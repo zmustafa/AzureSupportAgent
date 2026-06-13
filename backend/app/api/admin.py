@@ -27,6 +27,7 @@ from app.core.llm_config import (
     GITHUB_FALLBACK_MODELS,
     GROK_FALLBACK_MODELS,
     LMSTUDIO_FALLBACK_MODELS,
+    LOCAL_PROVIDERS,
     MISTRAL_FALLBACK_MODELS,
     OLLAMA_BASE_URL,
     OLLAMA_FALLBACK_MODELS,
@@ -35,6 +36,7 @@ from app.core.llm_config import (
     load_config,
     public_config,
     save_config,
+    set_provider_enabled,
 )
 from app.core.security import Principal, require_admin
 from app.mcp.client import build_mcp_client
@@ -251,6 +253,18 @@ async def update_llm_config(
             # Only replace the key when a non-empty new value is provided.
             if upd.api_key:
                 prov["api_key"] = upd.api_key
+            # Setting up a provider auto-enables it: a fresh install ships every
+            # provider disabled, and saving a credential (an API key, or a base URL for
+            # a local provider) is what "sets it up". An explicit disabled flag in the
+            # same request always wins.
+            if upd.disabled is None:
+                credential_added = bool(upd.api_key) or (
+                    name in LOCAL_PROVIDERS
+                    and upd.base_url is not None
+                    and upd.base_url.strip() != ""
+                )
+                if credential_added:
+                    prov["disabled"] = False
     save_config(cfg)
     db.add(
         AuditLog(
@@ -943,6 +957,8 @@ async def chatgpt_oauth_login(
         st = await chatgpt_oauth.interactive_login()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Signing in sets up the provider — make it available in the model picker.
+    set_provider_enabled("chatgpt", True)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -983,6 +999,8 @@ async def chatgpt_oauth_complete(
         st = await chatgpt_oauth.complete_with_callback_url(body.callback_url)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Signing in sets up the provider — make it available in the model picker.
+    set_provider_enabled("chatgpt", True)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -1002,6 +1020,8 @@ async def chatgpt_oauth_signout(
 ):
     """Forget the stored ChatGPT tokens and browser session."""
     st = chatgpt_oauth.sign_out()
+    # Signing out tears down the provider — hide it again until re-configured.
+    set_provider_enabled("chatgpt", False)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -1029,6 +1049,8 @@ async def github_copilot_login(
         status = await github_copilot_auth.interactive_login()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Signing in sets up the provider — make it available in the model picker.
+    set_provider_enabled("github_copilot", True)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -1066,6 +1088,8 @@ async def github_copilot_device_poll(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.get("status") == "authorized":
+        # Signing in sets up the provider — make it available in the model picker.
+        set_provider_enabled("github_copilot", True)
         db.add(
             AuditLog(
                 tenant_id=principal.tenant_id,
@@ -1099,6 +1123,8 @@ async def github_copilot_signout(
 ):
     """Forget the cached token and browser session."""
     github_copilot_auth.sign_out()
+    # Signing out tears down the provider — hide it again until re-configured.
+    set_provider_enabled("github_copilot", False)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,

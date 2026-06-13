@@ -37,6 +37,13 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 LMSTUDIO_BASE_URL = "http://localhost:1234/v1"
 CLAUDE_BASE_URL = "https://api.anthropic.com"
 
+# Local providers whose "credential" is a base URL rather than an API key. Saving a
+# base URL for one of these counts as setting it up (and auto-enables it).
+LOCAL_PROVIDERS = frozenset({"ollama", "lmstudio"})
+# Providers set up via an OAuth sign-in flow rather than a pasted key. They are enabled
+# when the sign-in completes and disabled again on sign-out.
+OAUTH_PROVIDERS = frozenset({"chatgpt", "github_copilot"})
+
 # Curated fallback model lists shown when the live model list can't be fetched.
 OPENAI_FALLBACK_MODELS = [
     "gpt-5.5",
@@ -138,11 +145,25 @@ CLAUDE_FALLBACK_MODELS = [
 
 
 def _default_config() -> dict[str, Any]:
-    """Seed config from env settings so an existing .env setup keeps working."""
+    """Seed config from env settings so an existing .env setup keeps working.
+
+    Every provider starts ``disabled`` (hidden from the chat model picker) on a fresh
+    install — a provider only becomes available once it's actually set up. The
+    exceptions are providers seeded with a real credential from the environment
+    (``LLM_API_KEY`` for OpenAI / Azure OpenAI) and a provider explicitly selected via
+    ``LLM_PROVIDER``, so existing env-driven deployments keep working unchanged.
+    """
     s = get_settings()
-    return {
-        "active_provider": s.llm_provider or "openai",
-        "providers": {
+    env_provider = (s.llm_provider or "").lower()
+
+    def _env_has_credential(name: str) -> bool:
+        if name == "openai":
+            return bool(s.llm_api_key)
+        if name == "azure_openai":
+            return bool(s.llm_api_key and s.azure_openai_endpoint)
+        return False
+
+    providers: dict[str, dict[str, Any]] = {
             "openai": {
                 "api_key": s.llm_api_key or "",
                 "model": s.llm_model or "gpt-4.1",
@@ -189,8 +210,29 @@ def _default_config() -> dict[str, Any]:
             },
             "lmstudio": {"api_key": "lmstudio", "model": "local-model", "base_url": LMSTUDIO_BASE_URL},
             "claude": {"api_key": "", "model": "claude-sonnet-4-6", "base_url": CLAUDE_BASE_URL},
-        },
     }
+    # Disable every provider by default; only enable those configured via the
+    # environment (real credential) or explicitly selected via LLM_PROVIDER.
+    for name, prov in providers.items():
+        prov["disabled"] = not (_env_has_credential(name) or name == env_provider)
+
+    return {
+        "active_provider": s.llm_provider or "openai",
+        "providers": providers,
+    }
+
+
+def _has_real_credential(name: str, prov: dict[str, Any]) -> bool:
+    """Whether a saved provider entry carries a real, user-supplied credential.
+
+    Used only to migrate older config files that predate the per-provider ``disabled``
+    flag, so an already-configured provider isn't hidden by the new "disabled until set
+    up" default. Local providers ship with a placeholder key and OAuth providers keep
+    their token outside this file, so neither counts as configured here — those are
+    enabled explicitly when set up."""
+    if name in LOCAL_PROVIDERS or name in OAUTH_PROVIDERS:
+        return False
+    return bool((prov.get("api_key") or "").strip())
 
 
 def load_config() -> dict[str, Any]:
@@ -201,7 +243,13 @@ def load_config() -> dict[str, Any]:
             base = _default_config()
             base["active_provider"] = data.get("active_provider", base["active_provider"])
             for name, prov in data.get("providers", {}).items():
-                base["providers"].setdefault(name, {}).update(prov)
+                merged = base["providers"].setdefault(name, {})
+                merged.update(prov)
+                # Migrate configs written before providers carried a `disabled` flag:
+                # keep a provider that already has a real credential enabled so existing
+                # setups aren't hidden by the new "disabled until set up" default.
+                if "disabled" not in prov:
+                    merged["disabled"] = not _has_real_credential(name, merged)
             return base
         except (json.JSONDecodeError, OSError):
             pass
@@ -211,6 +259,18 @@ def load_config() -> dict[str, Any]:
 def save_config(cfg: dict[str, Any]) -> None:
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+def set_provider_enabled(name: str, enabled: bool) -> None:
+    """Enable or disable a single provider and persist the change.
+
+    A disabled provider is hidden from the chat model picker. Providers default to
+    disabled until set up; this is called when a provider is configured (e.g. an OAuth
+    sign-in completes) or torn down (sign-out)."""
+    cfg = load_config()
+    prov = cfg.setdefault("providers", {}).setdefault(name, {})
+    prov["disabled"] = not enabled
+    save_config(cfg)
 
 
 def get_active(
