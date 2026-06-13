@@ -1,0 +1,95 @@
+# =============================================================================
+# Azure Support Agent — .gitignore
+# =============================================================================
+
+# --- Secrets & environment ---------------------------------------------------
+.env
+.env.*
+!.env.example
+*.local
+*.key
+secret.key
+*.pem
+*.pfx
+*.p12
+*.crt
+
+# --- Runtime data / state volumes --------------------------------------------
+# Backend JSON registries, SQLite DB, caches, OAuth profiles, evidence, etc.
+.data/
+**/.data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- Deployment / infra scratch (machine-specific identifiers) ---------------
+.acrname
+.stgname
+.imgdigest
+uvicorn.out.log
+uvicorn.err.log
+
+# --- Internal / non-distributable assets -------------------------------------
+sap.txt
+
+# --- Presentation / deck working files (non-distributable) -------------------
+# The pitch deck, its product screenshots, and its build scripts are internal.
+docs/deck-assets/
+docs/_build_deck.py
+docs/_validate.py
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+develop-eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# --- Node / frontend ---------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Playwright / browsers ---------------------------------------------------
+playwright-report/
+test-results/
+.playwright/
+
+# --- Editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# --- Logs --------------------------------------------------------------------
+*.log
+logs/
+
+# --- Misc temp ---------------------------------------------------------------
+*.tmp
+*.bak
+*.pptx

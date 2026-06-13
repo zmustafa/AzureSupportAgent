@@ -1,0 +1,383 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "8184174951594902972"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources."
+      }
+    },
+    "appName": {
+      "type": "string",
+      "defaultValue": "azure-support-agent",
+      "minLength": 3,
+      "maxLength": 40,
+      "metadata": {
+        "description": "Base name for the Azure Support Agent deployment. Use lowercase letters, numbers, and hyphens."
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "defaultValue": "docker.io/zmustafa/azure-support-agent:v23",
+      "metadata": {
+        "description": "Container image to deploy. Defaults to the public Docker Hub image. Switch to GHCR after the GitHub package is made public."
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "admin",
+      "minLength": 3,
+      "metadata": {
+        "description": "Bootstrap local admin username for first login."
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "minLength": 12,
+      "metadata": {
+        "description": "Bootstrap local admin password for first login. User is forced to change it after first sign-in."
+      }
+    },
+    "postgresAdminLogin": {
+      "type": "string",
+      "defaultValue": "azsupadmin",
+      "minLength": 3,
+      "maxLength": 63,
+      "metadata": {
+        "description": "PostgreSQL administrator username."
+      }
+    },
+    "postgresAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "[format('Azsup!{0}2026', uniqueString(subscription().id, resourceGroup().id, parameters('appName')))]",
+      "minLength": 16,
+      "metadata": {
+        "description": "Auto-generated PostgreSQL administrator password. Leave unchanged unless you need to supply your own."
+      }
+    },
+    "postgresDatabaseName": {
+      "type": "string",
+      "defaultValue": "azsup",
+      "minLength": 1,
+      "maxLength": 63,
+      "metadata": {
+        "description": "PostgreSQL database name used by the app."
+      }
+    },
+    "postgresSkuName": {
+      "type": "string",
+      "defaultValue": "Standard_B1ms",
+      "metadata": {
+        "description": "PostgreSQL Flexible Server SKU. B1ms is the lowest-cost managed option for this template."
+      }
+    },
+    "containerCpu": {
+      "type": "string",
+      "defaultValue": "1.0",
+      "metadata": {
+        "description": "Container CPU cores."
+      }
+    },
+    "containerMemory": {
+      "type": "string",
+      "defaultValue": "2Gi",
+      "allowedValues": [
+        "1Gi",
+        "2Gi",
+        "4Gi"
+      ],
+      "metadata": {
+        "description": "Container memory allocation. Chromium and Azure CLI need headroom, so 2Gi is the default."
+      }
+    }
+  },
+  "variables": {
+    "normalizedAppName": "[toLower(parameters('appName'))]",
+    "unique": "[uniqueString(resourceGroup().id, variables('normalizedAppName'))]",
+    "compactAppName": "[replace(variables('normalizedAppName'), '-', '')]",
+    "namePrefix": "[substring(variables('compactAppName'), 0, min(length(variables('compactAppName')), 14))]",
+    "workspaceName": "[format('{0}-law-{1}', variables('namePrefix'), variables('unique'))]",
+    "environmentName": "[format('{0}-env-{1}', variables('namePrefix'), variables('unique'))]",
+    "containerAppName": "[format('{0}-app-{1}', variables('namePrefix'), variables('unique'))]",
+    "storageAccountName": "[toLower(replace(format('azsup{0}', variables('unique')), '-', ''))]",
+    "fileShareName": "appdata",
+    "managedEnvStorageName": "appdata",
+    "postgresServerName": "[format('{0}-pg-{1}', variables('namePrefix'), variables('unique'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('workspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        }
+      }
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('environmentName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": true,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('fileShareName'))]",
+      "properties": {
+        "shareQuota": 20,
+        "enabledProtocols": "SMB"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments/storages",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', variables('environmentName'), variables('managedEnvStorageName'))]",
+      "properties": {
+        "azureFile": {
+          "accountName": "[variables('storageAccountName')]",
+          "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01').keys[0].value]",
+          "shareName": "[variables('fileShareName')]",
+          "accessMode": "ReadWrite"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', variables('fileShareName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2024-08-01",
+      "name": "[variables('postgresServerName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('postgresSkuName')]",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "16",
+        "administratorLogin": "[parameters('postgresAdminLogin')]",
+        "administratorLoginPassword": "[parameters('postgresAdminPassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        },
+        "network": {
+          "publicNetworkAccess": "Enabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2024-08-01",
+      "name": "[format('{0}/{1}', variables('postgresServerName'), parameters('postgresDatabaseName'))]",
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2024-08-01",
+      "name": "[format('{0}/{1}', variables('postgresServerName'), 'AllowAzureServices')]",
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('containerAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "transport": "auto",
+            "allowInsecure": false,
+            "traffic": [
+              {
+                "latestRevision": true,
+                "weight": 100
+              }
+            ]
+          },
+          "secrets": [
+            {
+              "name": "database-url",
+              "value": "[format('postgresql+asyncpg://{0}:{1}@{2}:5432/{3}?ssl=require', parameters('postgresAdminLogin'), parameters('postgresAdminPassword'), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName')), '2024-08-01').fullyQualifiedDomainName, parameters('postgresDatabaseName'))]"
+            },
+            {
+              "name": "admin-password",
+              "value": "[parameters('adminPassword')]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "azsupagent",
+              "image": "[parameters('containerImage')]",
+              "env": [
+                {
+                  "name": "SEED_ADMIN_USERNAME",
+                  "value": "[parameters('adminUsername')]"
+                },
+                {
+                  "name": "SEED_ADMIN_PASSWORD",
+                  "secretRef": "admin-password"
+                },
+                {
+                  "name": "DATABASE_URL",
+                  "secretRef": "database-url"
+                },
+                {
+                  "name": "COOKIE_SECURE",
+                  "value": "true"
+                },
+                {
+                  "name": "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT",
+                  "value": "1"
+                },
+                {
+                  "name": "ENTRA_MCP_COMMAND",
+                  "value": "/opt/eidmcp/bin/python"
+                },
+                {
+                  "name": "ENTRA_MCP_ARGS",
+                  "value": "/app/third_party/entraid-mcp-server/run_server.py"
+                },
+                {
+                  "name": "BROWSER_PROFILE_DIR",
+                  "value": "/tmp/browser-profiles"
+                },
+                {
+                  "name": "AZURE_EXTENSION_DIR",
+                  "value": "/opt/az-extensions"
+                }
+              ],
+              "resources": {
+                "cpu": "[json(parameters('containerCpu'))]",
+                "memory": "[parameters('containerMemory')]"
+              },
+              "volumeMounts": [
+                {
+                  "volumeName": "appdata",
+                  "mountPath": "/app/.data"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 1
+          },
+          "volumes": [
+            {
+              "name": "appdata",
+              "storageType": "AzureFile",
+              "storageName": "[variables('managedEnvStorageName')]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/firewallRules', variables('postgresServerName'), 'AllowAzureServices')]",
+        "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
+        "[resourceId('Microsoft.App/managedEnvironments/storages', variables('environmentName'), variables('managedEnvStorageName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('postgresServerName'), parameters('postgresDatabaseName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "appUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+    },
+    "containerAppName": {
+      "type": "string",
+      "value": "[variables('containerAppName')]"
+    },
+    "postgresServerName": {
+      "type": "string",
+      "value": "[variables('postgresServerName')]"
+    },
+    "storageAccountName": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    }
+  }
+}

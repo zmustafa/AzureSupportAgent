@@ -1,0 +1,284 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Rich formatting for assistant markdown answers. */
+.prose-chat {
+  line-height: 1.6;
+  font-size: 0.9rem;
+  color: #1f2933;
+}
+
+.prose-chat > *:first-child {
+  margin-top: 0;
+}
+.prose-chat > *:last-child {
+  margin-bottom: 0;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.1em 0 0.5em;
+  color: #0d1b2a;
+}
+.prose-chat h1 {
+  font-size: 1.25rem;
+  border-bottom: 1px solid #e5e9f0;
+  padding-bottom: 0.3rem;
+}
+.prose-chat h2 {
+  font-size: 1.1rem;
+  border-bottom: 1px solid #eef1f5;
+  padding-bottom: 0.25rem;
+}
+.prose-chat h3 {
+  font-size: 1rem;
+}
+.prose-chat h4 {
+  font-size: 0.92rem;
+  color: #334155;
+}
+
+.prose-chat p {
+  margin: 0.55em 0;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.55em 0;
+  padding-left: 1.4em;
+}
+.prose-chat li {
+  margin: 0.25em 0;
+}
+.prose-chat li > p {
+  margin: 0.2em 0;
+}
+.prose-chat ul {
+  list-style: disc;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+
+.prose-chat a {
+  color: #1f6feb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat a:hover {
+  color: #0d4fc4;
+}
+
+.prose-chat blockquote {
+  margin: 0.7em 0;
+  padding: 0.3em 0.9em;
+  border-left: 3px solid #c7d2e0;
+  background: #f6f8fb;
+  color: #475569;
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid #e5e9f0;
+  margin: 1em 0;
+}
+
+.prose-chat strong {
+  font-weight: 600;
+  color: #0d1b2a;
+}
+
+/* Tables */
+.prose-chat table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.85rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose-chat thead th {
+  background: #f1f5f9;
+  color: #0d1b2a;
+  font-weight: 600;
+  text-align: left;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid #e2e8f0;
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+.prose-chat tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+
+/* Code */
+.prose-chat pre {
+  background: #0d1117;
+  color: #e6edf3;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0.7em 0;
+}
+
+.prose-chat code {
+  background: #eef1f5;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.prose-chat pre code {
+  background: transparent;
+  padding: 0;
+}
+
+/* ===================================================================== */
+/* Monitor — Azure-dashboard-style grid, tiles, and resize affordances.  */
+/* ===================================================================== */
+
+.monitor-grid.layout {
+  position: relative;
+}
+
+/* Edit mode: a subtle dotted "design surface", like the Azure portal's
+   dashboard editor, so it's obvious the board is in a customizable state. */
+.monitor-grid--editing {
+  background-image: radial-gradient(circle, rgba(99, 102, 241, 0.14) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: -1px -1px;
+  border-radius: 14px;
+  outline: 1px dashed rgba(99, 102, 241, 0.25);
+  outline-offset: 4px;
+}
+
+/* Tile chrome + hover elevation (view mode). */
+.monitor-tile {
+  transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+}
+.monitor-grid:not(.monitor-grid--editing) .monitor-tile:hover {
+  box-shadow: 0 10px 26px -10px rgba(15, 23, 42, 0.22);
+  transform: translateY(-1px);
+}
+
+/* Drop/resize placeholder — Azure shows a tinted target outline. */
+.monitor-grid .react-grid-placeholder {
+  background: rgba(99, 102, 241, 0.16) !important;
+  border: 1.5px dashed rgba(99, 102, 241, 0.65);
+  border-radius: 12px;
+  opacity: 1 !important;
+  transition-duration: 90ms;
+}
+
+/* Editing tiles get a soft selectable ring + grab affordance. */
+.monitor-grid--editing .react-grid-item {
+  transition: box-shadow 0.16s ease;
+}
+.monitor-grid--editing .react-grid-item:hover {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35), 0 12px 28px -12px rgba(15, 23, 42, 0.25);
+  border-radius: 12px;
+  z-index: 5;
+}
+.monitor-grid--editing .react-grid-item.react-draggable-dragging,
+.monitor-grid--editing .react-grid-item.resizing {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.7), 0 18px 40px -12px rgba(15, 23, 42, 0.4);
+  z-index: 20;
+}
+
+/* ---- Resize handles: always visible in edit mode (Azure-style grips) ---- */
+.monitor-grid--editing .react-resizable-handle {
+  opacity: 0.55;
+  transition: opacity 0.14s ease;
+  background: none; /* replace the default tiny SVG with our own glyphs */
+  padding: 0;
+  z-index: 30;
+}
+.monitor-grid--editing .react-grid-item:hover .react-resizable-handle {
+  opacity: 1;
+}
+
+/* Bottom-right corner grip (primary resize). */
+.monitor-grid--editing .react-resizable-handle-se {
+  width: 20px;
+  height: 20px;
+  right: 3px;
+  bottom: 3px;
+  cursor: se-resize;
+}
+.monitor-grid--editing .react-resizable-handle-se::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 11px;
+  height: 11px;
+  border-right: 2.5px solid rgba(99, 102, 241, 0.95);
+  border-bottom: 2.5px solid rgba(99, 102, 241, 0.95);
+  border-bottom-right-radius: 4px;
+}
+
+/* Right edge handle. */
+.monitor-grid--editing .react-resizable-handle-e {
+  cursor: e-resize;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  transform: none;
+  margin: 0;
+}
+.monitor-grid--editing .react-resizable-handle-e::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 30px;
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.6);
+}
+
+/* Bottom edge handle. */
+.monitor-grid--editing .react-resizable-handle-s {
+  cursor: s-resize;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 10px;
+  transform: none;
+  margin: 0;
+}
+.monitor-grid--editing .react-resizable-handle-s::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 30px;
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.6);
+}

@@ -1,0 +1,769 @@
+"""Validated, identity-bound host command execution with live streaming.
+
+The Run button lets the agent's suggested Azure-CLI commands actually execute on the
+host, bound to the same Azure identity the chat's MCP session uses. Because the command
+text originates from an LLM it is treated as untrusted: we allow only an explicit set of
+CLI binaries, reject every shell metacharacter (no chaining/redirection/subshells), and
+gate mutating verbs behind an approval click. Output streams back token-by-token over SSE.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator
+
+from app.core.app_settings import load_settings
+
+# Shell metacharacters that enable chaining, redirection, subshells, or globbing tricks.
+# Any of these in the raw command string is an immediate rejection.
+# Shell metacharacters that enable chaining, redirection, or subshells. We scan for
+# these only OUTSIDE quoted strings — inside quotes (e.g. a KQL `-q "... | project ..."`
+# argument) they are literal data, and since we run via exec (no shell) they are never
+# interpreted. Newlines are always rejected (a code block must be a single command).
+_FORBIDDEN_OPERATORS = (";", "|", "&", ">", "<", "`")
+
+
+def _has_unquoted_shell_operator(raw: str) -> bool:
+    """True if a shell operator or command-substitution appears outside quotes."""
+    in_single = False
+    in_double = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == "\\" and i + 1 < n:
+                i += 2  # backslash escape inside double quotes
+                continue
+            if ch == '"':
+                in_double = False
+            elif ch == "`":  # backtick command substitution is active in double quotes
+                return True
+            elif ch == "$" and i + 1 < n and raw[i + 1] == "(":
+                return True
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == '"':
+                in_double = True
+            elif ch in _FORBIDDEN_OPERATORS:
+                return True
+            elif ch == "$" and i + 1 < n and raw[i + 1] == "(":
+                return True
+        i += 1
+    return False
+
+# Mutating verbs across az / azd / kubectl. Presence (as a bare token) marks a command
+# "destructive", which requires an explicit confirm and is blocked in read-only tenants.
+_MUTATING_VERBS = {
+    # az
+    "create", "delete", "update", "set", "add", "remove", "purge", "restart", "start",
+    "stop", "deallocate", "redeploy", "reset", "regenerate", "rotate", "renew", "assign",
+    "unassign", "grant", "revoke", "disable", "enable", "import", "move", "attach",
+    "detach", "approve", "reject", "deny", "cancel", "clear", "restore", "failover",
+    "lock", "unlock", "invoke-action", "generate", "upload", "publish",
+    # azd
+    "up", "down", "provision", "deploy", "destroy",
+    # kubectl
+    "apply", "patch", "edit", "scale", "drain", "cordon", "uncordon", "rollout",
+    "replace", "label", "annotate", "exec", "run", "expose", "taint",
+}
+
+MAX_OUTPUT_BYTES = 256_000  # truncate runaway output to protect the browser/feed
+
+
+@dataclass
+class Validation:
+    ok: bool
+    binary: str = ""
+    argv: list[str] = field(default_factory=list)
+    destructive: bool = False
+    error: str = ""
+
+
+def validate_command(command: str, allowlist: list[str]) -> Validation:
+    """Parse and safety-check a command. Returns argv + whether it's destructive."""
+    raw = (command or "").strip()
+    if not raw:
+        return Validation(ok=False, error="Empty command.")
+    if len(raw) > 4000:
+        return Validation(ok=False, error="Command is too long.")
+    if "\n" in raw or "\r" in raw:
+        return Validation(
+            ok=False,
+            error="Only a single-line command is allowed — run one command per code block.",
+        )
+    if _has_unquoted_shell_operator(raw):
+        return Validation(
+            ok=False,
+            error=(
+                "Only a single command is allowed — shell operators, pipes, "
+                "redirection and subshells are blocked. (Quotes around query text are fine.)"
+            ),
+        )
+    try:
+        argv = shlex.split(raw, posix=True)
+    except ValueError:
+        return Validation(ok=False, error="Could not parse the command (unbalanced quotes?).")
+    if not argv:
+        return Validation(ok=False, error="Empty command.")
+    binary = argv[0].lower()
+    if binary not in {b.lower() for b in allowlist}:
+        allowed = ", ".join(allowlist) or "(none)"
+        return Validation(
+            ok=False,
+            error=f"'{argv[0]}' is not an allowed command. Allowed: {allowed}.",
+        )
+    bare = {t.lower() for t in argv[1:] if not t.startswith("-")}
+    destructive = bool(bare & _MUTATING_VERBS)
+    return Validation(ok=True, binary=binary, argv=argv, destructive=destructive)
+
+
+def _run_env(conn: dict[str, Any] | None, config_dir: str | None) -> dict[str, str]:
+    """Environment for the actual command run (no secrets — auth is via the CLI's own
+    login context / config dir)."""
+    env = dict(os.environ)
+    # Never expose SP secrets to the executed command's environment.
+    for k in ("AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PATH"):
+        env.pop(k, None)
+    if conn:
+        if conn.get("tenant_id"):
+            env["AZURE_TENANT_ID"] = conn["tenant_id"]
+        if conn.get("default_subscription"):
+            env["AZURE_SUBSCRIPTION_ID"] = conn["default_subscription"]
+    if config_dir:
+        env["AZURE_CONFIG_DIR"] = config_dir
+    # Make az emit plain, non-paged output.
+    env["AZURE_CORE_NO_COLOR"] = "true"
+    env["AZURE_CORE_ONLY_SHOW_ERRORS"] = "false"
+    # Auto-install any missing CLI extension (e.g. resource-graph for `az graph query`)
+    # without an interactive prompt — otherwise the command hangs waiting on a TTY we
+    # don't have and eventually times out.
+    env["AZURE_EXTENSION_USE_DYNAMIC_INSTALL"] = "yes_without_prompt"
+    env["AZURE_CORE_DISABLE_CONFIRM_PROMPT"] = "true"
+    return env
+
+
+def _is_service_principal(conn: dict[str, Any] | None) -> bool:
+    return bool(conn) and conn.get("auth_method") in (
+        "service_principal",
+        "service_principal_cert",
+    )
+
+
+def _thread_reader(
+    pipe: Any,
+    kind: str,
+    queue: "asyncio.Queue",
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Blocking reader run in a worker thread: read a process pipe line-by-line and
+    forward each decoded line onto the asyncio queue (thread-safe). Ends with a None
+    sentinel. Used instead of asyncio subprocess streams so command execution works on
+    ANY event loop — notably the Windows SelectorEventLoop, where asyncio subprocesses
+    raise NotImplementedError."""
+    try:
+        for raw in iter(pipe.readline, b""):
+            text = raw.decode("utf-8", errors="replace")
+            loop.call_soon_threadsafe(queue.put_nowait, (kind, text))
+    except Exception:  # noqa: BLE001 - a broken pipe just ends this stream
+        pass
+    finally:
+        loop.call_soon_threadsafe(queue.put_nowait, (kind, None))  # stream done
+        try:
+            pipe.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _sp_login(conn: dict[str, Any], az_path: str, config_dir: str) -> str | None:
+    """Ephemeral `az login --service-principal` into an isolated config dir.
+
+    Returns an error string on failure, or None on success. The SP secret/cert never
+    persists outside this throwaway config dir.
+    """
+    tenant = conn.get("tenant_id", "")
+    client_id = conn.get("client_id", "")
+    if not (tenant and client_id):
+        return "Service-principal connection is missing tenant or client id."
+    argv = [az_path, "login", "--service-principal", "-u", client_id, "--tenant", tenant, "--only-show-errors"]
+    cleanup: list[str] = []
+    if conn.get("auth_method") == "service_principal_cert":
+        pem = conn.get("certificate_pem", "")
+        if not pem:
+            return "Certificate connection is missing its PEM."
+        fd = tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False, encoding="utf-8")
+        fd.write(pem)
+        fd.close()
+        cleanup.append(fd.name)
+        argv += ["-p", fd.name]
+    else:
+        secret = conn.get("client_secret", "")
+        if not secret:
+            return "Service-principal connection is missing its secret."
+        argv += ["-p", secret]
+    env = dict(os.environ)
+    env["AZURE_CONFIG_DIR"] = config_dir
+    try:
+        # Run via the blocking subprocess module in a worker thread so this works on any
+        # event loop (the Windows SelectorEventLoop can't spawn asyncio subprocesses).
+        result = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            capture_output=True,
+            env=env,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            msg = (
+                result.stderr.decode("utf-8", errors="replace")[:300]
+                if result.stderr
+                else "login failed"
+            )
+            return f"Service-principal sign-in failed: {msg}"
+        return None
+    except subprocess.TimeoutExpired:
+        return "Service-principal sign-in timed out."
+    finally:
+        for p in cleanup:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+async def _stream_process(
+    run_argv: list[str],
+    env: dict[str, str],
+    timeout: int,
+    *,
+    label: str,
+    destructive: bool,
+) -> AsyncIterator[dict[str, Any]]:
+    """Spawn a process and stream its stdout/stderr as SSE-ready events."""
+    yield {"type": "exec_start", "command": label, "destructive": destructive}
+    started = time.monotonic()
+    loop = asyncio.get_running_loop()
+    # Use the blocking subprocess module (in threads) rather than asyncio subprocesses,
+    # so this works on any event loop — including the Windows SelectorEventLoop, where
+    # asyncio.create_subprocess_exec raises NotImplementedError.
+    proc = await asyncio.to_thread(
+        subprocess.Popen,
+        run_argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    assert proc.stdout and proc.stderr
+    queue: asyncio.Queue = asyncio.Queue()
+    pumps = [
+        threading.Thread(
+            target=_thread_reader, args=(proc.stdout, "stdout", queue, loop), daemon=True
+        ),
+        threading.Thread(
+            target=_thread_reader, args=(proc.stderr, "stderr", queue, loop), daemon=True
+        ),
+    ]
+    for t in pumps:
+        t.start()
+    finished = 0
+    total = 0
+    truncated = False
+    timed_out = False
+    while finished < 2:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            timed_out = True
+            break
+        try:
+            kind, text = await asyncio.wait_for(queue.get(), timeout=remaining)
+        except asyncio.TimeoutError:
+            timed_out = True
+            break
+        if text is None:
+            finished += 1
+            continue
+        total += len(text)
+        if total > MAX_OUTPUT_BYTES:
+            truncated = True
+            break
+        yield {"type": kind, "text": text}
+
+    if timed_out or truncated:
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        reason = (
+            f"Command timed out after {timeout}s." if timed_out
+            else f"Output truncated at {MAX_OUTPUT_BYTES // 1000} KB."
+        )
+        yield {"type": "error", "message": reason}
+        try:
+            await asyncio.to_thread(proc.wait, 5)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+
+    await asyncio.to_thread(proc.wait)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    yield {"type": "exit", "code": proc.returncode, "duration_ms": duration_ms}
+
+
+async def run_command_stream(
+    command: str,
+    connection: dict[str, Any] | None,
+    *,
+    read_only: bool,
+    confirm: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """Validate, optionally authenticate, then run a command and yield SSE-ready events.
+
+    Event shapes (``type`` field): ``exec_start``, ``status``, ``stdout``, ``stderr``,
+    ``approval_required``, ``exit`` (code/duration_ms), ``error``.
+    """
+    settings = load_settings()
+    if not settings.get("command_execution_enabled", False):
+        yield {"type": "error", "message": "Command execution is disabled by the administrator."}
+        return
+    allowlist = settings.get("command_allowlist") or ["az"]
+
+    val = validate_command(command, allowlist)
+    if not val.ok:
+        yield {"type": "error", "message": val.error}
+        return
+
+    if val.destructive:
+        if read_only:
+            yield {
+                "type": "error",
+                "message": (
+                    "This is a mutating command, but the selected Azure connection is "
+                    "read-only. Switch to a writable connection or run a read-only command."
+                ),
+            }
+            return
+        if not confirm:
+            yield {
+                "type": "approval_required",
+                "command": command,
+                "message": "This command modifies Azure resources. Run it anyway?",
+            }
+            return
+
+    az_path = shutil.which(val.binary)
+    if not az_path:
+        yield {"type": "error", "message": f"'{val.binary}' is not installed on the host."}
+        return
+
+    timeout = int(settings.get("command_timeout_seconds", 120))
+    config_dir: str | None = None
+    sp = _is_service_principal(connection)
+    try:
+        if sp:
+            config_dir = tempfile.mkdtemp(prefix="azexec-")
+            yield {"type": "status", "text": "Authenticating with the service principal…"}
+            err = await _sp_login(connection, az_path, config_dir)
+            if err:
+                yield {"type": "error", "message": err}
+                return
+
+        env = _run_env(connection, config_dir)
+        # argv[0] is the binary name; replace with the resolved absolute path.
+        run_argv = [az_path, *val.argv[1:]]
+        async for ev in _stream_process(
+            run_argv, env, timeout, label=command, destructive=val.destructive
+        ):
+            yield ev
+    finally:
+        if config_dir:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+
+# Max rows a single Resource Graph query run returns (protects the browser/feed).
+KQL_MAX_ROWS = 1000
+
+
+async def run_kql_stream(
+    kql: str,
+    connection: dict[str, Any] | None,
+    *,
+    output: str = "table",
+    session_config_dir: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Run a KQL query via Azure Resource Graph (`az graph query`) and stream results.
+
+    The KQL is passed to ``az`` as a single argv element (data, never a shell string),
+    so there is no shell parsing or injection surface. Resource Graph is a read-only
+    query API, so this is always non-destructive.
+
+    ``session_config_dir``: when provided (and the connection is a service principal),
+    reuse this already-authenticated AZURE_CONFIG_DIR instead of doing a fresh `az login`
+    per query — a big speedup when running many queries (e.g. cache prefetch). The caller
+    owns that dir's lifecycle.
+    """
+    settings = load_settings()
+    # Resource Graph is a strictly READ-ONLY query API and is core to discovery,
+    # inventory, and assessments — so it is NOT gated behind the arbitrary-command
+    # execution kill-switch (`command_execution_enabled`), which only governs the
+    # destructive Run-button / agent CLI path (run_command_stream). We still require
+    # `az` to be available so the binary check below applies.
+    az_path = shutil.which("az")
+    if not az_path:
+        yield {"type": "error", "message": "'az' is not installed on the host."}
+        return
+
+    query = (kql or "").strip()
+    if not query:
+        yield {"type": "error", "message": "Empty query."}
+        return
+    if len(query) > 8000:
+        yield {"type": "error", "message": "Query is too long."}
+        return
+    # Collapse to a single line: on Windows `az` is a batch wrapper (az.cmd) that
+    # truncates an argument at the first newline, which would silently drop everything
+    # after the first KQL line. KQL is whitespace-insensitive between tokens, so a
+    # one-line form is equivalent. Also strip `// ...` line comments first.
+    query = re.sub(r"//[^\n]*", "", query)
+    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = re.sub(r"[ \t]{2,}", " ", query)
+
+    timeout = int(settings.get("command_timeout_seconds", 120))
+    config_dir: str | None = None
+    own_config = False
+    sp = _is_service_principal(connection)
+    try:
+        if sp:
+            if session_config_dir:
+                # Reuse a pre-authenticated session (the caller logged in once and will
+                # clean up) — skips the slow per-query `az login`.
+                config_dir = session_config_dir
+            else:
+                config_dir = tempfile.mkdtemp(prefix="azexec-")
+                own_config = True
+                yield {"type": "status", "text": "Authenticating with the service principal…"}
+                err = await _sp_login(connection, az_path, config_dir)
+                if err:
+                    yield {"type": "error", "message": err}
+                    return
+
+        env = _run_env(connection, config_dir)
+        run_argv = [
+            az_path, "graph", "query",
+            "-q", query,
+            "--first", str(KQL_MAX_ROWS),
+            # The graph result is a wrapper {count, data, ...}; extract just the rows so
+            # `--output table` renders the projected columns instead of a count summary.
+            "--query", "data[]",
+            "--output", output,
+        ]
+        label = f"az graph query (KQL, first {KQL_MAX_ROWS})"
+        async for ev in _stream_process(run_argv, env, timeout, label=label, destructive=False):
+            yield ev
+    finally:
+        # Only remove a config dir we created here; a shared session dir is the caller's.
+        if config_dir and own_config:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+
+@dataclass
+class CaptureResult:
+    """The full, captured result of a (non-streamed) command/KQL run."""
+
+    ok: bool
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    error: str = ""
+    destructive: bool = False
+
+
+async def _capture(stream: AsyncIterator[dict[str, Any]]) -> CaptureResult:
+    """Drain a run_*_stream generator into a single captured result."""
+    out: list[str] = []
+    errparts: list[str] = []
+    res = CaptureResult(ok=False)
+    async for ev in stream:
+        kind = ev.get("type")
+        if kind == "exec_start":
+            res.destructive = bool(ev.get("destructive"))
+        elif kind == "stdout":
+            out.append(ev.get("text", ""))
+        elif kind == "stderr":
+            errparts.append(ev.get("text", ""))
+        elif kind == "approval_required":
+            res.error = "This workbook is a mutating command and requires confirmation."
+            res.ok = False
+            return res
+        elif kind == "error":
+            res.error = ev.get("message", "Command failed.")
+        elif kind == "exit":
+            res.exit_code = ev.get("code")
+            res.duration_ms = ev.get("duration_ms")
+    res.stdout = "".join(out)[:MAX_OUTPUT_BYTES]
+    res.stderr = "".join(errparts)[:8000]
+    if res.error:
+        res.ok = False
+    else:
+        res.ok = res.exit_code == 0
+        if not res.ok and not res.error:
+            res.error = res.stderr.strip()[:500] or f"Exited with code {res.exit_code}."
+    return res
+
+
+async def run_command_capture(
+    command: str,
+    connection: dict[str, Any] | None,
+    *,
+    read_only: bool,
+    confirm: bool = False,
+) -> CaptureResult:
+    """Run an allowlisted command and capture its full output (non-streaming)."""
+    return await _capture(
+        run_command_stream(command, connection, read_only=read_only, confirm=confirm)
+    )
+
+
+async def run_kql_capture(
+    kql: str,
+    connection: dict[str, Any] | None,
+    *,
+    output: str = "json",
+    session_config_dir: str | None = None,
+) -> CaptureResult:
+    """Run a Resource Graph (KQL) query and capture its full output (non-streaming).
+
+    ``session_config_dir`` reuses a pre-authenticated SP session (see run_kql_stream)."""
+    return await _capture(
+        run_kql_stream(kql, connection, output=output, session_config_dir=session_config_dir)
+    )
+
+
+async def open_sp_session(connection: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """Log a service-principal connection in ONCE into a fresh config dir, for reuse
+    across many subsequent ``run_kql_capture(..., session_config_dir=...)`` calls.
+
+    Returns (config_dir, error). For non-SP connections returns (None, None) — no login
+    needed. The caller MUST call ``close_sp_session(config_dir)`` when done."""
+    if not _is_service_principal(connection):
+        return None, None
+    az_path = shutil.which("az")
+    if not az_path:
+        return None, "'az' is not installed on the host."
+    config_dir = tempfile.mkdtemp(prefix="azexec-")
+    err = await _sp_login(connection, az_path, config_dir)
+    if err:
+        shutil.rmtree(config_dir, ignore_errors=True)
+        return None, err
+    return config_dir, None
+
+
+def close_sp_session(config_dir: str | None) -> None:
+    if config_dir:
+        shutil.rmtree(config_dir, ignore_errors=True)
+
+
+# ============================ Generic az JSON argv runner ============================
+async def _run_az_argv_stream(
+    argv_tail: list[str],
+    connection: dict[str, Any] | None,
+    *,
+    label: str,
+    session_config_dir: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Run ``az <argv_tail>`` bound to a connection's identity and stream output.
+
+    Like ``run_kql_stream`` but for any read-only ``az`` sub-command (Log Analytics,
+    metrics, resource health, …). The argv tail is passed verbatim — NO shell parsing —
+    so embedded KQL/JMESPath with pipes is safe. Always read-only / non-destructive.
+    """
+    settings = load_settings()
+    if not settings.get("command_execution_enabled", False):
+        yield {"type": "error", "message": "Command execution is disabled by the administrator."}
+        return
+    allowlist = {b.lower() for b in (settings.get("command_allowlist") or ["az"])}
+    if "az" not in allowlist:
+        yield {"type": "error", "message": "This widget requires 'az' to be allowed."}
+        return
+    az_path = shutil.which("az")
+    if not az_path:
+        yield {"type": "error", "message": "'az' is not installed on the host."}
+        return
+
+    timeout = int(settings.get("command_timeout_seconds", 120))
+    config_dir: str | None = None
+    own_config = False
+    sp = _is_service_principal(connection)
+    try:
+        if sp:
+            if session_config_dir:
+                config_dir = session_config_dir
+            else:
+                config_dir = tempfile.mkdtemp(prefix="azexec-")
+                own_config = True
+                err = await _sp_login(connection, az_path, config_dir)
+                if err:
+                    yield {"type": "error", "message": err}
+                    return
+        env = _run_env(connection, config_dir)
+        run_argv = [az_path, *argv_tail]
+        async for ev in _stream_process(run_argv, env, timeout, label=label, destructive=False):
+            yield ev
+    finally:
+        if config_dir and own_config:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+
+# Caps for the read-only telemetry queries Monitor widgets issue.
+LA_MAX_ROWS = 1000
+METRICS_MAX_POINTS = 2000
+
+
+async def run_la_capture(
+    kql: str,
+    workspace_id: str,
+    connection: dict[str, Any] | None,
+    *,
+    timespan: str = "P1D",
+    session_config_dir: str | None = None,
+) -> CaptureResult:
+    """Run a Log Analytics KQL query (`az monitor log-analytics query`) and capture JSON.
+
+    ``timespan`` is an ISO-8601 duration (e.g. ``PT1H``, ``P1D``). Distinct from Resource
+    Graph: this targets a Log Analytics *workspace* and supports the full KQL surface.
+    """
+    query = re.sub(r"//[^\n]*", "", (kql or "").strip())
+    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    if not query:
+        return CaptureResult(ok=False, error="Empty query.")
+    if not workspace_id:
+        return CaptureResult(ok=False, error="No Log Analytics workspace id configured on the connection.")
+    if len(query) > 8000:
+        return CaptureResult(ok=False, error="Query is too long.")
+    argv_tail = [
+        "monitor", "log-analytics", "query",
+        "--workspace", workspace_id,
+        "--analytics-query", query,
+        "--timespan", timespan or "P1D",
+        "--output", "json",
+    ]
+    return await _capture(
+        _run_az_argv_stream(
+            argv_tail, connection,
+            label="az monitor log-analytics query",
+            session_config_dir=session_config_dir,
+        )
+    )
+
+
+async def run_metrics_capture(
+    resource_id: str,
+    metrics: list[str],
+    connection: dict[str, Any] | None,
+    *,
+    aggregation: str | list[str] = "Average",
+    interval: str = "PT5M",
+    timespan: str | None = None,
+    end_time: str | None = None,
+    session_config_dir: str | None = None,
+) -> CaptureResult:
+    """Run `az monitor metrics list` for a resource + metric(s) and capture JSON.
+
+    ``timespan`` is an ISO-8601 start datetime passed to ``--start-time`` (or omitted to let
+    the CLI default to the last hour); ``end_time`` is an optional ``--end-time`` so an
+    explicit start/end window can be requested. ``interval`` is the grain (e.g. ``PT5M``).
+    ``aggregation`` may be a single name or a list (``az`` accepts several, e.g. requesting
+    ``Average Total Maximum`` so the response carries every column — useful when different
+    metrics have different primary aggregations).
+    """
+    if not resource_id:
+        return CaptureResult(ok=False, error="No resource id provided.")
+    metric_names = [m for m in (metrics or []) if m]
+    if not metric_names:
+        return CaptureResult(ok=False, error="No metric name provided.")
+    if isinstance(aggregation, (list, tuple)):
+        aggs = [str(a) for a in aggregation if a] or ["Average"]
+    else:
+        aggs = [aggregation or "Average"]
+    argv_tail = [
+        "monitor", "metrics", "list",
+        "--resource", resource_id,
+        "--metrics", *metric_names,
+        "--aggregation", *aggs,
+        "--interval", interval or "PT5M",
+        "--output", "json",
+    ]
+    if timespan:
+        argv_tail += ["--start-time", timespan]
+    if end_time:
+        argv_tail += ["--end-time", end_time]
+    return await _capture(
+        _run_az_argv_stream(
+            argv_tail, connection,
+            label="az monitor metrics list",
+            session_config_dir=session_config_dir,
+        )
+    )
+
+
+async def run_az_json_capture(
+    argv_tail: list[str],
+    connection: dict[str, Any] | None,
+    *,
+    label: str = "az",
+    session_config_dir: str | None = None,
+) -> CaptureResult:
+    """Run an arbitrary read-only az sub-command (argv tail) and capture JSON output."""
+    return await _capture(
+        _run_az_argv_stream(argv_tail, connection, label=label, session_config_dir=session_config_dir)
+    )
+
+
+async def run_app_insights_capture(
+    kql: str,
+    app_id: str,
+    connection: dict[str, Any] | None,
+    *,
+    timespan: str = "P1D",
+    session_config_dir: str | None = None,
+) -> CaptureResult:
+    """Run a KQL query against a classic Application Insights resource via
+    ``az monitor app-insights query --app <appId>`` and capture JSON.
+
+    Distinct from ``run_la_capture`` (which targets a Log Analytics workspace): this hits
+    the App Insights query API directly, for components NOT in workspace-based mode.
+    Read-only; the same query-sanitization + length cap as Log Analytics applies."""
+    query = re.sub(r"//[^\n]*", "", (kql or "").strip())
+    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    if not query:
+        return CaptureResult(ok=False, error="Empty query.")
+    if not app_id:
+        return CaptureResult(ok=False, error="No Application Insights app id provided.")
+    if len(query) > 8000:
+        return CaptureResult(ok=False, error="Query is too long.")
+    argv_tail = [
+        "monitor", "app-insights", "query",
+        "--app", app_id,
+        "--analytics-query", query,
+        "--offset", timespan or "P1D",
+        "--output", "json",
+    ]
+    return await _capture(
+        _run_az_argv_stream(
+            argv_tail, connection,
+            label="az monitor app-insights query",
+            session_config_dir=session_config_dir,
+        )
+    )

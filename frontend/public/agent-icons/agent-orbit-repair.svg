@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Animated SVG icon for Azure Support Agent. Looping vector animation; transparent background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Orbit Repair Icon</title>
+  <desc id="desc">AI agents orbit a workload, exchange signals, and repair a broken component.</desc>
+  <defs>
+    <linearGradient id="cube" x1="146" y1="147" x2="362" y2="362" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#50E6FF"/><stop offset=".55" stop-color="#0078D4"/><stop offset="1" stop-color="#243A5E"/></linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style><![CDATA[
+      .orbit{fill:none;stroke:#50E6FF;stroke-width:3;stroke-dasharray:5 12;opacity:.3}
+      .node{fill:#003A63;stroke:#8BE9FF;stroke-width:5;filter:url(#glow)}
+      .spark{fill:#FFB900;filter:url(#glow)}
+    ]]></style>
+  </defs>
+  <circle cx="256" cy="256" r="212" fill="#001B2E" opacity=".10"/>
+  <circle class="orbit" cx="256" cy="256" r="149"/>
+  <circle class="orbit" cx="256" cy="256" r="104"/>
+
+  <g filter="url(#glow)">
+    <path d="M256 142l98 56v116l-98 56-98-56V198z" fill="url(#cube)" stroke="#D7F7FF" stroke-width="5"/>
+    <path d="M158 198l98 58 98-58M256 256v114" fill="none" stroke="#D7F7FF" stroke-width="5" opacity=".7"/>
+    <path d="M213 286h84M226 314h60" stroke="#D7F7FF" stroke-width="10" stroke-linecap="round" opacity=".78"/>
+  </g>
+
+  <g transform="rotate(0 256 256)">
+    <g transform="translate(256 106)">
+      <circle class="node" r="33"/>
+      <rect x="-17" y="-9" width="34" height="25" rx="8" fill="#BEEBFF"/>
+      <path d="M-7 1h.1M7 1h.1M-8 12q8 6 16 0" stroke="#002B4E" stroke-width="4" stroke-linecap="round" fill="none"/>
+    </g>
+    <g transform="translate(386 331)">
+      <circle class="node" r="33"/>
+      <rect x="-17" y="-9" width="34" height="25" rx="8" fill="#BEEBFF"/>
+      <path d="M-7 1h.1M7 1h.1M-8 12q8 6 16 0" stroke="#002B4E" stroke-width="4" stroke-linecap="round" fill="none"/>
+    </g>
+    <g transform="translate(126 331)">
+      <circle class="node" r="33"/>
+      <rect x="-17" y="-9" width="34" height="25" rx="8" fill="#BEEBFF"/>
+      <path d="M-7 1h.1M7 1h.1M-8 12q8 6 16 0" stroke="#002B4E" stroke-width="4" stroke-linecap="round" fill="none"/>
+    </g>
+    <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="8s" repeatCount="indefinite"/>
+  </g>
+
+  <g transform="rotate(0 256 256)" filter="url(#glow)">
+    <path d="M256 106C302 160 331 209 354 256" stroke="#8BE9FF" stroke-width="4" stroke-dasharray="9 16" stroke-linecap="round" fill="none"/>
+    <path d="M386 331C327 333 294 313 256 286" stroke="#8BE9FF" stroke-width="4" stroke-dasharray="9 16" stroke-linecap="round" fill="none"/>
+    <path d="M126 331C184 331 218 313 256 286" stroke="#8BE9FF" stroke-width="4" stroke-dasharray="9 16" stroke-linecap="round" fill="none"/>
+    <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="8s" repeatCount="indefinite"/>
+    <animate attributeName="stroke-dashoffset" from="0" to="-50" dur="1.2s" repeatCount="indefinite"/>
+  </g>
+
+  <g filter="url(#glow)">
+    <path d="M305 174l18 18 21-21" fill="none" stroke="#2BCB75" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;.34;.48;.82;1" dur="2.8s" repeatCount="indefinite"/>
+    </path>
+    <path d="M323 191l-21-21M302 191l21-21" stroke="#F7630C" stroke-width="9" stroke-linecap="round">
+      <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;.34;.48;.82;1" dur="2.8s" repeatCount="indefinite"/>
+    </path>
+    <circle cx="323" cy="181" r="31" fill="none" stroke="#FFB900" stroke-width="4" opacity=".8">
+      <animate attributeName="r" values="22;36;22" dur="1.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values=".9;.2;.9" dur="1.4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g>
+    <circle class="spark" cx="174" cy="142" r="5"><animate attributeName="opacity" values="0;1;0" dur="1.7s" repeatCount="indefinite"/></circle>
+    <circle class="spark" cx="394" cy="144" r="5"><animate attributeName="opacity" values="0;1;0" dur="1.7s" begin=".45s" repeatCount="indefinite"/></circle>
+    <circle class="spark" cx="428" cy="394" r="5"><animate attributeName="opacity" values="0;1;0" dur="1.7s" begin=".75s" repeatCount="indefinite"/></circle>
+    <circle class="spark" cx="91" cy="393" r="5"><animate attributeName="opacity" values="0;1;0" dur="1.7s" begin="1s" repeatCount="indefinite"/></circle>
+  </g>
+</svg>

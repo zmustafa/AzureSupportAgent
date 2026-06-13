@@ -1,0 +1,23 @@
+# Keep the build context small for ACR/cloud builds.
+**/.venv
+**/node_modules
+**/.data
+**/__pycache__
+**/*.pyc
+**/.git
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+**/build/
+frontend/dist
+.env
+**/.env
+*.log
+**/*.log
+docs/
+tests/
+**/tests/
+third_party/entraid-mcp-server/.venv
+# Exclude all markdown (incl. vendored third-party READMEs) from the image.
+**/*.md

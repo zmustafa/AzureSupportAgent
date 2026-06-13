@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Animated SVG icon for Azure Support Agent. Looping vector animation; transparent background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Root Cause Radar Icon</title>
+  <desc id="desc">A radar sweep scans Azure resources while AI agent nodes coordinate and lock onto a root cause.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="70%"><stop offset="0" stop-color="#003A63" stop-opacity=".24"/><stop offset="1" stop-color="#001B2E" stop-opacity="0"/></radialGradient>
+    <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#50E6FF" stop-opacity=".86"/><stop offset="1" stop-color="#50E6FF" stop-opacity="0"/></linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style><![CDATA[
+      .ring{fill:none;stroke:#50E6FF;stroke-width:3;opacity:.22}
+      .axis{stroke:#50E6FF;stroke-width:2;opacity:.16}
+      .link{stroke:#8BE9FF;stroke-width:4;stroke-linecap:round;stroke-dasharray:8 16;filter:url(#glow)}
+      .mini{fill:#003A63;stroke:#8BE9FF;stroke-width:4;filter:url(#glow)}
+      .resource{fill:#092A46;stroke:#8BE9FF;stroke-width:4;filter:url(#glow)}
+    ]]></style>
+  </defs>
+  <circle cx="256" cy="256" r="220" fill="url(#bg)"/>
+  <circle class="ring" cx="256" cy="256" r="72"/>
+  <circle class="ring" cx="256" cy="256" r="126"/>
+  <circle class="ring" cx="256" cy="256" r="178"/>
+  <path class="axis" d="M78 256h356M256 78v356M130 130l252 252M382 130L130 382"/>
+
+  <g transform="rotate(0 256 256)" filter="url(#glow)">
+    <path d="M256 256 L256 78 A178 178 0 0 1 374 123 Z" fill="url(#sweep)" opacity=".64"/>
+    <line x1="256" y1="256" x2="256" y2="78" stroke="#50E6FF" stroke-width="5" stroke-linecap="round"/>
+    <animateTransform attributeName="transform" type="rotate" from="0 256 256" to="360 256 256" dur="3.4s" repeatCount="indefinite"/>
+  </g>
+
+  <path class="link" d="M166 174C202 212 226 230 256 256"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="1.25s" repeatCount="indefinite"/></path>
+  <path class="link" d="M348 172C314 212 292 230 256 256"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="1.25s" begin=".15s" repeatCount="indefinite"/></path>
+  <path class="link" d="M164 342C202 304 226 284 256 256"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="1.25s" begin=".3s" repeatCount="indefinite"/></path>
+  <path class="link" d="M348 342C314 304 292 284 256 256"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="1.25s" begin=".45s" repeatCount="indefinite"/></path>
+
+  <g transform="translate(256 256)" filter="url(#glow)">
+    <rect x="-54" y="-38" width="108" height="76" rx="20" fill="#0078D4" stroke="#D7F7FF" stroke-width="5"/>
+    <path d="M-28 0h56M-10-18h20M-16 18h32" stroke="#EAFBFF" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="54" cy="-38" r="15" fill="#F7630C" stroke="#FFE1D6" stroke-width="3">
+      <animate attributeName="fill" values="#F7630C;#F7630C;#2BCB75;#2BCB75;#F7630C" keyTimes="0;.45;.61;.82;1" dur="3.4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g>
+    <g transform="translate(166 174)"><circle class="mini" r="30"/><path d="M-13-3h26M-10 10q10 8 20 0" stroke="#BEEBFF" stroke-width="5" stroke-linecap="round" fill="none"/><animateTransform attributeName="transform" type="translate" values="166 174;166 166;166 174" dur="2s" repeatCount="indefinite"/></g>
+    <g transform="translate(348 172)"><circle class="mini" r="30"/><path d="M-13-3h26M-10 10q10 8 20 0" stroke="#BEEBFF" stroke-width="5" stroke-linecap="round" fill="none"/><animateTransform attributeName="transform" type="translate" values="348 172;348 164;348 172" dur="2s" begin=".2s" repeatCount="indefinite"/></g>
+    <g transform="translate(164 342)"><circle class="mini" r="30"/><path d="M-13-3h26M-10 10q10 8 20 0" stroke="#BEEBFF" stroke-width="5" stroke-linecap="round" fill="none"/><animateTransform attributeName="transform" type="translate" values="164 342;164 350;164 342" dur="2s" begin=".4s" repeatCount="indefinite"/></g>
+    <g transform="translate(348 342)"><circle class="mini" r="30"/><path d="M-13-3h26M-10 10q10 8 20 0" stroke="#BEEBFF" stroke-width="5" stroke-linecap="round" fill="none"/><animateTransform attributeName="transform" type="translate" values="348 342;348 350;348 342" dur="2s" begin=".6s" repeatCount="indefinite"/></g>
+  </g>
+
+  <g filter="url(#glow)">
+    <circle cx="334" cy="226" r="17" fill="none" stroke="#FFB900" stroke-width="5">
+      <animate attributeName="r" values="10;25;10" dur="1.7s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;.25;1" dur="1.7s" repeatCount="indefinite"/>
+    </circle>
+    <path d="M334 202v48M310 226h48" stroke="#FFB900" stroke-width="4" stroke-linecap="round" opacity=".86"/>
+  </g>
+</svg>

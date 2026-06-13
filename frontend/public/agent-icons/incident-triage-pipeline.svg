@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Animated SVG icon for Azure Support Agent. Looping vector animation; transparent background. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Incident Triage Pipeline Icon</title>
+  <desc id="desc">Azure resources flow through AI agents into a successful fix checkmark.</desc>
+  <defs>
+    <linearGradient id="agent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#50E6FF"/><stop offset="1" stop-color="#0078D4"/></linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <path id="flowTop" d="M128 156 C190 120 230 148 258 222 C284 294 330 336 388 315"/>
+    <path id="flowMid" d="M126 256 C188 256 222 256 256 256 C302 256 332 257 390 256"/>
+    <path id="flowBot" d="M128 356 C190 392 230 364 258 290 C284 218 330 176 388 197"/>
+    <style><![CDATA[
+      .res{fill:#092A46;stroke:#8BE9FF;stroke-width:4;filter:url(#glow)}
+      .wire{fill:none;stroke:#50E6FF;stroke-width:5;stroke-linecap:round;stroke-dasharray:10 18;filter:url(#glow);opacity:.85}
+      .agentCircle{fill:url(#agent);stroke:#D7F7FF;stroke-width:5;filter:url(#glow)}
+      .txt{font-family:Segoe UI,Arial,sans-serif;font-weight:800;fill:#D7F7FF;font-size:28px;text-anchor:middle;dominant-baseline:middle}
+    ]]></style>
+  </defs>
+
+  <circle cx="256" cy="256" r="210" fill="#001B2E" opacity=".10"/>
+  <use href="#flowTop" class="wire"><animate attributeName="stroke-dashoffset" from="0" to="-56" dur="1.3s" repeatCount="indefinite"/></use>
+  <use href="#flowMid" class="wire"><animate attributeName="stroke-dashoffset" from="0" to="-56" dur="1.3s" begin=".2s" repeatCount="indefinite"/></use>
+  <use href="#flowBot" class="wire"><animate attributeName="stroke-dashoffset" from="0" to="-56" dur="1.3s" begin=".4s" repeatCount="indefinite"/></use>
+
+  <g>
+    <rect class="res" x="54" y="120" width="78" height="72" rx="18"/>
+    <path d="M80 148h28M80 164h18" stroke="#D7F7FF" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="115" cy="136" r="9" fill="#F7630C"><animate attributeName="opacity" values="1;.25;1" dur="1s" repeatCount="indefinite"/></circle>
+    <rect class="res" x="54" y="220" width="78" height="72" rx="18"/>
+    <path d="M79 246h29M79 263h29" stroke="#D7F7FF" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="115" cy="237" r="9" fill="#FFB900"><animate attributeName="opacity" values=".35;1;.35" dur="1s" begin=".3s" repeatCount="indefinite"/></circle>
+    <rect class="res" x="54" y="320" width="78" height="72" rx="18"/>
+    <path d="M78 350h30M92 335v40" stroke="#D7F7FF" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="115" cy="337" r="9" fill="#F7630C"><animate attributeName="opacity" values="1;.25;1" dur="1s" begin=".6s" repeatCount="indefinite"/></circle>
+  </g>
+
+  <g filter="url(#glow)">
+    <circle class="agentCircle" cx="256" cy="256" r="62"/>
+    <rect x="222" y="232" width="68" height="48" rx="15" fill="#C3F6FF" opacity=".9"/>
+    <circle cx="242" cy="255" r="5" fill="#002B4E"/>
+    <circle cx="270" cy="255" r="5" fill="#002B4E"/>
+    <path d="M241 270q15 11 30 0" stroke="#002B4E" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M256 207v-20" stroke="#C3F6FF" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="256" cy="183" r="8" fill="#C3F6FF"/>
+    <animate attributeName="opacity" values=".9;1;.9" dur="1.5s" repeatCount="indefinite"/>
+  </g>
+
+  <g>
+    <circle r="7" fill="#BEEBFF" filter="url(#glow)"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#flowTop"/></animateMotion></circle>
+    <circle r="7" fill="#BEEBFF" filter="url(#glow)"><animateMotion dur="1.4s" begin=".25s" repeatCount="indefinite"><mpath href="#flowMid"/></animateMotion></circle>
+    <circle r="7" fill="#BEEBFF" filter="url(#glow)"><animateMotion dur="1.4s" begin=".5s" repeatCount="indefinite"><mpath href="#flowBot"/></animateMotion></circle>
+  </g>
+
+  <g filter="url(#glow)">
+    <circle cx="421" cy="256" r="55" fill="#06351F" stroke="#2BCB75" stroke-width="6">
+      <animate attributeName="r" values="48;58;48" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <path d="M393 256l20 20 39-45" fill="none" stroke="#D6FFE8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="stroke-dasharray" values="0 100;80 100;80 100" keyTimes="0;.38;1" dur="2s" repeatCount="indefinite"/>
+    </path>
+  </g>
+</svg>

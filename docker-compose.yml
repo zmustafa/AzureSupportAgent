@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: azsup
+      POSTGRES_PASSWORD: azsup
+      POSTGRES_DB: azsup
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.data/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U azsup"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://azsup:azsup@postgres:5432/azsup
+      REDIS_URL: redis://redis:6379/0
+      # Azure MCP server is spawned in-process via `npx @azure/mcp` (stdio).
+      MCP_COMMAND: npx
+      MCP_ARGS: "-y @azure/mcp@latest server start --transport stdio"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount host az-login credentials so the MCP server can reach Azure with
+      # your own identity (DefaultAzureCredential). For service principal auth,
+      # set AZURE_* in .env instead and this mount is ignored.
+      - ${AZURE_CONFIG_DIR:-~/.azure}:/root/.azure:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE: http://localhost:8000/api
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

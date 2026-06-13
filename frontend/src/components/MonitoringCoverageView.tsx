@@ -1,0 +1,626 @@
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  api,
+  type AmbaCell,
+  type AmbaCoverage,
+  type AmbaGap,
+  type AmbaGroup,
+  type AmbaRow,
+} from "../api";
+import { formatError } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
+import { AllResourcesTab } from "./AllResourcesTab";
+
+const SEV_CLS: Record<string, string> = {
+  critical: "bg-red-100 text-red-700",
+  error: "bg-orange-100 text-orange-700",
+  warning: "bg-amber-100 text-amber-700",
+  info: "bg-sky-100 text-sky-700",
+};
+
+const CAT_CLS: Record<string, string> = {
+  availability: "bg-emerald-50 text-emerald-700",
+  performance: "bg-violet-50 text-violet-700",
+  security: "bg-rose-50 text-rose-700",
+};
+
+function agoText(seconds: number | null): string {
+  if (seconds == null) return "never";
+  if (seconds < 60) return "just now";
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function StatusMark({ status }: { status: string }) {
+  if (status === "present")
+    return <span title="Present" className="text-green-600">✓</span>;
+  if (status === "misconfigured")
+    return <span title="Misconfigured" className="text-amber-500">⚠</span>;
+  return <span title="Missing" className="text-red-500">✗</span>;
+}
+
+function Donut({ pct }: { pct: number }) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  const dash = (pct / 100) * c;
+  const color = pct >= 80 ? "#16a34a" : pct >= 50 ? "#d97706" : "#dc2626";
+  return (
+    <svg viewBox="0 0 80 80" className="h-20 w-20">
+      <circle cx="40" cy="40" r={r} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+      <circle
+        cx="40" cy="40" r={r} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"
+        strokeDasharray={`${dash} ${c - dash}`} transform="rotate(-90 40 40)"
+      />
+      <text x="40" y="45" textAnchor="middle" className="fill-gray-900 text-[18px] font-semibold">
+        {pct}%
+      </text>
+    </svg>
+  );
+}
+
+export function MonitoringCoveragePanel() {
+  const qc = useQueryClient();
+  const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.amba.scopeKind", "workload");
+  const [workloadId, setWorkloadId] = usePersistedState<string>("azsup.amba.workloadId", "");
+  const [subId, setSubId] = usePersistedState<string>("azsup.amba.subId", "");
+  const [query, setQuery] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [sevFilter, setSevFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tab, setTab] = useState<"coverage" | "all">("coverage");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState<{ row: AmbaRow; cell: AmbaCell } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [ticketFor, setTicketFor] = useState<string | null>(null);
+
+  const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
+  const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
+  const ticketConnectors = (connectorsQ.data?.connectors ?? []).filter(
+    (c) => !c.disabled && ["jira", "servicenow"].includes(c.type),
+  );
+
+  // Default the workload to the demo one when present so the page is never empty.
+  const workloads = workloadsQ.data?.workloads ?? [];
+  const effectiveWorkloadId =
+    scopeKind === "workload"
+      ? workloadId || workloads.find((w) => w.id === "demo-amba-coverage")?.id || workloads[0]?.id || ""
+      : "";
+
+  const params =
+    scopeKind === "workload"
+      ? { workload_id: effectiveWorkloadId }
+      : { subscription_id: subId };
+  const scopeReady = scopeKind === "workload" ? !!effectiveWorkloadId : !!subId;
+  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}`;
+  const [loadedScope, setLoadedScope] = usePersistedState("azsup.amba.loadedScope", "");
+  const enabled = scopeReady && loadedScope === scopeKey;
+
+  const covQ = useQuery({
+    queryKey: ["amba", scopeKind, effectiveWorkloadId, subId],
+    queryFn: () => api.ambaCoverage(params),
+    enabled,
+  });
+  const data: AmbaCoverage | undefined = enabled ? covQ.data : undefined;
+
+  function loadCoverage() {
+    setLoadedScope(scopeKey);
+  }
+
+  async function doRefresh() {
+    setRefreshing(true);
+    setMsg(null);
+    setLoadedScope(scopeKey);
+    try {
+      const fresh = await api.refreshAmba(params);
+      qc.setQueryData(["amba", scopeKind, effectiveWorkloadId, subId], fresh);
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  function cellVisible(c: AmbaCell): boolean {
+    if (catFilter !== "all" && c.amba_category !== catFilter) return false;
+    if (sevFilter !== "all" && c.severity !== sevFilter) return false;
+    if (statusFilter !== "all" && c.status !== statusFilter) return false;
+    return true;
+  }
+  function rowVisible(r: AmbaRow): boolean {
+    const q = query.trim().toLowerCase();
+    if (q && !(`${r.resource_name} ${r.resource_group}`.toLowerCase().includes(q))) return false;
+    return r.cells.some(cellVisible);
+  }
+
+  const allGaps = data?.gaps ?? [];
+
+  function download(text: string, name: string) {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function genIac(gaps: AmbaGap[], format: "bicep" | "terraform", title: string) {
+    if (gaps.length === 0) {
+      setMsg({ text: "No gaps to generate IaC for.", ok: false });
+      return;
+    }
+    setBusy("iac");
+    try {
+      const r = await api.ambaIac({ gaps, format });
+      setIacView({ title, text: r.iac, format });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function registerFindings() {
+    if (scopeKind !== "workload" || !effectiveWorkloadId) {
+      setMsg({ text: "Switch to a workload scope to register findings.", ok: false });
+      return;
+    }
+    setBusy("findings");
+    setMsg(null);
+    try {
+      const r = await api.registerAmbaFindings({
+        workload_id: effectiveWorkloadId,
+        workload_name: data?.scope_name ?? "",
+        gaps: allGaps,
+      });
+      setMsg({ text: `Registered ${r.finding_count} Operations-pillar finding(s).`, ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendApproval() {
+    if (allGaps.length === 0) {
+      setMsg({ text: "No gaps to send.", ok: false });
+      return;
+    }
+    setBusy("approval");
+    setMsg(null);
+    try {
+      await api.sendAmbaApproval({
+        scope_kind: scopeKind,
+        scope_id: effectiveWorkloadId || subId,
+        scope_name: data?.scope_name ?? "",
+        gaps: allGaps,
+        format: "bicep",
+      });
+      setMsg({ text: "Sent to the Approval Inbox (Settings → AMBA Change Requests).", ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function createTicket(gap: AmbaGap, connectorId: string) {
+    setBusy(`ticket:${gap.resource_id}:${gap.alert_key}`);
+    setMsg(null);
+    try {
+      const r = await api.createAmbaTicket({ connector_id: connectorId, gap });
+      setMsg({
+        text: r.ok ? `Ticket created${r.ticket_id ? ` (${r.ticket_id})` : ""}.` : r.detail || "Ticket failed.",
+        ok: !!r.ok,
+      });
+      setTicketFor(null);
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function toggleGroup(t: string) {
+    setCollapsed((p) => {
+      const n = new Set(p);
+      n.has(t) ? n.delete(t) : n.add(t);
+      return n;
+    });
+  }
+
+  const visibleGroups = useMemo(() => {
+    if (!data) return [] as AmbaGroup[];
+    return data.groups
+      .map((g) => ({ ...g, rows: g.rows.filter(rowVisible) }))
+      .filter((g) => g.rows.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, query, catFilter, sevFilter, statusFilter]);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-gray-50">
+      {/* Header */}
+      <div className="border-b bg-white px-6 py-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <Donut pct={data?.coverage_pct ?? 0} />
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-gray-900">Monitoring Coverage</h1>
+            <p className="text-xs text-gray-500">
+              Baseline-alert (AMBA) coverage of your resources.
+              {data?.demo && (
+                <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo data</span>
+              )}
+            </p>
+            <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
+              <span>Resources: <b>{data?.kpis.total_resources_in_baseline ?? 0}</b></span>
+              <span className="text-green-600">✓ {data?.kpis.alerts_present ?? 0}</span>
+              <span className="text-red-500">✗ {data?.kpis.alerts_missing ?? 0}</span>
+              <span className="text-amber-500">⚠ {data?.kpis.alerts_misconfigured ?? 0}</span>
+            </div>
+          </div>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* Scope switcher */}
+            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+              <button
+                onClick={() => setScopeKind("workload")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Workload
+              </button>
+              <button
+                onClick={() => setScopeKind("subscription")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Subscription
+              </button>
+            </div>
+            {scopeKind === "workload" ? (
+              <select
+                value={effectiveWorkloadId}
+                onChange={(e) => setWorkloadId(e.target.value)}
+                className="rounded-lg border px-2 py-1.5 text-xs"
+              >
+                {workloads.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={subId}
+                onChange={(e) => setSubId(e.target.value)}
+                placeholder="Subscription GUID"
+                className="w-64 rounded-lg border px-2 py-1.5 text-xs"
+              />
+            )}
+            <span className="text-xs text-gray-500">
+              {data ? (
+                <>
+                  Updated {agoText(data.age_seconds)}
+                  {data.stale && <span className="ml-1 text-amber-600">· stale</span>}
+                  <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span>
+                </>
+              ) : "—"}
+            </span>
+            {!enabled && (
+              <button
+                onClick={loadCoverage}
+                disabled={!scopeReady}
+                className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+              >
+                Load coverage
+              </button>
+            )}
+            <button
+              onClick={() => void doRefresh()}
+              disabled={refreshing || !scopeReady}
+              className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {refreshing ? "Refreshing…" : "↻ Refresh now"}
+            </button>
+            <button
+              onClick={() => download(JSON.stringify(data, null, 2), `coverage-${data?.scope_name || "export"}.json`)}
+              disabled={!data}
+              className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              ⬇ Export
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="mt-3 flex items-center gap-1 border-b text-sm">
+          <button onClick={() => setTab("coverage")} className={`-mb-px border-b-2 px-3 py-1.5 ${tab === "coverage" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>Monitoring Coverage</button>
+          <button onClick={() => setTab("all")} className={`-mb-px border-b-2 px-3 py-1.5 ${tab === "all" ? "border-brand font-medium text-gray-900" : "border-transparent text-gray-500"}`}>
+            All Resources {data?.all_resources?.length ? <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">{data.all_resources.length}</span> : null}
+          </button>
+        </div>
+
+        {/* Source provenance + filters */}
+        {tab === "coverage" && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-gray-400">
+            Source: {data?.source === "demo_dummy_data" ? "demo dummy data" : "Azure Resource Graph"}
+          </span>
+          <span className="text-gray-300">·</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search resources…"
+            className="w-44 rounded-lg border px-2.5 py-1.5 outline-none focus:border-gray-400"
+          />
+          <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+            <option value="all">All categories</option>
+            <option value="availability">Availability</option>
+            <option value="performance">Performance</option>
+            <option value="security">Security</option>
+          </select>
+          <select value={sevFilter} onChange={(e) => setSevFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+            <option value="all">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="error">Error</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info</option>
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border px-2 py-1.5">
+            <option value="all">All statuses</option>
+            <option value="present">✓ Present</option>
+            <option value="missing">✗ Missing</option>
+            <option value="misconfigured">⚠ Misconfigured</option>
+          </select>
+        </div>
+        )}
+
+        {/* Bulk toolbar */}
+        {tab === "coverage" && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-gray-500">{allGaps.length} gap(s):</span>
+          <button onClick={() => void genIac(allGaps, "bicep", "All gaps — Bicep")} disabled={busy === "iac"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Generate Bicep</button>
+          <button onClick={() => void genIac(allGaps, "terraform", "All gaps — Terraform")} disabled={busy === "iac"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Generate Terraform</button>
+          <button onClick={() => void registerFindings()} disabled={busy === "findings"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Create findings</button>
+          <button onClick={() => void sendApproval()} disabled={busy === "approval"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Send to Approval Inbox</button>
+        </div>
+        )}
+      </div>
+
+      {msg && (
+        <div className={`mx-6 mt-2 rounded-lg border p-2 text-xs ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+          {msg.text}
+        </div>
+      )}
+
+      {/* Body */}
+      <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+        {!enabled ? (
+          <div className="py-16 text-center text-sm text-gray-400">
+            {scopeReady
+              ? <>Pick a workload, then click <b>Load coverage</b> to audit its monitoring baseline coverage.</>
+              : "Pick a workload or enter a subscription to begin."}
+          </div>
+        ) : covQ.isLoading ? (
+          <div className="py-16 text-center text-sm text-gray-400">Loading coverage…</div>
+        ) : covQ.isError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(covQ.error)}</div>
+        ) : tab === "all" ? (
+          <AllResourcesTab resources={data?.all_resources ?? []} />
+        ) : data?.error ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">{data.error}</div>
+        ) : visibleGroups.length === 0 ? (
+          <div className="py-16 text-center text-sm text-gray-400">
+            No resources match the current scope/filters, or none are covered by the baseline reference.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {visibleGroups.map((g) => {
+              const isCollapsed = collapsed.has(g.resource_type);
+              return (
+                <section key={g.resource_type} className="overflow-hidden rounded-xl border bg-white">
+                  <button onClick={() => toggleGroup(g.resource_type)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
+                    <span className="text-gray-400">{isCollapsed ? "▸" : "▾"}</span>
+                    <h2 className="text-sm font-semibold text-gray-900">{g.display}</h2>
+                    <span className="font-mono text-[10px] text-gray-400">{g.resource_type}</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{g.rows.length}</span>
+                    <span
+                      className={`ml-auto rounded px-2 py-0.5 text-[11px] font-medium ${
+                        g.coverage_pct >= 80 ? "bg-green-100 text-green-700" : g.coverage_pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                      }`}
+                    >
+                      {g.coverage_pct}% covered
+                    </span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="overflow-x-auto border-t">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Resource</th>
+                            {g.recommended_alerts.map((a) => (
+                              <th key={a.key} className="px-2 py-2 text-center font-medium align-bottom" title={a.name}>
+                                <div className="mx-auto w-[80px] whitespace-normal break-words leading-tight">{a.name}</div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {g.rows.map((row) => {
+                            const rowKey = row.resource_id;
+                            const isExp = expandedRow === rowKey;
+                            return (
+                              <>
+                                <tr key={rowKey} className="border-t hover:bg-gray-50">
+                                  <td className="sticky left-0 bg-white px-3 py-2">
+                                    <button onClick={() => setExpandedRow(isExp ? null : rowKey)} className="text-left">
+                                      <div className="font-medium text-gray-800">{row.resource_name}</div>
+                                      <div className="text-[10px] text-gray-400">{row.resource_group}</div>
+                                    </button>
+                                  </td>
+                                  {g.recommended_alerts.map((ra) => {
+                                    const cell = row.cells.find((c) => c.alert_key === ra.key);
+                                    if (!cell) return <td key={ra.key} className="px-2 py-2 text-center text-gray-300">–</td>;
+                                    return (
+                                      <td key={ra.key} className="px-2 py-2 text-center">
+                                        <button onClick={() => setDrawer({ row, cell })} className="text-base">
+                                          <StatusMark status={cell.status} />
+                                        </button>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                                {isExp && (
+                                  <tr className="border-t bg-gray-50/60">
+                                    <td colSpan={g.recommended_alerts.length + 1} className="px-4 py-2">
+                                      <div className="space-y-1">
+                                        {row.cells.map((c) => (
+                                          <div key={c.alert_key} className="flex flex-wrap items-center gap-2 text-[11px]">
+                                            <StatusMark status={c.status} />
+                                            <span className={`rounded px-1.5 py-0.5 ${CAT_CLS[c.amba_category] ?? "bg-gray-100"}`}>{c.amba_category}</span>
+                                            <span className={`rounded px-1.5 py-0.5 ${SEV_CLS[c.severity] ?? ""}`}>{c.severity}</span>
+                                            <span className="text-gray-700">{c.alert_name}</span>
+                                            <span className="text-gray-400">
+                                              recommended {c.recommended.metric} {c.recommended.operator} {c.recommended.threshold ?? "—"}{c.recommended.unit}
+                                              {c.observed.observed_thresholds?.length ? ` · observed ${c.observed.observed_thresholds.join(", ")}` : ""}
+                                              {c.observed.rule_name ? ` · rule ${c.observed.rule_name}${c.observed.enabled === false ? " (disabled)" : ""}` : ""}
+                                            </span>
+                                            {c.status !== "present" && (
+                                              <button onClick={() => setDrawer({ row, cell: c })} className="text-indigo-600 hover:underline">details</button>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Right drawer: recommended vs observed + why + per-alert actions */}
+      {drawer && (
+        <div className="fixed inset-y-0 right-0 z-40 flex w-[420px] flex-col border-l bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-gray-900">{drawer.cell.alert_name}</div>
+              <div className="truncate text-[11px] text-gray-500">{drawer.row.resource_name}</div>
+            </div>
+            <button onClick={() => setDrawer(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4 text-xs">
+            <div className="flex items-center gap-2">
+              <StatusMark status={drawer.cell.status} />
+              <span className={`rounded px-1.5 py-0.5 ${CAT_CLS[drawer.cell.amba_category] ?? "bg-gray-100"}`}>{drawer.cell.amba_category}</span>
+              <span className={`rounded px-1.5 py-0.5 ${SEV_CLS[drawer.cell.severity] ?? ""}`}>{drawer.cell.severity}</span>
+            </div>
+            <div>
+              <div className="mb-1 font-medium text-gray-700">Why this matters</div>
+              <p className="text-gray-600">{drawer.cell.why || "—"}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg border bg-gray-50 p-2">
+                <div className="mb-1 font-medium text-gray-700">Recommended</div>
+                <pre className="whitespace-pre-wrap break-words text-[10px] text-gray-600">{JSON.stringify(drawer.cell.recommended, null, 2)}</pre>
+              </div>
+              <div className="rounded-lg border bg-gray-50 p-2">
+                <div className="mb-1 font-medium text-gray-700">Observed</div>
+                <pre className="whitespace-pre-wrap break-words text-[10px] text-gray-600">{Object.keys(drawer.cell.observed).length ? JSON.stringify(drawer.cell.observed, null, 2) : "(no matching rule)"}</pre>
+              </div>
+            </div>
+            {drawer.cell.observed.issues?.length ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-700">
+                Issues: {drawer.cell.observed.issues.join(", ")}
+              </div>
+            ) : null}
+            {drawer.cell.status !== "present" && (
+              <div className="space-y-2 border-t pt-3">
+                {(() => {
+                  const gap: AmbaGap = {
+                    resource_id: drawer.row.resource_id,
+                    resource_name: drawer.row.resource_name,
+                    resource_type: visibleGroups.find((g) => g.rows.some((r) => r.resource_id === drawer.row.resource_id))?.resource_type ?? "",
+                    resource_group: drawer.row.resource_group,
+                    subscription_id: drawer.row.subscription_id,
+                    location: drawer.row.location,
+                    alert_key: drawer.cell.alert_key,
+                    alert_name: drawer.cell.alert_name,
+                    amba_category: drawer.cell.amba_category,
+                    severity: drawer.cell.severity,
+                    status: drawer.cell.status,
+                    recommended: drawer.cell.recommended,
+                    observed: drawer.cell.observed,
+                    why: drawer.cell.why,
+                  };
+                  const tkey = `ticket:${gap.resource_id}:${gap.alert_key}`;
+                  return (
+                    <>
+                      <div className="flex gap-2">
+                        <button onClick={() => void genIac([gap], "bicep", `${gap.alert_name} — Bicep`)} className="rounded-md border px-2 py-1 hover:bg-gray-50">Generate Bicep</button>
+                        <button onClick={() => void genIac([gap], "terraform", `${gap.alert_name} — Terraform`)} className="rounded-md border px-2 py-1 hover:bg-gray-50">Generate Terraform</button>
+                      </div>
+                      {ticketFor === tkey ? (
+                        ticketConnectors.length > 0 ? (
+                          <select
+                            autoFocus
+                            disabled={busy === tkey}
+                            defaultValue=""
+                            onChange={(e) => e.target.value && void createTicket(gap, e.target.value)}
+                            className="w-full rounded-md border px-1.5 py-1"
+                          >
+                            <option value="" disabled>{busy === tkey ? "Creating…" : "Pick connector…"}</option>
+                            {ticketConnectors.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
+                          </select>
+                        ) : (
+                          <span className="text-gray-400">No Jira/ServiceNow connector configured.</span>
+                        )
+                      ) : (
+                        <button onClick={() => setTicketFor(tkey)} className="rounded-md border px-2 py-1 hover:bg-gray-50">🎫 Create ticket</button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* IaC modal */}
+      {iacView && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIacView(null)}>
+          <div className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="text-sm font-semibold text-gray-900">{iacView.title}</div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => download(iacView.text, `amba-gaps.${iacView.format === "terraform" ? "tf" : "bicep"}`)}
+                  className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+                >
+                  ⬇ Download
+                </button>
+                <button onClick={() => setIacView(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100">✕</button>
+              </div>
+            </div>
+            <pre className="min-h-0 flex-1 overflow-auto bg-gray-900 p-4 text-[11px] leading-relaxed text-gray-100">{iacView.text}</pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
