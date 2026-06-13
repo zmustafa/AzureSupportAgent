@@ -65,9 +65,15 @@ def _parse_token_json(raw: str) -> dict[str, str]:
         raise HTTPException(
             status_code=400, detail="Pasted JSON has no 'accessToken' field."
         )
+    # Prefer the UTC epoch (`expires_on`) over the human-readable `expiresOn`, which is
+    # LOCAL time and would be mis-compared against the server's UTC clock (a container
+    # runs in UTC) — making a still-valid token look expired.
+    expires = data.get("expires_on")
+    if expires in (None, ""):
+        expires = data.get("expiresOn", "")
     return {
         "access_token": token,
-        "token_expires_on": data.get("expiresOn") or data.get("expires_on") or "",
+        "token_expires_on": str(expires),
         "default_subscription": data.get("subscription", ""),
         "tenant_id": data.get("tenant", ""),
     }

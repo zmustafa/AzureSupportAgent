@@ -110,3 +110,45 @@ async def list_tenants(token: str) -> tuple[list[dict[str, str]], str | None]:
             }
         )
     return tenants, None
+
+
+async def query_resource_graph(
+    token: str,
+    query: str,
+    subscriptions: list[str] | None = None,
+    top: int = 1000,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Run a Resource Graph (KQL) query via ARM REST. Returns (rows, error).
+
+    This is the credential-independent discovery path used when there is no ambient
+    Azure CLI login (e.g. a Container App authenticating with a managed identity, or a
+    pasted-token connection). Omitting ``subscriptions`` queries across every subscription
+    the token's identity can access in the tenant — matching ``az graph query`` default
+    scoping.
+    """
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    options: dict[str, Any] = {"resultFormat": "objectArray"}
+    if top:
+        options["$top"] = int(top)
+    body: dict[str, Any] = {"query": query, "options": options}
+    if subscriptions:
+        body["subscriptions"] = subscriptions
+    try:
+        async with httpx.AsyncClient(timeout=60, base_url=_ARM) as client:
+            resp = await client.post(
+                "/providers/Microsoft.ResourceGraph/resources",
+                params={"api-version": "2022-10-01"},
+                headers=headers,
+                json=body,
+            )
+        if resp.status_code != 200:
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text)
+            except (ValueError, AttributeError):
+                detail = resp.text
+            return [], f"Resource Graph {resp.status_code}: {str(detail)[:300]}"
+        data = resp.json()
+        rows = data.get("data", [])
+        return (rows if isinstance(rows, list) else []), None
+    except httpx.HTTPError as e:  # noqa: BLE001
+        return [], f"Resource Graph request error: {e}"

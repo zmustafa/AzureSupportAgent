@@ -395,6 +395,43 @@ async def run_command_stream(
 KQL_MAX_ROWS = 1000
 
 
+def _format_rows_table(rows: list[dict[str, Any]]) -> str:
+    """Render Resource Graph rows as a simple aligned table, mimicking
+    ``az ... --output table`` so the REST path matches the CLI path for the chat KQL
+    Run view. JSON callers get raw JSON instead (see run_kql_stream)."""
+    import json as _json
+
+    if not rows:
+        return ""
+    cols: list[str] = []
+    for r in rows:
+        if isinstance(r, dict):
+            for k in r.keys():
+                if k not in cols:
+                    cols.append(k)
+    if not cols:
+        return ""
+
+    def cell(v: Any) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (dict, list)):
+            return _json.dumps(v, separators=(",", ":"))
+        return str(v)
+
+    widths = {c: len(c) for c in cols}
+    for r in rows:
+        for c in cols:
+            widths[c] = max(widths[c], len(cell(r.get(c) if isinstance(r, dict) else "")))
+    lines = [
+        "  ".join(c.ljust(widths[c]) for c in cols),
+        "  ".join("-" * widths[c] for c in cols),
+    ]
+    for r in rows:
+        lines.append("  ".join(cell(r.get(c) if isinstance(r, dict) else "").ljust(widths[c]) for c in cols))
+    return "\n".join(lines)
+
+
 async def run_kql_stream(
     kql: str,
     connection: dict[str, Any] | None,
@@ -402,27 +439,26 @@ async def run_kql_stream(
     output: str = "table",
     session_config_dir: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Run a KQL query via Azure Resource Graph (`az graph query`) and stream results.
+    """Run a KQL query via Azure Resource Graph and stream results.
 
-    The KQL is passed to ``az`` as a single argv element (data, never a shell string),
-    so there is no shell parsing or injection surface. Resource Graph is a read-only
-    query API, so this is always non-destructive.
+    Two execution paths share this entry point:
+
+    - **Service-principal** connections run ``az graph query`` after an (optionally
+      reused) ``az login --service-principal``. The KQL is passed to ``az`` as a single
+      argv element (data, never a shell string), so there is no injection surface.
+    - **All other** connections (managed identity / host identity / pasted token) have no
+      ambient ``az login`` — notably in Azure Container Apps — so they run Resource Graph
+      over ARM REST using the connection's own token. This is what makes discovery work
+      under a managed identity.
+
+    Resource Graph is a read-only query API, so this is always non-destructive.
 
     ``session_config_dir``: when provided (and the connection is a service principal),
-    reuse this already-authenticated AZURE_CONFIG_DIR instead of doing a fresh `az login`
+    reuse this already-authenticated AZURE_CONFIG_DIR instead of doing a fresh ``az login``
     per query — a big speedup when running many queries (e.g. cache prefetch). The caller
     owns that dir's lifecycle.
     """
     settings = load_settings()
-    # Resource Graph is a strictly READ-ONLY query API and is core to discovery,
-    # inventory, and assessments — so it is NOT gated behind the arbitrary-command
-    # execution kill-switch (`command_execution_enabled`), which only governs the
-    # destructive Run-button / agent CLI path (run_command_stream). We still require
-    # `az` to be available so the binary check below applies.
-    az_path = shutil.which("az")
-    if not az_path:
-        yield {"type": "error", "message": "'az' is not installed on the host."}
-        return
 
     query = (kql or "").strip()
     if not query:
@@ -440,9 +476,47 @@ async def run_kql_stream(
     query = re.sub(r"[ \t]{2,}", " ", query)
 
     timeout = int(settings.get("command_timeout_seconds", 120))
+    sp = _is_service_principal(connection)
+
+    # --- REST path: non-service-principal connections (managed identity / pasted token).
+    # These have no ambient `az login` in the cloud, so `az graph query` would return
+    # nothing. Use the connection's ARM token to query Resource Graph directly.
+    if not sp:
+        from app.azure.arm import query_resource_graph
+        from app.azure.credentials import get_arm_token
+
+        token, terr = await get_arm_token(connection)
+        if token:
+            yield {"type": "exec_start", "command": "resource-graph (REST)", "destructive": False}
+            start = time.time()
+            rows, qerr = await query_resource_graph(token, query, top=KQL_MAX_ROWS)
+            duration_ms = int((time.time() - start) * 1000)
+            if qerr:
+                yield {"type": "error", "message": qerr}
+                yield {"type": "exit", "code": 1, "duration_ms": duration_ms}
+                return
+            import json as _json
+
+            text = _json.dumps(rows) if output == "json" else _format_rows_table(rows)
+            yield {"type": "stdout", "text": text}
+            yield {"type": "exit", "code": 0, "duration_ms": duration_ms}
+            return
+        # No token. For pasted-token or managed-identity environments there is no ambient
+        # `az` to fall back to, so surface the auth error instead of silently returning
+        # empty. Pure local dev (default_chain, no managed identity) falls through to the
+        # ambient `az graph query` path below.
+        method = (connection or {}).get("auth_method", "")
+        if method == "az_cli_token" or os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"):
+            yield {"type": "error", "message": terr or "Could not acquire an Azure token for this connection."}
+            return
+
+    # --- CLI path: service principals (and local ambient `az` fallback). ----------------
+    az_path = shutil.which("az")
+    if not az_path:
+        yield {"type": "error", "message": "'az' is not installed on the host."}
+        return
     config_dir: str | None = None
     own_config = False
-    sp = _is_service_principal(connection)
     try:
         if sp:
             if session_config_dir:

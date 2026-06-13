@@ -82,15 +82,24 @@ def build_mcp_env(conn: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
 def _token_expired(expires_on: str) -> bool:
     if not expires_on:
         return False
+    s = str(expires_on).strip()
+    # Unix epoch seconds (UTC) — az's `expires_on` field. Unambiguous across timezones,
+    # so this is the preferred form (the human-readable `expiresOn` is LOCAL time and
+    # would be mis-compared against the server's UTC clock — e.g. inside a container).
+    if s.isdigit():
+        try:
+            return datetime.fromtimestamp(int(s), tz=timezone.utc) <= datetime.now(timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            return False
     try:
-        # az emits "2026-06-06 12:00:00.000000" (local) or ISO; try a few shapes.
+        # Legacy fallback: az's local-time "2026-06-06 12:00:00.000000" or ISO string.
         for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
             try:
-                dt = datetime.strptime(expires_on, fmt)
+                dt = datetime.strptime(s, fmt)
                 return dt <= datetime.now()
             except ValueError:
                 continue
-        dt = datetime.fromisoformat(expires_on.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc) if dt.tzinfo else datetime.now()
         return dt <= now
     except (ValueError, TypeError):
