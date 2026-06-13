@@ -16,7 +16,7 @@ See [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) for the full design.
 The goal: click a button, and the app runs in **your** Azure tenant with a managed
 database — no CLI, no manual wiring.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2F141ccd7294b123ff6e836f1bab1857910ef040d4%2Fdeploy%2Fmain.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
 What the button will provision (in your subscription, one deployment):
 
