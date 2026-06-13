@@ -15,7 +15,7 @@ from one app that runs in **your** Azure subscription.
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Deploy](#-deploy-to-azure-one-click) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
+[Deploy](#-deploy-to-azure-one-click) · [Install guide](docs/INSTALLATION.md) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
 
 </div>
 
@@ -44,6 +44,7 @@ diagrams, assessments, and dashboards to back it up.
 - [Features](#-features)
 - [Screenshots](#-screenshots)
 - [Deploy to Azure (one-click)](#-deploy-to-azure-one-click)
+- [Installation guide](docs/INSTALLATION.md)
 - [Quick start (local)](#-quick-start-local)
 - [How it works](#-how-it-works)
 - [Tech stack](#-tech-stack)
