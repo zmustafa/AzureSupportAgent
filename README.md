@@ -1,304 +1,273 @@
-# Azure Support Agent
+<div align="center">
 
-An enterprise, multi-session chat web app where each conversation has isolated
-context. The backend orchestrator drives an LLM that can call the **Azure MCP
-server** to investigate and troubleshoot problems across an Azure subscription
-(networking, compute, storage, identity, configuration, health, and more).
-Includes an admin dashboard (MCP tools, usage, audit).
+# 🛠️ Azure Support Agent
 
-See [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) for the full design.
-
-## Deploy to Azure (one-click)
-
-> **Status: tested.** The template provisions a managed PostgreSQL database,
-> Azure Files state storage, and the Container App running the public image.
-
-The goal: click a button, and the app runs in **your** Azure tenant with a managed
-database — no CLI, no manual wiring.
+**An AI-driven Azure operations workbench.** Chat with your tenant, investigate incidents
+with a team of specialist AI agents, and assess, monitor, and remediate your cloud — all
+from one app that runs in **your** Azure subscription.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
-What the button will provision (in your subscription, one deployment):
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-azure--support--agent-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/zmustafa/azure-support-agent)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](backend/pyproject.toml)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](frontend/package.json)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Deploy](#-deploy-to-azure-one-click) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
+
+</div>
+
+![Architecture designer reverse-engineering live Azure resources with AI rationale](docs/assets/architecture-designer.png)
+
+---
+
+## Why Azure Support Agent?
+
+Operating Azure at scale means hopping between the Portal, CLI, Resource Graph, Monitor,
+Advisor, and a dozen blades just to answer one question. **Azure Support Agent puts an LLM
+in the driver's seat** — it talks to your subscription through the official **Azure MCP
+server** and a **Microsoft Graph (Entra ID) MCP server**, reasons over live evidence, and
+turns *"why is the website throwing 5xx?"* into a ranked, validated answer — with the
+diagrams, assessments, and dashboards to back it up.
+
+- 🧠 **Agentic, not just a chatbot** — a War Room of specialist agents investigates in parallel against your real Azure data.
+- 🏠 **Runs in your tenant** — one-click deploy to Azure Container Apps; your data never leaves your subscription.
+- 🔒 **Safe by default** — Azure access is **read-only**, writes are **approval-gated + audited**, and AI providers stay **disabled until you configure them**.
+- 🧰 **A whole workbench** — chat, investigations, architectures, inventory, assessments, policy, monitoring, automations, and more.
+
+> Built for cloud architects, SREs, platform teams, and Azure support engineers.
+
+## Table of Contents
+
+- [Features](#-features)
+- [Screenshots](#-screenshots)
+- [Deploy to Azure (one-click)](#-deploy-to-azure-one-click)
+- [Quick start (local)](#-quick-start-local)
+- [How it works](#-how-it-works)
+- [Tech stack](#-tech-stack)
+- [Security & access model](#-security--access-model)
+- [Documentation](#-documentation)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## ✨ Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 💬 Conversational operations
+Multi-session chat with isolated context, live SSE streaming, a per-message reasoning +
+tool-call timeline that persists across reloads, image support, and smart starter
+suggestions. Cancel a running turn anytime — work continues server-side and is saved.
+
+</td>
+<td width="50%" valign="top">
+
+### 🕵️ Deep investigations ("War Room")
+Toggle deep mode to dispatch specialist agents (Networking, Identity, Compute, Storage,
+Security, Reliability, Cost, Monitoring) that research in parallel, form hypotheses, and
+validate them against your live Azure data — then converge on a conclusion.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🗺️ Architectures + Architecture Memory
+AI reverse-engineers live resources into interactive diagrams with best-practice review,
+network boundaries, and cost hints. Save revisions, build collections, and keep persistent
+**Architecture Memory** that powers dashboards and investigations.
+
+</td>
+<td width="50%" valign="top">
+
+### 📦 Workloads & inventory
+Discover and group resources into workloads, browse a sortable inventory grid and world
+map, see cost/refresh metadata, and search your estate in natural language.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### ✅ Assessments & governance
+Run Well-Architected-style assessments across Security, Reliability, Cost, Operations, and
+Performance pillars — with custom controls, framework mappings (NIST, ISO, CIS), waivers,
+finding lifecycle, and ticketing. Plus Policy compliance, baselines, and AI advisors.
+
+</td>
+<td width="50%" valign="top">
+
+### 📈 Monitoring & resilience
+**Monitor 2.0** customizable dashboards with AI authoring and ping history; **AMBA**
+baseline-alert coverage with one-click Bicep/Terraform gap remediation; **Performance
+Profiler**, **Backup/DR coverage**, **Retirement Radar**, and telemetry intelligence.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🤖 Automations & workflows
+Build custom sub-agents with scoped tools, schedule recurring tasks, chain Workbooks into
+Playbooks, and route results through in-app Notifications and external connectors
+(Jira, ServiceNow).
+
+</td>
+<td width="50%" valign="top">
+
+### 🔌 Bring your own AI
+11+ providers — OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, GitHub
+Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), Ollama, LM Studio — switchable
+at runtime with live model catalogs. **Disabled until you set them up.**
+
+</td>
+</tr>
+</table>
+
+### Enterprise-ready
+
+🔐 Read-only Azure by default · ✅ approval-gated writes · 🧾 full audit log ·
+👥 RBAC (users / roles / groups) · 🔑 OIDC + SAML SSO · 🗝️ encrypted connection
+credentials · 🖥️ Sandbox VMs for private-endpoint diagnostics · 🧩 multi-tenant Azure
+connections.
+
+## 📸 Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/deep-investigation.png" alt="Deep investigation War Room"><br/><sub><b>War Room</b> — assemble a team of specialist agents to investigate in parallel.</sub></td>
+<td width="50%"><img src="docs/assets/assessment.png" alt="Well-Architected assessment"><br/><sub><b>Assessments</b> — pillar scores, controls, and framework mappings (NIST/ISO/CIS).</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/performance-profiler.png" alt="Performance Profiler heatmap"><br/><sub><b>Performance Profiler</b> — resource × AMBA-metric heatmap to find bottlenecks.</sub></td>
+<td width="50%"><img src="docs/assets/monitoring-coverage.png" alt="Monitoring coverage"><br/><sub><b>Monitoring coverage</b> — AMBA baseline-alert gaps with Bicep/Terraform fixes.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor 2.0 dashboard"><br/><sub><b>Monitor 2.0</b> — usage, token cost, provider mix, and activity at a glance.</sub></td>
+<td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
+</tr>
+</table>
+
+## 🚀 Deploy to Azure (one-click)
+
+> **Status: tested.** Provisions a managed PostgreSQL database, Azure Files state storage,
+> and the Container App running the public image — in **your** subscription, in one
+> deployment. No CLI, no manual wiring.
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
+
+What it creates:
 
 1. **Azure Container App** running the public Docker Hub image
-2. **Azure Database for PostgreSQL — Flexible Server** (managed), auto-linked via `DATABASE_URL`
+2. **Azure Database for PostgreSQL — Flexible Server** (managed), auto-linked via `DATABASE_URL` (`?ssl=require`)
 3. **Azure Files** share mounted at `/app/.data` (registries, caches, encryption key)
 4. **Container Apps environment** + external HTTPS ingress on port 8000
 
-You supply only an **admin password** (first login); then connect your Azure tenant and
-an LLM from **Settings** — the AI does the rest (workload discovery, architectures,
-coverage scans, assessments, retirement radar, performance profiling).
+You supply only an **admin password** (you're forced to change it on first login). Then
+connect your Azure tenant and an LLM from **Settings** — the AI does the rest (workload
+discovery, architectures, coverage scans, assessments, retirement radar, performance
+profiling). Defaults to **West US 3** (validated for Container Apps + PostgreSQL B1ms).
 
-The first admin login is forced to set a new password.
+Prefer the CLI or want full control? See the **[manual deployment guide](docs/DEPLOYMENT.md)**.
 
-The template defaults to **West US 3** (`westus3`), which has been validated for both
-Azure Container Apps and PostgreSQL Flexible Server B1ms.
+## ⚡ Quick start (local)
 
-Repo: <https://github.com/zmustafa/AzureSupportAgent>
-
-## Stack
-
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Redis, SSE streaming
-- **Agent:** pluggable LLM provider (OpenAI first) + tool-calling loop
-- **Azure access:** official Azure MCP server (`@azure/mcp`) spawned over **stdio**
-- **Entra ID access:** vendored **EntraID MCP Server** (Microsoft Graph, FastMCP) spawned over **stdio**
-- **Frontend:** React 18, TypeScript, Vite, Tailwind
-- **Hosting target:** Azure Container Apps only (local dev via docker-compose)
-
-## Key features
-
-- **Multi-session chat** with isolated context, live SSE streaming, and a per-message
-  activity feed (reasoning steps + tool calls) that persists across reloads.
-- **Deep investigation ("War Room")** — toggle deep mode to dispatch specialist agents
-  that form hypotheses and validate them against live Azure evidence. A War Room badge
-  marks deep chats in the sidebar, and an animated agent icon shows at the top while an
-  investigation runs.
-- **Stop control** — agent turns run as background tasks decoupled from the SSE
-  connection (so navigating away doesn't kill the work). The Stop button cancels the
-  server-side turn and persists whatever was produced so far.
-- **Sandbox VMs** — onboard dedicated SSH VMs (Settings → Sandbox VMs) that sit inside a
-  workload's network; the agent runs diagnostic commands on them via `vm_exec` to reach
-  private endpoints, in normal and deep chat.
-- **Pluggable LLM providers** — OpenAI, Azure OpenAI, GitHub Copilot/Models, Ollama, and
-  ChatGPT (OAuth), configurable at runtime from the admin dashboard.
-- **Admin dashboard** — MCP tool catalog, usage, audit log, AI provider config, and more.
-
-## How it connects (local)
-
-```
-Browser ─► frontend (5173) ─► backend (8000) ─┬─► OpenAI  (LLM, via API key)
-                                               └─► Azure MCP (npx, stdio)
-                                                        └─► your Azure subscription
-                                                            (DefaultAzureCredential
-                                                             = your `az login`)
-```
-
-Nothing is deployed to Azure for local dev. The MCP server reaches your real
-subscription **outbound** using your signed-in identity and existing RBAC. It runs
-**read-only** by default.
-
-## Prerequisites
-
-- Docker Desktop
-- Azure CLI (`az`) — run `az login` once and select your target subscription
-- An OpenAI API key (or Azure OpenAI endpoint + key)
-
-## Quick start
-
-1. Sign in to Azure and pick the subscription to troubleshoot:
-   ```pwsh
-   az login
-   az account set --subscription "<your-subscription-id>"
-   ```
-2. Create your env file and fill in the LLM key:
-   ```pwsh
-   Copy-Item .env.example .env
-   # edit .env: set LLM_API_KEY (and AZURE_SUBSCRIPTION_ID if you want to pin one)
-   ```
-3. Start everything:
-   ```pwsh
-   docker compose up --build
-   ```
-4. Open the app: http://localhost:5173
-
-The backend runs DB migrations on startup. First MCP call downloads `@azure/mcp`
-via `npx` (a few seconds), then it's cached.
-
-### Health checks
-
-- Backend: http://localhost:8000/healthz
-- Identity (dev): http://localhost:8000/me
-- MCP tools (admin): http://localhost:8000/admin/mcp/tools
-
-## EntraID (Microsoft Graph) MCP Server
-
-In addition to the Azure MCP server, the app integrates the **EntraID MCP Server**. It
-exposes Microsoft Graph tools for Entra ID (Azure AD): users, groups, app registrations
-& service principals, **secret/certificate expiry**, MFA status, sign-in & audit logs,
-and conditional-access policies. It is spawned over stdio just like the Azure MCP server
-and its tools flow into the same provider tool-calling loop (works with every LLM
-provider, including the Copilot/Codex guided-tool-calling adapters).
-
-- **Enable for the default assistant:** Settings → **EntraID MCP Tools** → toggle on.
-- **Per sub agent:** check *"Also allow all EntraID (Microsoft Graph) tools (MCP)"*
-  in the agent editor (next to the Azure tools checkbox).
-- **Identity:** it authenticates to Graph using the **default Azure connection's**
-  service-principal credentials (tenant id / client id / client secret, or certificate).
-- **Tools listing (admin):** http://localhost:8000/admin/entra/tools
-
-### Required Microsoft Graph permissions
-
-Grant these **Application** permissions to the app registration used by the connection,
-then grant admin consent:
-
-| API / Permission | Type | Description |
-| --- | --- | --- |
-| `AuditLog.Read.All` | Application | Read all audit log data |
-| `AuthenticationContext.Read.All` | Application | Read all authentication context information |
-| `DeviceManagementManagedDevices.Read.All` | Application | Read Microsoft Intune devices |
-| `Directory.Read.All` | Application | Read directory data |
-| `Group.Read.All` | Application | Read all groups |
-| `GroupMember.Read.All` | Application | Read all group memberships |
-| `Group.ReadWrite.All` | Application | Create, update, delete groups; manage group members and owners |
-| `Policy.Read.All` | Application | Read your organization's policies |
-| `RoleManagement.Read.Directory` | Application | Read all directory RBAC settings |
-| `User.Read.All` | Application | Read all users' full profiles |
-| `User-PasswordProfile.ReadWrite.All` | Application | Least privileged permission to update the passwordProfile property |
-| `UserAuthenticationMethod.Read.All` | Application | Read all users' authentication methods |
-| `Application.ReadWrite.All` | Application | Create, update, and delete applications (app registrations) and service principals |
-
-Read-only permissions are sufficient for most queries; the `*.ReadWrite.All` permissions
-enable group, password, and application management. Write tools (create/update/delete/
-reset) are gated behind the app's approval policy.
-
-### Local setup notes
-
-The Graph SDK has very deep file paths, so its dependencies live in a dedicated venv to
-avoid the Windows 260-char path limit (Windows long-path support is also enabled). The
-backend spawns the server using `ENTRA_MCP_COMMAND` (that venv's python) and
-`ENTRA_MCP_ARGS` (the stdio launcher `third_party/entraid-mcp-server/run_server.py`).
-Override these via environment variables if your paths differ.
-
-## Auth (local dev)
-
-`DEV_AUTH=true` injects a fake admin identity so you can use the chat and admin
-dashboard without standing up Keycloak. Set `DEV_AUTH_ROLE=user` to test the
-non-admin view. Real OIDC (Keycloak) is a later phase.
-
-## Azure access modes
-
-| Mode | How |
-|------|-----|
-| Your `az login` (default) | `~/.azure` is mounted into the backend; uses your RBAC |
-| Service principal | set `AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET` in `.env` |
-
-The MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Gated-write
-execution + approval workflow is Phase 3; the approval data model and admin
-approvals API are already present.
-
-## Project layout
-
-```
-backend/    FastAPI app (api, agent, mcp, core, models, schemas) + alembic
-frontend/   React + Vite SPA (chat + admin); animated agent icons in public/agent-icons
-docs/       Technical specification
-docker-compose.yml
-```
-
-## Running backend tests / dev outside Docker (optional)
+**Prerequisites:** Docker Desktop · Azure CLI (`az`) · an LLM key (or a local Ollama / LM Studio).
 
 ```pwsh
-cd backend
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-# requires local postgres/redis + node + az login
-uvicorn app.main:app --reload
+# 1) Sign in to the subscription you want to work with
+az login
+az account set --subscription "<your-subscription-id>"
+
+# 2) Configure environment
+Copy-Item .env.example .env     # set LLM_API_KEY (optional — you can also do it in the UI)
+
+# 3) Run the whole stack
+docker compose up --build
 ```
 
-> **API prefix:** every backend endpoint is served under **`/api`** (e.g.
-> `/api/me`, `/api/chats`, `/api/admin/...`). Only `/healthz` and `/readyz` live at the
-> root. The frontend reads its base from `VITE_API_BASE` (default `http://localhost:8000/api`
-> for local dev). This keeps API routes from colliding with the SPA's client-side routes
-> (`/inventory`, `/admin`, `/policy`, …) so the single-container build can serve the app
-> at every non-`/api` path.
+Open **http://localhost:5173**. The backend runs DB migrations on startup; the first Azure
+MCP call fetches `@azure/mcp` via `npx` (a few seconds), then caches it.
 
-## Single-container deployment (Azure Container Apps)
+**Health check:** [`/healthz`](http://localhost:8000/healthz) · MCP tools (admin):
+`/api/admin/mcp/tools`
 
-The whole app — FastAPI **API + the built React SPA + the in-process MCP servers** —
-ships as **one image** and runs as a **single Container App**. No separate frontend,
-Postgres, or Redis containers are required.
+Full local/dev instructions (native backend, tests, type-check) live in
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-How it fits in one container:
+## 🧩 How it works
 
-- **SPA**: built by the multi-stage [`Dockerfile`](Dockerfile) (`VITE_API_BASE=/api`) and
-  copied into `app/static`. FastAPI serves `/assets/*` and falls back to `index.html` for
-  any non-`/api` path, so deep links and refresh work ([app/main.py](backend/app/main.py)).
-- **Database**: SQLite (`DATABASE_URL=sqlite+aiosqlite:///./.data/app.db`). Put `./.data`
-  on an Azure Files volume to persist across revisions. Postgres is still supported by
-  pointing `DATABASE_URL` at it.
-- **Redis**: not on the request path; omit it.
-- **MCP servers**: spawned in-process over stdio (`npx @azure/mcp`, EntraID FastMCP) — the
-  image already includes Node 20 + Azure CLI.
-- **Dependencies**: pinned in [`backend/requirements.txt`](backend/requirements.txt)
-  (frozen from a working environment, Windows-only packages removed) and installed before
-  `pip install --no-deps .` so every runtime import resolves.
+The whole app — FastAPI **API + the built React SPA + the in-process MCP servers** — ships
+as **one container image** and runs as a **single Container App**. No separate frontend,
+database, or Redis containers required.
 
-### Key env vars (production)
-
-| Variable | Purpose |
-|----------|---------|
-| `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` | Bootstrap admin created on first run (store the password as a Container App **secret**) |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./.data/app.db` (Azure Files) or a Postgres URL |
-| `COOKIE_SECURE` | `true` (HTTPS ingress) |
-| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Service-principal identity for MCP (or use a managed identity) — there is no `~/.azure` mount in ACA |
-| `LLM_API_KEY` (or configure in Settings) | LLM provider key |
-
-### Deploy from scratch (PowerShell)
-
-```pwsh
-$RG   = "rg-azsupagent"
-$LOC  = "southcentralus"
-$ACR  = "azsupagent$((Get-Random -Maximum 99999))"   # globally-unique
-$APP  = "azsupagent"
-
-az account set --subscription "<subscription-id>"
-
-# 1) Registry (cheapest Basic SKU) + cloud build of the single image
-az acr create -n $ACR -g $RG --sku Basic --admin-enabled true -l $LOC
-az acr build  -r $ACR -t "${APP}:latest" -f Dockerfile .
-
-# 2) Container Apps environment (Consumption)
-az containerapp env create -n "$APP-env" -g $RG -l $LOC
-
-# 3) The app: external ingress on 8000, scale-to-zero, admin password as a secret
-$server = "$ACR.azurecr.io"
-$pw     = az acr credential show -n $ACR --query "passwords[0].value" -o tsv
-az containerapp create -n $APP -g $RG `
-  --environment "$APP-env" `
-  --image "$server/${APP}:latest" `
-  --registry-server $server --registry-username $ACR --registry-password $pw `
-  --target-port 8000 --ingress external `
-  --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi `
-  --secrets "admin-password=<your-password>" `
-  --env-vars SEED_ADMIN_USERNAME=admin "SEED_ADMIN_PASSWORD=secretref:admin-password" `
-             "DATABASE_URL=sqlite+aiosqlite:///./.data/app.db" COOKIE_SECURE=true
+```mermaid
+flowchart LR
+    U([Browser]) --> SPA[React SPA]
+    SPA -->|/api| BE[FastAPI backend<br/>orchestrator · SSE streaming]
+    BE --> LLM{{LLM providers<br/>OpenAI · Claude · Gemini<br/>Copilot · Ollama · …}}
+    BE --> AZ[Azure MCP server · stdio]
+    BE --> EID[Entra / Graph MCP server · stdio]
+    BE --> TOOLS[Built-in tools<br/>DNS · HTTP · ping · traceroute]
+    BE --> DB[(PostgreSQL / SQLite)]
+    BE --> FILES[[Azure Files<br/>/app/.data]]
+    AZ --> SUB[(Your Azure subscription)]
+    EID --> GRAPH[(Microsoft Graph)]
 ```
 
-### Redeploy a new build
+For local dev nothing is deployed to Azure — the MCP server reaches your real subscription
+**outbound** using your signed-in identity and existing RBAC, **read-only by default**.
 
-```pwsh
-az acr build -r $ACR -t "${APP}:latest" -f Dockerfile .
-# 'latest' is reused, so force a fresh revision:
-az containerapp update -n $APP -g $RG `
-  --image "$ACR.azurecr.io/${APP}:latest" --revision-suffix "r$(Get-Random -Maximum 9999)"
-```
+## 🔧 Tech stack
 
-### Cost & scaling notes
+| Layer | Tech |
+| --- | --- |
+| **Backend** | Python 3.12 · FastAPI · async SQLAlchemy 2 · Pydantic v2 · Alembic · SSE |
+| **Frontend** | React 18 · TypeScript · Vite · Tailwind · TanStack Query · Recharts · XYFlow · Mermaid |
+| **AI** | Provider abstraction with streaming + normalized tool-calls (11+ providers) |
+| **Azure** | Official Azure MCP server (`@azure/mcp`) · Azure CLI / Resource Graph runner |
+| **Entra ID** | Vendored Microsoft Graph (EntraID) MCP server over stdio |
+| **Data** | PostgreSQL (prod) / SQLite (local) · Azure Files for state |
+| **Hosting** | Azure Container Apps (single image) |
 
-- **Cheapest** posture: Basic ACR + Consumption Container App, `min-replicas 0`
-  (scale-to-zero → no compute charge when idle), `0.5 vCPU / 1 GiB`. The first request
-  after idle pays a cold-start (plus a one-time `npx @azure/mcp` fetch).
-- **Single replica only** while using SQLite or in-container state (it's stateful). Set
-  `--min-replicas 1` to avoid cold starts (costs more).
+## 🔐 Security & access model
 
-### Gotchas learned (Windows + ACR)
+- **Read-only by default.** The Azure MCP server starts with `--read-only`; write-capable tools are classified, **approval-gated**, and **audited**.
+- **AI providers off until configured.** A fresh install ships every provider disabled; a provider only becomes selectable once you add a key (or sign in / set a local base URL).
+- **Identity & SSO.** Local users with RBAC (users / roles / groups), plus OIDC and SAML SSO. Forced password change on first admin login.
+- **Secrets.** Connection credentials are encrypted at rest and never returned to the UI. `.env`, `backend/.data/`, and keys are git-ignored.
+- **Found a vulnerability?** Please follow **[SECURITY.md](SECURITY.md)** — don't open a public issue.
 
-- **`az acr build` log streamer crashes** locally on Windows with
-  `UnicodeEncodeError: '\u2713'` (colorama → cp1252). The build still runs server-side.
-  Poll `az acr task list-runs -r <acr> --top 1 -o table` for status, or stream logs
-  straight to a UTF-8 console (don't pipe/redirect).
-- **`az containerapp up --source .`** can fail with
-  `'NoneType' object has no attribute 'linux'`; use the explicit `acr create` →
-  `acr build` → `containerapp create` flow above instead.
-- The Dockerfile **copies `backend/` before `pip install`** because
-  `setuptools packages=["app"]` validates the package dir at build time.
-- The container imports the whole API at startup, so a **missing dependency crashes
-  uvicorn immediately** — keep `backend/requirements.txt` complete.
+## 📚 Documentation
 
-## Notes & limitations (current build)
+| Doc | What's inside |
+| --- | --- |
+| [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) | Full architecture & feature specification |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Manual Azure Container Apps deploy, env vars, cost/scaling, gotchas |
+| [docs/ENTRA_SETUP.md](docs/ENTRA_SETUP.md) | EntraID (Microsoft Graph) MCP setup + required permissions |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Local dev, tests, type-check, PR guidelines |
+| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community guidelines |
 
-- Phase 0–2: multi-session chat, SSE streaming, persistence, and end-to-end
-  read-only Azure MCP tool calling.
-- Write actions are classified and gated but not executed yet (Phase 3).
-- Single-replica Postgres/Redis (stateful). For Container Apps, back them with
-  Azure Files volumes; everything else is stateless and scales horizontally.
+## 🤝 Contributing
+
+Contributions are welcome! Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** and our
+**[Code of Conduct](CODE_OF_CONDUCT.md)**. Good first steps: open an issue to discuss a
+change, keep PRs focused, and make sure backend tests and the frontend type-check pass.
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Zeeshan Mustafa ([@zmustafa](https://github.com/zmustafa))
+
+## 🙏 Acknowledgements
+
+- [Azure MCP server](https://github.com/Azure/azure-mcp) — the official Azure tool surface
+- EntraID MCP server (Microsoft Graph, FastMCP) — vendored under `third_party/`
+- The Model Context Protocol community
+
+<div align="center"><sub>If this project helps you, consider giving it a ⭐ — it helps others find it.</sub></div>
+
