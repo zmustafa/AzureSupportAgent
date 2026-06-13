@@ -2,9 +2,10 @@
 
 # 🛠️ Azure Support Agent
 
-**An AI-driven Azure operations workbench.** Chat with your tenant, investigate incidents
-with a team of specialist AI agents, and assess, monitor, and remediate your cloud — all
-from one app that runs in **your** Azure subscription.
+**An AI-driven Azure operations workbench that runs in _your_ subscription.** Point it at
+your tenant and AI discovers your workloads, reverse-engineers live architecture diagrams,
+and runs Well-Architected assessments — then a War Room of specialist agents helps you
+investigate, monitor, and remediate.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
@@ -140,24 +141,24 @@ connections.
 
 <table>
 <tr>
+<td width="50%"><img src="docs/assets/architecture-designer.png" alt="Architectures designer"><br/><sub><b>Architectures designer</b> — design diagrams with AI rationale &amp; best-practice review.</sub></td>
 <td width="50%"><img src="docs/assets/deep-investigation.png" alt="Deep investigation War Room"><br/><sub><b>War Room</b> — assemble a team of specialist agents to investigate in parallel.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/assessment.png" alt="Well-Architected assessment"><br/><sub><b>Assessments</b> — pillar scores, controls, and framework mappings (NIST/ISO/CIS).</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/performance-profiler.png" alt="Performance Profiler heatmap"><br/><sub><b>Performance Profiler</b> — resource × AMBA-metric heatmap to find bottlenecks.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/monitoring-coverage.png" alt="Monitoring coverage"><br/><sub><b>Monitoring coverage</b> — AMBA baseline-alert gaps with Bicep/Terraform fixes.</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/telemetry-coverage.png" alt="Telemetry coverage"><br/><sub><b>Telemetry coverage</b> — diagnostic-settings &amp; log coverage with Bicep/Policy gap fixes.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor 2.0 dashboard"><br/><sub><b>Monitor 2.0</b> — usage, token cost, provider mix, and activity at a glance.</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
-<td width="50%"><img src="docs/assets/backup-coverage.png" alt="Backup and DR coverage"><br/><sub><b>Backup &amp; DR coverage</b> — RTO/RPO protection posture with Bicep/runbook gap fixes.</sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/assets/backup-coverage.png" alt="Backup and DR coverage"><br/><sub><b>Backup &amp; DR coverage</b> — RTO/RPO protection posture with Bicep/runbook gap fixes.</sub></td>
 <td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
-<td width="50%"></td>
 </tr>
 </table>
 
