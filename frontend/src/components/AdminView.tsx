@@ -284,7 +284,6 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 const AUTH_METHOD_LABELS: Record<string, string> = {
   service_principal: "Service principal (client secret)",
   service_principal_cert: "Service principal (certificate)",
-  azure_cli: "Azure CLI sign-in (auto-refreshing, recommended)",
   default_chain: "Host identity (managed identity / az login)",
   az_cli_token: "Paste Azure CLI token (short-lived)",
 };
@@ -292,7 +291,7 @@ const AUTH_METHOD_LABELS: Record<string, string> = {
 const BLANK_FORM: import("../api").ConnectionUpsert = {
   display_name: "",
   tenant_id: "",
-  auth_method: "azure_cli",
+  auth_method: "default_chain",
   default_subscription: "",
   read_only: true,
   auto_execute_writes: false,

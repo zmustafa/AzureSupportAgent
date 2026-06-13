@@ -282,7 +282,6 @@ Supported auth methods:
 
 - `service_principal`
 - `service_principal_cert`
-- `azure_cli`
 - `default_chain`
 - `az_cli_token`
 

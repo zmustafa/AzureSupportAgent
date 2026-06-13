@@ -38,7 +38,6 @@ _PATH = Path(__file__).resolve().parents[2] / ".data" / "azure_connections.json"
 AUTH_METHODS = (
     "service_principal",
     "service_principal_cert",
-    "azure_cli",
     "default_chain",
     "az_cli_token",
 )
