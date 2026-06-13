@@ -283,7 +283,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output applicationUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
-output appUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output containerAppName string = containerApp.name
 output postgresServerName string = postgres.name
 output storageAccountName string = storage.name
