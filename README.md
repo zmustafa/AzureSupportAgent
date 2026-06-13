@@ -147,8 +147,12 @@ connections.
 <td width="50%"><img src="docs/assets/monitoring-coverage.png" alt="Monitoring coverage"><br/><sub><b>Monitoring coverage</b> — AMBA baseline-alert gaps with Bicep/Terraform fixes.</sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/assets/telemetry-coverage.png" alt="Telemetry coverage"><br/><sub><b>Telemetry coverage</b> — diagnostic-settings &amp; log coverage with Bicep/Policy gap fixes.</sub></td>
 <td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor 2.0 dashboard"><br/><sub><b>Monitor 2.0</b> — usage, token cost, provider mix, and activity at a glance.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
+<td width="50%"></td>
 </tr>
 </table>
 

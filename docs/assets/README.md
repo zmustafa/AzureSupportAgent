@@ -10,5 +10,6 @@ Filenames must match exactly:
 | `assessment.png` | Well-Architected assessment — pillar scores, controls, frameworks |
 | `performance-profiler.png` | Performance Profiler — resource × AMBA-metric heatmap |
 | `monitoring-coverage.png` | Monitoring coverage — AMBA baseline-alert gaps |
+| `telemetry-coverage.png` | Telemetry coverage — diagnostic-settings & log coverage |
 | `monitor-dashboard.png` | Monitor 2.0 "Stats" overview dashboard |
 | `ai-providers.png` | AI Provider settings — providers disabled until configured |
