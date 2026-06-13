@@ -177,6 +177,10 @@ What it creates:
 3. **Azure Files** share mounted at `/app/.data` (registries, caches, encryption key)
 4. **Container Apps environment** + external HTTPS ingress on port 8000
 
+> 💰 **Estimated cost: ~$25–35 / month** for the default infra at typical low/idle usage
+> (West US 3, pay-as-you-go) — mostly the Container App (1 vCPU / 2 GiB) and a Burstable
+> `B1ms` PostgreSQL server.
+
 You supply only an **admin password** (you're forced to change it on first login). Then
 connect your Azure tenant and an LLM from **Settings** — the AI does the rest (workload
 discovery, architectures, coverage scans, assessments, retirement radar, performance
