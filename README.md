@@ -180,6 +180,9 @@ connect your Azure tenant and an LLM from **Settings** — the AI does the rest 
 discovery, architectures, coverage scans, assessments, retirement radar, performance
 profiling). Defaults to **West US 3** (validated for Container Apps + PostgreSQL B1ms).
 
+📖 New here? Follow the **[step-by-step installation guide](docs/INSTALLATION.md)** — from
+clicking the button to onboarding your first workload.
+
 Prefer the CLI or want full control? See the **[manual deployment guide](docs/DEPLOYMENT.md)**.
 
 ## ⚡ Quick start (local)
@@ -254,6 +257,7 @@ For local dev nothing is deployed to Azure — the MCP server reaches your real 
 
 | Doc | What's inside |
 | --- | --- |
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | Step-by-step one-click install: deploy, first login, connect an LLM & tenant, onboard a workload |
 | [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) | Full architecture & feature specification |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Manual Azure Container Apps deploy, env vars, cost/scaling, gotchas |
 | [docs/ENTRA_SETUP.md](docs/ENTRA_SETUP.md) | EntraID (Microsoft Graph) MCP setup + required permissions |
