@@ -12,4 +12,5 @@ Filenames must match exactly:
 | `monitoring-coverage.png` | Monitoring coverage — AMBA baseline-alert gaps |
 | `telemetry-coverage.png` | Telemetry coverage — diagnostic-settings & log coverage |
 | `monitor-dashboard.png` | Monitor 2.0 "Stats" overview dashboard |
+| `backup-coverage.png` | Backup & DR coverage — RTO/RPO protection posture |
 | `ai-providers.png` | AI Provider settings — providers disabled until configured |
