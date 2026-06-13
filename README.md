@@ -154,6 +154,10 @@ connections.
 <td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
 <td width="50%"><img src="docs/assets/backup-coverage.png" alt="Backup and DR coverage"><br/><sub><b>Backup &amp; DR coverage</b> — RTO/RPO protection posture with Bicep/runbook gap fixes.</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
+<td width="50%"></td>
+</tr>
 </table>
 
 ## 🚀 Deploy to Azure (one-click)

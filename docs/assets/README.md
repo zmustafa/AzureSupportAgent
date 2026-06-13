@@ -13,4 +13,5 @@ Filenames must match exactly:
 | `telemetry-coverage.png` | Telemetry coverage — diagnostic-settings & log coverage |
 | `monitor-dashboard.png` | Monitor 2.0 "Stats" overview dashboard |
 | `backup-coverage.png` | Backup & DR coverage — RTO/RPO protection posture |
+| `retirement-coverage.png` | Retirement & breaking-change radar — deadlines mapped to workloads |
 | `ai-providers.png` | AI Provider settings — providers disabled until configured |
