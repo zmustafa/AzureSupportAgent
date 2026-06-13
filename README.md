@@ -31,6 +31,9 @@ coverage scans, assessments, retirement radar, performance profiling).
 
 The first admin login is forced to set a new password.
 
+The template defaults to **West US 3** (`westus3`), which has been validated for both
+Azure Container Apps and PostgreSQL Flexible Server B1ms.
+
 Repo: <https://github.com/zmustafa/AzureSupportAgent>
 
 ## Stack

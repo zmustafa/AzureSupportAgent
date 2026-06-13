@@ -1,7 +1,7 @@
 targetScope = 'resourceGroup'
 
-@description('Azure region for all resources.')
-param location string = resourceGroup().location
+@description('Azure region for all resources. Defaults to westus3, which has been validated for PostgreSQL Flexible Server B1ms and Azure Container Apps.')
+param location string = 'westus3'
 
 @description('Base name for the Azure Support Agent deployment. Use lowercase letters, numbers, and hyphens.')
 @minLength(3)

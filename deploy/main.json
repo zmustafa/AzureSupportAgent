@@ -5,15 +5,15 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "8184174951594902972"
+      "templateHash": "16424731709848381995"
     }
   },
   "parameters": {
     "location": {
       "type": "string",
-      "defaultValue": "[resourceGroup().location]",
+      "defaultValue": "westus3",
       "metadata": {
-        "description": "Azure region for all resources."
+        "description": "Azure region for all resources. Defaults to westus3, which has been validated for PostgreSQL Flexible Server B1ms and Azure Container Apps."
       }
     },
     "appName": {
