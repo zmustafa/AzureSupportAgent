@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { BrandIcon } from "./BrandIcon";
@@ -55,6 +55,13 @@ const ASSESSMENT_PILLARS = [
   { id: "operations", label: "⚙️ Operational Excellence" },
   { id: "performance", label: "⚡ Performance Efficiency" },
 ];
+// Recognised Well-Architected methodologies → the pillar bundle each one runs. Selecting a
+// pack is a one-click way to schedule a WARA / WASA / full WAF review (mirrors the Run flow).
+const ASSESSMENT_PACKS: { id: string; short: string; label: string; icon: string; pillars: string[] }[] = [
+  { id: "waf", short: "WAF", label: "Well-Architected Review", icon: "🏛️", pillars: ["security", "reliability", "cost", "operations", "performance"] },
+  { id: "wara", short: "WARA", label: "Reliability Assessment", icon: "🔄", pillars: ["reliability"] },
+  { id: "wasa", short: "WASA", label: "Security Assessment", icon: "🛡️", pillars: ["security"] },
+];
 
 // Fallback sub-agent category metadata (the live list comes from the API).
 const AGENT_CATEGORY_FALLBACK: AgentCategory[] = [
@@ -99,9 +106,12 @@ const TIMEZONES: string[] = (() => {
 })();
 
 export function AutomationsPanel({ section }: { section: AutomationsSection }) {
+  // The Sub Agents section renders a long catalog of agent cards, so give it the app's
+  // wide responsive width (the other sections are form-like and read better when narrow).
+  const wide = section === "agents";
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-5xl space-y-6 p-8">
+      <div className={`mx-auto space-y-6 p-8 ${wide ? "max-w-5xl xl:max-w-6xl 2xl:max-w-screen-2xl" : "max-w-5xl"}`}>
         {section === "overview" && <OverviewSection />}
         {section === "tasks" && <TasksSection />}
         {section === "agents" && <AgentsSection />}
@@ -991,6 +1001,15 @@ function AgentsSection() {
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${a.enabled !== false ? "translate-x-[18px]" : "translate-x-0.5"}`} />
             </button>
+            <Link
+              to={`/chat?agent=${encodeURIComponent(a.id)}`}
+              title={a.enabled === false ? "Enable the agent to chat with it" : `Start a chat with ${a.name}`}
+              aria-disabled={a.enabled === false}
+              onClick={(e) => { if (a.enabled === false) e.preventDefault(); }}
+              className={`rounded border px-2 py-1 font-medium ${a.enabled === false ? "cursor-not-allowed border-gray-200 text-gray-300" : "border-brand/40 text-brand hover:bg-brand/5"}`}
+            >
+              💬 Chat
+            </Link>
             <button onClick={() => setEnhancing(a)} title="Enhance this agent with AI" className="rounded border border-brand/40 px-2 py-1 font-medium text-brand hover:bg-brand/5">✨ Enhance</button>
             <button onClick={() => setEditing(a)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
             <button onClick={() => void exportOne(a)} title="Export config as JSON" className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Export</button>
@@ -1174,14 +1193,14 @@ function AgentsSection() {
                   <span>{c.icon} {c.label}</span>
                   <span className="rounded-full bg-gray-100 px-1.5 text-[10px] font-normal text-gray-500">{catCounts[c.id]}</span>
                 </div>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-2 2xl:grid-cols-2">
                   {agents.filter((a) => (a.category ?? "general") === c.id).map((a) => renderAgentCard(a))}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="space-y-2">{filteredAgents.map((a) => renderAgentCard(a))}</div>
+          <div className="grid grid-cols-1 gap-2 2xl:grid-cols-2">{filteredAgents.map((a) => renderAgentCard(a))}</div>
         )
       )}
     </Card>
@@ -2238,6 +2257,7 @@ function TasksSection() {
   const q = useQuery({ queryKey: ["scheduledTasks"], queryFn: api.scheduledTasks });
   const agentsQ = useQuery({ queryKey: ["customAgents"], queryFn: api.customAgents });
   const archivedQ = useQuery({ queryKey: ["archivedTasks"], queryFn: api.archivedTasks });
+  const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
   const [editing, setEditing] = useState<Partial<ScheduledTask> | null>(null);
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
@@ -2251,6 +2271,12 @@ function TasksSection() {
   const metrics = q.data?.metrics ?? { active: 0, total: 0, total_runs: 0 };
   const agents = agentsQ.data?.agents ?? [];
   const archived = archivedQ.data?.tasks ?? [];
+  // Connector id → {name, type} for rendering each schedule's notification methods.
+  const connectorById = useMemo(() => {
+    const m: Record<string, { name: string; type: string }> = {};
+    for (const c of connectorsQ.data?.connectors ?? []) m[c.id] = { name: c.name, type: c.type };
+    return m;
+  }, [connectorsQ.data]);
 
   // Group-by-type / filter-by-type / status / search for the unified schedules table.
   const [groupByType, setGroupByType] = useState(true);
@@ -2327,6 +2353,7 @@ function TasksSection() {
             </div>
           </td>
           <td className="py-2 pr-3 text-gray-600">{t.schedule_label}</td>
+          <td className="py-2 pr-3"><NotifyMethods task={t} connectorById={connectorById} /></td>
           <td className="py-2 pr-3 text-gray-500">{t.last_run_at ? formatTimestamp(t.last_run_at) : "—"}</td>
           <td className="py-2 pr-3 text-gray-500">
             {t.next_run_at ? (
@@ -2350,7 +2377,7 @@ function TasksSection() {
         </tr>
         {(openRuns === t.id || runNotice?.id === t.id) && (
           <tr key={`${t.id}-runs`}>
-            <td colSpan={8} className="bg-gray-50 px-3 py-2">
+            <td colSpan={9} className="bg-gray-50 px-3 py-2">
               {runNotice?.id === t.id && (
                 <div
                   className={`mb-2 flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-xs ${
@@ -2447,6 +2474,7 @@ function TasksSection() {
                   <th className="py-1.5 pr-3 font-medium">Type</th>
                   <th className="py-1.5 pr-3 font-medium">Status</th>
                   <th className="py-1.5 pr-3 font-medium">Schedule</th>
+                  <th className="py-1.5 pr-3 font-medium">Notify</th>
                   <th className="py-1.5 pr-3 font-medium">Last run</th>
                   <th className="py-1.5 pr-3 font-medium">Next run</th>
                   <th className="py-1.5 pr-3 font-medium">Runs</th>
@@ -2460,7 +2488,7 @@ function TasksSection() {
                       if (group.length === 0) return [];
                       return [
                         <tr key={`grp-${tt}`} className="bg-gray-50/70">
-                          <td colSpan={8} className="py-1.5 pl-1 text-xs font-semibold text-gray-600">
+                          <td colSpan={9} className="py-1.5 pl-1 text-xs font-semibold text-gray-600">
                             {TARGET_META[tt].icon} {TARGET_META[tt].label} <span className="font-normal text-gray-400">({group.length})</span>
                           </td>
                         </tr>,
@@ -2547,6 +2575,36 @@ function statusLabel(status: string): string {
   if (status === "on") return "enabled";
   if (status === "off") return "disabled";
   return status;
+}
+
+/** Renders the notification methods a schedule delivers its result through. Every run is
+ *  always published to the in-app notification center; selected connectors (Slack / Teams /
+ *  email / Jira / ServiceNow / webhook …) get the result summary too. */
+function NotifyMethods({ task, connectorById }: { task: ScheduledTask; connectorById: Record<string, { name: string; type: string }> }) {
+  const ids = task.notify_connector_ids ?? [];
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600"
+        title="Every scheduled run is delivered to the in-app notification center"
+      >
+        🔔 In-app
+      </span>
+      {ids.map((id) => {
+        const c = connectorById[id];
+        return (
+          <span
+            key={id}
+            className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] text-gray-600"
+            title={c ? `Delivered to ${c.name} (${c.type})` : "Delivered to a connector"}
+          >
+            <BrandIcon type={c?.type ?? "webhook"} className="h-3 w-3" />
+            {c?.name ?? "Connector"}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function TaskRuns({ taskId }: { taskId: string }) {
@@ -2650,8 +2708,8 @@ function TaskForm({
       setError("Select at least one workload to assess.");
       return;
     }
-    if (targetType === "assessment" && !((cfg.pillars as string[] | undefined)?.length)) {
-      setError("Select at least one assessment pillar.");
+    if (targetType === "assessment" && !((cfg.pillars as string[] | undefined)?.length) && !cfg.pack) {
+      setError("Select an assessment pack or at least one pillar.");
       return;
     }
     if (targetType === "workbook" && !cfg.workbook_id) {
@@ -2676,6 +2734,7 @@ function TaskForm({
 
   const cfgWorkloadIds = (cfg.workload_ids as string[] | undefined) ?? [];
   const cfgPillars = (cfg.pillars as string[] | undefined) ?? ["security", "reliability"];
+  const cfgPack = (cfg.pack as string | undefined) ?? "";
 
   return (
     <div className="mt-4 space-y-3 rounded-lg border border-brand/30 bg-brand/5 p-4">
@@ -2757,12 +2816,25 @@ function TaskForm({
             </div>
           </div>
           <div>
-            <label className={label}>Assessment types</label>
+            <label className={label}>Assessment pack</label>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {ASSESSMENT_PACKS.map((pk) => (
+                <button key={pk.id} type="button" title={pk.label}
+                  onClick={() => setCfg({ pack: pk.id, pillars: pk.pillars })}
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${cfgPack === pk.id ? "border-brand bg-brand font-medium text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                  {pk.icon} {pk.short}
+                </button>
+              ))}
+              <span className="self-center text-[11px] text-gray-400">
+                {cfgPack ? ASSESSMENT_PACKS.find((p) => p.id === cfgPack)?.label : "Custom pillars"}
+              </span>
+            </div>
+            <label className={label}>Pillars</label>
             <div className="flex flex-wrap gap-1.5">
               {ASSESSMENT_PILLARS.map((p) => {
                 const on = cfgPillars.includes(p.id);
                 return (
-                  <button key={p.id} type="button" onClick={() => setCfg({ pillars: on ? cfgPillars.filter((x) => x !== p.id) : [...cfgPillars, p.id] })}
+                  <button key={p.id} type="button" onClick={() => setCfg({ pack: "", pillars: on ? cfgPillars.filter((x) => x !== p.id) : [...cfgPillars, p.id] })}
                     className={`rounded-lg border px-2.5 py-1 text-xs ${on ? "border-brand bg-brand/10 font-medium text-brand" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>{p.label}</button>
                 );
               })}
@@ -2774,6 +2846,14 @@ function TaskForm({
               <select value={(cfg.alert_min_severity as string) ?? "warning"} onChange={(e) => setCfg({ alert_min_severity: e.target.value })} className="rounded border px-1.5 py-0.5 text-[11px]"><option value="warning">Warning</option><option value="error">Error</option><option value="critical">Critical</option></select>
             </label>
           </div>
+          <label className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+            <input type="checkbox" checked={!!cfg.alert_on_low_confidence} onChange={(e) => setCfg({ alert_on_low_confidence: e.target.checked })} />
+            Alert when result confidence is low (&lt;
+            <select value={String((cfg.min_completeness_pct as number) ?? 98)} onChange={(e) => setCfg({ min_completeness_pct: Number(e.target.value) })} className="rounded border px-1.5 py-0.5 text-[11px]">
+              <option value="98">98%</option><option value="90">90%</option><option value="80">80%</option><option value="70">70%</option>
+            </select>
+            controls evaluated)
+          </label>
         </>
       )}
 

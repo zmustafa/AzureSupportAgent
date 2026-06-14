@@ -70,6 +70,13 @@ def _purge_features(tenant_id: str) -> dict[str, Any]:
     step("retirement_radar", lambda: _del_all(lambda w: radar_cache.delete_snapshot(tenant_id, "workload", w)))
     step("telemetry_intelligence", lambda: ti_cache.delete_scope(tenant_id, DEMO_WORKLOAD_ID))
 
+    # Coverage/posture trend series (one shared store across all 4 dashboards).
+    from app.core import coverage_trends
+
+    step("coverage_trends", lambda: _del_all(
+        lambda w: any(coverage_trends.delete_scope(f, tenant_id, "workload", w) for f in coverage_trends.FEATURES)
+    ))
+
     from app.identity import appregs_cache
     step("app_registrations", lambda: appregs_cache.delete_demo(tenant_id))
 
@@ -111,9 +118,9 @@ async def _purge_all(tenant_id: str, db: AsyncSession) -> dict[str, Any]:
     def _purge_architectures() -> int:
         from app.architectures import registry as arch_reg
         n = 0
-        for a in arch_reg.list_architectures(None):
+        for a in arch_reg.list_architectures(None, include_deleted=True):
             if str(a.get("name", "")).upper().startswith("DEMO"):
-                if arch_reg.delete_architecture(a["id"]):
+                if arch_reg.purge_architecture(a["id"]):
                     n += 1
         return n
     step("architectures", _purge_architectures)

@@ -63,6 +63,10 @@ def _run_dict(r: AssessmentRun, *, full: bool = False) -> dict:
         "summary": r.summary,
         "used_ai": r.used_ai,
         "resource_count": r.resource_count,
+        "catalog_version": getattr(r, "catalog_version", None),
+        "schema_version": getattr(r, "schema_version", None),
+        "completeness_pct": getattr(r, "completeness_pct", None),
+        "confidence": getattr(r, "confidence", None),
         "baseline_run_id": r.baseline_run_id,
         "is_baseline": bool(getattr(r, "is_baseline", False)),
         "diff": r.diff_json,
@@ -103,22 +107,27 @@ async def get_catalog(_: Principal = Depends(read_dep)):
 class AssessmentRunRequest(BaseModel):
     workload_id: str
     pillars: list[str] = Field(default_factory=lambda: list(catalog.PILLARS))
+    pack: str | None = None  # 'waf'|'wara'|'wasa' — overrides pillars when set
     connection_id: str | None = None
     use_ai: bool = True
 
 
 @router.post("/run")
 async def run_assessment_endpoint(payload: AssessmentRunRequest, principal: Principal = Depends(write_dep)):
+    pillars = catalog.pack_pillars(payload.pack) if payload.pack else None
+    if pillars is None:
+        pillars = payload.pillars
+
     async def _gen():
         run_id = ""
         try:
             async for ev in run_assessment(
                 workload_id=payload.workload_id,
-                pillars=payload.pillars,
+                pillars=pillars,
                 tenant_id=principal.tenant_id,
                 connection_id=payload.connection_id,
                 actor=principal.subject,
-                trigger="manual",
+                trigger=(payload.pack or "manual"),
                 use_ai=payload.use_ai,
             ):
                 if ev.get("type") == "done":
@@ -152,6 +161,7 @@ def _spawn_assessment(
     connection_id: str | None,
     actor: str,
     use_ai: bool,
+    trigger: str = "manual",
 ) -> None:
     import asyncio
 
@@ -165,7 +175,7 @@ def _spawn_assessment(
             tenant_id=tenant_id,
             connection_id=connection_id,
             actor=actor,
-            trigger="manual",
+            trigger=trigger,
             use_ai=use_ai,
         )
     )
@@ -176,6 +186,7 @@ def _spawn_assessment(
 class AssessmentEnqueueRequest(BaseModel):
     workload_ids: list[str] = Field(default_factory=list)
     pillars: list[str] = Field(default_factory=lambda: list(catalog.PILLARS))
+    pack: str | None = None  # 'waf'|'wara'|'wasa' — overrides pillars when set
     connection_id: str | None = None
     use_ai: bool = True
 
@@ -193,9 +204,12 @@ async def enqueue_assessments_endpoint(
 
     if not payload.workload_ids:
         raise HTTPException(status_code=400, detail="Select at least one workload.")
-    pillars = [p for p in payload.pillars if p in catalog.PILLARS]
+    pack_pillars = catalog.pack_pillars(payload.pack) if payload.pack else None
+    source_pillars = pack_pillars if pack_pillars is not None else payload.pillars
+    pillars = [p for p in source_pillars if p in catalog.PILLARS]
     if not pillars:
         raise HTTPException(status_code=400, detail="Select at least one assessment type.")
+    trigger = payload.pack if (payload.pack and pack_pillars is not None) else "manual"
 
     # Create all queued run rows in the request's own session (single SQLite writer) so
     # we don't deadlock against a separate write transaction.
@@ -212,7 +226,7 @@ async def enqueue_assessments_endpoint(
             pillars=pillars,
             status="queued",
             triggered_by=principal.subject,
-            trigger="manual",
+            trigger=trigger,
         )
         db.add(run)
         new_runs.append(run)
@@ -231,6 +245,7 @@ async def enqueue_assessments_endpoint(
             "connection_id": payload.connection_id,
             "actor": principal.subject,
             "use_ai": payload.use_ai,
+            "trigger": trigger,
         }
         for run in new_runs
     ]
@@ -710,6 +725,47 @@ async def generate_custom_check_endpoint(payload: GenerateCheckRequest, _: Princ
 
 
 # ============================ Export ============================
+async def _resolve_subscription_names(run: AssessmentRun, findings: list) -> dict[str, str]:
+    """Best-effort ``subscription_id -> display name`` map for the subscriptions referenced by a
+    run's flagged resources, via a single read-only Resource Graph query against the run's
+    connection. Returns ``{}`` when there's nothing to resolve, no connection, or the query
+    fails — the export still succeeds with blank subscription names in that case."""
+    sub_ids = {
+        sid
+        for f in findings
+        for r in (f.get("flagged_resources") or [])
+        if (sid := r.get("subscription_id"))
+    }
+    if not sub_ids:
+        return {}
+    try:
+        from app.core.azure_connections import resolve_connection
+        from app.exec.command_runner import run_kql_capture
+
+        connection = resolve_connection(run.connection_id or None)
+        quoted = ", ".join("'" + s.replace("'", "''") + "'" for s in sorted(sub_ids))
+        kql = (
+            "ResourceContainers "
+            "| where type =~ 'microsoft.resources/subscriptions' "
+            f"| where subscriptionId in~ ({quoted}) "
+            "| project subscriptionId, name"
+        )
+        cap = await run_kql_capture(kql, connection, output="json")
+        if not cap.ok:
+            return {}
+        rows = json.loads(cap.stdout or "[]")
+        if isinstance(rows, dict):
+            rows = rows.get("data") or rows.get("value") or []
+        return {
+            r.get("subscriptionId", ""): r.get("name", "")
+            for r in rows
+            if isinstance(r, dict) and r.get("subscriptionId")
+        }
+    except Exception:  # noqa: BLE001 - export must never fail because name lookup did
+        logger.warning("Subscription name resolution failed for run %s", run.id, exc_info=True)
+        return {}
+
+
 @router.get("/runs/{run_id}/export")
 async def export_run_endpoint(
     run_id: str, format: str = "json", principal: Principal = Depends(read_dep), db: AsyncSession = Depends(get_db)
@@ -717,13 +773,14 @@ async def export_run_endpoint(
     run = await _get_run(db, principal, run_id)
     findings = run.findings_json or []
     if format == "csv":
+        sub_names = await _resolve_subscription_names(run, findings)
         buf = io.StringIO()
         w = csv.writer(buf)
         # One row per flagged resource (findings with no resources emit a single row with
         # empty resource columns) so the export is pivot-friendly and includes resource ids.
         w.writerow([
             "workload", "check_id", "pillar", "title", "severity", "status", "flagged_count",
-            "resource_name", "resource_id", "subscription_id", "resource_group", "resource_type",
+            "resource_name", "resource_id", "subscription_id", "subscription_name", "resource_group", "resource_type",
             "portal_url", "cis", "nist", "iso", "remediation", "remediation_command",
         ])
         for f in findings:
@@ -742,27 +799,166 @@ async def export_run_endpoint(
                 for r in resources:
                     rid = r.get("id", "")
                     portal = f"https://portal.azure.com/#@/resource{rid}/overview" if rid else ""
+                    sub_id = r.get("subscription_id", "")
                     # Prefer the real, per-resource command (placeholders already filled).
                     cmd = r.get("remediation_command") or template_cmd
                     w.writerow(base + [
-                        r.get("name", ""), rid, r.get("subscription_id", ""),
+                        r.get("name", ""), rid, sub_id, sub_names.get(sub_id, ""),
                         r.get("resource_group", ""), r.get("type", ""), portal,
                     ] + frameworks_cols + [remediation, cmd])
             else:
-                w.writerow(base + ["", "", "", "", "", ""] + frameworks_cols + [remediation, template_cmd])
+                w.writerow(base + ["", "", "", "", "", "", ""] + frameworks_cols + [remediation, template_cmd])
         return StreamingResponse(
             iter([buf.getvalue()]),
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="assessment-{run_id}.csv"'},
         )
     payload = _run_dict(run, full=True)
-    # Enrich each flagged resource with a ready-to-use Azure portal deep link.
+    # Enrich each flagged resource with a ready-to-use Azure portal deep link + subscription name.
+    sub_names = await _resolve_subscription_names(run, findings)
     for f in payload.get("findings", []):
         for r in f.get("flagged_resources", []) or []:
             rid = r.get("id", "")
             r["portal_url"] = f"https://portal.azure.com/#@/resource{rid}/overview" if rid else ""
+            r["subscription_name"] = sub_names.get(r.get("subscription_id", ""), "")
     return StreamingResponse(
         iter([json.dumps(payload, indent=2)]),
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="assessment-{run_id}.json"'},
     )
+
+
+# ============================ Manual attestations ============================
+class AttestationUpdate(BaseModel):
+    workload_id: str
+    check_id: str
+    status: str = ""  # pass|fail|not_applicable, or "" to clear (revert to pending)
+    note: str = Field(default="", max_length=2000)
+
+
+@router.get("/attestations")
+async def list_attestations_endpoint(workload_id: str, principal: Principal = Depends(read_dep)):
+    from app.assessments.attestations import get_attestations
+
+    return {"attestations": get_attestations(principal.tenant_id, workload_id)}
+
+
+@router.put("/attestations")
+async def set_attestation_endpoint(payload: AttestationUpdate, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    """Record (or clear) a human attestation for a manual control on a workload. Takes effect
+    on the next run of that workload (the control then scores pass/fail/N-A instead of pending)."""
+    if payload.status and payload.status not in ("pass", "fail", "not_applicable"):
+        raise HTTPException(status_code=400, detail="status must be pass, fail, not_applicable, or empty to clear.")
+    from app.assessments.attestations import set_attestation
+
+    entry = set_attestation(
+        principal.tenant_id, payload.workload_id, payload.check_id,
+        status=payload.status, note=payload.note, by=principal.subject,
+    )
+    await _audit(db, principal, "assessment.attestation.set", payload.check_id, workload_id=payload.workload_id, status=payload.status or "cleared")
+    await db.commit()
+    return {"attestation": entry}
+
+
+# ============================ Action plan (prioritized) ============================
+# Impact / effort ordinal maps so a finding can be ranked by remediation value.
+_IMPACT_RANK = {"high": 3, "medium": 2, "low": 1, "": 1}
+_EFFORT_DIVISOR = {"low": 1.0, "medium": 2.0, "high": 3.0, "": 2.0}
+_SEV_RANK = {"critical": 4, "error": 3, "warning": 2, "info": 1}
+
+
+def _priority_score(f: dict) -> float:
+    """Rank a failed finding by remediation value: severity × impact × breadth ÷ effort,
+    mirroring the WARA Action Plan ordering so the most valuable fixes float to the top."""
+    sev = _SEV_RANK.get(f.get("severity", "info"), 1)
+    impact = _IMPACT_RANK.get((f.get("impact") or "").lower(), 1)
+    flagged = int(f.get("flagged_count") or 0)
+    breadth = 1.0 + min(flagged, 50) / 10.0  # diminishing weight for very large blast radius
+    effort = _EFFORT_DIVISOR.get((f.get("effort") or "").lower(), 2.0)
+    return round(sev * impact * breadth / effort, 3)
+
+
+@router.get("/runs/{run_id}/action-plan")
+async def action_plan_endpoint(run_id: str, principal: Principal = Depends(read_dep), db: AsyncSession = Depends(get_db)):
+    """A prioritized remediation plan: every failed control ranked by severity × impact ×
+    blast-radius ÷ effort (highest value first), plus the manual controls still pending."""
+    run = await _get_run(db, principal, run_id)
+    findings = run.findings_json or []
+    failed = [f for f in findings if f.get("status") == "fail"]
+    items = sorted(failed, key=_priority_score, reverse=True)
+    plan = [
+        {
+            "rank": i + 1,
+            "check_id": f.get("check_id"),
+            "title": f.get("title"),
+            "pillar": f.get("pillar"),
+            "sub_category": f.get("sub_category", ""),
+            "severity": f.get("severity"),
+            "impact": f.get("impact", ""),
+            "effort": f.get("effort", ""),
+            "flagged_count": f.get("flagged_count", 0),
+            "partial": bool(f.get("partial")),
+            "priority": _priority_score(f),
+            "remediation": f.get("remediation", ""),
+            "remediation_command": f.get("remediation_command", ""),
+            "ai_rationale": f.get("ai_rationale", ""),
+            "source": f.get("source", "built-in"),
+        }
+        for i, f in enumerate(items)
+    ]
+    pending_manual = [
+        {"check_id": f.get("check_id"), "title": f.get("title"), "pillar": f.get("pillar"),
+         "sub_category": f.get("sub_category", ""), "severity": f.get("severity"),
+         "remediation": f.get("remediation", "")}
+        for f in findings if f.get("status") == "manual"
+    ]
+    return {
+        "run_id": run_id,
+        "workload_name": run.workload_name,
+        "overall_score": run.overall_score,
+        "completeness_pct": getattr(run, "completeness_pct", None),
+        "confidence": getattr(run, "confidence", None),
+        "plan": plan,
+        "pending_manual": pending_manual,
+    }
+
+
+# ============================ Per-resource rollup ============================
+@router.get("/runs/{run_id}/by-resource")
+async def by_resource_endpoint(run_id: str, principal: Principal = Depends(read_dep), db: AsyncSession = Depends(get_db)):
+    """Pivot a run's failed findings by resource: for each impacted resource, the list of
+    controls that flagged it (worst severity first). Complements the per-check view."""
+    run = await _get_run(db, principal, run_id)
+    findings = run.findings_json or []
+    by_res: dict[str, dict] = {}
+    for f in findings:
+        if f.get("status") != "fail":
+            continue
+        for r in (f.get("flagged_resources") or []):
+            rid = r.get("id", "")
+            if not rid:
+                continue
+            entry = by_res.setdefault(rid, {
+                "id": rid,
+                "name": r.get("name", ""),
+                "type": r.get("type", ""),
+                "resource_group": r.get("resource_group", ""),
+                "subscription_id": r.get("subscription_id", ""),
+                "findings": [],
+                "worst_severity": "info",
+            })
+            entry["findings"].append({
+                "check_id": f.get("check_id"),
+                "title": f.get("title"),
+                "pillar": f.get("pillar"),
+                "severity": f.get("severity"),
+                "remediation_command": r.get("remediation_command") or f.get("remediation_command", ""),
+            })
+            if _SEV_RANK.get(f.get("severity", "info"), 1) > _SEV_RANK.get(entry["worst_severity"], 1):
+                entry["worst_severity"] = f.get("severity", "info")
+    resources = sorted(
+        by_res.values(),
+        key=lambda e: (_SEV_RANK.get(e["worst_severity"], 1), len(e["findings"])),
+        reverse=True,
+    )
+    return {"run_id": run_id, "workload_name": run.workload_name, "resources": resources, "count": len(resources)}

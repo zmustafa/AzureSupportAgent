@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "ai": {},      # {model, generated_at, rationale, confidence, resource_count}
     "state_changed_by": "",
     "state_changed_at": "",
+    "deleted_at": "",  # soft-delete marker (Trash); empty = active
     "created_by": "",
     "updated_by": "",
     "created_at": "",
@@ -72,19 +73,34 @@ def _merge(aid: str, raw: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def list_architectures(tenant_id: str | None = None) -> list[dict[str, Any]]:
+def list_architectures(tenant_id: str | None = None, *, include_deleted: bool = False) -> list[dict[str, Any]]:
     data = _read()
     out = [_merge(aid, a) for aid, a in data.get("architectures", {}).items()]
+    # Hide trashed (soft-deleted) architectures from the active list — and thus from every
+    # consumer (canvas, memory index, evidence collector, …) — unless explicitly asked.
+    if not include_deleted:
+        out = [a for a in out if not a.get("deleted_at")]
     if tenant_id is not None:
         out = [a for a in out if (a.get("tenant_id") or "") in ("", tenant_id)]
     out.sort(key=lambda a: a.get("updated_at", ""), reverse=True)
     return out
 
 
-def get_architecture(architecture_id: str) -> dict[str, Any] | None:
+def list_trashed_architectures(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    """Architectures currently in the Trash (soft-deleted), most-recently-deleted first."""
+    out = [a for a in list_architectures(tenant_id, include_deleted=True) if a.get("deleted_at")]
+    out.sort(key=lambda a: a.get("deleted_at", ""), reverse=True)
+    return out
+
+
+def get_architecture(architecture_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
     data = _read()
     raw = data.get("architectures", {}).get(architecture_id)
-    return _merge(architecture_id, raw) if raw is not None else None
+    if raw is None:
+        return None
+    if not include_deleted and raw.get("deleted_at"):
+        return None
+    return _merge(architecture_id, raw)
 
 
 def upsert_architecture(
@@ -156,7 +172,46 @@ def _log_upsert_activity(
         activity.log(aid, activity.EDITED, f"Edited the diagram ({n} resources, {e} links)", actor)
 
 
-def delete_architecture(architecture_id: str) -> bool:
+def delete_architecture(architecture_id: str, *, actor: str = "") -> bool:
+    """Soft-delete: move the architecture to the Trash (set ``deleted_at``). It's hidden
+    everywhere but fully restorable — revisions and activity are PRESERVED — until purged.
+    Returns False if not found or already trashed."""
+    data = _read()
+    raw = data.get("architectures", {}).get(architecture_id)
+    if raw is None or raw.get("deleted_at"):
+        return False
+    raw["deleted_at"] = _now()
+    raw["updated_at"] = _now()
+    if actor:
+        raw["updated_by"] = actor
+    _write(data)
+    from app.architectures import activity
+
+    activity.log(architecture_id, activity.TRASHED, "Moved to Trash", actor)
+    return True
+
+
+def restore_architecture(architecture_id: str, *, actor: str = "") -> dict[str, Any] | None:
+    """Restore a trashed architecture back into the active list. Returns None if not found
+    or not currently trashed."""
+    data = _read()
+    raw = data.get("architectures", {}).get(architecture_id)
+    if raw is None or not raw.get("deleted_at"):
+        return None
+    raw["deleted_at"] = ""
+    raw["updated_at"] = _now()
+    if actor:
+        raw["updated_by"] = actor
+    _write(data)
+    from app.architectures import activity
+
+    activity.log(architecture_id, activity.RESTORED, "Restored from Trash", actor)
+    return get_architecture(architecture_id)
+
+
+def purge_architecture(architecture_id: str) -> bool:
+    """Permanently delete an architecture (hard delete) along with its revisions and
+    activity log. Works regardless of trash state. Returns False if not found."""
     data = _read()
     if architecture_id in data.get("architectures", {}):
         del data["architectures"][architecture_id]
@@ -167,6 +222,17 @@ def delete_architecture(architecture_id: str) -> bool:
         activity.delete_for(architecture_id)
         return True
     return False
+
+
+def empty_architecture_trash(tenant_id: str | None = None) -> int:
+    """Permanently delete every trashed architecture (optionally tenant-scoped). Returns
+    the count removed."""
+    trashed = list_trashed_architectures(tenant_id)
+    n = 0
+    for a in trashed:
+        if purge_architecture(a["id"]):
+            n += 1
+    return n
 
 
 def set_state(architecture_id: str, state: str, actor: str) -> dict[str, Any] | None:

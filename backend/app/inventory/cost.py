@@ -84,11 +84,15 @@ def _persist() -> None:
         pass
 
 
-def _key(tenant_id: str, connection_id: str) -> str:
-    # Permanent cache keyed by tenant + connection only (NOT month): cost data is captured
+def _key(tenant_id: str, connection_id: str, scope: str = "") -> str:
+    # Permanent cache keyed by tenant + connection + scope (NOT month): cost data is captured
     # once and persists indefinitely until the user clicks Refresh. The capture month lives
-    # inside the payload so the UI can show which month the figures cover.
-    return f"{tenant_id or ''}|{connection_id or ''}"
+    # inside the payload so the UI can show which month the figures cover. An empty scope
+    # reuses the legacy tenant|connection key so pre-scope cost stays cached; multi-token
+    # scopes are canonicalized (sorted/deduped) so order never splits the cache.
+    base = f"{tenant_id or ''}|{connection_id or ''}"
+    norm = ",".join(sorted({t.strip() for t in (scope or "").split(",") if t.strip()}))
+    return f"{base}|{norm}" if norm else base
 
 
 def _col_index(columns: list[dict[str, Any]], *names: str) -> int:
@@ -153,10 +157,10 @@ async def _subscription_cost(
     return out, currency, ""
 
 
-def peek_cost(tenant_id: str, connection_id: str) -> dict[str, Any] | None:
+def peek_cost(tenant_id: str, connection_id: str, scope: str = "") -> dict[str, Any] | None:
     """Return the permanently-cached cost payload if one exists, WITHOUT ever running the slow
     Cost Management query. Used to auto-restore cached cost on a fresh page load."""
-    hit = _load().get(_key(tenant_id, connection_id))
+    hit = _load().get(_key(tenant_id, connection_id, scope))
     return {**hit["payload"], "cached": True} if hit else None
 
 
@@ -167,17 +171,20 @@ async def get_cost(
     connection_id: str,
     *,
     force: bool = False,
+    scope: str = "",
 ) -> dict[str, Any]:
     """Aggregate trailing-30-days cost across the given subscriptions, attributed per resource.
 
     Returns {available, currency, period, by_resource: {id: cost}, by_subscription: {...},
     total, errors, cached, fetched_at}.
 
-    The result is cached PERMANENTLY (no TTL) — a cached payload is returned indefinitely and
-    only recomputed when ``force=True`` (the explicit Refresh button), so the (slow, throttled)
-    Cost Management queries run only when the user asks for fresh numbers."""
+    ``scope`` keys the permanent cache so each Azure scope (tenant / management group /
+    subscription) caches its cost independently. The result is cached PERMANENTLY (no TTL) —
+    a cached payload is returned indefinitely and only recomputed when ``force=True`` (the
+    explicit Refresh button), so the (slow, throttled) Cost Management queries run only when
+    the user asks for fresh numbers."""
     cache = _load()
-    ck = _key(tenant_id, connection_id)
+    ck = _key(tenant_id, connection_id, scope)
     if not force:
         hit = cache.get(ck)
         if hit:

@@ -133,6 +133,37 @@ async def list_runs(
     return {"runs": runs.list_runs(principal.tenant_id or "default", scope_kind, scope_id)}
 
 
+@router.get("/runs/trash")
+async def list_trashed_runs(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Trashed (soft-deleted) profile runs for the scope — restorable until purged."""
+    from app.perfprofile import runs
+
+    scope_kind, scope_id = _scope(workload_id, subscription_id)
+    return {"runs": runs.list_trashed_runs(principal.tenant_id or "default", scope_kind, scope_id)}
+
+
+@router.post("/runs/trash/empty")
+async def empty_trash(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Permanently delete every trashed run for the scope."""
+    from app.perfprofile import runs
+
+    scope_kind, scope_id = _scope(workload_id, subscription_id)
+    deleted = runs.empty_trash(principal.tenant_id or "default", scope_kind, scope_id)
+    if deleted:
+        db.add(AuditLog(tenant_id=principal.tenant_id, actor_id=principal.subject, action="performance.trash.empty", target=f"{scope_kind}:{scope_id}"))
+        await db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
 @router.get("/run/{run_id}")
 async def get_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
     from app.perfprofile import runs
@@ -147,6 +178,7 @@ async def get_run(run_id: str, principal: Principal = Depends(require_admin)) ->
 async def delete_run(
     run_id: str, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
+    """Soft-delete: move a profile run to the Trash (restorable until purged)."""
     from app.perfprofile import runs
 
     ok = runs.delete_run(principal.tenant_id or "default", run_id)
@@ -154,6 +186,60 @@ async def delete_run(
         db.add(AuditLog(tenant_id=principal.tenant_id, actor_id=principal.subject, action="performance.run.delete", target=run_id))
         await db.commit()
     return {"ok": ok}
+
+
+@router.post("/run/{run_id}/restore")
+async def restore_run(
+    run_id: str, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Restore a trashed profile run back into history."""
+    from app.perfprofile import runs
+
+    ok = runs.restore_run(principal.tenant_id or "default", run_id)
+    if ok:
+        db.add(AuditLog(tenant_id=principal.tenant_id, actor_id=principal.subject, action="performance.run.restore", target=run_id))
+        await db.commit()
+    return {"ok": ok}
+
+
+@router.delete("/run/{run_id}/purge")
+async def purge_run(
+    run_id: str, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Permanently delete a single trashed profile run (hard delete)."""
+    from app.perfprofile import runs
+
+    if runs.get_run(principal.tenant_id or "default", run_id, include_deleted=True) is None:
+        return {"ok": False, "detail": "Run not found."}
+    ok = runs.purge_run(principal.tenant_id or "default", run_id)
+    if ok:
+        db.add(AuditLog(tenant_id=principal.tenant_id, actor_id=principal.subject, action="performance.run.purge", target=run_id))
+        await db.commit()
+    return {"ok": ok}
+
+
+@router.get("/trend")
+async def trend(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Performance-score trend points for the scope (chart-ready). On a demo scope with no
+    history yet, backfills a believable rising series so the chart isn't empty."""
+    from app.core import coverage_trends
+    from app.perfprofile import runs
+
+    scope_kind, scope_id = _scope(workload_id, subscription_id)
+    tenant_id = principal.tenant_id or "default"
+    if demo.is_demo_scope(scope_kind, scope_id) and not coverage_trends.series("performance", tenant_id, scope_kind, scope_id):
+        latest = runs.latest_run(tenant_id, scope_kind, scope_id)
+        score = (latest or {}).get("scorecard", {}).get("workload_score") if latest else None
+        if score is None:
+            # No runs yet for the demo scope — seed the demo profile to get a current score.
+            snap = demo.seed_demo(tenant_id=tenant_id, scope_id=scope_id)
+            score = snap.get("scorecard", {}).get("workload_score")
+        coverage_trends.seed_demo_series("performance", tenant_id, scope_kind, scope_id, current_pct=score)
+    return coverage_trends.trend("performance", tenant_id, scope_kind, scope_id)
 
 
 @router.post("/refresh/stream")

@@ -34,6 +34,9 @@ uvicorn.err.log
 # --- Internal / non-distributable assets -------------------------------------
 sap.txt
 
+# Spreadsheets (workbooks, exports, scratch) — not distributable.
+*.xlsx
+
 # --- Presentation / deck working files (non-distributable) -------------------
 # The pitch deck, its product screenshots, and its build scripts are internal.
 docs/deck-assets/

@@ -105,6 +105,10 @@ function ArchitecturesList() {
   const [sortBy, setSortBy] = useState<"updated" | "name" | "health" | "resources">("updated");
   const [showThumbs, setShowThumbs] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showTrash, setShowTrash] = useState(false);
+
+  const trashQ = useQuery({ queryKey: ["architecturesTrash"], queryFn: api.trashedArchitectures, enabled: showTrash });
+  const trashed = trashQ.data?.architectures ?? [];
 
   const architectures = q.data?.architectures ?? [];
   const collections = collQ.data?.collections ?? [];
@@ -130,9 +134,35 @@ function ArchitecturesList() {
   }
 
   async function del(id: string) {
-    if (!window.confirm("Delete this architecture?")) return;
-    try { await api.deleteArchitecture(id); qc.invalidateQueries({ queryKey: ["architectures"] }); }
-    catch (e) { setMsg(formatError(e)); }
+    if (!window.confirm("Move this architecture to the Trash?")) return;
+    try {
+      await api.deleteArchitecture(id);
+      qc.invalidateQueries({ queryKey: ["architectures"] });
+      qc.invalidateQueries({ queryKey: ["architecturesTrash"] });
+      setMsg("");
+    } catch (e) { setMsg(formatError(e)); }
+  }
+
+  async function restore(id: string) {
+    try {
+      await api.restoreArchitecture(id);
+      qc.invalidateQueries({ queryKey: ["architectures"] });
+      qc.invalidateQueries({ queryKey: ["architecturesTrash"] });
+    } catch (e) { setMsg(formatError(e)); }
+  }
+  async function purge(id: string) {
+    if (!window.confirm("Permanently delete this architecture? This cannot be undone.")) return;
+    try {
+      await api.purgeArchitecture(id);
+      qc.invalidateQueries({ queryKey: ["architecturesTrash"] });
+    } catch (e) { setMsg(formatError(e)); }
+  }
+  async function emptyTrash() {
+    if (!window.confirm("Permanently delete ALL architectures in the Trash? This cannot be undone.")) return;
+    try {
+      await api.emptyArchitectureTrash();
+      qc.invalidateQueries({ queryKey: ["architecturesTrash"] });
+    } catch (e) { setMsg(formatError(e)); }
   }
 
   async function changeState(id: string, state: ArchitectureState) {
@@ -237,6 +267,7 @@ function ArchitecturesList() {
           <div className="flex shrink-0 gap-2">
             <button onClick={() => navigate("/architectures/memory")} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50">🧠 Memory</button>
             <button onClick={() => setManaging(true)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50">🗂️ Categories</button>
+            <button onClick={() => setShowTrash((v) => !v)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${showTrash ? "border-brand/40 bg-brand/5 text-brand" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>🗑 Trash</button>
             <button onClick={() => setCreating(true)} className="rounded-lg border border-brand/40 px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5">✨ From a workload (AI)</button>
             <button onClick={() => void blank()} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90">+ Blank</button>
           </div>
@@ -245,6 +276,50 @@ function ArchitecturesList() {
         {msg && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>}
         {creating && <FromWorkloadModal onClose={() => setCreating(false)} onQueued={() => setCreating(false)} />}
         {managing && <ManageCategoriesModal collections={collections} onClose={() => setManaging(false)} />}
+
+        {showTrash && (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                  🗑 Trash
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">{trashed.length}</span>
+                </h2>
+                <p className="mt-0.5 text-xs text-gray-500">Deleted architectures are kept here — restorable (with their history) until you permanently delete them.</p>
+              </div>
+              {trashed.length > 0 && (
+                <button onClick={() => void emptyTrash()} className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50">Empty trash</button>
+              )}
+            </div>
+            {trashQ.isLoading ? (
+              <div className="text-sm text-gray-500">Loading…</div>
+            ) : trashed.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-gray-400">Trash is empty.</div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {trashed.map((a) => (
+                  <div key={a.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-semibold text-gray-700">{a.name}</span>
+                      {a.source === "ai" && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">✨ AI</span>}
+                    </div>
+                    {a.description && <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{a.description}</p>}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.nodes.length} resources</span>
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{a.edges.length} links</span>
+                      {a.workload_name && <span>· {a.workload_name}</span>}
+                    </div>
+                    {a.deleted_at && <div className="mt-1.5 text-[10px] text-gray-400">Deleted {formatTimestamp(a.deleted_at)}</div>}
+                    <div className="mt-3 flex items-center gap-2">
+                      <button onClick={() => void restore(a.id)} className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10">↩ Restore</button>
+                      <button onClick={() => void purge(a.id)} className="ml-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50">Delete forever</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <GenerationJobs />
 
@@ -758,6 +833,7 @@ const ACTIVITY_ICON: Record<string, string> = {
   cloned: "📑",
   cloned_to: "📋",
   restored: "↩️",
+  trashed: "🗑️",
 };
 
 function ActivityModal({ architectureId, onClose }: { architectureId: string; onClose: () => void }) {

@@ -238,14 +238,16 @@ function IdentityFindingsPanel() {
               />
             </div>
             <span className="text-xs text-gray-500">
-              {data ? (
+              {!data ? (
+                "—"
+              ) : data.never_loaded ? (
+                <span className="text-amber-600">Not loaded yet — press Refresh</span>
+              ) : (
                 <>
                   Updated {agoText(data.age_seconds)}
                   {data.stale && <span className="ml-1 text-amber-600">· stale</span>}
                   <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">cached</span>
                 </>
-              ) : (
-                "—"
               )}
             </span>
             <button
@@ -318,6 +320,33 @@ function IdentityFindingsPanel() {
         ) : overviewQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {formatError(overviewQ.error)}
+          </div>
+        ) : data?.never_loaded ? (
+          <div className="mx-auto max-w-2xl py-16 text-center">
+            <div className="text-3xl">🔐</div>
+            <h2 className="mt-2 text-base font-semibold text-gray-900">Identity posture not loaded yet</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Scanning Microsoft Entra &amp; Azure for expiring credentials, ownerless apps, MFA and
+              conditional-access gaps takes a moment, so it doesn&apos;t run automatically. Press Refresh
+              to build the snapshot — it&apos;s then cached until you refresh again.
+            </p>
+            {msg && !msg.ok && (
+              <div className="mx-auto mt-3 max-w-md rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                {msg.text}
+              </div>
+            )}
+            <button
+              onClick={() => void doRefresh()}
+              disabled={refreshing}
+              className="mt-4 rounded-lg border bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {refreshing ? "Scanning…" : "↻ Refresh now"}
+            </button>
+            {!data.connection_configured && (
+              <p className="mt-3 text-xs text-amber-700">
+                No default Azure connection — configure one in Settings → Azure Tenants first.
+              </p>
+            )}
           </div>
         ) : (
           <div className="mx-auto max-w-5xl space-y-4">

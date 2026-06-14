@@ -31,9 +31,13 @@ Advisor, and a dozen blades just to answer one question. **Azure Support Agent p
 in the driver's seat** — it talks to your subscription through the official **Azure MCP
 server** and a **Microsoft Graph (Entra ID) MCP server**, reasons over live evidence, and
 turns *"why is the website throwing 5xx?"* into a ranked, validated answer — with the
-diagrams, assessments, and dashboards to back it up.
+diagrams, assessments, and dashboards to back it up. And it doesn't just wait to be asked:
+a whole **Proactive Support** suite continuously scans your estate for coverage gaps and
+looming retirements, while scheduled autonomous agents push findings to Teams, Jira, or
+ServiceNow before they bite.
 
 - 🧠 **Agentic, not just a chatbot** — a War Room of specialist agents investigates in parallel against your real Azure data.
+- 🛡️ **Proactive, not just reactive** — a Proactive Support suite (Assessments · Identity · Monitoring, Telemetry & Backup/DR coverage · Retirement Radar · Telemetry Intelligence · Performance Profiler) surfaces risks before you ask, and scheduled autonomous agents notify you via connectors.
 - 🏠 **Runs in your tenant** — one-click deploy to Azure Container Apps; your data never leaves your subscription.
 - 🔒 **Safe by default** — Azure access is **read-only**, writes are **approval-gated + audited**, and AI providers stay **disabled until you configure them**.
 - 🧰 **A whole workbench** — chat, investigations, architectures, inventory, assessments, policy, monitoring, automations, and more.

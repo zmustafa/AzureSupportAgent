@@ -85,6 +85,10 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         "deleted_at": "DATETIME",
         "resource_count": "INTEGER",
         "resources_json": "JSON",
+        "catalog_version": "VARCHAR(32)",
+        "schema_version": "INTEGER",
+        "completeness_pct": "INTEGER",
+        "confidence": "VARCHAR(8)",
     },
 }
 

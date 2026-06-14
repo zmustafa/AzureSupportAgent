@@ -225,6 +225,22 @@ async def list_architectures_endpoint(principal: Principal = Depends(get_princip
     return {"architectures": arch_registry.list_architectures(principal.tenant_id)}
 
 
+# ----------------------------------------------------------------------------- Trash
+# Declared BEFORE GET /{architecture_id} so "/architectures/trash" isn't captured as an
+# architecture id. Soft-deleted architectures live here until restored or purged.
+@router.get("/trash")
+async def list_trashed_architectures_endpoint(principal: Principal = Depends(get_principal)):
+    """Architectures currently in the Trash (soft-deleted, restorable)."""
+    return {"architectures": arch_registry.list_trashed_architectures(principal.tenant_id)}
+
+
+@router.post("/trash/empty")
+async def empty_architecture_trash_endpoint(principal: Principal = Depends(get_principal)):
+    """Permanently delete every architecture in the Trash (tenant-scoped)."""
+    deleted = arch_registry.empty_architecture_trash(principal.tenant_id)
+    return {"ok": True, "deleted": deleted}
+
+
 # --------------------------------------------------------------- Architecture Memory
 # Declared BEFORE GET /{architecture_id} so "/architectures/memories" and
 # "/architectures/memory/catalog" aren't captured as an architecture id.
@@ -288,9 +304,29 @@ async def upsert_architecture_endpoint(
 
 
 @router.delete("/{architecture_id}")
-async def delete_architecture_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
-    if not arch_registry.delete_architecture(architecture_id):
+async def delete_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+    """Soft-delete: move the architecture to the Trash (restorable until purged)."""
+    if not arch_registry.delete_architecture(architecture_id, actor=_actor(principal)):
         raise HTTPException(status_code=404, detail="Architecture not found.")
+    return {"ok": True}
+
+
+@router.post("/{architecture_id}/restore")
+async def restore_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+    """Restore a trashed architecture back into the active list."""
+    arch = arch_registry.restore_architecture(architecture_id, actor=_actor(principal))
+    if arch is None:
+        raise HTTPException(status_code=404, detail="Architecture not in trash.")
+    return {"architecture": arch}
+
+
+@router.delete("/{architecture_id}/purge")
+async def purge_architecture_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+    """Permanently delete a single trashed architecture (hard delete)."""
+    arch = arch_registry.get_architecture(architecture_id, include_deleted=True)
+    if arch is None or not arch.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="Architecture not in trash.")
+    arch_registry.purge_architecture(architecture_id)
     return {"ok": True}
 
 

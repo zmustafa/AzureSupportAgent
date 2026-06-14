@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { TrendChart } from "./TrendChart";
 
 const STATE_TONE: Record<string, string> = {
   breaching: "bg-red-500",
@@ -41,6 +42,26 @@ function scoreTone(score: number): string {
   if (score >= 80) return "text-green-600";
   if (score >= 50) return "text-amber-600";
   return "text-red-600";
+}
+
+// Circular performance-score gauge (mirrors the Telemetry Coverage donut). Shows the
+// 0-100 score with a green/amber/red ring; a null score renders a muted placeholder.
+function ScoreDonut({ score }: { score: number | null | undefined }) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  const pct = typeof score === "number" ? Math.max(0, Math.min(100, score)) : null;
+  const dash = ((pct ?? 0) / 100) * c;
+  const color = pct == null ? "#e5e7eb" : pct >= 80 ? "#16a34a" : pct >= 50 ? "#d97706" : "#dc2626";
+  return (
+    <svg viewBox="0 0 80 80" className="h-20 w-20 shrink-0">
+      <circle cx="40" cy="40" r={r} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+      {pct != null && (
+        <circle cx="40" cy="40" r={r} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"
+          strokeDasharray={`${dash} ${c - dash}`} transform="rotate(-90 40 40)" />
+      )}
+      <text x="40" y="45" textAnchor="middle" className="fill-gray-900 text-[18px] font-semibold">{pct ?? "—"}</text>
+    </svg>
+  );
 }
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -90,6 +111,7 @@ export function PerformancePanel() {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [ticketOpen, setTicketOpen] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
@@ -113,6 +135,21 @@ export function PerformancePanel() {
     enabled,
   });
   const runs = runsQ.data?.runs ?? [];
+
+  // Trash — trashed runs for this scope, only fetched when the Trash panel is open.
+  const trashQ = useQuery({
+    queryKey: ["perf-runs-trash", scopeKind, effWorkloadId, subId],
+    queryFn: () => api.perfTrashedRuns(params),
+    enabled: enabled && showTrash,
+  });
+  const trashed = trashQ.data?.runs ?? [];
+
+  // Performance-score trend over time (loads with the scope; refetched after each run).
+  const trendQ = useQuery({
+    queryKey: ["perf-trend", scopeKind, effWorkloadId, subId],
+    queryFn: () => api.coverageTrend("performance", params),
+    enabled,
+  });
 
   // Clear the shown run when the scope changes.
   useEffect(() => {
@@ -160,6 +197,7 @@ export function PerformancePanel() {
         onDone: (snap) => {
           setData(snap);
           runsQ.refetch();
+          trendQ.refetch();
         },
         onError: (m) => setMsg({ text: m, ok: false }),
       });
@@ -185,14 +223,57 @@ export function PerformancePanel() {
   }
 
   async function deleteRun(runId: string) {
-    if (!window.confirm("Delete this historic performance profile?")) return;
+    if (!window.confirm("Move this profile run to the Trash?")) return;
     setBusy(`del:${runId}`);
     setMsg(null);
     try {
       await api.deletePerfRun(runId);
       if (data?.id === runId) setData(null);
       await runsQ.refetch();
-      setMsg({ text: "Deleted profile run.", ok: true });
+      trashQ.refetch();
+      setMsg({ text: "Moved to Trash. Restore it from the Trash panel.", ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreRun(runId: string) {
+    setBusy(`restore:${runId}`);
+    setMsg(null);
+    try {
+      await api.restorePerfRun(runId);
+      await Promise.all([runsQ.refetch(), trashQ.refetch()]);
+      setMsg({ text: "Restored profile run.", ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function purgeRun(runId: string) {
+    if (!window.confirm("Permanently delete this profile run? This cannot be undone.")) return;
+    setBusy(`purge:${runId}`);
+    setMsg(null);
+    try {
+      await api.purgePerfRun(runId);
+      await trashQ.refetch();
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function emptyTrash() {
+    if (!window.confirm("Permanently delete ALL trashed profile runs for this scope? This cannot be undone.")) return;
+    setBusy("empty-trash");
+    setMsg(null);
+    try {
+      await api.emptyPerfTrash(params);
+      await trashQ.refetch();
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -252,13 +333,28 @@ export function PerformancePanel() {
     <div className="flex h-full min-h-0 flex-col">
       {/* Header + controls */}
       <div className="border-b bg-white px-5 py-3">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <ScoreDonut score={data?.scorecard?.workload_score ?? runs[0]?.workload_score ?? null} />
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">🔥 Performance Profiler</h1>
             <p className="text-xs text-gray-500">
               Profile a workload's metrics against its AMBA thresholds to find the binding bottleneck. Runs are kept as history — pick a window and click Run. Read-only.
             </p>
+            {data?.scorecard && (
+              <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
+                <span className="text-red-600">{data.scorecard.breaching} breaching</span>
+                <span className="text-amber-600">{data.scorecard.approaching} approaching</span>
+                <span className="text-green-600">{data.scorecard.healthy} healthy</span>
+                <span>· {data.scorecard.resources_profiled} resource(s) profiled</span>
+              </div>
+            )}
           </div>
+          {enabled && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Score trend</span>
+              <TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} unit="" deltaLabel="vs last run" />
+            </div>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as never)} className="rounded-md border px-2 py-1.5 text-sm">
               <option value="workload">By workload</option>
@@ -291,6 +387,13 @@ export function PerformancePanel() {
               className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
             >
               {running ? "Profiling…" : "▶ Run profile"}
+            </button>
+            <button
+              onClick={() => setShowTrash((v) => !v)}
+              title="Show trashed profile runs"
+              className={`rounded-md border px-3 py-1.5 text-sm font-medium ${showTrash ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}
+            >
+              🗑 Trash
             </button>
           </div>
         </div>
@@ -351,7 +454,57 @@ export function PerformancePanel() {
           </div>
         </div>
 
-        {/* Selected / just-run profile (below the grid) */}
+        {/* Trash panel (soft-deleted runs for this scope) */}
+        {showTrash && (
+          <div className="mb-5 rounded-lg border bg-white">
+            <div className="flex items-center justify-between border-b px-3 py-2">
+              <div className="flex items-center gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">🗑 Trash</h2>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">{trashed.length}</span>
+              </div>
+              {trashed.length > 0 && (
+                <button onClick={() => void emptyTrash()} disabled={busy === "empty-trash"}
+                  className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Empty trash</button>
+              )}
+            </div>
+            <p className="border-b px-3 py-1.5 text-[11px] text-gray-500">Deleted profile runs are kept here until you restore or permanently delete them.</p>
+            {trashQ.isLoading ? (
+              <div className="px-3 py-4 text-center text-sm text-gray-400">Loading…</div>
+            ) : trashed.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-gray-400">Trash is empty.</div>
+            ) : (
+              <table className="w-full text-[12px]">
+                <thead className="bg-gray-50 text-left text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2">Run time</th>
+                    <th className="px-3 py-2">Window</th>
+                    <th className="px-3 py-2">Score</th>
+                    <th className="px-3 py-2">Top bottleneck</th>
+                    <th className="px-3 py-2">Deleted</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trashed.map((r) => (
+                    <tr key={r.id} className="border-t hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-700">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</td>
+                      <td className="px-3 py-2 text-gray-500">{r.requested_start && r.requested_end ? "custom range" : r.window}</td>
+                      <td className={`px-3 py-2 font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</td>
+                      <td className="px-3 py-2 text-gray-600">{r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name}` : "—"}</td>
+                      <td className="px-3 py-2 text-gray-400">{r.deleted_at ? fmtTime(r.deleted_at) : "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => void restoreRun(r.id)} disabled={busy === `restore:${r.id}`}
+                          className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50">↩ Restore</button>
+                        <button onClick={() => void purgeRun(r.id)} disabled={busy === `purge:${r.id}`}
+                          className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete forever</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
         {running && !data ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-white p-10 text-center">
             <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none">

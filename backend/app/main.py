@@ -84,6 +84,16 @@ async def _startup() -> None:
             logging.getLogger("app.main").info("Seeded %d sample custom controls", added)
     except Exception:  # noqa: BLE001
         logging.getLogger("app.main").warning("Sample custom control seed failed", exc_info=True)
+    # Fail any assessment runs orphaned at 'queued'/'running' by a previous process — an
+    # in-flight run can't survive a restart, so they must not appear perpetually in progress.
+    from app.assessments.runner import reap_orphaned_runs
+
+    try:
+        reaped = await reap_orphaned_runs()
+        if reaped:
+            logging.getLogger("app.main").info("Reaped %d orphaned assessment run(s)", reaped)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app.main").warning("Assessment orphan reaper failed", exc_info=True)
     # Backfill sub-agent categories (idempotent) so existing agents are grouped.
     from app.automations.agents import seed_categories
 

@@ -21,6 +21,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _norm_scope(scope: str) -> str:
+    # Canonicalize multi-token scopes so order/dupes never mismatch on equality.
+    return ",".join(sorted({t.strip() for t in (scope or "").split(",") if t.strip()}))
+
+
 def _read() -> dict[str, Any]:
     if _PATH.exists():
         try:
@@ -60,7 +65,7 @@ def _summary_dict(rec: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_snapshot(
-    tenant_id: str, connection_id: str, payload: dict[str, Any], actor: str = ""
+    tenant_id: str, connection_id: str, payload: dict[str, Any], actor: str = "", scope: str = ""
 ) -> dict[str, Any]:
     """Persist a compact snapshot from a full inventory payload. Returns the summary."""
     data = _read()
@@ -71,6 +76,7 @@ def save_snapshot(
         "id": sid,
         "tenant_id": tenant_id or "",
         "connection_id": connection_id or "",
+        "scope": _norm_scope(scope),
         "created_at": _now(),
         "created_by": actor,
         "total_resources": summary.get("total_resources", len(resources)),
@@ -88,11 +94,17 @@ def save_snapshot(
     return _summary_dict(rec)
 
 
-def list_snapshots(tenant_id: str, connection_id: str | None = None, limit: int = 60) -> list[dict[str, Any]]:
+def list_snapshots(
+    tenant_id: str, connection_id: str | None = None, limit: int = 60, scope: str = ""
+) -> list[dict[str, Any]]:
     data = _read()
     out = [r for r in data.values() if (r.get("tenant_id") or "") in ("", tenant_id)]
     if connection_id:
         out = [r for r in out if (r.get("connection_id") or "") in ("", connection_id)]
+    # Scope-isolate: a selected scope only sees its own snapshots. Empty scope (whole tenant)
+    # sees only whole-tenant snapshots, so drift never mixes a scoped capture with a full one.
+    norm = _norm_scope(scope)
+    out = [r for r in out if _norm_scope(r.get("scope") or "") == norm]
     out.sort(key=lambda s: s.get("created_at", ""), reverse=True)
     return [_summary_dict(r) for r in out[:limit]]
 
@@ -114,8 +126,8 @@ def delete_snapshot(tenant_id: str, snapshot_id: str) -> bool:
     return False
 
 
-def latest_snapshot(tenant_id: str, connection_id: str | None = None) -> dict[str, Any] | None:
-    snaps = list_snapshots(tenant_id, connection_id, limit=1)
+def latest_snapshot(tenant_id: str, connection_id: str | None = None, scope: str = "") -> dict[str, Any] | None:
+    snaps = list_snapshots(tenant_id, connection_id, limit=1, scope=scope)
     if not snaps:
         return None
     return get_snapshot(tenant_id, snaps[0]["id"])

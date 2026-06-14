@@ -138,6 +138,7 @@ export type IdentityOverview = {
   ttl_s: number;
   age_seconds: number | null;
   stale: boolean;
+  never_loaded?: boolean;
 };
 
 // ---- App Registrations (Identity tab) -------------------------------------------
@@ -688,6 +689,7 @@ export type RadarSnapshot = {
   ttl_s: number;
   age_seconds: number | null;
   stale_cache: boolean;
+  never_loaded?: boolean;
 };
 
 export type RadarClassificationRule = {
@@ -944,6 +946,19 @@ export type PerfRunSummary = {
   top_bottleneck: { resource_name: string; metric_name: string; pct_of_threshold: number | null; state: string } | null;
   demo: boolean;
   triggered_by: string;
+  deleted_at?: string;
+};
+
+// ---- Coverage / posture trend (shared by the 4 dashboards) ----------------------
+export type CoverageTrendPoint = { at: string; pct: number | null; extra?: Record<string, number>; demo?: boolean };
+export type CoverageTrend = {
+  feature: string;
+  points: CoverageTrendPoint[];
+  current: number | null;
+  previous: number | null;
+  delta: number | null;
+  count: number;
+  unit: string;
 };
 
 // ---- Private Network Reachability Analyzer (netcheck) ---------------------------
@@ -1199,7 +1214,16 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  monitor: () => http<MonitorOverview>("/admin/monitor"),
+  monitor: (days?: number, workloadId?: string) =>
+    http<MonitorOverview>(
+      `/admin/monitor${(() => {
+        const p = new URLSearchParams();
+        if (days) p.set("days", String(days));
+        if (workloadId) p.set("workload_id", workloadId);
+        const qs = p.toString();
+        return qs ? `?${qs}` : "";
+      })()}`,
+    ),
   monitorDashboards: () =>
     http<{ dashboards: MonitorDashboard[] }>("/admin/monitor/dashboards"),
   upsertMonitorDashboard: (body: Partial<MonitorDashboard>) =>
@@ -1831,6 +1855,13 @@ export const api = {
     }),
   deleteArchitecture: (id: string) =>
     http<{ ok: boolean }>(`/architectures/${id}`, { method: "DELETE" }),
+  trashedArchitectures: () => http<{ architectures: Architecture[] }>("/architectures/trash"),
+  restoreArchitecture: (id: string) =>
+    http<{ architecture: Architecture }>(`/architectures/${id}/restore`, { method: "POST", body: "{}" }),
+  purgeArchitecture: (id: string) =>
+    http<{ ok: boolean }>(`/architectures/${id}/purge`, { method: "DELETE" }),
+  emptyArchitectureTrash: () =>
+    http<{ ok: boolean; deleted: number }>("/architectures/trash/empty", { method: "POST", body: "{}" }),
   cloneArchitecture: (id: string) =>
     http<{ architecture: Architecture }>(`/architectures/${id}/clone`, { method: "POST", body: "{}" }),
   architectureRevisions: (id: string) =>
@@ -1943,6 +1974,7 @@ export const api = {
   enqueueAssessments: (body: {
     workload_ids: string[];
     pillars: string[];
+    pack?: string | null;
     connection_id?: string | null;
     use_ai?: boolean;
   }) =>
@@ -1950,6 +1982,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  assessmentActionPlan: (id: string) =>
+    http<AssessmentActionPlan>(`/assessments/runs/${id}/action-plan`),
+  assessmentByResource: (id: string) =>
+    http<{ run_id: string; workload_name: string | null; resources: AssessmentResourceRollup[]; count: number }>(
+      `/assessments/runs/${id}/by-resource`,
+    ),
+  assessmentAttestations: (workloadId: string) =>
+    http<{ attestations: Record<string, { status: string; note?: string; by?: string; at?: string }> }>(
+      `/assessments/attestations?workload_id=${encodeURIComponent(workloadId)}`,
+    ),
+  setAssessmentAttestation: (body: { workload_id: string; check_id: string; status: string; note?: string }) =>
+    http<{ attestation: unknown }>("/assessments/attestations", { method: "PUT", body: JSON.stringify(body) }),
   deleteAssessmentRun: (id: string) =>
     http<{ ok: boolean }>(`/assessments/runs/${id}`, { method: "DELETE" }),
   cancelAssessmentRun: (id: string) =>
@@ -2032,6 +2076,14 @@ export const api = {
       "/identity/app-registrations/job" +
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
+  // Coverage / posture trend (shared shape across the 4 dashboards).
+  coverageTrend: (feature: "amba" | "telemetry" | "backupdr" | "performance", params: { workload_id?: string; subscription_id?: string }) => {
+    const base = feature === "performance" ? "/performance/trend" : `/${feature}/trend`;
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<CoverageTrend>(`${base}?${q.toString()}`);
+  },
   // AMBA Monitoring Coverage
   ambaCoverage: (params: { workload_id?: string; subscription_id?: string }) => {
     const q = new URLSearchParams();
@@ -2359,6 +2411,20 @@ export const api = {
   },
   perfRun: (run_id: string) => http<{ ok: boolean; run?: PerfProfile; detail?: string }>(`/performance/run/${encodeURIComponent(run_id)}`),
   deletePerfRun: (run_id: string) => http<{ ok: boolean }>(`/performance/run/${encodeURIComponent(run_id)}`, { method: "DELETE" }),
+  perfTrashedRuns: (params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ runs: PerfRunSummary[] }>(`/performance/runs/trash?${q.toString()}`);
+  },
+  restorePerfRun: (run_id: string) => http<{ ok: boolean }>(`/performance/run/${encodeURIComponent(run_id)}/restore`, { method: "POST", body: "{}" }),
+  purgePerfRun: (run_id: string) => http<{ ok: boolean }>(`/performance/run/${encodeURIComponent(run_id)}/purge`, { method: "DELETE" }),
+  emptyPerfTrash: (params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ ok: boolean; deleted: number }>(`/performance/runs/trash/empty?${q.toString()}`, { method: "POST", body: "{}" });
+  },
   registerPerfFindings: (body: { workload_id: string; workload_name: string; bottlenecks: PerfBottleneck[] }) =>
     http<{ ok: boolean; run_id: string; finding_count: number }>("/performance/findings/register", {
       method: "POST",
@@ -2963,8 +3029,19 @@ export interface RemediationGap {
 export interface PolicyConflict {
   policy_definition_id: string;
   definition_name: string;
+  is_initiative?: boolean;
+  category?: string;
   assignment_count: number;
-  scopes: { id: string; label: string; effect: string }[];
+  scope_count?: number;
+  scopes: {
+    id: string;
+    scope?: string;
+    scope_kind?: string;
+    label: string;
+    assignment_name?: string;
+    effect: string;
+    enforcement_mode?: string;
+  }[];
   kind: string;
   hint: string;
 }
@@ -4434,6 +4511,7 @@ export interface SiemDestinationInput {
 
 export interface MonitorOverview {
   generated_at: string;
+  window?: { days: number | null; since: string | null };
   totals: {
     chats: number;
     messages: number;
@@ -4486,6 +4564,8 @@ export interface MonitorOverview {
   providers: { provider: string; count: number }[];
   activity_14d: { date: string; messages: number; tool_calls: number; runs: number }[];
   activity_24h: { hour: string; messages: number; tool_calls: number }[];
+  activity_range?: { ts: string; bucket: "hour" | "day"; messages: number; tool_calls: number; runs: number }[];
+  heatmap?: { matrix: number[][]; max: number };
   top_chats: {
     id: string;
     title: string;
@@ -4513,6 +4593,8 @@ export interface MonitorOverview {
       pillars: string[];
       at: string | null;
     }[];
+    workload_options?: { workload_id: string; workload_name: string }[];
+    selected_workload_id?: string;
     last_assessed_at: string | null;
   };
   automations: {
@@ -5074,16 +5156,34 @@ export interface AssessmentCheckMeta {
   severity: Severity;
   weight: number;
   resource_types: string[];
-  frameworks: { cis?: string[]; nist?: string[]; iso?: string[] };
+  frameworks: { cis?: string[]; nist?: string[]; iso?: string[]; mcsb?: string[]; pci?: string[] };
   remediation: string;
   remediation_command: string;
+  metric_backed?: boolean;
   custom?: boolean;
   kql?: string;
   enabled?: boolean;
+  kind?: string; // graph | metric | manual | signal
+  impact?: string; // high | medium | low
+  effort?: string; // low | medium | high
+  sub_category?: string; // WAF sub-pillar (reliability)
+  source?: string; // built-in | aprl | advisor | custom
+  learn_more?: string[];
+}
+
+export interface AssessmentPack {
+  id: string;
+  label: string;
+  short: string;
+  icon: string;
+  pillars: string[];
+  description: string;
 }
 
 export interface AssessmentCatalog {
   pillars: AssessmentPillarMeta[];
+  packs?: AssessmentPack[];
+  sub_categories?: string[];
   checks: Record<string, AssessmentCheckMeta[]>;
   frameworks?: Record<string, { label: string; icon: string }>;
   score_bands?: { good: number; warn: number };
@@ -5146,6 +5246,7 @@ export interface Architecture {
   ai?: { rationale?: string; confidence?: number | null; resource_count?: number };
   state_changed_by?: string;
   state_changed_at?: string;
+  deleted_at?: string;
   created_by?: string;
   updated_by?: string;
   created_at?: string;
@@ -5462,11 +5563,13 @@ export async function streamArchitectureFromWorkload(
 
 export interface AssessmentPillarScore {
   score: number | null;
+  worst_case_score?: number | null;
   passed: number;
   failed: number;
   na: number;
   waived?: number;
   errored: number;
+  manual?: number;
   total: number;
 }
 
@@ -5475,6 +5578,12 @@ export interface AssessmentTotals {
   failed: number;
   na: number;
   waived?: number;
+  errored?: number;
+  manual?: number;
+  evaluated?: number;
+  evaluatable?: number;
+  completeness_pct?: number;
+  confidence?: string;
   by_severity: Record<string, number>;
 }
 
@@ -5503,15 +5612,23 @@ export interface AssessmentFinding {
   description: string;
   severity: Severity;
   weight: number;
-  frameworks: { cis?: string[]; nist?: string[]; iso?: string[] };
+  frameworks: { cis?: string[]; nist?: string[]; iso?: string[]; mcsb?: string[]; pci?: string[] };
   remediation: string;
   remediation_command: string;
   resource_types: string[];
-  status: "pass" | "fail" | "not_applicable" | "error" | "waived";
+  status: "pass" | "fail" | "not_applicable" | "error" | "waived" | "manual";
   flagged_count: number;
   flagged_resources: AssessmentFlaggedResource[];
   ai_rationale?: string;
   error?: string;
+  partial?: boolean;
+  kind?: string;
+  impact?: string;
+  effort?: string;
+  sub_category?: string;
+  source?: string;
+  learn_more?: string[];
+  attestation?: { status: string; note?: string; by?: string; at?: string };
   waiver?: { justification: string; approver: string };
 }
 
@@ -5606,6 +5723,11 @@ export interface AssessmentRunSummary {
   pillars: string[];
   status: string;
   overall_score: number | null;
+  worst_case_score?: number | null;
+  completeness_pct?: number | null;
+  confidence?: string | null;
+  catalog_version?: string | null;
+  schema_version?: number | null;
   scores: Record<string, AssessmentPillarScore>;
   totals: AssessmentTotals;
   severity: Severity;
@@ -5638,6 +5760,44 @@ export interface AssessmentRunDetail extends AssessmentRunSummary {
   compliance?: Record<string, AssessmentComplianceFramework>;
 }
 
+export interface AssessmentActionPlanItem {
+  rank: number;
+  check_id: string;
+  title: string;
+  pillar: string;
+  sub_category?: string;
+  severity: Severity;
+  impact?: string;
+  effort?: string;
+  flagged_count: number;
+  partial?: boolean;
+  priority: number;
+  remediation?: string;
+  remediation_command?: string;
+  ai_rationale?: string;
+  source?: string;
+}
+
+export interface AssessmentActionPlan {
+  run_id: string;
+  workload_name: string | null;
+  overall_score: number | null;
+  completeness_pct?: number | null;
+  confidence?: string | null;
+  plan: AssessmentActionPlanItem[];
+  pending_manual: { check_id: string; title: string; pillar: string; sub_category?: string; severity: Severity; remediation?: string }[];
+}
+
+export interface AssessmentResourceRollup {
+  id: string;
+  name: string;
+  type: string;
+  resource_group: string;
+  subscription_id: string;
+  worst_severity: Severity;
+  findings: { check_id: string; title: string; pillar: string; severity: Severity; remediation_command?: string }[];
+}
+
 export interface AssessmentHandlers {
   onStatus?: (data: { phase: string; message: string; [k: string]: unknown }) => void;
   onCheckStart?: (data: { index: number; total: number; check_id: string; title: string; pillar: string }) => void;
@@ -5652,6 +5812,9 @@ export interface AssessmentHandlers {
   onDone?: (data: {
     run_id: string;
     overall_score: number | null;
+    worst_case_score?: number | null;
+    completeness_pct?: number | null;
+    confidence?: string | null;
     scores: Record<string, AssessmentPillarScore>;
     totals: AssessmentTotals;
     severity: Severity;
@@ -5664,7 +5827,7 @@ export interface AssessmentHandlers {
 
 /** Stream an assessment run over SSE. */
 export async function streamAssessment(
-  body: { workload_id: string; pillars: string[]; connection_id?: string; use_ai?: boolean },
+  body: { workload_id: string; pillars: string[]; pack?: string | null; connection_id?: string; use_ai?: boolean },
   handlers: AssessmentHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

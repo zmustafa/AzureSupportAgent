@@ -625,6 +625,194 @@ async def run_kql_capture(
     )
 
 
+# Paged ceiling for a single collected Resource Graph query (vs the 1000-row single page
+# of run_kql_capture). Assessment controls page up to this many violating resources so a
+# large estate's true violation count isn't silently truncated to 1000.
+KQL_COLLECT_MAX_ROWS = 5000
+# Substrings in CLI stderr that indicate a transient/throttle condition worth retrying.
+_CLI_RETRYABLE = ("429", "toomanyrequests", "throttl", "rate limit", "timed out", "503", "502", "504", "500 ")
+
+
+@dataclass
+class KqlResult:
+    """The result of a fully-paged, fail-closed Resource Graph collection.
+
+    ``ok`` is False on ANY hard failure (auth, throttle-exhausted, JSON parse). Callers MUST
+    treat ``ok is False`` as "could not evaluate" — never as an empty (passing) result. This
+    is the contract that prevents a truncated/garbled response from masquerading as a clean
+    pass. ``complete`` is False when ``max_rows`` capped the violating set (more exist)."""
+
+    ok: bool
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+    complete: bool = True
+    pages: int = 0
+    total: int | None = None  # ARG's full record count (accurate even when rows are capped)
+
+
+def _normalize_kql(kql: str) -> tuple[str, str]:
+    """Normalize a KQL body to a single safe line (mirrors run_kql_stream). Returns
+    (query, error) — error non-empty if the query is empty or too long."""
+    query = (kql or "").strip()
+    if not query:
+        return "", "Empty query."
+    if len(query) > 8000:
+        return "", "Query is too long."
+    query = re.sub(r"//[^\n]*", "", query)
+    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = re.sub(r"[ \t]{2,}", " ", query)
+    return query, ""
+
+
+async def _graph_page_cli(
+    az_path: str,
+    query: str,
+    env: dict[str, str],
+    timeout: int,
+    page_size: int,
+    skip_token: str,
+) -> CaptureResult:
+    """Run ONE page of `az graph query` (full wrapper output incl. skip_token), captured."""
+    run_argv = [
+        az_path, "graph", "query",
+        "-q", query,
+        "--first", str(page_size),
+        "--output", "json",
+    ]
+    if skip_token:
+        run_argv += ["--skip-token", skip_token]
+    return await _capture(
+        _stream_process(run_argv, env, timeout, label="az graph query (paged)", destructive=False)
+    )
+
+
+async def run_kql_collect(
+    kql: str,
+    connection: dict[str, Any] | None,
+    *,
+    session_config_dir: str | None = None,
+    max_rows: int = KQL_COLLECT_MAX_ROWS,
+    page_size: int = 1000,
+) -> KqlResult:
+    """Run a Resource Graph (KQL) query and collect ALL rows across pages, FAIL-CLOSED.
+
+    This is the assessment-grade replacement for ``run_kql_capture`` + ``json.loads``:
+    - Pages through ``$skipToken`` (REST) / ``skip_token`` (CLI) up to ``max_rows``.
+    - Retries throttle (429) and transient 5xx with exponential backoff + jitter.
+    - Returns ``ok=False`` on ANY auth/throttle/parse failure so a control can be marked
+      ``error`` (excluded from the score) instead of a false ``pass``.
+
+    Mirrors ``run_kql_stream``'s SP-vs-REST branching so it works under service principals,
+    managed identity / pasted tokens (REST), and ambient local ``az`` login.
+    """
+    import asyncio
+    import json as _json
+    import random
+
+    query, qerr = _normalize_kql(kql)
+    if qerr:
+        return KqlResult(ok=False, error=qerr)
+
+    settings = load_settings()
+    timeout = int(settings.get("command_timeout_seconds", 120))
+    page_size = max(1, min(1000, int(page_size)))
+    sp = _is_service_principal(connection)
+
+    # --- REST path: non-service-principal (managed identity / pasted token). ----------------
+    if not sp:
+        from app.azure.arm import query_resource_graph_paged
+        from app.azure.credentials import get_arm_token
+
+        token, terr = await get_arm_token(connection)
+        if token:
+            rows, err, complete, total = await query_resource_graph_paged(
+                token, query, page_size=page_size, max_rows=max_rows
+            )
+            if err:
+                return KqlResult(ok=False, rows=rows, error=err, complete=False, total=total)
+            return KqlResult(ok=True, rows=rows, complete=complete, total=total)
+        # No token: only error out when we KNOW there is no ambient `az` to fall back to.
+        method = (connection or {}).get("auth_method", "")
+        if method == "az_cli_token" or os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"):
+            return KqlResult(ok=False, error=terr or "Could not acquire an Azure token for this connection.")
+        # else: fall through to ambient CLI (local dev default_chain).
+
+    # --- CLI path: service principals (and ambient local `az`). ------------------------------
+    az_path = shutil.which("az")
+    if not az_path:
+        return KqlResult(ok=False, error="'az' is not installed on the host.")
+
+    config_dir: str | None = None
+    own_config = False
+    try:
+        if sp:
+            if session_config_dir:
+                config_dir = session_config_dir
+            else:
+                config_dir = tempfile.mkdtemp(prefix="azexec-")
+                own_config = True
+                err = await _sp_login(connection, az_path, config_dir)
+                if err:
+                    return KqlResult(ok=False, error=err)
+        env = _run_env(connection, config_dir)
+
+        rows: list[dict[str, Any]] = []
+        skip_token = ""
+        complete = True
+        pages = 0
+        total: int | None = None
+        max_retries = 4
+        for _page in range(200):
+            cap: CaptureResult | None = None
+            for attempt in range(max_retries + 1):
+                cap = await _graph_page_cli(az_path, query, env, timeout, page_size, skip_token)
+                if cap.ok:
+                    break
+                blob = f"{cap.error} {cap.stderr}".lower()
+                transient = any(s in blob for s in _CLI_RETRYABLE)
+                if transient and attempt < max_retries:
+                    await asyncio.sleep(min(60.0, (2 ** attempt) + random.uniform(0, 0.5)))
+                    continue
+                break
+            if cap is None or not cap.ok:
+                return KqlResult(ok=False, rows=rows, error=(cap.error if cap else "Query failed."), complete=False, total=total)
+            # Fail-closed parse: a truncated/garbled wrapper is an ERROR, not an empty pass.
+            try:
+                wrapper = _json.loads(cap.stdout or "{}")
+            except (ValueError, TypeError) as e:
+                return KqlResult(ok=False, rows=rows, error=f"Result parse error: {e}", complete=False, total=total)
+            if isinstance(wrapper, list):
+                # Defensive: some az versions may already project to a list.
+                page_rows = wrapper
+                skip_token = ""
+            elif isinstance(wrapper, dict):
+                page_rows = wrapper.get("data", [])
+                skip_token = wrapper.get("skip_token") or wrapper.get("skipToken") or ""
+                if total is None:
+                    tr = wrapper.get("total_records")
+                    if tr is None:
+                        tr = wrapper.get("totalRecords")
+                    if isinstance(tr, (int, float)):
+                        total = int(tr)
+            else:
+                page_rows, skip_token = [], ""
+            if isinstance(page_rows, list):
+                rows.extend(page_rows)
+            pages += 1
+            if len(rows) >= max_rows:
+                rows = rows[:max_rows]
+                complete = not bool(skip_token)
+                break
+            if not skip_token:
+                break
+        else:
+            complete = not bool(skip_token)
+        return KqlResult(ok=True, rows=rows, complete=complete, pages=pages, total=total)
+    finally:
+        if config_dir and own_config:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+
 async def open_sp_session(connection: dict[str, Any] | None) -> tuple[str | None, str | None]:
     """Log a service-principal connection in ONCE into a fresh config dir, for reuse
     across many subsequent ``run_kql_capture(..., session_config_dir=...)`` calls.

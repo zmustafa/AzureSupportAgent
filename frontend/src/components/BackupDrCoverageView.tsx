@@ -10,6 +10,7 @@ import {
   type BackupDrRow,
 } from "../api";
 import { formatError } from "../utils/format";
+import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 
@@ -131,6 +132,13 @@ export function BackupDrCoveragePanel() {
   const data: BackupDrCoverage | undefined = enabled ? covQ.data : undefined;
   const allGaps = data?.gaps ?? [];
 
+  // % protected trend over time (loads with the coverage data).
+  const trendQ = useQuery({
+    queryKey: ["backupdr-trend", scopeKind, effectiveWorkloadId, subId],
+    queryFn: () => api.coverageTrend("backupdr", params),
+    enabled,
+  });
+
   function loadCoverage() {
     if (scopeReady) { setMsg(null); setLoadedScope(scopeKey); }
   }
@@ -141,6 +149,7 @@ export function BackupDrCoveragePanel() {
       const fresh = await api.refreshBackupDr(params);
       setLoadedScope(scopeKey);
       qc.setQueryData(["backupdr", scopeKind, effectiveWorkloadId, subId], fresh);
+      trendQ.refetch();
     } catch (e) { setMsg({ text: formatError(e), ok: false }); } finally { setRefreshing(false); }
   }
 
@@ -265,6 +274,12 @@ export function BackupDrCoveragePanel() {
               <span className="text-red-500">✗ {statusTotals.red}</span>
             </div>
           </div>
+          {enabled && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Protected trend</span>
+              <TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} />
+            </div>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
               <button onClick={() => setScopeKind("workload")} className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Workload</button>

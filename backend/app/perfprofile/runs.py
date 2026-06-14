@@ -70,6 +70,7 @@ def _summary(run: dict[str, Any]) -> dict[str, Any]:
         ),
         "demo": run.get("demo", False),
         "triggered_by": run.get("triggered_by", ""),
+        "deleted_at": run.get("deleted_at", ""),
     }
 
 
@@ -83,25 +84,54 @@ def save_run(tenant_id: str, scope_kind: str, scope_id: str, snapshot: dict[str,
     run["run_at"] = _now()
     run["triggered_by"] = actor
     runs.insert(0, run)
-    if len(runs) > _MAX_PER_SCOPE:
-        del runs[_MAX_PER_SCOPE:]
+    # Enforce the cap on ACTIVE (non-trashed) runs only, evicting the oldest active ones
+    # beyond the cap — trashed runs are preserved in the bucket until restored or purged.
+    active_positions = [i for i, r in enumerate(runs) if not r.get("deleted_at")]
+    if len(active_positions) > _MAX_PER_SCOPE:
+        for i in sorted(active_positions[_MAX_PER_SCOPE:], reverse=True):
+            del runs[i]
     _write(data)
+    # Record a compact trend point (performance score over time) for the trend chart.
+    try:
+        from app.core import coverage_trends
+
+        sc = snapshot.get("scorecard", {}) or {}
+        coverage_trends.record(
+            "performance", tenant_id or "default", scope_kind, scope_id,
+            pct=sc.get("workload_score"),
+            extra={k: sc.get(k) for k in ("breaching", "approaching", "healthy", "resources_profiled")},
+            demo=bool(snapshot.get("demo")),
+        )
+    except Exception:  # noqa: BLE001 - trend recording must never break a profile save
+        pass
     return run
 
 
 def list_runs(tenant_id: str, scope_kind: str, scope_id: str) -> list[dict[str, Any]]:
-    """Run summaries (newest first) for a scope."""
+    """Active run summaries (newest first) for a scope — trashed runs are excluded."""
     bucket = _read().get(tenant_id or "default", {})
     runs = bucket.get(_key(scope_kind, scope_id), [])
-    return [_summary(r) for r in runs]
+    return [_summary(r) for r in runs if not r.get("deleted_at")]
 
 
-def get_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
-    """Full run snapshot by id (searches all scopes within the tenant)."""
+def list_trashed_runs(tenant_id: str, scope_kind: str, scope_id: str) -> list[dict[str, Any]]:
+    """Trashed (soft-deleted) run summaries for a scope, most-recently-deleted first."""
+    bucket = _read().get(tenant_id or "default", {})
+    runs = bucket.get(_key(scope_kind, scope_id), [])
+    trashed = [_summary(r) for r in runs if r.get("deleted_at")]
+    trashed.sort(key=lambda r: r.get("deleted_at", ""), reverse=True)
+    return trashed
+
+
+def get_run(tenant_id: str, run_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
+    """Full run snapshot by id (searches all scopes within the tenant). Trashed runs are
+    excluded unless ``include_deleted`` is set."""
     bucket = _read().get(tenant_id or "default", {})
     for runs in bucket.values():
         for r in runs:
             if r.get("id") == run_id:
+                if r.get("deleted_at") and not include_deleted:
+                    return None
                 return r
     return None
 
@@ -109,19 +139,69 @@ def get_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
 def latest_run(tenant_id: str, scope_kind: str, scope_id: str) -> dict[str, Any] | None:
     bucket = _read().get(tenant_id or "default", {})
     runs = bucket.get(_key(scope_kind, scope_id), [])
-    return runs[0] if runs else None
+    for r in runs:  # newest-first; first active wins
+        if not r.get("deleted_at"):
+            return r
+    return None
 
 
 def delete_run(tenant_id: str, run_id: str) -> bool:
+    """Soft-delete: move a run to the Trash (set ``deleted_at``). Hidden from history but
+    restorable until purged. Returns False if not found or already trashed."""
     data = _read()
     bucket = data.get(tenant_id or "default", {})
-    for scope_key, runs in bucket.items():
+    for runs in bucket.values():
+        for r in runs:
+            if r.get("id") == run_id:
+                if r.get("deleted_at"):
+                    return False
+                r["deleted_at"] = _now()
+                _write(data)
+                return True
+    return False
+
+
+def restore_run(tenant_id: str, run_id: str) -> bool:
+    """Restore a trashed run back into active history. Returns False if not found or not
+    currently trashed."""
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    for runs in bucket.values():
+        for r in runs:
+            if r.get("id") == run_id:
+                if not r.get("deleted_at"):
+                    return False
+                r["deleted_at"] = ""
+                _write(data)
+                return True
+    return False
+
+
+def purge_run(tenant_id: str, run_id: str) -> bool:
+    """Permanently delete a single run (hard delete), regardless of trash state."""
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    for runs in bucket.values():
         for i, r in enumerate(runs):
             if r.get("id") == run_id:
                 del runs[i]
                 _write(data)
                 return True
     return False
+
+
+def empty_trash(tenant_id: str, scope_kind: str, scope_id: str) -> int:
+    """Permanently delete every trashed run for a scope. Returns the count removed."""
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    k = _key(scope_kind, scope_id)
+    runs = bucket.get(k) or []
+    keep = [r for r in runs if not r.get("deleted_at")]
+    removed = len(runs) - len(keep)
+    if removed:
+        bucket[k] = keep
+        _write(data)
+    return removed
 
 
 def delete_scope_runs(tenant_id: str, scope_kind: str, scope_id: str) -> int:

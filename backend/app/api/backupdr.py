@@ -109,6 +109,16 @@ async def refresh(
     # Shield the compute so it finishes (and writes the cache) even if the client navigates
     # away or the connection drops mid-refresh — the result is picked up on the next visit.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True))
+    # Record a compact trend point (% protected) so this scan can be charted over time.
+    from app.core import coverage_trends
+
+    sc = snap.get("scorecard", {}) or {}
+    coverage_trends.record(
+        "backupdr", principal.tenant_id or "default", scope_kind, scope_id,
+        pct=sc.get("pct_protected"),
+        extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
+        demo=bool(snap.get("demo")),
+    )
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id, actor_id=principal.subject, action="backupdr.refresh",
@@ -117,6 +127,30 @@ async def refresh(
     )
     await db.commit()
     return snap
+
+
+@router.get("/trend")
+async def trend(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """% protected trend points for the scope (chart-ready). Backfills a demo series on first
+    visit so a demo scope's chart isn't empty."""
+    from app.core import coverage_trends
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    tenant_id = principal.tenant_id or "default"
+    if demo.is_demo_scope(scope_kind, scope_id) and not coverage_trends.series("backupdr", tenant_id, scope_kind, scope_id):
+        snap = await _get_snapshot(principal, scope_kind, scope_id, force=False)
+        sc = snap.get("scorecard", {}) or {}
+        coverage_trends.seed_demo_series(
+            "backupdr", tenant_id, scope_kind, scope_id,
+            current_pct=sc.get("pct_protected"),
+            extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
+        )
+    return coverage_trends.trend("backupdr", tenant_id, scope_kind, scope_id)
+
 
 
 # ----------------------------------------------------------------------- reference set

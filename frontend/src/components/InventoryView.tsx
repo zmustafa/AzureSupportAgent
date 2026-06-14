@@ -41,9 +41,11 @@ function ageLabel(seconds?: number): string {
  * tenant), with natural-language search and a per-resource detail drawer. Read-only. The
  * active sub-tab is driven by the /inventory/:tab URL so a browser refresh restores it. */
 export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
+  const qc = useQueryClient();
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
   const connections = connQ.data?.connections ?? [];
   const [connectionId, setConnectionId] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const effectiveConn = connectionId || connections.find((c) => c.is_default)?.id || "";
 
   const invQ = useQuery({
@@ -57,9 +59,22 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
   const inv = invQ.data;
 
   async function refresh() {
-    await api.inventory(effectiveConn || null, true).catch(() => null);
-    await invQ.refetch();
+    // The force re-collect (slow Azure scan) is a direct call, not the query, so track its
+    // own state — invQ.isFetching only covers the trailing cache read and would otherwise
+    // leave the button live with no "Refreshing…" status for the whole scan.
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const fresh = await api.inventory(effectiveConn || null, true);
+      qc.setQueryData(["inventory", effectiveConn], fresh);
+    } catch {
+      await invQ.refetch().catch(() => null);
+    } finally {
+      setRefreshing(false);
+    }
   }
+
+  const busy = refreshing || invQ.isFetching;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -68,7 +83,7 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
         connections={connections}
         connectionId={effectiveConn}
         onConnection={setConnectionId}
-        refreshing={invQ.isFetching}
+        refreshing={busy}
         onRefresh={refresh}
       />
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -79,7 +94,7 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
         ) : !inv && invQ.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading inventory from Azure…</div>
         ) : inv ? (
-          <InventoryBody key={effectiveConn} inv={inv} connectionId={effectiveConn} refreshing={invQ.isFetching} tab={tab} />
+          <InventoryBody key={effectiveConn} inv={inv} connectionId={effectiveConn} refreshing={busy} tab={tab} />
         ) : null}
       </div>
     </div>

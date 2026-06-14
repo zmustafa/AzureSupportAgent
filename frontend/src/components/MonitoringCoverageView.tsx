@@ -9,6 +9,7 @@ import {
   type AmbaRow,
 } from "../api";
 import { formatError } from "../utils/format";
+import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 
@@ -110,6 +111,13 @@ export function MonitoringCoveragePanel() {
   });
   const data: AmbaCoverage | undefined = enabled ? covQ.data : undefined;
 
+  // Coverage-% trend over time (loads with the coverage data).
+  const trendQ = useQuery({
+    queryKey: ["amba-trend", scopeKind, effectiveWorkloadId, subId],
+    queryFn: () => api.coverageTrend("amba", params),
+    enabled,
+  });
+
   function loadCoverage() {
     setLoadedScope(scopeKey);
   }
@@ -121,6 +129,7 @@ export function MonitoringCoveragePanel() {
     try {
       const fresh = await api.refreshAmba(params);
       qc.setQueryData(["amba", scopeKind, effectiveWorkloadId, subId], fresh);
+      trendQ.refetch();
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -266,6 +275,12 @@ export function MonitoringCoveragePanel() {
               <span className="text-amber-500">⚠ {data?.kpis.alerts_misconfigured ?? 0}</span>
             </div>
           </div>
+          {enabled && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Coverage trend</span>
+              <TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} />
+            </div>
+          )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {/* Scope switcher */}

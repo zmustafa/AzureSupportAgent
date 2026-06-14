@@ -1496,39 +1496,80 @@ async def reset_siem_cursor(
 
 @router.get("/monitor")
 async def monitor_overview(
+    days: int | None = None,
+    workload_id: str | None = None,
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Central monitoring dashboard: one aggregated snapshot of everything happening
     in this tenant — activity volume, token usage, tool-call health, automations, and
-    a recent-activity feed. All counts are tenant-scoped."""
-    return await build_monitor_overview(db, principal.tenant_id)
+    a recent-activity feed. All counts are tenant-scoped.
+
+    Optional ``days`` (1-30) scopes the activity aggregations to a trailing window so the
+    Stats screen can be filtered by date range; omitted = lifetime (the default dashboard).
+    Optional ``workload_id`` scopes the Azure Well-Architected posture section to a single
+    workload's latest assessment (the rest of the snapshot stays tenant-wide)."""
+    window = None if days is None else max(1, min(30, int(days)))
+    return await build_monitor_overview(
+        db, principal.tenant_id, days=window, posture_workload_id=(workload_id or None)
+    )
 
 
-async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, Any]:
+async def build_monitor_overview(
+    db: AsyncSession,
+    tenant_id: str,
+    *,
+    days: int | None = None,
+    posture_workload_id: str | None = None,
+) -> dict[str, Any]:
     """Build the aggregated Monitor overview snapshot (tenant-scoped).
 
     Extracted from the /monitor endpoint so the ``app_telemetry`` Monitor datasource can
-    reuse the exact same aggregation without an HTTP round-trip."""
+    reuse the exact same aggregation without an HTTP round-trip.
+
+    ``days``: when set (1-30), activity-based aggregations are scoped to the trailing
+    window; current-state metrics (pending approvals, schedules, connectors, Azure
+    posture, live turns) are always lifetime. ``None`` (default) = lifetime everywhere,
+    preserving the original Monitor dashboard + datasource behavior.
+
+    ``posture_workload_id``: when set, the Azure posture section reflects ONLY that
+    workload's latest succeeded run (the dropdown options still list every assessed
+    workload so the filter can be changed)."""
     from datetime import timedelta
+
+    from sqlalchemy import true
 
     tid = tenant_id
     now = datetime.now(timezone.utc)
     since_24h = now - timedelta(hours=24)
+    # Time-window clause for the selected range (no-op when lifetime).
+    since = (now - timedelta(days=days)) if days else None
+
+    def tw(col):
+        return (col >= since) if since is not None else true()
 
     async def scalar(stmt) -> int:
         return int((await db.execute(stmt)).scalar() or 0)
 
     # ---- Headline totals ----------------------------------------------------
+    # Activity counts honor the selected window (``tw``); current-state counts are lifetime.
     chat_ids = select(Chat.id).where(Chat.tenant_id == tid)
-    total_chats = await scalar(
-        select(func.count(Chat.id)).where(Chat.tenant_id == tid)
-    )
+    if since is not None:
+        # In a windowed view, "chats" means chats ACTIVE in the period (had a message).
+        total_chats = await scalar(
+            select(func.count(func.distinct(Message.chat_id))).where(
+                Message.chat_id.in_(chat_ids), tw(Message.created_at)
+            )
+        )
+    else:
+        total_chats = await scalar(
+            select(func.count(Chat.id)).where(Chat.tenant_id == tid)
+        )
     total_messages = await scalar(
-        select(func.count(Message.id)).where(Message.chat_id.in_(chat_ids))
+        select(func.count(Message.id)).where(Message.chat_id.in_(chat_ids), tw(Message.created_at))
     )
     total_tool_calls = await scalar(
-        select(func.count(ToolCall.id)).where(ToolCall.tenant_id == tid)
+        select(func.count(ToolCall.id)).where(ToolCall.tenant_id == tid, tw(ToolCall.created_at))
     )
     tool_calls_24h = await scalar(
         select(func.count(ToolCall.id)).where(
@@ -1546,7 +1587,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         )
     )
     total_runs = await scalar(
-        select(func.count(TaskRun.id)).where(TaskRun.tenant_id == tid)
+        select(func.count(TaskRun.id)).where(TaskRun.tenant_id == tid, tw(TaskRun.started_at))
     )
     active_schedules = await scalar(
         select(func.count(ScheduledTask.id)).where(
@@ -1587,7 +1628,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
                 func.coalesce(func.sum(Usage.prompt_tokens), 0),
                 func.coalesce(func.sum(Usage.completion_tokens), 0),
             )
-            .where(Usage.tenant_id == tid)
+            .where(Usage.tenant_id == tid, tw(Usage.created_at))
             .group_by(Usage.model)
         )
     ).all()
@@ -1621,7 +1662,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
     status_rows = (
         await db.execute(
             select(ToolCall.status, func.count(ToolCall.id))
-            .where(ToolCall.tenant_id == tid)
+            .where(ToolCall.tenant_id == tid, tw(ToolCall.created_at))
             .group_by(ToolCall.status)
         )
     ).all()
@@ -1629,7 +1670,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
     kind_rows = (
         await db.execute(
             select(ToolCall.kind, func.count(ToolCall.id))
-            .where(ToolCall.tenant_id == tid)
+            .where(ToolCall.tenant_id == tid, tw(ToolCall.created_at))
             .group_by(ToolCall.kind)
         )
     ).all()
@@ -1637,7 +1678,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
     top_tool_rows = (
         await db.execute(
             select(ToolCall.tool_name, func.count(ToolCall.id))
-            .where(ToolCall.tenant_id == tid)
+            .where(ToolCall.tenant_id == tid, tw(ToolCall.created_at))
             .group_by(ToolCall.tool_name)
             .order_by(func.count(ToolCall.id).desc())
             .limit(8)
@@ -1655,7 +1696,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         for t in (
             await db.execute(
                 select(ToolCall)
-                .where(ToolCall.tenant_id == tid, ToolCall.status == "failed")
+                .where(ToolCall.tenant_id == tid, ToolCall.status == "failed", tw(ToolCall.created_at))
                 .order_by(ToolCall.created_at.desc())
                 .limit(6)
             )
@@ -1708,11 +1749,93 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
             }
         )
 
+    # ---- Range activity series (driven by the selected window) -------------
+    # Adaptive granularity: hourly buckets for short ranges (≤2 days) so the line has
+    # detail, daily buckets otherwise. Length follows the window (default 14 daily when
+    # lifetime, so the Stats screen always has a series even with no ?days=).
+    win_days = days or 14
+    use_hourly = win_days <= 2
+
+    async def per_hour_full(date_col, where_clause) -> dict[str, int]:
+        bucket = _hour_bucket(date_col)
+        rows = (
+            await db.execute(select(bucket, func.count()).where(where_clause).group_by(bucket))
+        ).all()
+        return {r[0]: int(r[1]) for r in rows if r[0]}
+
+    activity_range: list[dict[str, Any]] = []
+    if use_hourly:
+        n_hours = win_days * 24
+        start_r = (now - timedelta(hours=n_hours - 1)).replace(minute=0, second=0, microsecond=0)
+        rmsgs = await per_hour_full(
+            Message.created_at, (Message.chat_id.in_(chat_ids)) & (Message.created_at >= start_r)
+        )
+        rtools = await per_hour_full(
+            ToolCall.created_at, (ToolCall.tenant_id == tid) & (ToolCall.created_at >= start_r)
+        )
+        rruns = await per_hour_full(
+            TaskRun.started_at, (TaskRun.tenant_id == tid) & (TaskRun.started_at >= start_r)
+        )
+        for i in range(n_hours):
+            ts = start_r + timedelta(hours=i)
+            k = ts.strftime("%Y-%m-%d %H")
+            activity_range.append(
+                {
+                    "ts": ts.isoformat(),
+                    "bucket": "hour",
+                    "messages": rmsgs.get(k, 0),
+                    "tool_calls": rtools.get(k, 0),
+                    "runs": rruns.get(k, 0),
+                }
+            )
+    else:
+        start_r = (now - timedelta(days=win_days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        rmsgs = await per_day(
+            Message.created_at, (Message.chat_id.in_(chat_ids)) & (Message.created_at >= start_r)
+        )
+        rtools = await per_day(
+            ToolCall.created_at, (ToolCall.tenant_id == tid) & (ToolCall.created_at >= start_r)
+        )
+        rruns = await per_day(
+            TaskRun.started_at, (TaskRun.tenant_id == tid) & (TaskRun.started_at >= start_r)
+        )
+        for i in range(win_days):
+            ts = start_r + timedelta(days=i)
+            k = ts.strftime("%Y-%m-%d")
+            activity_range.append(
+                {
+                    "ts": ts.isoformat(),
+                    "bucket": "day",
+                    "messages": rmsgs.get(k, 0),
+                    "tool_calls": rtools.get(k, 0),
+                    "runs": rruns.get(k, 0),
+                }
+            )
+
+    # ---- Activity punch-card: weekday × hour heat matrix over the window ----
+    # Aggregated from hourly buckets (≤30×24 rows) so it's dialect-agnostic — we parse the
+    # "YYYY-MM-DD HH" labels in Python into (weekday 0=Mon … 6=Sun, hour 0-23).
+    heat_start = since if since is not None else (now - timedelta(days=13)).replace(hour=0, minute=0, second=0, microsecond=0)
+    heat_msgs = await per_hour_full(
+        Message.created_at, (Message.chat_id.in_(chat_ids)) & (Message.created_at >= heat_start)
+    )
+    heat_tools = await per_hour_full(
+        ToolCall.created_at, (ToolCall.tenant_id == tid) & (ToolCall.created_at >= heat_start)
+    )
+    heat_matrix = [[0] * 24 for _ in range(7)]
+    for label, cnt in list(heat_msgs.items()) + list(heat_tools.items()):
+        try:
+            dt = datetime.strptime(label, "%Y-%m-%d %H")
+        except (ValueError, TypeError):
+            continue
+        heat_matrix[dt.weekday()][dt.hour] += int(cnt)
+    heatmap = {"matrix": heat_matrix, "max": max((max(row) for row in heat_matrix), default=0)}
+
     # ---- Automations --------------------------------------------------------
     run_status_rows = (
         await db.execute(
             select(TaskRun.status, func.count(TaskRun.id))
-            .where(TaskRun.tenant_id == tid)
+            .where(TaskRun.tenant_id == tid, tw(TaskRun.started_at))
             .group_by(TaskRun.status)
         )
     ).all()
@@ -1732,7 +1855,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         for r in (
             await db.execute(
                 select(TaskRun)
-                .where(TaskRun.tenant_id == tid)
+                .where(TaskRun.tenant_id == tid, tw(TaskRun.started_at))
                 .order_by(TaskRun.started_at.desc())
                 .limit(8)
             )
@@ -1772,7 +1895,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         for a in (
             await db.execute(
                 select(AuditLog)
-                .where(AuditLog.tenant_id == tid)
+                .where(AuditLog.tenant_id == tid, tw(AuditLog.created_at))
                 .order_by(AuditLog.created_at.desc())
                 .limit(14)
             )
@@ -1820,7 +1943,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
                 func.count(Message.id),
                 func.max(Message.created_at),
             )
-            .where(Message.chat_id.in_(chat_ids))
+            .where(Message.chat_id.in_(chat_ids), tw(Message.created_at))
             .group_by(Message.chat_id)
         )
     ).all()
@@ -1828,7 +1951,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         (
             await db.execute(
                 select(ToolCall.chat_id, func.count(ToolCall.id))
-                .where(ToolCall.tenant_id == tid)
+                .where(ToolCall.tenant_id == tid, tw(ToolCall.created_at))
                 .group_by(ToolCall.chat_id)
             )
         ).all()
@@ -1866,6 +1989,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
             .where(
                 ToolCall.tenant_id == tid,
                 ToolCall.duration_ms.is_not(None),
+                tw(ToolCall.created_at),
             )
             .group_by(ToolCall.tool_name)
             .order_by(func.avg(ToolCall.duration_ms).desc())
@@ -1885,6 +2009,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
                 Message.chat_id.in_(chat_ids),
                 Message.role == "assistant",
                 Message.provider.is_not(None),
+                tw(Message.created_at),
             )
             .group_by(Message.provider)
         )
@@ -1898,7 +2023,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
     # ---- Deep investigations -----------------------------------------------
     deep_investigations = await scalar(
         select(func.count(Message.id)).where(
-            Message.chat_id.in_(chat_ids), Message.investigation_json.is_not(None)
+            Message.chat_id.in_(chat_ids), Message.investigation_json.is_not(None), tw(Message.created_at)
         )
     )
 
@@ -1946,6 +2071,19 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
     for r in posture_runs:
         if r.workload_id not in latest_by_wl:
             latest_by_wl[r.workload_id] = r
+
+    # Every assessed workload is offered as a filter option (before applying the filter), so
+    # the Stats posture dropdown lists all workloads that have a run — even when one is selected.
+    posture_workload_options = [
+        {"workload_id": wid, "workload_name": run.workload_name or wid}
+        for wid, run in latest_by_wl.items()
+    ]
+    posture_workload_options.sort(key=lambda o: (o["workload_name"] or "").lower())
+
+    # Scope the posture aggregation to a single workload when requested.
+    selected_workload_id = posture_workload_id if posture_workload_id in latest_by_wl else ""
+    if selected_workload_id:
+        latest_by_wl = {selected_workload_id: latest_by_wl[selected_workload_id]}
 
     pillar_scores: dict[str, list[int]] = {}
     findings_by_severity = {"critical": 0, "error": 0, "warning": 0, "info": 0}
@@ -2021,6 +2159,8 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         "new_findings": new_findings_total,
         "top_failing": top_failing,
         "workloads": posture_workloads[:8],
+        "workload_options": posture_workload_options,
+        "selected_workload_id": selected_workload_id,
         "last_assessed_at": last_assessed_at,
     }
 
@@ -2061,6 +2201,7 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
 
     return {
         "generated_at": now,
+        "window": {"days": days, "since": since.isoformat() if since is not None else None},
         "totals": {
             "chats": total_chats,
             "messages": total_messages,
@@ -2084,6 +2225,8 @@ async def build_monitor_overview(db: AsyncSession, tenant_id: str) -> dict[str, 
         "providers": providers,
         "activity_14d": activity_14d,
         "activity_24h": activity_24h,
+        "activity_range": activity_range,
+        "heatmap": heatmap,
         "top_chats": top_chats,
         "connectors_detail": connectors_detail,
         "azure_posture": azure_posture,

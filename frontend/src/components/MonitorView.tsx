@@ -12,6 +12,7 @@ import {
   type WorkbookTile,
 } from "../api";
 import { formatTimestamp, formatRelativeFromNow, formatDuration } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
 import { Spinner } from "./chat/icons";
 import { WidgetRenderer } from "./monitor/widgets";
 import { WidgetEditor, AiWidgetModal, BuildFromWorkloadModal, newBlankWidget } from "./monitor/editor";
@@ -153,7 +154,7 @@ export function MonitorPanel() {
 
   const q = useQuery({
     queryKey: ["monitor"],
-    queryFn: api.monitor,
+    queryFn: () => api.monitor(),
     refetchInterval: live ? intervalMs : false,
   });
 
@@ -416,11 +417,24 @@ export function MonitorPanel() {
  *  the customizable-dashboard machinery. */
 export function StatsPanel() {
   const [live, setLive] = useState(true);
+  // Date-range filter (trailing window in days). Drives every visualization + a quick-pick
+  // toolbar; persisted so the choice survives navigation/reload.
+  const [rangeDays, setRangeDays] = usePersistedState<number>("azsup.stats.rangeDays", 7);
+  // Workload filter for the Azure posture section — scopes the Well-Architected radar +
+  // findings to a single workload's latest assessment ("" = all assessed workloads).
+  const [postureWorkloadId, setPostureWorkloadId] = usePersistedState<string>("azsup.stats.postureWorkloadId", "");
   const q = useQuery({
-    queryKey: ["monitor"],
-    queryFn: api.monitor,
+    queryKey: ["monitor", rangeDays, postureWorkloadId],
+    queryFn: () => api.monitor(rangeDays, postureWorkloadId || undefined),
     refetchInterval: live ? 30000 : false,
   });
+  const RANGES: { label: string; days: number }[] = [
+    { label: "1d", days: 1 },
+    { label: "3d", days: 3 },
+    { label: "7d", days: 7 },
+    { label: "2w", days: 14 },
+    { label: "30d", days: 30 },
+  ];
 
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-b from-gray-50 to-gray-100/60">
@@ -441,6 +455,20 @@ export function StatsPanel() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {/* Date-range quick picks — drive every visualization below. */}
+            <div className="flex items-center gap-0.5 rounded-full border border-gray-200 bg-white p-0.5 shadow-sm" role="group" aria-label="Date range">
+              {RANGES.map((r) => (
+                <button
+                  key={r.days}
+                  onClick={() => setRangeDays(r.days)}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                    rangeDays === r.days ? "bg-brand text-white shadow-sm" : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-500 shadow-sm">
               <span className={`h-1.5 w-1.5 rounded-full ${q.isFetching ? "animate-pulse bg-sky-500" : live ? "bg-emerald-500" : "bg-gray-300"}`} />
               <span className="tabular-nums">{q.data?.generated_at ? formatTimestamp(q.data.generated_at) : "Loading…"}</span>
@@ -476,6 +504,13 @@ export function StatsPanel() {
         )}
         {q.data && (
           <div className="space-y-4">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="rounded-full bg-gray-900/5 px-2 py-0.5 font-medium text-gray-500">
+                Showing last {rangeDays === 14 ? "2 weeks" : rangeDays === 1 ? "24 hours" : `${rangeDays} days`}
+              </span>
+              <span>All metrics &amp; charts below reflect this range.</span>
+            </div>
+
             {/* KPI row */}
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
               <div className="h-28"><TileKpiMessages data={q.data} /></div>
@@ -494,10 +529,59 @@ export function StatsPanel() {
               <div className="h-72"><TileToolStatus data={q.data} /></div>
             </div>
 
-            {/* Activity trends */}
+            {/* Activity trends — range-driven area + classic 24h, then the punch-card */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="h-80"><TileActivityRange data={q.data} days={rangeDays} /></div>
               <div className="h-80"><TileActivity24h data={q.data} /></div>
-              <div className="h-80"><TileActivity14d data={q.data} /></div>
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+              <div><TileHeatmap data={q.data} /></div>
+            </div>
+
+            {/* New visualizations — breakdowns & cost */}
+            <div className="pt-1">
+              <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <span>📊</span> Breakdowns
+              </h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="h-64"><TileToolKinds data={q.data} /></div>
+                <div className="h-64"><TileTokenSplit data={q.data} /></div>
+                <div className="h-64"><TileAutomationOutcomes data={q.data} /></div>
+                <div className="h-64"><TileSuccessGauge data={q.data} /></div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="h-72"><TileCostByModel data={q.data} /></div>
+                <div className="h-72"><TileToolLatency data={q.data} /></div>
+              </div>
+            </div>
+
+            {/* Azure posture visualizations */}
+            <div className="pt-1">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                  <span>🛡️</span> Azure posture
+                </h2>
+                {(q.data.azure_posture.workload_options?.length ?? 0) > 0 && (
+                  <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <span className="font-medium text-gray-600">Workload</span>
+                    <select
+                      value={postureWorkloadId}
+                      onChange={(e) => setPostureWorkloadId(e.target.value)}
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 shadow-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      title="Scope the Well-Architected posture to a single workload"
+                    >
+                      <option value="">All workloads ({q.data.azure_posture.workload_options?.length ?? 0})</option>
+                      {(q.data.azure_posture.workload_options ?? []).map((o) => (
+                        <option key={o.workload_id} value={o.workload_id}>{o.workload_name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="h-80"><TilePostureRadar data={q.data} /></div>
+                <div className="h-80"><TileFindingsSeverity data={q.data} /></div>
+              </div>
             </div>
 
             {/* Advanced — live ops, investigations, logs & tool health */}
@@ -807,10 +891,31 @@ function TileToolStatus({ data }: { data: MonitorOverview }) {
   );
 }
 
+function TileActivityRange({ data, days }: { data: MonitorOverview; days: number }) {
+  const points = data.activity_range ?? [];
+  const label = days === 14 ? "last 2 weeks" : days === 1 ? "last 24 hours" : `last ${days} days`;
+  return (
+    <Panel fill title={`Activity — ${label}`}>
+      {points.length === 0 ? (
+        <p className="text-xs text-gray-400">No activity in this range.</p>
+      ) : (
+        <RangeBars points={points} />
+      )}
+      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-gray-500">
+        <Legend color="bg-brand" label="Messages" />
+        <Legend color="bg-sky-400" label="Tools" />
+        <Legend color="bg-emerald-400" label="Runs" />
+      </div>
+    </Panel>
+  );
+}
+
+/** Fixed 14-day activity tile (used by the customizable Monitor dashboard tile catalog). */
 function TileActivity14d({ data }: { data: MonitorOverview }) {
+  const points = data.activity_14d.map((d) => ({ ts: `${d.date}T00:00:00Z`, bucket: "day" as const, messages: d.messages, tool_calls: d.tool_calls, runs: d.runs }));
   return (
     <Panel fill title="Activity — last 14 days">
-      <ActivityChart data={data.activity_14d} />
+      <RangeBars points={points} />
       <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-gray-500">
         <Legend color="bg-brand" label="Messages" />
         <Legend color="bg-sky-400" label="Tools" />
@@ -1831,6 +1936,282 @@ function Donut({
   );
 }
 
+// ============================ NEW STATS VISUALIZATIONS ============================
+
+/** Horizontal labelled bars (cost, latency, …) with a formatted value column. */
+function HBars({ rows, color = "#6366f1" }: { rows: { label: string; value: number; display: string }[]; color?: string }) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <div className="space-y-1.5">
+      {rows.length === 0 && <p className="text-xs text-gray-400">No data in this range.</p>}
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-center gap-2">
+          <span className="w-28 shrink-0 truncate font-mono text-[11px] text-gray-600" title={r.label}>{r.label}</span>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
+            <div className="h-full rounded-full" style={{ width: `${pct(r.value, max)}%`, background: color }} />
+          </div>
+          <span className="w-14 shrink-0 text-right text-[11px] font-medium text-gray-600">{r.display}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Radial gauge (0-100) with a center value + caption. */
+function RadialGauge({ value, caption, color }: { value: number; caption: string; color?: string }) {
+  const r = 32;
+  const c = 2 * Math.PI * r;
+  const v = Math.max(0, Math.min(100, value));
+  const offset = c * (1 - v / 100);
+  const stroke = color ?? (v >= 85 ? "#10b981" : v >= 60 ? "#f59e0b" : "#ef4444");
+  return (
+    <div className="flex flex-col items-center justify-center gap-1">
+      <svg viewBox="0 0 80 80" className="h-28 w-28 -rotate-90">
+        <circle cx="40" cy="40" r={r} fill="none" stroke="#f1f5f9" strokeWidth="9" />
+        <circle cx="40" cy="40" r={r} fill="none" stroke={stroke} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset} className="transition-all duration-700" />
+        <text x="40" y="40" transform="rotate(90 40 40)" textAnchor="middle" dominantBaseline="central" className="fill-gray-900 text-[18px] font-bold">{Math.round(v)}%</text>
+      </svg>
+      <span className="text-[11px] text-gray-500">{caption}</span>
+    </div>
+  );
+}
+
+/** Radar / spider chart for a small set of 0-100 axes (Azure WAF pillars). */
+function RadarChart({ axes }: { axes: { label: string; value: number; color: string }[] }) {
+  const size = 200;
+  const cx = size / 2;
+  const cy = size / 2;
+  const R = 72;
+  const n = axes.length;
+  if (n < 3) return <p className="text-xs text-gray-400">Need 3+ pillars to chart.</p>;
+  const pt = (i: number, radius: number) => {
+    const ang = -Math.PI / 2 + (i / n) * 2 * Math.PI;
+    return [cx + radius * Math.cos(ang), cy + radius * Math.sin(ang)];
+  };
+  const poly = axes.map((a, i) => pt(i, (Math.max(0, Math.min(100, a.value)) / 100) * R).join(",")).join(" ");
+  return (
+    <div className="flex items-center gap-3">
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-44 w-44 shrink-0">
+        {[0.25, 0.5, 0.75, 1].map((f) => (
+          <polygon key={f} points={axes.map((_, i) => pt(i, R * f).join(",")).join(" ")} fill="none" stroke="#e5e7eb" strokeWidth="1" />
+        ))}
+        {axes.map((_, i) => {
+          const [x, y] = pt(i, R);
+          return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="#e5e7eb" strokeWidth="1" />;
+        })}
+        <polygon points={poly} fill="#6366f1" fillOpacity="0.18" stroke="#6366f1" strokeWidth="2" />
+        {axes.map((a, i) => {
+          const [x, y] = pt(i, (Math.max(0, Math.min(100, a.value)) / 100) * R);
+          return <circle key={i} cx={x} cy={y} r="2.5" fill={a.color} />;
+        })}
+      </svg>
+      <div className="min-w-0 flex-1 space-y-1">
+        {axes.map((a) => (
+          <div key={a.label} className="flex items-center gap-2 text-[11px]">
+            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: a.color }} />
+            <span className="min-w-0 flex-1 truncate capitalize text-gray-600">{a.label}</span>
+            <span className="shrink-0 font-medium" style={{ color: scoreHex(a.value) }}>{a.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const HEAT_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** GitHub-style punch-card: weekday × hour activity intensity. */
+function Heatmap({ matrix, max }: { matrix: number[][]; max: number }) {
+  const shade = (v: number) => {
+    if (v <= 0) return "#f1f5f9";
+    const t = Math.min(1, 0.15 + 0.85 * (v / Math.max(1, max)));
+    return `rgba(99,102,241,${t.toFixed(2)})`;
+  };
+  return (
+    <div className="overflow-x-auto">
+      <div className="inline-block min-w-full">
+        <div className="flex pl-9">
+          {Array.from({ length: 24 }, (_, h) => (
+            <div key={h} className="w-[3.6%] min-w-[14px] text-center text-[8px] text-gray-400">{h % 3 === 0 ? h : ""}</div>
+          ))}
+        </div>
+        {matrix.map((row, d) => (
+          <div key={d} className="flex items-center">
+            <span className="w-9 shrink-0 pr-1 text-right text-[9px] text-gray-400">{HEAT_DOW[d]}</span>
+            {row.map((v, h) => (
+              <div key={h} className="group relative aspect-square w-[3.6%] min-w-[14px] p-[1px]">
+                <div className="h-full w-full rounded-[2px] transition group-hover:ring-1 group-hover:ring-brand" style={{ background: shade(v) }} title={`${HEAT_DOW[d]} ${h}:00 — ${v} events`} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TileHeatmap({ data }: { data: MonitorOverview }) {
+  const hm = data.heatmap;
+  return (
+    <Panel title="Activity punch-card — busiest weekday × hour" action={<span className="text-[11px] text-gray-400">events (messages + tool calls)</span>}>
+      {!hm || hm.max === 0 ? (
+        <p className="text-xs text-gray-400">No activity in this range.</p>
+      ) : (
+        <Heatmap matrix={hm.matrix} max={hm.max} />
+      )}
+    </Panel>
+  );
+}
+
+function TileToolKinds({ data }: { data: MonitorOverview }) {
+  const byKind = data.tool_calls.by_kind;
+  const entries = Object.entries(byKind).filter(([, v]) => v > 0);
+  return (
+    <Panel fill title="Tool calls by kind">
+      {entries.length === 0 ? (
+        <p className="text-xs text-gray-400">No tool calls in this range.</p>
+      ) : (
+        <Donut
+          segments={entries.map(([k, v], i) => ({ label: k.replace(/_/g, " "), value: v, color: kindColor(k) ?? PALETTE[i % PALETTE.length] }))}
+          centerLabel="calls"
+          centerValue={entries.reduce((a, [, v]) => a + v, 0)}
+        />
+      )}
+    </Panel>
+  );
+}
+
+function TileTokenSplit({ data }: { data: MonitorOverview }) {
+  const t = data.tokens;
+  return (
+    <Panel fill title="Prompt vs completion tokens">
+      {t.total === 0 ? (
+        <p className="text-xs text-gray-400">No token usage in this range.</p>
+      ) : (
+        <Donut
+          segments={[
+            { label: "prompt", value: t.prompt, color: "#6366f1" },
+            { label: "completion", value: t.completion, color: "#0ea5e9" },
+          ]}
+          centerLabel="tokens"
+          centerValue={t.total}
+        />
+      )}
+    </Panel>
+  );
+}
+
+function TileAutomationOutcomes({ data }: { data: MonitorOverview }) {
+  const by = data.automations.runs_by_status;
+  const entries = Object.entries(by).filter(([, v]) => v > 0);
+  return (
+    <Panel fill title="Automation run outcomes">
+      {entries.length === 0 ? (
+        <p className="text-xs text-gray-400">No runs in this range.</p>
+      ) : (
+        <Donut
+          segments={entries.map(([k, v], i) => ({ label: k, value: v, color: statusColor(k) ?? PALETTE[i % PALETTE.length] }))}
+          centerLabel="runs"
+          centerValue={entries.reduce((a, [, v]) => a + v, 0)}
+        />
+      )}
+    </Panel>
+  );
+}
+
+function TileSuccessGauge({ data }: { data: MonitorOverview }) {
+  const tc = data.tool_calls;
+  const done = tc.succeeded + tc.failed;
+  const rate = done > 0 ? (tc.succeeded / done) * 100 : 100;
+  return (
+    <Panel fill title="Tool success rate">
+      <div className="flex h-full items-center justify-center">
+        <RadialGauge value={rate} caption={`${tc.succeeded}/${done || 0} succeeded`} />
+      </div>
+    </Panel>
+  );
+}
+
+function TileCostByModel({ data }: { data: MonitorOverview }) {
+  const rows = data.tokens.by_model
+    .filter((m) => m.cost_usd > 0)
+    .map((m) => ({ label: m.model, value: m.cost_usd, display: fmtUsd(m.cost_usd) }));
+  return (
+    <Panel fill title="Estimated cost by model" action={<span className="text-sm font-semibold text-emerald-700">{fmtUsd(data.tokens.cost_usd)}</span>}>
+      <HBars rows={rows} color="#10b981" />
+      <p className="mt-2 text-[10px] text-gray-400">Estimated from token counts &amp; standard per-model rates — for visibility, not billing.</p>
+    </Panel>
+  );
+}
+
+function TileToolLatency({ data }: { data: MonitorOverview }) {
+  const rows = data.tool_latency.map((l) => ({ label: l.name, value: l.avg_ms, display: formatDuration(l.avg_ms) ?? "—" }));
+  return (
+    <Panel fill title="Slowest tools (avg latency)">
+      <HBars rows={rows} color="#8b5cf6" />
+    </Panel>
+  );
+}
+
+function TilePostureRadar({ data }: { data: MonitorOverview }) {
+  const pa = data.azure_posture.pillar_avgs;
+  const axes = PILLAR_ORDER.filter((p) => pa[p] != null).map((p) => ({
+    label: PILLAR_META[p]?.label ?? p,
+    value: pa[p],
+    color: PALETTE[PILLAR_ORDER.indexOf(p) % PALETTE.length],
+  }));
+  const avg = data.azure_posture.avg_score;
+  return (
+    <Panel fill title="Azure Well-Architected posture" action={avg != null ? <span className="text-xs font-semibold" style={{ color: scoreHex(avg) }}>avg {avg}</span> : undefined}>
+      {axes.length < 3 ? (
+        <p className="text-xs text-gray-400">Assess 1+ workload across pillars to chart posture.</p>
+      ) : (
+        <RadarChart axes={axes} />
+      )}
+    </Panel>
+  );
+}
+
+function TileFindingsSeverity({ data }: { data: MonitorOverview }) {
+  const fb = data.azure_posture.findings_by_severity;
+  const order = ["critical", "error", "warning", "info"] as const;
+  const total = order.reduce((a, s) => a + (fb[s] || 0), 0);
+  const sevColor: Record<string, string> = { critical: "#ef4444", error: "#f97316", warning: "#f59e0b", info: "#0ea5e9" };
+  return (
+    <Panel fill title="Open findings by severity" action={<span className="text-xs text-gray-400">{total} open</span>}>
+      {total === 0 ? (
+        <p className="text-xs text-gray-400">No open findings — all assessed controls passing.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex h-3 overflow-hidden rounded-full bg-gray-100">
+            {order.map((s) => (fb[s] > 0 ? <div key={s} style={{ width: `${pct(fb[s], total)}%`, background: sevColor[s] }} title={`${s}: ${fb[s]}`} /> : null))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {order.map((s) => (
+              <div key={s} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50/60 px-2.5 py-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm" style={{ background: sevColor[s] }} />
+                <span className="flex-1 text-[12px] capitalize text-gray-600">{s}</span>
+                <span className="text-sm font-bold text-gray-800">{fb[s] || 0}</span>
+              </div>
+            ))}
+          </div>
+          {data.azure_posture.top_failing.length > 0 && (
+            <div className="border-t border-gray-100 pt-2">
+              <div className="mb-1 text-[11px] font-medium text-gray-400">Top failing controls</div>
+              {data.azure_posture.top_failing.slice(0, 4).map((c, i) => (
+                <div key={i} className="flex items-center gap-2 py-0.5 text-[11px]">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: sevColor[c.severity] ?? "#9ca3af" }} />
+                  <span className="min-w-0 flex-1 truncate text-gray-600" title={c.title}>{c.title}</span>
+                  <span className="shrink-0 text-gray-400">{c.resources} res</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 /** Smooth filled area chart for the 24h hourly activity (two series). */
 function AreaChart({ data }: { data: MonitorOverview["activity_24h"] }) {
   const W = 600;
@@ -1896,29 +2277,34 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
   );
 }
 
-/** Stacked vertical bar chart of daily activity (messages / tool calls / runs). */
-function ActivityChart({ data }: { data: MonitorOverview["activity_14d"] }) {
-  const CHART_H = 120;
-  const max = Math.max(1, ...data.map((d) => d.messages + d.tool_calls + d.runs));
+/** Stacked vertical bar chart of activity over the selected range (messages / tools / runs).
+ *  Adapts labels to the bucket grain (hour vs day). */
+function RangeBars({ points }: { points: NonNullable<MonitorOverview["activity_range"]> }) {
+  const CHART_H = 150;
+  const max = Math.max(1, ...points.map((d) => d.messages + d.tool_calls + d.runs));
   const px = (v: number) => Math.round((v / max) * CHART_H);
+  const n = points.length;
+  // Show roughly 7-8 axis labels regardless of how many buckets there are.
+  const step = Math.max(1, Math.round(n / 8));
   return (
-    <div className="flex items-end gap-1" style={{ height: CHART_H + 16 }}>
-      {data.map((d) => {
+    <div className="flex items-end gap-px sm:gap-0.5" style={{ height: CHART_H + 18 }}>
+      {points.map((d, i) => {
         const total = d.messages + d.tool_calls + d.runs;
-        const day = new Date(`${d.date}T00:00:00Z`).toLocaleDateString([], { weekday: "short" })[0];
+        const dt = new Date(d.ts);
+        const label =
+          d.bucket === "hour"
+            ? dt.toLocaleTimeString([], { hour: "numeric" }).replace(" ", "")
+            : dt.toLocaleDateString([], { day: "numeric", month: "short" });
+        const title = `${d.bucket === "hour" ? dt.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" }) : dt.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}: ${d.messages} msgs · ${d.tool_calls} tools · ${d.runs} runs`;
         return (
-          <div key={d.date} className="group flex flex-1 flex-col items-center gap-1">
-            <div
-              className="flex w-full flex-col-reverse overflow-hidden rounded-sm transition group-hover:opacity-80"
-              style={{ height: CHART_H }}
-              title={`${d.date}: ${d.messages} msgs · ${d.tool_calls} tools · ${d.runs} runs`}
-            >
+          <div key={d.ts} className="group flex flex-1 flex-col items-center gap-1">
+            <div className="flex w-full flex-col-reverse overflow-hidden rounded-sm transition group-hover:opacity-80" style={{ height: CHART_H }} title={title}>
               <div className="w-full bg-brand" style={{ height: px(d.messages) }} />
               <div className="w-full bg-sky-400" style={{ height: px(d.tool_calls) }} />
               <div className="w-full bg-emerald-400" style={{ height: px(d.runs) }} />
               {total === 0 && <div className="mt-auto h-px w-full bg-gray-100" />}
             </div>
-            <span className="text-[9px] text-gray-400">{day}</span>
+            <span className="h-3 text-[8px] text-gray-400">{i % step === 0 ? label : ""}</span>
           </div>
         );
       })}
@@ -1986,6 +2372,23 @@ function statusColor(status: string): string | null {
     case "running":
     case "pending":
       return "#0ea5e9";
+    default:
+      return null;
+  }
+}
+
+/** Color for a tool-call kind (read / write / search …) used by the kind donut. */
+function kindColor(kind: string): string | null {
+  switch (kind) {
+    case "read":
+      return "#10b981";
+    case "write":
+      return "#f59e0b";
+    case "search":
+      return "#0ea5e9";
+    case "exec":
+    case "execute":
+      return "#8b5cf6";
     default:
       return null;
   }

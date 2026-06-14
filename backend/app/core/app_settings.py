@@ -159,6 +159,19 @@ DEFAULTS: dict[str, Any] = {
     # (at risk), below warn is red (poor).
     "assessment_score_good": 80,
     "assessment_score_warn": 50,
+    # --- Assessments: execution engine (admin-tunable) ----------------------------
+    # Max controls evaluated concurrently per run (each may issue paged Resource Graph
+    # queries). Bounds load + ARG throttling while keeping a 60+ control run fast.
+    "assessment_concurrency": 6,
+    # Wall-clock seconds before a single control is abandoned and marked 'error' (so a
+    # hung query can never block the whole run).
+    "assessment_check_timeout_s": 90,
+    # Overall wall-clock budget for a run's control phase; controls not yet finished when
+    # the budget elapses are marked 'error' (excluded from the score, surfaced honestly).
+    "assessment_run_budget_s": 1800,
+    # Confidence threshold: a run whose evaluated-control coverage is >= this percent is
+    # 'high' confidence; >= (this - 15) is 'medium'; below that is 'low' (score provisional).
+    "assessment_confidence_high_pct": 98,
     # --- Architecture: taxonomy (admin-tunable) -----------------------------------
     # Per-category hex color overrides for diagram node accents. Empty = built-in
     # palette. Keys must be known category ids; values are '#rrggbb'.
@@ -451,6 +464,26 @@ def assessment_score_bands() -> dict[str, int]:
     if warn >= good:
         warn = max(0, good - 1)
     return {"good": good, "warn": warn}
+
+
+def assessment_execution() -> dict[str, int]:
+    """Live assessment execution-engine knobs (admin-tunable), clamped to safe ranges.
+
+    Read at run time so dashboard changes apply to subsequent runs without a restart."""
+    s = load_settings()
+
+    def _clamp(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(hi, int(s.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "concurrency": _clamp("assessment_concurrency", 6, 1, 16),
+        "check_timeout_s": _clamp("assessment_check_timeout_s", 90, 10, 600),
+        "run_budget_s": _clamp("assessment_run_budget_s", 1800, 60, 7200),
+        "confidence_high_pct": _clamp("assessment_confidence_high_pct", 98, 50, 100),
+    }
 
 
 def architecture_category_colors() -> dict[str, str]:

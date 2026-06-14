@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.exec.command_runner import (
@@ -61,6 +62,96 @@ async def _subscriptions(connection: dict[str, Any] | None, session_dir: str | N
         connection, session_dir,
     )
     return [{"id": r.get("subscriptionId", ""), "name": r.get("name", "") or r.get("subscriptionId", "")} for r in rows if r.get("subscriptionId")]
+
+
+def normalize_scope(scope: str) -> str:
+    """Canonicalize a (possibly multi-token) scope string: split on commas, trim, dedupe, and
+    sort so that ``sub:b,sub:a`` and ``sub:a,sub:b`` map to the same cache key. ``""`` (whole
+    tenant) stays ``""``."""
+    return ",".join(sorted({t.strip() for t in (scope or "").split(",") if t.strip()}))
+
+
+async def _resolve_single_scope(
+    connection: dict[str, Any] | None, token: str, all_sub_ids: list[str]
+) -> tuple[list[str], str]:
+    """Resolve ONE scope token (``""`` | ``sub:<id>`` | ``mg:<id>``) to visible subscription
+    ids. See ``resolve_scope_sub_ids`` for the contract."""
+    if not token:
+        return all_sub_ids, ""
+    visible = {s.lower() for s in all_sub_ids}
+    kind, _, ident = token.partition(":")
+    ident = ident.strip()
+    if kind == "sub":
+        if ident.lower() in visible:
+            return [ident], ""
+        return [], "The selected subscription isn't visible to this connection."
+    if kind == "mg":
+        from app.workloads.discovery import subscriptions_under_mg
+
+        under = await subscriptions_under_mg(connection, ident)
+        picked = [s for s in under if s.lower() in visible]
+        if picked:
+            return picked, ""
+        return [], "No visible subscriptions under the selected management group."
+    # Unknown scope kind → treat as whole tenant rather than failing.
+    return all_sub_ids, ""
+
+
+async def resolve_scope_sub_ids(
+    connection: dict[str, Any] | None, scope: str, all_sub_ids: list[str]
+) -> tuple[list[str], str]:
+    """Restrict a list of visible subscription ids to an Azure scope selector.
+
+    ``scope`` is either a single token or a comma-separated list of tokens (multi-select):
+      * ``""``        — whole tenant: every visible subscription (no filtering).
+      * ``sub:<id>``  — a single subscription.
+      * ``mg:<id>``   — every subscription recursively under a management group.
+
+    Multiple tokens are UNIONED (deduped, first-seen order preserved). Returns
+    ``(sub_ids, error)``. ``error`` is a friendly, non-empty string when the selection
+    resolves to zero in-scope subscriptions (e.g. nothing is visible to this connection);
+    callers surface it rather than silently returning the whole tenant.
+    """
+    tokens = [t.strip() for t in (scope or "").split(",") if t.strip()]
+    if len(tokens) <= 1:
+        return await _resolve_single_scope(connection, tokens[0] if tokens else "", all_sub_ids)
+    # Multi-select: union each recognized token's subscriptions.
+    picked: list[str] = []
+    seen: set[str] = set()
+    errors: list[str] = []
+    for tok in tokens:
+        if tok.partition(":")[0] not in ("sub", "mg"):
+            continue  # ignore unrecognized tokens in a multi-select set
+        ids, err = await _resolve_single_scope(connection, tok, all_sub_ids)
+        if err:
+            errors.append(err)
+        for i in ids:
+            lo = i.lower()
+            if lo not in seen:
+                seen.add(lo)
+                picked.append(i)
+    if not picked:
+        return [], "; ".join(dict.fromkeys(errors)) or "No visible subscriptions in the selected scope."
+    return picked, ""
+
+
+# Parse the subscription id out of a full ARM resource id (``/subscriptions/<id>/...``).
+_SUB_IN_ID = re.compile(r"/subscriptions/([^/]+)", re.IGNORECASE)
+
+
+def _workload_span_subs(w: dict[str, Any]) -> set[str]:
+    """Every subscription id a workload's membership references — across whole-subscription,
+    resource-group, and individual-resource scopes. Lowercased. Used to detect when a workload
+    extends beyond the currently-selected scope (the ``(Partial)`` indicator)."""
+    span: set[str] = set(w.get("subs") or set())
+    for sub, _rg in (w.get("rg_pairs") or set()):
+        span.add(sub)
+    for rid in (w.get("resource_ids") or set()):
+        m = _SUB_IN_ID.search(rid)
+        if m:
+            span.add(m.group(1).lower())
+    return span
+
 
 
 async def _workload_scopes(connection: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -147,8 +238,18 @@ def _normalize(row: dict[str, Any], wl_scopes: list[dict[str, Any]]) -> dict[str
     }
 
 
-def _facets(resources: list[dict[str, Any]], sub_names: dict[str, str], wl_scopes: list[dict[str, Any]]) -> dict[str, Any]:
-    """Counts by type / location / subscription / resource group / workload, for filters."""
+def _facets(
+    resources: list[dict[str, Any]],
+    sub_names: dict[str, str],
+    wl_scopes: list[dict[str, Any]],
+    partial_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Counts by type / location / subscription / resource group / workload, for filters.
+
+    ``partial_ids`` marks workloads whose membership extends into subscriptions outside the
+    current scope selection — surfaced as ``partial: true`` on the workload facet so the UI can
+    badge them ``(Partial)``."""
+    partial_ids = partial_ids or set()
     types: dict[str, int] = {}
     locations: dict[str, int] = {}
     subs: dict[str, int] = {}
@@ -177,7 +278,7 @@ def _facets(resources: list[dict[str, Any]], sub_names: dict[str, str], wl_scope
         "locations": _sorted(locations),
         "subscriptions": [{"key": k, "name": sub_names.get(k, k), "count": v} for k, v in sorted(subs.items(), key=lambda kv: (-kv[1], kv[0]))],
         "resource_groups": _sorted(rgs),
-        "workloads": [{"id": wid, "name": wl_name.get(wid, wid), "count": c} for wid, c in sorted(wl_counts.items(), key=lambda kv: (-kv[1], kv[0]))],
+        "workloads": [{"id": wid, "name": wl_name.get(wid, wid), "count": c, "partial": wid in partial_ids} for wid, c in sorted(wl_counts.items(), key=lambda kv: (-kv[1], kv[0]))],
         "unassigned_count": unassigned,
     }
 
@@ -191,10 +292,12 @@ async def run_id_query(kql: str, connection: dict[str, Any] | None) -> tuple[lis
     return [r.get("id", "") for r in rows if r.get("id")], ""
 
 
-async def collect(connection: dict[str, Any] | None) -> dict[str, Any]:
+async def collect(connection: dict[str, Any] | None, scope: str = "") -> dict[str, Any]:
     """Collect the full resource inventory for a connection, attributed to workloads.
 
     Queries per-subscription (so each query stays under the row/byte caps) and aggregates.
+    ``scope`` optionally restricts collection to a single subscription (``sub:<id>``) or every
+    subscription under a management group (``mg:<id>``); ``""`` collects the whole tenant.
     Returns {resources, facets, summary, subscriptions, errors}."""
     session_dir, _ = await open_sp_session(connection)
     errors: list[str] = []
@@ -202,11 +305,26 @@ async def collect(connection: dict[str, Any] | None) -> dict[str, Any]:
     resources: list[dict[str, Any]] = []
     sub_names: dict[str, str] = {}
     wl_scopes: list[dict[str, Any]] = []
+    partial_ids: set[str] = set()
     try:
-        subs = await _subscriptions(connection, session_dir)
+        all_subs = await _subscriptions(connection, session_dir)
+        visible_set = {s["id"].lower() for s in all_subs}
+        in_ids, scope_err = await resolve_scope_sub_ids(connection, scope, [s["id"] for s in all_subs])
+        in_set = {i.lower() for i in in_ids}
+        subs = [s for s in all_subs if s["id"].lower() in in_set]
         sub_names = {s["id"]: s["name"] for s in subs}
         wl_scopes = await _workload_scopes(connection)
-        if not subs:
+        # A workload is "partial" when its visible subscription span extends beyond the
+        # in-scope set — i.e. it has resources in subscriptions the current scope excludes. On
+        # the whole-tenant view (in_set == visible_set) nothing is partial.
+        partial_ids = {
+            w["id"]
+            for w in wl_scopes
+            if (span := (_workload_span_subs(w) & visible_set)) and (span - in_set)
+        }
+        if scope_err:
+            errors.append(scope_err)
+        elif not subs:
             errors.append("No subscriptions visible to this connection.")
         for s in subs:
             kql = (
@@ -224,7 +342,7 @@ async def collect(connection: dict[str, Any] | None) -> dict[str, Any]:
     finally:
         close_sp_session(session_dir)
 
-    facets = _facets(resources, sub_names, wl_scopes)
+    facets = _facets(resources, sub_names, wl_scopes, partial_ids)
     # Tag coverage + hygiene roll-ups for the overview/insights surfaces.
     tagged = sum(1 for r in resources if r["tag_count"] > 0)
     tag_keys: dict[str, int] = {}

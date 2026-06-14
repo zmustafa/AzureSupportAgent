@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   api,
   API_BASE,
@@ -19,6 +21,31 @@ import { formatError, formatTimestamp } from "../utils/format";
 import { CopyButton } from "./CopyButton";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
 
+// Render AI-authored text (executive summary, per-finding impact) as Markdown so **bold**,
+// lists, etc. display formatted instead of raw. Styling is via arbitrary variants (this app
+// has no @tailwindcss/typography plugin). `inline` flows within a label line.
+function Markdown({ children, className = "", inline = false }: { children: string; className?: string; inline?: boolean }) {
+  if (inline) {
+    return (
+      <span className={`[&_p]:m-0 [&_p]:inline [&_strong]:font-semibold [&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1 ${className}`}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      </span>
+    );
+  }
+  return (
+    <div
+      className={
+        "[&_p]:my-0 [&_p+p]:mt-2 [&_strong]:font-semibold " +
+        "[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 " +
+        "[&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1 [&_code]:text-[0.9em] [&_a]:text-brand [&_a]:underline " +
+        className
+      }
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+    </div>
+  );
+}
+
 const SEV_META: Record<string, { label: string; cls: string; rank: number }> = {
   critical: { label: "Critical", cls: "bg-red-100 text-red-700", rank: 3 },
   error: { label: "Error", cls: "bg-orange-100 text-orange-700", rank: 2 },
@@ -30,6 +57,7 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
   fail: { label: "Fail", cls: "bg-red-100 text-red-700" },
   not_applicable: { label: "N/A", cls: "bg-gray-100 text-gray-500" },
   error: { label: "Error", cls: "bg-purple-100 text-purple-700" },
+  manual: { label: "Manual", cls: "bg-indigo-100 text-indigo-700" },
   waived: { label: "Waived", cls: "bg-indigo-100 text-indigo-700" },
 };
 const STATE_META: Record<string, { label: string; cls: string }> = {
@@ -55,10 +83,33 @@ const PILLAR_SHORT: Record<string, string> = {
   performance: "Performance",
 };
 // Fixed display order for the status toggle bar (worst → least).
-const STATUS_ORDER = ["fail", "error", "waived", "pass", "not_applicable"] as const;
+const STATUS_ORDER = ["fail", "error", "manual", "waived", "pass", "not_applicable"] as const;
 
 // The full set of Well-Architected pillars offered when running/scheduling an assessment.
 const ALL_PILLARS = ["security", "reliability", "cost", "operations", "performance"] as const;
+
+// Recognised Well-Architected methodologies → the pillar bundle each one runs. Selecting a
+// pack is a one-click way to launch a WARA / WASA / full WAF review.
+const PACK_PRESETS: { id: string; short: string; label: string; icon: string; pillars: string[] }[] = [
+  { id: "waf", short: "WAF", label: "Well-Architected Review", icon: "🏛️", pillars: [...ALL_PILLARS] },
+  { id: "wara", short: "WARA", label: "Reliability Assessment", icon: "🔄", pillars: ["reliability"] },
+  { id: "wasa", short: "WASA", label: "Security Assessment", icon: "🛡️", pillars: ["security"] },
+];
+
+// Compliance frameworks a finding can map to, in display order, for the multi-select filter.
+const FRAMEWORK_ORDER = ["cis", "nist", "iso", "mcsb", "pci"] as const;
+type FrameworkKey = (typeof FRAMEWORK_ORDER)[number];
+const FRAMEWORK_LABEL: Record<FrameworkKey, string> = {
+  cis: "CIS",
+  nist: "NIST",
+  iso: "ISO 27001",
+  mcsb: "MCSB",
+  pci: "PCI DSS",
+};
+// The frameworks a single finding is mapped to (those with at least one control id).
+function findingFrameworks(f: AssessmentFinding): FrameworkKey[] {
+  return FRAMEWORK_ORDER.filter((k) => (f.frameworks[k]?.length ?? 0) > 0);
+}
 
 const RUN_STATUS_META: Record<string, { label: string; cls: string; spin?: boolean }> = {
   queued: { label: "Queued", cls: "bg-gray-100 text-gray-600" },
@@ -105,6 +156,58 @@ function scoreRing(s: number | null | undefined): string {
   if (s >= SCORE_GOOD) return "#16a34a";
   if (s >= SCORE_WARN) return "#d97706";
   return "#dc2626";
+}
+
+function TrustBar({ run }: { run: AssessmentRunSummary }) {
+  // Surfaces the run's result confidence so a partial / throttled run is never mistaken for
+  // a clean pass. Confidence comes from how many applicable controls were actually evaluated.
+  const conf = (run.confidence || run.totals?.confidence || "").toLowerCase();
+  const completeness = run.completeness_pct ?? run.totals?.completeness_pct;
+  const errored = run.totals?.errored ?? 0;
+  const manual = run.totals?.manual ?? 0;
+  const worst = run.worst_case_score;
+  const packMeta = PACK_PRESETS.find((p) => p.id === run.trigger);
+  const confTone =
+    conf === "high" ? "border-green-200 bg-green-50 text-green-700"
+      : conf === "medium" ? "border-amber-200 bg-amber-50 text-amber-700"
+        : conf === "low" ? "border-red-200 bg-red-50 text-red-700"
+          : "border-gray-200 bg-gray-50 text-gray-600";
+  if (!conf && completeness == null && !packMeta) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      {packMeta && (
+        <span className="rounded-full border border-brand/30 bg-brand/5 px-2 py-0.5 font-medium text-brand" title={packMeta.label}>
+          {packMeta.icon} {packMeta.short}
+        </span>
+      )}
+      {conf && (
+        <span className={`rounded-full border px-2 py-0.5 font-medium ${confTone}`}
+          title="Result confidence = share of applicable controls that were actually evaluated (not errored).">
+          {conf === "high" ? "✓ High confidence" : conf === "medium" ? "◐ Medium confidence" : "▲ Low confidence"}
+          {completeness != null ? ` · ${completeness}% evaluated` : ""}
+        </span>
+      )}
+      {errored > 0 && (
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700"
+          title="Controls that could not be evaluated (auth/throttle/timeout). Excluded from the optimistic score.">
+          {errored} not evaluated
+        </span>
+      )}
+      {worst != null && run.overall_score != null && worst !== run.overall_score && (
+        <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-600"
+          title="Worst-case score assumes every un-evaluated control would have failed.">
+          worst-case {worst}/100
+        </span>
+      )}
+      {manual > 0 && (
+        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-indigo-700"
+          title="Manual controls awaiting a reviewer attestation — excluded from the score until answered.">
+          {manual} manual pending
+        </span>
+      )}
+      {run.catalog_version && <span className="text-gray-300">catalog {run.catalog_version}</span>}
+    </div>
+  );
 }
 
 function ScoreGauge({ score, size = 120, label }: { score: number | null; size?: number; label?: string }) {
@@ -284,7 +387,20 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
                     <AzureIcon kind="resource" type={r.type} className="h-4 w-4" />
-                    <span className="font-medium text-gray-800">{r.name || "—"}</span>
+                    {r.id ? (
+                      <a
+                        href={portalUrl(r.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open in Azure Portal"
+                        className="group inline-flex items-center gap-1 font-medium text-gray-800 hover:text-brand hover:underline"
+                      >
+                        {r.name || "—"}
+                        <span className="text-gray-300 transition group-hover:text-brand">↗</span>
+                      </a>
+                    ) : (
+                      <span className="font-medium text-gray-800">{r.name || "—"}</span>
+                    )}
                   </div>
                 </td>
                 <td className="px-3 py-2 text-gray-600">{friendlyResourceType(r.type)}</td>
@@ -334,11 +450,22 @@ function FindingsTable({
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" }>({ col: "status", dir: "asc" });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Multi-select framework filter (OR semantics): empty = no framework filtering.
+  const [frameworkFilter, setFrameworkFilter] = useState<Set<FrameworkKey>>(new Set());
+  function toggleFramework(k: FrameworkKey) {
+    setFrameworkFilter((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  }
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
   const [waiveFor, setWaiveFor] = useState<string | null>(null);
   // Multi-select cart for "Plan enforcement in Azure Policy".
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Bulk-action panel over the selected findings (state / assign / waive / ticket).
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [bulkWaive, setBulkWaive] = useState(false);
+  const [bulkAssignee, setBulkAssignee] = useState("");
 
   // A finding is enforceable as a policy if it FAILED and targets concrete resource types
   // (the backend resolves its detection predicate from the check id).
@@ -388,14 +515,19 @@ function FindingsTable({
     setSort((s) => (s.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" } : { col, dir: "asc" }));
   }
 
-  const STATUS_RANK: Record<string, number> = { fail: 0, error: 1, waived: 2, pass: 3, not_applicable: 4 };
+  const STATUS_RANK: Record<string, number> = { fail: 0, error: 1, manual: 2, waived: 3, pass: 4, not_applicable: 5 };
+  // A finding matches the framework filter if it's mapped to ANY of the selected frameworks
+  // (multi-select OR); an empty selection matches everything.
+  const matchesFrameworks = (f: AssessmentFinding) =>
+    frameworkFilter.size === 0 || findingFrameworks(f).some((k) => frameworkFilter.has(k));
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = findings.filter((f) => {
       if (pillar !== "all" && f.pillar !== pillar) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
+      if (!matchesFrameworks(f)) return false;
       if (q) {
-        const hay = `${f.title} ${f.description} ${(f.frameworks.cis || []).join(" ")} ${(f.frameworks.nist || []).join(" ")} ${(f.frameworks.iso || []).join(" ")}`.toLowerCase();
+        const hay = `${f.title} ${f.description} ${(f.frameworks.cis || []).join(" ")} ${(f.frameworks.nist || []).join(" ")} ${(f.frameworks.iso || []).join(" ")} ${(f.frameworks.mcsb || []).join(" ")} ${(f.frameworks.pci || []).join(" ")}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -410,33 +542,40 @@ function FindingsTable({
       return sort.dir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [findings, query, pillar, statusFilter, sort]);
+  }, [findings, query, pillar, statusFilter, frameworkFilter, sort]);
 
   const arrow = (col: string) => (sort.col === col ? (sort.dir === "asc" ? "▲" : "▼") : "↕");
 
-  // Faceted counts for the pillar/status toggle bars: each dimension is counted
-  // independently of its own selection (but respects the other filter + search), and the
+  // Faceted counts for the pillar/status/framework toggle bars: each dimension is counted
+  // independently of its own selection (but respects the OTHER filters + search), and the
   // button sets are taken from the full run so they don't appear/disappear while filtering.
   const facet = useMemo(() => {
     const qq = query.trim().toLowerCase();
     const searched = qq
-      ? findings.filter((f) => `${f.title} ${f.description} ${(f.frameworks.cis || []).join(" ")} ${(f.frameworks.nist || []).join(" ")} ${(f.frameworks.iso || []).join(" ")}`.toLowerCase().includes(qq))
+      ? findings.filter((f) => `${f.title} ${f.description} ${(f.frameworks.cis || []).join(" ")} ${(f.frameworks.nist || []).join(" ")} ${(f.frameworks.iso || []).join(" ")} ${(f.frameworks.mcsb || []).join(" ")} ${(f.frameworks.pci || []).join(" ")}`.toLowerCase().includes(qq))
       : findings;
-    const forPillars = searched.filter((f) => statusFilter === "all" || f.status === statusFilter);
-    const forStatuses = searched.filter((f) => pillar === "all" || f.pillar === pillar);
+    // Pillar + status counts respect the framework filter (so they reflect the active scope);
+    // the framework counts do NOT apply their own selection (standard multi-select facet).
+    const forPillars = searched.filter((f) => (statusFilter === "all" || f.status === statusFilter) && matchesFrameworks(f));
+    const forStatuses = searched.filter((f) => (pillar === "all" || f.pillar === pillar) && matchesFrameworks(f));
+    const forFrameworks = searched.filter((f) => (pillar === "all" || f.pillar === pillar) && (statusFilter === "all" || f.status === statusFilter));
     const pillarCounts: Record<string, number> = {};
     for (const f of forPillars) pillarCounts[f.pillar] = (pillarCounts[f.pillar] ?? 0) + 1;
     const statusCounts: Record<string, number> = {};
     for (const f of forStatuses) statusCounts[f.status] = (statusCounts[f.status] ?? 0) + 1;
+    const frameworkCounts: Record<string, number> = {};
+    for (const f of forFrameworks) for (const k of findingFrameworks(f)) frameworkCounts[k] = (frameworkCounts[k] ?? 0) + 1;
     return {
       pillarCounts,
       statusCounts,
+      frameworkCounts,
       pillarTotal: forPillars.length,
       statusTotal: forStatuses.length,
       pillarsPresent: ALL_PILLARS.filter((p) => findings.some((f) => f.pillar === p)),
       statusesPresent: STATUS_ORDER.filter((s) => findings.some((f) => f.status === s)),
+      frameworksPresent: FRAMEWORK_ORDER.filter((k) => findings.some((f) => (f.frameworks[k]?.length ?? 0) > 0)),
     };
-  }, [findings, query, pillar, statusFilter]);
+  }, [findings, query, pillar, statusFilter, frameworkFilter]);
 
   async function setState(checkId: string, patch: Partial<{ status: string; assignee: string }>) {
     setBusy(checkId);
@@ -486,16 +625,127 @@ function FindingsTable({
     }
   }
 
+  // --- Bulk actions over the currently-selected findings ---------------------------
+  // Each runs the matching single-finding API for every selected check id and reports an
+  // aggregate "N/total applied" result; partial failures are tolerated and counted.
+  async function runBulk(label: string, fn: (checkId: string) => Promise<unknown>, opts?: { invalidateWaivers?: boolean }) {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    let ok = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try { await fn(id); ok++; } catch { failed++; }
+    }
+    if (opts?.invalidateWaivers) qc.invalidateQueries({ queryKey: ["assessmentWaivers", workloadId] });
+    setBulkBusy(false);
+    setBulkMsg({ ok: failed === 0, text: `${label}: ${ok}/${ids.length} applied${failed ? ` · ${failed} failed` : ""}.` });
+    onChanged();
+  }
+  function bulkSetState(status: string) {
+    return runBulk(`Set state → ${STATE_META[status]?.label ?? status}`, (id) =>
+      api.updateAssessmentFindingState({ workload_id: workloadId, check_id: id, status }));
+  }
+  function bulkAssign() {
+    const a = bulkAssignee.trim();
+    if (!a) return;
+    return runBulk(`Assigned to ${a}`, (id) =>
+      api.updateAssessmentFindingState({ workload_id: workloadId, check_id: id, assignee: a }));
+  }
+  function bulkTicket(connectorId: string) {
+    const conn = ticketConnectors.find((c) => c.id === connectorId);
+    // Creating tickets hits an external system (Jira/ServiceNow) — confirm before fan-out.
+    if (!window.confirm(`Create ${selected.size} ticket${selected.size === 1 ? "" : "s"} in ${conn?.name ?? "the connector"}?`)) return;
+    return runBulk("Tickets created", (id) =>
+      api.createAssessmentTicket({ run_id: runId, check_id: id, connector_id: connectorId }));
+  }
+  async function bulkWaiveSubmit(justification: string, approver: string, expires: string) {
+    let expiresIso: string | null = null;
+    if (expires) {
+      const [y, m, d] = expires.split("-").map(Number);
+      expiresIso = new Date(y, (m || 1) - 1, d || 1).toISOString();
+    }
+    await runBulk("Waivers applied", (id) =>
+      api.createAssessmentWaiver({ workload_id: workloadId, check_id: id, justification, approver, expires_at: expiresIso }),
+      { invalidateWaivers: true });
+    setBulkWaive(false);
+  }
+  function clearSelection() {
+    setSelected(new Set());
+    setBulkOpen(false);
+    setBulkWaive(false);
+    setBulkMsg(null);
+  }
+
   return (
     <div>
       {selected.size > 0 && (
-        <div className="sticky top-0 z-10 mb-2 flex flex-wrap items-center gap-3 rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 shadow-sm">
-          <span className="text-sm font-medium text-gray-800">🚦 {selected.size} finding{selected.size === 1 ? "" : "s"} selected</span>
-          <button onClick={planEnforcement} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90">
-            Plan enforcement in Azure Policy →
-          </button>
-          <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
-          <span className="ml-auto text-[11px] text-gray-500">Brings these failing controls to the AI Safe-Rollout Planner as guardrails.</span>
+        <div className="sticky top-0 z-10 mb-2 rounded-lg border border-brand/40 bg-brand/5 px-3 py-2 shadow-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-gray-800">🚦 {selected.size} finding{selected.size === 1 ? "" : "s"} selected</span>
+            <button
+              onClick={() => { setBulkOpen((o) => !o); setBulkMsg(null); }}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold ${bulkOpen ? "border-brand bg-brand/10 text-brand" : "border-brand/40 bg-white text-brand hover:bg-brand/10"}`}
+            >
+              Bulk actions {bulkOpen ? "▴" : "▾"}
+            </button>
+            <button onClick={planEnforcement} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90">
+              Plan enforcement in Azure Policy →
+            </button>
+            <button onClick={clearSelection} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+            <span className="ml-auto text-[11px] text-gray-500">Apply a state, owner, waiver or ticket to all selected — or bring them to the Safe-Rollout Planner.</span>
+          </div>
+          {bulkOpen && (
+            <div className="mt-2 border-t border-brand/20 pt-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-medium text-gray-600">Apply to {selected.size}:</span>
+                {/* Set state */}
+                <select
+                  defaultValue=""
+                  disabled={bulkBusy}
+                  onChange={(e) => { const v = e.target.value; e.currentTarget.value = ""; if (v) void bulkSetState(v); }}
+                  className="rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
+                >
+                  <option value="">Set state…</option>
+                  {Object.entries(STATE_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+                {/* Assign to */}
+                <div className="flex items-center gap-1">
+                  <input
+                    value={bulkAssignee}
+                    onChange={(e) => setBulkAssignee(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void bulkAssign(); }}
+                    placeholder="Assign to…"
+                    disabled={bulkBusy}
+                    className="w-32 rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
+                  />
+                  <button onClick={() => void bulkAssign()} disabled={bulkBusy || !bulkAssignee.trim()}
+                    className="rounded-md border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50">Assign</button>
+                </div>
+                {/* Waive */}
+                <button onClick={() => setBulkWaive((w) => !w)} disabled={bulkBusy}
+                  className="rounded-md border border-indigo-200 px-2 py-1 text-[11px] text-indigo-600 hover:bg-indigo-50 disabled:opacity-50">Waive…</button>
+                {/* Ticket */}
+                {ticketConnectors.length > 0 && (
+                  <select
+                    defaultValue=""
+                    disabled={bulkBusy}
+                    onChange={(e) => { const v = e.target.value; e.currentTarget.value = ""; if (v) void bulkTicket(v); }}
+                    className="rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
+                  >
+                    <option value="">Create tickets…</option>
+                    {ticketConnectors.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
+                  </select>
+                )}
+                {bulkBusy && <span className="text-[11px] text-gray-500">Applying…</span>}
+                {bulkMsg && <span className={`text-[11px] ${bulkMsg.ok ? "text-green-600" : "text-red-600"}`}>{bulkMsg.text}</span>}
+              </div>
+              {bulkWaive && (
+                <WaiveForm onCancel={() => setBulkWaive(false)} onSubmit={(j, a, e) => void bulkWaiveSubmit(j, a, e)} busy={bulkBusy} />
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="mb-2 space-y-2">
@@ -543,6 +793,17 @@ function FindingsTable({
               </button>
             ))}
           </div>
+          {/* Framework multi-select bar (OR; pick several to combine) */}
+          {facet.frameworksPresent.length > 0 && (
+            <div className="inline-flex overflow-hidden rounded-md border text-xs" title="Filter by compliance framework (select multiple to combine)">
+              <button onClick={() => setFrameworkFilter(new Set())} className={`px-2.5 py-1 ${frameworkFilter.size === 0 ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>All frameworks</button>
+              {facet.frameworksPresent.map((k) => (
+                <button key={k} onClick={() => toggleFramework(k)} className={`border-l px-2.5 py-1 ${frameworkFilter.has(k) ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+                  {FRAMEWORK_LABEL[k]} ({facet.frameworkCounts[k] ?? 0})
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border">
@@ -597,12 +858,14 @@ function FindingsTable({
                         </span>
                       ) : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="py-2 pr-3 text-gray-700">{f.status === "fail" ? f.flagged_count : "—"}</td>
+                    <td className="py-2 pr-3 text-gray-700">{f.status === "fail" ? (f.partial ? `${f.flagged_count}+` : f.flagged_count) : "—"}</td>
                     <td className="py-2 pr-3">
                       <div className="flex flex-wrap gap-1">
                         {(f.frameworks.cis || []).map((x) => <span key={`cis-${x}`} className="rounded bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>)}
                         {(f.frameworks.nist || []).map((x) => <span key={`nist-${x}`} className="rounded bg-teal-50 px-1 py-0.5 text-[9px] text-teal-600">NIST {x}</span>)}
                         {(f.frameworks.iso || []).map((x) => <span key={`iso-${x}`} className="rounded bg-purple-50 px-1 py-0.5 text-[9px] text-purple-600">ISO {x}</span>)}
+                        {(f.frameworks.mcsb || []).map((x) => <span key={`mcsb-${x}`} className="rounded bg-sky-50 px-1 py-0.5 text-[9px] text-sky-600">MCSB {x}</span>)}
+                        {(f.frameworks.pci || []).map((x) => <span key={`pci-${x}`} className="rounded bg-rose-50 px-1 py-0.5 text-[9px] text-rose-600">{x}</span>)}
                       </div>
                     </td>
                   </tr>
@@ -611,7 +874,7 @@ function FindingsTable({
                       <td />
                       <td colSpan={8} className="px-3 py-3">
                         <p className="text-gray-600">{f.description}</p>
-                        {f.ai_rationale && <p className="mt-1.5 rounded bg-blue-50 px-2 py-1.5 text-blue-700"><span className="font-medium">Impact:</span> {f.ai_rationale}</p>}
+                        {f.ai_rationale && <div className="mt-1.5 rounded bg-blue-50 px-2 py-1.5 text-blue-700"><span className="font-medium">Impact:</span> <Markdown inline className="text-blue-700">{f.ai_rationale}</Markdown></div>}
                         {f.status === "waived" && f.waiver && (
                           <p className="mt-1.5 rounded bg-indigo-50 px-2 py-1.5 text-indigo-700">
                             <span className="font-medium">Waived:</span> {f.waiver.justification}{f.waiver.approver ? ` — approved by ${f.waiver.approver}` : ""}
@@ -657,6 +920,8 @@ function FindingsTable({
                           </div>
                         )}
                         {f.status === "error" && f.error && <p className="mt-2 rounded bg-purple-50 px-2 py-1.5 text-purple-700">Query error: {f.error}</p>}
+                        {f.status === "manual" && <p className="mt-2 rounded bg-indigo-50 px-2 py-1.5 text-indigo-700">Manual control — record an attestation (Settings → workload) for it to count toward the score.</p>}
+                        {f.status === "fail" && f.partial && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-amber-700">Very large result set — the count is accurate, but only a capped sample of the matching resources is listed here.</p>}
                         <div className="mt-2 rounded border border-gray-200 bg-white px-2 py-1.5">
                           <span className="font-medium text-gray-700">Remediation:</span> <span className="text-gray-600">{f.remediation}</span>
                           {f.remediation_command && (
@@ -844,6 +1109,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
           {run.pillars.map((p) => PILLAR_META[p]?.label ?? p).join(" + ")} · {run.used_ai ? "AI-assisted" : "deterministic"}
           {run.trigger === "schedule" ? " · scheduled" : ""}
         </p>
+        <TrustBar run={run} />
       </div>
 
       {isRunning && (
@@ -908,7 +1174,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
       {run.summary && (
         <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-500">Executive summary</div>
-          <p className="whitespace-pre-wrap text-sm text-gray-700">{run.summary}</p>
+          <Markdown className="text-sm text-gray-700">{run.summary}</Markdown>
         </div>
       )}
 
@@ -942,6 +1208,7 @@ function RunFlow({ onQueued }: { onQueued: () => void }) {
     return [];
   });
   const [pillars, setPillars] = useState<string[]>([...ALL_PILLARS]);
+  const [activePack, setActivePack] = useState<string>("waf");
   const [useAi, setUseAi] = useState(true);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -958,13 +1225,14 @@ function RunFlow({ onQueued }: { onQueued: () => void }) {
   function toggleAll() {
     setSelectedWl((prev) => (allFilteredSelected ? prev.filter((id) => !filtered.some((w) => w.id === id)) : Array.from(new Set([...prev, ...filtered.map((w) => w.id)]))));
   }
-  function togglePillar(p: string) { setPillars((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p])); }
+  function togglePillar(p: string) { setActivePack(""); setPillars((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p])); }
+  function selectPack(pk: { id: string; pillars: string[] }) { setActivePack(pk.id); setPillars([...pk.pillars]); }
 
   async function run() {
     if (selectedWl.length === 0 || pillars.length === 0) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const res = await api.enqueueAssessments({ workload_ids: selectedWl, pillars, use_ai: useAi });
+      const res = await api.enqueueAssessments({ workload_ids: selectedWl, pillars, pack: activePack || null, use_ai: useAi });
       setNotice(`Queued ${res.queued} assessment${res.queued === 1 ? "" : "s"} — running in the background. Track progress in History below.`);
       onQueued();
     } catch (e) {
@@ -996,14 +1264,24 @@ function RunFlow({ onQueued }: { onQueued: () => void }) {
           </div>
         </div>
         <div>
-          <span className="mb-1 block text-xs font-medium text-gray-600">Assessment types {pillars.length > 0 && <span className="text-brand">({pillars.length})</span>}</span>
+          <span className="mb-1 block text-xs font-medium text-gray-600">Assessment pack</span>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {PACK_PRESETS.map((pk) => (
+              <button key={pk.id} onClick={() => selectPack(pk)} disabled={busy} title={pk.label}
+                className={`rounded-lg border px-3 py-1.5 text-sm transition ${activePack === pk.id ? "border-brand bg-brand text-white font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
+                {pk.icon} {pk.short}
+              </button>
+            ))}
+            <span className="self-center text-xs text-gray-400">{activePack ? PACK_PRESETS.find((p) => p.id === activePack)?.label : "Custom selection"}</span>
+          </div>
+          <span className="mb-1 block text-xs font-medium text-gray-600">Pillars {pillars.length > 0 && <span className="text-brand">({pillars.length})</span>}</span>
           <div className="flex flex-wrap gap-2">
             {ALL_PILLARS.map((p) => (
               <button key={p} onClick={() => togglePillar(p)} disabled={busy}
                 className={`rounded-lg border px-3 py-1.5 text-sm transition ${pillars.includes(p) ? "border-brand bg-brand/10 font-medium text-brand" : "text-gray-600 hover:bg-gray-50"}`}>{PILLAR_META[p].icon} {PILLAR_META[p].label}</button>
             ))}
           </div>
-          <button onClick={() => setPillars(pillars.length === ALL_PILLARS.length ? [] : [...ALL_PILLARS])} disabled={busy} className="mt-2 text-xs text-brand hover:underline disabled:opacity-50">{pillars.length === ALL_PILLARS.length ? "Clear all" : "Select all types"}</button>
+          <button onClick={() => { const all = pillars.length === ALL_PILLARS.length; setActivePack(all ? "" : "waf"); setPillars(all ? [] : [...ALL_PILLARS]); }} disabled={busy} className="mt-2 text-xs text-brand hover:underline disabled:opacity-50">{pillars.length === ALL_PILLARS.length ? "Clear all" : "Select all types"}</button>
           <label className="mt-2 flex items-center gap-2 text-xs text-gray-600">
             <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} disabled={busy} />AI executive summary &amp; impact
           </label>

@@ -32,6 +32,7 @@ AI_ENHANCED = "ai_enhanced"
 CLONED = "cloned"
 CLONED_TO = "cloned_to"
 RESTORED = "restored"
+TRASHED = "trashed"
 
 
 def _now() -> str:

@@ -191,11 +191,26 @@ def detect_conflicts(assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         scopes = {g.get("scope") for g in group}
         same_scope = len(scopes) < len(group)
+        first = group[0]
         out.append({
             "policy_definition_id": def_id,
-            "definition_name": group[0].get("definition_name") or def_id.split("/")[-1],
+            "definition_name": first.get("definition_name") or def_id.split("/")[-1],
+            "is_initiative": bool(first.get("is_initiative")),
+            "category": first.get("category", ""),
             "assignment_count": len(group),
-            "scopes": [{"id": g.get("id"), "label": g.get("scope_label"), "effect": g.get("effect")} for g in group],
+            "scope_count": len(scopes),
+            "scopes": [
+                {
+                    "id": g.get("id"),
+                    "scope": g.get("scope"),
+                    "scope_kind": g.get("scope_kind"),
+                    "label": g.get("scope_label"),
+                    "assignment_name": g.get("display_name"),
+                    "effect": g.get("effect"),
+                    "enforcement_mode": g.get("enforcement_mode") or "Default",
+                }
+                for g in group
+            ],
             "kind": "duplicate_same_scope" if same_scope else "redundant_inheritance",
             "hint": (
                 "Same policy assigned twice at the same scope — remove the duplicate."

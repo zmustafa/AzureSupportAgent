@@ -5,9 +5,10 @@ registrations, conditional-access gaps, privileged users without MFA, and Key Va
 object expiry — each with severity, owning workload (where resolvable) and one-click
 ticket / investigate handoffs.
 
-Results are **server-side cached** (the Graph aggregation is slow): a fresh snapshot is
-served from ``backend/.data/identity_cache.json`` within its TTL; a TTL miss or
-``POST /identity/refresh`` recomputes under a per-tenant lock. Admin-gated."""
+Results are **server-side cached** (the Graph aggregation is slow). Visiting the page only
+ever READS the cache from ``backend/.data/identity_cache.json`` — it never recomputes, even
+when the snapshot is stale or missing. Only ``POST /identity/refresh`` (the dashboard Refresh
+button) recomputes under a per-tenant lock and overwrites the cache. Admin-gated."""
 from __future__ import annotations
 
 import logging
@@ -56,7 +57,33 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
     out["ttl_s"] = ttl_s
     out["age_seconds"] = int(age) if age is not None else None
     out["stale"] = (age is None) or (age >= ttl_s)
+    out.setdefault("never_loaded", False)
     return out
+
+
+def _empty_overview(tenant_id: str, days: int, connection: dict[str, Any] | None) -> dict[str, Any]:
+    """A 'not loaded yet' identity snapshot — empty groups/KPIs with ``never_loaded`` set so the
+    UI prompts the user to press Refresh. Visiting the page must never trigger the (slow) Graph
+    aggregation; only the Refresh button recomputes."""
+    return {
+        "generated_at": "",
+        "days": int(days),
+        "tenant_id": tenant_id,
+        "connection_configured": connection is not None,
+        "kpis": {
+            "expiring_secrets": 0,
+            "expiring_certs": 0,
+            "ownerless_apps": 0,
+            "users_without_mfa": 0,
+            "ca_gaps": 0,
+            "keyvault_expiring": 0,
+        },
+        "group_severity": {g: "ok" for g in _GROUPS},
+        "groups": {g: [] for g in _GROUPS},
+        "errors": {},
+        "meta": {},
+        "never_loaded": True,
+    }
 
 
 def _merge_last_good(new: dict[str, Any], prev: dict[str, Any] | None) -> dict[str, Any]:
@@ -95,17 +122,17 @@ async def _get_snapshot(principal: Principal, days: int, *, force: bool) -> dict
     tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
 
     if not force:
+        # Plain page visit: only ever READ the cache — never trigger the (slow) Graph
+        # aggregation, even when the snapshot is stale or missing. A cache miss returns an
+        # empty 'not loaded yet' payload so the UI prompts the user to press Refresh; only
+        # ``force`` (the Refresh button) recomputes and overwrites the cache.
         snap = cache.read_snapshot(tenant_id, days)
-        if snap and cache.is_fresh(snap, ttl):
+        if snap:
             return _decorate(snap, ttl)
+        return _decorate(_empty_overview(tenant_id, days, connection), ttl)
 
     lock = cache.get_lock(tenant_id, days)
     async with lock:
-        # Re-check inside the lock: a concurrent request may have just refreshed it.
-        if not force:
-            snap = cache.read_snapshot(tenant_id, days)
-            if snap and cache.is_fresh(snap, ttl):
-                return _decorate(snap, ttl)
         prev = cache.read_snapshot(tenant_id, days)
         fresh = await collect_identity(
             connection, days=days, mfa_cap=mfa_cap, include_keyvault=True, tenant_id=tenant_id

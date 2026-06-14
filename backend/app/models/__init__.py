@@ -298,6 +298,10 @@ class AssessmentRun(Base):
     resources_json: Mapped[list] = mapped_column(JSON, default=list)  # capped sample of scanned resources
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # AI executive summary
     used_ai: Mapped[bool] = mapped_column(default=False)
+    catalog_version: Mapped[str | None] = mapped_column(String(32), nullable=True)  # control-catalog version
+    schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # finding-result schema version
+    completeness_pct: Mapped[int | None] = mapped_column(Integer, nullable=True)  # % of applicable controls evaluated
+    confidence: Mapped[str | None] = mapped_column(String(8), nullable=True)  # high|medium|low result confidence
     baseline_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     is_baseline: Mapped[bool] = mapped_column(default=False)  # admin-pinned reference run
     diff_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # change vs previous run

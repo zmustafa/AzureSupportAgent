@@ -13,11 +13,35 @@ Design notes:
 - ``resource_types`` drives applicability: a check is N/A for a workload that contains
   none of those ARM types (so a storage control doesn't penalize a network-only app).
 - ``severity`` sets the default ``weight`` for 0-100 pillar scoring.
-- ``frameworks`` maps the control to CIS Azure Foundations + NIST 800-53 Rev.5 IDs.
+- ``frameworks`` maps the control to compliance control ids across multiple frameworks:
+  CIS Azure Foundations Benchmark (pinned via ``CIS_VERSION``), NIST 800-53 Rev.5,
+  ISO/IEC 27001:2022 Annex A, Microsoft Cloud Security Benchmark (MCSB) and PCI DSS v4.0.
+  CIS/NIST are declared inline on each control; ISO/MCSB/PCI are applied centrally by
+  check id (see ``_ISO_MAP`` / ``_MCSB_MAP`` / ``_PCI_MAP``) so adding a framework needs
+  no per-control edits.
+
+Two control kinds exist:
+- Resource Graph (ARG/KQL) controls built with ``_check`` — the deterministic default.
+- Metric-backed controls built with ``_metric_check`` — evaluated per in-scope resource
+  against an Azure Monitor metric threshold (e.g. idle-VM CPU). These carry a ``metric``
+  config and an empty ``kql``; the runner routes them through the metrics path.
 """
 from __future__ import annotations
 
 from typing import Any
+
+# CIS Microsoft Azure Foundations Benchmark version that the ``cis`` control ids below are
+# pinned to. Centralised so the benchmark edition is unambiguous and easy to bump.
+CIS_VERSION = "v2.1.0"
+
+# Version of the shipped control catalog. Stamped onto every AssessmentRun so historical
+# runs are reproducible and drift/diff across catalog edits is meaningful. Bump whenever
+# controls are added/removed/materially changed.
+CATALOG_VERSION = "2026.06.2"
+
+# Version of the per-finding result schema (shape of each entry in findings_json). Bump
+# when the finding dict gains/changes fields the UI or scoring relies on.
+FINDING_SCHEMA_VERSION = 2
 
 PILLARS = ("security", "reliability", "cost", "operations", "performance")
 
@@ -28,6 +52,45 @@ PILLAR_META: dict[str, dict[str, str]] = {
     "operations": {"label": "Operational Excellence", "icon": "⚙️"},
     "performance": {"label": "Performance Efficiency", "icon": "⚡"},
 }
+
+# Named assessment packs map a recognised Microsoft methodology to the pillar(s) it covers,
+# so a user can launch "WARA" / "WASA" / a full WAF review by name. A pack is just a
+# convenient pillar bundle — the same deterministic + manual + signal controls run underneath.
+PACKS: dict[str, dict[str, Any]] = {
+    "waf": {
+        "label": "Well-Architected Review (all pillars)",
+        "short": "WAF",
+        "icon": "🏛️",
+        "pillars": list(PILLARS),
+        "description": "Full Azure Well-Architected Framework review across Security, "
+        "Reliability, Cost, Operational Excellence, and Performance.",
+    },
+    "wara": {
+        "label": "Well-Architected Reliability Assessment",
+        "short": "WARA",
+        "icon": "🔄",
+        "pillars": ["reliability"],
+        "description": "Reliability-pillar deep dive (Microsoft WARA / APRL aligned): "
+        "availability zones, multi-region DR, backup/recovery, SLAs, and Advisor signals.",
+    },
+    "wasa": {
+        "label": "Well-Architected Security Assessment",
+        "short": "WASA",
+        "icon": "🛡️",
+        "pillars": ["security"],
+        "description": "Security-pillar deep dive: exposure, encryption, identity, network "
+        "isolation, and key management, mapped to CIS/NIST/ISO/MCSB/PCI.",
+    },
+}
+
+
+def pack_pillars(pack_id: str) -> list[str] | None:
+    """Resolve a pack id (e.g. 'wara') to its pillar list, or None if unknown."""
+    p = PACKS.get((pack_id or "").lower())
+    if not p:
+        return None
+    return [x for x in p["pillars"] if x in PILLARS]
+
 
 # Default scoring weight per severity (higher = more impact on the pillar score).
 SEVERITY_WEIGHT = {"critical": 10, "error": 6, "warning": 3, "info": 1}
@@ -68,6 +131,12 @@ def _check(
     frameworks: dict[str, list[str]] | None = None,
     remediation_command: str = "",
     weight: int | None = None,
+    kind: str = "graph",
+    impact: str = "",
+    effort: str = "",
+    sub_category: str = "",
+    source: str = "built-in",
+    learn_more: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "id": cid,
@@ -81,7 +150,145 @@ def _check(
         "remediation": remediation,
         "remediation_command": remediation_command,
         "frameworks": frameworks or {},
+        # --- WARA/APRL-aligned metadata (all optional, backward compatible) ---
+        "kind": kind,  # graph | metric | manual | signal
+        "impact": impact,  # high | medium | low (business impact of the finding)
+        "effort": effort,  # low | medium | high (remediation effort)
+        "sub_category": sub_category,  # WAF sub-pillar, e.g. "High availability"
+        "source": source,  # built-in | aprl | advisor | custom
+        "learn_more": list(learn_more or []),  # documentation URLs
     }
+
+
+# WAF/APRL reliability sub-categories used to slice the reliability score like WARA.
+SUB_CATEGORIES = (
+    "High availability",
+    "Disaster recovery",
+    "Scalability",
+    "Monitoring & alerting",
+    "Service upgrade & retirement",
+    "Governance",
+    "Other",
+)
+
+
+def _metric_check(
+    cid: str,
+    pillar: str,
+    title: str,
+    description: str,
+    severity: str,
+    resource_types: list[str],
+    metric: dict[str, Any],
+    remediation: str,
+    *,
+    frameworks: dict[str, list[str]] | None = None,
+    remediation_command: str = "",
+    weight: int | None = None,
+    impact: str = "",
+    effort: str = "",
+    sub_category: str = "",
+    source: str = "built-in",
+    learn_more: list[str] | None = None,
+) -> dict[str, Any]:
+    """A metric-backed control. Unlike an ARG control it has no KQL predicate; instead the
+    runner pulls an Azure Monitor metric for each in-scope resource and flags those whose
+    aggregated value violates a threshold (e.g. idle VMs whose peak CPU stayed low).
+
+    ``metric`` keys:
+    - ``metric``        Azure Monitor metric name (e.g. 'Percentage CPU').
+    - ``aggregation``   server-side aggregation requested ('Average'|'Maximum'|'Total'|…).
+    - ``evaluate``      how to reduce the time-series to one number ('avg'|'max'|'min').
+    - ``comparison``    'lt'|'le'|'gt'|'ge' — resource is flagged when value <cmp> threshold.
+    - ``threshold``     numeric threshold.
+    - ``lookback_days`` window length (days) of metric history to evaluate.
+    - ``interval``      metric grain (ISO-8601 duration, e.g. 'PT1H').
+    - ``unit``          display unit for the flagged value (e.g. '%').
+
+    ``kql`` is intentionally empty so ``detection_predicate`` returns '' — metric checks
+    can't be enforced as a static what-if policy, which is correct.
+    """
+    c = _check(
+        cid, pillar, title, description, severity, resource_types, "", remediation,
+        frameworks=frameworks, remediation_command=remediation_command, weight=weight,
+        kind="metric", impact=impact, effort=effort, sub_category=sub_category,
+        source=source, learn_more=learn_more,
+    )
+    c["metric"] = {
+        "metric": metric["metric"],
+        "aggregation": metric.get("aggregation", "Average"),
+        "evaluate": metric.get("evaluate", "avg"),
+        "comparison": metric.get("comparison", "lt"),
+        "threshold": float(metric.get("threshold", 0)),
+        "lookback_days": int(metric.get("lookback_days", 7)),
+        "interval": metric.get("interval", "PT1H"),
+        "unit": metric.get("unit", ""),
+    }
+    return c
+
+
+def _manual_check(
+    cid: str,
+    pillar: str,
+    title: str,
+    description: str,
+    severity: str,
+    resource_types: list[str],
+    remediation: str,
+    *,
+    frameworks: dict[str, list[str]] | None = None,
+    impact: str = "",
+    effort: str = "",
+    sub_category: str = "",
+    source: str = "built-in",
+    learn_more: list[str] | None = None,
+) -> dict[str, Any]:
+    """A manual-attestation control (no automated query). Many WAF/APRL recommendations can't
+    be verified from Resource Graph — they need a reviewer to confirm. A manual control
+    surfaces as ``manual`` (pending) and is EXCLUDED from the auto-score until a human records
+    an attestation (pass/fail/N/A), at which point it scores like any other control."""
+    c = _check(
+        cid, pillar, title, description, severity, resource_types, "", remediation,
+        frameworks=frameworks, kind="manual", impact=impact, effort=effort,
+        sub_category=sub_category, source=source, learn_more=learn_more,
+    )
+    return c
+
+
+def _signal_check(
+    cid: str,
+    pillar: str,
+    title: str,
+    description: str,
+    severity: str,
+    signal: dict[str, Any],
+    remediation: str,
+    *,
+    resource_types: list[str] | None = None,
+    frameworks: dict[str, list[str]] | None = None,
+    impact: str = "",
+    effort: str = "",
+    sub_category: str = "",
+    source: str = "advisor",
+    learn_more: list[str] | None = None,
+) -> dict[str, Any]:
+    """A live-signal control backed by a platform data plane (e.g. Azure Advisor) rather than
+    a resource-config predicate. ``signal`` config drives the runner:
+    - ``provider`` currently ``advisor``.
+    - ``category`` Advisor category to match (e.g. ``HighAvailability``).
+
+    The control flags resources that have an open recommendation in that category. Applicable
+    whenever the scope contains ANY resource (``resource_types`` empty == always applicable)."""
+    c = _check(
+        cid, pillar, title, description, severity, resource_types or [], "", remediation,
+        frameworks=frameworks, kind="signal", impact=impact, effort=effort,
+        sub_category=sub_category, source=source, learn_more=learn_more,
+    )
+    c["signal"] = {
+        "provider": signal.get("provider", "advisor"),
+        "category": signal.get("category", ""),
+    }
+    return c
 
 
 # ===================== SECURITY =====================
@@ -126,7 +333,7 @@ _SECURITY: list[dict[str, Any]] = [
         f"| where type =~ 'microsoft.storage/storageaccounts' "
         f"| where isnull(properties.allowSharedKeyAccess) or tobool(properties.allowSharedKeyAccess) == true {_PROJECT}",
         "Disable shared key access and use Azure AD (Entra) authorization for data plane access.",
-        frameworks={"cis": ["CIS Azure 3.x"], "nist": ["AC-2", "IA-2"]},
+        frameworks={"nist": ["AC-2", "IA-2"]},
         remediation_command="az storage account update --name <name> --resource-group <rg> --allow-shared-key-access false",
     ),
     _check(
@@ -188,6 +395,7 @@ _SECURITY: list[dict[str, Any]] = [
         f"| where tostring(properties.publicNetworkAccess) =~ 'Enabled' or isnull(properties.publicNetworkAccess) {_PROJECT}",
         "Set public network access to Disabled and use private endpoints / trusted services.",
         frameworks={"nist": ["SC-7"]},
+        remediation_command="az keyvault update --name <name> --resource-group <rg> --public-network-access Disabled",
     ),
     _check(
         "sec_sql_public_access",
@@ -201,7 +409,7 @@ _SECURITY: list[dict[str, Any]] = [
         f"| where tostring(properties.publicNetworkAccess) =~ 'Enabled' {_PROJECT}",
         "Disable public network access and use private endpoints; if public access is needed, "
         "scope firewall rules tightly.",
-        frameworks={"cis": ["CIS Azure 4.x"], "nist": ["SC-7"]},
+        frameworks={"nist": ["SC-7"]},
         remediation_command="az sql server update --name <name> --resource-group <rg> --enable-public-network false",
     ),
     _check(
@@ -231,7 +439,7 @@ _SECURITY: list[dict[str, Any]] = [
         "| project id, name, type, resourceGroup, subscriptionId",
         "Apply a disk encryption set with a customer-managed key where regulatory requirements "
         "demand CMK.",
-        frameworks={"cis": ["CIS Azure 7.x"], "nist": ["SC-28"]},
+        frameworks={"cis": ["CIS Azure 7.3"], "nist": ["SC-28"]},
     ),
     _check(
         "sec_aks_public_api",
@@ -259,6 +467,222 @@ _SECURITY: list[dict[str, Any]] = [
         f"| where tostring(properties.publicNetworkAccess) =~ 'Enabled' or isnull(properties.publicNetworkAccess) {_PROJECT}",
         "Set public network access to Disabled and use private endpoints / IP firewall rules.",
         frameworks={"nist": ["SC-7"]},
+        remediation_command="az cosmosdb update --name <name> --resource-group <rg> --public-network-access DISABLED",
+    ),
+    _check(
+        "sec_storage_min_tls",
+        "security",
+        "Storage accounts allow TLS below 1.2",
+        "Storage accounts whose minimum TLS version is below 1.2 accept weak, deprecated TLS "
+        "connections that are vulnerable to downgrade and known protocol attacks.",
+        "error",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tostring(properties.minimumTlsVersion) !in~ ('TLS1_2', 'TLS1_3') "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set the minimum TLS version to 1.2 (or later) on each storage account.",
+        frameworks={"cis": ["CIS Azure 3.15"], "nist": ["SC-8"]},
+        remediation_command="az storage account update --name <name> --resource-group <rg> --min-tls-version TLS1_2",
+    ),
+    _check(
+        "sec_storage_net_default_allow",
+        "security",
+        "Storage accounts default to allowing all networks",
+        "Storage accounts whose network default action is 'Allow' are reachable from every "
+        "network; the firewall should default to 'Deny' and explicitly allow trusted ranges.",
+        "warning",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where isnull(properties.networkAcls.defaultAction) or tostring(properties.networkAcls.defaultAction) =~ 'Allow' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set the storage firewall default action to Deny and allow only required VNets / IP "
+        "ranges (and trusted Azure services).",
+        frameworks={"cis": ["CIS Azure 3.8"], "nist": ["SC-7", "AC-3"]},
+        remediation_command="az storage account update --name <name> --resource-group <rg> --default-action Deny",
+    ),
+    _check(
+        "sec_sql_aad_only",
+        "security",
+        "SQL servers allow SQL (non-Entra) authentication",
+        "SQL logical servers without Azure AD (Entra)-only authentication still accept "
+        "password-based SQL logins, which are harder to govern, rotate, and audit.",
+        "warning",
+        ["microsoft.sql/servers"],
+        "| where type =~ 'microsoft.sql/servers' "
+        "| where isnull(properties.administrators.azureADOnlyAuthentication) "
+        "or tobool(properties.administrators.azureADOnlyAuthentication) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set an Entra admin and enable Azure AD-only authentication on the SQL server.",
+        frameworks={"nist": ["IA-2", "AC-2"]},
+        remediation_command="az sql server ad-only-auth enable --resource-group <rg> --server <name>",
+    ),
+    _check(
+        "sec_kv_rbac",
+        "security",
+        "Key Vaults using legacy access policies (not RBAC)",
+        "Key Vaults with vault access policies instead of Azure RBAC can't use fine-grained, "
+        "centrally-audited role assignments and are harder to govern at scale.",
+        "warning",
+        ["microsoft.keyvault/vaults"],
+        "| where type =~ 'microsoft.keyvault/vaults' "
+        "| where isnull(properties.enableRbacAuthorization) or tobool(properties.enableRbacAuthorization) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Migrate the vault to the Azure RBAC permission model and assign least-privilege roles.",
+        frameworks={"cis": ["CIS Azure 8.5"], "nist": ["AC-3", "AC-6"]},
+        remediation_command="az keyvault update --name <name> --resource-group <rg> --enable-rbac-authorization true",
+    ),
+    _check(
+        "sec_kv_soft_delete",
+        "security",
+        "Key Vaults without soft-delete enabled",
+        "Without soft-delete a deleted vault, key, or secret is unrecoverable, risking "
+        "permanent data loss and breaking key-backed services.",
+        "error",
+        ["microsoft.keyvault/vaults"],
+        "| where type =~ 'microsoft.keyvault/vaults' "
+        "| where isnull(properties.enableSoftDelete) or tobool(properties.enableSoftDelete) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Enable soft-delete (and purge protection) on every Key Vault.",
+        frameworks={"cis": ["CIS Azure 8.4"], "nist": ["CP-9", "SC-12"]},
+        remediation_command="az keyvault update --name <name> --resource-group <rg> --enable-soft-delete true",
+    ),
+    _check(
+        "sec_webapp_min_tls",
+        "security",
+        "App Services allow TLS below 1.2",
+        "Web/function apps whose minimum TLS version is 1.0 or 1.1 accept weak, deprecated TLS, "
+        "exposing traffic to downgrade attacks.",
+        "error",
+        ["microsoft.web/sites"],
+        "| where type =~ 'microsoft.web/sites' "
+        "| where tostring(properties.siteConfig.minTlsVersion) in~ ('1.0', '1.1') "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set the minimum TLS version to 1.2 (or later) on each App Service.",
+        frameworks={"nist": ["SC-8", "SC-23"]},
+        remediation_command="az webapp config set --name <name> --resource-group <rg> --min-tls-version 1.2",
+    ),
+    _check(
+        "sec_webapp_ftps",
+        "security",
+        "App Services allow plaintext FTP deployment",
+        "App Services with FTP state 'AllAllowed' permit unencrypted FTP for content deployment, "
+        "exposing credentials and code in transit.",
+        "warning",
+        ["microsoft.web/sites"],
+        "| where type =~ 'microsoft.web/sites' "
+        "| where tostring(properties.siteConfig.ftpsState) =~ 'AllAllowed' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set FTP state to 'FTPS only' or 'Disabled' on each App Service.",
+        frameworks={"nist": ["SC-8"]},
+        remediation_command="az webapp config set --name <name> --resource-group <rg> --ftps-state Disabled",
+    ),
+    _check(
+        "sec_webapp_no_managed_identity",
+        "security",
+        "App Services without a managed identity",
+        "App Services with no managed identity tend to rely on secrets/connection strings in "
+        "config instead of identity-based access to Azure resources.",
+        "info",
+        ["microsoft.web/sites"],
+        "| where type =~ 'microsoft.web/sites' "
+        "| where isnull(identity) or tostring(identity.type) in~ ('', 'None') "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Enable a system- or user-assigned managed identity and use it for downstream access.",
+        frameworks={"nist": ["IA-2", "IA-5"]},
+        remediation_command="az webapp identity assign --name <name> --resource-group <rg>",
+    ),
+    _check(
+        "sec_acr_admin_user",
+        "security",
+        "Container registries with the admin user enabled",
+        "ACR admin user is a single shared username/password with push/pull rights — a "
+        "long-lived credential that bypasses per-identity RBAC and auditing.",
+        "warning",
+        ["microsoft.containerregistry/registries"],
+        "| where type =~ 'microsoft.containerregistry/registries' "
+        "| where tobool(properties.adminUserEnabled) == true "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Disable the admin user and use Entra identities / tokens with scoped RBAC instead.",
+        frameworks={"nist": ["AC-2", "AC-6", "IA-2"]},
+        remediation_command="az acr update --name <name> --resource-group <rg> --admin-enabled false",
+    ),
+    _check(
+        "sec_acr_public_network",
+        "security",
+        "Container registries allow public network access",
+        "ACRs reachable from all networks are exposed beyond the private boundary; registries "
+        "holding production images should be private.",
+        "warning",
+        ["microsoft.containerregistry/registries"],
+        "| where type =~ 'microsoft.containerregistry/registries' "
+        "| where tostring(properties.publicNetworkAccess) =~ 'Enabled' or isnull(properties.publicNetworkAccess) "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set public network access to Disabled and use private endpoints (Premium SKU).",
+        frameworks={"nist": ["SC-7"]},
+        remediation_command="az acr update --name <name> --resource-group <rg> --public-network-enabled false",
+    ),
+    _check(
+        "sec_aks_local_accounts",
+        "security",
+        "AKS clusters with local (non-Entra) accounts enabled",
+        "AKS clusters that keep static local admin kubeconfig accounts enabled allow access "
+        "that bypasses Entra ID and Kubernetes RBAC auditing.",
+        "warning",
+        ["microsoft.containerservice/managedclusters"],
+        "| where type =~ 'microsoft.containerservice/managedclusters' "
+        "| where isnull(properties.disableLocalAccounts) or tobool(properties.disableLocalAccounts) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Disable local accounts and use Entra ID integration with Kubernetes RBAC.",
+        frameworks={"nist": ["IA-2", "AC-2"]},
+        remediation_command="az aks update --name <name> --resource-group <rg> --disable-local-accounts",
+    ),
+    _check(
+        "sec_aks_no_rbac",
+        "security",
+        "AKS clusters without Kubernetes RBAC",
+        "Clusters with Kubernetes RBAC disabled can't enforce least-privilege authorization "
+        "inside the cluster, so any authenticated user may have broad access.",
+        "error",
+        ["microsoft.containerservice/managedclusters"],
+        "| where type =~ 'microsoft.containerservice/managedclusters' "
+        "| where tobool(properties.enableRBAC) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Recreate the cluster with Kubernetes RBAC enabled (RBAC can't be toggled in place).",
+        frameworks={"nist": ["AC-3", "AC-6"]},
+    ),
+    _check(
+        "sec_cosmos_local_auth",
+        "security",
+        "Cosmos DB accounts with key-based (local) auth enabled",
+        "Cosmos DB accounts that allow key-based auth rely on long-lived shared keys instead of "
+        "Entra identity, weakening rotation and audit.",
+        "warning",
+        ["microsoft.documentdb/databaseaccounts"],
+        "| where type =~ 'microsoft.documentdb/databaseaccounts' "
+        "| where isnull(properties.disableLocalAuth) or tobool(properties.disableLocalAuth) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Disable local (key) auth and use Entra ID RBAC for data-plane access.",
+        frameworks={"nist": ["IA-2", "AC-2"]},
+    ),
+    _check(
+        "sec_nsg_db_ports_open",
+        "security",
+        "NSGs allow inbound database ports from the internet",
+        "NSG rules permitting inbound database ports (SQL 1433, MySQL 3306, PostgreSQL 5432, "
+        "Redis 6379, MongoDB 27017) from any source expose datastores directly to the internet.",
+        "critical",
+        ["microsoft.network/networksecuritygroups"],
+        "| where type =~ 'microsoft.network/networksecuritygroups' "
+        "| mv-expand rule = properties.securityRules "
+        "| extend dir = tostring(rule.properties.direction), acc = tostring(rule.properties.access), "
+        "src = tostring(rule.properties.sourceAddressPrefix), "
+        "ports = strcat(tostring(rule.properties.destinationPortRange), ' ', tostring(rule.properties.destinationPortRanges)) "
+        "| where dir =~ 'Inbound' and acc =~ 'Allow' and (src == '*' or src == '0.0.0.0/0' or src =~ 'Internet') "
+        "and (ports has '1433' or ports has '3306' or ports has '5432' or ports has '6379' or ports has '27017' or ports has '*') "
+        "| summarize by id, name, type, resourceGroup, subscriptionId",
+        "Remove internet-facing database rules; reach datastores over private endpoints / VNet "
+        "and restrict NSG sources to specific application subnets.",
+        frameworks={"nist": ["SC-7", "AC-17"]},
     ),
 ]
 
@@ -413,6 +837,302 @@ _RELIABILITY: list[dict[str, Any]] = [
         "Deploy zone-redundant Application Gateway v2 across multiple availability zones.",
         frameworks={"nist": ["CP-2"]},
     ),
+    _check(
+        "rel_appservice_no_zone",
+        "reliability",
+        "App Service plans without zone redundancy",
+        "App Service plans without zone redundancy keep all instances in one zone and won't "
+        "survive a single-zone outage.",
+        "warning",
+        ["microsoft.web/serverfarms"],
+        "| where type =~ 'microsoft.web/serverfarms' "
+        "| where isnull(properties.zoneRedundant) or tobool(properties.zoneRedundant) == false "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Enable zone redundancy on supported (Premium v2/v3) App Service plans with 2+ instances.",
+        frameworks={"nist": ["CP-2", "CP-10"]},
+    ),
+    _check(
+        "rel_aks_free_sla",
+        "reliability",
+        "AKS clusters on the Free tier (no uptime SLA)",
+        "AKS clusters on the Free tier have no financially-backed control-plane uptime SLA; "
+        "production clusters should use the Standard tier.",
+        "warning",
+        ["microsoft.containerservice/managedclusters"],
+        "| where type =~ 'microsoft.containerservice/managedclusters' "
+        "| where isnull(sku.tier) or tostring(sku.tier) =~ 'Free' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Move production clusters to the Standard tier for the control-plane uptime SLA.",
+        frameworks={"nist": ["CP-2"]},
+        remediation_command="az aks update --name <name> --resource-group <rg> --tier standard",
+    ),
+    _check(
+        "rel_vmss_no_zone",
+        "reliability",
+        "VM scale sets not spread across availability zones",
+        "Virtual machine scale sets without availability zones share a single zone's fault and "
+        "maintenance domains and won't survive a zone outage.",
+        "warning",
+        ["microsoft.compute/virtualmachinescalesets"],
+        "| where type =~ 'microsoft.compute/virtualmachinescalesets' "
+        "| where isnull(zones) or array_length(zones) == 0 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Deploy scale sets across 2-3 availability zones for zone-resilient capacity.",
+        frameworks={"nist": ["CP-2", "CP-10"]},
+        sub_category="High availability",
+        impact="high",
+        effort="high",
+    ),
+    # ---------------- Native reliability expansion (WARA/APRL-aligned) ----------------
+    _check(
+        "rel_vm_single_instance",
+        "reliability",
+        "Single-instance VMs with no zone, availability set, or scale set",
+        "A VM that is not in an availability zone, an availability set, or a scale set is a "
+        "single point of failure with no platform SLA for instance uptime.",
+        "warning",
+        ["microsoft.compute/virtualmachines"],
+        "| where type =~ 'microsoft.compute/virtualmachines' "
+        "| where (isnull(zones) or array_length(zones) == 0) "
+        "and isnull(properties.availabilitySet) and isnull(properties.virtualMachineScaleSet) "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Place the VM in an availability zone, an availability set, or a scale set; for "
+        "stateless workloads prefer zone-spread scale sets behind a Standard Load Balancer.",
+        frameworks={"nist": ["CP-2", "CP-10"]},
+        sub_category="High availability",
+        impact="high",
+        effort="high",
+        learn_more=["https://learn.microsoft.com/azure/reliability/availability-zones-overview"],
+    ),
+    _check(
+        "rel_firewall_no_zone",
+        "reliability",
+        "Azure Firewall not deployed across availability zones",
+        "An Azure Firewall without availability zones is a zonal single point of failure for "
+        "all traffic that transits it.",
+        "warning",
+        ["microsoft.network/azurefirewalls"],
+        "| where type =~ 'microsoft.network/azurefirewalls' "
+        "| where isnull(zones) or array_length(zones) < 2 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Redeploy the firewall pinned to 2-3 availability zones (zones are set at creation).",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="high",
+        effort="high",
+    ),
+    _check(
+        "rel_vnet_gateway_no_az_sku",
+        "reliability",
+        "VPN/ExpressRoute gateways on non-zone-redundant SKUs",
+        "Virtual network gateways whose SKU is not zone-redundant (…AZ) run in a single zone, "
+        "so a zone outage drops hybrid connectivity.",
+        "warning",
+        ["microsoft.network/virtualnetworkgateways"],
+        "| where type =~ 'microsoft.network/virtualnetworkgateways' "
+        "| extend skuName = tostring(properties.sku.name) "
+        "| where isnotempty(skuName) and skuName !endswith 'AZ' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Migrate to a zone-redundant gateway SKU (e.g. VpnGw1AZ / ErGw1AZ) for zone resilience.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="medium",
+        effort="high",
+    ),
+    _check(
+        "rel_traffic_manager_single_endpoint",
+        "reliability",
+        "Traffic Manager profiles with fewer than two endpoints",
+        "A Traffic Manager profile with a single endpoint provides no failover target, so it "
+        "can't deliver the multi-region availability it exists to provide.",
+        "warning",
+        ["microsoft.network/trafficmanagerprofiles"],
+        "| where type =~ 'microsoft.network/trafficmanagerprofiles' "
+        "| extend n = array_length(properties.endpoints) "
+        "| where isnull(n) or n < 2 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Add at least one healthy secondary endpoint (different region) and configure failover/priority routing.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="Disaster recovery",
+        impact="high",
+        effort="medium",
+    ),
+    _check(
+        "rel_servicebus_basic_tier",
+        "reliability",
+        "Service Bus namespaces on the Basic tier",
+        "Service Bus Basic has no topics, no geo-disaster-recovery pairing, and no zone "
+        "redundancy — unsuitable for resilient messaging.",
+        "warning",
+        ["microsoft.servicebus/namespaces"],
+        "| where type =~ 'microsoft.servicebus/namespaces' "
+        "| where tolower(tostring(sku.name)) == 'basic' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Upgrade to Standard or Premium; use Premium with zone redundancy + geo-DR for critical workloads.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="medium",
+        effort="medium",
+    ),
+    _check(
+        "rel_eventhub_basic_tier",
+        "reliability",
+        "Event Hubs namespaces on the Basic tier",
+        "Event Hubs Basic has a 1-day retention cap and no geo-DR or zone redundancy, limiting "
+        "resilience and recovery for streaming pipelines.",
+        "info",
+        ["microsoft.eventhub/namespaces"],
+        "| where type =~ 'microsoft.eventhub/namespaces' "
+        "| where tolower(tostring(sku.name)) == 'basic' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Move to Standard/Premium and enable zone redundancy (and geo-DR for critical streams).",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="low",
+        effort="medium",
+    ),
+    _check(
+        "rel_redis_basic_tier",
+        "reliability",
+        "Azure Cache for Redis on the Basic tier",
+        "Basic-tier Redis is a single node with no replication and no SLA — a restart or node "
+        "failure causes a full cache outage and data loss.",
+        "warning",
+        ["microsoft.cache/redis"],
+        "| where type =~ 'microsoft.cache/redis' "
+        "| where tolower(tostring(properties.sku.name)) == 'basic' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Upgrade to Standard (replicated) or Premium (zone-redundant) for an availability SLA.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="high",
+        effort="medium",
+    ),
+    _check(
+        "rel_postgres_flexible_no_ha",
+        "reliability",
+        "PostgreSQL Flexible Server without high availability",
+        "A Flexible Server with high availability disabled has no standby replica, so planned or "
+        "unplanned downtime takes the database fully offline.",
+        "warning",
+        ["microsoft.dbforpostgresql/flexibleservers"],
+        "| where type =~ 'microsoft.dbforpostgresql/flexibleservers' "
+        "| where isnull(properties.highAvailability.mode) or tostring(properties.highAvailability.mode) =~ 'Disabled' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Enable zone-redundant high availability (a standby in another zone) for production databases.",
+        frameworks={"nist": ["CP-2", "CP-10"]},
+        sub_category="High availability",
+        impact="high",
+        effort="medium",
+    ),
+    _check(
+        "rel_mysql_flexible_no_ha",
+        "reliability",
+        "MySQL Flexible Server without high availability",
+        "A MySQL Flexible Server with high availability disabled has no standby replica, so any "
+        "downtime takes the database fully offline.",
+        "warning",
+        ["microsoft.dbformysql/flexibleservers"],
+        "| where type =~ 'microsoft.dbformysql/flexibleservers' "
+        "| where isnull(properties.highAvailability.mode) or tostring(properties.highAvailability.mode) =~ 'Disabled' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Enable zone-redundant high availability for production databases.",
+        frameworks={"nist": ["CP-2", "CP-10"]},
+        sub_category="High availability",
+        impact="high",
+        effort="medium",
+    ),
+    _check(
+        "rel_apim_developer_sku",
+        "reliability",
+        "API Management on the Developer SKU",
+        "The API Management Developer tier carries no SLA and can't scale out or span zones — it "
+        "is not intended to front production traffic.",
+        "warning",
+        ["microsoft.apimanagement/service"],
+        "| where type =~ 'microsoft.apimanagement/service' "
+        "| where tolower(tostring(sku.name)) == 'developer' "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Use Standard/Premium for production; Premium adds multi-region + zone redundancy.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="High availability",
+        impact="medium",
+        effort="high",
+    ),
+    _check(
+        "rel_container_app_min_replicas_zero",
+        "reliability",
+        "Container Apps that can scale to zero replicas",
+        "A Container App with minReplicas 0 has cold starts and no always-on instance, so the "
+        "first request after idle can fail or time out — risky for latency-sensitive services.",
+        "info",
+        ["microsoft.app/containerapps"],
+        "| where type =~ 'microsoft.app/containerapps' "
+        "| extend minr = toint(properties.template.scale.minReplicas) "
+        "| where isnull(minr) or minr < 1 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Set minReplicas to at least 1 (2+ for zone resilience) for always-on production apps.",
+        frameworks={"nist": ["CP-2"]},
+        sub_category="Scalability",
+        impact="low",
+        effort="low",
+    ),
+    # ---------------- Manual attestation controls (reviewer-verified) ----------------
+    _manual_check(
+        "rel_manual_dr_drill",
+        "reliability",
+        "Disaster-recovery failover tested recently",
+        "A documented DR failover drill has been executed for this workload within the last 6 "
+        "months and met its recovery objectives. Cannot be verified from resource configuration.",
+        "error",
+        [],
+        "Run and document a failover drill to the secondary region; capture the achieved RTO/RPO.",
+        sub_category="Disaster recovery",
+        impact="high",
+        effort="high",
+        learn_more=["https://learn.microsoft.com/azure/reliability/disaster-recovery-overview-for-azure-services"],
+    ),
+    _manual_check(
+        "rel_manual_rto_rpo",
+        "reliability",
+        "RTO and RPO targets are defined",
+        "Recovery Time Objective and Recovery Point Objective targets are agreed with the "
+        "business and documented for this workload.",
+        "warning",
+        [],
+        "Define and document RTO/RPO per business criticality and align backup/DR design to them.",
+        sub_category="Disaster recovery",
+        impact="high",
+        effort="medium",
+    ),
+    _manual_check(
+        "rel_manual_health_model",
+        "reliability",
+        "Workload health model and SLO defined",
+        "The workload has a defined health model (what 'healthy' means) and a service-level "
+        "objective, with alerting wired to user-facing signals.",
+        "warning",
+        [],
+        "Define an SLO and a layered health model; alert on user-impacting symptoms, not just resource metrics.",
+        sub_category="Monitoring & alerting",
+        impact="medium",
+        effort="medium",
+    ),
+    # ---------------- Live platform signal (Azure Advisor) ----------------
+    _signal_check(
+        "rel_advisor_high_availability",
+        "reliability",
+        "Open Azure Advisor reliability recommendations",
+        "Azure Advisor has open High Availability recommendations for in-scope resources — "
+        "Microsoft's own reliability guidance flagged a gap on these resources.",
+        "warning",
+        {"provider": "advisor", "category": "HighAvailability"},
+        "Review and action the Advisor High Availability recommendations for each flagged resource.",
+        sub_category="Other",
+        impact="medium",
+        effort="medium",
+        learn_more=["https://learn.microsoft.com/azure/advisor/advisor-reference-reliability-recommendations"],
+    ),
 ]
 
 
@@ -497,6 +1217,42 @@ _COST: list[dict[str, Any]] = [
         "| where tostring(properties.sku.tier) has 'v2' and isnull(properties.autoscaleConfiguration) "
         "| project id, name, type, resourceGroup, subscriptionId",
         "Enable autoscaling (min/max capacity) on v2 Application Gateways to match demand.",
+    ),
+    _check(
+        "cost_nat_gateway_orphaned",
+        "cost",
+        "NAT gateways not associated with any subnet",
+        "A NAT gateway with no associated subnets does no work yet still bills hourly for the "
+        "gateway resource.",
+        "warning",
+        ["microsoft.network/natgateways"],
+        "| where type =~ 'microsoft.network/natgateways' "
+        "| where isnull(properties.subnets) or array_length(properties.subnets) == 0 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Delete NAT gateways that aren't associated with any subnet.",
+        remediation_command="az network nat gateway delete --name <name> --resource-group <rg>",
+    ),
+    _metric_check(
+        "cost_vm_idle",
+        "cost",
+        "Virtual machines that appear idle (very low CPU)",
+        "VMs whose peak CPU stayed below 5% over the last week are likely idle or oversized and "
+        "are paying for compute capacity they don't use.",
+        "warning",
+        ["microsoft.compute/virtualmachines"],
+        {
+            "metric": "Percentage CPU",
+            "aggregation": "Average",
+            "evaluate": "max",
+            "comparison": "lt",
+            "threshold": 5.0,
+            "lookback_days": 7,
+            "interval": "PT1H",
+            "unit": "%",
+        },
+        "Deallocate, downsize, or reclaim idle VMs (confirm they aren't intentional standby).",
+        frameworks={"nist": ["CM-8"]},
+        remediation_command="az vm deallocate --name <name> --resource-group <rg>",
     ),
 ]
 
@@ -591,6 +1347,35 @@ _OPERATIONS: list[dict[str, Any]] = [
         "Set an auto-upgrade channel (e.g. 'stable' or 'patch') on AKS clusters.",
         frameworks={"nist": ["CM-3"]},
     ),
+    _check(
+        "ops_missing_costcenter_tag",
+        "operations",
+        "Resources missing a 'cost center' tag",
+        "Resources without a cost-center tag can't be charged back or governed by FinOps "
+        "policy, making spend attribution and accountability difficult.",
+        "info",
+        _COMMON_TYPES,
+        f"| where type in~ ({_COMMON_TYPES_KQL}) "
+        f"| where isempty(tostring(tags['costcenter'])) and isempty(tostring(tags['CostCenter'])) "
+        f"and isempty(tostring(tags['cost-center'])) {_PROJECT}",
+        "Apply a consistent cost-center tag and enforce it with Azure Policy.",
+        frameworks={"nist": ["CM-8"]},
+    ),
+    _check(
+        "ops_law_short_retention",
+        "operations",
+        "Log Analytics workspaces with short data retention",
+        "Workspaces retaining data for fewer than 30 days limit incident investigation and may "
+        "fall short of audit/compliance retention requirements.",
+        "warning",
+        ["microsoft.operationalinsights/workspaces"],
+        "| where type =~ 'microsoft.operationalinsights/workspaces' "
+        "| where toint(properties.retentionInDays) < 30 "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Increase workspace retention to at least 30 days (longer for regulated workloads).",
+        frameworks={"nist": ["AU-11", "AU-6"]},
+        remediation_command="az monitor log-analytics workspace update --workspace-name <name> --resource-group <rg> --retention-time 30",
+    ),
 ]
 
 
@@ -679,6 +1464,27 @@ _PERFORMANCE: list[dict[str, Any]] = [
         "| project id, name, type, resourceGroup, subscriptionId",
         "Enable autoscaling or raise the fixed instance count to handle peak load.",
     ),
+    _metric_check(
+        "perf_vm_cpu_saturated",
+        "performance",
+        "Virtual machines with sustained high CPU",
+        "VMs whose average CPU exceeded 85% over the last week are likely under-provisioned, "
+        "risking latency, queueing, and throttling under load.",
+        "warning",
+        ["microsoft.compute/virtualmachines"],
+        {
+            "metric": "Percentage CPU",
+            "aggregation": "Average",
+            "evaluate": "avg",
+            "comparison": "gt",
+            "threshold": 85.0,
+            "lookback_days": 7,
+            "interval": "PT1H",
+            "unit": "%",
+        },
+        "Resize to a larger SKU or scale out (e.g. via a scale set) to add CPU headroom.",
+        remediation_command="az vm resize --name <name> --resource-group <rg> --size <larger-sku>",
+    ),
 ]
 
 
@@ -692,38 +1498,159 @@ _ISO_MAP: dict[str, list[str]] = {
     "sec_storage_public_blob": ["A.5.10", "A.8.3"],
     "sec_storage_https_only": ["A.8.24", "A.5.14"],
     "sec_storage_shared_key": ["A.5.15", "A.8.2"],
+    "sec_storage_min_tls": ["A.8.24"],
+    "sec_storage_net_default_allow": ["A.8.20", "A.8.22"],
     "sec_nsg_mgmt_open": ["A.8.20", "A.8.22"],
+    "sec_nsg_db_ports_open": ["A.8.20", "A.8.22"],
     "sec_public_ip": ["A.8.20", "A.8.22"],
     "sec_kv_purge_protection": ["A.8.24", "A.8.13"],
     "sec_kv_public_network": ["A.8.20", "A.8.24"],
+    "sec_kv_rbac": ["A.5.15", "A.8.2"],
+    "sec_kv_soft_delete": ["A.8.13"],
     "sec_sql_public_access": ["A.8.20", "A.8.22"],
+    "sec_sql_aad_only": ["A.5.15", "A.8.2"],
     "sec_webapp_https_only": ["A.8.24"],
+    "sec_webapp_min_tls": ["A.8.24"],
+    "sec_webapp_ftps": ["A.8.24"],
+    "sec_webapp_no_managed_identity": ["A.5.16"],
     "sec_disk_unencrypted": ["A.8.24"],
     "sec_aks_public_api": ["A.8.20", "A.8.22"],
+    "sec_aks_local_accounts": ["A.5.15", "A.8.2"],
+    "sec_aks_no_rbac": ["A.8.3"],
     "sec_cosmos_public": ["A.8.20"],
+    "sec_cosmos_local_auth": ["A.5.15", "A.8.2"],
+    "sec_acr_admin_user": ["A.5.15", "A.8.2"],
+    "sec_acr_public_network": ["A.8.20"],
     "rel_vm_no_zone": ["A.5.29", "A.8.14"],
     "rel_storage_lrs": ["A.8.13", "A.8.14"],
     "rel_pip_basic_sku": ["A.8.14"],
     "rel_lb_basic_sku": ["A.8.14"],
     "rel_sql_no_zone": ["A.5.29", "A.8.14"],
     "rel_appplan_single_instance": ["A.8.14"],
+    "rel_appservice_no_zone": ["A.8.14"],
     "rel_disk_lrs": ["A.8.13"],
     "rel_cosmos_single_region": ["A.5.29", "A.8.14"],
     "rel_aks_single_nodepool": ["A.8.14"],
+    "rel_aks_free_sla": ["A.8.14"],
+    "rel_vmss_no_zone": ["A.8.14"],
     "rel_appgw_no_zone": ["A.8.14"],
+    "ops_vm_no_boot_diagnostics": ["A.8.15", "A.8.16"],
+    "ops_aks_no_monitoring": ["A.8.15", "A.8.16"],
+    "ops_law_short_retention": ["A.8.15"],
+}
+
+# Microsoft Cloud Security Benchmark (MCSB) v1 control mappings, keyed by check id.
+_MCSB_MAP: dict[str, list[str]] = {
+    "sec_storage_public_blob": ["NS-2", "DP-8"],
+    "sec_storage_https_only": ["DP-3"],
+    "sec_storage_min_tls": ["DP-3"],
+    "sec_storage_shared_key": ["IM-1"],
+    "sec_storage_net_default_allow": ["NS-2"],
+    "sec_nsg_mgmt_open": ["NS-1"],
+    "sec_nsg_db_ports_open": ["NS-1"],
+    "sec_public_ip": ["NS-1"],
+    "sec_kv_purge_protection": ["DP-8"],
+    "sec_kv_public_network": ["NS-2"],
+    "sec_kv_rbac": ["PA-7"],
+    "sec_kv_soft_delete": ["DP-8"],
+    "sec_sql_public_access": ["NS-2"],
+    "sec_sql_aad_only": ["IM-1"],
+    "sec_webapp_https_only": ["DP-3"],
+    "sec_webapp_min_tls": ["DP-3"],
+    "sec_webapp_ftps": ["DP-3"],
+    "sec_webapp_no_managed_identity": ["IM-3"],
+    "sec_disk_unencrypted": ["DP-5"],
+    "sec_aks_public_api": ["NS-2"],
+    "sec_aks_local_accounts": ["IM-1"],
+    "sec_aks_no_rbac": ["PA-7"],
+    "sec_cosmos_public": ["NS-2"],
+    "sec_cosmos_local_auth": ["IM-1"],
+    "sec_acr_admin_user": ["IM-1"],
+    "sec_acr_public_network": ["NS-2"],
+    "rel_storage_lrs": ["BR-2"],
+    "rel_disk_lrs": ["BR-2"],
+    "ops_vm_no_boot_diagnostics": ["LT-3"],
+    "ops_aks_no_monitoring": ["LT-3"],
+    "ops_law_short_retention": ["LT-6"],
+}
+
+# PCI DSS v4.0 requirement mappings (top-level requirement), keyed by check id.
+_PCI_MAP: dict[str, list[str]] = {
+    "sec_storage_public_blob": ["PCI DSS 1", "PCI DSS 7"],
+    "sec_storage_https_only": ["PCI DSS 4"],
+    "sec_storage_min_tls": ["PCI DSS 4"],
+    "sec_storage_shared_key": ["PCI DSS 8"],
+    "sec_storage_net_default_allow": ["PCI DSS 1"],
+    "sec_nsg_mgmt_open": ["PCI DSS 1"],
+    "sec_nsg_db_ports_open": ["PCI DSS 1"],
+    "sec_public_ip": ["PCI DSS 1"],
+    "sec_kv_purge_protection": ["PCI DSS 3"],
+    "sec_kv_public_network": ["PCI DSS 1"],
+    "sec_kv_rbac": ["PCI DSS 7"],
+    "sec_kv_soft_delete": ["PCI DSS 3"],
+    "sec_sql_public_access": ["PCI DSS 1"],
+    "sec_sql_aad_only": ["PCI DSS 8"],
+    "sec_webapp_https_only": ["PCI DSS 4"],
+    "sec_webapp_min_tls": ["PCI DSS 4"],
+    "sec_webapp_ftps": ["PCI DSS 4"],
+    "sec_webapp_no_managed_identity": ["PCI DSS 8"],
+    "sec_disk_unencrypted": ["PCI DSS 3"],
+    "sec_aks_public_api": ["PCI DSS 1"],
+    "sec_aks_local_accounts": ["PCI DSS 8"],
+    "sec_aks_no_rbac": ["PCI DSS 7"],
+    "sec_cosmos_public": ["PCI DSS 1"],
+    "sec_cosmos_local_auth": ["PCI DSS 8"],
+    "sec_acr_admin_user": ["PCI DSS 8"],
+    "sec_acr_public_network": ["PCI DSS 1"],
+    "ops_vm_no_boot_diagnostics": ["PCI DSS 10"],
+    "ops_aks_no_monitoring": ["PCI DSS 10"],
+    "ops_law_short_retention": ["PCI DSS 10"],
+}
+
+# Apply the centrally-maintained framework maps so each check carries every framework's
+# control ids without per-control edits. ``cis``/``nist`` are declared inline on the check.
+_CENTRAL_MAPS: dict[str, dict[str, list[str]]] = {"iso": _ISO_MAP, "mcsb": _MCSB_MAP, "pci": _PCI_MAP}
+for _c in ALL_CHECKS:
+    for _fw, _map in _CENTRAL_MAPS.items():
+        _ids = _map.get(_c["id"])
+        if _ids:
+            _c["frameworks"][_fw] = _ids
+
+# Backfill WAF reliability sub-categories for the original reliability controls (the newer
+# controls declare their own ``sub_category``). Applied centrally so the whole reliability
+# pillar can be sliced by sub-pillar (HA / DR / Scalability / …) like a WARA report.
+_SUB_CATEGORY_MAP: dict[str, str] = {
+    "rel_vm_no_zone": "High availability",
+    "rel_storage_lrs": "Disaster recovery",
+    "rel_pip_basic_sku": "High availability",
+    "rel_lb_basic_sku": "High availability",
+    "rel_sql_no_zone": "High availability",
+    "rel_appplan_single_instance": "High availability",
+    "rel_appservice_no_zone": "High availability",
+    "rel_disk_lrs": "Disaster recovery",
+    "rel_cosmos_single_region": "Disaster recovery",
+    "rel_aks_single_nodepool": "High availability",
+    "rel_aks_free_sla": "High availability",
+    "rel_appgw_no_zone": "High availability",
 }
 for _c in ALL_CHECKS:
-    iso = _ISO_MAP.get(_c["id"])
-    if iso:
-        _c["frameworks"]["iso"] = iso
+    if not _c.get("sub_category"):
+        sub = _SUB_CATEGORY_MAP.get(_c["id"])
+        if sub:
+            _c["sub_category"] = sub
 
 _BY_ID = {c["id"]: c for c in ALL_CHECKS}
 
+# Frameworks the compliance coverage view aggregates, in display order.
+FRAMEWORKS = ("cis", "nist", "iso", "mcsb", "pci")
+
 # Framework display metadata for the compliance coverage view.
 FRAMEWORK_META: dict[str, dict[str, str]] = {
-    "cis": {"label": "CIS Azure Foundations", "icon": "🛡️"},
+    "cis": {"label": f"CIS Azure Foundations {CIS_VERSION}", "icon": "🛡️"},
     "nist": {"label": "NIST 800-53 Rev.5", "icon": "🏛️"},
     "iso": {"label": "ISO/IEC 27001:2022", "icon": "📜"},
+    "mcsb": {"label": "Microsoft Cloud Security Benchmark", "icon": "☁️"},
+    "pci": {"label": "PCI DSS v4.0", "icon": "💳"},
 }
 
 
@@ -744,12 +1671,13 @@ def checks_for(pillars: list[str], *, include_custom: bool = True) -> list[dict[
 def compliance_coverage(findings: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate findings into a per-framework compliance report.
 
-    For each framework (CIS/NIST/ISO), maps each referenced control id to the worst
-    status across the checks that cite it (fail > error > not_applicable > pass), so the
-    same assessment run yields a compliance coverage view alongside the WAF score."""
+    For each framework (see ``FRAMEWORKS``: CIS/NIST/ISO/MCSB/PCI), maps each referenced
+    control id to the worst status across the checks that cite it (fail > error >
+    not_applicable > pass), so the same assessment run yields a compliance coverage view
+    alongside the WAF score."""
     rank = {"fail": 3, "error": 2, "not_applicable": 1, "pass": 0}
     out: dict[str, Any] = {}
-    for fw in ("cis", "nist", "iso"):
+    for fw in FRAMEWORKS:
         controls: dict[str, dict[str, Any]] = {}
         for f in findings:
             fws = (f.get("frameworks") or {}).get(fw) or []
@@ -818,6 +1746,13 @@ def _check_public(c: dict[str, Any]) -> dict[str, Any]:
         "frameworks": c.get("frameworks", {}),
         "remediation": c.get("remediation", ""),
         "remediation_command": c.get("remediation_command", ""),
+        "metric_backed": bool(c.get("metric")),
+        "kind": c.get("kind") or ("metric" if c.get("metric") else "graph"),
+        "impact": c.get("impact", ""),
+        "effort": c.get("effort", ""),
+        "sub_category": c.get("sub_category", ""),
+        "source": c.get("source", "built-in"),
+        "learn_more": c.get("learn_more", []),
         "custom": c.get("custom", False),
     }
 
@@ -845,8 +1780,56 @@ def public_catalog() -> dict[str, Any]:
             {"id": p, **PILLAR_META[p], "check_count": len(by_pillar.get(p, []))}
             for p in PILLARS
         ],
+        "packs": [
+            {"id": pid, **{k: v for k, v in meta.items()}}
+            for pid, meta in PACKS.items()
+        ],
+        "sub_categories": list(SUB_CATEGORIES),
         "frameworks": FRAMEWORK_META,
         "checks": by_pillar,
         "score_bands": bands,
     }
+
+
+def catalog_markdown() -> str:
+    """Render the shipped catalog as a Markdown reference, auto-generated from ``ALL_CHECKS``.
+
+    One table per pillar (id/title, severity, control kind, mapped framework controls) so a
+    compliance reference can be produced on demand without hand-maintaining a separate doc.
+    Run ``python -m app.assessments.catalog`` to print it."""
+    lines: list[str] = ["# Assessment check catalog", ""]
+    lines.append(
+        f"_{len(ALL_CHECKS)} shipped controls across {len(PILLARS)} Well-Architected pillars. "
+        f"CIS control ids pinned to {CIS_VERSION}._"
+    )
+    lines.append("")
+    by_pillar: dict[str, list[dict[str, Any]]] = {p: [] for p in PILLARS}
+    for c in ALL_CHECKS:
+        by_pillar.setdefault(c["pillar"], []).append(c)
+    for p in PILLARS:
+        meta = PILLAR_META.get(p, {"label": p, "icon": ""})
+        rows = by_pillar.get(p, [])
+        lines.append(f"## {meta.get('icon', '')} {meta.get('label', p)} ({len(rows)})".strip())
+        lines.append("")
+        lines.append("| Check | Severity | Kind | Frameworks |")
+        lines.append("| --- | --- | --- | --- |")
+        for c in rows:
+            fws = c.get("frameworks") or {}
+            fw_str = (
+                "; ".join(
+                    f"{FRAMEWORK_META.get(k, {}).get('label', k)}: {', '.join(v)}"
+                    for k, v in fws.items()
+                    if v
+                )
+                or "—"
+            )
+            kind = c.get("kind") or ("metric" if c.get("metric") else "graph")
+            lines.append(f"| `{c['id']}` — {c['title']} | {c['severity']} | {kind} | {fw_str} |")
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+if __name__ == "__main__":  # pragma: no cover - manual doc generation helper
+    print(catalog_markdown())
+
 

@@ -34,61 +34,81 @@ def _conn(connection_id: str | None) -> dict[str, Any] | None:
     return resolve_connection(connection_id)
 
 
+async def _scope_subscriptions(conn: dict[str, Any] | None, scope: str) -> list[str]:
+    """Subscription ids to query for cost under the selected Azure scope. ``scope=\"\"`` returns
+    every visible subscription; ``sub:``/``mg:`` restrict to the selection."""
+    all_ids = await policy_collector.discover_subscriptions(conn)
+    if not scope:
+        return all_ids
+    ids, _ = await service.resolve_scope_sub_ids(conn, scope, all_ids)
+    return ids
+
+
 def _actor(p: Principal) -> str:
     return p.display_name or p.email or p.subject
 
 
-async def _policy_inventory(tenant_id: str, connection_id: str) -> dict[str, Any]:
+async def _policy_inventory(tenant_id: str, connection_id: str, force: bool = False) -> tuple[dict[str, Any], str]:
+    """The (slow) Azure Policy inventory for a tenant+connection, cached for 5 min. Returns
+    ``(inventory, fetched_at_iso)``. ``force=True`` bypasses the cache and re-queries Azure
+    Policy (used by the Governance tab's explicit Refresh)."""
+    from datetime import datetime, timezone
+
     key = f"{tenant_id}|{connection_id}"
     hit = _POLICY_CACHE.get(key)
-    if hit and (time.time() - hit["ts"]) < _POLICY_TTL:
-        return hit["inv"]
+    if hit and not force and (time.time() - hit["ts"]) < _POLICY_TTL:
+        return hit["inv"], hit.get("fetched_at", "")
     inv = await policy_collector.collect_inventory(_conn(connection_id or None))
-    _POLICY_CACHE[key] = {"inv": inv, "ts": time.time()}
-    return inv
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    _POLICY_CACHE[key] = {"inv": inv, "ts": time.time(), "fetched_at": fetched_at}
+    return inv, fetched_at
 
 
 @router.get("")
 async def get_inventory(
     connection_id: str | None = None,
     force: int = 0,
+    scope: str = "",
     principal: Principal = Depends(require_admin),
 ):
     """Full resource inventory (resources + facets + summary), attributed to workloads.
 
-    Server-cached PERMANENTLY per tenant + connection so the many Resource Graph queries run
-    only once until refreshed. ``force=1`` bypasses the cache and re-collects from Azure."""
+    Server-cached PERMANENTLY per tenant + connection + scope so the many Resource Graph
+    queries run only once per scope until refreshed. ``scope`` restricts collection to a
+    subscription (``sub:<id>``) or a management group's subscriptions (``mg:<id>``); ``""`` is
+    the whole tenant. ``force=1`` bypasses the cache and re-collects from Azure."""
     tid = principal.tenant_id
     cid = connection_id or ""
     if not force:
-        hit = cache.get(tid, cid)
+        hit = cache.get(tid, cid, scope=scope)
         if hit:
             return {**hit["payload"], "cached": True, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
 
     conn = _conn(connection_id)
-    payload = await service.collect(conn)
-    fetched_at = cache.set_(tid, cid, payload)
+    payload = await service.collect(conn, scope=scope)
+    fetched_at = cache.set_(tid, cid, payload, scope=scope)
     return {**payload, "cached": False, "fetched_at": fetched_at, "age_seconds": 0}
 
 
 @router.get("/optimization")
 async def get_optimization(
     connection_id: str | None = None,
+    scope: str = "",
     principal: Principal = Depends(require_admin),
 ):
     """Cost-optimization report: orphaned / idle resources (unattached disks, idle public
     IPs, orphaned NICs) joined with trailing-30-day cost as an estimated monthly saving.
 
     Read-only and cache-only — it never triggers a fresh Resource Graph or Cost query, so
-    it returns instantly. If inventory hasn't been collected yet, ``available`` is false and
-    the UI prompts the user to load the Inventory grid first."""
+    it returns instantly. If inventory hasn't been collected yet for this scope, ``available``
+    is false and the UI prompts the user to load the Inventory grid first."""
     tid = principal.tenant_id
     cid = connection_id or ""
-    hit = cache.get(tid, cid)
+    hit = cache.get(tid, cid, scope=scope)
     if not hit:
         return {"available": False, "categories": [], "items": [], "total_count": 0}
     resources = (hit.get("payload") or {}).get("resources") or []
-    cost_payload = cost.peek_cost(tid, cid)
+    cost_payload = cost.peek_cost(tid, cid, scope=scope)
     report = optimization_mod.analyze_resources(resources, cost_payload)
     return {
         "available": True,
@@ -151,49 +171,49 @@ async def post_explain(req: ExplainReq, _: Principal = Depends(require_admin)):
 
 # ============================================================ AI estate insights (Theme 5)
 @router.get("/insights")
-async def get_insights(connection_id: str | None = None, principal: Principal = Depends(require_admin)):
+async def get_insights(connection_id: str | None = None, scope: str = "", principal: Principal = Depends(require_admin)):
     """AI-generated, actionable insights over the whole inventory roll-up (concentration,
     tag governance, cleanup, unassigned). Degrades to deterministic insights if AI is down."""
-    hit = cache.get(principal.tenant_id, connection_id or "")
+    hit = cache.get(principal.tenant_id, connection_id or "", scope=scope)
     if hit:
         payload = hit["payload"]
     else:
-        payload = await service.collect(_conn(connection_id))
-        cache.set_(principal.tenant_id, connection_id or "", payload)
+        payload = await service.collect(_conn(connection_id), scope=scope)
+        cache.set_(principal.tenant_id, connection_id or "", payload, scope=scope)
     return await ai.estate_insights(payload.get("summary", {}), payload.get("facets", {}))
 
 
 # ============================================================ snapshots + drift (Theme 3)
 @router.get("/snapshots")
-async def get_snapshots(connection_id: str | None = None, principal: Principal = Depends(require_admin)):
-    return {"snapshots": snapshots.list_snapshots(principal.tenant_id, connection_id)}
+async def get_snapshots(connection_id: str | None = None, scope: str = "", principal: Principal = Depends(require_admin)):
+    return {"snapshots": snapshots.list_snapshots(principal.tenant_id, connection_id, scope=scope)}
 
 
 @router.post("/snapshots")
-async def post_snapshot(connection_id: str | None = None, principal: Principal = Depends(require_admin)):
+async def post_snapshot(connection_id: str | None = None, scope: str = "", principal: Principal = Depends(require_admin)):
     """Capture a point-in-time snapshot of the live inventory and return it plus the drift
     since the previous snapshot. Read-only — records a fingerprint, applies nothing."""
-    payload = await service.collect(_conn(connection_id))
-    cache.set_(principal.tenant_id, connection_id or "", payload)
-    prev = snapshots.latest_snapshot(principal.tenant_id, connection_id or "")
-    snap = snapshots.save_snapshot(principal.tenant_id, connection_id or "", payload, _actor(principal))
+    payload = await service.collect(_conn(connection_id), scope=scope)
+    cache.set_(principal.tenant_id, connection_id or "", payload, scope=scope)
+    prev = snapshots.latest_snapshot(principal.tenant_id, connection_id or "", scope=scope)
+    snap = snapshots.save_snapshot(principal.tenant_id, connection_id or "", payload, _actor(principal), scope=scope)
     drift = snapshots.compute_drift(prev, payload.get("resources", [])) if prev else None
     return {"snapshot": snap, "drift_since_previous": drift}
 
 
 @router.get("/drift")
-async def get_drift(connection_id: str | None = None, baseline_id: str | None = None, principal: Principal = Depends(require_admin)):
+async def get_drift(connection_id: str | None = None, baseline_id: str | None = None, scope: str = "", principal: Principal = Depends(require_admin)):
     """Drift of the current live inventory against a baseline snapshot (or the latest one)."""
     baseline = (
         snapshots.get_snapshot(principal.tenant_id, baseline_id) if baseline_id
-        else snapshots.latest_snapshot(principal.tenant_id, connection_id or "")
+        else snapshots.latest_snapshot(principal.tenant_id, connection_id or "", scope=scope)
     )
     if not baseline:
         return {"drift": None, "reason": "No snapshot yet. Take a snapshot to start tracking drift."}
-    hit = cache.get(principal.tenant_id, connection_id or "")
-    payload = hit["payload"] if hit else await service.collect(_conn(connection_id))
+    hit = cache.get(principal.tenant_id, connection_id or "", scope=scope)
+    payload = hit["payload"] if hit else await service.collect(_conn(connection_id), scope=scope)
     if not hit:
-        cache.set_(principal.tenant_id, connection_id or "", payload)
+        cache.set_(principal.tenant_id, connection_id or "", payload, scope=scope)
     return {"drift": snapshots.compute_drift(baseline, payload.get("resources", []))}
 
 
@@ -208,17 +228,20 @@ async def delete_snapshot(snapshot_id: str, principal: Principal = Depends(requi
 class GovernanceReq(BaseModel):
     resource_id: str
     connection_id: str = ""
+    force: bool = False
 
 
 @router.post("/governance")
 async def post_governance(req: GovernanceReq, principal: Principal = Depends(require_admin)):
     """Effective Azure Policy at a resource's scope (assignments inherited from its RG /
-    subscription / management groups), plus a compliance hint. Read-only."""
+    subscription / management groups), plus a compliance hint. Read-only. ``force=true``
+    re-queries Azure Policy (bypasses the 5-min cache). Returns ``fetched_at`` so the UI can
+    show when the underlying policy inventory was last collected."""
     if not req.resource_id:
         raise HTTPException(status_code=400, detail="resource_id is required.")
-    inv = await _policy_inventory(principal.tenant_id, req.connection_id)
+    inv, fetched_at = await _policy_inventory(principal.tenant_id, req.connection_id, force=req.force)
     eff = policy_collector.resolve_effective(req.resource_id, inv.get("assignments", []), inv.get("exemptions", []))
-    return {"effective": eff}
+    return {"effective": eff, "fetched_at": fetched_at}
 
 
 # ============================================================ assessment findings (Theme 2)
@@ -273,34 +296,35 @@ async def post_findings(req: FindingsReq, principal: Principal = Depends(require
 
 # ============================================================ cost / FinOps (Theme 4)
 @router.get("/cost")
-async def get_cost(connection_id: str | None = None, force: int = 0, cached_only: int = 0, principal: Principal = Depends(require_admin)):
+async def get_cost(connection_id: str | None = None, force: int = 0, cached_only: int = 0, scope: str = "", principal: Principal = Depends(require_admin)):
     """Best-effort trailing-30-days Azure cost per resource (Cost Management). Returns an empty,
     'unavailable' result (not an error) when Cost Management isn't accessible. ``cached_only=1``
-    returns the permanently-cached cost without ever running the slow query (auto-restore on a
-    fresh page load); a ``not_loaded`` marker is returned when nothing is cached yet. Read-only."""
+    returns the permanently-cached cost (per scope) without ever running the slow query (auto-restore
+    on a fresh page load); a ``not_loaded`` marker is returned when nothing is cached yet. Read-only."""
     tid = principal.tenant_id
     cid = connection_id or ""
     if cached_only and not force:
-        hit = cost.peek_cost(tid, cid)
+        hit = cost.peek_cost(tid, cid, scope=scope)
         if hit is None:
             return {"available": False, "not_loaded": True, "currency": "USD", "period": "",
                     "fetched_at": "", "cached": False, "by_resource": {}, "by_subscription": {},
                     "total": 0, "errors": []}
         return hit
     conn = _conn(connection_id)
-    subs = await policy_collector.discover_subscriptions(conn)
-    return await cost.get_cost(conn, subs, tid, cid, force=bool(force))
+    subs = await _scope_subscriptions(conn, scope)
+    return await cost.get_cost(conn, subs, tid, cid, force=bool(force), scope=scope)
 
 
 @router.get("/cost-rollup")
-async def get_cost_rollup(connection_id: str | None = None, force: int = 0, cached_only: int = 0, principal: Principal = Depends(require_admin)):
+async def get_cost_rollup(connection_id: str | None = None, force: int = 0, cached_only: int = 0, scope: str = "", principal: Principal = Depends(require_admin)):
     """Cost rolled up by workload / resource type / region / subscription / resource group,
     plus the most expensive resources — joining the PERMANENT cost cache onto the inventory.
 
-    ``force=1`` re-runs the (slow) Azure Cost Management query and refreshes the permanent
+    ``scope`` keys both the cost and inventory caches so the rollup reflects the selected Azure
+    scope. ``force=1`` re-runs the (slow) Azure Cost Management query and refreshes the permanent
     cost cache; otherwise the cached cost is reused indefinitely. ``cached_only=1`` returns the
     cached rollup if one exists and NEVER runs the slow query — used to auto-restore cost on a
-    fresh page load. The inventory itself uses its own 5-minute cache. Read-only."""
+    fresh page load. The inventory itself uses its own per-scope cache. Read-only."""
     tid = principal.tenant_id
     cid = connection_id or ""
     conn = _conn(connection_id)
@@ -309,23 +333,23 @@ async def get_cost_rollup(connection_id: str | None = None, force: int = 0, cach
     # cache without ever querying Azure; if there's no cached cost yet, return a "not loaded"
     # marker so the UI shows its load prompt.
     if cached_only:
-        cost_payload = cost.peek_cost(tid, cid)
+        cost_payload = cost.peek_cost(tid, cid, scope=scope)
         if cost_payload is None:
             return {"available": False, "not_loaded": True, "currency": "USD", "period": "",
                     "fetched_at": "", "cached": False, "total": 0, "by_workload": [], "by_type": [],
                     "by_location": [], "by_subscription": [], "by_resource_group": [], "top_resources": [],
                     "unassigned_cost": 0, "attributed_total": 0, "unattributed_total": 0, "errors": []}
     else:
-        subs = await policy_collector.discover_subscriptions(conn)
-        cost_payload = await cost.get_cost(conn, subs, tid, cid, force=bool(force))
+        subs = await _scope_subscriptions(conn, scope)
+        cost_payload = await cost.get_cost(conn, subs, tid, cid, force=bool(force), scope=scope)
 
-    # Inventory (5-min cache; collect on miss).
-    hit = cache.get(tid, cid)
+    # Inventory (per-scope cache; collect on miss).
+    hit = cache.get(tid, cid, scope=scope)
     if hit:
         inv = hit["payload"]
     else:
-        inv = await service.collect(conn)
-        cache.set_(tid, cid, inv)
+        inv = await service.collect(conn, scope=scope)
+        cache.set_(tid, cid, inv, scope=scope)
 
     rollup = cost.build_rollup(cost_payload, inv.get("resources", []))
 

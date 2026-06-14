@@ -206,7 +206,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
               disabled={invQ.isFetching}
               className="rounded-lg border px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
-              ↻ Refresh
+              {invQ.isFetching && !withCompliance ? "Refreshing…" : "↻ Refresh"}
             </button>
             {inv && (
               invQ.isFetching ? (
@@ -523,6 +523,19 @@ function Inventory({ inv }: { inv: PolicyInventory }) {
 }
 
 // =========================================================================== Effective
+/** Azure portal deep link for a policy scope (ARM id). Management groups use the MG
+ *  drill-down blade; subscriptions / resource groups / resources use the generic resource
+ *  overview, which the portal resolves for every ARM scope. Returns "" for an empty scope. */
+function scopePortalUrl(scope: string): string {
+  const s = (scope || "").trim();
+  if (!s) return "";
+  const mg = s.match(/\/managementGroups\/([^/]+)/i);
+  if (mg) {
+    return `https://portal.azure.com/#view/Microsoft_Azure_ManagementGroups/ManagementGroupDrillDownMenuBlade/~/overview/tenantId//mgId/${encodeURIComponent(mg[1])}`;
+  }
+  return `https://portal.azure.com/#@/resource${s}/overview`;
+}
+
 function Effective({ inv }: { inv: PolicyInventory }) {
   const [scope, setScope] = useState("");
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.policyEffective>> | null>(null);
@@ -566,6 +579,19 @@ function Effective({ inv }: { inv: PolicyInventory }) {
           <button onClick={() => resolve(scope)} disabled={busy || !scope} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
             Resolve
           </button>
+          <a
+            href={scope ? scopePortalUrl(scope) : undefined}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-disabled={!scope}
+            onClick={(e) => { if (!scope) e.preventDefault(); }}
+            title="Open this scope in the Azure portal"
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+              scope ? "border-gray-200 text-gray-600 hover:bg-gray-50" : "cursor-not-allowed border-gray-200 text-gray-300"
+            }`}
+          >
+            Open in Azure ↗
+          </a>
         </div>
       </Card>
 
@@ -669,16 +695,48 @@ function Advisors({ inv, connectionId }: { inv: PolicyInventory; connectionId: s
       {/* Conflicts */}
       <Card title="⚖️ Conflict & redundancy detector" icon="" subtitle="The same policy assigned at multiple scopes or duplicated — consolidate.">
         {adv.conflicts.length === 0 ? <Empty text="No conflicts or duplicates." /> : (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {adv.conflicts.map((c) => (
               <div key={c.policy_definition_id} className="rounded-lg border p-2.5">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-gray-800">{c.definition_name}</span>
                   <Pill cls={c.kind === "duplicate_same_scope" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}>{c.kind.replace(/_/g, " ")}</Pill>
-                  <span className="text-[11px] text-gray-500">×{c.assignment_count}</span>
+                  <Pill cls="bg-gray-100 text-gray-500">{c.is_initiative ? "Initiative" : "Policy"}</Pill>
+                  {c.category && <span className="text-[11px] text-gray-500">{c.category}</span>}
+                  <span className="ml-auto text-[11px] text-gray-500">
+                    {c.assignment_count} assignment{c.assignment_count === 1 ? "" : "s"}
+                    {c.scope_count != null && c.scope_count !== c.assignment_count ? ` · ${c.scope_count} scope${c.scope_count === 1 ? "" : "s"}` : ""}
+                  </span>
                 </div>
-                <div className="mt-0.5 text-[11px] text-gray-500">{c.scopes.map((s) => s.label).join(" · ")}</div>
-                <div className="text-[11px] text-gray-600">{c.hint}</div>
+                {/* Per-assignment detail rows */}
+                <div className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-100 bg-gray-50/50">
+                  {c.scopes.map((s, i) => (
+                    <div key={s.id ?? i} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1.5 text-[11px]">
+                      <ScopeIcon kind={s.scope_kind ?? ""} />
+                      <span className="font-medium text-gray-700">{s.label}</span>
+                      {s.assignment_name && s.assignment_name !== c.definition_name && (
+                        <span className="text-gray-500" title="Assignment name">· {s.assignment_name}</span>
+                      )}
+                      {s.effect && <Pill cls={effectTone(s.effect)}>{s.effect}</Pill>}
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${s.enforcement_mode === "DoNotEnforce" ? "bg-gray-200 text-gray-600" : "bg-green-100 text-green-700"}`}>
+                        {s.enforcement_mode === "DoNotEnforce" ? "Dry-run" : "Enforced"}
+                      </span>
+                      {s.scope && (
+                        <a
+                          href={scopePortalUrl(s.scope)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open this scope in the Azure portal"
+                          className="ml-auto shrink-0 text-gray-400 transition hover:text-brand"
+                        >
+                          Open in Azure ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1.5 text-[11px] text-gray-600">{c.hint}</div>
               </div>
             ))}
           </div>

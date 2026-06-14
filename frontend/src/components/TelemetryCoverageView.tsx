@@ -13,6 +13,7 @@ import {
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
+import { TrendChart } from "./TrendChart";
 
 const STATUS_META: Record<string, { label: string; dot: string; cls: string }> = {
   none: { label: "No diagnostics", dot: "bg-red-500", cls: "text-red-600" },
@@ -114,6 +115,13 @@ export function TelemetryCoveragePanel() {
   const data: TelemetryCoverage | undefined = enabled ? covQ.data : undefined;
   const allGaps = data?.gaps ?? [];
 
+  // Coverage-% trend over time (loads with the coverage data).
+  const trendQ = useQuery({
+    queryKey: ["telemetry-trend", scopeKind, effectiveWorkloadId, subId],
+    queryFn: () => api.coverageTrend("telemetry", params),
+    enabled,
+  });
+
   function loadCoverage() {
     if (scopeReady) { setMsg(null); setLoadedScope(scopeKey); }
   }
@@ -125,6 +133,7 @@ export function TelemetryCoveragePanel() {
       const fresh = await api.refreshTelemetry(params);
       setLoadedScope(scopeKey);
       qc.setQueryData(["telemetry", scopeKind, effectiveWorkloadId, subId], fresh);
+      trendQ.refetch();
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -254,6 +263,12 @@ export function TelemetryCoveragePanel() {
               <span className="text-amber-600">{data?.kpis.unknown_destinations ?? 0} unknown dest</span>
             </div>
           </div>
+          {enabled && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Coverage trend</span>
+              <TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} />
+            </div>
+          )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
               <button onClick={() => setScopeKind("workload")} className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Workload</button>

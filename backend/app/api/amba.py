@@ -114,6 +114,13 @@ async def refresh(
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
     # Shield so the compute finishes + caches even if the client navigates away mid-refresh.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True))
+    # Record a compact trend point so this scan can be charted over time.
+    from app.core import coverage_trends
+
+    coverage_trends.record(
+        "amba", principal.tenant_id or "default", scope_kind, scope_id,
+        pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
+    )
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -125,6 +132,28 @@ async def refresh(
     )
     await db.commit()
     return snap
+
+
+@router.get("/trend")
+async def trend(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Coverage-% trend points for the scope (chart-ready). On a demo scope with no history
+    yet, backfills a believable rising series so the chart isn't empty on first visit."""
+    from app.core import coverage_trends
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    tenant_id = principal.tenant_id or "default"
+    if demo.is_demo_scope(scope_kind, scope_id) and not coverage_trends.series("amba", tenant_id, scope_kind, scope_id):
+        snap = await _get_snapshot(principal, scope_kind, scope_id, force=False)
+        coverage_trends.seed_demo_series(
+            "amba", tenant_id, scope_kind, scope_id,
+            current_pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {},
+        )
+    return coverage_trends.trend("amba", tenant_id, scope_kind, scope_id)
+
 
 
 # ----------------------------------------------------------------------- reference set

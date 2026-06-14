@@ -1750,10 +1750,10 @@ function DemoDataCard() {
       <p className="mb-3 text-sm text-gray-600">
         Load a complete dummy dataset across the proactive screens (Monitoring / Telemetry /
         Backup-DR coverage, Performance Profiler, Retirement Radar, Telemetry Intelligence,
-        Evidence Locker, DNS &amp; reachability) anchored to the demo workload{" "}
-        <b>“Contoso Hotels”</b>. Useful for demos and screenshots without a live
-        Azure tenant. Removing it deletes <b>only</b> demo data — your real workloads, scans,
-        and settings are never touched.
+        Evidence Locker, DNS &amp; reachability) anchored to the demo workloads{" "}
+        <b>“Contoso Hotels”</b>, <b>“Zava Shoes Website”</b>, and <b>“Zava Shoes CRM”</b>.
+        Useful for demos and screenshots without a live Azure tenant. Removing it deletes{" "}
+        <b>only</b> demo data — your real workloads, scans, and settings are never touched.
       </p>
 
       <div className="mb-3 flex items-center gap-2 text-xs">

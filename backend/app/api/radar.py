@@ -5,7 +5,13 @@ recommendations (deduped by tracking ID) into one workload/subscription-scoped, 
 mapped list with a deadline countdown, plus a dedicated Azure OpenAI/Foundry model-
 lifecycle lane. Exposes drill-down, migration-runbook drafting, Reliability-pillar finding
 registration, ticketing, status/assign/waive, a scheduled-digest preview, the editable
-reference, and a War Room handoff context. Admin-gated."""
+reference, and a War Room handoff context. Admin-gated.
+
+Real (non-demo) scopes are **server-side cached**: selecting a scope only ever READS the
+cache and never triggers the slow Service Health / Advisor queries — a cache miss returns an
+empty ``never_loaded`` snapshot so the UI prompts for Refresh. Only ``POST /radar/refresh``
+recomputes under a per-scope lock. The demo scope is synthesised locally, so it stays
+instant on visit."""
 from __future__ import annotations
 
 import logging
@@ -41,7 +47,30 @@ def _decorate(snap: dict[str, Any], ttl_s: int, tenant_id: str) -> dict[str, Any
     out["ttl_s"] = ttl_s
     out["age_seconds"] = int(age) if age is not None else None
     out["stale_cache"] = (age is None) or (age >= ttl_s)
+    out.setdefault("never_loaded", False)
     return out
+
+
+def _empty_radar(scope_kind: str, scope_id: str, *, connection_configured: bool) -> dict[str, Any]:
+    """A 'not loaded yet' radar snapshot — empty rail/events/counts with ``never_loaded`` set so
+    the UI prompts the user to press Refresh. Selecting a scope must never trigger the (slow)
+    Service Health / Advisor queries; only the Refresh button recomputes and overwrites the cache."""
+    from app.radar.collector import compute_radar
+
+    snap = compute_radar([], [])
+    snap.update(
+        {
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "scope_name": scope_id,
+            "connection_configured": connection_configured,
+            "source": "",
+            "demo": False,
+            "error": "",
+            "never_loaded": True,
+        }
+    )
+    return snap
 
 
 async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
@@ -53,22 +82,25 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
     tenant_id = principal.tenant_id or "default"
 
     if demo.is_demo_scope(scope_kind, scope_id):
+        # Demo data is synthesised locally (no Azure calls), so seeding stays instant on visit.
         snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
         if force or snap is None or not cache.is_fresh(snap, ttl) or not snap.get("demo"):
             snap = demo.seed_demo(tenant_id=tenant_id, scope_id=scope_id)
         return _decorate(snap, ttl, tenant_id)
 
     if not force:
+        # Selecting a scope: only ever READ the cache — never trigger the (slow) Service Health /
+        # Advisor queries, even when the snapshot is stale or missing. A cache miss returns an
+        # empty 'not loaded yet' payload so the UI prompts the user to press Refresh; only
+        # ``force`` (the Refresh button) recomputes and overwrites the cache.
         snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
-        if snap and cache.is_fresh(snap, ttl):
+        if snap:
             return _decorate(snap, ttl, tenant_id)
+        connection = get_default_connection()
+        return _decorate(_empty_radar(scope_kind, scope_id, connection_configured=connection is not None), ttl, tenant_id)
 
     lock = cache.get_lock(tenant_id, scope_kind, scope_id)
     async with lock:
-        if not force:
-            snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
-            if snap and cache.is_fresh(snap, ttl):
-                return _decorate(snap, ttl, tenant_id)
         connection = get_default_connection()
         workload = get_workload(scope_id) if scope_kind == "workload" else None
         fresh = await collect_radar(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)

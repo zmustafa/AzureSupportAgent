@@ -13,6 +13,7 @@ from typing import Any
 from app.azure.arm import (
     get_management_group_children,
     list_management_groups,
+    list_root_management_groups,
     list_subscriptions,
 )
 from app.azure.credentials import get_arm_token
@@ -41,8 +42,18 @@ async def list_top_level(connection: dict | None, group_by: str) -> list[dict[st
     token, err = await get_arm_token(connection) if connection else (None, "no connection")
     if group_by == "mg":
         if token and not err:
+            # Prefer the ROOT management groups (real hierarchy) so nested MGs are revealed by
+            # expansion rather than listed flat alongside their parent.
+            roots, root_err = await list_root_management_groups(token)
+            if not root_err and roots:
+                return [
+                    {"kind": "mg", "id": g["id"], "name": g["name"], "has_children": True}
+                    for g in roots
+                ]
+            # Fallback (getEntities unavailable/forbidden): the flat list, so the picker still
+            # works — degraded to showing every visible MG at the top level.
             mgs, mg_err = await list_management_groups(token)
-            if not mg_err:
+            if not mg_err and mgs:
                 return [
                     {"kind": "mg", "id": g["id"], "name": g["name"], "has_children": True}
                     for g in mgs

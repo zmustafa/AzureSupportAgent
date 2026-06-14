@@ -266,9 +266,15 @@ export function RetirementRadarPanel() {
         </div>
         {data && (
           <div className="mt-1 text-[11px] text-gray-400">
-            {data.demo ? "Demo data · " : data.connection_configured ? "" : "No Azure connection · "}
-            updated {agoText(data.age_seconds)} {data.stale_cache ? "· stale" : ""}
-            {data.error ? ` · ${data.error}` : ""}
+            {data.never_loaded ? (
+              <span className="text-amber-600">Not loaded yet — press Refresh</span>
+            ) : (
+              <>
+                {data.demo ? "Demo data · " : data.connection_configured ? "" : "No Azure connection · "}
+                updated {agoText(data.age_seconds)} {data.stale_cache ? "· stale" : ""}
+                {data.error ? ` · ${data.error}` : ""}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -284,6 +290,33 @@ export function RetirementRadarPanel() {
           <div className="p-8 text-center text-sm text-gray-500">Loading radar…</div>
         ) : !data ? (
           <div className="p-8 text-center text-sm text-gray-500">Pick a scope to load the radar.</div>
+        ) : data.never_loaded ? (
+          <div className="mx-auto max-w-2xl py-16 text-center">
+            <div className="text-3xl">📡</div>
+            <h2 className="mt-2 text-base font-semibold text-gray-900">Radar not loaded yet</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Scanning Azure Service Health &amp; Advisor for upcoming retirements and breaking changes
+              takes a moment, so it doesn&apos;t run automatically. Press Refresh to build the snapshot —
+              it&apos;s then cached until you refresh again.
+            </p>
+            {msg && !msg.ok && (
+              <div className="mx-auto mt-3 max-w-md rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {msg.text}
+              </div>
+            )}
+            <button
+              onClick={doRefresh}
+              disabled={refreshing}
+              className="mt-4 rounded-md border bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {refreshing ? "Scanning…" : "↻ Refresh now"}
+            </button>
+            {!data.connection_configured && (
+              <p className="mt-3 text-xs text-amber-700">
+                No default Azure connection — configure one in Settings → Azure Tenants first.
+              </p>
+            )}
+          </div>
         ) : (
           <>
             {msg && (

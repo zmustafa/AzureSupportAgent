@@ -94,13 +94,22 @@ class AssessmentTarget(Target):
             return "Select at least one workload for the assessment schedule."
         from app.assessments import catalog
 
+        # A named pack (WARA/WASA/WAF) supplies its own pillars.
+        if catalog.pack_pillars((cfg.get("pack") or "").lower()):
+            return None
         pillars = [p for p in (cfg.get("pillars") or []) if p in catalog.PILLARS]
         if not pillars:
-            return "Select at least one assessment pillar."
+            return "Select an assessment pack or at least one pillar."
         return None
 
     def label(self, cfg: dict[str, Any]) -> str:
+        from app.assessments import catalog
+
         wids = cfg.get("workload_ids") or ([cfg["workload_id"]] if cfg.get("workload_id") else [])
+        pack = (cfg.get("pack") or "").lower()
+        pack_meta = catalog.PACKS.get(pack)
+        if pack_meta:
+            return f"{pack_meta['short']} · assess {len(wids)} workload(s)"
         pillars = cfg.get("pillars") or []
         return f"Assess {len(wids)} workload(s) · {', '.join(pillars) or 'all pillars'}"
 
@@ -110,7 +119,15 @@ class AssessmentTarget(Target):
 
         cfg = task.target_config or {}
         wids = cfg.get("workload_ids") or ([cfg["workload_id"]] if cfg.get("workload_id") else [])
-        pillars = [p for p in (cfg.get("pillars") or []) if p in catalog.PILLARS] or list(catalog.PILLARS)
+        # A named pack (WARA/WASA/WAF) overrides the pillar list and stamps the run trigger.
+        pack = (cfg.get("pack") or "").lower()
+        pack_pillars = catalog.pack_pillars(pack) if pack else None
+        if pack_pillars is not None:
+            pillars = pack_pillars
+            trigger = pack
+        else:
+            pillars = [p for p in (cfg.get("pillars") or []) if p in catalog.PILLARS] or list(catalog.PILLARS)
+            trigger = "schedule"
         use_ai = bool(cfg.get("use_ai", True))
         conn = cfg.get("connection_id") or task.connection_id or None
 
@@ -126,7 +143,7 @@ class AssessmentTarget(Target):
                     tenant_id=task.tenant_id,
                     connection_id=conn,
                     actor=f"schedule:{task.id}",
-                    trigger="schedule",
+                    trigger=trigger,
                     use_ai=use_ai,
                 ):
                     if ev.get("type") == "done":
@@ -152,7 +169,41 @@ class AssessmentTarget(Target):
 
 
 async def _maybe_alert_assessment(task: Any, cfg: dict[str, Any], done: dict) -> None:
-    """Publish a notification when a scheduled assessment has new findings (per config)."""
+    """Publish notifications for a scheduled assessment, per config: (1) new findings at or
+    above a severity, and (2) a low-confidence / incomplete run (controls couldn't all be
+    evaluated) — so an unreliable scheduled score is never trusted silently."""
+    from app.notifications.engine import publish
+
+    # --- (2) Low-confidence / incompleteness alert (new assessment trust signal). --------
+    if cfg.get("alert_on_low_confidence", False):
+        totals = done.get("totals") or {}
+        completeness = done.get("completeness_pct")
+        if completeness is None:
+            completeness = totals.get("completeness_pct")
+        confidence = (done.get("confidence") or totals.get("confidence") or "").lower()
+        errored = int(totals.get("errored") or 0)
+        threshold = int(cfg.get("min_completeness_pct", 98) or 98)
+        if (completeness is not None and completeness < threshold) or confidence == "low":
+            try:
+                await publish(
+                    tenant_id=task.tenant_id,
+                    type="assessment.low_confidence",
+                    source="assessment",
+                    severity="warning",
+                    title=f"Scheduled assessment '{task.name}' had low confidence",
+                    body=(
+                        f"Only {completeness}% of applicable controls were evaluated"
+                        + (f" ({errored} could not run)" if errored else "")
+                        + f". Confidence: {confidence or 'unknown'} — the score is provisional."
+                    ),
+                    facts={"completeness_pct": completeness, "confidence": confidence, "errored": errored},
+                    links={"run_id": done.get("run_id")},
+                    fingerprint=f"assessment-sched-conf:{task.id}",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    # --- (1) New-findings alert. ----------------------------------------------------------
     if not cfg.get("alert_on_new_findings", True):
         return
     diff = done.get("diff") or {}
@@ -170,8 +221,6 @@ async def _maybe_alert_assessment(task: Any, cfg: dict[str, Any], done: dict) ->
         return
     names = [nf.get("title", "") if isinstance(nf, dict) else str(nf) for nf in new_failures][:5]
     try:
-        from app.notifications.engine import publish
-
         await publish(
             tenant_id=task.tenant_id,
             type="assessment.new_findings",
