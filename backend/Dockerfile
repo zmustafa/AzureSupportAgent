@@ -16,7 +16,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Copy the project metadata and package source needed to build/install the
+# wheel (pyproject declares packages = ["app"]), then install. Done before the
+# full COPY so the dependency layer is cached unless these inputs change.
 COPY pyproject.toml ./
+COPY app ./app
 RUN pip install --upgrade pip && pip install .
 
 COPY . .
