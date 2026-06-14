@@ -5167,8 +5167,9 @@ export interface AssessmentCheckMeta {
   impact?: string; // high | medium | low
   effort?: string; // low | medium | high
   sub_category?: string; // WAF sub-pillar (reliability)
-  source?: string; // built-in | aprl | advisor | custom
+  source?: string; // built-in | aprl | advisor | custom | cis-v5
   learn_more?: string[];
+  profile?: string; // CIS profile level: L1 | L2
 }
 
 export interface AssessmentPack {
@@ -5628,6 +5629,7 @@ export interface AssessmentFinding {
   sub_category?: string;
   source?: string;
   learn_more?: string[];
+  profile?: string;
   attestation?: { status: string; note?: string; by?: string; at?: string };
   waiver?: { justification: string; approver: string };
 }

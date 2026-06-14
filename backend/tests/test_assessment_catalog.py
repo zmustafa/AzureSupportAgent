@@ -35,9 +35,11 @@ def test_every_check_has_valid_core_fields():
         kind = c.get("kind") or ("metric" if c.get("metric") else "graph")
         assert c["pillar"] in catalog.PILLARS, c["id"]
         assert c["severity"] in _VALID_SEVERITIES, c["id"]
-        # graph/metric controls target resource types; manual/signal controls may be
-        # workload-level (no resource_types) and apply whenever any resource is in scope.
-        if kind in ("graph", "metric"):
+        # graph/metric controls target resource types; manual/signal and subscription-scoped
+        # CIS controls (existence checks / non-Resources ARG tables) are workload-level and
+        # apply whenever any in-scope subscription exists (no resource_types required).
+        sub_scoped = c.get("expectation") == "present" or (c.get("arg_table", "Resources") != "Resources")
+        if kind in ("graph", "metric") and not sub_scoped:
             assert c["resource_types"], f"{c['id']} has no resource_types"
         # resource_types must be lowercased ARM type strings.
         assert all(t == t.lower() for t in c["resource_types"]), c["id"]
@@ -51,7 +53,16 @@ def test_graph_checks_project_required_columns():
         kind = c.get("kind") or ("metric" if c.get("metric") else "graph")
         if kind != "graph":
             continue  # metric/manual/signal controls have no standard KQL projection
-        assert _REQUIRED_PROJECTION in c["kql"], f"{c['id']} does not project the standard columns"
+        # Existence checks only need subscriptionId; subscription-subject / summarize checks
+        # project a synthetic subscription row. All graph checks must surface subscriptionId
+        # and reduce to a row set (project / summarize / distinct).
+        assert "subscriptionId" in c["kql"], f"{c['id']} does not project subscriptionId"
+        assert any(op in c["kql"] for op in ("project", "summarize", "distinct")), c["id"]
+        if c.get("expectation") == "present":
+            continue  # existence checks project only subscriptionId
+        # Resource-subject violation checks must also surface id + type for the flagged list.
+        if c.get("arg_table", "Resources") == "Resources":
+            assert " id" in c["kql"] and "type" in c["kql"], f"{c['id']} missing id/type projection"
 
 
 def test_manual_and_signal_kinds_well_formed():
@@ -102,7 +113,7 @@ def test_cis_version_pinned_and_no_vague_refs():
 def test_tls_check_promoted_to_shipped_catalog():
     tls = catalog.get_check("sec_storage_min_tls")
     assert tls is not None
-    assert "CIS Azure 3.15" in tls["frameworks"].get("cis", [])
+    assert "CIS Azure 9.3.6" in tls["frameworks"].get("cis", [])
     assert tls["remediation_command"].startswith("az storage account update")
 
 

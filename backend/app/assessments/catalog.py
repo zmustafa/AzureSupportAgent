@@ -32,12 +32,12 @@ from typing import Any
 
 # CIS Microsoft Azure Foundations Benchmark version that the ``cis`` control ids below are
 # pinned to. Centralised so the benchmark edition is unambiguous and easy to bump.
-CIS_VERSION = "v2.1.0"
+CIS_VERSION = "v5.0.0"
 
 # Version of the shipped control catalog. Stamped onto every AssessmentRun so historical
 # runs are reproducible and drift/diff across catalog edits is meaningful. Bump whenever
 # controls are added/removed/materially changed.
-CATALOG_VERSION = "2026.06.2"
+CATALOG_VERSION = "2026.06.3"
 
 # Version of the per-finding result schema (shape of each entry in findings_json). Bump
 # when the finding dict gains/changes fields the UI or scoring relies on.
@@ -137,6 +137,10 @@ def _check(
     sub_category: str = "",
     source: str = "built-in",
     learn_more: list[str] | None = None,
+    arg_table: str = "Resources",
+    expectation: str = "",
+    profile: str = "",
+    scope_mode: str = "",
 ) -> dict[str, Any]:
     return {
         "id": cid,
@@ -155,8 +159,13 @@ def _check(
         "impact": impact,  # high | medium | low (business impact of the finding)
         "effort": effort,  # low | medium | high (remediation effort)
         "sub_category": sub_category,  # WAF sub-pillar, e.g. "High availability"
-        "source": source,  # built-in | aprl | advisor | custom
+        "source": source,  # built-in | aprl | advisor | custom | cis-v5
         "learn_more": list(learn_more or []),  # documentation URLs
+        # --- ARG table + evaluation mode (CIS subscription-scoped controls) ---
+        "arg_table": arg_table,  # Resources | securityresources | authorizationresources | …
+        "expectation": expectation,  # "" = violation mode; "present" = existence/absence mode
+        "profile": profile,  # "" | "L1" | "L2" (CIS profile level)
+        "scope_mode": scope_mode,  # "" = scoped; "tenant" = no scope filter (tenant-wide governance)
     }
 
 
@@ -242,6 +251,7 @@ def _manual_check(
     sub_category: str = "",
     source: str = "built-in",
     learn_more: list[str] | None = None,
+    profile: str = "",
 ) -> dict[str, Any]:
     """A manual-attestation control (no automated query). Many WAF/APRL recommendations can't
     be verified from Resource Graph — they need a reviewer to confirm. A manual control
@@ -250,7 +260,7 @@ def _manual_check(
     c = _check(
         cid, pillar, title, description, severity, resource_types, "", remediation,
         frameworks=frameworks, kind="manual", impact=impact, effort=effort,
-        sub_category=sub_category, source=source, learn_more=learn_more,
+        sub_category=sub_category, source=source, learn_more=learn_more, profile=profile,
     )
     return c
 
@@ -271,6 +281,7 @@ def _signal_check(
     sub_category: str = "",
     source: str = "advisor",
     learn_more: list[str] | None = None,
+    profile: str = "",
 ) -> dict[str, Any]:
     """A live-signal control backed by a platform data plane (e.g. Azure Advisor) rather than
     a resource-config predicate. ``signal`` config drives the runner:
@@ -282,7 +293,7 @@ def _signal_check(
     c = _check(
         cid, pillar, title, description, severity, resource_types or [], "", remediation,
         frameworks=frameworks, kind="signal", impact=impact, effort=effort,
-        sub_category=sub_category, source=source, learn_more=learn_more,
+        sub_category=sub_category, source=source, learn_more=learn_more, profile=profile,
     )
     c["signal"] = {
         "provider": signal.get("provider", "advisor"),
@@ -1488,8 +1499,834 @@ _PERFORMANCE: list[dict[str, Any]] = [
 ]
 
 
+# ===================== CIS MICROSOFT AZURE FOUNDATIONS BENCHMARK v5.0.0 =====================
+# Automated recommendations from the CIS Azure Foundations Benchmark v5.0.0 "Combined
+# Profiles" sheet (Assessment Status = Automated). Each control carries its exact v5
+# recommendation number and profile level (L1 = baseline, L2 = defense-in-depth) so the
+# compliance view can slice by profile. Three evaluation shapes are used:
+#   - graph violation: flag resources whose config violates the control (the default).
+#   - graph existence (expectation="present"): flag in-scope subscriptions MISSING a required
+#     control (Defender plans, activity-log alerts, Bastion, App Insights, security contacts).
+#   - manual: data-plane / Entra-tenant controls not queryable via Resource Graph — surfaced
+#     as a reviewer attestation so they're tracked and scored once answered.
+# Controls that exactly duplicate an existing shipped check are NOT re-authored here; their
+# v5 number is appended to the existing check's `cis` mapping via _CIS_V5_ALIAS below.
+
+# CIS L1/L2 profile → default severity for the security pillar score.
+_CIS_SEV = {"L1": "error", "L2": "warning"}
+
+
+def _cis(
+    rec: str, profile: str, title: str, description: str,
+    resource_types: list[str], kql: str, remediation: str,
+    *, remediation_command: str = "", arg_table: str = "Resources",
+    expectation: str = "", severity: str | None = None, learn_more: list[str] | None = None,
+    scope_mode: str = "",
+) -> dict[str, Any]:
+    """Construct a CIS v5 control (graph violation or existence). The check id is derived
+    from the recommendation number (e.g. 9.2.1 → cis_9_2_1)."""
+    return _check(
+        "cis_" + rec.replace(".", "_"),
+        "security",
+        title,
+        description,
+        severity or _CIS_SEV.get(profile, "warning"),
+        resource_types,
+        kql,
+        remediation,
+        frameworks={"cis": [f"CIS Azure {rec}"]},
+        remediation_command=remediation_command,
+        kind="graph",
+        source="cis-v5",
+        profile=profile,
+        arg_table=arg_table,
+        expectation=expectation,
+        learn_more=learn_more or [],
+        scope_mode=scope_mode,
+    )
+
+
+def _cis_manual(
+    rec: str, profile: str, title: str, description: str, remediation: str,
+    *, resource_types: list[str] | None = None, learn_more: list[str] | None = None,
+) -> dict[str, Any]:
+    """A CIS v5 control that can't be evaluated from Resource Graph (data-plane key/secret
+    expiry, diagnostic settings, Entra tenant policy). Surfaced as a reviewer attestation."""
+    return _manual_check(
+        "cis_" + rec.replace(".", "_"),
+        "security",
+        title,
+        description,
+        _CIS_SEV.get(profile, "warning"),
+        resource_types or [],
+        remediation,
+        frameworks={"cis": [f"CIS Azure {rec}"]},
+        source="cis-v5",
+        profile=profile,
+        learn_more=learn_more or [],
+    )
+
+
+def _cis_graph(
+    rec: str, profile: str, title: str, description: str, remediation: str,
+    *, path: str, field: str, op: str, expected: Any = None,
+    resource_types: list[str] | None = None, learn_more: list[str] | None = None,
+) -> dict[str, Any]:
+    """A CIS v5 Entra tenant-identity control evaluated via Microsoft Graph (not Resource
+    Graph). The runner GETs ``path`` and PASSes when ``field`` satisfies ``op``/``expected``;
+    otherwise the whole Entra tenant is flagged as the failing subject."""
+    c = _check(
+        "cis_" + rec.replace(".", "_"),
+        "security", title, description,
+        _CIS_SEV.get(profile, "warning"),
+        resource_types or [],
+        "",  # no KQL — evaluated via Microsoft Graph
+        remediation,
+        frameworks={"cis": [f"CIS Azure {rec}"]},
+        kind="graph_api",
+        source="cis-v5",
+        profile=profile,
+        learn_more=learn_more or [],
+    )
+    c["graph_check"] = {"path": path, "field": field, "op": op, "expected": expected}
+    return c
+
+
+def _cis_rest(
+    rec: str, profile: str, title: str, description: str, remediation: str,
+    *, mode: str, categories: list[str] | None = None,
+    resource_types: list[str] | None = None, learn_more: list[str] | None = None,
+    remediation_command: str = "",
+) -> dict[str, Any]:
+    """A CIS v5 control evaluated via control-plane ARM REST, because the underlying config
+    (diagnostic settings, App Service HTTP logs) is not surfaced in Resource Graph. ``mode``
+    selects the runner's evaluator (diag_exists | diag_categories | app_httplogs)."""
+    c = _check(
+        "cis_" + rec.replace(".", "_"),
+        "security", title, description,
+        _CIS_SEV.get(profile, "warning"),
+        resource_types or [],
+        "",  # no KQL — evaluated via ARM REST
+        remediation,
+        frameworks={"cis": [f"CIS Azure {rec}"]},
+        remediation_command=remediation_command,
+        kind="arm_rest",
+        source="cis-v5",
+        profile=profile,
+        learn_more=learn_more or [],
+    )
+    c["rest_check"] = {"mode": mode, "categories": list(categories or [])}
+    return c
+
+
+def _cis_defender(rec: str, plan: str, plan_label: str) -> dict[str, Any]:
+    """A CIS v5 Microsoft Defender for Cloud plan control (all L2): existence check that flags
+    each in-scope subscription whose Defender plan ``plan`` is not on the Standard tier."""
+    return _cis(
+        rec, "L2",
+        f"Microsoft Defender for {plan_label} is not enabled",
+        f"CIS {rec}: Microsoft Defender for {plan_label} should be set to 'On' (Standard tier) "
+        f"on every subscription to provide threat protection for {plan_label}.",
+        [],
+        f"| where type =~ 'microsoft.security/pricings' and name =~ '{plan}' "
+        "| where tostring(properties.pricingTier) =~ 'Standard' "
+        "| project subscriptionId",
+        f"Enable Microsoft Defender for {plan_label} (Standard tier) on the subscription.",
+        remediation_command=f"az security pricing create -n {plan} --tier Standard",
+        arg_table="securityresources",
+        expectation="present",
+        learn_more=["https://learn.microsoft.com/azure/defender-for-cloud/enable-enhanced-security"],
+    )
+
+
+def _cis_activity_alert(rec: str, op: str, label: str) -> dict[str, Any]:
+    """A CIS v5 Activity Log Alert existence control (all L1): flags each in-scope subscription
+    that has no enabled Activity Log alert on the administrative operation ``op``."""
+    op_l = op.lower()
+    return _cis(
+        rec, "L1",
+        f"No Activity Log Alert for '{label}'",
+        f"CIS {rec}: an Activity Log Alert should exist for '{label}' so that "
+        f"administrative changes are detected and investigated.",
+        [],
+        "| where type =~ 'microsoft.insights/activitylogalerts' "
+        "| where tobool(properties.enabled) == true "
+        "| mv-expand cond = properties.condition.allOf "
+        "| where tostring(cond.field) =~ 'operationName' "
+        f"| where tostring(cond['equals']) =~ '{op_l}' "
+        "| project subscriptionId",
+        f"Create an Activity Log Alert for the operation '{op}'.",
+        arg_table="Resources",
+        expectation="present",
+        learn_more=["https://learn.microsoft.com/azure/azure-monitor/alerts/activity-log-alerts"],
+    )
+
+
+def _cis_no_private_endpoint(rec: str, profile: str, target_type: str, label: str) -> dict[str, Any]:
+    """A CIS v5 'use private endpoints' control: flag in-scope resources of ``target_type``
+    that have NO private endpoint pointing at them. The private-endpoint sub-query is
+    deliberately unscoped (a PE can live in a different resource group than its target)."""
+    return _cis(
+        rec, profile,
+        f"{label} not accessed via a private endpoint",
+        f"CIS {rec}: {label} should be reachable only over a private endpoint. This flags "
+        f"{label.lower()} that have no private endpoint targeting them.",
+        [target_type],
+        f"| where type =~ '{target_type}' "
+        "| extend _lid = tolower(id) "
+        "| join kind=leftouter (resources "
+        "| where type =~ 'microsoft.network/privateendpoints' "
+        "| mv-expand _c = properties.privateLinkServiceConnections "
+        "| project _tid = tolower(tostring(_c.properties.privateLinkServiceId)) "
+        "| where isnotempty(_tid) | distinct _tid) on $left._lid == $right._tid "
+        "| where isempty(_tid) "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        f"Create a private endpoint for the {label.lower()} and disable public network access.",
+        learn_more=["https://learn.microsoft.com/azure/private-link/private-endpoint-overview"],
+    )
+
+
+_CIS_V5: list[dict[str, Any]] = [
+    # ---------- 2.x Analytics — Azure Databricks ----------
+    _cis(
+        "2.1.1", "L1",
+        "Azure Databricks not deployed in a customer-managed VNet",
+        "CIS 2.1.1: Databricks workspaces should be deployed into a customer-managed VNet "
+        "(VNet injection) for network control and private connectivity.",
+        ["microsoft.databricks/workspaces"],
+        "| where type =~ 'microsoft.databricks/workspaces' "
+        "| where isempty(tostring(properties.parameters.customVirtualNetworkId.value)) "
+        f"{_PROJECT}",
+        "Redeploy the Databricks workspace with VNet injection (customer-managed VNet).",
+    ),
+    _cis(
+        "2.1.9", "L1",
+        "Azure Databricks 'No Public IP' is not enabled",
+        "CIS 2.1.9: 'No Public IP' (secure cluster connectivity) should be enabled so Databricks "
+        "cluster nodes have no public IPs.",
+        ["microsoft.databricks/workspaces"],
+        "| where type =~ 'microsoft.databricks/workspaces' "
+        "| where tobool(properties.parameters.enableNoPublicIp.value) != true "
+        f"{_PROJECT}",
+        "Redeploy the workspace with Secure Cluster Connectivity ('No Public IP') enabled.",
+    ),
+    _cis(
+        "2.1.10", "L1",
+        "Azure Databricks allows public network access",
+        "CIS 2.1.10: 'Allow Public Network Access' should be Disabled so the Databricks "
+        "workspace is reachable only over private endpoints.",
+        ["microsoft.databricks/workspaces"],
+        "| where type =~ 'microsoft.databricks/workspaces' "
+        "| where tostring(properties.publicNetworkAccess) =~ 'Enabled' or isnull(properties.publicNetworkAccess) "
+        f"{_PROJECT}",
+        "Set Public Network Access to Disabled and use private endpoints.",
+    ),
+    # ---------- 5.x Identity — RBAC ----------
+    _cis(
+        "5.27", "L1",
+        "Subscriptions without between 2 and 3 Owners",
+        "CIS 5.27: each subscription should have a minimum of 2 and a maximum of 3 Owner role "
+        "assignments — too few risks lockout, too many widens privileged exposure.",
+        [],
+        "| where type =~ 'microsoft.authorization/roleassignments' "
+        "| extend roleId = tolower(tostring(properties.roleDefinitionId)) "
+        "| where roleId endswith '8e3af657-a8ff-443c-a75c-2fe8c4bcb635' "  # Owner role definition
+        "| where tolower(tostring(properties.scope)) == strcat('/subscriptions/', tolower(subscriptionId)) "
+        "| summarize owners = count() by subscriptionId "
+        "| where owners < 2 or owners > 3 "
+        "| project id = strcat('/subscriptions/', subscriptionId), name = subscriptionId, "
+        "type = 'microsoft.resources/subscriptions', resourceGroup = '', subscriptionId",
+        "Adjust subscription Owner assignments to between 2 and 3 accounts.",
+        arg_table="authorizationresources",
+    ),
+    # ---------- 6.1.2.x Activity Log Alerts (existence) ----------
+    _cis_activity_alert("6.1.2.1", "Microsoft.Authorization/policyAssignments/write", "Create Policy Assignment"),
+    _cis_activity_alert("6.1.2.2", "Microsoft.Authorization/policyAssignments/delete", "Delete Policy Assignment"),
+    _cis_activity_alert("6.1.2.3", "Microsoft.Network/networkSecurityGroups/write", "Create or Update NSG"),
+    _cis_activity_alert("6.1.2.4", "Microsoft.Network/networkSecurityGroups/delete", "Delete NSG"),
+    _cis_activity_alert("6.1.2.5", "Microsoft.Security/securitySolutions/write", "Create or Update Security Solution"),
+    _cis_activity_alert("6.1.2.6", "Microsoft.Security/securitySolutions/delete", "Delete Security Solution"),
+    _cis_activity_alert("6.1.2.7", "Microsoft.Sql/servers/firewallRules/write", "Create or Update SQL Server Firewall Rule"),
+    _cis_activity_alert("6.1.2.8", "Microsoft.Sql/servers/firewallRules/delete", "Delete SQL Server Firewall Rule"),
+    _cis_activity_alert("6.1.2.9", "Microsoft.Network/publicIPAddresses/write", "Create or Update Public IP Address"),
+    _cis_activity_alert("6.1.2.10", "Microsoft.Network/publicIPAddresses/delete", "Delete Public IP Address"),
+    _cis(
+        "6.1.2.11", "L1",
+        "No Activity Log Alert for Service Health",
+        "CIS 6.1.2.11: a Service Health activity log alert should exist so the team is notified "
+        "of Azure service incidents, planned maintenance, and health advisories.",
+        [],
+        "| where type =~ 'microsoft.insights/activitylogalerts' "
+        "| where tobool(properties.enabled) == true "
+        "| mv-expand cond = properties.condition.allOf "
+        "| where tostring(cond.field) =~ 'category' and tostring(cond['equals']) =~ 'ServiceHealth' "
+        "| project subscriptionId",
+        "Create a Service Health activity log alert with an action group.",
+        expectation="present",
+    ),
+    # ---------- 6.1.3.1 Application Insights (existence) ----------
+    _cis(
+        "6.1.3.1", "L2",
+        "No Application Insights configured in the subscription",
+        "CIS 6.1.3.1: Application Insights should be configured to provide application-level "
+        "telemetry, performance, and failure diagnostics.",
+        [],
+        "| where type =~ 'microsoft.insights/components' | project subscriptionId",
+        "Create an Application Insights resource and instrument your applications.",
+        expectation="present",
+    ),
+    # ---------- 7.x Networking ----------
+    _cis(
+        "7.3", "L1",
+        "NSGs allow inbound UDP from the internet",
+        "CIS 7.3: NSG rules permitting inbound UDP from any source (Internet / 0.0.0.0/0) expose "
+        "UDP services to the internet and should be evaluated and restricted.",
+        ["microsoft.network/networksecuritygroups"],
+        "| where type =~ 'microsoft.network/networksecuritygroups' "
+        "| mv-expand rule = properties.securityRules "
+        "| extend dir = tostring(rule.properties.direction), acc = tostring(rule.properties.access), "
+        "prot = tostring(rule.properties.protocol), src = tostring(rule.properties.sourceAddressPrefix) "
+        "| where dir =~ 'Inbound' and acc =~ 'Allow' and (prot =~ 'Udp' or prot == '*') "
+        "and (src == '*' or src == '0.0.0.0/0' or src =~ 'Internet') "
+        "| summarize by id, name, type, resourceGroup, subscriptionId",
+        "Restrict inbound UDP rules to specific source IPs; remove 0.0.0.0/0 / Internet allow rules.",
+    ),
+    _cis(
+        "7.10", "L2",
+        "Application Gateway without WAF enabled",
+        "CIS 7.10: internet-facing Application Gateways should run the WAF_v2 tier so a Web "
+        "Application Firewall inspects traffic.",
+        ["microsoft.network/applicationgateways"],
+        "| where type =~ 'microsoft.network/applicationgateways' "
+        "| where tostring(properties.sku.tier) !in~ ('WAF', 'WAF_v2') "
+        f"{_PROJECT}",
+        "Upgrade the Application Gateway to the WAF_v2 tier and attach a WAF policy.",
+    ),
+    _cis(
+        "7.11", "L1",
+        "Subnets not associated with a network security group",
+        "CIS 7.11: every subnet (except the gateway/AzureBastion/AzureFirewall subnets) should "
+        "be associated with an NSG to filter traffic.",
+        ["microsoft.network/virtualnetworks"],
+        "| where type =~ 'microsoft.network/virtualnetworks' "
+        "| mv-expand subnet = properties.subnets "
+        "| extend sname = tostring(subnet.name), nsg = tostring(subnet.properties.networkSecurityGroup.id) "
+        "| where sname !in~ ('GatewaySubnet', 'AzureBastionSubnet', 'AzureFirewallSubnet', 'RouteServerSubnet') "
+        "| where isempty(nsg) "
+        "| project id, name = strcat(name, '/', sname), type, resourceGroup, subscriptionId",
+        "Associate each workload subnet with an appropriately-scoped NSG.",
+    ),
+    _cis(
+        "7.12", "L1",
+        "Application Gateway SSL policy allows TLS below 1.2",
+        "CIS 7.12: the Application Gateway SSL policy minimum protocol version should be TLSv1_2 "
+        "(or higher) to reject weak, deprecated TLS.",
+        ["microsoft.network/applicationgateways"],
+        "| where type =~ 'microsoft.network/applicationgateways' "
+        "| extend minv = tostring(properties.sslPolicy.minProtocolVersion) "
+        "| where minv in~ ('TLSv1_0', 'TLSv1_1') "
+        f"{_PROJECT}",
+        "Set the Application Gateway SSL policy minimum protocol version to TLSv1_2 or higher.",
+    ),
+    _cis(
+        "7.13", "L1",
+        "Application Gateway without HTTP/2 enabled",
+        "CIS 7.13: HTTP/2 should be enabled on Application Gateways for performance and to match "
+        "modern client expectations.",
+        ["microsoft.network/applicationgateways"],
+        "| where type =~ 'microsoft.network/applicationgateways' "
+        "| where tobool(properties.enableHttp2) != true "
+        f"{_PROJECT}",
+        "Enable HTTP/2 on the Application Gateway.",
+    ),
+    _cis(
+        "7.14", "L2",
+        "WAF policy without request body inspection",
+        "CIS 7.14: Application Gateway WAF policies should have request body inspection enabled "
+        "so request payloads are evaluated by the firewall.",
+        ["microsoft.network/applicationgatewaywebapplicationfirewallpolicies"],
+        "| where type =~ 'microsoft.network/applicationgatewaywebapplicationfirewallpolicies' "
+        "| where tobool(properties.policySettings.requestBodyCheck) != true "
+        f"{_PROJECT}",
+        "Enable request body inspection in the WAF policy's policy settings.",
+    ),
+    # ---------- 8.1.x Microsoft Defender for Cloud plans (existence, all L2) ----------
+    _cis_defender("8.1.1.1", "CloudPosture", "Cloud Security Posture Management (CSPM)"),
+    _cis_defender("8.1.2.1", "Api", "APIs"),
+    _cis_defender("8.1.3.1", "VirtualMachines", "Servers"),
+    _cis_defender("8.1.4.1", "Containers", "Containers"),
+    _cis_defender("8.1.5.1", "StorageAccounts", "Storage"),
+    _cis_defender("8.1.6.1", "AppServices", "App Service"),
+    _cis_defender("8.1.7.1", "CosmosDbs", "Azure Cosmos DB"),
+    _cis_defender("8.1.7.2", "OpenSourceRelationalDatabases", "Open-Source Relational Databases"),
+    _cis_defender("8.1.7.3", "SqlServers", "Azure SQL Databases"),
+    _cis_defender("8.1.7.4", "SqlServerVirtualMachines", "SQL Servers on Machines"),
+    _cis_defender("8.1.8.1", "KeyVaults", "Key Vault"),
+    _cis_defender("8.1.9.1", "Arm", "Resource Manager"),
+    _cis(
+        "8.1.13", "L1",
+        "No Security Contact email configured",
+        "CIS 8.1.13: a Security Contact email should be configured in Microsoft Defender for "
+        "Cloud so security alerts and attack-path notifications reach the right people.",
+        [],
+        "| where type =~ 'microsoft.security/securitycontacts' "
+        "| where isnotempty(tostring(properties.emails)) or isnotempty(tostring(properties.email)) "
+        "| project subscriptionId",
+        "Configure a Security Contact email (and notification settings) in Defender for Cloud.",
+        arg_table="securityresources",
+        expectation="present",
+    ),
+    # ---------- 8.3.x Key Vault config ----------
+    # 8.3.5 purge protection, 8.3.6 RBAC, 8.3.7 public network access overlap existing checks
+    # (see _CIS_V5_ALIAS). The data-plane ones (key/secret expiry, rotation) are manual below.
+    # ---------- 8.4.1 Azure Bastion (existence) ----------
+    _cis(
+        "8.4.1", "L2",
+        "No Azure Bastion host in the subscription",
+        "CIS 8.4.1: an Azure Bastion host should exist so administrators reach VMs over TLS "
+        "without exposing RDP/SSH to the internet.",
+        [],
+        "| where type =~ 'microsoft.network/bastionhosts' | project subscriptionId",
+        "Deploy an Azure Bastion host and use it for VM management.",
+        expectation="present",
+    ),
+    # ---------- 8.5 DDoS Network Protection ----------
+    _cis(
+        "8.5", "L2",
+        "Virtual networks without Azure DDoS Network Protection",
+        "CIS 8.5: Azure DDoS Network Protection should be enabled on virtual networks that host "
+        "internet-facing workloads to absorb volumetric attacks.",
+        ["microsoft.network/virtualnetworks"],
+        "| where type =~ 'microsoft.network/virtualnetworks' "
+        "| where tobool(properties.enableDdosProtection) != true "
+        f"{_PROJECT}",
+        "Enable Azure DDoS Network Protection on the virtual network.",
+    ),
+    # ---------- 9.x Storage ----------
+    _cis(
+        "9.1.1", "L1",
+        "Azure File Shares without soft delete enabled",
+        "CIS 9.1.1: soft delete for Azure File Shares should be enabled so deleted shares can be "
+        "recovered within the retention period.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/fileservices' "
+        "| where tobool(properties.shareDeleteRetentionPolicy.enabled) != true "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Enable soft delete for file shares with a sufficient retention period.",
+    ),
+    _cis(
+        "9.2.1", "L1",
+        "Blob storage without blob soft delete enabled",
+        "CIS 9.2.1: soft delete for blobs should be enabled so deleted blobs can be recovered "
+        "within the retention period.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
+        "| where tobool(properties.deleteRetentionPolicy.enabled) != true "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Enable soft delete for blobs with a sufficient retention period.",
+    ),
+    _cis(
+        "9.2.2", "L1",
+        "Blob storage without container soft delete enabled",
+        "CIS 9.2.2: soft delete for containers should be enabled so deleted containers can be "
+        "recovered within the retention period.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
+        "| where tobool(properties.containerDeleteRetentionPolicy.enabled) != true "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Enable soft delete for containers with a sufficient retention period.",
+    ),
+    _cis(
+        "9.2.3", "L2",
+        "Blob storage without versioning enabled",
+        "CIS 9.2.3: blob versioning should be enabled to automatically retain previous versions "
+        "of objects for recovery from modification or deletion.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
+        "| where tobool(properties.isVersioningEnabled) != true "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Enable blob versioning on the storage account.",
+    ),
+    _cis(
+        "9.3.5", "L2",
+        "Storage accounts not allowing trusted Azure services",
+        "CIS 9.3.5: 'Allow Azure services on the trusted services list to access this storage "
+        "account' should be enabled so trusted first-party services keep working under a deny "
+        "firewall default.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tostring(properties.networkAcls.defaultAction) =~ 'Deny' "
+        "| where tostring(properties.networkAcls.bypass) !has 'AzureServices' "
+        f"{_PROJECT}",
+        "Set the storage firewall to allow trusted Microsoft services (bypass = AzureServices).",
+    ),
+    _cis(
+        "9.3.7", "L1",
+        "Storage accounts with cross-tenant replication enabled",
+        "CIS 9.3.7: cross-tenant object replication should be disabled to prevent data being "
+        "replicated to a storage account in another tenant.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tobool(properties.allowCrossTenantReplication) == true "
+        f"{_PROJECT}",
+        "Disable cross-tenant replication on the storage account.",
+        remediation_command="az storage account update --name <name> --resource-group <rg> --allow-cross-tenant-replication false",
+    ),
+    _cis(
+        "9.3.2.2", "L1",
+        "Storage accounts allow public network access",
+        "CIS 9.3.2.2: 'Public Network Access' should be Disabled so the storage account is "
+        "reachable only over private endpoints / selected networks.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tostring(properties.publicNetworkAccess) =~ 'Enabled' "
+        f"{_PROJECT}",
+        "Set Public Network Access to Disabled and use private endpoints.",
+        remediation_command="az storage account update --name <name> --resource-group <rg> --public-network-access Disabled",
+    ),
+    _cis(
+        "9.3.3.1", "L1",
+        "Storage accounts not defaulting to Microsoft Entra authorization",
+        "CIS 9.3.3.1: 'Default to Microsoft Entra authorization in the Azure portal' should be "
+        "enabled so the portal uses identity-based access rather than account keys.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tobool(properties.defaultToOAuthAuthentication) != true "
+        f"{_PROJECT}",
+        "Enable 'Default to Microsoft Entra authorization' on the storage account.",
+        remediation_command="az storage account update --name <name> --resource-group <rg> --default-to-oauth-authentication true",
+    ),
+    _cis(
+        "9.3.11", "L2",
+        "Critical storage accounts not geo-redundant (GRS)",
+        "CIS 9.3.11: critical storage accounts should use geo-redundant storage (GRS/RA-GRS/"
+        "GZRS) so data survives a regional outage.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tostring(sku.name) in~ ('Standard_LRS', 'Standard_ZRS', 'Premium_LRS', 'Premium_ZRS') "
+        f"{_PROJECT}",
+        "Reconfigure critical storage accounts to a geo-redundant SKU (GRS / RA-GRS / GZRS).",
+    ),
+    # ---------- Phase 3: data-plane controls (manual attestation) ----------
+    _cis_manual(
+        "8.3.1", "L1", "Expiration date set for all keys in RBAC Key Vaults",
+        "CIS 8.3.1: every key in RBAC-model Key Vaults should have an expiration date. Key/secret "
+        "expiry lives in the Key Vault data plane and isn't queryable via Resource Graph.",
+        "Set an expiration date on every Key Vault key; enforce via policy.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_manual(
+        "8.3.2", "L1", "Expiration date set for all keys in non-RBAC Key Vaults",
+        "CIS 8.3.2: every key in access-policy (non-RBAC) Key Vaults should have an expiration date.",
+        "Set an expiration date on every Key Vault key.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_manual(
+        "8.3.3", "L1", "Expiration date set for all secrets in RBAC Key Vaults",
+        "CIS 8.3.3: every secret in RBAC-model Key Vaults should have an expiration date.",
+        "Set an expiration date on every Key Vault secret.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_manual(
+        "8.3.4", "L1", "Expiration date set for all secrets in non-RBAC Key Vaults",
+        "CIS 8.3.4: every secret in access-policy (non-RBAC) Key Vaults should have an expiration date.",
+        "Set an expiration date on every Key Vault secret.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_manual(
+        "8.3.9", "L2", "Automatic key rotation enabled in Key Vault",
+        "CIS 8.3.9: automatic key rotation should be configured on Key Vault keys (data-plane "
+        "rotation policy, not in Resource Graph).",
+        "Configure an automatic rotation policy on Key Vault keys.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_manual(
+        "8.3.11", "L1", "Key Vault certificate validity period ≤ 12 months",
+        "CIS 8.3.11: certificate validity period should be 12 months or less (data-plane "
+        "certificate policy, not in Resource Graph).",
+        "Set certificate policy validity to ≤ 12 months and reissue long-lived certificates.",
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_no_private_endpoint("8.3.8", "L2", "microsoft.keyvault/vaults", "Key Vaults"),
+    _cis_manual(
+        "9.3.1.1", "L1", "Storage Account key rotation reminders enabled",
+        "CIS 9.3.1.1: 'Enable key rotation reminders' should be on for each storage account "
+        "(account key policy, not reliably in Resource Graph).",
+        "Enable key-rotation reminders on the storage account.",
+        resource_types=["microsoft.storage/storageaccounts"],
+    ),
+    _cis(
+        "9.3.1.2", "L1",
+        "Storage Account access keys not regenerated in 90 days",
+        "CIS 9.3.1.2: storage account access keys should be regenerated periodically. This flags "
+        "accounts whose oldest key was created more than 90 days ago.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| extend _k1 = todatetime(properties.keyCreationTime.key1), _k2 = todatetime(properties.keyCreationTime.key2) "
+        "| extend _oldest = min_of(_k1, _k2) "
+        "| where isnotempty(_oldest) and _oldest < ago(90d) "
+        f"{_PROJECT}",
+        "Regenerate (rotate) the storage account access keys; automate rotation on a schedule.",
+    ),
+    _cis_no_private_endpoint("9.3.2.1", "L2", "microsoft.storage/storageaccounts", "Storage Accounts"),
+    _cis_rest(
+        "6.1.1.1", "L1", "Diagnostic Setting exists for Subscription Activity Logs",
+        "CIS 6.1.1.1: a diagnostic setting should export the subscription Activity Log to a Log "
+        "Analytics workspace / storage / Event Hub. Evaluated live via ARM REST per subscription.",
+        "Create a subscription Activity Log diagnostic setting capturing all categories.",
+        mode="diag_exists",
+        learn_more=["https://learn.microsoft.com/azure/azure-monitor/essentials/activity-log"],
+    ),
+    _cis_rest(
+        "6.1.1.2", "L1", "Activity Log diagnostic captures appropriate categories",
+        "CIS 6.1.1.2: the Activity Log diagnostic setting should capture Administrative, Alert, "
+        "Policy and Security categories. Evaluated live via ARM REST per subscription.",
+        "Update the Activity Log diagnostic setting to include all recommended categories.",
+        mode="diag_categories",
+        categories=["Administrative", "Alert", "Policy", "Security"],
+    ),
+    _cis_rest(
+        "6.1.1.4", "L1", "Logging enabled for Azure Key Vault",
+        "CIS 6.1.1.4: AuditEvent diagnostic logging should be enabled for every Key Vault. "
+        "Evaluated live via ARM REST (diagnostic settings) per in-scope Key Vault.",
+        "Enable AuditEvent diagnostic logging on each Key Vault.",
+        mode="diag_resource",
+        categories=["AuditEvent"],
+        resource_types=["microsoft.keyvault/vaults"],
+    ),
+    _cis_rest(
+        "6.1.1.6", "L2", "App Service 'HTTP logs' logging enabled",
+        "CIS 6.1.1.6: App Service HTTP logs should be enabled. Evaluated live via ARM REST "
+        "(config/logs) per in-scope App Service.",
+        "Enable HTTP logs diagnostic logging on each App Service.",
+        mode="app_httplogs",
+        resource_types=["microsoft.web/sites"],
+    ),
+    _cis_manual(
+        "8.1.3.3", "L2", "Defender for Servers endpoint protection enabled",
+        "CIS 8.1.3.3: the Defender for Servers 'Endpoint protection' (MDE integration) component "
+        "should be On (Defender plan extension config, not in ARG).",
+        "Enable the Endpoint protection component on the Defender for Servers plan.",
+    ),
+    _cis_manual(
+        "8.1.10", "L1", "Defender for Cloud checks VM OS for updates",
+        "CIS 8.1.10: Defender for Cloud should be configured to check VM operating systems for "
+        "missing updates (system-updates assessment).",
+        "Enable the OS-update assessment in Defender for Cloud.",
+    ),
+    _cis(
+        "8.1.12", "L1",
+        "Defender email notifications do not target subscription Owners",
+        "CIS 8.1.12: Defender for Cloud email notifications should include the Owner role so "
+        "subscription owners receive security alerts. Flags subscriptions whose security contact "
+        "does not notify the Owner role.",
+        [],
+        "| where type =~ 'microsoft.security/securitycontacts' "
+        "| where tostring(properties.notificationsByRole.roles) has 'Owner' "
+        "| project subscriptionId",
+        "Set Defender for Cloud email notifications to include the Owner role.",
+        arg_table="securityresources",
+        expectation="present",
+    ),
+    _cis(
+        "8.1.14", "L1",
+        "Defender alert-severity notifications not enabled",
+        "CIS 8.1.14: Defender for Cloud should notify about alerts at a chosen severity (or higher). "
+        "Flags subscriptions whose security contact has alert notifications turned off.",
+        [],
+        "| where type =~ 'microsoft.security/securitycontacts' "
+        "| where tostring(properties.alertNotifications.state) =~ 'On' "
+        "or tostring(properties.alertNotifications) =~ 'On' "
+        "| project subscriptionId",
+        "Enable Defender for Cloud alert notifications (severity High or higher).",
+        arg_table="securityresources",
+        expectation="present",
+    ),
+    _cis(
+        "8.1.15", "L1",
+        "Defender attack-path notifications not enabled",
+        "CIS 8.1.15: Defender for Cloud should notify about attack paths at a chosen risk level "
+        "(or higher). Flags subscriptions whose security contact has no attack-path notification "
+        "source enabled.",
+        [],
+        "| where type =~ 'microsoft.security/securitycontacts' "
+        "| mv-expand _src = properties.notificationsSources "
+        "| where tostring(_src.sourceType) =~ 'AttackPath' "
+        "| project subscriptionId",
+        "Configure Defender for Cloud to notify on attack paths at the chosen risk level.",
+        arg_table="securityresources",
+        expectation="present",
+    ),
+    _cis(
+        "5.23", "L1",
+        "Custom roles granting full-control at subscription scope",
+        "CIS 5.23: no custom RBAC role should grant full control (action '*') with a subscription "
+        "in its assignable scopes — these are de-facto subscription administrator roles that bypass "
+        "built-in role review. Evaluated tenant-wide.",
+        [],
+        "| where type =~ 'microsoft.authorization/roledefinitions' "
+        "| where tostring(properties.type) =~ 'CustomRole' "
+        "| mv-expand _act = properties.permissions[0].actions "
+        "| where tostring(_act) == '*' "
+        "| where tostring(properties.assignableScopes) contains '/subscriptions/' "
+        "| project id, name = tostring(properties.roleName), type = 'microsoft.authorization/roledefinitions', resourceGroup = '', subscriptionId = '' "
+        "| distinct id, name, type, resourceGroup, subscriptionId",
+        "Remove full-control custom roles scoped to subscriptions; use least-privilege built-in roles.",
+        arg_table="authorizationresources",
+        scope_mode="tenant",
+    ),
+    _cis(
+        "5.3.3", "L1",
+        "User Access Administrator assigned at subscription scope",
+        "CIS 5.3.3: use of the 'User Access Administrator' role should be restricted. This surfaces "
+        "each assignment of that role at subscription scope for review.",
+        [],
+        "| where type =~ 'microsoft.authorization/roleassignments' "
+        "| extend _rid = tolower(tostring(properties.roleDefinitionId)) "
+        "| where _rid endswith '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9' "
+        "| where tolower(tostring(properties.scope)) == strcat('/subscriptions/', tolower(subscriptionId)) "
+        "| project id, name = tostring(properties.principalId), type = 'microsoft.authorization/roleassignments', resourceGroup = '', subscriptionId",
+        "Review and minimize User Access Administrator assignments; remove unneeded ones.",
+        arg_table="authorizationresources",
+    ),
+    _cis(
+        "7.4", "L1",
+        "NSGs allow inbound HTTP(S) from the internet",
+        "CIS 7.4: NSG rules permitting inbound HTTP/HTTPS (80/443) from any source (Internet / "
+        "0.0.0.0/0) expose web endpoints directly; front them with a WAF/firewall and restrict sources.",
+        ["microsoft.network/networksecuritygroups"],
+        "| where type =~ 'microsoft.network/networksecuritygroups' "
+        "| mv-expand rule = properties.securityRules "
+        "| extend dir = tostring(rule.properties.direction), acc = tostring(rule.properties.access), "
+        "prot = tostring(rule.properties.protocol), src = tostring(rule.properties.sourceAddressPrefix), "
+        "ports = strcat(tostring(rule.properties.destinationPortRange), ' ', tostring(rule.properties.destinationPortRanges)) "
+        "| where dir =~ 'Inbound' and acc =~ 'Allow' and (prot =~ 'Tcp' or prot == '*') "
+        "and (src == '*' or src == '0.0.0.0/0' or src =~ 'Internet') "
+        "and (ports has '80' or ports has '443' or ports has '*') "
+        "| summarize by id, name, type, resourceGroup, subscriptionId",
+        "Restrict internet-facing 80/443 NSG rules; front public web with a WAF and limit sources.",
+    ),
+    _cis(
+        "7.5", "L2",
+        "NSG flow logs with retention below 90 days",
+        "CIS 7.5: NSG flow log retention should be at least 90 days for adequate forensic history.",
+        ["microsoft.network/networkwatchers/flowlogs"],
+        "| where type =~ 'microsoft.network/networkwatchers/flowlogs' "
+        "| where tolower(tostring(properties.targetResourceId)) has 'networksecuritygroups' "
+        "| extend _days = toint(properties.retentionPolicy.days) "
+        "| where isnull(_days) or _days < 90 "
+        "| project id, name = tostring(split(id, '/')[-1]), type, resourceGroup, subscriptionId",
+        "Set NSG flow log retention to at least 90 days.",
+    ),
+    _cis(
+        "7.6", "L2",
+        "Regions with VNets but no Network Watcher",
+        "CIS 7.6: Network Watcher should be enabled in every region that hosts a virtual network. "
+        "This flags (subscription, region) pairs that have VNets but no Network Watcher.",
+        ["microsoft.network/virtualnetworks"],
+        "| where type =~ 'microsoft.network/virtualnetworks' "
+        "| distinct subscriptionId, location "
+        "| join kind=leftouter (resources "
+        "| where type =~ 'microsoft.network/networkwatchers' "
+        "| distinct subscriptionId, location | extend _hasNW = true) on subscriptionId, location "
+        "| where isnull(_hasNW) "
+        "| project id = strcat('/subscriptions/', subscriptionId, '/providers/Microsoft.Network/locations/', location), "
+        "name = location, type = 'microsoft.network/networkwatchers', resourceGroup = '', subscriptionId",
+        "Enable Network Watcher in each region that hosts virtual networks.",
+    ),
+    _cis(
+        "7.8", "L2",
+        "VNet flow logs with retention below 90 days",
+        "CIS 7.8: virtual network flow log retention should be at least 90 days.",
+        ["microsoft.network/networkwatchers/flowlogs"],
+        "| where type =~ 'microsoft.network/networkwatchers/flowlogs' "
+        "| where tolower(tostring(properties.targetResourceId)) has 'virtualnetworks' "
+        "| extend _days = toint(properties.retentionPolicy.days) "
+        "| where isnull(_days) or _days < 90 "
+        "| project id, name = tostring(split(id, '/')[-1]), type, resourceGroup, subscriptionId",
+        "Set virtual network flow log retention to at least 90 days.",
+    ),
+    _cis(
+        "7.15", "L2",
+        "WAF policy without bot protection",
+        "CIS 7.15: the Application Gateway WAF policy should enable the bot protection managed rule "
+        "set so known malicious bots are blocked.",
+        ["microsoft.network/applicationgatewaywebapplicationfirewallpolicies"],
+        "| where type =~ 'microsoft.network/applicationgatewaywebapplicationfirewallpolicies' "
+        "| where tostring(properties.managedRules.managedRuleSets) !has 'BotManager' "
+        f"{_PROJECT}",
+        "Add the Bot Manager managed rule set to the WAF policy.",
+    ),
+    _cis_manual(
+        "2.1.2", "L1", "NSGs configured for Databricks subnets",
+        "CIS 2.1.2: the Databricks workspace subnets should have NSGs with the required Databricks "
+        "rules.",
+        "Associate the required NSGs with the Databricks host/container subnets.",
+        resource_types=["microsoft.databricks/workspaces"],
+    ),
+    _cis_rest(
+        "2.1.7", "L1", "Diagnostic log delivery configured for Databricks",
+        "CIS 2.1.7: diagnostic log delivery should be configured for the Databricks workspace. "
+        "Evaluated live via ARM REST (diagnostic settings) per in-scope workspace.",
+        "Configure diagnostic settings to deliver Databricks logs to a workspace/storage/Event Hub.",
+        mode="diag_resource",
+        resource_types=["microsoft.databricks/workspaces"],
+    ),
+    _cis_no_private_endpoint("2.1.11", "L2", "microsoft.databricks/workspaces", "Azure Databricks workspaces"),
+    # ---------- Phase 4: Entra ID tenant policy (Microsoft Graph) ----------
+    _cis_graph(
+        "5.1.1", "L1", "Microsoft Entra 'security defaults' enabled",
+        "CIS 5.1.1: 'security defaults' should be enabled in Microsoft Entra ID (tenant-wide "
+        "identity policy). Evaluated live via Microsoft Graph.",
+        "Enable security defaults in Microsoft Entra ID (or an equivalent Conditional Access baseline).",
+        path="/policies/identitySecurityDefaultsEnforcementPolicy",
+        field="isEnabled", op="is_true",
+        learn_more=["https://learn.microsoft.com/entra/fundamentals/security-defaults"],
+    ),
+    _cis_manual(
+        "5.1.2", "L1", "Multifactor authentication enabled for all users",
+        "CIS 5.1.2: MFA should be enabled for all users. Requires per-user registration state / "
+        "Conditional Access evaluation across the tenant, recorded as a reviewer attestation.",
+        "Require MFA for all users via Conditional Access or security defaults.",
+    ),
+    _cis_graph(
+        "5.4", "L1", "Restrict non-admin users from creating tenants",
+        "CIS 5.4: 'Restrict non-admin users from creating tenants' should be Yes. Evaluated live "
+        "via Microsoft Graph (authorizationPolicy.defaultUserRolePermissions.allowedToCreateTenants).",
+        "Set 'Restrict non-admin users from creating tenants' to Yes in Entra user settings.",
+        path="/policies/authorizationPolicy",
+        field="defaultUserRolePermissions.allowedToCreateTenants", op="is_false",
+    ),
+    _cis_graph(
+        "5.14", "L1", "Users cannot register applications",
+        "CIS 5.14: 'Users can register applications' should be No. Evaluated live via Microsoft "
+        "Graph (authorizationPolicy.defaultUserRolePermissions.allowedToCreateApps).",
+        "Set 'Users can register applications' to No in Entra user settings.",
+        path="/policies/authorizationPolicy",
+        field="defaultUserRolePermissions.allowedToCreateApps", op="is_false",
+    ),
+    _cis_graph(
+        "5.15", "L1", "Guest user access restrictions tightened",
+        "CIS 5.15: guest users' access should be restricted to properties and memberships of their "
+        "own directory objects (the most restrictive role). Evaluated live via Microsoft Graph "
+        "(authorizationPolicy.guestUserRoleId).",
+        "Set guest user access to the most restrictive option in external collaboration settings.",
+        path="/policies/authorizationPolicy",
+        field="guestUserRoleId", op="equals", expected="2af84b1e-32c8-42b7-82bc-daa82404023b",
+    ),
+    _cis_graph(
+        "5.16", "L2", "Guest invite restrictions tightened",
+        "CIS 5.16: guest invitations should be limited to specific admin roles (or no one). "
+        "Evaluated live via Microsoft Graph (authorizationPolicy.allowInvitesFrom).",
+        "Restrict who can invite guests to specific admin roles in external collaboration settings.",
+        path="/policies/authorizationPolicy",
+        field="allowInvitesFrom", op="in", expected=["none", "adminsAndGuestInviters"],
+    ),
+]
+
+
 ALL_CHECKS: list[dict[str, Any]] = (
-    _SECURITY + _RELIABILITY + _COST + _OPERATIONS + _PERFORMANCE
+    _SECURITY + _RELIABILITY + _COST + _OPERATIONS + _PERFORMANCE + _CIS_V5
 )
 
 # ISO/IEC 27001:2022 Annex A control mappings, keyed by check id. Added centrally so the
@@ -1639,6 +2476,25 @@ for _c in ALL_CHECKS:
         if sub:
             _c["sub_category"] = sub
 
+# CIS Azure Foundations v5.0.0 numbers for shipped security checks that already cover a CIS
+# automated recommendation (so we don't duplicate the control). Overwrites the older v2.1.0
+# id so the whole catalog speaks v5 numbering consistently.
+_CIS_V5_ALIAS: dict[str, list[str]] = {
+    "sec_storage_public_blob": ["CIS Azure 9.3.8"],
+    "sec_storage_https_only": ["CIS Azure 9.3.4"],
+    "sec_storage_min_tls": ["CIS Azure 9.3.6"],
+    "sec_storage_net_default_allow": ["CIS Azure 9.3.2.3"],
+    "sec_storage_shared_key": ["CIS Azure 9.3.1.3"],
+    "sec_nsg_mgmt_open": ["CIS Azure 7.1", "CIS Azure 7.2"],
+    "sec_kv_purge_protection": ["CIS Azure 8.3.5"],
+    "sec_kv_rbac": ["CIS Azure 8.3.6"],
+    "sec_kv_public_network": ["CIS Azure 8.3.7"],
+}
+for _c in ALL_CHECKS:
+    _alias = _CIS_V5_ALIAS.get(_c["id"])
+    if _alias:
+        _c["frameworks"]["cis"] = _alias
+
 _BY_ID = {c["id"]: c for c in ALL_CHECKS}
 
 # Frameworks the compliance coverage view aggregates, in display order.
@@ -1753,6 +2609,7 @@ def _check_public(c: dict[str, Any]) -> dict[str, Any]:
         "sub_category": c.get("sub_category", ""),
         "source": c.get("source", "built-in"),
         "learn_more": c.get("learn_more", []),
+        "profile": c.get("profile", ""),
         "custom": c.get("custom", False),
     }
 

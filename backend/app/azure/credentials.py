@@ -22,6 +22,8 @@ import httpx
 
 _ARM_SCOPE = "https://management.azure.com/.default"
 _ARM_RESOURCE = "https://management.azure.com"
+_GRAPH_SCOPE = "https://graph.microsoft.com/.default"
+_GRAPH_RESOURCE = "https://graph.microsoft.com"
 _LOGIN = "https://login.microsoftonline.com"
 
 
@@ -106,12 +108,14 @@ def _token_expired(expires_on: str) -> bool:
         return False
 
 
-async def _sp_secret_token(tenant: str, client_id: str, secret: str) -> tuple[str | None, str | None]:
+async def _sp_secret_token(
+    tenant: str, client_id: str, secret: str, scope: str = _ARM_SCOPE
+) -> tuple[str | None, str | None]:
     url = f"{_LOGIN}/{tenant}/oauth2/v2.0/token"
     data = {
         "client_id": client_id,
         "client_secret": secret,
-        "scope": _ARM_SCOPE,
+        "scope": scope,
         "grant_type": "client_credentials",
     }
     try:
@@ -151,14 +155,16 @@ def _build_cert_assertion(tenant: str, client_id: str, pem: str) -> tuple[str | 
         return None, f"Certificate assertion failed: {e}"
 
 
-async def _sp_cert_token(tenant: str, client_id: str, pem: str) -> tuple[str | None, str | None]:
+async def _sp_cert_token(
+    tenant: str, client_id: str, pem: str, scope: str = _ARM_SCOPE
+) -> tuple[str | None, str | None]:
     assertion, err = _build_cert_assertion(tenant, client_id, pem)
     if err:
         return None, err
     url = f"{_LOGIN}/{tenant}/oauth2/v2.0/token"
     data = {
         "client_id": client_id,
-        "scope": _ARM_SCOPE,
+        "scope": scope,
         "grant_type": "client_credentials",
         "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
         "client_assertion": assertion,
@@ -174,8 +180,8 @@ async def _sp_cert_token(tenant: str, client_id: str, pem: str) -> tuple[str | N
         return None, f"Token request error: {e}"
 
 
-async def _cli_token(tenant: str) -> tuple[str | None, str | None]:
-    """Fallback for default_chain: shell out to the host Azure CLI for an ARM token."""
+async def _cli_token(tenant: str, resource: str = _ARM_RESOURCE) -> tuple[str | None, str | None]:
+    """Fallback for default_chain: shell out to the host Azure CLI for a token."""
     import shutil
 
     az = shutil.which("az")
@@ -183,7 +189,7 @@ async def _cli_token(tenant: str) -> tuple[str | None, str | None]:
         return None, "Azure CLI (az) not found on the host."
     args = [
         az, "account", "get-access-token",
-        "--resource", _ARM_RESOURCE, "--output", "json",
+        "--resource", resource, "--output", "json",
     ]
     if tenant:
         args += ["--tenant", tenant]
@@ -226,8 +232,10 @@ def _managed_identity_client_id(conn: dict[str, Any]) -> str:
     return conn.get("client_id") or os.environ.get("AZURE_CLIENT_ID", "")
 
 
-async def _managed_identity_token(client_id: str = "") -> tuple[str | None, str | None]:
-    """Acquire an ARM token from the platform managed identity.
+async def _managed_identity_token(
+    client_id: str = "", resource: str = _ARM_RESOURCE
+) -> tuple[str | None, str | None]:
+    """Acquire a token from the platform managed identity.
 
     Uses the App Service / Container Apps identity endpoint (``IDENTITY_ENDPOINT`` +
     ``IDENTITY_HEADER``) when present — this is the only option in Container Apps, which
@@ -237,7 +245,7 @@ async def _managed_identity_token(client_id: str = "") -> tuple[str | None, str 
     header = os.environ.get("IDENTITY_HEADER") or os.environ.get("MSI_SECRET")
     try:
         if endpoint and header:
-            params = {"resource": _ARM_RESOURCE, "api-version": "2019-08-01"}
+            params = {"resource": resource, "api-version": "2019-08-01"}
             if client_id:
                 params["client_id"] = client_id
             async with httpx.AsyncClient(timeout=30) as client:
@@ -249,7 +257,7 @@ async def _managed_identity_token(client_id: str = "") -> tuple[str | None, str 
                 return None, f"Managed identity token failed ({resp.status_code}): {detail}"
             return resp.json().get("access_token"), None
         # IMDS fallback (VMs / AKS). Not available in Azure Container Apps.
-        params = {"resource": _ARM_RESOURCE, "api-version": "2018-02-01"}
+        params = {"resource": resource, "api-version": "2018-02-01"}
         if client_id:
             params["client_id"] = client_id
         async with httpx.AsyncClient(timeout=10) as client:
@@ -293,4 +301,31 @@ async def get_arm_token(conn: dict[str, Any]) -> tuple[str | None, str | None]:
     if _has_managed_identity():
         return await _managed_identity_token(_managed_identity_client_id(conn))
     return await _cli_token(tenant)
+
+
+async def get_graph_token(conn: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Acquire a Microsoft Graph (graph.microsoft.com) access token for this connection.
+
+    Returns (token, error). Used by the tenant-identity assessment controls (Entra policy)
+    that live in Microsoft Graph, not Azure Resource Manager. Mirrors ``get_arm_token``'s
+    auth-method dispatch but requests the Graph scope/resource. The pasted-ARM-token method
+    (``az_cli_token``) can't mint a Graph token, so those controls fail-closed (``error``,
+    excluded from the score) rather than reporting a misleading pass.
+    """
+    method = conn.get("auth_method", "")
+    tenant = conn.get("tenant_id", "")
+    if method == "service_principal":
+        if not (tenant and conn.get("client_id") and conn.get("client_secret")):
+            return None, "Missing tenant id, client id or client secret."
+        return await _sp_secret_token(tenant, conn["client_id"], conn["client_secret"], _GRAPH_SCOPE)
+    if method == "service_principal_cert":
+        if not (tenant and conn.get("client_id") and conn.get("certificate_pem")):
+            return None, "Missing tenant id, client id or certificate."
+        return await _sp_cert_token(tenant, conn["client_id"], conn["certificate_pem"], _GRAPH_SCOPE)
+    if method == "az_cli_token":
+        return None, "Microsoft Graph checks need a service-principal or managed-identity connection."
+    # default_chain ("Host identity"): platform managed identity in the cloud, host az CLI locally.
+    if _has_managed_identity():
+        return await _managed_identity_token(_managed_identity_client_id(conn), _GRAPH_RESOURCE)
+    return await _cli_token(tenant, _GRAPH_RESOURCE)
 

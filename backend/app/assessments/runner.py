@@ -22,6 +22,7 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator
 
+import httpx
 from sqlalchemy import desc, select
 
 from app.assessments import catalog
@@ -263,9 +264,27 @@ async def _resolve_scope(workload: dict[str, Any], connection: dict[str, Any] | 
         clauses.append(f"id in~ ({joined})")
 
     predicate = " or ".join(clauses) if clauses else ""
+    # Effective subscription set: the distinct subscriptions the workload touches across ALL
+    # node kinds (direct subscriptions, the parent sub of each RG, and the parent sub of each
+    # resource id). Subscription-scoped CIS controls (Defender plans, activity-log alerts,
+    # RBAC owners, …) and existence checks evaluate against these, since they govern the whole
+    # subscription, not an individual resource.
+    eff_subs: set[str] = set(subs)
+    for guid, _rg in rg_pairs:
+        if guid:
+            eff_subs.add(guid)
+    for rid in resource_ids:
+        g = _sub_guid(rid)
+        if g:
+            eff_subs.add(g)
+    effective = sorted(eff_subs)
+    _sub_list = ", ".join("'" + _esc(s) + "'" for s in effective)
+    sub_predicate = f"subscriptionId in~ ({_sub_list})" if effective else ""
     return {
         "predicate": predicate,
         "subscriptions": sorted(subs),
+        "effective_subscriptions": effective,
+        "sub_predicate": sub_predicate,
         "rg_pairs": sorted(rg_pairs),
         "resource_ids": sorted(resource_ids),
         "error": "" if predicate else "Workload has no resolvable scope (empty membership).",
@@ -774,12 +793,160 @@ def _new_finding_base(check: dict[str, Any]) -> dict[str, Any]:
         "effort": check.get("effort", ""),
         "sub_category": check.get("sub_category", ""),
         "source": check.get("source", "built-in"),
+        "profile": check.get("profile", ""),
         "learn_more": check.get("learn_more", []),
         "flagged_count": 0,
         "flagged_resources": [],
         "partial": False,
         "ai_rationale": "",
     }
+
+
+def _subscription_subject(guid: str, template: str, name: str = "") -> dict[str, Any]:
+    """Synthesize a flagged-resource entry whose subject is a whole subscription (used by
+    subscription-scoped CIS controls and existence/absence checks, where the failing subject
+    is the subscription itself, not an individual resource)."""
+    label = name or guid
+    return {
+        "id": f"/subscriptions/{guid}",
+        "name": label,
+        "type": "microsoft.resources/subscriptions",
+        "resource_group": "",
+        "subscription_id": guid,
+        "remediation_command": _real_remediation(template, {"name": label, "subscription_id": guid}),
+    }
+
+
+def _tenant_subject(tenant_id: str, template: str, name: str = "") -> dict[str, Any]:
+    """Synthesize a flagged-resource entry whose subject is the whole Entra tenant (used by
+    the identity-policy controls that live in Microsoft Graph, where the failing subject is
+    the directory itself, not an Azure resource)."""
+    label = name or tenant_id or "tenant"
+    return {
+        "id": f"/tenants/{tenant_id}" if tenant_id else "/tenants/current",
+        "name": label,
+        "type": "microsoft.aad/tenant",
+        "resource_group": "",
+        "subscription_id": "",
+        "remediation_command": _real_remediation(template, {"name": label}),
+    }
+
+
+# --- Microsoft Graph (Entra tenant identity policy) access. ---------------------------------
+# Cache GET responses per (tenant, path) for a short TTL and serialize fetches so the handful
+# of identity controls that share a Graph object (e.g. /policies/authorizationPolicy) cause a
+# single network fetch per object per run instead of one per control.
+_GRAPH_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_GRAPH_CACHE_TTL = 60.0
+_GRAPH_LOCK = asyncio.Lock()
+
+
+async def _graph_get(connection: dict[str, Any] | None, path: str) -> tuple[bool, dict[str, Any], str]:
+    """GET a Microsoft Graph v1.0 object, cached + deduped per (tenant, path).
+
+    Returns (ok, json, error). FAIL-CLOSED: any token/HTTP/parse failure returns ok=False so
+    the calling control is marked ``error`` (excluded from the score) rather than a false pass.
+    """
+    from app.azure.credentials import get_graph_token
+
+    tenant = (connection or {}).get("tenant_id", "") or "_"
+    key = (tenant, path)
+    async with _GRAPH_LOCK:
+        now = _time.monotonic()
+        hit = _GRAPH_CACHE.get(key)
+        if hit and (now - hit[0]) < _GRAPH_CACHE_TTL:
+            return True, hit[1], ""
+        token, terr = await get_graph_token(connection or {})
+        if not token:
+            return False, {}, terr or "Could not acquire a Microsoft Graph token."
+        url = f"https://graph.microsoft.com/v1.0{path}"
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:  # noqa: BLE001
+            return False, {}, f"Graph request error: {e}"
+        if resp.status_code != 200:
+            return False, {}, f"Graph GET {path} failed ({resp.status_code}): {resp.text[:200]}"
+        try:
+            body = resp.json()
+        except ValueError:
+            return False, {}, "Graph returned a non-JSON response."
+        _GRAPH_CACHE[key] = (now, body)
+        return True, body, ""
+
+
+def _drill(obj: Any, dotted: str) -> Any:
+    """Walk a dotted path (``a.b.c``) into nested dicts; return None if any hop is missing."""
+    cur = obj
+    for part in (dotted or "").split("."):
+        if isinstance(cur, dict):
+            cur = cur.get(part)
+        else:
+            return None
+    return cur
+
+
+def _policy_satisfied(val: Any, op: str, expected: Any) -> bool:
+    """Compare a Graph policy value against the control's expectation."""
+    if op == "is_true":
+        return val is True
+    if op == "is_false":
+        return val is False
+    if op == "equals":
+        return val == expected
+    if op == "not_equals":
+        return val != expected
+    if op == "in":
+        return val in (expected or [])
+    return False
+
+
+async def _arm_get_token(token: str, url: str) -> tuple[bool, dict[str, Any], str]:
+    """GET an ARM resource with an already-acquired token. Returns (ok, json, error)."""
+    try:
+        async with httpx.AsyncClient(timeout=40) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+    except httpx.HTTPError as e:  # noqa: BLE001
+        return False, {}, f"ARM request error: {e}"
+    if resp.status_code != 200:
+        return False, {}, f"ARM GET failed ({resp.status_code}): {resp.text[:200]}"
+    try:
+        return True, resp.json(), ""
+    except ValueError:
+        return False, {}, "ARM returned a non-JSON response."
+
+
+def _diag_covers(settings: list[dict[str, Any]], required: set[str]) -> bool:
+    """True when some diagnostic setting enables the ``allLogs`` category group, or enables
+    every required individual log category (Activity-Log category check for CIS 6.1.1.2)."""
+    for s in settings or []:
+        logs = ((s.get("properties") or {}).get("logs")) or []
+        enabled_groups = {str(l.get("categoryGroup", "")).lower() for l in logs if l.get("enabled")}
+        if "alllogs" in enabled_groups:
+            return True
+        enabled_cats = {str(l.get("category", "")) for l in logs if l.get("enabled")}
+        if required and required.issubset(enabled_cats):
+            return True
+    return False
+
+
+def _diag_resource_ok(settings: list[dict[str, Any]], required: set[str]) -> bool:
+    """True when a per-resource diagnostic setting enables the relevant logs. With ``required``
+    categories given (e.g. {AuditEvent} for CIS 6.1.1.4) it matches the ``allLogs``/``audit``
+    group or any required category; with no required categories (existence mode, e.g. CIS
+    2.1.7 Databricks log delivery) any enabled log entry suffices."""
+    for s in settings or []:
+        logs = ((s.get("properties") or {}).get("logs")) or []
+        for l in logs:
+            if not l.get("enabled"):
+                continue
+            if not required:
+                return True
+            if str(l.get("categoryGroup", "")).lower() in ("alllogs", "audit"):
+                return True
+            if str(l.get("category", "")) in required:
+                return True
+    return False
 
 
 def _flagged_resource(r: dict[str, Any], template: str, *, metric: bool = False) -> dict[str, Any]:
@@ -812,6 +979,8 @@ async def _execute_check(
     connection: dict[str, Any] | None,
     session_dir: str | None,
     attestation: dict[str, Any] | None = None,
+    sub_predicate: str = "",
+    in_scope_subs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Evaluate ONE control and return its finished finding dict.
 
@@ -826,10 +995,19 @@ async def _execute_check(
     - ``metric`` Azure Monitor threshold per in-scope resource.
     - ``signal`` live platform signal (Azure Advisor recommendation) joined to in-scope resources.
     - ``manual`` human attestation — ``manual`` (pending) until an attestation is recorded.
+
+    Graph controls additionally support:
+    - ``arg_table``   the ARG table to query (``Resources`` default; ``securityresources`` /
+                      ``authorizationresources`` for subscription-scoped CIS controls). Non-
+                      ``Resources`` tables are scoped by ``sub_predicate`` (subscription-level).
+    - ``expectation`` ``"present"`` flips to existence/absence mode: the KQL returns the
+                      subscriptions that HAVE the desired config; any in-scope subscription
+                      MISSING it fails, with the subscription as the flagged subject.
     """
     base = _new_finding_base(check)
     template = check.get("remediation_command", "")
     kind = base["kind"]
+    in_scope_subs = in_scope_subs or []
 
     # Applicability: a control with resource_types applies only when the scope contains one of
     # those types; a control with NO resource_types (e.g. workload-level signal/manual) always
@@ -897,14 +1075,219 @@ async def _execute_check(
             base["status"] = "pass"
         return base
 
+    # --- Microsoft Graph (Entra tenant identity policy) control. -------------------------
+    # The failing subject is the tenant itself; a single GET (cached/deduped) drives the check.
+    if kind == "graph_api":
+        spec = check.get("graph_check") or {}
+        path = str(spec.get("path", ""))
+        if not path:
+            base["status"] = "error"
+            base["error"] = "Graph control is misconfigured (no path)."
+            return base
+        ok, body, err = await _graph_get(connection, path)
+        if not ok:
+            base["status"] = "error"
+            base["error"] = err[:300]
+            return base
+        val = _drill(body, str(spec.get("field", "")))
+        if _policy_satisfied(val, str(spec.get("op", "equals")), spec.get("expected")):
+            base["status"] = "pass"
+        else:
+            tenant = (connection or {}).get("tenant_id", "")
+            base["status"] = "fail"
+            base["flagged_count"] = 1
+            base["flagged_resources"] = [
+                _tenant_subject(tenant, template, (connection or {}).get("name", ""))
+            ]
+        return base
+
+    # --- Control-plane ARM REST control (diagnostic settings / App Service logs). ---------
+    # ARG does not surface diagnostic settings, so these fan out over ARM REST: subscription
+    # Activity-Log diag settings (one call per in-scope subscription) or App Service HTTP logs
+    # (one call per in-scope site, bounded). FAIL-CLOSED on any token/HTTP error.
+    if kind == "arm_rest":
+        from app.azure.credentials import get_arm_token
+
+        spec = check.get("rest_check") or {}
+        mode = str(spec.get("mode", ""))
+        token, terr = await get_arm_token(connection or {})
+        if not token:
+            base["status"] = "error"
+            base["error"] = (terr or "Could not acquire an ARM token.")[:300]
+            return base
+
+        if mode in ("diag_exists", "diag_categories"):
+            if not in_scope_subs:
+                base["status"] = "not_applicable"
+                return base
+            required = {str(c) for c in (spec.get("categories") or [])}
+            failed: list[str] = []
+            for sub in in_scope_subs:
+                url = (
+                    f"https://management.azure.com/subscriptions/{sub}"
+                    "/providers/microsoft.insights/diagnosticSettings?api-version=2021-05-01-preview"
+                )
+                ok, body, err = await _arm_get_token(token, url)
+                if not ok:
+                    base["status"] = "error"
+                    base["error"] = err[:300]
+                    return base
+                settings = body.get("value", []) or []
+                good = (len(settings) > 0) if mode == "diag_exists" else _diag_covers(settings, required)
+                if not good:
+                    failed.append(sub)
+            if failed:
+                base["status"] = "fail"
+                base["flagged_count"] = len(failed)
+                base["flagged_resources"] = [_subscription_subject(s, template) for s in failed[:_FLAGGED_SAMPLE]]
+            else:
+                base["status"] = "pass"
+            return base
+
+        if mode == "diag_resource":
+            rtypes = check.get("resource_types") or []
+            if not predicate or not rtypes:
+                base["status"] = "not_applicable"
+                return base
+            type_filter = " or ".join(f"type =~ '{_esc(t)}'" for t in rtypes)
+            kql = (
+                f"Resources | where {predicate}\n"
+                f"| where {type_filter} "
+                "| project id, name, type, resourceGroup, subscriptionId"
+            )
+            res = await run_kql_collect(
+                kql, connection, session_config_dir=session_dir, max_rows=_METRIC_RESOURCE_CAP
+            )
+            if not res.ok:
+                base["status"] = "error"
+                base["error"] = (res.error or "Resource query failed.")[:300]
+                return base
+            targets = res.rows
+            if not targets:
+                base["status"] = "not_applicable"
+                return base
+            required = {str(c) for c in (spec.get("categories") or [])}
+            failed_res: list[dict[str, Any]] = []
+            for target in targets[:_METRIC_RESOURCE_CAP]:
+                url = (
+                    f"https://management.azure.com{target.get('id', '')}"
+                    "/providers/microsoft.insights/diagnosticSettings?api-version=2021-05-01-preview"
+                )
+                ok, body, err = await _arm_get_token(token, url)
+                if not ok:
+                    base["status"] = "error"
+                    base["error"] = err[:300]
+                    return base
+                if not _diag_resource_ok(body.get("value", []) or [], required):
+                    failed_res.append(target)
+            if failed_res:
+                base["status"] = "fail"
+                base["flagged_count"] = len(failed_res)
+                base["partial"] = not res.complete
+                base["flagged_resources"] = [_flagged_resource(r, template) for r in failed_res[:_FLAGGED_SAMPLE]]
+            else:
+                base["status"] = "pass"
+            return base
+
+        if mode == "app_httplogs":
+            if not predicate:
+                base["status"] = "not_applicable"
+                return base
+            kql = (
+                f"Resources | where {predicate}\n"
+                "| where type =~ 'microsoft.web/sites' "
+                "| project id, name, type, resourceGroup, subscriptionId"
+            )
+            res = await run_kql_collect(
+                kql, connection, session_config_dir=session_dir, max_rows=_METRIC_RESOURCE_CAP
+            )
+            if not res.ok:
+                base["status"] = "error"
+                base["error"] = (res.error or "Site query failed.")[:300]
+                return base
+            sites = res.rows
+            if not sites:
+                base["status"] = "not_applicable"
+                return base
+            failed_sites: list[dict[str, Any]] = []
+            for site in sites[:_METRIC_RESOURCE_CAP]:
+                url = f"https://management.azure.com{site.get('id', '')}/config/logs?api-version=2022-03-01"
+                ok, body, err = await _arm_get_token(token, url)
+                if not ok:
+                    base["status"] = "error"
+                    base["error"] = err[:300]
+                    return base
+                http = (body.get("properties", {}) or {}).get("httpLogs", {}) or {}
+                enabled = bool((http.get("fileSystem", {}) or {}).get("enabled")) or bool(
+                    (http.get("azureBlobStorage", {}) or {}).get("enabled")
+                )
+                if not enabled:
+                    failed_sites.append(site)
+            if failed_sites:
+                base["status"] = "fail"
+                base["flagged_count"] = len(failed_sites)
+                base["partial"] = not res.complete
+                base["flagged_resources"] = [_flagged_resource(r, template) for r in failed_sites[:_FLAGGED_SAMPLE]]
+            else:
+                base["status"] = "pass"
+            return base
+
+        base["status"] = "error"
+        base["error"] = f"Unknown arm_rest mode '{mode}'."
+        return base
+
     # --- Resource Graph (KQL) control — paged + fail-closed. -----------------------------
-    kql = f"Resources | where {predicate}\n{check['kql']}"
+    # Subscription-scoped CIS controls query a different ARG table (securityresources /
+    # authorizationresources) and are scoped by subscription, not the resource predicate.
+    arg_table = (check.get("arg_table") or "Resources").strip() or "Resources"
+    expectation = (check.get("expectation") or "").strip().lower()
+    scope_mode = (check.get("scope_mode") or "").strip().lower()
+    # Existence/absence checks are inherently subscription-scoped (a control "exists somewhere
+    # in the subscription"), so they always use the subscription predicate. Likewise any
+    # non-Resources ARG table is subscription-scoped. Plain violation checks on Resources use
+    # the full resource predicate (subscription / RG / resource-id granularity).
+    # ``scope_mode="tenant"`` opts out entirely (tenant-wide governance controls, e.g. custom
+    # role definitions which carry no subscriptionId) — the check's KQL scopes itself.
+    if scope_mode == "tenant":
+        scope_pred = "1 == 1"
+    elif expectation == "present" or arg_table.lower() != "resources":
+        scope_pred = sub_predicate
+    else:
+        scope_pred = predicate
+    if not scope_pred:
+        # A subscription-scoped control with no resolvable subscription scope can't be evaluated.
+        base["status"] = "not_applicable"
+        return base
+
+    kql = f"{arg_table} | where {scope_pred}\n{check['kql']}"
     res = await run_kql_collect(kql, connection, session_config_dir=session_dir)
     if not res.ok:
         base["status"] = "error"
         base["error"] = (res.error or "Query failed.")[:300]
         return base
     rows = res.rows
+
+    # --- Existence / absence mode: KQL returns subscriptions that HAVE the desired config;
+    # any in-scope subscription MISSING it is the violation (subject = the subscription). -----
+    if expectation == "present":
+        if not in_scope_subs:
+            base["status"] = "not_applicable"
+            return base
+        have = {
+            _sub_guid(str(r.get("subscriptionId", "")))
+            for r in rows
+            if r.get("subscriptionId")
+        }
+        missing = [s for s in in_scope_subs if s not in have]
+        if missing:
+            base["status"] = "fail"
+            base["flagged_count"] = len(missing)
+            base["flagged_resources"] = [_subscription_subject(s, template) for s in missing[:_FLAGGED_SAMPLE]]
+        else:
+            base["status"] = "pass"
+        return base
+
+    # --- Violation mode: rows ARE the violating resources/subscriptions. -----------------
     if rows:
         base["status"] = "fail"
         # Prefer ARG's reported total (accurate even when the row sample is capped); fall
@@ -1046,6 +1429,8 @@ async def run_assessment(
                     _execute_check(
                         chk, predicate, present, connection, session_dir,
                         attestation=attestations.get(chk["id"]),
+                        sub_predicate=scope.get("sub_predicate", ""),
+                        in_scope_subs=scope.get("effective_subscriptions", []),
                     ),
                     timeout=min(check_timeout, remaining),
                 )

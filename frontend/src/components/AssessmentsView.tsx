@@ -861,6 +861,7 @@ function FindingsTable({
                     <td className="py-2 pr-3 text-gray-700">{f.status === "fail" ? (f.partial ? `${f.flagged_count}+` : f.flagged_count) : "—"}</td>
                     <td className="py-2 pr-3">
                       <div className="flex flex-wrap gap-1">
+                        {f.profile && <span title={`CIS profile ${f.profile === "L1" ? "Level 1 (baseline)" : "Level 2 (defense-in-depth)"}`} className={`rounded px-1 py-0.5 text-[9px] font-semibold ${f.profile === "L1" ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>{f.profile}</span>}
                         {(f.frameworks.cis || []).map((x) => <span key={`cis-${x}`} className="rounded bg-indigo-50 px-1 py-0.5 text-[9px] text-indigo-600">{x}</span>)}
                         {(f.frameworks.nist || []).map((x) => <span key={`nist-${x}`} className="rounded bg-teal-50 px-1 py-0.5 text-[9px] text-teal-600">NIST {x}</span>)}
                         {(f.frameworks.iso || []).map((x) => <span key={`iso-${x}`} className="rounded bg-purple-50 px-1 py-0.5 text-[9px] text-purple-600">ISO {x}</span>)}
