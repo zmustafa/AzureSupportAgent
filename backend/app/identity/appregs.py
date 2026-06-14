@@ -610,14 +610,24 @@ async def collect_app_registrations(
     note = ""
     apps: list[dict[str, Any]] = []
     if connection is not None:
-        try:
-            apps = await _collect_real(connection, limit=limit, progress=progress)
-            source = "microsoft_graph"
-        except Exception as exc:  # noqa: BLE001 - graceful fallback to demo
-            note = f"Live enumeration failed, showing demo data: {str(exc)[:200]}"
-            log.info("app-registrations live collect failed: %s", exc)
-            await _say("error", note)
-            apps = []
+        from app.mcp.client import entra_graph_config_error, unwrap_exc_message
+
+        cfg_err = entra_graph_config_error(connection)
+        if cfg_err:
+            # The Graph MCP can't authenticate with this connection — don't spawn a doomed
+            # server; show the clear, actionable reason and fall back to demo data.
+            note = cfg_err
+            log.info("app-registrations: Graph MCP not usable with this connection: %s", cfg_err)
+            await _say("error", cfg_err)
+        else:
+            try:
+                apps = await _collect_real(connection, limit=limit, progress=progress)
+                source = "microsoft_graph"
+            except Exception as exc:  # noqa: BLE001 - graceful fallback to demo
+                note = f"Live enumeration failed, showing demo data: {unwrap_exc_message(exc)[:200]}"
+                log.info("app-registrations live collect failed: %s", exc)
+                await _say("error", note)
+                apps = []
     if not apps:
         apps = build_demo_app_registrations()
         if connection is None:

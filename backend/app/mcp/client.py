@@ -349,6 +349,59 @@ def build_mcp_client(settings, connection: dict[str, Any] | None = None) -> "MCP
     )
 
 
+def unwrap_exc_message(exc: BaseException) -> str:
+    """Flatten an exception — including the anyio/asyncio ``ExceptionGroup`` that the MCP
+    stdio client raises when a spawned child process or session fails — into a legible
+    message. The raw ``str()`` of such a failure is the useless "unhandled errors in a
+    TaskGroup (1 sub-exception)"; recurse into the group and join the real leaf messages so
+    callers (and the UI) see the actual cause."""
+    subs = getattr(exc, "exceptions", None)
+    if subs:  # ExceptionGroup / BaseExceptionGroup
+        seen: list[str] = []
+        for sub in subs:
+            msg = unwrap_exc_message(sub)
+            if msg and msg not in seen:
+                seen.append(msg)
+        if seen:
+            return "; ".join(seen)
+    msg = str(exc).strip()
+    return msg or exc.__class__.__name__
+
+
+def entra_graph_config_error(connection: dict[str, Any] | None) -> str:
+    """Why the EntraID (Microsoft Graph) MCP server can't be used with this connection, or
+    ``""`` when it can.
+
+    The vendored Graph server authenticates ONLY with an explicit service-principal identity
+    (client id + secret, or a certificate). It cannot use a managed identity, a pasted ARM
+    token, or host ``az`` login. Checking this up front lets the Identity / app-registration
+    features show ONE clear, actionable message instead of spawning a server that immediately
+    crashes with an opaque ``AuthenticationError`` wrapped in a task-group exception."""
+    if not connection:
+        return (
+            "No Azure connection is configured. Identity (Microsoft Graph) features need a "
+            "service-principal connection with a client secret and Directory.Read.All."
+        )
+    has_client = bool(connection.get("client_id"))
+    has_secret = bool(connection.get("client_secret"))
+    has_cert = bool(connection.get("certificate_pem"))
+    if has_client and (has_secret or has_cert):
+        return ""
+    name = connection.get("display_name") or "the selected connection"
+    pretty = {
+        "service_principal": "a service principal with no stored client secret",
+        "service_principal_cert": "a service principal with no stored certificate",
+        "default_chain": "host / managed identity",
+        "az_cli_token": "a pasted ARM token",
+    }.get(connection.get("auth_method", ""), "a non-service-principal identity")
+    return (
+        f"Identity (Microsoft Graph) features need a service-principal connection with a client "
+        f"secret or certificate. \u2018{name}\u2019 uses {pretty}, which can't authenticate to "
+        f"Microsoft Graph. Add a service-principal connection (client id + secret) granted "
+        f"Directory.Read.All / Application.Read.All to use these features."
+    )
+
+
 def _entra_env_from_connection(connection: dict[str, Any] | None) -> tuple[dict[str, str], list[str]]:
     """Map an Azure connection's service-principal identity to the env vars the EntraID
     (Microsoft Graph) MCP server expects (TENANT_ID / CLIENT_ID / CLIENT_SECRET, or a

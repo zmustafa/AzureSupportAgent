@@ -458,7 +458,7 @@ async def collect_identity(
 ) -> dict[str, Any]:
     """Build the full identity snapshot. Never raises — per-group errors land in ``errors``."""
     from app.core.config import get_settings
-    from app.mcp.client import build_entra_mcp_client
+    from app.mcp.client import build_entra_mcp_client, entra_graph_config_error, unwrap_exc_message
 
     settings = get_settings()
     index = _build_workload_index()
@@ -472,25 +472,6 @@ async def collect_identity(
     errors: dict[str, str] = {}
     meta: dict[str, Any] = {}
 
-    client = build_entra_mcp_client(settings, connection=connection)
-
-    async def _run(group: str, coro):
-        try:
-            groups[group] = _sort_findings(await coro)
-        except Exception as exc:  # noqa: BLE001 - isolate per-group failures
-            errors[group] = str(exc)[:300]
-            log.info("identity group %s failed: %s", group, exc)
-
-    async def _run_mfa():
-        try:
-            findings, sampled, scanned = await _collect_users_without_mfa(client, mfa_cap)
-            groups["users_without_mfa"] = _sort_findings(findings)
-            meta["mfa_sampled"] = sampled
-            meta["mfa_scanned"] = scanned
-        except Exception as exc:  # noqa: BLE001
-            errors["users_without_mfa"] = str(exc)[:300]
-            log.info("identity group users_without_mfa failed: %s", exc)
-
     async def _run_kv():
         try:
             findings, note = await _collect_keyvault_expiry(connection, index)
@@ -498,21 +479,54 @@ async def collect_identity(
             if note:
                 errors["keyvault_expiry"] = note
         except Exception as exc:  # noqa: BLE001
-            errors["keyvault_expiry"] = str(exc)[:300]
+            errors["keyvault_expiry"] = unwrap_exc_message(exc)[:300]
             log.info("identity group keyvault_expiry failed: %s", exc)
 
-    try:
-        tasks = [
-            _run("expiring_credentials", _collect_expiring_credentials(client, days, index)),
-            _run("ownerless_apps", _collect_ownerless_apps(client, index)),
-            _run("ca_gaps", _collect_ca_gaps(client)),
-            _run_mfa(),
-        ]
+    # The four Graph-backed groups need the EntraID MCP server, which authenticates ONLY with
+    # an explicit service-principal identity (client id + secret/cert). When the selected
+    # connection can't provide that (managed identity / pasted token / host az-login), spawning
+    # the server just crash-loops it with an opaque task-group error — so detect it up front
+    # and surface ONE clear, actionable message per group. The Key Vault group still runs (it
+    # uses Resource Graph, which any connection can drive).
+    cfg_err = entra_graph_config_error(connection)
+    if cfg_err:
+        for g in ("expiring_credentials", "ownerless_apps", "ca_gaps", "users_without_mfa"):
+            errors[g] = cfg_err
+        log.info("identity: Graph MCP not usable with this connection: %s", cfg_err)
         if include_keyvault:
-            tasks.append(_run_kv())
-        await asyncio.gather(*tasks)
-    finally:
-        client.close()
+            await _run_kv()
+    else:
+        client = build_entra_mcp_client(settings, connection=connection)
+
+        async def _run(group: str, coro):
+            try:
+                groups[group] = _sort_findings(await coro)
+            except Exception as exc:  # noqa: BLE001 - isolate per-group failures
+                errors[group] = unwrap_exc_message(exc)[:300]
+                log.info("identity group %s failed: %s", group, exc)
+
+        async def _run_mfa():
+            try:
+                findings, sampled, scanned = await _collect_users_without_mfa(client, mfa_cap)
+                groups["users_without_mfa"] = _sort_findings(findings)
+                meta["mfa_sampled"] = sampled
+                meta["mfa_scanned"] = scanned
+            except Exception as exc:  # noqa: BLE001
+                errors["users_without_mfa"] = unwrap_exc_message(exc)[:300]
+                log.info("identity group users_without_mfa failed: %s", exc)
+
+        try:
+            tasks = [
+                _run("expiring_credentials", _collect_expiring_credentials(client, days, index)),
+                _run("ownerless_apps", _collect_ownerless_apps(client, index)),
+                _run("ca_gaps", _collect_ca_gaps(client)),
+                _run_mfa(),
+            ]
+            if include_keyvault:
+                tasks.append(_run_kv())
+            await asyncio.gather(*tasks)
+        finally:
+            client.close()
 
     def _worst(items: list[dict[str, Any]]) -> str:
         if not items:
