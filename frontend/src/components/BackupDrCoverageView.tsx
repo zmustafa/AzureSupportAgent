@@ -54,6 +54,25 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
   );
 }
 
+function Donut({ pct }: { pct: number }) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  const dash = (pct / 100) * c;
+  const color = pct >= 80 ? "#16a34a" : pct >= 50 ? "#d97706" : "#dc2626";
+  return (
+    <svg viewBox="0 0 80 80" className="h-20 w-20">
+      <circle cx="40" cy="40" r={r} fill="none" stroke="#e5e7eb" strokeWidth="8" />
+      <circle
+        cx="40" cy="40" r={r} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"
+        strokeDasharray={`${dash} ${c - dash}`} transform="rotate(-90 40 40)"
+      />
+      <text x="40" y="45" textAnchor="middle" className="fill-gray-900 text-[18px] font-semibold">
+        {pct}%
+      </text>
+    </svg>
+  );
+}
+
 function Cell({ cell }: { cell: BackupDrCell }) {
   return (
     <td className="px-2 py-2 text-center" title={`${cell.value}${cell.detail ? " — " + cell.detail : ""}`}>
@@ -213,6 +232,13 @@ export function BackupDrCoveragePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, query, statusFilter]);
 
+  // Per-status resource counts across all backup groups, for the header summary line.
+  const statusTotals = useMemo(() => {
+    const t = { green: 0, amber: 0, red: 0 };
+    for (const g of data?.groups ?? []) { t.green += g.green; t.amber += g.amber; t.red += g.red; }
+    return t;
+  }, [data]);
+
   const sc = data?.scorecard;
 
   function openDrawer(group: BackupDrGroup, row: BackupDrRow) {
@@ -224,13 +250,20 @@ export function BackupDrCoveragePanel() {
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
       {/* Header */}
       <div className="border-b bg-white px-6 py-3">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <Donut pct={sc?.pct_protected ?? 0} />
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-gray-900">Backup &amp; DR Coverage</h1>
             <p className="text-xs text-gray-500">
               Are RTO/RPO commitments actually backed by configured &amp; tested protection?
               {data?.demo && <span className="ml-1 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">demo data</span>}
             </p>
+            <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
+              <span>Resources: <b>{statusTotals.green + statusTotals.amber + statusTotals.red}</b></span>
+              <span className="text-green-600">✓ {statusTotals.green}</span>
+              <span className="text-amber-500">⚠ {statusTotals.amber}</span>
+              <span className="text-red-500">✗ {statusTotals.red}</span>
+            </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
