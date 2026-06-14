@@ -87,7 +87,7 @@ DEFAULTS: dict[str, Any] = {
     "deep_parallel_enabled": True,
     # How many sub-agents may validate hypotheses simultaneously (1-12). Ignored when
     # deep_parallel_enabled is False (then validation runs one at a time).
-    "deep_parallel_count": 3,
+    "deep_parallel_count": 12,
     # Verbosity of the live "Working on your request…" progress feed shown in the chat:
     #   compact  — only high-level phases (sending, responding, writing the answer)
     #   normal   — phases + tool names + result summaries (no params/reasoning)
@@ -145,10 +145,10 @@ DEFAULTS: dict[str, Any] = {
     "request_timeout_seconds": 180,
     # --- Host command execution (Run button on az-cli code blocks) ----------------
     # Master switch. When False, the Run button is hidden and the exec endpoint 403s.
-    # OFF by default — an admin must explicitly opt in.
-    "command_execution_enabled": False,
-    # Which CLI binaries may be executed. Only these are ever allowed (az-cli focused).
-    "command_allowlist": ["az"],
+    # ON by default — an admin can opt out to hide the Run button entirely.
+    "command_execution_enabled": True,
+    # Which CLI binaries may be executed. Only these are ever allowed (az / azd / kubectl).
+    "command_allowlist": ["az", "azd", "kubectl"],
     # Wall-clock seconds before a running command is killed.
     "command_timeout_seconds": 120,
     # --- Assessments: scoring (admin-tunable) -------------------------------------
@@ -274,7 +274,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["tool_discovery_limit"] = max(2000, min(400000, int(current["tool_discovery_limit"])))
     current["request_timeout_seconds"] = max(30, min(600, int(current["request_timeout_seconds"])))
     current["command_timeout_seconds"] = max(5, min(900, int(current["command_timeout_seconds"])))
-    current["deep_parallel_count"] = max(1, min(12, int(current.get("deep_parallel_count", 3))))
+    current["deep_parallel_count"] = max(1, min(12, int(current.get("deep_parallel_count", 12))))
     current["deep_parallel_enabled"] = bool(current.get("deep_parallel_enabled", True))
     # Sanitize the command allowlist: keep only permitted, de-duplicated binaries.
     raw_allow = current.get("command_allowlist") or ["az"]
@@ -286,7 +286,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         if b in ALLOWED_COMMAND_BINARIES and b not in seen:
             seen.append(b)
     current["command_allowlist"] = seen or ["az"]
-    current["command_execution_enabled"] = bool(current.get("command_execution_enabled", False))
+    current["command_execution_enabled"] = bool(current.get("command_execution_enabled", True))
     # Built-in utility tools: coerce flags + clamp timeout + normalize string lists.
     current["builtin_tools_enabled"] = bool(current.get("builtin_tools_enabled", True))
     current["network_tool_timeout_seconds"] = max(
@@ -437,7 +437,7 @@ def deep_parallelism() -> int:
     s = load_settings()
     if not bool(s.get("deep_parallel_enabled", True)):
         return 1
-    return max(1, min(12, int(s.get("deep_parallel_count", 3))))
+    return max(1, min(12, int(s.get("deep_parallel_count", 12))))
 
 
 def assessment_weights() -> dict[str, int]:
