@@ -72,7 +72,9 @@ DEFAULTS: dict[str, Any] = {
     "response_style": "default",
     "max_tokens": 32000,
     "auto_title": True,
-    "scope_clarification": True,
+    # Ask the user to pick a subscription for ambiguous, resource-specific questions.
+    # Opt-in: defaults off so a fresh install never interrupts the first message with a picker.
+    "scope_clarification": False,
     # Ask the user to pick a management group for governance-scoped questions
     # (policy/compliance/org-wide). Opt-in: defaults off so it never double-prompts.
     "mgmt_group_clarification": False,

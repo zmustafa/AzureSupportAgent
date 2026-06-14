@@ -818,7 +818,7 @@ async def clarify_scope(
     from app.core.azure_connections import resolve_connection
 
     cfg = load_settings()
-    sub_on = bool(cfg.get("scope_clarification", True))
+    sub_on = bool(cfg.get("scope_clarification", False))
     mg_on = bool(cfg.get("mgmt_group_clarification", False))
     if not sub_on and not mg_on:
         return empty
