@@ -91,8 +91,25 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
           <div className="m-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {(invQ.error as Error)?.message || "Failed to load inventory."}
           </div>
+        ) : inv?.never_loaded ? (
+          <div className="mx-auto max-w-2xl px-6 py-16 text-center">
+            <div className="text-3xl">🗂️</div>
+            <h2 className="mt-2 text-base font-semibold text-gray-900">Inventory not loaded yet</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Scanning every subscription with Azure Resource Graph and attributing each resource to its
+              workload takes a moment, so it doesn&apos;t run automatically. Press Refresh to collect the
+              inventory — it&apos;s then cached until you refresh again.
+            </p>
+            <button
+              onClick={refresh}
+              disabled={busy}
+              className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+            >
+              {busy ? "Refreshing…" : "↻ Refresh inventory"}
+            </button>
+          </div>
         ) : !inv && invQ.isLoading ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading inventory from Azure…</div>
+          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading inventory…</div>
         ) : inv ? (
           <InventoryBody key={effectiveConn} inv={inv} connectionId={effectiveConn} refreshing={busy} tab={tab} />
         ) : null}
@@ -165,7 +182,7 @@ function Header({
           })()}
         </div>
       </div>
-      {s && (
+      {s && !inv?.never_loaded && (
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
           <Stat label="resources" value={s.total_resources} />
           <Stat label="types" value={s.type_count} />

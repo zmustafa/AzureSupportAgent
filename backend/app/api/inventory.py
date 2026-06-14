@@ -76,18 +76,24 @@ async def get_inventory(
     Server-cached PERMANENTLY per tenant + connection + scope so the many Resource Graph
     queries run only once per scope until refreshed. ``scope`` restricts collection to a
     subscription (``sub:<id>``) or a management group's subscriptions (``mg:<id>``); ``""`` is
-    the whole tenant. ``force=1`` bypasses the cache and re-collects from Azure."""
+    the whole tenant.
+
+    A plain page visit (``force=0``) ONLY reads the cache — it never triggers a scan, even on a
+    cache miss. A miss returns an empty ``never_loaded`` payload so the UI prompts the user to
+    press Refresh. ``force=1`` (the Refresh button) re-collects from Azure and caches the result."""
     tid = principal.tenant_id
     cid = connection_id or ""
     if not force:
         hit = cache.get(tid, cid, scope=scope)
         if hit:
-            return {**hit["payload"], "cached": True, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+            return {**hit["payload"], "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+        # Cache miss on a page visit: do NOT scan. Return an empty 'not loaded yet' payload.
+        return {**service.empty_payload(), "cached": False, "never_loaded": True, "fetched_at": "", "age_seconds": 0}
 
     conn = _conn(connection_id)
     payload = await service.collect(conn, scope=scope)
     fetched_at = cache.set_(tid, cid, payload, scope=scope)
-    return {**payload, "cached": False, "fetched_at": fetched_at, "age_seconds": 0}
+    return {**payload, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
 
 
 @router.get("/optimization")

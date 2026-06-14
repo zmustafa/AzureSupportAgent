@@ -2900,6 +2900,7 @@ export interface InventoryResponse {
   cached: boolean;
   fetched_at: string;
   age_seconds: number;
+  never_loaded?: boolean;
 }
 
 // The AI-parsed filter from a natural-language query.

@@ -292,6 +292,28 @@ async def run_id_query(kql: str, connection: dict[str, Any] | None) -> tuple[lis
     return [r.get("id", "") for r in rows if r.get("id")], ""
 
 
+def empty_payload() -> dict[str, Any]:
+    """The canonical empty inventory payload (no resources), shaped exactly like ``collect``'s
+    result. Used for the 'not loaded yet' page-visit response so visiting the grid never
+    triggers a (slow) Resource Graph scan — only the Refresh button collects."""
+    facets = _facets([], {}, [], set())
+    summary = {
+        "total_resources": 0,
+        "type_count": 0,
+        "subscription_count": 0,
+        "resource_group_count": 0,
+        "location_count": 0,
+        "workload_count": 0,
+        "unassigned_count": 0,
+        "truncated_subscriptions": [],
+        "tagged_count": 0,
+        "tag_coverage_pct": 0,
+        "top_tag_keys": [],
+        "flag_counts": {},
+    }
+    return {"resources": [], "facets": facets, "summary": summary, "errors": []}
+
+
 async def collect(connection: dict[str, Any] | None, scope: str = "") -> dict[str, Any]:
     """Collect the full resource inventory for a connection, attributed to workloads.
 
