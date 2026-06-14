@@ -498,6 +498,17 @@ export default function ChatView() {
     inputRef.current = v;
     setInput(v);
   };
+  // Drop a suggested prompt into the composer (instead of sending it) so the user can
+  // edit it before sending. Focuses the textarea and places the cursor at the end.
+  const fillComposer = (text: string) => {
+    setInputSynced(text);
+    setTimeout(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(text.length, text.length);
+    }, 0);
+  };
   // Images (base64 data URLs) the user pasted/attached for the next message.
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -2982,7 +2993,7 @@ export default function ChatView() {
                         <StarterCategory
                           key={cat.title}
                           category={cat}
-                          onPick={(prompt) => void send(prompt)}
+                          onPick={(prompt) => fillComposer(prompt)}
                         />
                       ))}
                     </div>
@@ -3003,7 +3014,7 @@ export default function ChatView() {
                           node={node}
                           depth={0}
                           trail={[]}
-                          onPick={(prompt) => void send(prompt)}
+                          onPick={(prompt) => fillComposer(prompt)}
                         />
                       ))}
                     </div>
