@@ -94,8 +94,16 @@ async def _startup() -> None:
             logging.getLogger("app.main").info("Reaped %d orphaned assessment run(s)", reaped)
     except Exception:  # noqa: BLE001
         logging.getLogger("app.main").warning("Assessment orphan reaper failed", exc_info=True)
-    # Backfill sub-agent categories (idempotent) so existing agents are grouped.
-    from app.automations.agents import seed_categories
+    # Seed the curated starter sub-agents (a full Azure troubleshooting team) on first run,
+    # then backfill categories. Both idempotent (seed only when the registry is empty).
+    from app.automations.agents import seed_categories, seed_if_empty
+
+    try:
+        agn = seed_if_empty()
+        if agn:
+            logging.getLogger("app.main").info("Seeded %d starter sub agent(s)", agn)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app.main").warning("Starter sub agent seed failed", exc_info=True)
 
     try:
         catn = seed_categories()
@@ -103,6 +111,7 @@ async def _startup() -> None:
             logging.getLogger("app.main").info("Categorized %d sub agent(s)", catn)
     except Exception:  # noqa: BLE001
         logging.getLogger("app.main").warning("Sub agent categorization failed", exc_info=True)
+
     # Start the automations scheduler (recurring tasks).
     from app.automations.scheduler import scheduler
 

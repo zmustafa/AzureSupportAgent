@@ -185,3 +185,48 @@ def seed_categories() -> int:
     if changed:
         _write(data)
     return changed
+
+
+# Curated starter sub-agents shipped with the product (a full Azure troubleshooting team:
+# Networking, Compute, Data, Security, Operations, Cost). Bundled IN the package (NOT under
+# .data, which is gitignored / excluded from the image) so a fresh install / deployment comes
+# up with them pre-loaded. Each carries an empty provider/model/connection_id so it inherits
+# the deployment's active LLM provider and default Azure connection at run time.
+_SEED_PATH = Path(__file__).resolve().parent / "builtin_agents.json"
+
+
+def _read_builtin_seed() -> dict[str, Any]:
+    try:
+        data = json.loads(_SEED_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data.get("agents", {}) or {}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def seed_if_empty() -> int:
+    """Seed the curated starter sub-agents on first run, ONLY when the registry is empty.
+
+    Returns the number of agents seeded. Idempotent: once any agent exists (including after
+    the admin edits or deletes some), this never re-adds them, so a deleted starter stays
+    deleted. Mirrors the workbook / sample-control starter-seed convention."""
+    data = _read()
+    if data.get("agents"):
+        return 0
+    builtins = _read_builtin_seed()
+    if not builtins:
+        return 0
+    agents = data.setdefault("agents", {})
+    for aid, seed in builtins.items():
+        merged = dict(DEFAULTS)
+        merged.update(seed)
+        if merged.get("category") not in _CATEGORY_IDS:
+            merged["category"] = classify_category(merged.get("name", ""), merged.get("instructions", ""))
+        merged["created_at"] = _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        agents[aid] = merged
+    _write(data)
+    return len(agents)
+
