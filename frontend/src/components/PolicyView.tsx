@@ -208,7 +208,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
             >
               {invQ.isFetching && !withCompliance ? "Refreshing…" : "↻ Refresh"}
             </button>
-            {inv && (
+            {inv && !inv.never_loaded && (
               invQ.isFetching ? (
                 <span className="flex animate-pulse items-center gap-1 text-[11px] font-semibold text-brand">
                   <span className="inline-block h-2 w-2 animate-ping rounded-full bg-brand" />
@@ -240,11 +240,30 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
 
       {/* Body — cached data always wins; only show the full loader when there's nothing yet. */}
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
-        {!inv ? (
+        {!inv || inv.never_loaded ? (
           invQ.isError ? (
             <ErrorBox message={(invQ.error as Error)?.message || "Failed to load policy inventory."} />
-          ) : (
+          ) : invQ.isFetching ? (
             <Loading text="Loading policy inventory from Azure…" />
+          ) : !inv ? (
+            <Loading text="Loading…" />
+          ) : (
+            <div className="mx-auto max-w-2xl py-16 text-center">
+              <div className="text-3xl">🛡️</div>
+              <h2 className="mt-2 text-base font-semibold text-gray-900">Policy inventory not loaded yet</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Enumerating policy definitions, initiatives, assignments and exemptions across your
+                scopes takes a moment, so it doesn&apos;t run automatically. Press Refresh to load it —
+                it&apos;s then cached until you refresh again.
+              </p>
+              <button
+                onClick={() => refresh(false)}
+                disabled={invQ.isFetching}
+                className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+              >
+                {invQ.isFetching ? "Refreshing…" : "↻ Refresh"}
+              </button>
+            </div>
           )
         ) : (
           <>

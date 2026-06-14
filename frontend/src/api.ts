@@ -3085,6 +3085,9 @@ export interface PolicyInventory {
   cached?: boolean;
   fetched_at?: string;
   age_seconds?: number;
+  // True for the empty payload returned on a first visit (cache miss, no scan) so the UI
+  // prompts the user to press Refresh instead of auto-scanning Azure.
+  never_loaded?: boolean;
 }
 
 export interface PolicyWorkloadScope {

@@ -61,7 +61,11 @@ async def get_inventory(
     summary block is attached.
 
     Server-cached PERMANENTLY (per tenant + connection + workload + compliance flag) so the
-    slow Azure round-trip runs only once until refreshed. ``force=1`` bypasses cache."""
+    slow Azure round-trip runs only once until refreshed.
+
+    A plain page visit (``force=0``) ONLY reads the cache — it never scans, even on a cache
+    miss. A miss returns an empty ``never_loaded`` payload so the UI prompts the user to press
+    Refresh. ``force=1`` (Refresh / Scan) bypasses the cache and collects from Azure."""
     tid = principal.tenant_id
     cid = connection_id or ""
     wid = workload_id or ""
@@ -70,7 +74,26 @@ async def get_inventory(
     if not force:
         hit = policy_registry.get_inventory_cache(tid, cid, want_compliance, wid)
         if hit:
-            return {**hit["payload"], "cached": True, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+            return {**hit["payload"], "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+        # Cache miss on a page visit: do NOT scan. Return an empty 'not loaded yet' payload.
+        empty = collector.empty_inventory()
+        return {
+            "connection_id": cid,
+            **empty,
+            "scope_tree": [],
+            "compliance": {"available": False, "by_assignment": {}},
+            "advisors": {
+                "promote_to_deny": [],
+                "exemption_hygiene": {"items": [], "buckets": {}, "total": 0},
+                "remediation_gaps": [],
+                "conflicts": [],
+            },
+            "workload": None,
+            "cached": False,
+            "never_loaded": True,
+            "fetched_at": "",
+            "age_seconds": 0,
+        }
 
     conn = _conn(connection_id)
     inv = await collector.collect_inventory(conn)
@@ -124,7 +147,7 @@ async def get_inventory(
         "workload": workload_block,
     }
     fetched_at = policy_registry.set_inventory_cache(tid, cid, want_compliance, payload, wid)
-    return {**payload, "cached": False, "fetched_at": fetched_at, "age_seconds": 0}
+    return {**payload, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
 
 
 @router.get("/compliance")

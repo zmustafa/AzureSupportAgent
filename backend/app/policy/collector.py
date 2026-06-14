@@ -308,6 +308,27 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
+def empty_inventory() -> dict[str, Any]:
+    """The canonical empty policy inventory (no Azure round-trip), shaped exactly like
+    ``collect_inventory``'s result. Used for the 'not loaded yet' page-visit response so a
+    first visit to /policy never triggers a (slow) Azure scan — only Refresh / Scan collects."""
+    return {
+        "definitions": [],
+        "initiatives": [],
+        "assignments": [],
+        "exemptions": [],
+        "subscription_names": {},
+        "errors": [],
+        "counts": {
+            "definitions": 0,
+            "custom_definitions": 0,
+            "initiatives": 0,
+            "assignments": 0,
+            "exemptions": 0,
+        },
+    }
+
+
 def build_scope_tree(assignments: list[dict[str, Any]], exemptions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group assignments + exemptions by scope into a flat, depth-ordered list."""
     by_scope: dict[str, dict[str, Any]] = {}
