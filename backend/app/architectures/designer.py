@@ -106,17 +106,22 @@ def _resources_block(resources: list[dict[str, Any]]) -> str:
 
 async def _complete_json(system: str, user: str) -> Any:
     provider = build_provider()
-    text = ""
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     # Architecture/diagram JSON for a real estate can be large; the default response cap
     # (~4k tokens) truncates it mid-JSON, so the parse yields nothing. Request a generous
-    # cap for these structured completions so the JSON object is returned whole.
-    async for ev in provider.stream(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        None,
-        max_tokens=16000,
-    ):
-        if ev.type == "token":
-            text += ev.text
+    # cap for these structured completions so the JSON object is returned whole. Reasoning
+    # models (e.g. gpt-5.x via the Responses API) occasionally return an empty completion
+    # when reasoning consumes the budget, so retry once on an empty/unparseable result.
+    text = ""
+    for attempt in range(2):
+        text = ""
+        async for ev in provider.stream(messages, None, max_tokens=16000):
+            if ev.type == "token":
+                text += ev.text
+        if text.strip():
+            break
+        if attempt == 0:
+            logger.warning("Architecture JSON completion returned empty; retrying once.")
     t = text.strip()
     if "```" in t:
         m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)

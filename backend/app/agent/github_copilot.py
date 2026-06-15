@@ -388,7 +388,7 @@ class GitHubCopilotChatProvider(LLMProvider):
             msg = str(exc)
             # GPT-5 family must use the Responses API on Copilot.
             if "unsupported_api_for_model" in msg or "/chat/completions endpoint" in msg:
-                async for ev in self._stream_editor_responses(messages, tools):
+                async for ev in self._stream_editor_responses(messages, tools, max_tokens=max_tokens):
                     yield ev
                 return
             # Token rotated mid-session — refresh once and retry chat/completions.
@@ -414,6 +414,7 @@ class GitHubCopilotChatProvider(LLMProvider):
         self,
         messages: list[dict[str, Any]],
         tools: list[ToolSpec] | None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream a GPT-5 / o-series Copilot model via the OpenAI **Responses** API
         (/responses), which is the only endpoint those models accept on Copilot. Tools
@@ -444,6 +445,13 @@ class GitHubCopilotChatProvider(LLMProvider):
             "stream": True,
             "store": False,
         }
+        # GPT-5 / o-series are reasoning models: reasoning tokens count against the output
+        # budget, and Copilot applies a low default cap when max_output_tokens is unset — so
+        # reasoning can exhaust it and leave ZERO output text (empty completion). A caller that
+        # needs a large structured result (e.g. architecture JSON, max_tokens=16000) must have
+        # that budget honored, or the JSON never comes back.
+        if max_tokens:
+            payload["max_output_tokens"] = int(max_tokens)
         detector = ToolCallDetector(tools_enabled=bool(tools))
         completion_chars = 0
         current_event: str | None = None

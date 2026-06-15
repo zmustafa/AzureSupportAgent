@@ -134,6 +134,11 @@ class CodexProvider(LLMProvider):
             "stream": True,
             "store": False,
         }
+        # Reasoning models spend output budget on reasoning; without an explicit cap the
+        # default can be exhausted by reasoning, leaving no output text. Honor a requested
+        # max_tokens (e.g. architecture/memory JSON) as max_output_tokens so the result returns.
+        if max_tokens:
+            payload["max_output_tokens"] = int(max_tokens)
 
         url = f"{self._base_url}/responses"
         detector = ToolCallDetector(tools_enabled=bool(tools))
