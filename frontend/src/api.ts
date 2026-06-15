@@ -4702,6 +4702,9 @@ export interface AzureConnection {
   has_access_token: boolean;
   client_secret_hint: string;
   access_token_hint: string;
+  has_graph_access_token?: boolean;
+  graph_access_token_hint?: string;
+  graph_token_expires_on?: string;
   created_at: string;
   updated_at: string;
 }
@@ -4722,6 +4725,9 @@ export interface ConnectionUpsert {
   access_token?: string;
   access_token_json?: string;
   token_expires_on?: string;
+  graph_access_token?: string;
+  graph_access_token_json?: string;
+  graph_token_expires_on?: string;
 }
 
 export interface SandboxVm {

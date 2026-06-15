@@ -301,6 +301,7 @@ const BLANK_FORM: import("../api").ConnectionUpsert = {
   certificate_pem: "",
   access_token: "",
   access_token_json: "",
+  graph_access_token_json: "",
 };
 
 function EntraValidationResult({
@@ -395,6 +396,7 @@ function ConnectionsCard() {
       certificate_pem: "",
       access_token: "",
       access_token_json: "",
+      graph_access_token_json: "",
     });
   }
 
@@ -986,6 +988,29 @@ function AzCliTokenFields({
           onChange={(e) => set({ access_token_json: e.target.value })}
           placeholder={'{\n  "accessToken": "eyJ0…",\n  "expiresOn": "2026-06-06 12:00:00.000000",\n  "subscription": "…",\n  "tenant": "…"\n}'}
         />
+      </div>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="mb-1 font-semibold">Microsoft Graph token (optional — resolves names)</div>
+        <p className="mb-1">
+          An ARM token can’t query Microsoft Graph, so user / group / service-principal <strong>names</strong>{" "}
+          (e.g. in RBAC Access Review) can’t be resolved from GUIDs without a Graph token. To enable name
+          resolution, also paste a Graph token:
+        </p>
+        <pre className="mb-2 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">
+          az account get-access-token --resource-type ms-graph --output json
+        </pre>
+        <label className={label}>Paste Microsoft Graph token JSON (optional)</label>
+        <textarea
+          rows={3}
+          className={`${input} font-mono text-xs`}
+          value={form.graph_access_token_json ?? ""}
+          onChange={(e) => set({ graph_access_token_json: e.target.value })}
+          placeholder={'{\n  "accessToken": "eyJ0…",\n  "expiresOn": "2026-06-06 12:00:00.000000"\n}'}
+        />
+        <div className="mt-1 text-[11px] text-amber-800">
+          Needs Directory.Read.All (or User/Group/Application read) on your account. Without it, names
+          stay as GUIDs. Like the ARM token, it’s short-lived (~1 hour).
+        </div>
       </div>
     </div>
   );

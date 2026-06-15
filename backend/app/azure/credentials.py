@@ -323,7 +323,19 @@ async def get_graph_token(conn: dict[str, Any]) -> tuple[str | None, str | None]
             return None, "Missing tenant id, client id or certificate."
         return await _sp_cert_token(tenant, conn["client_id"], conn["certificate_pem"], _GRAPH_SCOPE)
     if method == "az_cli_token":
-        return None, "Microsoft Graph checks need a service-principal or managed-identity connection."
+        # An ARM token can't be used against Graph. If the operator pasted a separate Microsoft
+        # Graph token (az account get-access-token --resource-type ms-graph), use it so principal
+        # / group / Entra name resolution works for pasted-token connections.
+        gtok = conn.get("graph_access_token", "")
+        if gtok and not _token_expired(conn.get("graph_token_expires_on", "")):
+            return gtok, None
+        if gtok:
+            return None, "Pasted Microsoft Graph token has expired — paste a fresh one (az account get-access-token --resource-type ms-graph)."
+        return None, (
+            "Pasted-token connection has no Microsoft Graph token. Paste one "
+            "(az account get-access-token --resource-type ms-graph) so principal names resolve, "
+            "or use a service-principal / managed-identity connection with Directory.Read.All."
+        )
     # default_chain ("Host identity"): platform managed identity in the cloud, host az CLI locally.
     if _has_managed_identity():
         return await _managed_identity_token(_managed_identity_client_id(conn), _GRAPH_RESOURCE)

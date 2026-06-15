@@ -50,6 +50,12 @@ class ConnectionUpsert(BaseModel):
     access_token: str | None = None
     access_token_json: str | None = None
     token_expires_on: str | None = None
+    # Optional Microsoft Graph token for az_cli_token connections (resolves principal names).
+    # Paste the JSON from `az account get-access-token --resource-type ms-graph` in
+    # graph_access_token_json, or supply graph_access_token (+ optional expiry) directly.
+    graph_access_token: str | None = None
+    graph_access_token_json: str | None = None
+    graph_token_expires_on: str | None = None
 
 
 def _parse_token_json(raw: str) -> dict[str, str]:
@@ -102,6 +108,14 @@ async def upsert_connection_endpoint(
             # Don't overwrite an explicitly-provided tenant/subscription with blanks.
             if v or k not in data:
                 data[k] = v
+
+    # Optional Microsoft Graph token JSON (az account get-access-token --resource-type ms-graph)
+    # -> graph_access_token + graph_token_expires_on. The ARM-scope token can't query Graph.
+    graph_json = data.pop("graph_access_token_json", None)
+    if graph_json:
+        gparsed = _parse_token_json(graph_json)
+        data["graph_access_token"] = gparsed["access_token"]
+        data["graph_token_expires_on"] = gparsed["token_expires_on"]
 
     saved = upsert_connection(data)
     db.add(

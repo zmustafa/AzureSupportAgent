@@ -165,11 +165,14 @@ async def refresh_directory(
     statuses.append(owner_status)
 
     # Resolve every distinct principal GUID seen in the cached Azure-RBAC/KV/classic assignments
-    # to a friendly name (ARM only returns the object id). This populates the principal directory
+    # AND the Entra directory-role rows to a friendly name (ARM only returns the object id, and
+    # the Entra query expands roleDefinition not principal). This populates the principal directory
     # used by compose to backfill names across every tab + export.
     principal_ids = sorted(
         {r.get("principalId", "") for r in scope_rows if r.get("principalId")}
         | {r.get("effectivePrincipalId", "") for r in scope_rows if r.get("effectivePrincipalId")}
+        | {r.get("principalId", "") for r in entra_rows if r.get("principalId")}
+        | {r.get("effectivePrincipalId", "") for r in owner_rows if r.get("effectivePrincipalId")}
     )
     await progress("info", f"Resolving {len(principal_ids)} principal name(s)…")
     principals, prin_status = await collectors.collect_principal_directory(token, principal_ids)

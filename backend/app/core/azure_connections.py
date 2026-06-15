@@ -43,7 +43,7 @@ AUTH_METHODS = (
 )
 
 # Fields that hold secrets and must be encrypted at rest.
-_SECRET_FIELDS = ("client_secret", "certificate_pem", "access_token", "refresh_token")
+_SECRET_FIELDS = ("client_secret", "certificate_pem", "access_token", "refresh_token", "graph_access_token")
 
 _DEFAULTS: dict[str, Any] = {
     "display_name": "",
@@ -64,6 +64,11 @@ _DEFAULTS: dict[str, Any] = {
     "access_token": "",
     "refresh_token": "",
     "token_expires_on": "",
+    # Optional Microsoft Graph token for the pasted-token (az_cli_token) method. An ARM token
+    # can't be used against Graph, so principal/group/Entra name resolution needs a separate
+    # Graph token (az account get-access-token --resource-type ms-graph).
+    "graph_access_token": "",
+    "graph_token_expires_on": "",
     # Health.
     "status": "unknown",  # unknown | ok | error
     "status_detail": "",
@@ -247,6 +252,9 @@ def public_connection(conn: dict[str, Any]) -> dict[str, Any]:
         "has_access_token": bool(conn.get("access_token")),
         "client_secret_hint": _mask(conn.get("client_secret", "")),
         "access_token_hint": _mask(conn.get("access_token", "")),
+        "has_graph_access_token": bool(conn.get("graph_access_token")),
+        "graph_access_token_hint": _mask(conn.get("graph_access_token", "")),
+        "graph_token_expires_on": conn.get("graph_token_expires_on", ""),
         "created_at": conn.get("created_at", ""),
         "updated_at": conn.get("updated_at", ""),
     }

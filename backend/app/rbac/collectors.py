@@ -183,7 +183,10 @@ async def collect_entra_roles(token: str, tenant_id: str) -> tuple[list[dict[str
     """Active Entra directory-role assignments (roleManagement/directory/roleAssignments)."""
     st = CollectorStatus("EntraRoleAssignments")
     url = f"{_GRAPH}/roleManagement/directory/roleAssignments"
-    value, err, code = await _get_all(token, url, {"$expand": "roleDefinition,principal"})
+    # Graph allows only ONE $expand per query ("Only one property can be expanded in a single
+    # query"), so expand roleDefinition for the role name; the principal GUID is resolved to a
+    # name by the shared principal-directory resolver (getByIds) during the directory refresh.
+    value, err, code = await _get_all(token, url, {"$expand": "roleDefinition"})
     rows: list[dict[str, Any]] = []
     for ra in value:
         rdef = ra.get("roleDefinition", {}) or {}
