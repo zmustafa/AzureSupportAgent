@@ -13,6 +13,7 @@ import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
+import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
 const STATE_TONE: Record<string, string> = {
   breaching: "bg-red-500",
@@ -102,6 +103,7 @@ export function PerformancePanel() {
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.performance.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.performance.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.performance.subId", "");
+  const [subName, setSubName] = usePersistedState("azsup.performance.subName", "");
   const [windowSel, setWindowSel] = useState("P1D");
   const [useRange, setUseRange] = useState(false);
   const [startTime, setStartTime] = useState("");
@@ -368,7 +370,14 @@ export function PerformancePanel() {
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             ) : (
-              <input value={subId} onChange={(e) => setSubId(e.target.value)} placeholder="Subscription GUID" className="w-[240px] rounded-md border px-2 py-1.5 text-sm" />
+              <SubscriptionScopePicker
+                value={subId}
+                valueName={subName}
+                onPick={(id, name) => {
+                  setSubId(id);
+                  setSubName(name);
+                }}
+              />
             )}
             {!useRange ? (
               <select value={windowSel} onChange={(e) => setWindowSel(e.target.value)} className="rounded-md border px-2 py-1.5 text-sm" title="Metric window">

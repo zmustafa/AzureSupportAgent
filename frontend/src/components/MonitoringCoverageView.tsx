@@ -12,6 +12,7 @@ import { formatError } from "../utils/format";
 import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
+import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
 const SEV_CLS: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -68,6 +69,7 @@ export function MonitoringCoveragePanel() {
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.amba.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState<string>("azsup.amba.workloadId", "");
   const [subId, setSubId] = usePersistedState<string>("azsup.amba.subId", "");
+  const [subName, setSubName] = usePersistedState<string>("azsup.amba.subName", "");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [sevFilter, setSevFilter] = useState("all");
@@ -309,11 +311,13 @@ export function MonitoringCoveragePanel() {
                 ))}
               </select>
             ) : (
-              <input
+              <SubscriptionScopePicker
                 value={subId}
-                onChange={(e) => setSubId(e.target.value)}
-                placeholder="Subscription GUID"
-                className="w-64 rounded-lg border px-2 py-1.5 text-xs"
+                valueName={subName}
+                onPick={(id, name) => {
+                  setSubId(id);
+                  setSubName(name);
+                }}
               />
             )}
             <span className="text-xs text-gray-500">

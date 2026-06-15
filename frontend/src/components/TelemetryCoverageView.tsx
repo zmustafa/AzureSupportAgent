@@ -14,6 +14,7 @@ import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { TrendChart } from "./TrendChart";
+import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
 const STATUS_META: Record<string, { label: string; dot: string; cls: string }> = {
   none: { label: "No diagnostics", dot: "bg-red-500", cls: "text-red-600" },
@@ -74,6 +75,7 @@ export function TelemetryCoveragePanel() {
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.telemetry.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.telemetry.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.telemetry.subId", "");
+  const [subName, setSubName] = usePersistedState("azsup.telemetry.subName", "");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [tab, setTab] = useState<"coverage" | "all">("coverage");
@@ -279,7 +281,14 @@ export function TelemetryCoveragePanel() {
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             ) : (
-              <input value={subId} onChange={(e) => setSubId(e.target.value)} placeholder="Subscription GUID" className="w-64 rounded-lg border px-2 py-1.5 text-xs" />
+              <SubscriptionScopePicker
+                value={subId}
+                valueName={subName}
+                onPick={(id, name) => {
+                  setSubId(id);
+                  setSubName(name);
+                }}
+              />
             )}
             <span className="text-xs text-gray-500">
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
