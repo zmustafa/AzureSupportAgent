@@ -2,6 +2,7 @@ import { Link, Navigate, Route, Routes } from "react-router-dom";
 import ChatView from "./components/ChatView";
 import { useAuth } from "./components/AuthContext";
 import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
+import { APP_VERSION } from "./version";
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -32,6 +33,12 @@ export default function App() {
           </Link>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          <span
+            className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
+            title={`Azure Support Agent ${APP_VERSION}`}
+          >
+            {APP_VERSION}
+          </span>
           <Link to="/dashboard" className="rounded px-2 py-1 hover:bg-white/10">
             Dashboard
           </Link>

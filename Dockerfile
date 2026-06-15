@@ -10,6 +10,10 @@ RUN npm install
 COPY frontend/ ./
 # Same-origin API base so the bundle calls /api/... on whatever host serves it.
 ENV VITE_API_BASE=/api
+# Release/image version shown in the top header. Pass --build-arg APP_VERSION=vNN at build
+# time (the image tag); defaults to "dev" for an untagged build.
+ARG APP_VERSION=dev
+ENV VITE_APP_VERSION=$APP_VERSION
 RUN npm run build
 
 # ---- Stage 2: backend + bundled SPA ------------------------------------------------
