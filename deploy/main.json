@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "14154329005827376793"
+      "templateHash": "3707321318291605195"
     }
   },
   "parameters": {
@@ -27,7 +27,7 @@
     },
     "containerImage": {
       "type": "string",
-      "defaultValue": "docker.io/zmustafa/azure-support-agent:v29",
+      "defaultValue": "docker.io/zmustafa/azure-support-agent:v30",
       "metadata": {
         "description": "Container image to deploy. Defaults to the public Docker Hub image. Switch to GHCR after the GitHub package is made public."
       }
