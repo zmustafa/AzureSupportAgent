@@ -99,8 +99,12 @@ def demo_metrics_by_resource(scope_id: str = CONTOSO_ID) -> dict[str, dict[str, 
 
 def build_demo_snapshot(*, scope_id: str = CONTOSO_ID, scope_name: str | None = None) -> dict[str, Any]:
     from app.amba.demo import demo_scope_name
+    from app.amba.reference import load_reference
+    from app.core.coverage_resources import build_all_resources
 
-    snap = compute_profile(resources_for(scope_id), demo_metrics_by_resource(scope_id))
+    resources = resources_for(scope_id)
+    snap = compute_profile(resources, demo_metrics_by_resource(scope_id))
+    snap["all_resources"] = build_all_resources(resources, load_reference().get("types", {}))
     snap.update(
         {
             "scope_kind": "workload",

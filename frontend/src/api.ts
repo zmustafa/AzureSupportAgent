@@ -914,6 +914,8 @@ export type PerfProfile = {
   top_bottleneck: PerfBottleneck | null;
   bottlenecks: PerfBottleneck[];
   resources: PerfResourceRow[];
+  // Every in-scope resource (not just AMBA-profiled types), for the "All Resources" tab.
+  all_resources?: CoverageResource[];
   narrative?: string;
   ttl_s?: number;
   age_seconds?: number | null;

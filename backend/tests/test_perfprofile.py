@@ -96,3 +96,17 @@ def test_workload_score_between_0_and_100():
 def test_demo_metrics_cover_all_resources():
     m = demo_metrics_by_resource()
     assert len(m) >= 8
+
+
+def test_demo_snapshot_has_all_resources_tab_data():
+    """The demo snapshot carries an all_resources list (for the 'All Resources' tab),
+    one entry per in-scope resource, each annotated with the in_reference flag."""
+    snap = build_demo_snapshot()
+    ar = snap.get("all_resources")
+    assert isinstance(ar, list) and ar, "all_resources must be a non-empty list"
+    # At least every profiled resource is represented in the full list.
+    assert len(ar) >= snap["scorecard"]["resources_profiled"]
+    for row in ar:
+        assert set(row) >= {"id", "name", "type", "resource_group", "subscription_id", "location", "in_reference"}
+        assert isinstance(row["in_reference"], bool)
+

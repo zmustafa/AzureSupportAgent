@@ -12,6 +12,7 @@ import {
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { TrendChart } from "./TrendChart";
+import { AllResourcesTab } from "./AllResourcesTab";
 
 const STATE_TONE: Record<string, string> = {
   breaching: "bg-red-500",
@@ -112,6 +113,8 @@ export function PerformancePanel() {
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  // Which sub-tab of the analysis is shown: the metric heatmap or the full resource list.
+  const [perfTab, setPerfTab] = useState<"analysis" | "all">("analysis");
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
@@ -556,6 +559,31 @@ export function PerformancePanel() {
               <Stat label="Healthy" value={`${data.scorecard.healthy}`} tone="text-green-600" />
             </div>
 
+            {/* Sub-tabs: the metric heatmap vs the full in-scope resource list */}
+            <div className="mb-3 flex gap-1 border-b">
+              {([
+                ["analysis", "Heatmap"],
+                ["all", "All Resources"],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setPerfTab(id)}
+                  className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium transition ${
+                    perfTab === id ? "border-brand text-brand" : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {label}
+                  {id === "all" && (data.all_resources?.length ?? 0) > 0 ? (
+                    <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">{data.all_resources!.length}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+
+            {perfTab === "all" ? (
+              <AllResourcesTab resources={data.all_resources ?? []} />
+            ) : (
+            <>
             <div className="mb-2 flex items-center gap-2">
               <h2 className="text-sm font-semibold text-gray-900">Heatmap — resources × AMBA metrics</h2>
               <span className="text-[11px] text-gray-400">cell = % of its AMBA threshold</span>
@@ -635,6 +663,8 @@ export function PerformancePanel() {
                   ))}
                 </div>
               </div>
+            )}
+            </>
             )}
           </>
         )}

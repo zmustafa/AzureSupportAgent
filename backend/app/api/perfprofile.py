@@ -41,6 +41,9 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
     out["ttl_s"] = ttl_s
     out["age_seconds"] = int(age) if age is not None else None
     out["stale_cache"] = (age is None) or (age >= ttl_s)
+    # Historical runs saved before the "All Resources" tab existed have no all_resources list;
+    # default it so the frontend renders an empty tab instead of crashing.
+    out.setdefault("all_resources", [])
     return out
 
 
