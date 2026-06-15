@@ -97,18 +97,14 @@ def _max_retention(props: dict[str, Any]) -> int:
 
 
 # --------------------------------------------------------------------------- ARG queries
-async def _query_resources(predicate: str, connection: dict[str, Any] | None) -> list[dict[str, Any]]:
-    from app.exec.command_runner import run_kql_capture
+async def _query_resources(predicates: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
+    from app.assessments.runner import query_resources_batched
 
-    kql = (
-        f"Resources | where {predicate} "
-        "| project id, name, type, resourceGroup, subscriptionId, location, tags "
-        "| order by type asc, name asc | take 1000"
+    return await query_resources_batched(
+        predicates,
+        connection,
+        projection="id, name, type, resourceGroup, subscriptionId, location, tags",
     )
-    cap = await run_kql_capture(kql, connection, output="json")
-    if not cap.ok:
-        raise RuntimeError(cap.error or "Resource query failed.")
-    return _parse_rows(cap.stdout)
 
 
 async def list_workspaces(connection: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -330,20 +326,21 @@ async def collect_coverage(
     scan_cap: int,
 ) -> dict[str, Any]:
     """Resolve scope, query ARG for resources, fan out per-resource diag-settings, compute."""
-    from app.assessments.runner import _resolve_scope
+    from app.assessments.runner import _resolve_scope, scope_predicate_batches
 
     if scope_kind == "workload" and workload is not None:
         scope = await _resolve_scope(workload, connection)
         predicate = scope.get("predicate") or ""
         if scope.get("error") and not predicate:
             return _empty_snapshot(scope_kind, scope_id, error=scope["error"])
+        predicates = scope_predicate_batches(scope)
     elif scope_kind == "subscription" and scope_id:
-        predicate = f"subscriptionId =~ '{_esc(scope_id)}'"
+        predicates = [f"subscriptionId =~ '{_esc(scope_id)}'"]
     else:
         return _empty_snapshot(scope_kind, scope_id, error="No resolvable scope.")
 
     try:
-        resources = await _query_resources(predicate, connection)
+        resources = await _query_resources(predicates, connection)
     except RuntimeError as exc:
         return _empty_snapshot(scope_kind, scope_id, error=str(exc)[:300])
 

@@ -166,18 +166,14 @@ def _match_status(
 
 
 # --------------------------------------------------------------------------- ARG queries
-async def _query_resources(predicate: str, connection: dict[str, Any] | None) -> list[dict[str, Any]]:
-    from app.exec.command_runner import run_kql_capture
+async def _query_resources(predicates: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
+    from app.assessments.runner import query_resources_batched
 
-    kql = (
-        f"Resources | where {predicate} "
-        "| project id, name, type, resourceGroup, subscriptionId, location, tags "
-        "| order by type asc, name asc | take 1000"
+    return await query_resources_batched(
+        predicates,
+        connection,
+        projection="id, name, type, resourceGroup, subscriptionId, location, tags",
     )
-    cap = await run_kql_capture(kql, connection, output="json")
-    if not cap.ok:
-        raise RuntimeError(cap.error or "Resource query failed.")
-    return _parse_rows(cap.stdout)
 
 
 async def _query_alerts(subscriptions: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -358,7 +354,7 @@ async def collect_coverage(
     tolerance_pct: float,
 ) -> dict[str, Any]:
     """Resolve the scope, query ARG for resources + alert rules, and compute coverage."""
-    from app.assessments.runner import _resolve_scope  # reuse the proven scope resolver
+    from app.assessments.runner import _resolve_scope, scope_predicate_batches  # reuse the proven scope resolver
 
     subscriptions: list[str] = []
     if scope_kind == "workload" and workload is not None:
@@ -370,14 +366,15 @@ async def collect_coverage(
                 subscriptions.append(sub)
         if scope.get("error") and not predicate:
             return _empty_snapshot(scope_kind, scope_id, error=scope["error"])
+        predicates = scope_predicate_batches(scope)
     elif scope_kind == "subscription" and scope_id:
-        predicate = f"subscriptionId =~ '{_esc(scope_id)}'"
+        predicates = [f"subscriptionId =~ '{_esc(scope_id)}'"]
         subscriptions = [scope_id]
     else:
         return _empty_snapshot(scope_kind, scope_id, error="No resolvable scope.")
 
     try:
-        resources = await _query_resources(predicate, connection)
+        resources = await _query_resources(predicates, connection)
         # Alert rules can live in any RG within the in-scope subscriptions; collect by sub.
         sub_guids = subscriptions or sorted(
             {str(r.get("subscriptionId", "")) for r in resources if r.get("subscriptionId")}

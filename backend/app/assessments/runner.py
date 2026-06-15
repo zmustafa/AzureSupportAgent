@@ -291,6 +291,148 @@ async def _resolve_scope(workload: dict[str, Any], connection: dict[str, Any] | 
     }
 
 
+# Resource Graph rejects queries beyond ~8000 chars (see command_runner._normalize_kql). A
+# workload made of many individual resource nodes produces an ``id in~ (...)`` clause carrying
+# one full ARM id each (~130-200 chars), so a single predicate blows past that limit at roughly
+# ~40 resources — surfacing as the opaque "Query is too long." error. We instead split the
+# scope into several predicates, each kept under this character budget, and run + merge them.
+# 6000 leaves comfortable headroom for the query wrapper (project/order/take ≈ 150 chars) plus
+# escaping growth, while keeping the batch count low (e.g. ~230 resources → ~6 queries).
+_PREDICATE_BUDGET = 6000
+
+
+def scope_predicate_batches(scope: dict[str, Any], *, budget: int = _PREDICATE_BUDGET) -> list[str]:
+    """Split a resolved scope into one or more KQL ``where`` predicates, each under ``budget``
+    characters, so a workload with many resources never produces an over-length query.
+
+    The (short, bounded) subscription + resource-group clauses are packed first; the resource-id
+    list is then chunked into ``id in~ (...)`` predicates by accumulated length (robust to the
+    wide variance in ARM id lengths). Callers run each predicate and merge + de-duplicate the
+    rows by id (an id inside an in-scope subscription would otherwise appear in both queries)."""
+    subs = scope.get("subscriptions") or []
+    rg_pairs = scope.get("rg_pairs") or []
+    resource_ids = scope.get("resource_ids") or []
+
+    preds: list[str] = []
+
+    # Subscription + resource-group clauses, greedily packed under the budget.
+    base_clauses: list[str] = []
+    if subs:
+        base_clauses.append("subscriptionId in~ (" + ", ".join(f"'{_esc(s)}'" for s in sorted(subs)) + ")")
+    for guid, rg in sorted(rg_pairs):
+        base_clauses.append(f"(subscriptionId =~ '{_esc(guid)}' and resourceGroup =~ '{_esc(rg)}')")
+    cur: list[str] = []
+    cur_len = 0
+    for clause in base_clauses:
+        add = len(clause) + 4  # " or "
+        if cur and cur_len + add > budget:
+            preds.append(" or ".join(cur))
+            cur, cur_len = [], 0
+        cur.append(clause)
+        cur_len += add
+    if cur:
+        preds.append(" or ".join(cur))
+
+    # Resource-id list, chunked into id-only predicates under the budget.
+    cur, cur_len = [], 0
+    for rid in sorted(resource_ids):
+        tok = f"'{_esc(rid)}'"
+        add = len(tok) + 2  # ", "
+        if cur and cur_len + add > budget:
+            preds.append("id in~ (" + ", ".join(cur) + ")")
+            cur, cur_len = [], 0
+        cur.append(tok)
+        cur_len += add
+    if cur:
+        preds.append("id in~ (" + ", ".join(cur) + ")")
+
+    return preds
+
+
+async def query_resources_batched(
+    predicates: list[str],
+    connection: dict[str, Any] | None,
+    *,
+    projection: str,
+    session_dir: str | None = None,
+    take: int = 1000,
+) -> list[dict[str, Any]]:
+    """Run one ARG ``Resources`` query per predicate (each pre-sized under the query-length
+    limit by ``scope_predicate_batches``) and return the merged rows, de-duplicated by id.
+
+    A heavy projection (one that pulls the full ``properties`` blob) can blow the 256 KB output
+    capture cap well before the row cap, and the size depends on *which* heavy resources land in
+    a batch, not the count — so a fixed chunk size is fragile. For heavy projections we therefore
+    run each id-batch ADAPTIVELY: start with a moderate chunk and, on an output-truncation, bisect
+    the id list and retry each half (recursively). This converges on a safe size for any property
+    distribution while keeping the query count low in the common (small-property) case.
+
+    Raises ``RuntimeError`` on the first genuine query failure (fail-closed, matching the
+    per-collector ``_query_resources`` it replaces). An output truncation is NOT a genuine failure
+    — it's handled by bisection; a single resource whose properties alone exceed the cap is skipped
+    (logged) rather than sinking the whole scan."""
+    heavy = "properties" in projection.lower()
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    async def _run(pred: str):
+        kql = (
+            f"Resources | where {pred} | project {projection} "
+            f"| order by type asc, name asc | take {take}"
+        )
+        return await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
+
+    def _merge(rows: list[dict[str, Any]]) -> None:
+        for r in rows:
+            rid = str(r.get("id", "")).lower()
+            if rid:
+                if rid in seen:
+                    continue
+                seen.add(rid)
+            out.append(r)
+
+    async def _run_ids_adaptive(toks: list[str]) -> None:
+        if not toks:
+            return
+        cap = await _run("id in~ (" + ", ".join(toks) + ")")
+        if cap.ok:
+            _merge(_parse_rows(cap.stdout))
+            return
+        truncated = "truncat" in (cap.error or "").lower()
+        if truncated and len(toks) > 1:
+            mid = len(toks) // 2
+            await _run_ids_adaptive(toks[:mid])
+            await _run_ids_adaptive(toks[mid:])
+            return
+        if truncated:
+            # A single resource's properties alone exceed the 256 KB cap — skip it instead of
+            # failing the whole coverage scan (it simply won't appear in the resource list).
+            logger.warning("query_resources_batched: skipping a resource whose properties exceed the capture cap")
+            return
+        raise RuntimeError(cap.error or "Resource query failed.")
+
+    for pred in predicates:
+        if not pred:
+            continue
+        if heavy and pred.startswith("id in~ ("):
+            toks = [t.strip() for t in pred[len("id in~ ("):-1].split(",") if t.strip()]
+            for i in range(0, len(toks), _HEAVY_PROJECTION_CHUNK):
+                await _run_ids_adaptive(toks[i : i + _HEAVY_PROJECTION_CHUNK])
+        else:
+            cap = await _run(pred)
+            if not cap.ok:
+                raise RuntimeError(cap.error or "Resource query failed.")
+            _merge(_parse_rows(cap.stdout))
+    return out
+
+
+# Starting id-count per query for heavy (full-``properties``) projections. Adaptive bisection in
+# ``query_resources_batched`` shrinks this further whenever a batch truncates, so it only needs to
+# be "usually safe"; 20 keeps the query count low while rarely needing to split.
+_HEAVY_PROJECTION_CHUNK = 20
+
+
+
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
     try:
         data = json.loads(stdout or "[]")

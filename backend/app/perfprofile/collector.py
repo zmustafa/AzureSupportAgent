@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.amba.reference import load_reference
+from app.core.coverage_resources import build_all_resources
 from app.perfprofile.metrics_map import metric_semantics
 
 log = logging.getLogger("app.perfprofile.collector")
@@ -272,18 +273,14 @@ def compute_profile(
 
 
 # --------------------------------------------------------------------------- live gather
-async def _query_resources(predicate: str, connection: dict[str, Any] | None) -> list[dict[str, Any]]:
-    from app.exec.command_runner import run_kql_capture
+async def _query_resources(predicates: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
+    from app.assessments.runner import query_resources_batched
 
-    kql = (
-        f"Resources | where {predicate} "
-        "| project id, name, type, resourceGroup, subscriptionId, location, sku "
-        "| order by type asc, name asc | take 1000"
+    return await query_resources_batched(
+        predicates,
+        connection,
+        projection="id, name, type, resourceGroup, subscriptionId, location, sku",
     )
-    cap = await run_kql_capture(kql, connection, output="json")
-    if not cap.ok:
-        raise RuntimeError(cap.error or "Resource query failed.")
-    return _parse_rows(cap.stdout)
 
 
 def _parse_metric_series(stdout: str, aggregation: str) -> list[dict[str, Any]]:
@@ -323,7 +320,7 @@ async def profile_workload(
     end_time: str = "",
     progress=None,
 ) -> dict[str, Any]:
-    from app.assessments.runner import _resolve_scope
+    from app.assessments.runner import _resolve_scope, scope_predicate_batches
     from app.exec.command_runner import run_metrics_capture
 
     # Resolve the effective metric window. An explicit start/end range wins; otherwise the
@@ -341,13 +338,14 @@ async def profile_workload(
         predicate = scope.get("predicate") or ""
         if scope.get("error") and not predicate:
             return _empty(scope_kind, scope_id, error=scope["error"])
+        predicates = scope_predicate_batches(scope)
     elif scope_kind == "subscription" and scope_id:
-        predicate = f"subscriptionId =~ '{_esc(scope_id)}'"
+        predicates = [f"subscriptionId =~ '{_esc(scope_id)}'"]
     else:
         return _empty(scope_kind, scope_id, error="No resolvable scope.")
 
     try:
-        resources = await _query_resources(predicate, connection)
+        resources = await _query_resources(predicates, connection)
     except RuntimeError as exc:
         return _empty(scope_kind, scope_id, error=str(exc)[:300])
 
@@ -381,6 +379,7 @@ async def profile_workload(
     await asyncio.gather(*[_gather(r) for r in targets])
 
     snap = compute_profile(targets, metrics_by_resource)
+    snap["all_resources"] = build_all_resources(resources, ref_types)
     snap.update(
         {
             "scope_kind": scope_kind,
@@ -420,6 +419,7 @@ def _window_to_start(window: str) -> str:
 
 def _empty(scope_kind: str, scope_id: str, *, error: str) -> dict[str, Any]:
     snap = compute_profile([], {})
+    snap["all_resources"] = []
     snap.update(
         {
             "scope_kind": scope_kind, "scope_id": scope_id, "scope_name": scope_id,
