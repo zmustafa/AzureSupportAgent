@@ -1514,6 +1514,24 @@ async def run_assessment(
         yield _event("error", message=msg)
         return
 
+    # Pre-flight auth probe: confirm the connection can obtain an ARM token BEFORE running
+    # the 100+ controls. ``open_sp_session`` only validates service-principal logins; a pasted
+    # ARM token (az_cli_token) that has expired is a no-op there, so without this every control
+    # would fail its Resource Graph query with the same auth error — surfacing 100+ identical
+    # "error" rows instead of one clear, actionable message. The probe is cheap (a local expiry
+    # check for pasted tokens; a token mint for SP/MI) and fails the run fast with the real cause.
+    if connection is not None:
+        from app.azure.credentials import get_arm_token
+
+        _tok, _tok_err = await get_arm_token(connection)
+        if _tok_err:
+            msg = f"Connection '{connection.get('display_name', wl_name)}' can't authenticate to Azure: {_tok_err}"
+            close_sp_session(session_dir)
+            if existing_run_id:
+                await _set_run_status(existing_run_id, "failed", error=msg[:2000])
+            yield _event("error", message=msg)
+            return
+
     yield _event("status", phase="scope", message=f"Resolving scope for '{wl_name}'…")
     scope = await _resolve_scope(workload, connection)
     if scope["error"]:

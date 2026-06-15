@@ -213,6 +213,47 @@ def test_scored_full_coverage_is_high_confidence():
     assert sc["worst_case_score"] == sc["overall_score"]  # nothing errored
 
 
+# ----------------------------------------------------------- pre-flight auth probe (expired token)
+async def test_run_aborts_fast_when_connection_token_expired(monkeypatch):
+    """An expired pasted token must fail the whole run with ONE clear message before the
+    100+ controls run — not surface an 'error' row on every control."""
+    monkeypatch.setattr(runner, "get_workload", lambda _wid: {"name": "AP Public Website - Dev", "connection_id": "c1", "nodes": []})
+    monkeypatch.setattr(
+        "app.core.azure_connections.resolve_connection",
+        lambda _cid: {"id": "c1", "display_name": "lu", "auth_method": "az_cli_token"},
+    )
+
+    async def _ok_session(_conn):
+        return None, None  # pasted-token: open_sp_session is a no-op
+
+    monkeypatch.setattr("app.exec.command_runner.open_sp_session", _ok_session)
+    monkeypatch.setattr("app.exec.command_runner.close_sp_session", lambda _d: None)
+
+    async def _expired(_conn):
+        return None, "Pasted token has expired — paste a fresh one."
+
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", _expired)
+
+    # _resolve_scope / _scan_scope must NEVER be reached once the probe fails.
+    async def _boom_scope(*_a, **_k):
+        raise AssertionError("scope resolution must not run when the token probe fails")
+
+    monkeypatch.setattr(runner, "_resolve_scope", _boom_scope)
+    monkeypatch.setattr(runner, "_scan_scope", _boom_scope)
+
+    events = []
+    async for ev in runner.run_assessment(
+        existing_run_id=None,
+        workload_id="w1",
+        pillars=["security"],
+        tenant_id="t1",
+    ):
+        events.append(ev)
+    # Exactly one terminal error event, carrying the actionable cause; no per-control results.
+    assert any(e.get("type") == "error" and "expired" in e.get("message", "") for e in events)
+    assert not any(e.get("type") == "check_result" for e in events)
+
+
 def test_scored_errors_drop_completeness_and_worst_case():
     findings = [
         {"pillar": "reliability", "status": "pass", "severity": "warning"},
