@@ -65,6 +65,10 @@ class Scheduler:
                 await self._siem_flush()
             except Exception as exc:  # noqa: BLE001 - never let the loop die
                 logger.warning("SIEM flush error: %s", exc)
+            try:
+                await self._reservations_digest()
+            except Exception as exc:  # noqa: BLE001 - never let the loop die
+                logger.warning("Reservations digest error: %s", exc)
             self._tick_count += 1
             if self._tick_count % _HOUSEKEEPING_EVERY_TICKS == 0:
                 try:
@@ -105,6 +109,14 @@ class Scheduler:
         from app.core.siem_export import flush_once
 
         await flush_once()
+
+    async def _reservations_digest(self) -> None:
+        """Send the weekly Azure Reservations digest when enabled and due. No-op (cheap
+        settings read) unless ``reservations_digest_enabled`` is set, so it stays dormant
+        until an operator opts in after reviewing the preview."""
+        from app.reservations.digest import maybe_send_weekly_digest
+
+        await maybe_send_weekly_digest()
 
     async def _import_assessment_schedules(self) -> None:
         """One-time migration: fold legacy assessment_schedules.json into ScheduledTask

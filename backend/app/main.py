@@ -32,6 +32,8 @@ from app.api import (
     policy,
     perfprofile,
     radar,
+    rbac,
+    reservations,
     telemetry,
     teleintel,
     users,
@@ -181,6 +183,8 @@ api.include_router(evidence.router)
 api.include_router(radar.router)
 api.include_router(teleintel.router)
 api.include_router(perfprofile.router)
+api.include_router(rbac.router)
+api.include_router(reservations.router)
 api.include_router(vms.router)
 
 

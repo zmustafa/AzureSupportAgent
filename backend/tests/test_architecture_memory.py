@@ -82,3 +82,59 @@ def test_clean_sections_drops_keyless_entries():
     assert len(cleaned) == 1
     assert cleaned[0]["key"] == "overview"
     assert cleaned[0]["label"] == "Overview"
+
+
+# --- merge_ai_sections (full "Generate with AI" merge) -----------------------------------
+
+def test_merge_ai_sections_overwrites_filled_sections():
+    # Regression: a fully-populated memory used to silently keep its old content because the
+    # merge only filled EMPTY sections. A full AI draft must overwrite.
+    existing = _sections(("overview", "OLD overview"), ("expected_flow", "OLD flow"))
+    merged = mem.merge_ai_sections(existing, {"overview": "NEW overview", "expected_flow": "NEW flow"})
+    by_key = {s["key"]: s["content"] for s in merged}
+    assert by_key["overview"] == "NEW overview"
+    assert by_key["expected_flow"] == "NEW flow"
+
+
+def test_merge_ai_sections_keeps_existing_when_ai_omits_section():
+    # A partial AI draft must never wipe sections it didn't return content for.
+    existing = _sections(("overview", "keep me"), ("expected_flow", "keep me too"))
+    merged = mem.merge_ai_sections(existing, {"overview": "fresh"})
+    by_key = {s["key"]: s["content"] for s in merged}
+    assert by_key["overview"] == "fresh"
+    assert by_key["expected_flow"] == "keep me too"
+
+
+def test_merge_ai_sections_empty_ai_content_does_not_overwrite():
+    existing = _sections(("overview", "keep me"))
+    merged = mem.merge_ai_sections(existing, {"overview": "   "})  # whitespace = empty
+    assert merged[0]["content"] == "keep me"
+
+
+def test_merge_ai_sections_appends_new_catalog_keys():
+    existing = _sections(("overview", "ov"))
+    merged = mem.merge_ai_sections(existing, {"overview": "ov2", "diagnostic_hints": "check fd"})
+    keys = [s["key"] for s in merged]
+    assert keys == ["overview", "diagnostic_hints"]
+    assert merged[-1]["label"] == "Diagnostic hints"
+    assert merged[-1]["content"] == "check fd"
+
+
+def test_merge_ai_sections_clears_needs_review_on_overwrite():
+    existing = [{"key": "overview", "label": "Overview", "content": "old", "needs_review": True}]
+    merged = mem.merge_ai_sections(existing, {"overview": "new"})
+    assert merged[0]["content"] == "new"
+    assert "needs_review" not in merged[0]
+
+
+def test_merge_ai_sections_seeds_defaults_when_existing_is_none():
+    merged = mem.merge_ai_sections(None, {"overview": "from AI"})
+    keys = [s["key"] for s in merged]
+    # Must seed the full default catalog and fill overview from the AI payload.
+    assert keys == list(mem.DEFAULT_SECTION_KEYS)
+    by_key = {s["key"]: s["content"] for s in merged}
+    assert by_key["overview"] == "from AI"
+    # Sections the AI didn't return stay empty.
+    for k in mem.DEFAULT_SECTION_KEYS:
+        if k != "overview":
+            assert by_key[k] == ""

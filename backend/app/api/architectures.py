@@ -681,18 +681,14 @@ async def generate_memory_stream_endpoint(
                 return
 
             yield {"event": "status", "data": json.dumps({"phase": "save", "message": "💾 Validating sections & saving memory…"})}
-            # Merge AI content into the existing (or default) section list, preserving
-            # author order; fill empty sections, append any new catalog sections.
+            # Merge AI content into the existing (or default) section list. See
+            # ``mem.merge_ai_sections`` — a full "Generate with AI" overwrites every section
+            # the model returned content for (a fully-populated memory used to silently keep
+            # its old content and appear "not saved").
             existing = mem.get_memory(architecture_id)
-            sections = list((existing or {}).get("sections") or mem.default_sections())
-            present = {s["key"] for s in sections}
-            ai_sections = result["sections"]
-            for s in sections:
-                if not str(s.get("content") or "").strip() and ai_sections.get(s["key"]):
-                    s["content"] = ai_sections[s["key"]]
-            for key, content in ai_sections.items():
-                if key not in present:
-                    sections.append({"key": key, "label": mem.section_label(key), "content": content})
+            sections = mem.merge_ai_sections(
+                (existing or {}).get("sections"), result["sections"]
+            )
 
             memory = mem.upsert_memory(
                 architecture_id,

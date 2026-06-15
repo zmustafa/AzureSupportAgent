@@ -105,6 +105,58 @@ def _roots_from_entities(entities: list[dict[str, Any]]) -> list[dict[str, str]]
     return roots
 
 
+def _flatten_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten ALL visible management groups from a ``getEntities`` result into a single
+    depth-ordered list (parent before its children), each carrying a ``depth`` for indentation.
+
+    Used by the flat MG picker (Workload Autopilot's ``<select>``) so a nested MG is selectable
+    directly — unlike the lazy-expansion tree, a flat dropdown can't reveal children, so it must
+    list every MG up front. Cycles / orphaned parents are handled defensively."""
+    mgs = [e for e in entities if "managementgroups" in (e.get("type", "") or "").lower()]
+    by_name: dict[str, dict[str, Any]] = {}
+    children: dict[str, list[str]] = {}
+    for e in mgs:
+        name = e.get("name", "")
+        if not name:
+            continue
+        props = e.get("properties", {}) or {}
+        parent_id = ((props.get("parent") or {}).get("id") or "")
+        parent_name = parent_id.rstrip("/").split("/")[-1] if parent_id else ""
+        by_name[name] = {"id": name, "name": props.get("displayName", name), "parent": parent_name}
+    # A node is a visible root when it has no parent, or its parent isn't visible to us.
+    roots = sorted(
+        (n for n, e in by_name.items() if not e["parent"] or e["parent"] not in by_name),
+        key=lambda n: by_name[n]["name"].lower(),
+    )
+    for n, e in by_name.items():
+        p = e["parent"]
+        if p and p in by_name:
+            children.setdefault(p, []).append(n)
+    for p in children:
+        children[p].sort(key=lambda n: by_name[n]["name"].lower())
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _walk(name: str, depth: int) -> None:
+        if name in seen:  # defend against cycles
+            return
+        seen.add(name)
+        e = by_name[name]
+        out.append({"id": e["id"], "name": e["name"], "depth": depth})
+        for c in children.get(name, []):
+            _walk(c, depth + 1)
+
+    for r in roots:
+        _walk(r, 0)
+    # Include any MG not reachable from a root (cycle/orphan) so nothing is silently dropped.
+    for n in sorted(by_name, key=lambda x: by_name[x]["name"].lower()):
+        if n not in seen:
+            _walk(n, 0)
+    return out
+
+
+
 def _skiptoken(next_link: str) -> str:
     """Extract the ``$skiptoken`` from a paged ARM ``@nextLink`` URL (empty if none)."""
     if not next_link:
@@ -122,6 +174,25 @@ async def list_root_management_groups(token: str) -> tuple[list[dict[str, str]],
     the roots, so nested MGs are surfaced by expansion rather than shown flat next to their
     parent. Pages through ``@nextLink`` for very large hierarchies. Returns ``([], error)`` on
     failure so callers can fall back to the flat list."""
+    entities, err = await _get_entities(token)
+    if err:
+        return [], err
+    return _roots_from_entities(entities), None
+
+
+async def list_all_management_groups(token: str) -> tuple[list[dict[str, Any]], str | None]:
+    """EVERY visible management group, flattened into a depth-ordered list (each with a
+    ``depth`` for indentation). For the flat MG picker where children can't be lazily expanded,
+    so nested MGs must be listed up front. Returns ``([], error)`` on failure."""
+    entities, err = await _get_entities(token)
+    if err:
+        return [], err
+    return _flatten_entities(entities), None
+
+
+async def _get_entities(token: str) -> tuple[list[dict[str, Any]], str | None]:
+    """Page through ``Microsoft.Management/getEntities`` (every visible MG with its parent id),
+    bounding paging for very large MG forests. Returns ``(entities, error)``."""
     entities: list[dict[str, Any]] = []
     skiptoken = ""
     for _ in range(20):  # bound paging for very large MG forests
@@ -135,7 +206,7 @@ async def list_root_management_groups(token: str) -> tuple[list[dict[str, str]],
         skiptoken = _skiptoken((data or {}).get("@nextLink") or (data or {}).get("@odata.nextLink") or "")
         if not skiptoken:
             break
-    return _roots_from_entities(entities), None
+    return entities, None
 
 
 async def get_management_group_children(

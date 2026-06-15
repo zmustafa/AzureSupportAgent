@@ -2,7 +2,7 @@
 only ROOT management groups at the top of the scope tree so nested MGs are revealed by
 expansion instead of listed flat alongside their parent.
 """
-from app.azure.arm import _roots_from_entities, _skiptoken
+from app.azure.arm import _flatten_entities, _roots_from_entities, _skiptoken
 
 _MG = "Microsoft.Management/managementGroups"
 
@@ -73,3 +73,67 @@ def test_skiptoken_parsing():
     assert _skiptoken("") == ""
     assert _skiptoken("https://management.azure.com/x?$skiptoken=abc123&api-version=2020-05-01") == "abc123"
     assert _skiptoken("https://management.azure.com/x?api-version=2020-05-01") == ""
+
+
+# --------------------------------------------------------------------------- flat hierarchy
+def test_flatten_nests_children_under_root_with_depth():
+    # Tenant Root Group with a nested child — the flat picker must list BOTH, child indented.
+    entities = [
+        _ent("TenantRoot", parent=None, display="Tenant Root Group"),
+        _ent("Platform", parent="TenantRoot", display="Platform"),
+    ]
+    flat = _flatten_entities(entities)
+    assert [(g["id"], g["depth"]) for g in flat] == [("TenantRoot", 0), ("Platform", 1)]
+    assert flat[0]["name"] == "Tenant Root Group"
+
+
+def test_flatten_deep_hierarchy_depths_and_order():
+    entities = [
+        _ent("Root", display="Root"),
+        _ent("L1", parent="Root", display="L1"),
+        _ent("L2", parent="L1", display="L2"),
+        _ent("Sibling", parent="Root", display="Sibling"),
+    ]
+    flat = _flatten_entities(entities)
+    # Parent precedes its children; siblings are alphabetized (L1 before Sibling).
+    assert [(g["id"], g["depth"]) for g in flat] == [
+        ("Root", 0), ("L1", 1), ("L2", 2), ("Sibling", 1),
+    ]
+
+
+def test_flatten_includes_every_management_group():
+    # The whole point of the fix: a nested MG ("inside" the root) must be present + selectable.
+    entities = [
+        _ent("TenantRoot", parent=None, display="Tenant Root Group"),
+        _ent("Prod", parent="TenantRoot"),
+        _ent("Dev", parent="TenantRoot"),
+        _ent("ProdApps", parent="Prod"),
+    ]
+    ids = {g["id"] for g in _flatten_entities(entities)}
+    assert ids == {"TenantRoot", "Prod", "Dev", "ProdApps"}
+
+
+def test_flatten_child_visible_without_parent_is_root():
+    entities = [_ent("MG", parent="TenantRoot", display="MG")]
+    flat = _flatten_entities(entities)
+    assert [(g["id"], g["depth"]) for g in flat] == [("MG", 0)]
+
+
+def test_flatten_ignores_subscriptions_and_handles_empty():
+    entities = [
+        _ent("Root"),
+        {"name": "sub-1", "type": "/subscriptions", "properties": {"displayName": "Sub 1"}},
+    ]
+    assert [g["id"] for g in _flatten_entities(entities)] == ["Root"]
+    assert _flatten_entities([]) == []
+
+
+def test_flatten_survives_a_cycle():
+    # Defensive: a parent loop must not infinite-recurse; every node still appears once.
+    entities = [
+        _ent("A", parent="B"),
+        _ent("B", parent="A"),
+    ]
+    flat = _flatten_entities(entities)
+    assert {g["id"] for g in flat} == {"A", "B"}
+

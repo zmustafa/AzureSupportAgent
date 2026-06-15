@@ -178,6 +178,31 @@ export const INVENTORY_NAV: { id: InventoryTab; label: string }[] = [
 
 export const INVENTORY_TAB_IDS = new Set<InventoryTab>(INVENTORY_NAV.map((n) => n.id));
 
+// ---- RBAC / Access Review -------------------------------------------------------
+// Sub-tabs of the RBAC access-review screen, driven by the /rbac/:tab URL so a refresh (or a
+// shared link) restores the same view. "overview" is the default (bare /rbac). The 7 tabs
+// collapse the standalone scanner's 25 workbook sheets into task-oriented views.
+export type RbacTab =
+  | "overview"
+  | "effective"
+  | "privileged"
+  | "scopes"
+  | "roles"
+  | "insights"
+  | "diagnostics";
+
+export const RBAC_NAV: { id: RbacTab; label: string }[] = [
+  { id: "overview", label: "📊 Overview" },
+  { id: "effective", label: "🧩 Effective Access" },
+  { id: "privileged", label: "🛡️ Privileged & Exposure" },
+  { id: "scopes", label: "🗂️ Scopes" },
+  { id: "roles", label: "🎫 Roles & Principals" },
+  { id: "insights", label: "📈 Insights" },
+  { id: "diagnostics", label: "🩺 Diagnostics" },
+];
+
+export const RBAC_TAB_IDS = new Set<RbacTab>(RBAC_NAV.map((n) => n.id));
+
 // ---- Identity -------------------------------------------------------------------
 // Sub-tabs of the Identity screen, driven by the /identity/:tab URL so a refresh (or a
 // shared link) restores the same view. "overview" is the default (bare /identity).

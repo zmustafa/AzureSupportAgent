@@ -244,6 +244,30 @@ DEFAULTS: dict[str, Any] = {
     "perfprofile_window": "P1D",
     "perfprofile_interval": "PT15M",
     "perfprofile_scan_cap": 200,
+    # --- RBAC / Access Review (per-scope access scanner) ---------------------------
+    # Server-side cache TTL (seconds) after which a scope's slice is badged stale. Default 6h.
+    "rbac_cache_ttl_s": 21600,
+    # Max access rows returned in one grid page response (defensive cap).
+    "rbac_max_rows": 5000,
+    # Expose the read-only RBAC agent tools (who_can_access / privileged_access_review).
+    "rbac_tools_enabled": True,
+    # --- Reservations Monitor (weekly expiry digest) -------------------------------
+    # Server-side cache TTL (seconds) for reservation snapshots. Default 6h.
+    "reservations_cache_ttl_s": 21600,
+    # ±window (days): flag reservations expiring within, or expired within the last, N
+    # days. Matches the original Logic App's 60-day window.
+    "reservations_window_days": 60,
+    # Weekly digest delivery. OFF by default — nothing is sent until an operator opts in
+    # after reviewing the preview. When on, it fans out to the in-app center plus the
+    # selected Email/Outlook connectors.
+    "reservations_digest_enabled": False,
+    "reservations_digest_recipients": [],
+    "reservations_digest_connector_ids": [],
+    # Schedule (configurable). Default: weekly, Monday 08:00 Eastern (the Logic App's).
+    "reservations_digest_schedule_kind": "weekly",
+    "reservations_digest_weekday": 0,
+    "reservations_digest_time": "08:00",
+    "reservations_digest_timezone": "America/New_York",
 }
 
 # Binaries an admin is permitted to add to the allowlist (defense-in-depth: even if the
@@ -387,6 +411,30 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     _pi = str(current.get("perfprofile_interval", "PT15M") or "PT15M").strip().upper()
     current["perfprofile_interval"] = _pi if re.match(r"^PT\d+[MH]$", _pi) else "PT15M"
     current["perfprofile_scan_cap"] = max(1, min(2000, int(current.get("perfprofile_scan_cap", 200) or 200)))
+    # RBAC / Access Review: clamp cache TTL + row cap.
+    current["rbac_cache_ttl_s"] = max(0, min(604800, int(current.get("rbac_cache_ttl_s", 21600) or 21600)))
+    current["rbac_max_rows"] = max(100, min(50000, int(current.get("rbac_max_rows", 5000) or 5000)))
+    current["rbac_tools_enabled"] = bool(current.get("rbac_tools_enabled", True))
+    # Reservations Monitor: clamp cache TTL + window; coerce digest flags/lists/schedule.
+    current["reservations_cache_ttl_s"] = max(0, min(604800, int(current.get("reservations_cache_ttl_s", 21600) or 21600)))
+    current["reservations_window_days"] = max(1, min(365, int(current.get("reservations_window_days", 60) or 60)))
+    current["reservations_digest_enabled"] = bool(current.get("reservations_digest_enabled", False))
+    for _key in ("reservations_digest_recipients", "reservations_digest_connector_ids"):
+        raw = current.get(_key) or []
+        if not isinstance(raw, list):
+            raw = []
+        cleaned: list[str] = []
+        for item in raw:
+            s = str(item).strip()
+            if s and s not in cleaned:
+                cleaned.append(s)
+        current[_key] = cleaned
+    _rk = str(current.get("reservations_digest_schedule_kind", "weekly") or "weekly").strip().lower()
+    current["reservations_digest_schedule_kind"] = _rk if _rk in ("weekly", "daily") else "weekly"
+    current["reservations_digest_weekday"] = max(0, min(6, int(current.get("reservations_digest_weekday", 0) or 0)))
+    _rt = str(current.get("reservations_digest_time", "08:00") or "08:00").strip()
+    current["reservations_digest_time"] = _rt if re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", _rt) else "08:00"
+    current["reservations_digest_timezone"] = str(current.get("reservations_digest_timezone", "America/New_York") or "America/New_York")[:64]
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     _PATH.write_text(json.dumps(current, indent=2), encoding="utf-8")
     return current

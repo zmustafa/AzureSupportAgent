@@ -1112,6 +1112,194 @@ export type EvidenceCreateRequest = {
   tags: string[];
 };
 
+// ---- Reservations Monitor -------------------------------------------------------
+export type ReservationItem = {
+  id: string;
+  order_id: string;
+  display_name: string;
+  term: string;
+  billing_plan: string;
+  created_date: string;
+  expiry_date: string;
+  provisioning_state: string;
+  renew: boolean | null;
+  utilization_pct: number | null;
+  sku: string;
+  reserved_resource_type: string;
+  applied_scope_type: string;
+  quantity: number | null;
+  reservation_count: number;
+  days_until: number | null;
+  severity: "red" | "amber" | "grey";
+  bucket: "expiring_soon" | "recently_expired" | "active" | "expired" | "unknown";
+  expired: boolean;
+};
+
+export type ReservationsSnapshot = {
+  generated_at: string;
+  window_days: number;
+  scope_id: string;
+  source: string;
+  demo: boolean;
+  connection_configured: boolean;
+  error: string;
+  never_loaded?: boolean;
+  items: ReservationItem[];
+  counts: {
+    total: number;
+    expiring_soon: number;
+    recently_expired: number;
+    active: number;
+    expired: number;
+    in_window: number;
+    red: number;
+    amber: number;
+    grey: number;
+    non_renew: number;
+    low_utilization: number;
+  };
+  ttl_s: number;
+  age_seconds: number | null;
+  stale_cache: boolean;
+};
+
+export type ReservationsDigestPreview = {
+  items: ReservationItem[];
+  expiring_soon: ReservationItem[];
+  recently_expired: ReservationItem[];
+  window_days: number;
+  count: number;
+  summary: string;
+  html: string;
+  never_loaded: boolean;
+  error: string;
+};
+
+// ---- RBAC / Access Review -------------------------------------------------------
+export type RbacRow = Record<string, string | boolean>;
+
+export type RbacScopeFreshness = {
+  scope: string;
+  scopeType: string;
+  displayName: string;
+  subscriptionId: string;
+  status: string;
+  row_count: number;
+  generated_at: string;
+  age_seconds: number | null;
+  collectors_total: number;
+  collectors_attention: number;
+  stale?: boolean;
+  demo: boolean;
+};
+
+export type RbacDirectoryFreshness = {
+  status: string;
+  generated_at: string;
+  age_seconds: number | null;
+  row_count: number;
+  role_def_count: number;
+  principal_count: number;
+  group_count: number;
+  loaded: boolean;
+};
+
+export type RbacCollector = {
+  collector: string;
+  status: string;
+  rowsAdded: number;
+  durationSeconds: number;
+  message: string;
+  scope: string;
+  scopeLabel: string;
+};
+
+export type RbacOverview = {
+  tenant_id: string;
+  generated_at: string;
+  kpis: {
+    total_assignments: number;
+    unique_principals: number;
+    privileged: number;
+    data_plane: number;
+    group_derived: number;
+    owners: number;
+    entra_roles: number;
+    eligible: number;
+    scopes: number;
+    subscriptions: number;
+  };
+  group_severity: Record<string, string>;
+  scopes: RbacScopeFreshness[];
+  directory: RbacDirectoryFreshness;
+  collectors: RbacCollector[];
+  demo: boolean;
+  never_loaded: boolean;
+  ttl_s: number;
+  connection_configured: boolean;
+};
+
+export type RbacAccessPage = {
+  total: number;
+  offset: number;
+  limit: number;
+  rows: RbacRow[];
+  columns: string[];
+};
+
+export type RbacPivotItem = { label: string; count: number };
+export type RbacPivots = { pivots: Record<string, RbacPivotItem[]>; labels: Record<string, string> };
+
+export type RbacScopeNode = {
+  id: string;
+  name: string;
+  type: "root" | "managementGroup" | "subscription";
+  count: number;
+  subscriptionIds: string[];
+  inferred?: boolean;
+  children: RbacScopeNode[];
+};
+
+export type RbacScopeTree = {
+  root: RbacScopeNode;
+  demo: boolean;
+  subscription_count: number;
+  mg_count: number;
+};
+
+export type RbacJob = {
+  id: string;
+  key: string;
+  scope: string;
+  mode: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  progress_count: number;
+  last_message: string;
+  error: string;
+} | null;
+
+export type RbacRun = {
+  id: string;
+  scope: string;
+  trigger: string;
+  status: string;
+  total_rows: number;
+  privileged_count: number;
+  unique_principals: number;
+  kpis: Record<string, number>;
+  scopes: { scope: string; displayName: string; row_count: number; status: string }[];
+  diff: { baseline_run_id: string; added_privileged: string[]; removed_privileged: string[]; added_count: number; removed_count: number } | null;
+  demo: boolean;
+  triggered_by: string;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number | null;
+};
+
+export type RbacProgress = { seq: number; ts: string; level: "info" | "ok" | "warning" | "error"; message: string };
+
 export const api = {
   me: () => http<Me>("/me"),
   activeLlm: () => http<ActiveLlm>("/llm/active"),
@@ -2078,6 +2266,85 @@ export const api = {
       "/identity/app-registrations/job" +
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
+  // Reservations Monitor — server cache; demo scope for synthetic data.
+  reservationsOverview: (demo = false) =>
+    http<ReservationsSnapshot>(`/reservations/overview?demo=${demo ? "true" : "false"}`),
+  refreshReservations: (demo = false) =>
+    http<ReservationsSnapshot>(`/reservations/refresh?demo=${demo ? "true" : "false"}`, {
+      method: "POST",
+      body: "{}",
+    }),
+  reservationsDigestPreview: (demo = false) =>
+    http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}`),
+  // RBAC / Access Review — server cache, per-scope refresh.
+  rbacOverview: () => http<RbacOverview>("/rbac/overview"),
+  rbacAccess: (params: {
+    tab?: string;
+    scope?: string;
+    surface?: string;
+    principal_type?: string;
+    search?: string;
+    privileged_only?: boolean;
+    scope_id?: string;
+    subscription_ids?: string;
+    workload_id?: string;
+    offset?: number;
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.tab) q.set("tab", params.tab);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.surface) q.set("surface", params.surface);
+    if (params.principal_type) q.set("principal_type", params.principal_type);
+    if (params.search) q.set("search", params.search);
+    if (params.privileged_only) q.set("privileged_only", "true");
+    if (params.scope_id) q.set("scope_id", params.scope_id);
+    if (params.subscription_ids) q.set("subscription_ids", params.subscription_ids);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.offset != null) q.set("offset", String(params.offset));
+    if (params.limit != null) q.set("limit", String(params.limit));
+    return http<RbacAccessPage>(`/rbac/access?${q.toString()}`);
+  },
+  rbacScopeTree: () => http<RbacScopeTree>("/rbac/scope-tree"),
+  rbacScopes: () => http<{ scopes: RbacScopeFreshness[]; directory: RbacDirectoryFreshness; ttl_s: number }>("/rbac/scopes"),
+  rbacRoles: () => http<{ role_defs: Record<string, unknown>[]; principals: Record<string, unknown>[] }>("/rbac/roles"),
+  rbacPivots: (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.scope_id) q.set("scope_id", params.scope_id);
+    if (params?.subscription_ids) q.set("subscription_ids", params.subscription_ids);
+    if (params?.workload_id) q.set("workload_id", params.workload_id);
+    const qs = q.toString();
+    return http<RbacPivots>(`/rbac/pivots${qs ? `?${qs}` : ""}`);
+  },
+  rbacDiagnostics: () =>
+    http<{ collectors: RbacCollector[]; errors: Record<string, string>[]; directory: RbacDirectoryFreshness }>("/rbac/diagnostics"),
+  rbacRefresh: (body: { scope?: string; mode?: string; display_name?: string }) =>
+    http<RbacJob & { already_running: boolean }>("/rbac/refresh", { method: "POST", body: JSON.stringify(body) }),
+  rbacJob: (params: { scope?: string; mode?: string }) => {
+    const q = new URLSearchParams();
+    if (params.scope) q.set("scope", params.scope);
+    if (params.mode) q.set("mode", params.mode);
+    return http<{ job: RbacJob }>(`/rbac/job?${q.toString()}`);
+  },
+  rbacRuns: () => http<{ runs: RbacRun[] }>("/rbac/runs"),
+  rbacRun: (id: string) => http<{ run: RbacRun | null }>(`/rbac/run/${encodeURIComponent(id)}`),
+  rbacExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+    const q = new URLSearchParams({ fmt, tab });
+    if (filter?.scope_id) q.set("scope_id", filter.scope_id);
+    if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
+    if (filter?.workload_id) q.set("workload_id", filter.workload_id);
+    return `${API_BASE}/rbac/export?${q.toString()}`;
+  },
+  rbacWorkbookUrl: (filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+    const q = new URLSearchParams();
+    if (filter?.scope_id) q.set("scope_id", filter.scope_id);
+    if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
+    if (filter?.workload_id) q.set("workload_id", filter.workload_id);
+    const qs = q.toString();
+    return `${API_BASE}/rbac/export/workbook${qs ? `?${qs}` : ""}`;
+  },
+  rbacDemoSeed: () => http<{ ok: boolean; scopes: number; directory_rows: number; overview: RbacOverview }>("/rbac/demo/seed", { method: "POST", body: "{}" }),
+  rbacDemoPurge: () => http<{ ok: boolean; scopes_removed: number }>("/rbac/demo/purge", { method: "POST", body: "{}" }),
   // Coverage / posture trend (shared shape across the 4 dashboards).
   coverageTrend: (feature: "amba" | "telemetry" | "backupdr" | "performance", params: { workload_id?: string; subscription_id?: string }) => {
     const base = feature === "performance" ? "/performance/trend" : `/${feature}/trend`;
@@ -3713,11 +3980,79 @@ export async function streamPerfRefresh(
   }
 }
 
+// ---- RBAC per-scope refresh (SSE) ----------------------------------------------
+/** Follow a per-scope RBAC refresh over SSE. The server job keeps running even if this stream
+ *  disconnects — re-calling re-attaches and replays the log. mode: scope | directory | all. */
+export async function streamRbacRefresh(
+  params: { scope?: string; mode?: string; display_name?: string },
+  handlers: {
+    onStart?: (d: RbacJob) => void;
+    onProgress?: (d: RbacProgress) => void;
+    onDone?: (d: { key: string; scope: string; mode: string }) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const q = new URLSearchParams();
+  if (params.scope) q.set("scope", params.scope);
+  if (params.mode) q.set("mode", params.mode);
+  if (params.display_name) q.set("display_name", params.display_name);
+  const res = await fetch(`${API_BASE}/rbac/refresh/stream?${q.toString()}`, {
+    method: "GET",
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "start") handlers.onStart?.(parsed as never);
+      else if (event === "progress") handlers.onProgress?.(parsed as never);
+      else if (event === "done") handlers.onDone?.(parsed as never);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Refresh failed.");
+    }
+  }
+}
+
 // ---- App Registrations background refresh (SSE) --------------------------------
 export type AppRegProgress = { seq: number; ts: string; level: "info" | "ok" | "warn" | "error"; message: string };
-
-/** Follow the background Application Registrations refresh over SSE. The server job keeps
- *  running even if this stream disconnects — re-calling re-attaches and replays the log. */
 export async function streamAppRegistrationsRefresh(
   handlers: {
     onStart?: (d: { id: string; status: string; started_at: string }) => void;
@@ -5144,6 +5479,8 @@ export interface TreeNode {
   resource_type?: string;
   location?: string;
   has_children?: boolean;
+  // Hierarchy depth for the flat MG picker (group_by='mg_flat'), used to indent nested groups.
+  depth?: number;
 }
 
 // === Assessments ===========================================================

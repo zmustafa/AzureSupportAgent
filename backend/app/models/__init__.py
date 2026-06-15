@@ -361,6 +361,36 @@ class AssessmentFindingState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class RbacScanRun(Base):
+    """One completed RBAC (access review) refresh — a compact history point for drift.
+
+    The heavy per-scope rows live in the file cache; this table keeps only the summary needed
+    to chart movement and diff "new privileged access since last scan". ``privileged_keys_json``
+    is the set of ``effectivePrincipal|role|scope`` keys present at scan time so a later run can
+    compute added/removed privileged grants."""
+
+    __tablename__ = "rbac_scan_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    scope: Mapped[str] = mapped_column(String(512), default="__all__")  # refreshed scope or __all__
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|scheduled
+    status: Mapped[str] = mapped_column(String(16), default="succeeded")
+    total_rows: Mapped[int] = mapped_column(Integer, default=0)
+    privileged_count: Mapped[int] = mapped_column(Integer, default=0)
+    unique_principals: Mapped[int] = mapped_column(Integer, default=0)
+    kpis_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    scopes_json: Mapped[list] = mapped_column(JSON, default=list)  # per-scope summary
+    privileged_keys_json: Mapped[list] = mapped_column(JSON, default=list)  # for drift diff
+    diff_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # change vs previous run
+    demo: Mapped[bool] = mapped_column(default=False)
+    triggered_by: Mapped[str] = mapped_column(String(128), default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class Notification(Base):
     """A normalized event published to the notification engine (in-app + channels)."""
 

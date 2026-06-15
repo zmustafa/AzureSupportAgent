@@ -72,6 +72,8 @@ export default function App() {
           <Route path="/workloads/:id" element={<ChatView />} />
           <Route path="/inventory" element={<ChatView />} />
           <Route path="/inventory/:tab" element={<ChatView />} />
+          <Route path="/rbac" element={<ChatView />} />
+          <Route path="/rbac/:tab" element={<ChatView />} />
           <Route path="/assessments" element={<ChatView />} />
           <Route path="/assessments/:id" element={<ChatView />} />
           <Route path="/architectures" element={<ChatView />} />
@@ -87,6 +89,7 @@ export default function App() {
           <Route path="/backupdr" element={<ChatView />} />
           <Route path="/evidence" element={<ChatView />} />
           <Route path="/radar" element={<ChatView />} />
+          <Route path="/reservations" element={<ChatView />} />
           <Route path="/telemetry-intel" element={<ChatView />} />
           <Route path="/performance" element={<ChatView />} />
           <Route path="/notifications" element={<ChatView />} />

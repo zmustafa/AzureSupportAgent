@@ -12,6 +12,7 @@ from typing import Any
 
 from app.azure.arm import (
     get_management_group_children,
+    list_all_management_groups,
     list_management_groups,
     list_root_management_groups,
     list_subscriptions,
@@ -38,8 +39,33 @@ def _esc(val: str) -> str:
 
 
 async def list_top_level(connection: dict | None, group_by: str) -> list[dict[str, Any]]:
-    """Top-level tree nodes: management groups (group_by='mg') or subscriptions."""
+    """Top-level tree nodes: management groups (group_by='mg') or subscriptions.
+
+    ``group_by='mg_flat'`` returns the WHOLE management-group hierarchy flattened into one
+    depth-ordered list (each node carries ``depth`` for indentation) — for the flat MG picker
+    (Workload Autopilot) where children can't be lazily expanded, so nested MGs must be listed
+    up front."""
     token, err = await get_arm_token(connection) if connection else (None, "no connection")
+    if group_by == "mg_flat":
+        if token and not err:
+            flat, flat_err = await list_all_management_groups(token)
+            if not flat_err and flat:
+                return [
+                    {"kind": "mg", "id": g["id"], "name": g["name"], "depth": g.get("depth", 0), "has_children": True}
+                    for g in flat
+                ]
+            # Fallback: the plain flat list (no depth) so the picker still works.
+            mgs, mg_err = await list_management_groups(token)
+            if not mg_err and mgs:
+                return [
+                    {"kind": "mg", "id": g["id"], "name": g["name"], "depth": 0, "has_children": True}
+                    for g in mgs
+                ]
+        subs = await _subscriptions(connection, token, err)
+        return [
+            {"kind": "subscription", "id": s["id"], "name": s["name"], "has_children": True}
+            for s in subs
+        ]
     if group_by == "mg":
         if token and not err:
             # Prefer the ROOT management groups (real hierarchy) so nested MGs are revealed by

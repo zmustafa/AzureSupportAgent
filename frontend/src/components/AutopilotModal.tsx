@@ -68,10 +68,11 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
     setScopeId("");
     setScopeName("");
     api
-      .workloadTree({ connection_id: connectionId, group_by: scopeKind })
+      .workloadTree({ connection_id: connectionId, group_by: scopeKind === "mg" ? "mg_flat" : scopeKind })
       .then((r) => {
         if (cancelled) return;
-        // In MG mode the top level may contain both mg and subscription nodes; keep matching kind.
+        // In MG mode the flat list contains every management group (depth-ordered for
+        // indentation); in subscription mode keep only subscription nodes.
         const opts = r.nodes.filter((n) => n.kind === scopeKind || scopeKind === "mg");
         setScopeOptions(opts);
       })
@@ -215,7 +216,9 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                     {scopeLoading ? "Loading…" : !connectionId ? "Pick a connection first" : "Select…"}
                   </option>
                   {scopeOptions.map((o) => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
+                    <option key={o.id} value={o.id}>
+                      {o.depth ? `${"\u00A0\u00A0".repeat(o.depth)}↳ ${o.name}` : o.name}
+                    </option>
                   ))}
                 </select>
               </div>

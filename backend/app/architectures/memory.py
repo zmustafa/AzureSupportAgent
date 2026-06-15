@@ -126,6 +126,30 @@ def default_sections() -> list[dict[str, str]]:
     ]
 
 
+def merge_ai_sections(
+    existing_sections: list[dict[str, Any]] | None,
+    ai_sections: dict[str, str],
+) -> list[dict[str, str]]:
+    """Merge an AI (re)draft into a memory's section list for a FULL "Generate with AI".
+
+    OVERWRITES each existing section the model returned non-empty content for (a full draft
+    is a regenerate, not just a gap-fill — the old behavior of only filling EMPTY sections
+    meant a fully-populated memory silently kept its old content and appeared "not saved").
+    Sections the model left out keep their existing content (so a partial draft never wipes
+    good text). Author order is preserved; brand-new catalog sections are appended."""
+    sections = [dict(s) for s in (existing_sections or default_sections())]
+    present = {s.get("key") for s in sections}
+    for s in sections:
+        new_content = ai_sections.get(s.get("key", ""))
+        if new_content and str(new_content).strip():
+            s["content"] = str(new_content)
+            s.pop("needs_review", None)  # a fresh draft clears the review flag
+    for key, content in ai_sections.items():
+        if key and key not in present and str(content or "").strip():
+            sections.append({"key": key, "label": section_label(key), "content": str(content)})
+    return sections
+
+
 def get_memory(architecture_id: str) -> dict[str, Any] | None:
     """Return the memory for an architecture, or None if none exists yet."""
     raw = _read().get("memories", {}).get(architecture_id)

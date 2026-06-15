@@ -1252,6 +1252,13 @@ async def stream_message(
             actor=principal.display_name or principal.email or principal.subject,
         )
 
+    # RBAC access-review tools: answer "who can access X" / "privileged access review" from the
+    # latest cached access scan (read-only, no Azure calls during the turn).
+    if turn_connector_toolset is not None:
+        from app.rbac.agent_tool import register_rbac_tools
+
+        register_rbac_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
+
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
     if turn_agent is not None:
