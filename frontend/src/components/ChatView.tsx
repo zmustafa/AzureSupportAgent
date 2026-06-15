@@ -531,8 +531,6 @@ export default function ChatView() {
   const [chatFilter, setChatFilter] = useState<"all" | "pinned">("all");
   // Automations sub-menu expansion in the sidebar (auto-open on an automations route).
   const [automationsOpen, setAutomationsOpen] = useState<boolean>(false);
-  // Custom Agents sub-menu expansion in the sidebar (lists enabled agents to launch).
-  const [agentsMenuOpen, setAgentsMenuOpen] = useState<boolean>(false);
   // Proactive Support sub-menu expansion (groups the posture/forensic dashboards).
   const [proactiveOpen, setProactiveOpen] = useState<boolean>(false);
   // Settings sub-menu expansion in the sidebar (auto-open on an /admin route).
@@ -541,9 +539,6 @@ export default function ChatView() {
   // Auto-open each sidebar sub-menu when you navigate INTO its section, but keep the
   // open/closed state user-controllable via the chevron afterwards (so clicking the
   // section header doesn't force the list permanently expanded).
-  useEffect(() => {
-    if (inCustomAgents) setAgentsMenuOpen(true);
-  }, [inCustomAgents]);
   useEffect(() => {
     if (inAutomations && !inCustomAgents) setAutomationsOpen(true);
   }, [inAutomations, inCustomAgents]);
@@ -1952,12 +1947,6 @@ export default function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
-  // Launch a new chat with the given custom agent pre-selected.
-  function launchAgentChat(agentId: string) {
-    setAgentsMenuOpen(true); // keep the menu expanded after picking an agent
-    navigate(`/chat?agent=${encodeURIComponent(agentId)}`);
-  }
-
   // Change the active chat's thinking level. First time deep is enabled, show the
   // one-time notice; persist to the chat when one exists.
   function changeThinking(level: "normal" | "deep") {
@@ -2279,9 +2268,7 @@ export default function ChatView() {
             </div>
           ))}
 
-        {/* Sub Agents: a top-level menu (next to Automations). The header opens the
-            management page; the sub-items are the ENABLED agents — clicking one launches
-            a new chat with that agent pre-selected. Admin-only. */}
+        {/* Sub Agents: a plain link to the agent-management page. Admin-only. */}
         {me?.role === "admin" &&
           (railCollapsed ? (
             <Link
@@ -2297,58 +2284,17 @@ export default function ChatView() {
             </Link>
           ) : (
             <div className="mb-1 px-2">
-              <div className="flex items-center">
-                <Link
-                  to="/automations/agents"
-                  className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                    inCustomAgents
-                      ? "bg-gray-200 font-medium text-gray-900"
-                      : "text-gray-700 hover:bg-gray-200/60"
-                  }`}
-                >
-                  <RobotIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                  <span>Sub Agents</span>
-                </Link>
-                <button
-                  onClick={() => setAgentsMenuOpen((v) => !v)}
-                  title={agentsMenuOpen ? "Collapse" : "Expand"}
-                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
-                >
-                  <ChevronRightIcon
-                    className={`h-4 w-4 transition-transform ${
-                      agentsMenuOpen ? "rotate-90" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-              {agentsMenuOpen && (
-                <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {enabledAgents.length === 0 ? (
-                    <div className="px-2.5 py-1.5 text-[12px] text-gray-400">
-                      No enabled agents.
-                    </div>
-                  ) : (
-                    enabledAgents.map((a) => {
-                      const sel = selectedAgentId === a.id && !inCustomAgents;
-                      return (
-                      <button
-                        key={a.id}
-                        onClick={() => launchAgentChat(a.id)}
-                        title={`Start a chat with ${a.name}`}
-                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition ${
-                          sel
-                            ? "bg-gray-200 font-semibold text-gray-900"
-                            : "text-gray-600 hover:bg-gray-200/60"
-                        }`}
-                      >
-                        <span className="text-xs">✨</span>
-                        <span className="truncate">{a.name}</span>
-                      </button>
-                      );
-                    })
-                  )}
-                </div>
-              )}
+              <Link
+                to="/automations/agents"
+                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                  inCustomAgents
+                    ? "bg-gray-200 font-medium text-gray-900"
+                    : "text-gray-700 hover:bg-gray-200/60"
+                }`}
+              >
+                <RobotIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                <span>Sub Agents</span>
+              </Link>
             </div>
           ))}
 

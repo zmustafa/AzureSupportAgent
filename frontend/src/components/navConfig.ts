@@ -32,6 +32,7 @@ export type AdminSection =
   | "entratools"
   | "usage"
   | "audit"
+  | "backup"
   | "demodata"
   | SecuritySection;
 
@@ -85,6 +86,7 @@ export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?:
   // Observability
   { id: "usage", label: "Usage", icon: "📊", group: "Observability" },
   { id: "audit", label: "Audit Log", icon: "📋" },
+  { id: "backup", label: "Backup & Restore", icon: "💾" },
   { id: "demodata", label: "Demo Data", icon: "🎬" },
 ];
 

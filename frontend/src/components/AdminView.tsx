@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, streamRefreshLlmModels, streamTestLlmProvider, type AiPrompt, type AppSettings, type ArchitectureCategory, type AuditEntry, type LlmTestStep, type SandboxVm, type SandboxVmRun, type SiemDestination, type Workload } from "../api";
+import { api, streamRefreshLlmModels, streamTestLlmProvider, type AiPrompt, type AppSettings, type ArchitectureCategory, type AuditEntry, type BackupConflictMode, type BackupImportPreview, type LlmTestStep, type SandboxVm, type SandboxVmRun, type SiemDestination, type Workload } from "../api";
 import { ensureUtc, formatError } from "../utils/format";
 import { ConnectorsSection } from "./AutomationsView";
 import { SecurityPanel, AccessControlPanel } from "./SecurityView";
@@ -266,6 +267,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
         )}
 
         {section === "audit" && <AuditCard />}
+        {section === "backup" && <BackupRestoreCard />}
         {section === "demodata" && <DemoDataCard />}
       </div>
     </div>
@@ -278,6 +280,292 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
       <h2 className="mb-3 font-medium">{title}</h2>
       {children}
     </section>
+  );
+}
+
+// ===========================================================================
+// Backup & Restore
+// ===========================================================================
+const BACKUP_TIER_LABEL: Record<string, string> = {
+  config: "Configuration",
+  reference: "Reference sets",
+  secrets: "Connections & credentials",
+  data: "Operational data",
+};
+const BACKUP_TIER_ORDER = ["config", "data", "reference", "secrets"];
+const BACKUP_MODE_HELP: Record<BackupConflictMode, string> = {
+  merge: "Add new items and update matching ones; keep everything else.",
+  overwrite: "Replace matching items with the backup's version (new items added).",
+  skip: "Only add items that don't already exist; never touch existing ones.",
+};
+
+function BackupRestoreCard() {
+  const qc = useQueryClient();
+  const sectionsQ = useQuery({ queryKey: ["backupSections"], queryFn: api.backupSections });
+  const sections = sectionsQ.data?.sections ?? [];
+
+  // ---- Export state ----
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
+  const [exportErr, setExportErr] = useState("");
+
+  // Default-select every section once the catalog loads.
+  useEffect(() => {
+    if (sections.length) setSelected((cur) => (cur.size ? cur : new Set(sections.map((s) => s.id))));
+  }, [sections]);
+
+  const byTier = BACKUP_TIER_ORDER.map((tier) => ({
+    tier,
+    items: sections.filter((s) => s.tier === tier),
+  })).filter((g) => g.items.length > 0);
+
+  const toggle = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  async function doExport() {
+    setExporting(true);
+    setExportErr("");
+    try {
+      const manifest = await api.backupExport([...selected]);
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+      a.href = url;
+      a.download = `azsupagent-backup-${ts}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportErr(formatError(e));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // ---- Import state ----
+  const [parsed, setParsed] = useState<unknown>(null);
+  const [fileName, setFileName] = useState("");
+  const [mode, setMode] = useState<BackupConflictMode>("merge");
+  const [preview, setPreview] = useState<BackupImportPreview | null>(null);
+  const [importErr, setImportErr] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [done, setDone] = useState<{ sections: number; secrets: string[] } | null>(null);
+
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportErr("");
+    setPreview(null);
+    setDone(null);
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        setParsed(JSON.parse(String(reader.result)));
+      } catch {
+        setParsed(null);
+        setImportErr("That file isn't valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function doPreview() {
+    if (!parsed) return;
+    setImportBusy(true);
+    setImportErr("");
+    setDone(null);
+    try {
+      setPreview(await api.backupImportPreview(parsed, mode));
+    } catch (e) {
+      setImportErr(formatError(e));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function doImport() {
+    if (!parsed) return;
+    if (!confirm(`Restore this backup using "${mode}"? This changes configuration and data on this instance.`)) return;
+    setImportBusy(true);
+    setImportErr("");
+    try {
+      const res = await api.backupImport(parsed, mode, []);
+      setDone({ sections: res.sections.length, secrets: res.secrets_required });
+      setPreview(null);
+      qc.invalidateQueries({ queryKey: ["backupSections"] });
+    } catch (e) {
+      setImportErr(formatError(e));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card title="Export backup">
+        <p className="mb-3 text-xs text-gray-500">
+          Download a portable JSON backup of this tenant's configuration and operational data.
+          Secrets (API keys, client secrets, tokens) are <strong>never</strong> exported — you'll
+          re-enter them after restoring.
+        </p>
+        {sectionsQ.isLoading && <div className="h-16 animate-pulse rounded-lg border bg-gray-100" />}
+        <div className="space-y-4">
+          {byTier.map((g) => (
+            <div key={g.tier}>
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                  {BACKUP_TIER_LABEL[g.tier] ?? g.tier}
+                </span>
+                {g.tier === "secrets" && (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                    secrets redacted
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {g.items.map((s) => (
+                  <label
+                    key={s.id}
+                    className="flex cursor-pointer items-center justify-between rounded-lg border px-2.5 py-1.5 text-sm hover:bg-gray-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} />
+                      <span className="text-gray-700">{s.label}</span>
+                    </span>
+                    <span className="text-[11px] text-gray-400">{s.count}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={doExport}
+            disabled={exporting || selected.size === 0}
+            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+          >
+            {exporting ? "Preparing…" : `Download backup (${selected.size})`}
+          </button>
+          <button onClick={() => setSelected(new Set(sections.map((s) => s.id)))} className="text-xs text-gray-500 hover:underline">
+            Select all
+          </button>
+          <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:underline">
+            Clear
+          </button>
+          {exportErr && <span className="text-xs text-red-600">{exportErr}</span>}
+        </div>
+      </Card>
+
+      <Card title="Restore backup">
+        <p className="mb-3 text-xs text-gray-500">
+          Upload a backup file, preview the changes, then apply. Existing local data is never
+          deleted; a restored secret blank never overwrites a working credential.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+            <input type="file" accept="application/json,.json" onChange={onFile} className="hidden" />
+            {fileName || "Choose backup file…"}
+          </label>
+          <select
+            value={mode}
+            onChange={(e) => {
+              setMode(e.target.value as BackupConflictMode);
+              setPreview(null);
+            }}
+            className="rounded-lg border px-2 py-1.5 text-sm"
+          >
+            <option value="merge">Merge</option>
+            <option value="overwrite">Overwrite</option>
+            <option value="skip">Skip existing</option>
+          </select>
+          <button
+            onClick={doPreview}
+            disabled={!parsed || importBusy}
+            className="rounded-lg border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Preview
+          </button>
+          <button
+            onClick={doImport}
+            disabled={!parsed || importBusy}
+            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+          >
+            {importBusy ? "Working…" : "Restore"}
+          </button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-gray-400">{BACKUP_MODE_HELP[mode]}</p>
+        {importErr && <div className="mt-2 text-xs text-red-600">{importErr}</div>}
+
+        {preview && (
+          <div className="mt-4">
+            {preview.source_tenant && (
+              <div className="mb-2 text-[11px] text-gray-500">
+                Backup from tenant <span className="font-mono">{preview.source_tenant}</span>
+                {preview.exported_at && <> · exported {new Date(preview.exported_at).toLocaleString()}</>}
+              </div>
+            )}
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-left text-xs text-gray-500">
+                  <tr>
+                    <th className="px-3 py-1.5 font-medium">Section</th>
+                    <th className="px-3 py-1.5 font-medium">Incoming</th>
+                    <th className="px-3 py-1.5 font-medium text-green-600">Create</th>
+                    <th className="px-3 py-1.5 font-medium text-blue-600">Update</th>
+                    <th className="px-3 py-1.5 font-medium text-gray-500">Skip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.sections.map((s) => (
+                    <tr key={s.id} className="border-t">
+                      <td className="px-3 py-1.5 text-gray-700">{s.label}</td>
+                      <td className="px-3 py-1.5 text-gray-500">{s.incoming}</td>
+                      <td className="px-3 py-1.5 text-green-700">{s.create || ""}</td>
+                      <td className="px-3 py-1.5 text-blue-700">{s.update || ""}</td>
+                      <td className="px-3 py-1.5 text-gray-400">{s.skip || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {preview.secrets_required.length > 0 && (
+              <BackupSecretsNotice secrets={preview.secrets_required} />
+            )}
+          </div>
+        )}
+
+        {done && (
+          <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+            ✓ Restore complete — {done.sections} section{done.sections === 1 ? "" : "s"} applied.
+            {done.secrets.length > 0 && <BackupSecretsNotice secrets={done.secrets} />}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function BackupSecretsNotice({ secrets }: { secrets: string[] }) {
+  return (
+    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      <div className="mb-1 font-medium">Re-enter these secrets after restoring:</div>
+      <ul className="ml-4 list-disc space-y-0.5">
+        {secrets.map((s) => (
+          <li key={s}>{s}</li>
+        ))}
+      </ul>
+      <div className="mt-2 flex gap-3">
+        <Link to="/admin/connectors" className="text-amber-900 underline">Connectors</Link>
+        <Link to="/admin/tenants" className="text-amber-900 underline">Azure Tenants</Link>
+        <Link to="/admin/providers" className="text-amber-900 underline">AI Providers</Link>
+      </div>
+    </div>
   );
 }
 

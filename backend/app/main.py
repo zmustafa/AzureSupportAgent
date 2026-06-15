@@ -17,6 +17,7 @@ from app.api import (
     assessments,
     auth,
     automations,
+    backup,
     backupdr,
     charts,
     chats,
@@ -165,6 +166,7 @@ api.include_router(admin_demo.router)
 api.include_router(connections.router)
 api.include_router(connectors.router)
 api.include_router(automations.router)
+api.include_router(backup.router)
 api.include_router(workbooks.router)
 api.include_router(playbooks.router)
 api.include_router(notifications.router)

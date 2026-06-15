@@ -1816,6 +1816,25 @@ export const api = {
   taskRuns: (id: string) =>
     http<{ runs: TaskRunInfo[] }>(`/admin/automations/tasks/${id}/runs`),
 
+  // --- Backup & Restore (whole-tenant) ---
+  backupSections: () =>
+    http<{ sections: BackupSection[] }>("/admin/backup/sections"),
+  backupExport: (sections: string[]) =>
+    http<BackupManifest>("/admin/backup/export", {
+      method: "POST",
+      body: JSON.stringify({ sections }),
+    }),
+  backupImportPreview: (data: unknown, mode: BackupConflictMode) =>
+    http<BackupImportPreview>("/admin/backup/import/preview", {
+      method: "POST",
+      body: JSON.stringify({ data, mode }),
+    }),
+  backupImport: (data: unknown, mode: BackupConflictMode, sections: string[]) =>
+    http<BackupImportResult>("/admin/backup/import", {
+      method: "POST",
+      body: JSON.stringify({ data, mode, sections }),
+    }),
+
   // --- Authentication (local + SSO) ---
   authConfig: () => http<AuthConfig>("/auth/config"),
   authMe: () => http<Me>("/auth/me"),
@@ -4658,6 +4677,51 @@ export interface TaskRunInfo {
   started_at: string;
   ended_at: string | null;
   duration_ms: number | null;
+}
+
+export type BackupConflictMode = "skip" | "overwrite" | "merge";
+
+export interface BackupSection {
+  id: string;
+  label: string;
+  tier: "config" | "reference" | "secrets" | "data";
+  kind: "collection" | "document" | "db";
+  secret_bearing: boolean;
+  count: number;
+}
+
+export interface BackupManifest {
+  format: string;
+  version: number;
+  exported_at: string;
+  meta: { tenant_id: string; sections: string[]; secrets_required: string[] };
+  sections: Record<string, unknown>;
+}
+
+export interface BackupSectionDiff {
+  id: string;
+  label: string;
+  tier: string;
+  kind: string;
+  incoming: number;
+  create: number;
+  update: number;
+  skip: number;
+  ignored?: boolean;
+}
+
+export interface BackupImportPreview {
+  mode: BackupConflictMode;
+  exported_at: string | null;
+  source_tenant: string | null;
+  secrets_required: string[];
+  sections: BackupSectionDiff[];
+}
+
+export interface BackupImportResult {
+  mode: BackupConflictMode;
+  secrets_required: string[];
+  sections: { id: string; created: number; updated: number; skipped: number }[];
 }
 
 export interface TenantOption {
