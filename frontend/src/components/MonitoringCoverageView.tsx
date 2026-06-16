@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -13,6 +13,7 @@ import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 
 const SEV_CLS: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -78,7 +79,6 @@ export function MonitoringCoveragePanel() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ row: AmbaRow; cell: AmbaCell } | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -106,6 +106,12 @@ export function MonitoringCoveragePanel() {
   const [loadedScope, setLoadedScope] = usePersistedState("azsup.amba.loadedScope", "");
   const enabled = scopeReady && loadedScope === scopeKey;
 
+  // Background refresh (per-scope) — survives scope switches + navigation. "Refreshing…"
+  // shows ONLY for the scope actually refreshing; other scopes show "↻ Refresh now".
+  const refreshKey = `amba:${scopeKey}`;
+  const refreshVersion = useBackgroundRefresh();
+  const refreshing = isRefreshing(refreshKey);
+
   const covQ = useQuery({
     queryKey: ["amba", scopeKind, effectiveWorkloadId, subId],
     queryFn: () => api.ambaCoverage(params),
@@ -125,19 +131,28 @@ export function MonitoringCoveragePanel() {
   }
 
   async function doRefresh() {
-    setRefreshing(true);
+    if (refreshing || !scopeReady) return;
     setMsg(null);
     setLoadedScope(scopeKey);
-    try {
-      const fresh = await api.refreshAmba(params);
-      qc.setQueryData(["amba", scopeKind, effectiveWorkloadId, subId], fresh);
-      trendQ.refetch();
-    } catch (e) {
-      setMsg({ text: formatError(e), ok: false });
-    } finally {
-      setRefreshing(false);
-    }
+    const p = params;
+    const dataKey = ["amba", scopeKind, effectiveWorkloadId, subId] as const;
+    const trendKey = ["amba-trend", scopeKind, effectiveWorkloadId, subId] as const;
+    // Fire-and-forget: keeps running even if the user switches scope or navigates away; the
+    // cache update via the shared queryClient lands whenever the scan finishes.
+    startBackgroundRefresh(refreshKey, async () => {
+      const fresh = await api.refreshAmba(p);
+      qc.setQueryData(dataKey, fresh);
+      await qc.invalidateQueries({ queryKey: trendKey });
+    });
   }
+
+  // Surface an error from a background refresh that finished (possibly while away).
+  useEffect(() => {
+    if (!refreshing) {
+      const err = takeRefreshError(refreshKey);
+      if (err) setMsg({ text: err, ok: false });
+    }
+  }, [refreshVersion, refreshKey, refreshing]);
 
   function cellVisible(c: AmbaCell): boolean {
     if (catFilter !== "all" && c.amba_category !== catFilter) return false;
@@ -328,6 +343,7 @@ export function MonitoringCoveragePanel() {
                   <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span>
                 </>
               ) : "—"}
+              {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
             </span>
             {!enabled && (
               <button
@@ -339,9 +355,10 @@ export function MonitoringCoveragePanel() {
               </button>
             )}
             <button
-              onClick={() => void doRefresh()}
+              onClick={doRefresh}
               disabled={refreshing || !scopeReady}
               className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              data-testid="coverage-refresh"
             >
               {refreshing ? "Refreshing…" : "↻ Refresh now"}
             </button>

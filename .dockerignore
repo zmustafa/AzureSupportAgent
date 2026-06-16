@@ -18,6 +18,8 @@ frontend/dist
 docs/
 tests/
 **/tests/
+# Local-only E2E test suite
+e2e/
 third_party/entraid-mcp-server/.venv
 # Exclude all markdown (incl. vendored third-party READMEs) from the image.
 **/*.md

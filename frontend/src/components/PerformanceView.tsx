@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -11,9 +11,100 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { queryClient } from "../queryClient";
 import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+
+// ---- Background profile-run registry --------------------------------------------
+// A profile started from this screen keeps streaming even if the user switches scope or
+// navigates away — so it truly runs "in the background". The registry is keyed by
+// scopeKey (`${scopeKind}:${scopeId}`) so the optimistic "Running" row and the button
+// state are PER-SCOPE: a scope with no active run shows "▶ Run profile", not "Profiling…".
+// On completion it invalidates the history-grid query via the shared queryClient so the
+// finished run replaces the optimistic row even if the originating component unmounted.
+type RunningProfile = {
+  scopeKey: string;
+  scopeLabel: string;
+  windowLabel: string;
+  startedAt: number;
+  lastResource: string;
+  steps: number;
+};
+
+const _runningProfiles = new Map<string, RunningProfile>();
+let _lastCompleted: { scopeKey: string; snap: PerfProfile; at: number } | null = null;
+let _runVersion = 0;
+const _runListeners = new Set<() => void>();
+
+function _bumpRuns() {
+  _runVersion += 1;
+  for (const l of _runListeners) l();
+}
+
+// Subscribe a component to registry changes; returns a monotonically-increasing version
+// so effects can depend on "something changed".
+function useProfileRuns(): number {
+  return useSyncExternalStore(
+    (cb) => {
+      _runListeners.add(cb);
+      return () => {
+        _runListeners.delete(cb);
+      };
+    },
+    () => _runVersion,
+    () => _runVersion,
+  );
+}
+
+function startBackgroundProfile(opts: {
+  scopeKey: string;
+  scopeLabel: string;
+  windowLabel: string;
+  body: { workload_id?: string; subscription_id?: string; window?: string; start_time?: string; end_time?: string };
+  runsKey: readonly unknown[];
+  trendKey: readonly unknown[];
+  onError: (msg: string) => void;
+}) {
+  if (_runningProfiles.has(opts.scopeKey)) return;
+  _runningProfiles.set(opts.scopeKey, {
+    scopeKey: opts.scopeKey,
+    scopeLabel: opts.scopeLabel,
+    windowLabel: opts.windowLabel,
+    startedAt: Date.now(),
+    lastResource: "",
+    steps: 0,
+  });
+  _bumpRuns();
+  void streamPerfRefresh(opts.body, {
+    onProgress: (d) => {
+      const e = _runningProfiles.get(opts.scopeKey);
+      if (e) {
+        e.lastResource = d.resource;
+        e.steps += 1;
+        _bumpRuns();
+      }
+    },
+    onDone: (snap) => {
+      _runningProfiles.delete(opts.scopeKey);
+      _lastCompleted = { scopeKey: opts.scopeKey, snap, at: Date.now() };
+      _bumpRuns();
+      // Refresh the history grid + trend wherever they're mounted (originating component
+      // may have unmounted). The just-saved run replaces the optimistic "Running" row.
+      void queryClient.invalidateQueries({ queryKey: opts.runsKey });
+      void queryClient.invalidateQueries({ queryKey: opts.trendKey });
+    },
+    onError: (m) => {
+      _runningProfiles.delete(opts.scopeKey);
+      _bumpRuns();
+      opts.onError(m);
+    },
+  }).catch((err) => {
+    _runningProfiles.delete(opts.scopeKey);
+    _bumpRuns();
+    opts.onError(formatError(err));
+  });
+}
 
 const STATE_TONE: Record<string, string> = {
   breaching: "bg-red-500",
@@ -109,8 +200,6 @@ export function PerformancePanel() {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [drawer, setDrawer] = useState<PerfResourceRow | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -132,6 +221,13 @@ export function PerformancePanel() {
       : "";
   const params = scopeKind === "workload" ? { workload_id: effWorkloadId } : { subscription_id: subId };
   const enabled = scopeKind === "workload" ? !!effWorkloadId : !!subId;
+
+  // Per-scope background-run state. A profile is identified by its scope so switching to a
+  // scope with no active run shows "▶ Run profile" while the other keeps profiling.
+  const scopeKey = `${scopeKind}:${effWorkloadId || subId}`;
+  const runsVersion = useProfileRuns();
+  const runningEntry = _runningProfiles.get(scopeKey) ?? null;
+  const runningHere = runningEntry !== null;
 
   // History grid — fetched on load + after each run/delete. NO auto-profiling.
   const runsQ = useQuery({
@@ -159,8 +255,17 @@ export function PerformancePanel() {
   // Clear the shown run when the scope changes.
   useEffect(() => {
     setData(null);
-    setProgress([]);
   }, [scopeKind, effWorkloadId, subId]);
+
+  // Auto-show a run that finished in the background while viewing its scope. Only surfaces
+  // completions that happen after this component mounted (older ones stay in the grid only).
+  const seenCompletionRef = useRef(Date.now());
+  useEffect(() => {
+    if (_lastCompleted && _lastCompleted.scopeKey === scopeKey && _lastCompleted.at > seenCompletionRef.current) {
+      seenCompletionRef.current = _lastCompleted.at;
+      setData(_lastCompleted.snap);
+    }
+  }, [runsVersion, scopeKey]);
 
   const WINDOWS = [
     { v: "PT1H", l: "Last 1 hour" },
@@ -186,31 +291,32 @@ export function PerformancePanel() {
     return cols;
   }, [data]);
 
-  async function runProfile() {
-    setRunning(true);
-    setProgress([]);
+  function runProfile() {
+    if (!enabled || runningHere) return;
     setMsg(null);
+    const windowLabel =
+      useRange && startTime && endTime ? "custom range" : WINDOWS.find((w) => w.v === windowSel)?.l ?? windowSel;
+    const scopeLabel =
+      scopeKind === "workload"
+        ? workloads.find((w) => w.id === effWorkloadId)?.name ?? effWorkloadId
+        : subName || subId;
     const body = {
       ...params,
       ...(useRange && startTime && endTime
         ? { start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString() }
         : { window: windowSel }),
     };
-    try {
-      await streamPerfRefresh(body, {
-        onProgress: (d) => setProgress((p) => [...p.slice(-40), d.resource]),
-        onDone: (snap) => {
-          setData(snap);
-          runsQ.refetch();
-          trendQ.refetch();
-        },
-        onError: (m) => setMsg({ text: m, ok: false }),
-      });
-    } catch (e) {
-      setMsg({ text: formatError(e), ok: false });
-    } finally {
-      setRunning(false);
-    }
+    // Fire-and-forget: the run streams in the registry, survives scope switches/navigation,
+    // and lands in the history grid on completion (the optimistic row shows meanwhile).
+    startBackgroundProfile({
+      scopeKey,
+      scopeLabel,
+      windowLabel,
+      body,
+      runsKey: ["perf-runs", scopeKind, effWorkloadId, subId],
+      trendKey: ["perf-trend", scopeKind, effWorkloadId, subId],
+      onError: (m) => setMsg({ text: m, ok: false }),
+    });
   }
 
   async function viewRun(runId: string) {
@@ -395,10 +501,11 @@ export function PerformancePanel() {
             </label>
             <button
               onClick={runProfile}
-              disabled={running || !enabled || (useRange && (!startTime || !endTime))}
+              disabled={runningHere || !enabled || (useRange && (!startTime || !endTime))}
               className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              data-testid="perf-run-button"
             >
-              {running ? "Profiling…" : "▶ Run profile"}
+              {runningHere ? "Profiling…" : "▶ Run profile"}
             </button>
             <button
               onClick={() => setShowTrash((v) => !v)}
@@ -409,8 +516,8 @@ export function PerformancePanel() {
             </button>
           </div>
         </div>
-        {running && progress.length > 0 && (
-          <div className="mt-1 truncate text-[11px] text-gray-500">profiling… {progress[progress.length - 1]}</div>
+        {runningHere && runningEntry?.lastResource && (
+          <div className="mt-1 truncate text-[11px] text-gray-500">profiling… {runningEntry.lastResource}</div>
         )}
       </div>
 
@@ -424,6 +531,11 @@ export function PerformancePanel() {
           <div className="mb-2 flex items-center gap-2">
             <h2 className="text-sm font-semibold text-gray-900">Profile history</h2>
             <span className="text-[11px] text-gray-400">{runs.length} run(s) for this scope</span>
+            {runningHere && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />1 running
+              </span>
+            )}
           </div>
           <div className="overflow-x-auto rounded-lg border bg-white">
             <table className="w-full text-[12px]">
@@ -438,9 +550,25 @@ export function PerformancePanel() {
                 </tr>
               </thead>
               <tbody>
+                {runningHere && runningEntry && (
+                  <tr className="border-t bg-amber-50/50" data-testid="perf-running-row">
+                    <td className="px-3 py-2 text-gray-700">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</td>
+                    <td className="px-3 py-2 text-gray-500">{runningEntry.windowLabel}</td>
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />Running
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-400" colSpan={2}>
+                      Profiling… {runningEntry.lastResource || "gathering metrics"}
+                      {runningEntry.steps ? ` (${runningEntry.steps} step${runningEntry.steps === 1 ? "" : "s"})` : ""}
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-300">—</td>
+                  </tr>
+                )}
                 {runsQ.isLoading ? (
                   <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Loading history…</td></tr>
-                ) : runs.length === 0 ? (
+                ) : runs.length === 0 && !runningHere ? (
                   <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">No profiles yet — pick a window and click <b>Run profile</b>.</td></tr>
                 ) : (
                   runs.map((r) => (
@@ -517,7 +645,7 @@ export function PerformancePanel() {
             )}
           </div>
         )}
-        {running && !data ? (
+        {runningHere && !data ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-white p-10 text-center">
             <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -525,9 +653,9 @@ export function PerformancePanel() {
             </svg>
             <div className="mt-3 text-sm font-medium text-gray-700">Profiling workload…</div>
             <div className="mt-1 max-w-md truncate text-xs text-gray-400">
-              {progress.length ? progress[progress.length - 1] : "Gathering metrics and evaluating against AMBA thresholds…"}
+              {runningEntry?.lastResource || "Gathering metrics and evaluating against AMBA thresholds…"}
             </div>
-            <div className="mt-1 text-[11px] text-gray-400">{progress.length} step(s) · runs in the background, you can navigate away</div>
+            <div className="mt-1 text-[11px] text-gray-400">{runningEntry?.steps ?? 0} step(s) · runs in the background, you can navigate away</div>
           </div>
         ) : !data ? (
           <div className="rounded-lg border border-dashed bg-white p-8 text-center text-sm text-gray-400">

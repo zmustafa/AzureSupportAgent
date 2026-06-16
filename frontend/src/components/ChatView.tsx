@@ -72,6 +72,7 @@ import {
   RobotIcon,
   ChevronRightIcon,
   SparkleIcon,
+  WarRoomIcon,
   PanelLeftIcon,
   Spinner,
 } from "./chat/icons";
@@ -121,11 +122,11 @@ const EvidenceLockerPanel = lazy(() =>
 const RetirementRadarPanel = lazy(() =>
   import("./RetirementRadarView").then((m) => ({ default: m.RetirementRadarPanel })),
 );
-const ReservationsMonitorPanel = lazy(() =>
-  import("./ReservationsMonitorView").then((m) => ({ default: m.ReservationsMonitorPanel })),
-);
 const TelemetryIntelligencePanel = lazy(() =>
   import("./TelemetryIntelligenceView").then((m) => ({ default: m.TelemetryIntelligencePanel })),
+);
+const ReservationsMonitorPanel = lazy(() =>
+  import("./ReservationsMonitorView").then((m) => ({ default: m.ReservationsMonitorPanel })),
 );
 const PerformancePanel = lazy(() =>
   import("./PerformanceView").then((m) => ({ default: m.PerformancePanel })),
@@ -135,6 +136,11 @@ const NotificationsPanel = lazy(() =>
 );
 const DashboardPanel = lazy(() =>
   import("./DashboardView").then((m) => ({ default: m.DashboardPanel })),
+);
+// Interactive metric chart rendered inline from a ```azchart fenced block (recharts is
+// heavy, so it's code-split out of the initial chat bundle).
+const MetricChart = lazy(() =>
+  import("./chat/MetricChart").then((m) => ({ default: m.MetricChart })),
 );
 import { NotificationBell } from "./NotificationBell";
 
@@ -265,23 +271,27 @@ const ExecContext = createContext<ExecConfig>({
   openMermaidEditor: () => {},
 });
 
-const ACTIVITIES_KEY = "aznet.activities.v1";
+const ACTIVITIES_KEY = "azsup.activities.v1";
 // Full progress feed (the exact lines shown under "Working on your request…")
 // persisted per assistant message so the detailed work survives after completion.
-const PROGRESS_KEY = "aznet.progress.v1";
+const PROGRESS_KEY = "azsup.progress.v1";
 // Deep-investigation hypothesis trees, persisted per assistant message.
-const INVESTIGATIONS_KEY = "aznet.investigations.v1";
+const INVESTIGATIONS_KEY = "azsup.investigations.v1";
 // LocalStorage flag: the user has acknowledged the one-time deep-investigation notice.
-const DEEP_CONFIRMED_KEY = "aznet.deepConfirmed.v1";
+const DEEP_CONFIRMED_KEY = "azsup.deepConfirmed.v1";
 // Persisted width (px) of the resizable deep-investigation side panel.
-const INVESTIGATION_WIDTH_KEY = "aznet.investigationWidth.v1";
+const INVESTIGATION_WIDTH_KEY = "azsup.investigationWidth.v1";
 // LocalStorage flag: keep the deep-investigation panel pinned so it auto-reopens when
 // switching to a chat that has a running or completed investigation.
-const INVESTIGATION_PINNED_KEY = "aznet.investigationPinned.v1";
+const INVESTIGATION_PINNED_KEY = "azsup.investigationPinned.v1";
 // Persisted width (px) of the resizable command/query editor side panel.
-const EDITOR_WIDTH_KEY = "aznet.editorWidth.v1";
+const EDITOR_WIDTH_KEY = "azsup.editorWidth.v1";
 // Persisted width (px) of the resizable Mermaid diagram editor side panel.
-const MERMAID_WIDTH_KEY = "aznet.mermaidEditorWidth.v1";
+const MERMAID_WIDTH_KEY = "azsup.mermaidEditorWidth.v1";
+
+// Animated deep-investigation icon (served from frontend/public/agent-icons), shown at
+// the top while a deep investigation runs.
+const DEEP_INVESTIGATION_ICON = "/agent-icons/agent-orbit-repair.svg";
 
 // Playful "the model is thinking" phrases, shown (one picked at random per turn) in
 // place of the old fixed "Model is responding…" / "Writing the answer…" lines.
@@ -304,7 +314,7 @@ function randomThinkingPhrase(): string {
 
 // Host "Run" command results, persisted per (chat, command) so a command's output
 // stays part of the conversation when the chat is reopened.
-const EXEC_KEY = "aznet.execRuns.v1";
+const EXEC_KEY = "azsup.execRuns.v1";
 
 // One persisted command run (output + exit/error), keyed by `${chatId}::${command}`.
 type ExecRun = {
@@ -403,6 +413,8 @@ type LiveStream = {
   error?: string;
   // Live deep-investigation tree (deep thinking level only).
   investigation?: Investigation;
+  // Randomly-chosen animated icon shown at the top while a deep investigation runs.
+  deepIcon?: string;
   // Optimistic user message shown immediately, before the server reload.
   userMessage: Message;
   // Allows the Stop button to cancel the in-flight fetch for this chat.
@@ -439,7 +451,7 @@ export default function ChatView() {
   })();
   // Monitor dashboard lives in the shell too.
   const inMonitor = location.pathname.startsWith("/monitor");
-  // Stats: read-only at-a-glance metrics page (admin-only).
+  // Stats: a read-only at-a-glance metrics page.
   const inStats = location.pathname.startsWith("/stats");
   // Azure Workloads section.
   const inWorkloads = location.pathname.startsWith("/workloads");
@@ -452,32 +464,40 @@ export default function ChatView() {
   const inAssessments = location.pathname.startsWith("/assessments");
   const inArchitectures = location.pathname.startsWith("/architectures");
   const inPolicy = location.pathname.startsWith("/policy");
-  // Azure Policy sub-tab lives in the URL (/policy/:tab) so a refresh restores the same view.
-  const policyTab: PolicyTab = (() => {
-    const seg = location.pathname.split("/")[2] as PolicyTab | undefined;
-    return seg && POLICY_TAB_IDS.has(seg) ? seg : "overview";
-  })();
   // RBAC / Access Review. Sub-tab lives in the URL (/rbac/:tab) so a refresh restores the view.
   const inRbac = location.pathname.startsWith("/rbac");
   const rbacTab: RbacTab = (() => {
     const seg = location.pathname.split("/")[2] as RbacTab | undefined;
     return seg && RBAC_TAB_IDS.has(seg) ? seg : "overview";
   })();
-  // Proactive Support: posture/forensic dashboards (admin-only).
+  // Identity posture dashboard (admin-only).
   const inIdentity = location.pathname.startsWith("/identity");
   // Identity sub-tab lives in the URL (/identity/:tab) so a refresh restores the same view.
   const identityTab: IdentityTab = (() => {
     const seg = location.pathname.split("/")[2] as IdentityTab | undefined;
     return seg && IDENTITY_TAB_IDS.has(seg) ? seg : "overview";
   })();
+  // Monitoring Coverage (AMBA) dashboard (admin-only).
   const inCoverage = location.pathname.startsWith("/coverage");
+  // Telemetry Coverage (diagnostic settings) dashboard (admin-only).
   const inTelemetry = location.pathname.startsWith("/telemetry") && !location.pathname.startsWith("/telemetry-intel");
+  // Backup & DR Coverage dashboard (admin-only).
   const inBackupDr = location.pathname.startsWith("/backupdr");
+  // Evidence Locker (investigation snapshots).
   const inEvidence = location.pathname.startsWith("/evidence");
+  // Retirement & Breaking-Change Radar (admin-only).
   const inRadar = location.pathname.startsWith("/radar");
-  const inReservations = location.pathname.startsWith("/reservations");
+  // Telemetry Intelligence (AI correlation & triage over App Insights, admin-only).
   const inTeleIntel = location.pathname.startsWith("/telemetry-intel");
+  // Reservations Monitor (weekly expiry digest, admin-only).
+  const inReservations = location.pathname.startsWith("/reservations");
+  // Performance Profiler (profile against AMBA, admin-only).
   const inPerformance = location.pathname.startsWith("/performance");
+  // Azure Policy sub-tab lives in the URL (/policy/:tab) so a refresh restores the same view.
+  const policyTab: PolicyTab = (() => {
+    const seg = location.pathname.split("/")[2] as PolicyTab | undefined;
+    return seg && POLICY_TAB_IDS.has(seg) ? seg : "overview";
+  })();
   const inNotifications = location.pathname.startsWith("/notifications");
   // Getting-started / overview page for newcomers.
   const inDashboard = location.pathname.startsWith("/dashboard");
@@ -496,6 +516,17 @@ export default function ChatView() {
     inputRef.current = v;
     setInput(v);
   };
+  // Drop a suggested prompt into the composer (instead of sending it) so the user can
+  // edit it before sending. Focuses the textarea and places the cursor at the end.
+  const fillComposer = (text: string) => {
+    setInputSynced(text);
+    setTimeout(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(text.length, text.length);
+    }, 0);
+  };
   // Images (base64 data URLs) the user pasted/attached for the next message.
   const [attachments, setAttachments] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -511,7 +542,7 @@ export default function ChatView() {
   // Sidebar: collapse to an icon-only rail (persisted).
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("aznet.railCollapsed.v1") === "1";
+      return localStorage.getItem("azsup.railCollapsed.v1") === "1";
     } catch {
       return false;
     }
@@ -520,7 +551,7 @@ export default function ChatView() {
     setRailCollapsed((v) => {
       const next = !v;
       try {
-        localStorage.setItem("aznet.railCollapsed.v1", next ? "1" : "0");
+        localStorage.setItem("azsup.railCollapsed.v1", next ? "1" : "0");
       } catch {
         /* ignore */
       }
@@ -545,8 +576,10 @@ export default function ChatView() {
   useEffect(() => {
     if (inArchitectures || inAssessments || inRbac || inIdentity || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations || inTeleIntel || inPerformance) setProactiveOpen(true);
   }, [inArchitectures, inAssessments, inRbac, inIdentity, inCoverage, inTelemetry, inBackupDr, inEvidence, inRadar, inReservations, inTeleIntel, inPerformance]);
+  // Settings tracks the route: opens on an /admin route and collapses when you navigate
+  // away to a section outside Settings (still chevron-collapsible while inside /admin).
   useEffect(() => {
-    if (inAdmin) setAdminOpen(true);
+    setAdminOpen(inAdmin);
   }, [inAdmin]);
   // Pending scope clarification: when a question is ambiguous we ask the user to
   // pick a subscription (or skip) before running the agent. For governance/policy
@@ -613,6 +646,10 @@ export default function ChatView() {
   // user's current selection. Loaded (AI-pre-selected) when the auth card appears.
   const [deepAgentOptions, setDeepAgentOptions] = useState<DeepAgent[] | null>(null);
   const [deepAgentSel, setDeepAgentSel] = useState<Set<string>>(new Set());
+  // "All Hands On Deck": when active, every visible agent is selected; toggling off
+  // restores the selection that was in effect before it was engaged.
+  const [allHandsActive, setAllHandsActive] = useState(false);
+  const [allHandsPrevSel, setAllHandsPrevSel] = useState<Set<string>>(new Set());
   // Architecture Memory to inject into the deep investigation. "" = auto-resolve
   // (backend uses the sole candidate if there is exactly one). A specific architecture
   // id pins that architecture's memory; "none" suppresses memory entirely.
@@ -1071,6 +1108,7 @@ export default function ChatView() {
       // launch popup can show a "war room roster" picker.
       setDeepAgentOptions(null);
       setDeepAgentSel(new Set());
+      setAllHandsActive(false);
       setDeepMemorySel("");
       void (async () => {
         try {
@@ -1181,6 +1219,7 @@ export default function ChatView() {
     setPendingDeepAuth({ chatId, content, hasImages, regenerate: true });
     setDeepAgentOptions(null);
     setDeepAgentSel(new Set());
+    setAllHandsActive(false);
     setDeepMemorySel("");
     void (async () => {
       try {
@@ -1269,6 +1308,8 @@ export default function ChatView() {
       (!scope?.thinking_level && activeChat?.thinking_level === "deep");
     if (isDeep) {
       stream.investigation = { phases: [], hypotheses: [], conclusion: null };
+      // Animated icon shown at the top while the investigation runs.
+      stream.deepIcon = DEEP_INVESTIGATION_ICON;
       setOpenInvestigation("__live__");
       // Auto-pin the side panel so it stays/reopens for the whole investigation and
       // when returning to this chat later (user can unpin via the panel's pin button).
@@ -1560,12 +1601,27 @@ export default function ChatView() {
     void loadSuggestions(streamChatId);
   }
 
-  // Stop the in-flight response for the active chat. The backend persists partial
-  // output at checkpoints, so the answer-so-far is kept and the user can continue
-  // by simply sending another message (the history includes the partial turn).
+  // Stop the in-flight response for the active chat. The turn runs in a background
+  // task on the server (decoupled from the SSE connection), so we must tell the server
+  // to cancel it — aborting only the local fetch would leave it running and the UI
+  // would just reconnect to it. The backend persists partial output at checkpoints, so
+  // the answer-so-far is kept and the user can continue by sending another message.
   function stopStreaming() {
     if (!activeId) return;
-    streamsRef.current.get(activeId)?.abort?.abort();
+    const chatId = activeId;
+    // Ask the server to cancel the background turn first, then drop the local stream.
+    void api.stopTurn(chatId).catch(() => {});
+    streamsRef.current.get(chatId)?.abort?.abort();
+    streamsRef.current.delete(chatId);
+    markStreaming(chatId, false);
+    // Refresh the transcript so the persisted partial answer shows, and clear the
+    // server-active spinner state quickly.
+    qc.invalidateQueries({ queryKey: ["activeTurns"] });
+    void api.listMessages(chatId).then((msgs) => {
+      if (viewRef.current === chatId) setMessages(msgs);
+      rerender();
+    });
+    rerender();
   }
 
   // Read image files into base64 data URLs and queue them as attachments.
@@ -1894,6 +1950,60 @@ export default function ChatView() {
     setSelectedWorkloadId(activeChat?.workload_id ?? null);
   }, [activeChat?.id, activeChat?.thinking_level, activeChat?.agent_id, activeChat?.workload_id]);
 
+  // Handoff from the Architecture Memory screen: "Investigate with this memory" stores a
+  // one-shot scope in sessionStorage and navigates to /chat. We preselect deep mode + the
+  // workload + the architecture's memory on the new-chat composer; sending the first
+  // message creates the chat (the proven path). We pin syncedChatRef so the chat-sync
+  // effect won't reset the level back to normal for the empty new-chat view.
+  useEffect(() => {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("azsup.memoryHandoff"); } catch { /* ignore */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem("azsup.memoryHandoff"); } catch { /* ignore */ }
+    let scope: { workloadId?: string; memoryArchId?: string };
+    try { scope = JSON.parse(raw); } catch { return; }
+    // Apply the deep scope to the current composer. Pin syncedChatRef so the chat-sync
+    // effect won't reset the level back to normal.
+    syncedChatRef.current = activeChat?.id ?? null;
+    setThinkingLevel("deep");
+    if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
+    if (scope.memoryArchId) setDeepMemorySel(scope.memoryArchId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  // Handoff from the Identity dashboard: "Investigate" stores a one-shot scope (optional
+  // owning workload + a prefilled prompt) in sessionStorage and navigates to /chat. We
+  // preselect the workload (when resolved) and prefill the composer so the user can review
+  // and send. Sending the first message creates the chat (the proven path).
+  useEffect(() => {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("azsup.identityHandoff"); } catch { /* ignore */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem("azsup.identityHandoff"); } catch { /* ignore */ }
+    let scope: { workloadId?: string; prompt?: string };
+    try { scope = JSON.parse(raw); } catch { return; }
+    syncedChatRef.current = activeChat?.id ?? null;
+    if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
+    if (scope.prompt) setInputSynced(scope.prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  // Handoff from Backup & DR Coverage: "Investigate in War Room" stores deep mode +
+  // workload + a gap-preloaded prompt; we open the deep (War Room) composer prefilled.
+  useEffect(() => {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("azsup.warRoomHandoff"); } catch { /* ignore */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem("azsup.warRoomHandoff"); } catch { /* ignore */ }
+    let scope: { workloadId?: string; prompt?: string };
+    try { scope = JSON.parse(raw); } catch { return; }
+    syncedChatRef.current = activeChat?.id ?? null;
+    setThinkingLevel("deep");
+    if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
+    if (scope.prompt) setInputSynced(scope.prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
   // Surface the Deep Investigation side panel as soon as a new/empty chat is put into
   // deep mode (before any message streams a hypothesis tree). It shows an idle
   // placeholder; sending a message swaps it for the live run. The effect only auto-
@@ -2032,6 +2142,9 @@ export default function ChatView() {
             onClick={() => selectChat(c.id)}
             className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left"
           >
+            {c.thinking_level === "deep" && (
+              <WarRoomIcon className="h-4 w-4 shrink-0" />
+            )}
             {c.pinned && <PinIcon className="h-3 w-3 shrink-0 text-gray-400" />}
             <span className="truncate">{c.title}</span>
           </button>
@@ -2268,7 +2381,8 @@ export default function ChatView() {
             </div>
           ))}
 
-        {/* Sub Agents: a plain link to the agent-management page. Admin-only. */}
+        {/* Sub Agents: a top-level link (next to Automations) to the management page.
+            Admin-only. Clicking opens the management page; it does NOT expand a submenu. */}
         {me?.role === "admin" &&
           (railCollapsed ? (
             <Link
@@ -2448,11 +2562,10 @@ export default function ChatView() {
           ))}
 
         {/* Proactive Support: posture/forensic dashboards grouped under one expandable
-            menu (Identity, Monitoring/Telemetry/Backup-DR coverage, Retirement Radar,
-            Telemetry Intelligence, Performance Profiler, Evidence Locker). Admin-only. */}
+            menu (Monitoring/Telemetry/Backup-DR coverage, Evidence Locker, Retirement
+            Radar, Telemetry Intelligence, Performance Profiler). Admin-only. */}
         {me?.role === "admin" && (() => {
           const items = [
-            { to: "/architectures", label: "Architectures", Icon: ArchitectureIcon, active: inArchitectures },
             { to: "/assessments", label: "Assessments", Icon: AssessmentIcon, active: inAssessments },
             { to: "/identity", label: "Identity", Icon: IdentityIcon, active: inIdentity },
             { to: "/rbac", label: "RBAC", Icon: RbacIcon, active: inRbac },
@@ -2461,14 +2574,14 @@ export default function ChatView() {
             { to: "/backupdr", label: "Backup & DR Coverage", Icon: BackupIcon, active: inBackupDr },
             { to: "/radar", label: "Retirement Radar", Icon: RadarIcon, active: inRadar },
             { to: "/reservations", label: "Reservations Monitor", Icon: ReservationIcon, active: inReservations },
-            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/telemetry-intel", label: "Telemetry Intelligence", Icon: TelemetryIntelIcon, active: inTeleIntel },
+            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/evidence", label: "Evidence Locker", Icon: EvidenceIcon, active: inEvidence },
           ];
           const anyActive = items.some((i) => i.active);
           return railCollapsed ? (
             <Link
-              to="/architectures"
+              to="/coverage"
               title="Proactive Support"
               className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
                 anyActive
@@ -2519,6 +2632,35 @@ export default function ChatView() {
             </div>
           );
         })()}
+
+        {/* Architectures: visual application architecture diagrams (manual or AI). All users. */}
+        {railCollapsed ? (
+          <Link
+            to="/architectures"
+            title="Architectures"
+            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+              inArchitectures
+                ? "bg-gray-200 text-gray-900"
+                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+            }`}
+          >
+            <ArchitectureIcon className="h-[18px] w-[18px]" />
+          </Link>
+        ) : (
+          <div className="mb-1 px-2">
+            <Link
+              to="/architectures"
+              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                inArchitectures
+                  ? "bg-gray-200 font-medium text-gray-900"
+                  : "text-gray-700 hover:bg-gray-200/60"
+              }`}
+            >
+              <ArchitectureIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+              <span>Architectures</span>
+            </Link>
+          </div>
+        )}
 
         {/* Settings: an expandable menu (mirrors Automations). URL-driven so a refresh
             restores the same panel. Admin-only. */}
@@ -2730,14 +2872,6 @@ export default function ChatView() {
             </Suspense>
           </PanelErrorBoundary>
         </main>
-      ) : inRbac ? (
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <PanelErrorBoundary name="RBAC">
-            <Suspense fallback={<PanelLoading />}>
-              <RbacPanel tab={rbacTab} />
-            </Suspense>
-          </PanelErrorBoundary>
-        </main>
       ) : inAssessments ? (
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Assessments">
@@ -2759,6 +2893,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Policy">
             <Suspense fallback={<PanelLoading />}>
               <PolicyPanel tab={policyTab} />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inRbac ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="RBAC">
+            <Suspense fallback={<PanelLoading />}>
+              <RbacPanel tab={rbacTab} />
             </Suspense>
           </PanelErrorBoundary>
         </main>
@@ -2887,7 +3029,7 @@ export default function ChatView() {
                         <StarterCategory
                           key={cat.title}
                           category={cat}
-                          onPick={(prompt) => void send(prompt)}
+                          onPick={(prompt) => fillComposer(prompt)}
                         />
                       ))}
                     </div>
@@ -2908,7 +3050,7 @@ export default function ChatView() {
                           node={node}
                           depth={0}
                           trail={[]}
-                          onPick={(prompt) => void send(prompt)}
+                          onPick={(prompt) => fillComposer(prompt)}
                         />
                       ))}
                     </div>
@@ -3020,6 +3162,25 @@ export default function ChatView() {
             {/* Live progress for the in-flight turn */}
             {streaming && (
               <div className="space-y-2">
+                {/* Deep investigation: a random animated agent icon at the top. */}
+                {live?.deepIcon && (
+                  <div className="flex items-center gap-3 rounded-lg border border-brand/20 bg-gradient-to-br from-brand/10 to-transparent px-4 py-3">
+                    <img
+                      src={live.deepIcon}
+                      alt=""
+                      aria-hidden="true"
+                      className="h-12 w-12 shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-800">
+                        Deep investigation in progress
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Specialist agents are analyzing your Azure environment…
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {/* Live progress feed — appears immediately, streams details, and shows
                     the answer-so-far inside the same panel. */}
                 <LiveProgress
@@ -3051,7 +3212,7 @@ export default function ChatView() {
                 <Bubble role="user" content={pendingDeepAuth.content} />
                 <div className="rounded-xl border border-brand/30 bg-brand/5 p-4">
                   <div className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-800">
-                    <SparkleIcon className="h-4 w-4 text-brand" />
+                    <WarRoomIcon className="h-5 w-5" />
                     Assemble your investigation team
                   </div>
                   <div className="mb-3 text-xs text-gray-500">
@@ -3067,7 +3228,33 @@ export default function ChatView() {
                       Couldn’t load suggestions — the investigation will pick agents automatically.
                     </div>
                   ) : (
-                    <div className="mb-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    <div className="mb-3">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-gray-500">
+                          {deepAgentSel.size} of {deepAgentOptions.length} selected
+                        </span>
+                        <button
+                          onClick={() => {
+                            if (allHandsActive) {
+                              // Restore the selection that was in effect before All Hands.
+                              setDeepAgentSel(new Set(allHandsPrevSel));
+                              setAllHandsActive(false);
+                            } else {
+                              setAllHandsPrevSel(new Set(deepAgentSel));
+                              setDeepAgentSel(new Set(deepAgentOptions.map((a) => a.id)));
+                              setAllHandsActive(true);
+                            }
+                          }}
+                          className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                            allHandsActive
+                              ? "border-brand bg-brand text-white"
+                              : "border-brand/40 bg-white text-brand hover:bg-brand/5"
+                          }`}
+                        >
+                          🙌 All Hands On Deck
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                       {deepAgentOptions.map((a) => {
                         const on = deepAgentSel.has(a.id);
                         return (
@@ -3078,6 +3265,7 @@ export default function ChatView() {
                                 const next = new Set(prev);
                                 if (next.has(a.id)) next.delete(a.id);
                                 else next.add(a.id);
+                                setAllHandsActive(false);
                                 return next;
                               })
                             }
@@ -3111,6 +3299,7 @@ export default function ChatView() {
                           </button>
                         );
                       })}
+                      </div>
                     </div>
                   )}
 
@@ -4727,7 +4916,7 @@ const KEY_BASED_PROVIDERS = new Set([
   "openrouter",
 ]);
 
-const RECENT_MODELS_KEY = "aznet.recentModels.v1";
+const RECENT_MODELS_KEY = "azsup.recentModels.v1";
 
 type RecentModel = { provider: string; model: string };
 
@@ -5928,6 +6117,16 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
   // Mermaid diagrams: render the chart instead of the raw code fence.
   if (lang === "mermaid" && trimmed) {
     return <MermaidDiagram code={trimmed} />;
+  }
+  // Interactive Azure Monitor metric chart from a ```azchart { ...spec } block.
+  if (lang === "azchart" && trimmed) {
+    return (
+      <Suspense
+        fallback={<div className="my-3 h-[340px] w-full animate-pulse rounded-xl bg-gray-100" />}
+      >
+        <MetricChart spec={trimmed} />
+      </Suspense>
+    );
   }
   const firstToken = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
   const singleCommand = !trimmed.includes("\n");

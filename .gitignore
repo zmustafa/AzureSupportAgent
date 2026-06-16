@@ -80,6 +80,9 @@ playwright-report/
 test-results/
 .playwright/
 
+# --- Local-only E2E test suite  -------
+/e2e/
+
 # --- Editors / OS ------------------------------------------------------------
 .vscode/
 .idea/

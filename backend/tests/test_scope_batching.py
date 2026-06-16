@@ -187,3 +187,40 @@ def test_light_projection_does_not_chunk(monkeypatch):
     assert len(seen) == 1  # single query, no chunking for the light projection
     assert len(rows) == 50
 
+
+def test_heavy_subscription_predicate_falls_back_to_id_enumeration(monkeypatch):
+    """A whole-subscription predicate (no id list to bisect) that truncates under a heavy
+    projection must fall back to enumerating ids with a light projection, then re-query in
+    adaptive id-batches — so the scan succeeds instead of surfacing 'Output truncated'.
+
+    This is the Backup & DR subscription-scope bug: ``subscriptionId =~ '<guid>'`` with the
+    full-``properties`` projection blew the 256 KB cap and could not be split."""
+    import json
+
+    sub_pred = f"subscriptionId =~ '{_SUB}'"
+    all_ids = [f"/subscriptions/{_SUB}/providers/Microsoft.Compute/virtualMachines/vm-{i}" for i in range(30)]
+    calls = {"heavy_sub": 0, "id_enum": 0, "heavy_ids": 0}
+
+    async def _capture(kql, connection, *, output="json", session_config_dir=None):
+        is_heavy = "properties" in kql
+        # The whole-subscription heavy query truncates (too many heavy rows, no id list).
+        if is_heavy and "subscriptionId =~" in kql:
+            calls["heavy_sub"] += 1
+            return CaptureResult(ok=False, error="Output truncated at 256 KB.")
+        # Light id-only enumeration of the subscription succeeds (ids are tiny).
+        if not is_heavy and "project id" in kql and "subscriptionId =~" in kql:
+            calls["id_enum"] += 1
+            return CaptureResult(ok=True, stdout=json.dumps([{"id": i} for i in all_ids]))
+        # Heavy re-query by id-batch succeeds.
+        toks = re.findall(r"'([^']+)'", kql)
+        calls["heavy_ids"] += 1
+        return CaptureResult(ok=True, stdout=json.dumps([{"id": t, "name": "n", "type": "t"} for t in toks]))
+
+    monkeypatch.setattr(runner, "run_kql_capture", _capture)
+    rows = asyncio.run(query_resources_batched([sub_pred], None, projection=_PROJ))
+    got = sorted(r["id"] for r in rows)
+    assert got == sorted(all_ids), got  # every resource returned despite the truncation
+    assert calls["heavy_sub"] == 1   # tried the whole-subscription heavy query once
+    assert calls["id_enum"] == 1     # then enumerated ids with a light projection
+    assert calls["heavy_ids"] >= 1   # then pulled properties in id-batches
+

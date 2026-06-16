@@ -155,6 +155,7 @@ export function SubscriptionScopePicker({
         onClick={() => setOpen((o) => !o)}
         className="flex w-64 items-center gap-1 rounded-lg border px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
         title={value ? `${valueName || ""} ${value}`.trim() : "Pick a subscription from the management-group tree"}
+        data-testid="sub-picker-trigger"
       >
         <span className="shrink-0">📦</span>
         <span className="truncate">{value ? valueName || value : "Select subscription…"}</span>

@@ -342,3 +342,40 @@ def test_arm_rest_diag_exists_not_applicable_without_subs(monkeypatch):
     assert base["status"] == "not_applicable"
 
 
+
+
+# ----------------------------------------------------------------- v6 ARG additions (resource locks, low SKU, NSP, NSG flow logs)
+def test_v6_new_arg_checks_present_and_graph():
+    # The 6 verified v6 controls added as automated Resource Graph checks.
+    new = ["cis_6_1_1_5", "cis_6_1_5", "cis_6_2", "cis_7_16", "cis_9_3_9", "cis_9_3_10"]
+    for cid in new:
+        chk = catalog._BY_ID[cid]
+        assert chk["pillar"] == "security", cid
+        assert chk["profile"] in ("L1", "L2"), cid
+        assert chk["kind"] in ("graph",), cid
+        assert chk["kql"], cid  # non-empty KQL
+        assert chk["frameworks"]["cis"] == [f"CIS Azure {cid.replace('cis_', '').replace('_', '.')}"], cid
+
+
+def test_v6_lock_checks_are_inheritance_aware():
+    # The lock checks must leftouter-join locks and prefix-match the resource id so an
+    # RG/subscription-scoped lock covers its children (no false positives).
+    for cid, level in (("cis_9_3_9", "CanNotDelete"), ("cis_9_3_10", "ReadOnly"), ("cis_6_2", "CanNotDelete")):
+        kql = catalog._BY_ID[cid]["kql"]
+        assert "microsoft.authorization/locks" in kql, cid
+        assert f"=~ '{level}'" in kql, cid
+        assert "startswith" in kql, cid          # prefix (inheritance) match
+        assert "leftouter" in kql, cid
+
+
+def test_v6_nsp_is_existence_check():
+    chk = catalog._BY_ID["cis_7_16"]
+    assert chk["expectation"] == "present"
+    assert "networksecurityperimeters" in chk["kql"]
+    assert "subscriptionId" in chk["kql"]
+
+
+def test_v6_low_sku_flags_constrained_tiers():
+    kql = catalog._BY_ID["cis_6_1_5"]["kql"]
+    for tier in ("Free", "Basic", "Shared", "Consumption"):
+        assert tier in kql

@@ -382,6 +382,16 @@ async def query_resources_batched(
         )
         return await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
 
+    async def _enumerate_ids(pred: str) -> list[str]:
+        # Light id-only projection of the SAME predicate — ids are tiny, so this stays under the
+        # 256 KB capture cap even when the full-``properties`` version of the predicate blows it.
+        # Returns QUOTED tokens ("'<id>'") to match what ``_run_ids_adaptive`` expects.
+        kql = f"Resources | where {pred} | project id | order by id asc | take {take}"
+        cap = await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
+        if not cap.ok:
+            raise RuntimeError(cap.error or "Resource id enumeration failed.")
+        return [f"'{_esc(str(r.get('id', '')))}'" for r in _parse_rows(cap.stdout) if r.get("id")]
+
     def _merge(rows: list[dict[str, Any]]) -> None:
         for r in rows:
             rid = str(r.get("id", "")).lower()
@@ -420,9 +430,20 @@ async def query_resources_batched(
                 await _run_ids_adaptive(toks[i : i + _HEAVY_PROJECTION_CHUNK])
         else:
             cap = await _run(pred)
-            if not cap.ok:
-                raise RuntimeError(cap.error or "Resource query failed.")
-            _merge(_parse_rows(cap.stdout))
+            if cap.ok:
+                _merge(_parse_rows(cap.stdout))
+                continue
+            truncated = "truncat" in (cap.error or "").lower()
+            if heavy and truncated:
+                # A NON-id-list predicate (e.g. a whole subscription) matched too many heavy
+                # resources to return in one 256 KB capture, and there's no id list to bisect.
+                # Enumerate the matching ids with a light projection, then pull full properties
+                # in adaptive id-batches (which bisect further if any batch still truncates).
+                ids = await _enumerate_ids(pred)
+                for i in range(0, len(ids), _HEAVY_PROJECTION_CHUNK):
+                    await _run_ids_adaptive(ids[i : i + _HEAVY_PROJECTION_CHUNK])
+                continue
+            raise RuntimeError(cap.error or "Resource query failed.")
     return out
 
 

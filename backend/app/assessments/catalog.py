@@ -1686,6 +1686,39 @@ def _cis_no_private_endpoint(rec: str, profile: str, target_type: str, label: st
     )
 
 
+def _cis_lock(
+    rec: str, profile: str, level: str, types: list[str], label: str, summary: str,
+) -> dict[str, Any]:
+    """A CIS v5 'resource locks' control: flag in-scope resources of the given ``types`` that
+    are NOT protected by a management lock of ``level`` ('CanNotDelete' or 'ReadOnly') at
+    their own scope OR an inherited (resource-group / subscription) scope. Lock inheritance is
+    resolved by matching any lock whose scope is a prefix of the resource id (joined within the
+    subscription, then prefix-filtered, so an RG/subscription lock correctly covers children)."""
+    type_list = ", ".join(f"'{t}'" for t in types)
+    return _cis(
+        rec, profile, label,
+        summary,
+        types,
+        f"| where type in~ ({type_list}) "
+        "| extend _rid = tolower(id) "
+        "| join kind=leftouter (resources "
+        "| where type =~ 'microsoft.authorization/locks' "
+        f"| where tostring(properties.level) =~ '{level}' "
+        "| extend _lscope = tolower(tostring(split(id, '/providers/Microsoft.Authorization/locks/')[0])) "
+        "| project subscriptionId, _lscope) on subscriptionId "
+        "| extend _covered = iff(isempty(_lscope), false, _rid startswith _lscope) "
+        "| summarize _anyCov = max(_covered) by id, name, type, resourceGroup, subscriptionId "
+        "| where _anyCov != true "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        f"Apply a '{level}' management lock to the resource (or its resource group / subscription).",
+        remediation_command=(
+            f"az lock create --name <lockName> --lock-type {level} "
+            "--resource-name <name> --resource-group <rg> --resource-type <type>"
+        ),
+        learn_more=["https://learn.microsoft.com/azure/azure-resource-manager/management/lock-resources"],
+    )
+
+
 _CIS_V5: list[dict[str, Any]] = [
     # ---------- 2.x Analytics — Azure Databricks ----------
     _cis(
@@ -1774,6 +1807,60 @@ _CIS_V5: list[dict[str, Any]] = [
         "| where type =~ 'microsoft.insights/components' | project subscriptionId",
         "Create an Application Insights resource and instrument your applications.",
         expectation="present",
+    ),
+    _cis(
+        "6.1.1.5", "L2",
+        "NSG flow logs disabled or not sent to Log Analytics",
+        "CIS 6.1.1.5: Network Security Group flow logs should be captured and sent to Log "
+        "Analytics. This flags NSG-targeted flow logs that are disabled or have no Log Analytics "
+        "(traffic analytics) workspace configured. (NSGs with no flow log at all aren't surfaced "
+        "by this check — create a flow log for every NSG.)",
+        ["microsoft.network/networkwatchers/flowlogs"],
+        "| where type =~ 'microsoft.network/networkwatchers/flowlogs' "
+        "| where tolower(tostring(properties.targetResourceId)) has 'networksecuritygroups' "
+        "| extend _en = tobool(properties.enabled), "
+        "_ws = tostring(properties.flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration.workspaceResourceId) "
+        "| where _en != true or isempty(_ws) "
+        "| project id, name = tostring(split(id, '/')[-1]), type, resourceGroup, subscriptionId",
+        "Enable the NSG flow log and configure traffic analytics to a Log Analytics workspace.",
+    ),
+    _cis(
+        "6.1.5", "L2",
+        "Monitored production resources on Basic/Free/Consumption SKUs",
+        "CIS 6.1.5: Basic, Free, Shared, and Consumption SKUs should not be used on production "
+        "artifacts that require monitoring and an SLA — these tiers lack the diagnostic depth and "
+        "availability guarantees of Standard/Premium. Review flagged resources and upgrade those "
+        "that are production workloads.",
+        [
+            "microsoft.web/serverfarms",
+            "microsoft.cache/redis",
+            "microsoft.dbforpostgresql/flexibleservers",
+            "microsoft.dbformysql/flexibleservers",
+            "microsoft.sql/servers/databases",
+            "microsoft.containerregistry/registries",
+        ],
+        "| where type in~ ('microsoft.web/serverfarms', 'microsoft.cache/redis', "
+        "'microsoft.dbforpostgresql/flexibleservers', 'microsoft.dbformysql/flexibleservers', "
+        "'microsoft.sql/servers/databases', 'microsoft.containerregistry/registries') "
+        "| extend _tier = tostring(sku.tier), _sku = tostring(sku.name) "
+        "| where _tier in~ ('Free', 'Basic', 'Shared', 'Consumption') "
+        "or _sku in~ ('Free', 'Basic', 'Shared', 'Consumption', 'F1', 'D1', 'Y1') "
+        "| project id, name, type, resourceGroup, subscriptionId",
+        "Move production resources to a Standard/Premium SKU that meets your monitoring and SLA needs.",
+    ),
+    _cis_lock(
+        "6.2", "L2", "CanNotDelete",
+        [
+            "microsoft.compute/virtualmachines",
+            "microsoft.sql/servers",
+            "microsoft.keyvault/vaults",
+            "microsoft.documentdb/databaseaccounts",
+        ],
+        "Mission-critical resources without a delete lock",
+        "CIS 6.2: resource locks should be set for mission-critical Azure resources so they "
+        "cannot be accidentally deleted. This flags critical resource types (VMs, SQL servers, "
+        "Key Vaults, Cosmos DB) with no 'CanNotDelete' lock at their own, resource-group, or "
+        "subscription scope. Review and lock the ones that are genuinely mission-critical.",
     ),
     # ---------- 7.x Networking ----------
     _cis(
@@ -1915,6 +2002,39 @@ _CIS_V5: list[dict[str, Any]] = [
         "Enable soft delete for file shares with a sufficient retention period.",
     ),
     _cis(
+        "9.1.2", "L1",
+        "SMB file shares allowing SMB protocol below 3.1.1",
+        "CIS 9.1.2: the SMB 'protocol version' for Azure file shares should be SMB 3.1.1 or higher. "
+        "Leaving the default (or allowing SMB 2.1 / 3.0) permits weaker, less secure dialects.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/fileservices' "
+        "| extend _smbVer = tostring(properties.protocolSettings.smb.versions) "
+        "| where isempty(_smbVer) or _smbVer has 'SMB2.1' or _smbVer has 'SMB3.0' "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Set the file service SMB protocol version to 'SMB3.1.1' only (remove SMB2.1 / SMB3.0).",
+        remediation_command=(
+            "az storage account file-service-properties update --account-name <sa> "
+            "--resource-group <rg> --versions SMB3.1.1"
+        ),
+    ),
+    _cis(
+        "9.1.3", "L1",
+        "SMB file shares allowing weaker channel encryption than AES-256-GCM",
+        "CIS 9.1.3: the SMB 'channel encryption' for Azure file shares should be AES-256-GCM or "
+        "higher. Leaving the default (or allowing AES-128-CCM / AES-128-GCM) permits weaker "
+        "in-transit encryption.",
+        ["microsoft.storage/storageaccounts"],
+        "| where type =~ 'microsoft.storage/storageaccounts/fileservices' "
+        "| extend _enc = tostring(properties.protocolSettings.smb.channelEncryption) "
+        "| where isempty(_enc) or _enc has 'AES-128' "
+        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "Set the file service SMB channel encryption to 'AES-256-GCM' only.",
+        remediation_command=(
+            "az storage account file-service-properties update --account-name <sa> "
+            "--resource-group <rg> --channel-encryption AES-256-GCM"
+        ),
+    ),
+    _cis(
         "9.2.1", "L1",
         "Blob storage without blob soft delete enabled",
         "CIS 9.2.1: soft delete for blobs should be enabled so deleted blobs can be recovered "
@@ -2006,6 +2126,23 @@ _CIS_V5: list[dict[str, Any]] = [
         "| where tostring(sku.name) in~ ('Standard_LRS', 'Standard_ZRS', 'Premium_LRS', 'Premium_ZRS') "
         f"{_PROJECT}",
         "Reconfigure critical storage accounts to a geo-redundant SKU (GRS / RA-GRS / GZRS).",
+    ),
+    _cis_lock(
+        "9.3.9", "L1", "CanNotDelete",
+        ["microsoft.storage/storageaccounts"],
+        "Storage accounts without a delete lock",
+        "CIS 9.3.9: an Azure Resource Manager 'CanNotDelete' lock should be applied to storage "
+        "accounts so they cannot be accidentally or maliciously deleted. This flags storage "
+        "accounts with no 'CanNotDelete' lock at their own, resource-group, or subscription scope.",
+    ),
+    _cis_lock(
+        "9.3.10", "L2", "ReadOnly",
+        ["microsoft.storage/storageaccounts"],
+        "Storage accounts without a read-only lock",
+        "CIS 9.3.10: an Azure Resource Manager 'ReadOnly' lock should be considered for storage "
+        "accounts whose configuration must not change. This flags storage accounts with no "
+        "'ReadOnly' lock at their own, resource-group, or subscription scope. (ReadOnly is "
+        "restrictive — apply only where appropriate.)",
     ),
     # ---------- Phase 3: data-plane controls (manual attestation) ----------
     _cis_manual(
@@ -2245,6 +2382,33 @@ _CIS_V5: list[dict[str, Any]] = [
         "| where isnull(_days) or _days < 90 "
         "| project id, name = tostring(split(id, '/')[-1]), type, resourceGroup, subscriptionId",
         "Set virtual network flow log retention to at least 90 days.",
+    ),
+    _cis(
+        "7.9", "L2",
+        "VPN Gateway point-to-site not restricted to Microsoft Entra ID authentication",
+        "CIS 7.9: for Azure VPN Gateway point-to-site configurations, the 'Authentication type' "
+        "should be 'Azure Active Directory' (Microsoft Entra ID) only — certificate or RADIUS "
+        "authentication is weaker and harder to govern centrally.",
+        ["microsoft.network/virtualnetworkgateways"],
+        "| where type =~ 'microsoft.network/virtualnetworkgateways' "
+        "| where isnotnull(properties.vpnClientConfiguration) "
+        "| extend _authTypes = properties.vpnClientConfiguration.vpnAuthenticationTypes "
+        "| where isnull(_authTypes) or array_length(_authTypes) != 1 or tostring(_authTypes[0]) !~ 'AAD' "
+        f"{_PROJECT}",
+        "Configure the VPN Gateway point-to-site 'Authentication type' to Azure Active Directory "
+        "(Microsoft Entra ID) only.",
+    ),
+    _cis(
+        "7.16", "L2",
+        "No Network Security Perimeter configured in the subscription",
+        "CIS 7.16: an Azure Network Security Perimeter (NSP) should be used to secure Azure "
+        "Platform-as-a-Service resources behind an explicit network boundary. This flags "
+        "subscriptions with no Network Security Perimeter resource.",
+        [],
+        "| where type =~ 'microsoft.network/networksecurityperimeters' | project subscriptionId",
+        "Create a Network Security Perimeter and associate your PaaS resources with it.",
+        expectation="present",
+        learn_more=["https://learn.microsoft.com/azure/private-link/network-security-perimeter-concepts"],
     ),
     _cis(
         "7.15", "L2",

@@ -4072,6 +4072,9 @@ export async function streamRbacRefresh(
 
 // ---- App Registrations background refresh (SSE) --------------------------------
 export type AppRegProgress = { seq: number; ts: string; level: "info" | "ok" | "warn" | "error"; message: string };
+
+/** Follow the background Application Registrations refresh over SSE. The server job keeps
+ *  running even if this stream disconnects — re-calling re-attaches and replays the log. */
 export async function streamAppRegistrationsRefresh(
   handlers: {
     onStart?: (d: { id: string; status: string; started_at: string }) => void;

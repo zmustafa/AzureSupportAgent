@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -15,6 +15,7 @@ import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { TrendChart } from "./TrendChart";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 
 const STATUS_META: Record<string, { label: string; dot: string; cls: string }> = {
   none: { label: "No diagnostics", dot: "bg-red-500", cls: "text-red-600" },
@@ -82,7 +83,6 @@ export function TelemetryCoveragePanel() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ group: TelemetryGroup; row: TelemetryRow } | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -109,6 +109,11 @@ export function TelemetryCoveragePanel() {
   const [loadedScope, setLoadedScope] = usePersistedState<string>("azsup.telemetry.loadedScope", "");
   const enabled = scopeReady && loadedScope === scopeKey;
 
+  // Background refresh (per-scope) — survives scope switches + navigation.
+  const refreshKey = `telemetry:${scopeKey}`;
+  const refreshVersion = useBackgroundRefresh();
+  const refreshing = isRefreshing(refreshKey);
+
   const covQ = useQuery({
     queryKey: ["telemetry", scopeKind, effectiveWorkloadId, subId],
     queryFn: () => api.telemetryCoverage(params),
@@ -129,19 +134,26 @@ export function TelemetryCoveragePanel() {
   }
 
   async function doRefresh() {
-    setRefreshing(true);
+    if (refreshing || !scopeReady) return;
     setMsg(null);
-    try {
-      const fresh = await api.refreshTelemetry(params);
-      setLoadedScope(scopeKey);
-      qc.setQueryData(["telemetry", scopeKind, effectiveWorkloadId, subId], fresh);
-      trendQ.refetch();
-    } catch (e) {
-      setMsg({ text: formatError(e), ok: false });
-    } finally {
-      setRefreshing(false);
-    }
+    setLoadedScope(scopeKey);
+    const p = params;
+    const dataKey = ["telemetry", scopeKind, effectiveWorkloadId, subId] as const;
+    const trendKey = ["telemetry-trend", scopeKind, effectiveWorkloadId, subId] as const;
+    startBackgroundRefresh(refreshKey, async () => {
+      const fresh = await api.refreshTelemetry(p);
+      qc.setQueryData(dataKey, fresh);
+      await qc.invalidateQueries({ queryKey: trendKey });
+    });
   }
+
+  // Surface an error from a background refresh that finished (possibly while away).
+  useEffect(() => {
+    if (!refreshing) {
+      const err = takeRefreshError(refreshKey);
+      if (err) setMsg({ text: err, ok: false });
+    }
+  }, [refreshVersion, refreshKey, refreshing]);
 
   function download(text: string, name: string) {
     const blob = new Blob([text], { type: "text/plain" });
@@ -292,11 +304,12 @@ export function TelemetryCoveragePanel() {
             )}
             <span className="text-xs text-gray-500">
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
+              {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
             </span>
             {!enabled && (
               <button onClick={loadCoverage} disabled={!scopeReady} className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">Load coverage</button>
             )}
-            <button onClick={() => void doRefresh()} disabled={refreshing || !scopeReady} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            <button onClick={doRefresh} disabled={refreshing || !scopeReady} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" data-testid="coverage-refresh">
               {refreshing ? "Refreshing…" : "↻ Refresh now"}
             </button>
             <button onClick={() => download(JSON.stringify(data, null, 2), `telemetry-${data?.scope_name || "export"}.json`)} disabled={!data} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">⬇ Export</button>
