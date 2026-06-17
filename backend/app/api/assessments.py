@@ -777,6 +777,15 @@ async def export_run_endpoint(
         sub_names = await _resolve_subscription_names(run, findings)
         buf = io.StringIO()
         w = csv.writer(buf)
+
+        # Excel / LibreOffice treat a cell starting with `= + - @` as a formula —
+        # an attacker who controls any flagged-resource name can run code on the
+        # admin's workstation when the CSV is opened. Prefix with an apostrophe
+        # to force literal text. Shared with the RBAC CSV export.
+        from app.rbac.export import _csv_safe
+
+        def _safe_row(values: list) -> list:
+            return [_csv_safe(v) for v in values]
         # One row per flagged resource (findings with no resources emit a single row with
         # empty resource columns) so the export is pivot-friendly and includes resource ids.
         w.writerow([
@@ -803,12 +812,12 @@ async def export_run_endpoint(
                     sub_id = r.get("subscription_id", "")
                     # Prefer the real, per-resource command (placeholders already filled).
                     cmd = r.get("remediation_command") or template_cmd
-                    w.writerow(base + [
+                    w.writerow(_safe_row(base + [
                         r.get("name", ""), rid, sub_id, sub_names.get(sub_id, ""),
                         r.get("resource_group", ""), r.get("type", ""), portal,
-                    ] + frameworks_cols + [remediation, cmd])
+                    ] + frameworks_cols + [remediation, cmd]))
             else:
-                w.writerow(base + ["", "", "", "", "", "", ""] + frameworks_cols + [remediation, template_cmd])
+                w.writerow(_safe_row(base + ["", "", "", "", "", "", ""] + frameworks_cols + [remediation, template_cmd]))
         return StreamingResponse(
             iter([buf.getvalue()]),
             media_type="text/csv",

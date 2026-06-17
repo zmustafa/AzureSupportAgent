@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import oidc as oidc_mod
 from app.auth import saml as saml_mod
+from app.auth.ip_lockout import ip_lockout
 from app.auth.passwords import hash_password, needs_rehash, verify_password
 from app.auth.provisioning import provision_sso_user
 from app.auth.service import (
@@ -67,10 +68,25 @@ async def _audit(db: AsyncSession, actor: str, action: str, meta: dict[str, Any]
 
 
 def _client_ip(request: Request) -> str | None:
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else None
+    """Resolve the originating client IP.
+
+    Only honors ``X-Forwarded-For`` when the request's *direct* peer is a
+    pre-configured trusted reverse proxy (``settings.trusted_proxies``). Otherwise
+    the header is ignored so an attacker can't spoof their IP for audit logs or the
+    per-IP brute-force counter. With no proxy configured (default), we always fall
+    back to ``request.client.host``.
+    """
+    direct = request.client.host if request.client else None
+    trusted = {ip.strip() for ip in (settings.trusted_proxies or "").split(",") if ip.strip()}
+    if direct and direct in trusted:
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            # Standard format is `client, proxy1, proxy2, ...` — the first entry is
+            # the original client (the proxy chain prepends as it forwards).
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
+    return direct
 
 
 # --------------------------------------------------------------------------- config
@@ -126,12 +142,45 @@ async def login(
     if not cfg["local_login_enabled"]:
         raise HTTPException(status_code=403, detail="Local login is disabled.")
 
+    client_ip = _client_ip(request)
+
+    # Per-IP brute-force gate (auto-unlocks). Runs BEFORE the username lookup so a
+    # locked-out attacker can't use the endpoint as a username oracle either.
+    ip_enabled = bool(cfg.get("ip_rate_limit_enabled", True))
+    ip_max = int(cfg.get("ip_rate_limit_max_attempts", 15))
+    ip_window = float(cfg.get("ip_rate_limit_window_seconds", 300))
+    ip_lock_secs = float(cfg.get("ip_rate_limit_lockout_seconds", 900))
+    if ip_enabled and client_ip:
+        is_locked, remaining = await ip_lockout.check_locked(
+            client_ip, lockout_seconds=ip_lock_secs
+        )
+        if is_locked:
+            retry_after = max(1, int(remaining))
+            await _audit(db, body.username, "auth.login_blocked",
+                         {"reason": "ip_rate_limit", "ip": client_ip, "retry_after_s": retry_after})
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed sign-in attempts from this address. Try again later.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
     user = await find_user_by_login(db, body.username)
     # Generic failure to avoid user enumeration.
     fail = HTTPException(status_code=401, detail="Invalid username or password.")
 
+    async def _ip_failure() -> None:
+        if not (ip_enabled and client_ip):
+            return
+        await ip_lockout.record_failure(
+            client_ip,
+            max_attempts=ip_max,
+            window_seconds=ip_window,
+            lockout_seconds=ip_lock_secs,
+        )
+
     if user is None or user.status != "active":
-        await _audit(db, body.username, "auth.login_failed", {"reason": "unknown_or_inactive"})
+        await _audit(db, body.username, "auth.login_failed", {"reason": "unknown_or_inactive", "ip": client_ip})
+        await _ip_failure()
         raise fail
 
     # Lockout check. SQLite returns naive datetimes; treat them as UTC for comparison.
@@ -140,6 +189,7 @@ async def login(
 
         lu = user.locked_until if user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc)
         if _aware_now() < lu:
+            await _ip_failure()
             raise HTTPException(status_code=423, detail="Account temporarily locked. Try again later.")
 
     if not verify_password(user.password_hash, body.password):
@@ -150,14 +200,18 @@ async def login(
             user.locked_until = _aware_now() + timedelta(minutes=int(cfg["lockout_minutes"]))
             user.failed_attempts = 0
         await db.commit()
-        await _audit(db, user.username, "auth.login_failed", {"reason": "bad_password"})
+        await _audit(db, user.username, "auth.login_failed", {"reason": "bad_password", "ip": client_ip})
+        await _ip_failure()
         raise fail
 
     # Success: rehash if params changed, reset counters, create session.
     if needs_rehash(user.password_hash or ""):
         user.password_hash = hash_password(body.password)
     user.locked_until = None
-    sess = await create_session(db, user, _client_ip(request), request.headers.get("user-agent"))
+    # Clear the per-IP counter on a successful login so the user isn't punished
+    # for past mistakes from the same network.
+    await ip_lockout.clear(client_ip)
+    sess = await create_session(db, user, client_ip, request.headers.get("user-agent"))
     _set_session_cookie(response, sess.id)
     await _audit(db, user.username, "auth.login", {"source": "local"})
     perms, role_names = await effective(db, user)

@@ -138,9 +138,15 @@ def import_workbook(bundle: Any, *, actor: str) -> dict[str, Any]:
     return saved
 
 
-def import_playbook(bundle: Any, *, actor: str) -> dict[str, Any]:
+def import_playbook(bundle: Any, *, actor: str, tenant_id: str = "") -> dict[str, Any]:
     """Import a playbook bundle: import its inlined workbooks (de-duped by content),
-    remap step references to the new local ids, then create the playbook."""
+    remap step references to the new local ids, then create the playbook.
+
+    The optional ``tenant_id`` argument scopes the imported playbook to the calling
+    tenant; callers MUST pass this in multi-tenant deployments to prevent a bundle
+    from landing as a legacy global (tenant_id == "") record. Older callers that omit
+    it keep working but yield a global playbook (legacy behavior).
+    """
     bundle = _validate_envelope(bundle)
     if bundle.get("kind") != KIND_PLAYBOOK:
         raise ImportError_("This file is not a playbook export.")
@@ -198,6 +204,8 @@ def import_playbook(bundle: Any, *, actor: str) -> dict[str, Any]:
     pb_payload["name"] = _unique_name(str(pb_payload.get("name", "")), existing_pb_names)
     pb_payload["created_by"] = actor
     pb_payload.pop("id", None)
+    if tenant_id:
+        pb_payload["tenant_id"] = tenant_id
     saved = pb_registry.upsert_playbook(pb_payload)
     return {
         "playbook": saved,

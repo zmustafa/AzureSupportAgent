@@ -19,9 +19,16 @@ DEFAULTS: dict[str, Any] = {
     # Password policy.
     "password_min_length": 8,
     "password_require_complexity": False,
-    # Brute-force protection.
+    # Brute-force protection (per-account).
     "max_failed_attempts": 5,
     "lockout_minutes": 15,
+    # Brute-force protection (per-IP) — complements the per-account lockout above.
+    # The per-IP limiter trips before the per-account one when an attacker hammers
+    # MANY usernames from the same IP, and auto-unlocks after the configured cooldown.
+    "ip_rate_limit_enabled": True,
+    "ip_rate_limit_max_attempts": 15,
+    "ip_rate_limit_window_seconds": 300,   # count failures over a 5-minute sliding window
+    "ip_rate_limit_lockout_seconds": 900,  # 15-minute auto-unlock
     # Session lifetimes (minutes). idle=sliding, absolute=hard cap.
     "session_idle_minutes": 480,      # 8h
     "session_absolute_minutes": 10080,  # 7d

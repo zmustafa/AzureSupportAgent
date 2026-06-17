@@ -70,7 +70,16 @@ async def publish(
         note_id = note.id
 
         rules = (
-            await db.execute(select(NotificationRule).where(NotificationRule.enabled.is_(True)))
+            await db.execute(
+                select(NotificationRule).where(
+                    NotificationRule.enabled.is_(True),
+                    # Tenant-scoped fan-out: only rules owned by THIS tenant ever fire
+                    # for THIS tenant's events. Without this filter, an admin in
+                    # tenant A could route tenant B's notifications to their own
+                    # connectors (cross-tenant data leak).
+                    NotificationRule.tenant_id == tenant_id,
+                )
+            )
         ).scalars().all()
 
     # Determine target channels from matching rules.

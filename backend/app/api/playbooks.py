@@ -19,6 +19,22 @@ router = APIRouter(prefix="/playbooks", tags=["playbooks"])
 logger = logging.getLogger("app.api.playbooks")
 
 
+def _tenant_playbook_or_404(playbook_id: str, principal: Principal) -> dict[str, Any]:
+    """Load a playbook and verify the caller's tenant owns it.
+
+    Centralizes the per-id IDOR guard. An empty `tenant_id` on a registry row is a
+    legacy global record visible to any tenant (matches the list endpoint). Otherwise a
+    mismatch raises 404 (not 403) so a cross-tenant probe cannot confirm existence.
+    """
+    pb = pb_registry.get_playbook(playbook_id)
+    if pb is None:
+        raise HTTPException(status_code=404, detail="Playbook not found.")
+    pb_tenant = pb.get("tenant_id") or ""
+    if pb_tenant and pb_tenant != principal.tenant_id:
+        raise HTTPException(status_code=404, detail="Playbook not found.")
+    return pb
+
+
 class PlaybookStep(BaseModel):
     id: str = ""
     name: str = ""
@@ -55,18 +71,26 @@ async def upsert_playbook_endpoint(
     payload: PlaybookUpsert, principal: Principal = Depends(get_principal)
 ):
     data = payload.model_dump()
+    # When updating an existing playbook, verify the caller owns it before letting
+    # the merge proceed (otherwise a user could overwrite any tenant's playbook by
+    # supplying its id).
+    if payload.id:
+        _tenant_playbook_or_404(payload.id, principal)
     if not payload.id:
         data["created_by"] = principal.subject
     if not data.get("tenant_id"):
         data["tenant_id"] = principal.tenant_id
+    # Never let a caller forge an arbitrary tenant_id on the bundle; lock it to theirs.
+    data["tenant_id"] = principal.tenant_id
     saved = pb_registry.upsert_playbook(data)
     return {"playbook": saved}
 
 
 @router.delete("/{playbook_id}")
 async def delete_playbook_endpoint(
-    playbook_id: str, _: Principal = Depends(get_principal)
+    playbook_id: str, principal: Principal = Depends(get_principal)
 ):
+    _tenant_playbook_or_404(playbook_id, principal)
     if not pb_registry.delete_playbook(playbook_id):
         raise HTTPException(status_code=404, detail="Playbook not found.")
     return {"ok": True}
@@ -78,10 +102,11 @@ class PlaybookImportRequest(BaseModel):
 
 
 @router.get("/{playbook_id}/export")
-async def export_playbook_endpoint(playbook_id: str, _: Principal = Depends(get_principal)):
+async def export_playbook_endpoint(playbook_id: str, principal: Principal = Depends(get_principal)):
     """A portable bundle for a playbook, inlining every workbook its steps reference."""
     from app.automations.portability import export_playbook
 
+    _tenant_playbook_or_404(playbook_id, principal)
     bundle = export_playbook(playbook_id)
     if bundle is None:
         raise HTTPException(status_code=404, detail="Playbook not found.")
@@ -93,13 +118,30 @@ async def import_playbook_endpoint(
     payload: PlaybookImportRequest, principal: Principal = Depends(get_principal)
 ):
     """Create a playbook from a bundle: imports referenced workbooks (de-duped by
-    content), remaps step references, then creates the playbook."""
+    content), remaps step references, then creates the playbook.
+
+    The imported playbook is forced into the caller's tenant regardless of what the
+    bundle says — a bundle should never elevate into another tenant or land in the
+    legacy global scope.
+    """
     from app.automations.portability import ImportError_, import_playbook
 
     try:
-        result = import_playbook(payload.bundle, actor=principal.subject)
+        result = import_playbook(
+            payload.bundle, actor=principal.subject, tenant_id=principal.tenant_id
+        )
     except ImportError_ as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TypeError:
+        # Backwards-compat fallback if the portability helper hasn't been updated yet:
+        # fall back to the no-tenant signature, then patch the saved playbook's tenant.
+        result = import_playbook(payload.bundle, actor=principal.subject)
+        saved_pb_id = (result or {}).get("playbook", {}).get("id") if isinstance(result, dict) else None
+        if saved_pb_id:
+            existing = pb_registry.get_playbook(saved_pb_id) or {}
+            existing["id"] = saved_pb_id
+            existing["tenant_id"] = principal.tenant_id
+            pb_registry.upsert_playbook(existing)
     return result
 
 
@@ -150,6 +192,7 @@ def pb_registry_workbooks() -> list[dict[str, Any]]:
 async def run_playbook_endpoint(
     playbook_id: str, principal: Principal = Depends(get_principal)
 ):
+    _tenant_playbook_or_404(playbook_id, principal)
     try:
         result = await run_playbook(
             playbook_id, tenant_id=principal.tenant_id, actor=principal.subject, trigger="manual"

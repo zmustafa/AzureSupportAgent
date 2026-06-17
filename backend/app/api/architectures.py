@@ -26,6 +26,26 @@ router = APIRouter(prefix="/architectures", tags=["architectures"])
 logger = logging.getLogger("app.api.architectures")
 
 
+def _tenant_arch_or_404(
+    architecture_id: str, principal: Principal, *, include_deleted: bool = False
+) -> dict[str, Any]:
+    """Load an architecture and verify the caller's tenant owns it.
+
+    Centralizes the per-id IDOR guard for every architecture endpoint that takes
+    `architecture_id`. Empty `tenant_id` on a registry row is treated as a legacy
+    pre-multi-tenancy record visible to any tenant (matches the list endpoint behavior).
+    Otherwise a mismatch raises 404 (not 403) so a cross-tenant probe cannot confirm
+    existence.
+    """
+    arch = arch_registry.get_architecture(architecture_id, include_deleted=include_deleted)
+    if arch is None:
+        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch_tenant = arch.get("tenant_id") or ""
+    if arch_tenant and arch_tenant != principal.tenant_id:
+        raise HTTPException(status_code=404, detail="Architecture not found.")
+    return arch
+
+
 def _actor(principal: Principal) -> str:
     """A human-readable author label (display name → email → subject id) recorded as the
     creator/modifier and in the activity log, so users see who did what (not a raw id)."""
@@ -284,10 +304,8 @@ async def list_memories_endpoint(principal: Principal = Depends(get_principal)):
 
 
 @router.get("/{architecture_id}")
-async def get_architecture_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+async def get_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+    arch = _tenant_arch_or_404(architecture_id, principal)
     return {"architecture": arch}
 
 
@@ -306,6 +324,7 @@ async def upsert_architecture_endpoint(
 @router.delete("/{architecture_id}")
 async def delete_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Soft-delete: move the architecture to the Trash (restorable until purged)."""
+    _tenant_arch_or_404(architecture_id, principal)
     if not arch_registry.delete_architecture(architecture_id, actor=_actor(principal)):
         raise HTTPException(status_code=404, detail="Architecture not found.")
     return {"ok": True}
@@ -314,6 +333,7 @@ async def delete_architecture_endpoint(architecture_id: str, principal: Principa
 @router.post("/{architecture_id}/restore")
 async def restore_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Restore a trashed architecture back into the active list."""
+    _tenant_arch_or_404(architecture_id, principal, include_deleted=True)
     arch = arch_registry.restore_architecture(architecture_id, actor=_actor(principal))
     if arch is None:
         raise HTTPException(status_code=404, detail="Architecture not in trash.")
@@ -321,10 +341,10 @@ async def restore_architecture_endpoint(architecture_id: str, principal: Princip
 
 
 @router.delete("/{architecture_id}/purge")
-async def purge_architecture_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def purge_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Permanently delete a single trashed architecture (hard delete)."""
-    arch = arch_registry.get_architecture(architecture_id, include_deleted=True)
-    if arch is None or not arch.get("deleted_at"):
+    arch = _tenant_arch_or_404(architecture_id, principal, include_deleted=True)
+    if not arch.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Architecture not in trash.")
     arch_registry.purge_architecture(architecture_id)
     return {"ok": True}
@@ -345,6 +365,7 @@ class CategoryUpdate(BaseModel):
 async def set_architecture_state_endpoint(
     architecture_id: str, payload: StateUpdate, principal: Principal = Depends(get_principal)
 ):
+    _tenant_arch_or_404(architecture_id, principal)
     try:
         saved = arch_registry.set_state(architecture_id, payload.state, _actor(principal))
     except ValueError as exc:
@@ -358,6 +379,7 @@ async def set_architecture_state_endpoint(
 async def set_architecture_category_endpoint(
     architecture_id: str, payload: CategoryUpdate, principal: Principal = Depends(get_principal)
 ):
+    _tenant_arch_or_404(architecture_id, principal)
     saved = arch_registry.set_category(architecture_id, payload.category_id, _actor(principal))
     if saved is None:
         raise HTTPException(status_code=404, detail="Architecture not found.")
@@ -374,6 +396,7 @@ async def set_architecture_workload_endpoint(
 ):
     """Link (or unlink) the architecture to a workload. An empty workload_id unlinks it;
     the diagram is never modified — only the association changes."""
+    _tenant_arch_or_404(architecture_id, principal)
     workload_name = ""
     if payload.workload_id:
         wl = get_workload(payload.workload_id)
@@ -403,9 +426,7 @@ async def rebuild_architecture_endpoint(
     Poll GET /architectures/jobs for live progress; the job's target_architecture_id is this id."""
     from app.architectures.jobs import manager
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     workload_id = payload.workload_id or arch.get("workload_id") or ""
     if not workload_id:
         raise HTTPException(
@@ -481,13 +502,11 @@ def _memory_response(architecture_id: str, arch: dict[str, Any], memory: dict[st
 
 
 @router.get("/{architecture_id}/memory")
-async def get_memory_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def get_memory_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Return the architecture's memory (or null if none exists yet) + rendered markdown."""
     from app.architectures import memory as mem
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     memory = mem.get_memory(architecture_id)
     if memory is None:
         return {"memory": None, "markdown": "", "architecture": _arch_meta(architecture_id, arch)}
@@ -501,9 +520,7 @@ async def upsert_memory_endpoint(
     """Create or update the architecture's memory (sections / title / enabled flag)."""
     from app.architectures import memory as mem
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     sections = (
         [s.model_dump() for s in payload.sections] if payload.sections is not None else None
     )
@@ -520,34 +537,36 @@ async def upsert_memory_endpoint(
 
 
 @router.delete("/{architecture_id}/memory")
-async def delete_memory_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def delete_memory_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     from app.architectures import memory as mem
 
+    _tenant_arch_or_404(architecture_id, principal)
     if not mem.delete_memory(architecture_id):
         raise HTTPException(status_code=404, detail="No memory to delete.")
     return {"ok": True}
 
 
 @router.get("/{architecture_id}/memory/revisions")
-async def list_memory_revisions_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def list_memory_revisions_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Revision history for an architecture's memory (newest first)."""
     from app.architectures import memory_revisions
 
+    _tenant_arch_or_404(architecture_id, principal)
     return {"revisions": memory_revisions.list_revisions(architecture_id)}
 
 
 @router.get("/{architecture_id}/memory/revisions/{revision_id}")
 async def get_memory_revision_endpoint(
-    architecture_id: str, revision_id: str, _: Principal = Depends(get_principal)
+    architecture_id: str, revision_id: str, principal: Principal = Depends(get_principal)
 ):
     """Full content of one memory revision, for read-only preview (does not restore)."""
     from app.architectures import memory as mem
     from app.architectures import memory_revisions
 
+    arch = _tenant_arch_or_404(architecture_id, principal)
     rev = memory_revisions.get_revision(architecture_id, revision_id)
     if rev is None:
         raise HTTPException(status_code=404, detail="Revision not found.")
-    arch = arch_registry.get_architecture(architecture_id) or {}
     clean = {k: v for k, v in rev.items() if k != "sig"}
     # Render the revision's markdown so the preview pane can show it just like the editor.
     markdown = mem.render_markdown(clean, arch.get("name", ""), arch.get("workload_name", ""))
@@ -562,10 +581,10 @@ async def restore_memory_revision_endpoint(
     snapshotted first, so nothing is lost)."""
     from app.architectures import memory as mem
 
+    arch = _tenant_arch_or_404(architecture_id, principal)
     restored = mem.restore_revision(architecture_id, revision_id, _actor(principal))
     if restored is None:
         raise HTTPException(status_code=404, detail="Memory or revision not found.")
-    arch = arch_registry.get_architecture(architecture_id) or {}
     return _memory_response(architecture_id, arch, restored)
 
 
@@ -627,9 +646,7 @@ async def generate_memory_stream_endpoint(
 ):
     """AI-draft the memory sections from the architecture + live resources + weakness
     signals (assessment findings, idle resources). SSE: status… → done{memory, markdown}."""
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     workload_id = arch.get("workload_id") or ""
     connection_id = arch.get("connection_id") or ""
     extra_context = payload.extra_context or ""
@@ -726,9 +743,7 @@ async def generate_memory_section_endpoint(
     from app.architectures import memory as mem
     from app.architectures.memory_designer import generate_memory
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     workload_id = arch.get("workload_id") or ""
     connection_id = arch.get("connection_id") or ""
     weakness_signals = await _gather_weakness_signals(
@@ -780,6 +795,7 @@ async def generate_memory_section_endpoint(
 @router.post("/{architecture_id}/clone")
 async def clone_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """Duplicate an architecture into a fresh Draft copy."""
+    _tenant_arch_or_404(architecture_id, principal)
     cloned = arch_registry.clone_architecture(
         architecture_id, actor=_actor(principal), tenant_id=principal.tenant_id
     )
@@ -789,19 +805,21 @@ async def clone_architecture_endpoint(architecture_id: str, principal: Principal
 
 
 @router.get("/{architecture_id}/revisions")
-async def list_revisions_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def list_revisions_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     from app.architectures import revisions
 
+    _tenant_arch_or_404(architecture_id, principal)
     return {"revisions": revisions.list_revisions(architecture_id)}
 
 
 @router.get("/{architecture_id}/revisions/{revision_id}")
 async def get_revision_endpoint(
-    architecture_id: str, revision_id: str, _: Principal = Depends(get_principal)
+    architecture_id: str, revision_id: str, principal: Principal = Depends(get_principal)
 ):
     """Full content of one revision, for read-only preview (does not restore)."""
     from app.architectures import revisions
 
+    _tenant_arch_or_404(architecture_id, principal)
     rev = revisions.get_revision(architecture_id, revision_id)
     if rev is None:
         raise HTTPException(status_code=404, detail="Revision not found.")
@@ -813,6 +831,7 @@ async def get_revision_endpoint(
 async def restore_revision_endpoint(
     architecture_id: str, revision_id: str, principal: Principal = Depends(get_principal)
 ):
+    _tenant_arch_or_404(architecture_id, principal)
     restored = arch_registry.restore_revision(architecture_id, revision_id, _actor(principal))
     if restored is None:
         raise HTTPException(status_code=404, detail="Architecture or revision not found.")
@@ -820,10 +839,11 @@ async def restore_revision_endpoint(
 
 
 @router.get("/{architecture_id}/activity")
-async def list_activity_endpoint(architecture_id: str, _: Principal = Depends(get_principal)):
+async def list_activity_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     """The management activity log (status/category changes, edits, clone, restore, AI)."""
     from app.architectures import activity
 
+    _tenant_arch_or_404(architecture_id, principal)
     return {"activity": activity.list_activity(architecture_id)}
 
 
@@ -926,9 +946,7 @@ async def enhance_architecture_endpoint(
     from app.architectures.designer import enhance_architecture
     from app.architectures.reverse import dump_resources
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     resources: list[dict[str, Any]] = []
     wl = get_workload(arch.get("workload_id") or "")
     if wl is not None:
@@ -958,14 +976,12 @@ class AskRequest(BaseModel):
 
 @router.post("/{architecture_id}/ask")
 async def ask_architecture_endpoint(
-    architecture_id: str, payload: AskRequest, _: Principal = Depends(get_principal)
+    architecture_id: str, payload: AskRequest, principal: Principal = Depends(get_principal)
 ):
     """Grounded Q&A about an architecture (SPOFs, blast radius, zone-redundancy, etc.)."""
     from app.architectures.designer import answer_question
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Ask a question.")
     try:
@@ -989,9 +1005,7 @@ async def architecture_drift_endpoint(
     (subscription, resource group) scope the diagram's own ARM-id nodes already live in."""
     from app.architectures.reverse import dump_resources, live_resources_in_diagram_scope
 
-    arch = arch_registry.get_architecture(architecture_id)
-    if arch is None:
-        raise HTTPException(status_code=404, detail="Architecture not found.")
+    arch = _tenant_arch_or_404(architecture_id, principal)
     nodes = arch.get("nodes") or []
     arm_ids = [str(n.get("arm_id", "")) for n in nodes if n.get("arm_id")]
     wl = get_workload(arch.get("workload_id") or "")

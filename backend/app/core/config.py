@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     cookie_samesite: str = "lax"
     # Public base URL of this API (used to build OIDC/SAML redirect URIs).
     public_base_url: str = "http://localhost:8000"
+    # Trusted reverse-proxy IPs (comma-separated). When set, the app honors the
+    # ``X-Forwarded-For`` header only for requests whose direct client IP is in this
+    # allowlist; otherwise it falls back to ``request.client.host`` to prevent IP
+    # spoofing in audit logs and brute-force counters. Leave empty (default) to
+    # trust no proxy header at all — the safest default for direct/local deployments.
+    trusted_proxies: str = ""
 
     # LLM
     llm_provider: str = "openai"

@@ -27,6 +27,7 @@ import html
 import io
 import base64
 import math
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
@@ -70,6 +71,33 @@ _FAILING = ("fail", "error")
 
 def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
+
+
+def _svg_attr(value: Any) -> str:
+    """Escape a string for safe insertion into an SVG attribute or text node.
+
+    Uses ``html.escape(quote=True)`` so single + double quotes are escaped as
+    well — important when the value lands inside ``'…'`` or ``"…"`` attribute
+    delimiters in the SVG fragments below. Defense-in-depth: today every
+    user-controlled field that reaches the SVG already passes through ``_esc``,
+    but using a dedicated helper makes future changes explicit and prevents a
+    silent regression from introducing SVG injection.
+    """
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+# Hex color pattern used to reject anything that doesn't look like a `#rrggbb` or
+# `#rgb` literal before it's inlined into an SVG stroke/fill. The PDF builder only
+# ever passes hardcoded hex constants today; the guard makes that an enforced
+# invariant rather than a convention.
+_HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _svg_color(value: str, *, fallback: str = "#9ca3af") -> str:
+    """Return a safe hex color literal, falling back to neutral grey on mismatch."""
+    if isinstance(value, str) and _HEX_COLOR.match(value.strip()):
+        return value.strip()
+    return fallback
 
 
 def _score_color(score: Any) -> str:
@@ -156,13 +184,19 @@ def _donut_svg(slices: list[tuple[str, float]], *, center: str, accent: str) -> 
     cx = cy = 85
     radius = 56
     circumference = 2 * math.pi * radius
+    # Defense-in-depth: every dynamic string that lands inside an SVG attribute is
+    # escaped (`_svg_attr`) or color-validated (`_svg_color`) here, even though
+    # current callers only pass hardcoded values. Prevents a silent regression
+    # from a future caller passing user-controlled data into the chart.
+    accent_safe = _svg_color(accent, fallback="#2563eb")
+    center_safe = _svg_attr(center)
     if total <= 0:
         return f"""
         <svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}' viewBox='0 0 {size} {size}'>
           <circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='#e5e7eb' stroke-width='18'/>
           <circle cx='{cx}' cy='{cy}' r='33' fill='white'/>
-          <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent}' font-weight='700'>0</text>
-          <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{_esc(center)}</text>
+          <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent_safe}' font-weight='700'>0</text>
+          <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{center_safe}</text>
         </svg>
         """
 
@@ -174,8 +208,9 @@ def _donut_svg(slices: list[tuple[str, float]], *, center: str, accent: str) -> 
             continue
         length = circumference * value / total
         gap = max(0.0, circumference - length)
+        color_safe = _svg_color(color)
         pieces.append(
-            f"<circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='{color}' stroke-width='18' "
+            f"<circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='{color_safe}' stroke-width='18' "
             f"stroke-linecap='butt' stroke-dasharray='{length:.3f} {gap:.3f}' stroke-dashoffset='{-offset:.3f}' "
             f"transform='rotate(-90 {cx} {cy})'/>")
         offset += length
@@ -185,15 +220,15 @@ def _donut_svg(slices: list[tuple[str, float]], *, center: str, accent: str) -> 
       <circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='#e5e7eb' stroke-width='18'/>
       {''.join(pieces)}
       <circle cx='{cx}' cy='{cy}' r='33' fill='white'/>
-      <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent}' font-weight='700'>{_esc(str(int(total)))}</text>
-      <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{_esc(center)}</text>
+      <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent_safe}' font-weight='700'>{_svg_attr(str(int(total)))}</text>
+      <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{center_safe}</text>
     </svg>
     """
 
 
 def _viz_card(title: str, subtitle: str, svg: str, legend_rows: list[tuple[str, str, str]]) -> str:
     legend = "".join(
-        f"<tr><td><span class='viz-swatch' style='background:{_esc(color)}'></span></td>"
+        f"<tr><td><span class='viz-swatch' style='background:{_svg_color(color)}'></span></td>"
         f"<td>{_esc(label)}</td><td class='num'>{_esc(value)}</td></tr>"
         for label, value, color in legend_rows
     )

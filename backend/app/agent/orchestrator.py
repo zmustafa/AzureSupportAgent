@@ -392,6 +392,15 @@ class Orchestrator:
                 else:
                     result_for_model = result
                     result_cap = data_result_cap
+                # Defense-in-depth against prompt injection: scrub the highest-signal
+                # "system: ignore previous instructions" / fake role-header markers
+                # out of every string inside the tool result before it lands in the
+                # model context. See app.agent.result_sanitizer for the rules. The
+                # approval gate still protects writes; this just lowers the false-
+                # positive surface area.
+                from app.agent.result_sanitizer import sanitize_tool_result
+
+                result_for_model = sanitize_tool_result(result_for_model)
                 messages.append(
                     {
                         "role": "tool",

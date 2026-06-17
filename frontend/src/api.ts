@@ -4525,6 +4525,10 @@ export interface AuthPolicies {
   password_require_complexity: boolean;
   max_failed_attempts: number;
   lockout_minutes: number;
+  ip_rate_limit_enabled: boolean;
+  ip_rate_limit_max_attempts: number;
+  ip_rate_limit_window_seconds: number;
+  ip_rate_limit_lockout_seconds: number;
   session_idle_minutes: number;
   session_absolute_minutes: number;
   sso_auto_provision: boolean;

@@ -4,10 +4,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import (
@@ -58,6 +58,58 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="Azure Support Agent", version="0.1.0")
+
+
+# --------------------------------------------------------------- Production safety
+#
+# In production (`environment != "local"`) we disable the interactive OpenAPI UI to
+# avoid information disclosure (full schema = free reconnaissance for an attacker).
+# Local dev keeps `/docs` + `/redoc` for convenience. Override via OPENAPI_PUBLIC=1
+# if a deployment genuinely needs the docs (e.g. an internal-only deployment).
+#
+# FastAPI registers the `/docs` / `/redoc` / `/openapi.json` routes at construction
+# time, so the only way to truly remove them is to pass the URLs as None to the
+# constructor (post-hoc assignment leaves the routes registered). The block above
+# instantiated the app with the defaults; we re-create it here once we know whether
+# docs should be enabled, **before** any router is mounted.
+import os  # noqa: E402
+
+_OPENAPI_PUBLIC = os.getenv("OPENAPI_PUBLIC", "").lower() in ("1", "true", "yes")
+_DOCS_ENABLED = (settings.environment == "local") or _OPENAPI_PUBLIC
+app = FastAPI(
+    title="Azure Support Agent",
+    version="0.1.0",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
+
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all so an unexpected error never leaks a stack trace, file path, or
+    library version to the client. We log the full traceback server-side so
+    operators still have it for debugging.
+    """
+    logging.getLogger("app.main").exception("Unhandled exception", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error. The error has been logged."},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    """Preserve intentional HTTPExceptions (auth, validation, 404, etc.) verbatim;
+    don't dress them as generic 500s. Mirrors FastAPI's default but plays well with
+    the ``Exception`` handler above (which would otherwise swallow them).
+    """
+    headers = getattr(exc, "headers", None)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=dict(headers) if headers else None,
+    )
 
 
 @app.on_event("startup")
@@ -149,8 +201,21 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Explicit method + header allowlist instead of wildcards. Combined with
+    # `allow_credentials=True`, wildcards are dangerous (any header from the
+    # configured origin including bespoke ones the backend doesn't expect can
+    # land); spelling out the small set of methods/headers we actually use is
+    # required for SOC2/PCI baselines.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Accept",
+        "Accept-Encoding",
+        "Authorization",
+        "Content-Type",
+        "Cache-Control",
+        "X-Requested-With",
+    ],
+    max_age=3600,
 )
 
 # Compress large JSON payloads on the wire. SSE clients (EventSource API) always
@@ -178,6 +243,78 @@ class _SafeGZip:
 
 
 app.add_middleware(_SafeGZip, minimum_size=1024)
+
+
+# --------------------------------------------------------------- Security headers
+#
+# Defense-in-depth response headers required by SOC2/ISO27001/PCI baselines. Some
+# headers (HSTS, COOP/COEP) are only meaningful when served over HTTPS — they're
+# emitted only when `cookie_secure=true` so local HTTP development isn't broken by
+# the browser refusing future plaintext connections.
+class _SecurityHeaders:
+    """ASGI middleware that adds CSP, X-Frame-Options, X-Content-Type-Options,
+    Referrer-Policy, Permissions-Policy, and (in HTTPS deployments) HSTS to every
+    response. SSE responses get the same treatment — none of these headers affect
+    chunked-event delivery.
+    """
+
+    def __init__(self, app) -> None:
+        self._app = app
+        cfg = get_settings()
+        # CSP: lock script/style/img/connect to same-origin + data: for inline
+        # images. `'unsafe-inline'` is allowed for style only because Tailwind's
+        # generated utility classes are emitted via <style> tags. The SPA uses no
+        # inline scripts, and connect-src is same-origin since the API is mounted
+        # under /api on the same domain.
+        self._headers = [
+            (b"X-Content-Type-Options", b"nosniff"),
+            (b"X-Frame-Options", b"DENY"),
+            (b"Referrer-Policy", b"strict-origin-when-cross-origin"),
+            (b"Permissions-Policy", b"geolocation=(), microphone=(), camera=(), payment=(), usb=()"),
+            (
+                b"Content-Security-Policy",
+                (
+                    b"default-src 'self'; "
+                    b"script-src 'self' 'wasm-unsafe-eval'; "
+                    b"style-src 'self' 'unsafe-inline'; "
+                    b"img-src 'self' data: blob: https:; "
+                    b"font-src 'self' data:; "
+                    b"connect-src 'self'; "
+                    b"worker-src 'self' blob:; "
+                    b"frame-ancestors 'none'; "
+                    b"base-uri 'self'; "
+                    b"form-action 'self'"
+                ),
+            ),
+        ]
+        if cfg.cookie_secure:
+            # Browsers cache HSTS aggressively; only enable it when we know we're
+            # always serving over HTTPS.
+            self._headers.append(
+                (b"Strict-Transport-Security", b"max-age=31536000; includeSubDomains")
+            )
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+        extra = self._headers
+
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                existing = {name for name, _ in headers}
+                for name, value in extra:
+                    if name.lower() not in existing:
+                        headers.append((name, value))
+                message = dict(message)
+                message["headers"] = headers
+            await send(message)
+
+        await self._app(scope, receive, _send)
+
+
+app.add_middleware(_SecurityHeaders)
 
 # All application endpoints live under /api so the SPA can own every other path
 # (client-side routes like /inventory, /admin, /policy collide with API prefixes

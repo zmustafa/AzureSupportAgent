@@ -5849,7 +5849,9 @@ const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) 
       ) : svg ? (
         <div
           className="mermaid-diagram flex justify-center overflow-x-auto px-3 py-4 [&_svg]:h-auto [&_svg]:max-w-full"
-          // mermaid output is sanitized by securityLevel:"strict" before we set it.
+          // svg comes from useMermaidRender which (1) renders via Mermaid's
+          // securityLevel:"strict" parser and (2) runs the result through
+          // DOMPurify's SVG profile as a defense-in-depth second layer.
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
@@ -5879,7 +5881,8 @@ const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) 
           <div
             className="mermaid-diagram m-4 mt-0 flex flex-1 items-center justify-center overflow-auto rounded-lg bg-white p-6 [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full"
             onClick={(e) => e.stopPropagation()}
-            // mermaid output is sanitized by securityLevel:"strict" before we set it.
+            // svg already sanitized by Mermaid (strict) + DOMPurify (SVG profile)
+            // in useMermaidRender; safe to inject.
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         </div>
@@ -5930,8 +5933,15 @@ function useMermaidRender(code: string): { svg: string; error: string } {
           });
           // `render` validates + produces SVG without touching the DOM tree we control.
           const { svg: out } = await mermaid.render(renderId, trimmed);
+          // Defense-in-depth: even though Mermaid is configured with
+          // securityLevel:"strict", we run the output through DOMPurify (SVG
+          // profile) before injecting it as innerHTML. If a future Mermaid CVE
+          // ever lets an attacker-crafted diagram smuggle a JS handler past
+          // Mermaid's sanitizer, DOMPurify still strips it.
+          const DOMPurify = (await import("dompurify")).default;
+          const safeSvg = DOMPurify.sanitize(out, { USE_PROFILES: { svg: true, svgFilters: true } });
           if (!cancelled) {
-            setSvg(out);
+            setSvg(safeSvg);
             setError("");
             lastRenderedRef.current = trimmed;
           }
@@ -6043,7 +6053,8 @@ function MermaidEditorPanel({ code, onClose }: { code: string; onClose: () => vo
             ) : svg ? (
               <div
                 className="mermaid-diagram flex justify-center overflow-auto px-3 py-4 [&_svg]:h-auto [&_svg]:max-w-full"
-                // mermaid output is sanitized by securityLevel:"strict" before we set it.
+                // svg already sanitized by Mermaid (strict) + DOMPurify (SVG profile)
+                // in useMermaidRender; safe to inject.
                 dangerouslySetInnerHTML={{ __html: svg }}
               />
             ) : (

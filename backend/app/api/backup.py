@@ -42,6 +42,65 @@ class ImportRequest(BaseModel):
     sections: list[str] = Field(default_factory=list)
 
 
+# Hard upper bounds on a single backup payload. A malicious admin (or a leaked
+# admin session) could otherwise POST a 100 GB JSON or a zip-bomb-like manifest
+# and exhaust container memory / disk. The numbers are generous for the largest
+# realistic deployment but bounded.
+_MAX_MANIFEST_BYTES = 64 * 1024 * 1024     # 64 MB serialized
+_MAX_MANIFEST_ITEMS = 200_000              # total elements across all sections
+_MAX_MANIFEST_DEPTH = 20                   # JSON nesting depth
+
+
+def _enforce_manifest_limits(data: Any) -> None:
+    """Reject obviously oversized or pathologically nested import payloads.
+
+    Runs in O(n) over the materialized JSON tree so it can't itself become a DoS.
+    Raised as ``HTTPException(413)`` so the client sees a clear "payload too large".
+    """
+    try:
+        serialized = json.dumps(data, default=str)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Backup payload is not JSON-serializable: {exc}") from exc
+    if len(serialized) > _MAX_MANIFEST_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Backup payload too large ({len(serialized) // (1024 * 1024)} MB > {_MAX_MANIFEST_BYTES // (1024 * 1024)} MB).",
+        )
+
+    items = 0
+    max_depth_seen = 0
+    # Iterative traversal so a deeply-nested manifest can't blow the recursion stack.
+    stack: list[tuple[Any, int]] = [(data, 1)]
+    while stack:
+        node, depth = stack.pop()
+        max_depth_seen = max(max_depth_seen, depth)
+        if depth > _MAX_MANIFEST_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Backup payload nesting too deep (> {_MAX_MANIFEST_DEPTH} levels).",
+            )
+        if isinstance(node, dict):
+            items += len(node)
+            if items > _MAX_MANIFEST_ITEMS:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Backup payload has too many items (> {_MAX_MANIFEST_ITEMS}).",
+                )
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    stack.append((v, depth + 1))
+        elif isinstance(node, list):
+            items += len(node)
+            if items > _MAX_MANIFEST_ITEMS:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Backup payload has too many items (> {_MAX_MANIFEST_ITEMS}).",
+                )
+            for v in node:
+                if isinstance(v, (dict, list)):
+                    stack.append((v, depth + 1))
+
+
 @router.get("/sections")
 async def list_sections_endpoint(
     principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
@@ -92,6 +151,7 @@ async def import_preview_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Dry-run an import: report per-section create/update/skip counts. Writes nothing."""
+    _enforce_manifest_limits(payload.data)
     try:
         return await backup.preview_import(payload.data, principal.tenant_id, payload.mode, db)
     except ValueError as exc:
@@ -106,6 +166,7 @@ async def import_endpoint(
 ):
     """Apply a backup with the chosen conflict mode. DB writes commit atomically; file
     sections are written atomically per file."""
+    _enforce_manifest_limits(payload.data)
     if payload.mode not in backup.CONFLICT_MODES:
         raise HTTPException(status_code=400, detail=f"Unknown conflict mode '{payload.mode}'.")
     try:

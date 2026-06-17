@@ -10,13 +10,38 @@ from typing import Any
 from app.rbac import schema
 
 
+# Excel / LibreOffice interpret a cell that starts with one of these characters as a
+# formula — `=cmd|'...'!A1` is the classic vector for CSV-injection RCE on the
+# admin's workstation. Prefixing with a single quote forces literal-text interpretation.
+_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+# Tab / CR / LF can also kick off formula interpretation in some spreadsheet apps.
+_FORMULA_LEADING_WS = ("\t", "\r", "\n")
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutralize CSV / Excel formula-injection vectors in a single cell value.
+
+    Strings that begin with ``= + - @`` (or with leading whitespace followed by
+    one of those) are prefixed with a leading apostrophe so the spreadsheet
+    treats them as plain text. Non-string values pass through unchanged.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    stripped = value.lstrip("\t\r\n ")
+    if stripped and stripped[0] in _FORMULA_TRIGGERS:
+        return "'" + value
+    if value[0] in _FORMULA_LEADING_WS and stripped and stripped[0] in _FORMULA_TRIGGERS:
+        return "'" + value
+    return value
+
+
 def to_csv(rows: list[dict[str, Any]]) -> str:
     """Serialize rows to CSV with the canonical 46-column header order."""
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=list(schema.COLUMNS), extrasaction="ignore")
     writer.writeheader()
     for row in rows:
-        writer.writerow({c: row.get(c, "") for c in schema.COLUMNS})
+        writer.writerow({c: _csv_safe(row.get(c, "")) for c in schema.COLUMNS})
     return buf.getvalue()
 
 
@@ -65,8 +90,11 @@ def _coerce(value: Any) -> Any:
     if value is None:
         return ""
     if isinstance(value, (int, float, str)):
-        return value
-    return str(value)
+        # Apply the same formula-injection neutralization as the CSV path. Excel
+        # interprets `=...` / `+...` / `-...` / `@...` cells as formulas even in
+        # an .xlsx workbook.
+        return _csv_safe(value)
+    return _csv_safe(str(value))
 
 
 def to_workbook(

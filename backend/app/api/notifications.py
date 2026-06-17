@@ -140,10 +140,14 @@ def _rule_row(r: NotificationRule) -> dict[str, Any]:
 
 @router.get("/rules")
 async def list_rules_endpoint(
-    _: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     rows = (
-        await db.execute(select(NotificationRule).order_by(NotificationRule.created_at))
+        await db.execute(
+            select(NotificationRule)
+            .where(NotificationRule.tenant_id == principal.tenant_id)
+            .order_by(NotificationRule.created_at)
+        )
     ).scalars().all()
     return {"rules": [_rule_row(r) for r in rows]}
 
@@ -156,7 +160,9 @@ async def upsert_rule_endpoint(
 ):
     if payload.id:
         rule = await db.get(NotificationRule, payload.id)
-        if rule is None:
+        # Treat a cross-tenant rule id as if it doesn't exist so existence can't
+        # be probed and the foreign rule can't be edited.
+        if rule is None or rule.tenant_id != principal.tenant_id:
             raise HTTPException(status_code=404, detail="Rule not found.")
     else:
         rule = NotificationRule(tenant_id=principal.tenant_id, created_by=principal.subject)
@@ -177,11 +183,11 @@ async def upsert_rule_endpoint(
 @router.delete("/rules/{rule_id}")
 async def delete_rule_endpoint(
     rule_id: str,
-    _: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     rule = await db.get(NotificationRule, rule_id)
-    if rule is None:
+    if rule is None or rule.tenant_id != principal.tenant_id:
         raise HTTPException(status_code=404, detail="Rule not found.")
     await db.delete(rule)
     await db.commit()

@@ -991,8 +991,30 @@ function PoliciesCard() {
 
       <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Brute-force protection</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {numField("max_failed_attempts", "Max failed attempts")}
-        {numField("lockout_minutes", "Lockout duration (minutes)")}
+        {numField("max_failed_attempts", "Max failed attempts (per account)", "After this many wrong passwords for the same user, the account is auto-locked.")}
+        {numField("lockout_minutes", "Account lockout duration (minutes)", "Account auto-unlocks after this many minutes.")}
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {boolRow(
+          "ip_rate_limit_enabled",
+          "Per-IP rate limit",
+          "Also block a client IP that fails too many sign-ins across any usernames (auto-unlocks).",
+        )}
+        {numField(
+          "ip_rate_limit_max_attempts",
+          "Max failed attempts (per IP)",
+          "Failures counted across the sliding window below.",
+        )}
+        {numField(
+          "ip_rate_limit_window_seconds",
+          "IP window (seconds)",
+          "Sliding window in which failures are counted.",
+        )}
+        {numField(
+          "ip_rate_limit_lockout_seconds",
+          "IP lockout duration (seconds)",
+          "How long a tripped IP stays blocked before auto-unlock.",
+        )}
       </div>
 
       <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Sessions</h3>
