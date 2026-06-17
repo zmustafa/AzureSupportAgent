@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
 const SEV_TONE: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -96,6 +97,8 @@ export function TelemetryIntelligencePanel() {
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.teleintel.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.teleintel.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.teleintel.subId", "");
+  const [subName, setSubName] = usePersistedState("azsup.teleintel.subName", "");
+  const [hasActivated, setHasActivated] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   // Ask box state
@@ -141,7 +144,12 @@ export function TelemetryIntelligencePanel() {
   // above may set workloadId to pre-select one.
   const effWorkloadId = scopeKind === "workload" ? workloadId : "";
   const params = scopeKind === "workload" ? { workload_id: effWorkloadId } : { subscription_id: subId };
-  const enabled = scopeKind === "workload" ? !!effWorkloadId : !!subId;
+  const selectionReady = scopeKind === "workload" ? !!effWorkloadId : !!subId;
+  const enabled = hasActivated && selectionReady;
+
+  useEffect(() => {
+    setHasActivated(false);
+  }, [scopeKind, effWorkloadId, subId]);
 
   const overviewQ = useQuery({
     queryKey: ["teleintel-overview", scopeKind, effWorkloadId, subId],
@@ -289,6 +297,12 @@ export function TelemetryIntelligencePanel() {
     [],
   );
 
+  function loadTelemetry() {
+    if (!selectionReady) return;
+    setHasActivated(true);
+    setMsg(null);
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -297,23 +311,50 @@ export function TelemetryIntelligencePanel() {
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">📈 Telemetry Intelligence</h1>
             <p className="text-xs text-gray-500">
-              AI correlation &amp; triage over Application Insights — ask in plain English, auto-join
-              requests↔exceptions↔dependencies, and stitch failures to the deploy that caused them. Read-only.
+              Investigate Application Insights data without writing KQL by hand. This page correlates
+              requests, dependencies, exceptions, and detected changes to explain slowdowns and failures.
+            </p>
+            <p className="mt-1 text-[11px] text-gray-400">
+              Nothing runs when you land here. Pick a workload or subscription, then click Load telemetry.
             </p>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as never)} className="rounded-md border px-2 py-1.5 text-sm">
-              <option value="workload">By workload</option>
-              <option value="subscription">By subscription</option>
-            </select>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+              <button
+                onClick={() => setScopeKind("workload")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Workload
+              </button>
+              <button
+                onClick={() => setScopeKind("subscription")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Subscription
+              </button>
+            </div>
             {scopeKind === "workload" ? (
-              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[240px] rounded-md border px-2 py-1.5 text-sm">
+              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[240px] rounded-lg border px-2 py-1.5 text-xs">
                 <option value="">Select a workload…</option>
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             ) : (
-              <input value={subId} onChange={(e) => setSubId(e.target.value)} placeholder="Subscription GUID" className="w-[260px] rounded-md border px-2 py-1.5 text-sm" />
+              <SubscriptionScopePicker
+                value={subId}
+                valueName={subName}
+                onPick={(id, name) => {
+                  setSubId(id);
+                  setSubName(name);
+                }}
+              />
             )}
+            <button
+              onClick={loadTelemetry}
+              disabled={!selectionReady}
+              className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Load telemetry
+            </button>
           </div>
         </div>
         {overview && (
@@ -325,15 +366,46 @@ export function TelemetryIntelligencePanel() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <div className="rounded-lg border bg-white p-3">
+            <div className="text-sm font-semibold text-gray-900">What this page does</div>
+            <p className="mt-1 text-xs leading-5 text-gray-500">
+              Correlates requests, dependencies, exceptions, and deployment or configuration changes
+              to explain why an operation slowed down or failed.
+            </p>
+          </div>
+          <div className="rounded-lg border bg-white p-3">
+            <div className="text-sm font-semibold text-gray-900">How to use it</div>
+            <p className="mt-1 text-xs leading-5 text-gray-500">
+              Load a scope, review the AI triage and timeline, then ask follow-up questions in plain
+              English. The generated KQL stays visible so you can inspect or rerun it.
+            </p>
+          </div>
+          <div className="rounded-lg border bg-white p-3">
+            <div className="text-sm font-semibold text-gray-900">Typical outcomes</div>
+            <p className="mt-1 text-xs leading-5 text-gray-500">
+              Identify the top failing dependency, reconstruct a transaction path, surface probable
+              change triggers, and open a War Room, finding, or ticket from the same context.
+            </p>
+          </div>
+        </div>
+
         {msg && (
           <div className={`mb-3 rounded-md border px-3 py-2 text-sm ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>
         )}
 
-        {!enabled ? (
+        {!selectionReady ? (
           <div className="p-8 text-center text-sm text-gray-500">
             {scopeKind === "workload"
-              ? "Select a workload to load telemetry intelligence."
-              : "Enter a subscription to load telemetry intelligence."}
+              ? "Select a workload, then click Load telemetry."
+              : "Pick a subscription, then click Load telemetry."}
+          </div>
+        ) : !enabled ? (
+          <div className="rounded-lg border border-dashed bg-white p-8 text-center text-sm text-gray-500">
+            Scope selected. Nothing has been queried yet.
+            <div className="mt-2 text-xs text-gray-400">
+              Click Load telemetry to fetch overview, triage, timeline, smart detections, and optimization hints.
+            </div>
           </div>
         ) : (
         <>

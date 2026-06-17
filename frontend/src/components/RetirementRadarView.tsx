@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type RadarEvent, type RadarModelItem, type RadarSnapshot } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
 const SEV_DOT: Record<string, string> = { red: "bg-red-500", amber: "bg-amber-500", grey: "bg-gray-400" };
 const SEV_TEXT: Record<string, string> = { red: "text-red-600", amber: "text-amber-600", grey: "text-gray-500" };
@@ -58,6 +59,7 @@ export function RetirementRadarPanel() {
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.radar.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.radar.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.radar.subId", "");
+  const [subName, setSubName] = usePersistedState("azsup.radar.subName", "");
   const [typeFilter, setTypeFilter] = useState<"all" | "retirement" | "breaking_change">("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -225,20 +227,26 @@ export function RetirementRadarPanel() {
               slips past a deadline.
             </p>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <select
-              value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as "workload" | "subscription")}
-              className="rounded-md border px-2 py-1.5 text-sm"
-            >
-              <option value="workload">By workload</option>
-              <option value="subscription">By subscription</option>
-            </select>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+              <button
+                onClick={() => setScopeKind("workload")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Workload
+              </button>
+              <button
+                onClick={() => setScopeKind("subscription")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Subscription
+              </button>
+            </div>
             {scopeKind === "workload" ? (
               <select
                 value={effectiveWorkloadId}
                 onChange={(e) => setWorkloadId(e.target.value)}
-                className="max-w-[240px] rounded-md border px-2 py-1.5 text-sm"
+                className="max-w-[240px] rounded-lg border px-2 py-1.5 text-xs"
               >
                 <option value="">Select a workload…</option>
                 {workloads.map((w) => (
@@ -248,11 +256,13 @@ export function RetirementRadarPanel() {
                 ))}
               </select>
             ) : (
-              <input
+              <SubscriptionScopePicker
                 value={subId}
-                onChange={(e) => setSubId(e.target.value)}
-                placeholder="Subscription GUID"
-                className="w-[260px] rounded-md border px-2 py-1.5 text-sm"
+                valueName={subName}
+                onPick={(id, name) => {
+                  setSubId(id);
+                  setSubName(name);
+                }}
               />
             )}
             <button

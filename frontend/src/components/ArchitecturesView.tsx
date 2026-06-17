@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { api, type Architecture, type ArchitectureCollection, type ArchitectureJob, type ArchitectureRevision, type ArchitectureState, type Workload } from "../api";
 import { formatError, formatTimestamp } from "../utils/format";
 import { ArchitectureCanvas, ArchitecturePreview } from "./ArchitectureCanvas";
-import { MemoryEditor, MemoryIndex } from "./ArchitectureMemoryView";
+// Memory editor is a sizeable module — lazy-load so the architectures LIST page
+// doesn't ship the markdown editor + revisions UI.
+const MemoryEditor = lazy(() => import("./ArchitectureMemoryView").then((m) => ({ default: m.MemoryEditor })));
+const MemoryIndex = lazy(() => import("./ArchitectureMemoryView").then((m) => ({ default: m.MemoryIndex })));
 
 // ---------------- Lifecycle states (fixed workflow) ----------------
 const STATE_META: Record<ArchitectureState, { label: string; badge: string; dot: string }> = {
@@ -699,9 +702,11 @@ function ArchitectureEditor({ id }: { id: string }) {
         <button onClick={() => setShowActivity(true)} className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">📋 Activity</button>
         <button onClick={() => { setShowHistory((v) => { if (v) setPreviewRev(null); return !v; }); }}
           className={`rounded-lg border px-2.5 py-1 text-xs ${showHistory ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}>🕘 History</button>
-        {arch?.ai?.rationale && <RationaleChip text={arch.ai.rationale} confidence={arch.ai.confidence} count={arch.ai.resource_count} />}
-        {arch && (arch.created_by || arch.updated_by) && <AuthorInfo arch={arch} />}
-        {rebuildMsg && <span className="text-[11px] text-amber-600">{rebuildMsg}</span>}
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:ml-auto lg:justify-end">
+          {arch?.ai?.rationale && <RationaleChip text={arch.ai.rationale} confidence={arch.ai.confidence} count={arch.ai.resource_count} />}
+          {arch && (arch.created_by || arch.updated_by) && <AuthorInfo arch={arch} />}
+          {rebuildMsg && <span className="text-[11px] text-amber-600">{rebuildMsg}</span>}
+        </div>
       </div>
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 flex-1 flex-col">
@@ -997,8 +1002,8 @@ export function ArchitecturesPanel() {
   const segs = location.pathname.split("/").filter(Boolean); // ["architectures", ...]
   const second = segs[1];
   const third = segs[2];
-  if (second === "memory" && !third) return <MemoryIndex />;
-  if (second && third === "memory") return <MemoryEditor architectureId={second} />;
+  if (second === "memory" && !third) return <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}><MemoryIndex /></Suspense>;
+  if (second && third === "memory") return <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}><MemoryEditor architectureId={second} /></Suspense>;
   if (second) return <ArchitectureEditor id={second} />;
   return <ArchitecturesList />;
 }

@@ -1,7 +1,7 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, type AssessmentRunSummary, type RadarRailItem, type ReservationItem } from "../api";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -84,6 +84,38 @@ export function DashboardPanel() {
   const runsQ = useQuery({ queryKey: ["assessmentRuns"], queryFn: () => api.assessmentRuns(), retry: false });
   const policyQ = useQuery({ queryKey: ["policySnapshots"], queryFn: api.policySnapshots, enabled: isAdmin, retry: false });
   const agentsQ = useQuery({ queryKey: ["customAgents"], queryFn: api.customAgents, enabled: isAdmin, retry: false });
+  // New signals driving the KPI strip, posture & risks panel, and the activity feed.
+  // Each query is non-blocking — a failure hides the affected tile/section instead of
+  // breaking the dashboard. Defer expensive admin-only queries with a 5-minute
+  // staleTime so they don't refetch on every dashboard mount/navigation.
+  const unreadQ = useQuery({
+    queryKey: ["notificationsUnread"],
+    queryFn: api.notificationsUnread,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const reservationsQ = useQuery({
+    queryKey: ["reservationsOverview"],
+    queryFn: () => api.reservationsOverview(false),
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const radarQ = useQuery({
+    queryKey: ["radarOverviewDashboard"],
+    queryFn: () => api.radarOverview({}),
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const recentInvQ = useQuery({
+    queryKey: ["recentDeepInvestigations"],
+    queryFn: () => api.deepInvestigations(5),
+    retry: false,
+    staleTime: 2 * 60_000,
+  });
 
   const activeProvider = llmQ.data?.active_provider ?? "";
   const activeCfg = activeProvider ? llmQ.data?.providers?.[activeProvider] : undefined;
@@ -267,79 +299,354 @@ export function DashboardPanel() {
   const pct = known.length ? Math.round((doneCount / known.length) * 100) : 0;
   const allDone = known.length > 0 && doneCount === known.length;
 
+  // Per-step bullet expansion. Completed steps keep their bullet list collapsed by
+  // default so the checklist is scannable; pending steps expand to surface the value.
+  const [expandedSteps, setExpandedSteps] = useState<Record<string, boolean>>({});
+  const isStepExpanded = (s: Step) => expandedSteps[s.id] ?? (s.done !== true);
+  // When the user has finished onboarding the entire setup guide collapses to a banner
+  // the user can still expand.
+  const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
+
+  // -------- Derived KPIs / posture signals --------------------------------------
+  const reservations = reservationsQ.data?.items ?? [];
+  const radarRail = radarQ.data?.rail ?? [];
+  const unreadCount = unreadQ.data?.count ?? 0;
+  const recentInvestigations = recentInvQ.data?.investigations ?? [];
+
+  const completedRuns = useMemo(
+    () => runs.filter((r) => typeof r.overall_score === "number"),
+    [runs],
+  );
+  const avgScore = useMemo(() => {
+    if (!completedRuns.length) return null;
+    const total = completedRuns.reduce((s, r) => s + (r.overall_score ?? 0), 0);
+    return Math.round(total / completedRuns.length);
+  }, [completedRuns]);
+  const lowestRun: AssessmentRunSummary | null = useMemo(() => {
+    if (!completedRuns.length) return null;
+    return [...completedRuns].sort((a, b) => (a.overall_score ?? 0) - (b.overall_score ?? 0))[0];
+  }, [completedRuns]);
+
+  const retirementsSoon: RadarRailItem[] = useMemo(
+    () => radarRail.filter((r) => (r.days_until ?? 9999) <= 90 && r.severity !== "grey")
+      .sort((a, b) => (a.days_until ?? 9999) - (b.days_until ?? 9999))
+      .slice(0, 5),
+    [radarRail],
+  );
+  const reservationsExpiringSoon: ReservationItem[] = useMemo(
+    () => reservations
+      .filter((r) => r.bucket === "expiring_soon")
+      .sort((a, b) => (a.days_until ?? 9999) - (b.days_until ?? 9999))
+      .slice(0, 5),
+    [reservations],
+  );
+
+  type ActivityEntry = { kind: string; icon: string; title: string; detail: string; at: string; to: string };
+  const recentActivity: ActivityEntry[] = useMemo(() => {
+    const entries: ActivityEntry[] = [];
+    for (const r of runs.slice(0, 5)) {
+      const when = r.ended_at || r.started_at;
+      if (!when) continue;
+      entries.push({
+        kind: "assessment", icon: "🛡️",
+        title: `Assessment · ${r.workload_name}`,
+        detail: r.overall_score != null ? `${r.overall_score}/100 · ${r.severity}` : (r.status || "running"),
+        at: when,
+        to: `/assessments/${r.id}`,
+      });
+    }
+    for (const inv of recentInvestigations.slice(0, 5)) {
+      entries.push({
+        kind: "investigation", icon: "🔎",
+        title: `Deep investigation · ${inv.title}`,
+        detail: inv.root_cause || inv.summary || "completed",
+        at: inv.created_at,
+        to: `/chat/${inv.chat_id}`,
+      });
+    }
+    if (isAdmin) {
+      for (const snap of policySnapshots.slice(0, 3)) {
+        const when = (snap as unknown as { generated_at?: string; created_at?: string }).generated_at
+          || (snap as unknown as { created_at?: string }).created_at
+          || "";
+        if (!when) continue;
+        entries.push({
+          kind: "policy", icon: "📐",
+          title: "Policy posture snapshot",
+          detail: snap.summary?.compliance?.available
+            ? `${snap.summary.compliance.total_non_compliant_resources ?? 0} non-compliant`
+            : "snapshot captured",
+          at: when,
+          to: "/policy",
+        });
+      }
+    }
+    return entries
+      .filter((e) => !!e.at)
+      .sort((a, b) => (new Date(b.at).getTime() - new Date(a.at).getTime()))
+      .slice(0, 6);
+  }, [runs, recentInvestigations, policySnapshots, isAdmin]);
+
+  const userName = (meQ.data?.display_name && meQ.data.display_name.trim())
+    || (meQ.data?.email ? meQ.data.email.split("@")[0] : "")
+    || "there";
+  const defaultConn = conns.find((c) => c.is_default) || conns[0];
+
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-5xl space-y-6 p-6">
-        {/* Hero */}
-        <div className="rounded-2xl border bg-gradient-to-br from-brand/10 to-violet-50 p-6">
-          <div className="flex items-start gap-3">
-            <span className="text-3xl">🤖</span>
-            <div className="min-w-0">
-              <h1 className="text-2xl font-bold text-gray-800">Welcome to the Azure Support Agent</h1>
-              <p className="mt-1 max-w-3xl text-sm text-gray-600">
-                An agentic AI teammate for your Azure estate. It reasons over your live data to run deep,
-                multi-hypothesis root-cause investigations, AI-scores workloads against the Well-Architected
-                Framework, recommends and safely rolls out Azure Policy guardrails, reverse-engineers
-                architecture diagrams from real resources, and surfaces inventory and cost insights — every
-                answer AI-generated from your real Azure data, never guessed. Follow the steps below to get
-                set up.
-              </p>
+      <div className="mx-auto max-w-6xl space-y-6 p-6">
+        {/* Hero — personalized greeting */}
+        <div className="rounded-2xl border bg-gradient-to-br from-brand/10 to-violet-50 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="text-3xl">🤖</span>
+              <div className="min-w-0">
+                <h1 className="truncate text-2xl font-bold text-gray-800">Welcome back, {userName}</h1>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-600">
+                  <span className="rounded-full bg-white/70 px-2 py-0.5">{isAdmin ? "Administrator" : "User"}</span>
+                  {effectiveProvider && (
+                    <span className="rounded-full bg-white/70 px-2 py-0.5">
+                      🧠 {providerLabel(effectiveProvider)}{effectiveModel ? ` · ${effectiveModel}` : ""}
+                    </span>
+                  )}
+                  {defaultConn && (
+                    <span className="rounded-full bg-white/70 px-2 py-0.5">🏢 {defaultConn.name}</span>
+                  )}
+                  {!allDone && known.length > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">
+                      Setup {doneCount}/{known.length}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-          {/* Progress */}
-          <div className="mt-4 flex items-center gap-3">
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/70">
-              <div className={`h-full rounded-full transition-all ${allDone ? "bg-green-500" : "bg-brand"}`} style={{ width: `${pct}%` }} />
+            <div className="flex items-center gap-2">
+              <Link to="/chat" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">💬 New chat</Link>
+              <Link to="/chat?deep=1" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100">🔎 Deep investigation</Link>
+              <Link to="/assessments" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">🛡️ Run assessment</Link>
+              {isAdmin && (
+                <Link to="/monitor" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">📊 Monitor</Link>
+              )}
             </div>
-            <span className="shrink-0 text-xs font-medium text-gray-600">{allDone ? "🎉 You're all set!" : `${doneCount}/${known.length} done`}</span>
           </div>
         </div>
 
-        {/* Setup checklist */}
+        {/* KPI strip — at-a-glance signals */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <KpiTile to="/workloads" icon="🧩" label="Workloads" value={workloads.length} />
+          <KpiTile
+            to="/assessments"
+            icon="🛡️"
+            label="Assessments"
+            value={runs.length}
+            sub={avgScore != null ? `avg ${avgScore}/100` : undefined}
+          />
+          <KpiTile to="/architectures" icon="🗺️" label="Architectures" value={architectures.length} />
+          <KpiTile
+            to="/notifications"
+            icon="🔔"
+            label="Unread"
+            value={unreadCount}
+            tone={unreadCount > 0 ? "amber" : undefined}
+          />
+          {isAdmin && (
+            <KpiTile
+              to="/radar"
+              icon="📡"
+              label="Retirements ≤ 90d"
+              value={retirementsSoon.length}
+              tone={retirementsSoon.length > 0 ? "red" : undefined}
+            />
+          )}
+          {isAdmin && (
+            <KpiTile
+              to="/reservations"
+              icon="🏷️"
+              label="RIs ≤ 30d"
+              value={reservationsExpiringSoon.length}
+              tone={reservationsExpiringSoon.length > 0 ? "red" : undefined}
+            />
+          )}
+        </div>
+
+        {/* Posture & risks — the actual reason an admin opens the dashboard */}
         <div>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Setup guide</h2>
-          <div className="space-y-2">
-            {steps.map((s, i) => {
-              const blocked = s.adminOnly && !isAdmin;
-              return (
-                <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
-                  <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                    s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
-                  }`}>
-                    {s.done === true ? "✓" : s.done === undefined ? "?" : i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-800">{s.title}</span>
-                      {s.done === true && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">done</span>}
-                      {s.done === undefined && <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">admin-managed</span>}
-                    </div>
-                    <p className="mt-0.5 text-xs text-gray-500">{s.desc}</p>
-                    {s.bullets && (
-                      <ul className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
-                        {s.bullets.map((b, bi) => (
-                          <li key={bi} className="text-[11px] leading-snug text-gray-600">{b}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {s.detail && (
-                      <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">
-                        <span className="text-green-500">●</span>{s.detail}
-                      </p>
-                    )}
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Posture &amp; risks</h2>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Card title="Lowest assessment" icon="🛡️" manageTo="/assessments">
+              {lowestRun ? (
+                <Link to={`/assessments/${lowestRun.id}`} className="block rounded-lg border bg-gray-50 p-3 hover:border-brand/40 hover:bg-white">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-medium text-gray-800">{lowestRun.workload_name}</span>
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${scoreTone(lowestRun.overall_score)}`}>
+                      {lowestRun.overall_score}/100
+                    </span>
                   </div>
-                  {blocked ? (
-                    <span className="shrink-0 self-center rounded-lg border px-3 py-1.5 text-xs text-gray-400">Ask an admin</span>
-                  ) : (
-                    <Link to={s.to} className={`shrink-0 self-center rounded-lg px-3 py-1.5 text-xs font-medium ${s.done ? "border text-gray-600 hover:bg-gray-50" : "bg-brand text-white hover:bg-brand/90"}`}>
-                      {s.done ? "Review" : s.cta} →
-                    </Link>
-                  )}
-                </div>
-              );
-            })}
+                  <p className="mt-1 line-clamp-2 text-[11px] text-gray-500">{lowestRun.summary || "Open the run to see prioritized findings."}</p>
+                </Link>
+              ) : (
+                <Empty text={runs.length ? "No completed runs with a score yet." : "No assessment has been run yet."} />
+              )}
+            </Card>
+
+            {isAdmin && (
+              <Card title="Retirements due ≤ 90d" icon="📡" manageTo="/radar">
+                {radarQ.isError ? (
+                  <Empty text="Radar data not available." />
+                ) : retirementsSoon.length === 0 ? (
+                  <Empty text="Nothing retiring in the next 90 days." />
+                ) : (
+                  <ul className="space-y-1.5">
+                    {retirementsSoon.map((r) => (
+                      <li key={r.id} className="flex items-center justify-between gap-2 rounded-md border bg-gray-50 px-2.5 py-1.5">
+                        <span className="min-w-0 truncate text-[12px] text-gray-700" title={r.title}>{r.title}</span>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          r.severity === "red" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                        }`}>{r.days_until ?? "—"}d</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            )}
+
+            {isAdmin && (
+              <Card title="Reservations expiring ≤ 30d" icon="🏷️" manageTo="/reservations">
+                {reservationsQ.isError ? (
+                  <Empty text="Reservation data not available." />
+                ) : reservationsExpiringSoon.length === 0 ? (
+                  <Empty text="No reservations expire in the next 30 days." />
+                ) : (
+                  <ul className="space-y-1.5">
+                    {reservationsExpiringSoon.map((r) => (
+                      <li key={r.id} className="flex items-center justify-between gap-2 rounded-md border bg-gray-50 px-2.5 py-1.5">
+                        <span className="min-w-0 truncate text-[12px] text-gray-700" title={r.display_name}>{r.display_name}</span>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          r.severity === "red" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                        }`}>{r.days_until ?? "—"}d</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Card>
+            )}
           </div>
         </div>
+
+        {/* Recent activity feed */}
+        {recentActivity.length > 0 && (
+          <div>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Recent activity</h2>
+            <ul className="divide-y rounded-xl border bg-white shadow-sm">
+              {recentActivity.map((e, i) => (
+                <li key={i}>
+                  <Link to={e.to} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                    <span className="text-base">{e.icon}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-gray-800">{e.title}</div>
+                      <div className="truncate text-[11px] text-gray-500">{e.detail}</div>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-gray-400">{formatRelative(e.at)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Setup guide — full when in progress, collapsed banner when complete */}
+        {allDone ? (
+          <div className="rounded-xl border border-green-200 bg-green-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm text-green-800">
+                <span>✅</span>
+                <span className="font-medium">All {known.length} setup steps complete.</span>
+                {recentInvQ.isSuccess && (
+                  <span className="text-green-700">{plural(recentInvestigations.length, "recent investigation")} · {plural(runs.length, "assessment run")}</span>
+                )}
+              </div>
+              <button onClick={() => setSetupGuideOpen((v) => !v)} className="rounded-lg border border-green-300 bg-white px-2.5 py-1 text-xs text-green-700 hover:bg-green-100">
+                {setupGuideOpen ? "Hide guide" : "Show guide"}
+              </button>
+            </div>
+            {setupGuideOpen && (
+              <ul className="mt-3 space-y-1.5">
+                {steps.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                        s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
+                      }`}>{s.done === true ? "✓" : s.done === undefined ? "?" : "•"}</span>
+                      <span className="truncate text-xs font-medium text-gray-700">{s.title}</span>
+                      {s.detail && <span className="truncate text-[11px] text-gray-400">· {s.detail}</span>}
+                    </div>
+                    <Link to={s.to} className="shrink-0 text-[11px] font-medium text-brand hover:underline">Review →</Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div className="mb-2 flex items-end justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Setup guide</h2>
+              <span className="text-xs text-gray-500">{doneCount}/{known.length} done</span>
+            </div>
+            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-gray-200">
+              <div className={`h-full rounded-full transition-all ${allDone ? "bg-green-500" : "bg-brand"}`} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="space-y-2">
+              {steps.map((s, i) => {
+                const blocked = s.adminOnly && !isAdmin;
+                const expanded = isStepExpanded(s);
+                return (
+                  <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
+                    <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                      s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
+                    }`}>
+                      {s.done === true ? "✓" : s.done === undefined ? "?" : i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-800">{s.title}</span>
+                        {s.done === true && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">done</span>}
+                        {s.done === undefined && <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">admin-managed</span>}
+                        {s.bullets && s.bullets.length > 0 && (
+                          <button
+                            onClick={() => setExpandedSteps((m) => ({ ...m, [s.id]: !expanded }))}
+                            className="ml-auto rounded-md border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+                          >
+                            {expanded ? "Hide details" : "Learn more"}
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-gray-500">{s.desc}</p>
+                      {expanded && s.bullets && (
+                        <ul className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
+                          {s.bullets.map((b, bi) => (
+                            <li key={bi} className="text-[11px] leading-snug text-gray-600">{b}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {s.detail && (
+                        <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">
+                          <span className="text-green-500">●</span>{s.detail}
+                        </p>
+                      )}
+                    </div>
+                    {blocked ? (
+                      <span className="shrink-0 self-center rounded-lg border px-3 py-1.5 text-xs text-gray-400">Ask an admin</span>
+                    ) : (
+                      <Link to={s.to} className={`shrink-0 self-center rounded-lg px-3 py-1.5 text-xs font-medium ${s.done ? "border text-gray-600 hover:bg-gray-50" : "bg-brand text-white hover:bg-brand/90"}`}>
+                        {s.done ? "Review" : s.cta} →
+                      </Link>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* What's set up — detailed */}
         <div>
@@ -448,20 +755,23 @@ export function DashboardPanel() {
               </Card>
             )}
 
-            {/* Stats */}
-            <Card title="Your estate at a glance" icon="📊">
-              <div className="grid grid-cols-2 gap-3">
-                <StatTile to="/workloads" label="Workloads" value={workloads.length} icon="🧩" />
-                <StatTile to="/assessments" label="Assessments" value={runs.length} icon="🛡️" />
-                <StatTile to="/architectures" label="Architectures" value={architectures.length} icon="🗺️" />
-                {isAdmin && <StatTile to="/policy" label="Policy snapshots" value={policySnapshots.length} icon="📐" />}
-                {isAdmin && <StatTile to="/automations/agents" label="Sub agents" value={agents.length} icon="✨" />}
-              </div>
-            </Card>
+            {/* Sub agents quick summary (admin) */}
+            {isAdmin && (
+              <Card title="Sub agents" icon="✨" manageTo="/automations/agents">
+                {agents.length === 0 ? (
+                  <Empty text="No specialized agents defined yet." />
+                ) : (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border bg-gray-50 p-2.5">
+                    <span className="text-sm text-gray-700">{plural(agents.length, "specialized agent")} ready to dispatch in deep investigations.</span>
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
         </div>
 
-        {/* Explore */}
+        {/* Explore — only when setup still in progress, so it acts as onboarding */}
+        {!allDone && (
         <div>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What can I do here?</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -474,6 +784,7 @@ export function DashboardPanel() {
             {isAdmin && <ExploreCard to="/monitor" icon="📊" title="Monitor" desc="Central dashboard of activity, runs, usage, and audit across the workspace." />}
           </div>
         </div>
+        )}
       </div>
     </div>
   );
@@ -517,14 +828,42 @@ function StatusDot({ ok }: { ok: boolean | undefined }) {
   return <span className={`mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} title={ok === true ? "Connected" : ok === false ? "Not connected" : "Unknown"} />;
 }
 
-function StatTile({ to, label, value, icon }: { to: string; label: string; value: number; icon: string }) {
+function KpiTile({ to, icon, label, value, sub, tone }: { to: string; icon: string; label: string; value: number; sub?: string; tone?: "red" | "amber" }) {
+  const valueTone = tone === "red" ? "text-red-700" : tone === "amber" ? "text-amber-700" : "text-gray-800";
+  const borderTone = tone === "red" ? "border-red-200" : tone === "amber" ? "border-amber-200" : "";
   return (
-    <Link to={to} className="rounded-lg border bg-gray-50 p-3 text-center transition hover:border-brand/40 hover:bg-white">
-      <div className="text-xl">{icon}</div>
-      <div className="text-xl font-bold text-gray-800">{value}</div>
-      <div className="text-[11px] text-gray-500">{label}</div>
+    <Link to={to} className={`flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-sm transition hover:border-brand/40 hover:shadow-md ${borderTone}`}>
+      <span className="text-xl">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className={`text-lg font-bold leading-tight ${valueTone}`}>{value}</div>
+        <div className="truncate text-[11px] text-gray-500">{label}</div>
+        {sub && <div className="truncate text-[10px] text-gray-400">{sub}</div>}
+      </div>
     </Link>
   );
+}
+
+function scoreTone(score: number | null | undefined): string {
+  if (score == null) return "bg-gray-100 text-gray-500";
+  if (score >= 80) return "bg-green-100 text-green-700";
+  if (score >= 60) return "bg-amber-100 text-amber-700";
+  return "bg-red-100 text-red-700";
+}
+
+function formatRelative(iso: string): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diff = Date.now() - t;
+  const m = Math.round(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.round(d / 30);
+  return `${mo}mo ago`;
 }
 
 function ExploreCard({ to, icon, title, desc }: { to: string; icon: string; title: string; desc: string }) {

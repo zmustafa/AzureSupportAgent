@@ -1,13 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import JSZip from "jszip";
 import { api, streamRefreshLlmModels, streamTestLlmProvider, type AiPrompt, type AppSettings, type ArchitectureCategory, type AuditEntry, type BackupConflictMode, type BackupImportPreview, type LlmTestStep, type SandboxVm, type SandboxVmRun, type SiemDestination, type Workload } from "../api";
 import { ensureUtc, formatError } from "../utils/format";
 import { ConnectorsSection } from "./AutomationsView";
-import { SecurityPanel, AccessControlPanel } from "./SecurityView";
-import { AmbaReferenceEditor } from "./AmbaReferenceEditor";
-import { TelemetryReferenceEditor } from "./TelemetryReferenceEditor";
-import { BackupDrReferenceEditor } from "./BackupDrReferenceEditor";
+// Heavy admin sub-sections — lazy so visiting /admin only pulls the small General/
+// Providers/etc. cards, not every reference-set editor in the bundle.
+const SecurityPanel = lazy(() => import("./SecurityView").then((m) => ({ default: m.SecurityPanel })));
+const AccessControlPanel = lazy(() => import("./SecurityView").then((m) => ({ default: m.AccessControlPanel })));
+const AmbaReferenceEditor = lazy(() => import("./AmbaReferenceEditor").then((m) => ({ default: m.AmbaReferenceEditor })));
+const TelemetryReferenceEditor = lazy(() => import("./TelemetryReferenceEditor").then((m) => ({ default: m.TelemetryReferenceEditor })));
+const BackupDrReferenceEditor = lazy(() => import("./BackupDrReferenceEditor").then((m) => ({ default: m.BackupDrReferenceEditor })));
+
+const AdminSubLoading = () => <div className="p-6 text-sm text-gray-500">Loading…</div>;
+const wrap = (node: React.ReactNode) => <Suspense fallback={<AdminSubLoading />}>{node}</Suspense>;
 import {
   ADMIN_NAV,
   ADMIN_SECTION_IDS,
@@ -143,21 +150,21 @@ export function AdminPanel({ section }: { section: AdminSection }) {
 
   // Access Control: a sub-tabbed page for Users / Roles / Groups / Sign-in & SSO.
   if (section === "access" || ACCESS_SUB_IDS.has(section)) {
-    return <AccessControlPanel section={section} />;
+    return wrap(<AccessControlPanel section={section} />);
   }
   // Standalone security sections (Active Sessions, Security Policy) keep their own panel.
   if (section === "sessions" || section === "policies") {
-    return <SecurityPanel section={section as SecuritySection} />;
+    return wrap(<SecurityPanel section={section as SecuritySection} />);
   }
   // AMBA Reference Set gets a dedicated full-page two-pane rich editor.
   if (section === "amba") {
-    return <AmbaReferenceEditor />;
+    return wrap(<AmbaReferenceEditor />);
   }
   if (section === "telemetry") {
-    return <TelemetryReferenceEditor />;
+    return wrap(<TelemetryReferenceEditor />);
   }
   if (section === "backupdr") {
-    return <BackupDrReferenceEditor />;
+    return wrap(<BackupDrReferenceEditor />);
   }
 
   return (
@@ -308,6 +315,7 @@ function BackupRestoreCard() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
   const [exportErr, setExportErr] = useState("");
+  const [includeChats, setIncludeChats] = useState(false);
 
   // Default-select every section once the catalog loads.
   useEffect(() => {
@@ -330,13 +338,12 @@ function BackupRestoreCard() {
     setExporting(true);
     setExportErr("");
     try {
-      const manifest = await api.backupExport([...selected]);
-      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+      const blob = await api.backupExport([...selected], includeChats);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       const ts = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
       a.href = url;
-      a.download = `azsupagent-backup-${ts}.json`;
+      a.download = `azsupagent-backup-${ts}.zip`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -354,24 +361,36 @@ function BackupRestoreCard() {
   const [importErr, setImportErr] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [done, setDone] = useState<{ sections: number; secrets: string[] } | null>(null);
+  const [importArchiveHasChats, setImportArchiveHasChats] = useState(false);
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const parseImportedFile = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith(".zip")) {
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const manifestFile = zip.file("backup.json");
+      if (!manifestFile) throw new Error("That ZIP archive does not contain backup.json.");
+      const text = await manifestFile.async("text");
+      return { data: JSON.parse(text), hasChats: Boolean(zip.file("chats.zip")) };
+    }
+    return { data: JSON.parse(await file.text()), hasChats: false };
+  };
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setImportErr("");
     setPreview(null);
     setDone(null);
     setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        setParsed(JSON.parse(String(reader.result)));
-      } catch {
-        setParsed(null);
-        setImportErr("That file isn't valid JSON.");
-      }
-    };
-    reader.readAsText(file);
+    setImportArchiveHasChats(false);
+    try {
+      const parsedFile = await parseImportedFile(file);
+      setParsed(parsedFile.data);
+      setImportArchiveHasChats(parsedFile.hasChats);
+    } catch {
+      setParsed(null);
+      setImportErr(file.name.toLowerCase().endsWith(".zip") ? "That ZIP archive isn't a valid backup export." : "That file isn't valid JSON.");
+    }
   }
 
   async function doPreview() {
@@ -409,9 +428,9 @@ function BackupRestoreCard() {
     <div className="space-y-6">
       <Card title="Export backup">
         <p className="mb-3 text-xs text-gray-500">
-          Download a portable JSON backup of this tenant's configuration and operational data.
+          Download a portable ZIP backup of this tenant's configuration and operational data.
           Secrets (API keys, client secrets, tokens) are <strong>never</strong> exported — you'll
-          re-enter them after restoring.
+          re-enter them after restoring. Chats can be included as an export-only HTML archive.
         </p>
         {sectionsQ.isLoading && <div className="h-16 animate-pulse rounded-lg border bg-gray-100" />}
         <div className="space-y-4">
@@ -444,13 +463,17 @@ function BackupRestoreCard() {
             </div>
           ))}
         </div>
+        <label className="mt-4 flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={includeChats} onChange={(e) => setIncludeChats(e.target.checked)} />
+          Include chats as a nested HTML ZIP export
+        </label>
         <div className="mt-4 flex items-center gap-3">
           <button
             onClick={doExport}
             disabled={exporting || selected.size === 0}
             className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
           >
-            {exporting ? "Preparing…" : `Download backup (${selected.size})`}
+            {exporting ? "Preparing…" : `Download ZIP backup (${selected.size})`}
           </button>
           <button onClick={() => setSelected(new Set(sections.map((s) => s.id)))} className="text-xs text-gray-500 hover:underline">
             Select all
@@ -465,11 +488,12 @@ function BackupRestoreCard() {
       <Card title="Restore backup">
         <p className="mb-3 text-xs text-gray-500">
           Upload a backup file, preview the changes, then apply. Existing local data is never
-          deleted; a restored secret blank never overwrites a working credential.
+          deleted; a restored secret blank never overwrites a working credential. ZIP exports
+          can include chats, which remain export-only and are skipped on restore.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <label className="cursor-pointer rounded-lg border px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
-            <input type="file" accept="application/json,.json" onChange={onFile} className="hidden" />
+            <input type="file" accept="application/json,application/zip,.json,.zip" onChange={onFile} className="hidden" />
             {fileName || "Choose backup file…"}
           </label>
           <select
@@ -501,6 +525,11 @@ function BackupRestoreCard() {
         </div>
         <p className="mt-1.5 text-[11px] text-gray-400">{BACKUP_MODE_HELP[mode]}</p>
         {importErr && <div className="mt-2 text-xs text-red-600">{importErr}</div>}
+        {importArchiveHasChats && (
+          <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-2 text-xs text-sky-800">
+            This export includes chats. They are preserved as HTML in the archive and are not restored into the app.
+          </div>
+        )}
 
         {preview && (
           <div className="mt-4">

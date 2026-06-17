@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { RBAC_NAV, type RbacTab } from "./navConfig";
+import { AzureIcon } from "./AzureIcon";
 
 // ---- helpers --------------------------------------------------------------------
 function agoText(seconds: number | null): string {
@@ -144,7 +145,7 @@ function ScopeTreeRow({
   const hasKids = node.children.length > 0;
   const isOpen = expanded.has(node.id);
   const selected = selectedId === node.id;
-  const icon = node.type === "managementGroup" ? "🗂️" : node.type === "subscription" ? "📦" : "🌐";
+  const azKind = node.type === "managementGroup" ? "mg" : node.type === "subscription" ? "subscription" : null;
   return (
     <div>
       <div
@@ -159,7 +160,7 @@ function ScopeTreeRow({
           <span className="w-4 shrink-0" />
         )}
         <button onClick={() => onPick(node)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <span className="shrink-0">{icon}</span>
+          {azKind ? <AzureIcon kind={azKind} className="h-4 w-4" /> : <span className="shrink-0">🌐</span>}
           <span className="truncate" title={node.name}>{node.name}</span>
           {node.inferred && node.type === "managementGroup" && (
             <span className="shrink-0 text-[10px] text-gray-400" title="Subscription nesting inferred (single management group)">~</span>

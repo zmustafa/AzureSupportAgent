@@ -92,6 +92,25 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function httpBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new HttpError(res.status, detail);
+  }
+  return res.blob();
+}
+
 /** Absolute API origin, e.g. for SSO redirects (full-page navigations). */
 export const apiBase = API_BASE;
 
@@ -963,6 +982,22 @@ export type CoverageTrend = {
   unit: string;
 };
 
+// ---- Coverage scan history (shared by Monitoring / Telemetry / Backup-DR) --------
+export type CoverageFeature = "amba" | "telemetry" | "backupdr";
+export type CoverageRunSummary = {
+  id: string;
+  run_at: string;
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  headline: number | null;
+  counts: Record<string, number>;
+  resource_count: number;
+  demo: boolean;
+  triggered_by: string;
+  deleted_at?: string;
+};
+
 // ---- Private Network Reachability Analyzer (netcheck) ---------------------------
 export type NetCheckStep = {
   step: string;
@@ -1819,10 +1854,10 @@ export const api = {
   // --- Backup & Restore (whole-tenant) ---
   backupSections: () =>
     http<{ sections: BackupSection[] }>("/admin/backup/sections"),
-  backupExport: (sections: string[]) =>
-    http<BackupManifest>("/admin/backup/export", {
+  backupExport: (sections: string[], include_chats = false) =>
+    httpBlob("/admin/backup/export", {
       method: "POST",
-      body: JSON.stringify({ sections }),
+      body: JSON.stringify({ sections, include_chats }),
     }),
   backupImportPreview: (data: unknown, mode: BackupConflictMode) =>
     http<BackupImportPreview>("/admin/backup/import/preview", {
@@ -2371,6 +2406,33 @@ export const api = {
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     return http<CoverageTrend>(`${base}?${q.toString()}`);
+  },
+  // Coverage scan history (shared across Monitoring / Telemetry / Backup-DR).
+  coverageRuns: (feature: CoverageFeature, params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ runs: CoverageRunSummary[] }>(`/${feature}/runs?${q.toString()}`);
+  },
+  coverageTrashedRuns: (feature: CoverageFeature, params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ runs: CoverageRunSummary[] }>(`/${feature}/runs/trash?${q.toString()}`);
+  },
+  coverageRun: <T>(feature: CoverageFeature, runId: string) =>
+    http<{ ok: boolean; run?: T; detail?: string }>(`/${feature}/run/${runId}`),
+  deleteCoverageRun: (feature: CoverageFeature, runId: string) =>
+    http<{ ok: boolean }>(`/${feature}/run/${runId}`, { method: "DELETE" }),
+  restoreCoverageRun: (feature: CoverageFeature, runId: string) =>
+    http<{ ok: boolean }>(`/${feature}/run/${runId}/restore`, { method: "POST", body: "{}" }),
+  purgeCoverageRun: (feature: CoverageFeature, runId: string) =>
+    http<{ ok: boolean }>(`/${feature}/run/${runId}/purge`, { method: "DELETE" }),
+  emptyCoverageTrash: (feature: CoverageFeature, params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ purged: number }>(`/${feature}/runs/trash/empty?${q.toString()}`, { method: "POST", body: "{}" });
   },
   // AMBA Monitoring Coverage
   ambaCoverage: (params: { workload_id?: string; subscription_id?: string }) => {

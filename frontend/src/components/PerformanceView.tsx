@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Markdown } from "./LazyMarkdown";
 import {
   api,
   streamPerfRefresh,
@@ -467,12 +468,22 @@ export function PerformancePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <select value={scopeKind} onChange={(e) => setScopeKind(e.target.value as never)} className="rounded-md border px-2 py-1.5 text-sm">
-              <option value="workload">By workload</option>
-              <option value="subscription">By subscription</option>
-            </select>
+            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+              <button
+                onClick={() => setScopeKind("workload")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Workload
+              </button>
+              <button
+                onClick={() => setScopeKind("subscription")}
+                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
+              >
+                Subscription
+              </button>
+            </div>
             {scopeKind === "workload" ? (
-              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[220px] rounded-md border px-2 py-1.5 text-sm">
+              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[220px] rounded-lg border px-2 py-1.5 text-xs">
                 {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             ) : (
@@ -685,7 +696,11 @@ export function PerformancePanel() {
             )}
 
             {data.narrative && (
-              <div className="mb-4 rounded-lg border bg-white px-3 py-2 text-sm text-gray-700">{data.narrative}</div>
+              <div className="mb-4 rounded-lg border bg-white px-3 py-2 text-sm text-gray-700">
+                <Markdown>
+                  {data.narrative}
+                </Markdown>
+              </div>
             )}
 
             <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">

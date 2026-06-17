@@ -16,3 +16,40 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Per-key defaults for shared, low-churn data that many panels mount. These keys are
+// requested by 5–10 components across the app; without a longer staleTime each mount
+// triggers a refetch. Mutations still invalidate explicitly, so freshness is preserved.
+const FIVE_MIN = 5 * 60_000;
+const TEN_MIN = 10 * 60_000;
+const LOW_CHURN_FIVE_MIN: readonly (readonly unknown[])[] = [
+  ["workloads"],
+  ["connectors"],
+  ["azureConnections"],
+  ["adminConnections"],
+  ["llmConfig"],
+  ["activeLlm"],
+  ["customAgents"],
+  ["architectureCollections"],
+  ["architectureCatalog"],
+  ["assessmentCatalog"],
+  ["assessmentPortfolio"],
+  ["architectureMemories"],
+];
+const VERY_LOW_CHURN_TEN_MIN: readonly (readonly unknown[])[] = [
+  ["me"],
+  ["memoryCatalog"],
+  ["builtinTools"],
+  ["entraTools"],
+  ["tools"],
+  ["appSettings"],
+  ["architectureCatalog"],
+  ["monitorDatasources"],
+];
+for (const key of LOW_CHURN_FIVE_MIN) {
+  queryClient.setQueryDefaults(key, { staleTime: FIVE_MIN });
+}
+for (const key of VERY_LOW_CHURN_TEN_MIN) {
+  queryClient.setQueryDefaults(key, { staleTime: TEN_MIN });
+}
+

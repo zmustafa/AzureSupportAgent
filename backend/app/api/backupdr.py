@@ -110,7 +110,7 @@ async def refresh(
     # away or the connection drops mid-refresh — the result is picked up on the next visit.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True))
     # Record a compact trend point (% protected) so this scan can be charted over time.
-    from app.core import coverage_trends
+    from app.core import coverage_trends, coverage_runs
 
     sc = snap.get("scorecard", {}) or {}
     coverage_trends.record(
@@ -118,6 +118,11 @@ async def refresh(
         pct=sc.get("pct_protected"),
         extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
         demo=bool(snap.get("demo")),
+    )
+    coverage_runs.save_run(
+        "backupdr", principal.tenant_id or "default", scope_kind, scope_id, snap,
+        headline=sc.get("pct_protected"), counts=sc,
+        resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
     )
     db.add(
         AuditLog(
@@ -150,6 +155,76 @@ async def trend(
             extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
         )
     return coverage_trends.trend("backupdr", tenant_id, scope_kind, scope_id)
+
+
+# ----------------------------------------------------------------------- run history
+@router.get("/runs")
+async def list_runs(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Saved scan history for the scope (newest first). Each 'Refresh now' adds a run."""
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"runs": coverage_runs.list_runs("backupdr", principal.tenant_id or "default", scope_kind, scope_id)}
+
+
+@router.get("/runs/trash")
+async def list_trashed_runs(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"runs": coverage_runs.list_trashed_runs("backupdr", principal.tenant_id or "default", scope_kind, scope_id)}
+
+
+@router.get("/run/{run_id}")
+async def get_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """Re-open a saved run's full snapshot (renders exactly like a fresh scan)."""
+    from app.core import coverage_runs
+
+    run = coverage_runs.get_run("backupdr", principal.tenant_id or "default", run_id)
+    if run is None:
+        return {"ok": False, "detail": "Run not found."}
+    return {"ok": True, "run": _decorate(run, _settings()[0])}
+
+
+@router.delete("/run/{run_id}")
+async def delete_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.delete_run("backupdr", principal.tenant_id or "default", run_id)}
+
+
+@router.post("/run/{run_id}/restore")
+async def restore_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.restore_run("backupdr", principal.tenant_id or "default", run_id)}
+
+
+@router.delete("/run/{run_id}/purge")
+async def purge_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.purge_run("backupdr", principal.tenant_id or "default", run_id)}
+
+
+@router.post("/runs/trash/empty")
+async def empty_trash(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, int]:
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"purged": coverage_runs.empty_trash("backupdr", principal.tenant_id or "default", scope_kind, scope_id)}
 
 
 

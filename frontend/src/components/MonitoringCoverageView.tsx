@@ -13,6 +13,7 @@ import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 
 const SEV_CLS: Record<string, string> = {
@@ -76,7 +77,9 @@ export function MonitoringCoveragePanel() {
   const [sevFilter, setSevFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [tab, setTab] = useState<"coverage" | "all">("coverage");
+  const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.amba.density", "expanded");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<{ row: AmbaRow; cell: AmbaCell } | null>(null);
   const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
@@ -143,6 +146,7 @@ export function MonitoringCoveragePanel() {
       const fresh = await api.refreshAmba(p);
       qc.setQueryData(dataKey, fresh);
       await qc.invalidateQueries({ queryKey: trendKey });
+      await qc.invalidateQueries({ queryKey: coverageRunsKey("amba", scopeKind, effectiveWorkloadId, subId) });
     });
   }
 
@@ -256,7 +260,8 @@ export function MonitoringCoveragePanel() {
   }
 
   function toggleGroup(t: string) {
-    setCollapsed((p) => {
+    const setter = density === "compact" ? setOpenGroups : setCollapsed;
+    setter((p) => {
       const n = new Set(p);
       n.has(t) ? n.delete(t) : n.add(t);
       return n;
@@ -412,6 +417,11 @@ export function MonitoringCoveragePanel() {
             <option value="missing">✗ Missing</option>
             <option value="misconfigured">⚠ Misconfigured</option>
           </select>
+          <span className="text-gray-300">·</span>
+          <div className="inline-flex overflow-hidden rounded-lg border" title="Compact shows just the resource-type rows; Expanded shows the full alert matrix.">
+            <button onClick={() => setDensity("compact")} className={`px-2 py-1.5 ${density === "compact" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Compact</button>
+            <button onClick={() => setDensity("expanded")} className={`px-2 py-1.5 ${density === "expanded" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Expanded</button>
+          </div>
         </div>
         )}
 
@@ -435,6 +445,20 @@ export function MonitoringCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+        {enabled && tab === "coverage" && (
+          <CoverageHistory<AmbaCoverage>
+            feature="amba"
+            scopeKind={scopeKind}
+            workloadId={effectiveWorkloadId}
+            subId={subId}
+            enabled={enabled}
+            headlineLabel="Coverage"
+            onView={(snap) => {
+              qc.setQueryData(["amba", scopeKind, effectiveWorkloadId, subId], snap);
+              setLoadedScope(scopeKey);
+            }}
+          />
+        )}
         {!enabled ? (
           <div className="py-16 text-center text-sm text-gray-400">
             {scopeReady
@@ -454,14 +478,14 @@ export function MonitoringCoveragePanel() {
             No resources match the current scope/filters, or none are covered by the baseline reference.
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className={density === "compact" ? "space-y-1.5" : "space-y-4"}>
             {visibleGroups.map((g) => {
-              const isCollapsed = collapsed.has(g.resource_type);
+              const isCollapsed = density === "compact" ? !openGroups.has(g.resource_type) : collapsed.has(g.resource_type);
               return (
-                <section key={g.resource_type} className="overflow-hidden rounded-xl border bg-white">
-                  <button onClick={() => toggleGroup(g.resource_type)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
+                <section key={g.resource_type} className={`overflow-hidden border bg-white ${density === "compact" ? "rounded-lg" : "rounded-xl"}`}>
+                  <button onClick={() => toggleGroup(g.resource_type)} className={`flex w-full items-center gap-2 text-left ${density === "compact" ? "px-3 py-1.5" : "px-4 py-3"}`}>
                     <span className="text-gray-400">{isCollapsed ? "▸" : "▾"}</span>
-                    <h2 className="text-sm font-semibold text-gray-900">{g.display}</h2>
+                    <h2 className={`font-semibold text-gray-900 ${density === "compact" ? "text-xs" : "text-sm"}`}>{g.display}</h2>
                     <span className="font-mono text-[10px] text-gray-400">{g.resource_type}</span>
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{g.rows.length}</span>
                     <span

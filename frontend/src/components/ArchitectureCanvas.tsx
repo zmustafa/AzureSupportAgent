@@ -1484,7 +1484,7 @@ function CanvasInner({
         {dirty && <span className="text-[11px] text-amber-600">● unsaved</span>}
 
         {/* Find a node */}
-        <div className="relative ml-3">
+        <div className="relative min-w-0">
           <input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setSearchFocus(true); }}
@@ -1508,7 +1508,7 @@ function CanvasInner({
           )}
         </div>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="flex basis-full flex-wrap items-center gap-1.5 border-t border-gray-100 pt-2">
           {/* Undo / redo */}
           <div className="flex overflow-hidden rounded-lg border">
             <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)" className="px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-30">↶</button>

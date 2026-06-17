@@ -28,8 +28,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "../LazyMarkdown";
 import { api, type MonitorWidget, type WidgetTableResult } from "../../api";
 
 const PALETTE = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6", "#f43f5e", "#84cc16", "#06b6d4"];
@@ -423,7 +422,7 @@ function MarkdownWidget({ widget }: WidgetProps) {
   const md = (widget.viz?.markdown as string) || (widget.dataSource?.query as string) || "_Empty markdown widget — edit to add content._";
   return (
     <div className="prose-chat h-full overflow-auto text-sm">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
+      <Markdown>{md}</Markdown>
     </div>
   );
 }

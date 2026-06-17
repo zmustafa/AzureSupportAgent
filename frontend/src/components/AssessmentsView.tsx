@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown as LazyMarkdown } from "./LazyMarkdown";
 import {
   api,
   API_BASE,
@@ -28,7 +27,7 @@ function Markdown({ children, className = "", inline = false }: { children: stri
   if (inline) {
     return (
       <span className={`[&_p]:m-0 [&_p]:inline [&_strong]:font-semibold [&_code]:rounded [&_code]:bg-black/5 [&_code]:px-1 ${className}`}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+        <LazyMarkdown>{children}</LazyMarkdown>
       </span>
     );
   }
@@ -41,7 +40,7 @@ function Markdown({ children, className = "", inline = false }: { children: stri
         className
       }
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <LazyMarkdown>{children}</LazyMarkdown>
     </div>
   );
 }
@@ -1009,6 +1008,8 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<"findings" | "compliance" | "resources">("findings");
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const pdfAbortRef = useRef<AbortController | null>(null);
   // Findings filter state, lifted here so the score gauge + pillar tiles can drive it.
   const [pillar, setPillar] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1017,6 +1018,8 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
     setTab("findings");
     setPillar((cur) => (cur === p ? "all" : p));
   }
+
+  useEffect(() => () => pdfAbortRef.current?.abort(), []);
 
   const statesQ = useQuery({
     queryKey: ["assessmentFindingStates", run?.workload_id],
@@ -1067,7 +1070,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
       setBusy(false);
     }
   }
-  function exportRun(fmt: "json" | "csv") {
+  function exportRun(fmt: "json" | "csv" | "pdf") {
     void (async () => {
       try {
         const res = await fetch(`${API_BASE}/assessments/runs/${runId}/export?format=${fmt}`, { credentials: "include" });
@@ -1075,7 +1078,9 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `assessment-${runId}.${fmt}`;
+        const cd = res.headers.get("Content-Disposition") || "";
+        const m = /filename="?([^";]+)"?/.exec(cd);
+        a.download = m ? m[1] : `assessment-${runId}.${fmt}`;
         a.click();
         URL.revokeObjectURL(url);
       } catch {
@@ -1083,10 +1088,41 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
       }
     })();
   }
+  async function exportPdf() {
+    if (pdfBusy) return;
+    const controller = new AbortController();
+    pdfAbortRef.current = controller;
+    setPdfBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/assessments/runs/${runId}/export?format=pdf`, {
+        credentials: "include",
+        signal: controller.signal,
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="?([^";]+)"?/.exec(cd);
+      a.download = m ? m[1] : `assessment-${runId}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      if ((err as { name?: string } | null)?.name !== "AbortError") {
+        /* ignore */
+      }
+    } finally {
+      pdfAbortRef.current = null;
+      setPdfBusy(false);
+    }
+  }
+  function cancelPdfExport() {
+    pdfAbortRef.current?.abort();
+  }
 
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
+    <div className="w-full space-y-5 px-4 py-4 sm:px-6 lg:px-8">
+      <div className="flex w-full items-center justify-between gap-4">
         <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-700">← Back to assessments</button>
         <div className="flex items-center gap-2">
           <button onClick={() => void rerun()} disabled={busy || isRunning}
@@ -1098,6 +1134,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
             className={`rounded-lg border px-2.5 py-1 text-xs ${run.is_baseline ? "border-amber-300 bg-amber-50 text-amber-700" : "text-gray-600 hover:bg-gray-50"}`}>
             {run.is_baseline ? "★ Baseline" : "☆ Set baseline"}
           </button>
+          <button onClick={() => void exportPdf()} disabled={pdfBusy} className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10 disabled:opacity-50" title="Download a branded PDF report">{pdfBusy ? "Generating…" : "⬇ PDF"}</button>
           <button onClick={() => exportRun("csv")} className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">⬇ CSV</button>
           <button onClick={() => exportRun("json")} className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">⬇ JSON</button>
           <span className="text-xs text-gray-400">{formatTimestamp(run.started_at ?? undefined)}</span>
@@ -1127,21 +1164,21 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-5 rounded-lg border bg-white p-5">
+      <div className="grid w-full gap-5 rounded-lg border bg-white p-5 2xl:grid-cols-[auto_minmax(0,1fr)_auto] 2xl:items-center">
         <button
           type="button"
           onClick={() => { setTab("findings"); setPillar("all"); setStatusFilter("all"); }}
           title="Show all controls"
-          className={`rounded-lg p-1 transition hover:bg-gray-50 ${pillar === "all" && statusFilter === "all" ? "ring-1 ring-brand/40" : ""}`}
+          className={`w-fit rounded-lg p-1 transition hover:bg-gray-50 ${pillar === "all" && statusFilter === "all" ? "ring-1 ring-brand/40" : ""}`}
         >
           <ScoreGauge score={run.overall_score} size={130} label="Overall" />
         </button>
-        <div className="flex flex-wrap gap-3">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-3">
           {Object.entries(run.scores).map(([p, s]) => (
             <PillarCard key={p} pillar={p} score={s} active={pillar === p} onClick={() => focusPillar(p)} />
           ))}
         </div>
-        <div className="ml-auto text-right text-xs text-gray-500">
+        <div className="text-right text-xs text-gray-500 2xl:justify-self-end">
           {trend.length > 1 && <div className="mb-1 flex justify-end"><Sparkline values={trend} /></div>}
           <div><span className="font-medium text-green-600">{run.totals.passed}</span> passed</div>
           <div><span className="font-medium text-red-600">{run.totals.failed}</span> failed</div>
@@ -1176,6 +1213,32 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
         <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-500">Executive summary</div>
           <Markdown className="text-sm text-gray-700">{run.summary}</Markdown>
+        </div>
+      )}
+
+      {pdfBusy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6 backdrop-blur-[1px]">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="mt-0.5 h-10 w-10 animate-spin rounded-full border-4 border-brand/20 border-t-brand" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg font-semibold text-gray-900">Generating PDF report</div>
+                <p className="mt-1 text-sm text-gray-500">
+                  The report is being compiled with the table of contents, summary, findings, and appendix.
+                  You can cancel while it is processing.
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <button
+                    onClick={cancelPdfExport}
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
+                  >
+                    Cancel
+                  </button>
+                  <span className="text-xs text-gray-400">This only cancels the current PDF request.</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

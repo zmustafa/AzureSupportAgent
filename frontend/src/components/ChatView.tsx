@@ -2,8 +2,7 @@ import { useEffect, useRef, useState, memo, createContext, useContext, useCallba
 import { flushSync } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation, Link } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "./LazyMarkdown";
 import {
   api,
   streamMessage,
@@ -567,15 +566,21 @@ export default function ChatView() {
   // Settings sub-menu expansion in the sidebar (auto-open on an /admin route).
   const [adminOpen, setAdminOpen] = useState<boolean>(false);
 
-  // Auto-open each sidebar sub-menu when you navigate INTO its section, but keep the
-  // open/closed state user-controllable via the chevron afterwards (so clicking the
-  // section header doesn't force the list permanently expanded).
+  // Auto-open each sidebar sub-menu when you navigate INTO its section, AND collapse it
+  // when you leave — matching the behavior of the Settings sub-menu so all expandable
+  // groups behave the same. The chevron still toggles per session while you're inside.
   useEffect(() => {
-    if (inAutomations && !inCustomAgents) setAutomationsOpen(true);
+    setAutomationsOpen(inAutomations && !inCustomAgents);
   }, [inAutomations, inCustomAgents]);
+  // NOTE: Architectures is a top-level item — NOT a Proactive Support child — so it must
+  // not appear in this condition. Including it caused Proactive Support to wrongly auto-
+  // expand whenever the user opened Architectures.
+  const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
+    || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
+    || inTeleIntel || inPerformance;
   useEffect(() => {
-    if (inArchitectures || inAssessments || inRbac || inIdentity || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations || inTeleIntel || inPerformance) setProactiveOpen(true);
-  }, [inArchitectures, inAssessments, inRbac, inIdentity, inCoverage, inTelemetry, inBackupDr, inEvidence, inRadar, inReservations, inTeleIntel, inPerformance]);
+    setProactiveOpen(inAnyProactive);
+  }, [inAnyProactive]);
   // Settings tracks the route: opens on an /admin route and collapses when you navigate
   // away to a section outside Settings (still chevron-collapsible while inside /admin).
   useEffect(() => {
@@ -745,7 +750,7 @@ export default function ChatView() {
     queryKey: ["activeTurns"],
     queryFn: api.activeTurns,
     refetchInterval: 4000,
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     staleTime: 2000,
   });
   // When the set of server-active turns changes, refresh the chat list so OTHER tabs/
@@ -2102,14 +2107,17 @@ export default function ChatView() {
 
   // Sidebar: filter by search, then split into pinned / unpinned groups.
   const q = chatSearch.trim().toLowerCase();
-  const searchedChats = q
-    ? chats.filter((c) => c.title.toLowerCase().includes(q))
-    : chats;
-  // The "Pinned" quick-filter narrows to pinned threads only.
-  const filteredChats =
-    chatFilter === "pinned" ? searchedChats.filter((c) => c.pinned) : searchedChats;
-  const pinnedChats = filteredChats.filter((c) => c.pinned);
-  const recentChats = filteredChats.filter((c) => !c.pinned);
+  const { searchedChats, filteredChats, pinnedChats, recentChats } = useMemo(() => {
+    const searched = q ? chats.filter((c) => c.title.toLowerCase().includes(q)) : chats;
+    const filtered = chatFilter === "pinned" ? searched.filter((c) => c.pinned) : searched;
+    return {
+      searchedChats: searched,
+      filteredChats: filtered,
+      pinnedChats: filtered.filter((c) => c.pinned),
+      recentChats: filtered.filter((c) => !c.pinned),
+    };
+  }, [chats, chatFilter, q]);
+  void searchedChats; // exported for parity; consumed indirectly via filteredChats
 
   // Spinner source: local in-flight streams (this tab) ∪ server-reported active turns
   // (any tab/window). A short-lived local stream that just finished is excluded by the
@@ -2412,66 +2420,6 @@ export default function ChatView() {
             </div>
           ))}
 
-        {/* Monitor: a single link to the central dashboard. Admin-only. */}
-        {me?.role === "admin" &&
-          (railCollapsed ? (
-            <Link
-              to="/monitor"
-              title="Monitor"
-              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inMonitor
-                  ? "bg-gray-200 text-gray-900"
-                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-              }`}
-            >
-              <MonitorIcon className="h-[18px] w-[18px]" />
-            </Link>
-          ) : (
-            <div className="mb-1 px-2">
-              <Link
-                to="/monitor"
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                  inMonitor
-                    ? "bg-gray-200 font-medium text-gray-900"
-                    : "text-gray-700 hover:bg-gray-200/60"
-                }`}
-              >
-                <MonitorIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                <span>Monitor</span>
-              </Link>
-            </div>
-          ))}
-
-        {/* Stats: a read-only at-a-glance metrics page. Admin-only. */}
-        {me?.role === "admin" &&
-          (railCollapsed ? (
-            <Link
-              to="/stats"
-              title="Stats"
-              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inStats
-                  ? "bg-gray-200 text-gray-900"
-                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-              }`}
-            >
-              <StatsIcon className="h-[18px] w-[18px]" />
-            </Link>
-          ) : (
-            <div className="mb-1 px-2">
-              <Link
-                to="/stats"
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                  inStats
-                    ? "bg-gray-200 font-medium text-gray-900"
-                    : "text-gray-700 hover:bg-gray-200/60"
-                }`}
-              >
-                <StatsIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                <span>Stats</span>
-              </Link>
-            </div>
-          ))}
-
         {/* Azure Workloads: hand-picked resource scopes. Available to all users. */}
         {railCollapsed ? (
           <Link
@@ -2501,65 +2449,34 @@ export default function ChatView() {
           </div>
         )}
 
-        {/* Inventory: every Azure resource across workloads. Admin-only. */}
-        {me?.role === "admin" &&
-          (railCollapsed ? (
+        {/* Architectures: visual application architecture diagrams (manual or AI). All users. */}
+        {railCollapsed ? (
+          <Link
+            to="/architectures"
+            title="Architectures"
+            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+              inArchitectures
+                ? "bg-gray-200 text-gray-900"
+                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+            }`}
+          >
+            <ArchitectureIcon className="h-[18px] w-[18px]" />
+          </Link>
+        ) : (
+          <div className="mb-1 px-2">
             <Link
-              to="/inventory"
-              title="Inventory"
-              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inInventory
-                  ? "bg-gray-200 text-gray-900"
-                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+              to="/architectures"
+              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                inArchitectures
+                  ? "bg-gray-200 font-medium text-gray-900"
+                  : "text-gray-700 hover:bg-gray-200/60"
               }`}
             >
-              <InventoryIcon className="h-[18px] w-[18px]" />
+              <ArchitectureIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+              <span>Architectures</span>
             </Link>
-          ) : (
-            <div className="mb-1 px-2">
-              <Link
-                to="/inventory"
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                  inInventory
-                    ? "bg-gray-200 font-medium text-gray-900"
-                    : "text-gray-700 hover:bg-gray-200/60"
-                }`}
-              >
-                <InventoryIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                <span>Inventory</span>
-              </Link>
-            </div>
-          ))}
-
-        {/* Azure Policy: governance toolkit (inventory, compliance, advisors). Admin-only. */}
-        {me?.role === "admin" &&
-          (railCollapsed ? (
-            <Link
-              to="/policy"
-              title="Azure Policy"
-              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inPolicy
-                  ? "bg-gray-200 text-gray-900"
-                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-              }`}
-            >
-              <PolicyIcon className="h-[18px] w-[18px]" />
-            </Link>
-          ) : (
-            <div className="mb-1 px-2">
-              <Link
-                to="/policy"
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                  inPolicy
-                    ? "bg-gray-200 font-medium text-gray-900"
-                    : "text-gray-700 hover:bg-gray-200/60"
-                }`}
-              >
-                <PolicyIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                <span>Azure Policy</span>
-              </Link>
-            </div>
-          ))}
+          </div>
+        )}
 
         {/* Proactive Support: posture/forensic dashboards grouped under one expandable
             menu (Monitoring/Telemetry/Backup-DR coverage, Evidence Locker, Retirement
@@ -2567,15 +2484,17 @@ export default function ChatView() {
         {me?.role === "admin" && (() => {
           const items = [
             { to: "/assessments", label: "Assessments", Icon: AssessmentIcon, active: inAssessments },
-            { to: "/identity", label: "Identity", Icon: IdentityIcon, active: inIdentity },
-            { to: "/rbac", label: "RBAC", Icon: RbacIcon, active: inRbac },
             { to: "/coverage", label: "Monitoring Coverage", Icon: CoverageIcon, active: inCoverage },
             { to: "/telemetry", label: "Telemetry Coverage", Icon: TelemetryIcon, active: inTelemetry },
             { to: "/backupdr", label: "Backup & DR Coverage", Icon: BackupIcon, active: inBackupDr },
+            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/radar", label: "Retirement Radar", Icon: RadarIcon, active: inRadar },
             { to: "/reservations", label: "Reservations Monitor", Icon: ReservationIcon, active: inReservations },
+            { to: "/inventory", label: "Inventory", Icon: InventoryIcon, active: inInventory },
+            { to: "/policy", label: "Azure Policy", Icon: PolicyIcon, active: inPolicy },
+            { to: "/identity", label: "Identity", Icon: IdentityIcon, active: inIdentity },
+            { to: "/rbac", label: "RBAC", Icon: RbacIcon, active: inRbac },
             { to: "/telemetry-intel", label: "Telemetry Intelligence", Icon: TelemetryIntelIcon, active: inTeleIntel },
-            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/evidence", label: "Evidence Locker", Icon: EvidenceIcon, active: inEvidence },
           ];
           const anyActive = items.some((i) => i.active);
@@ -2632,35 +2551,6 @@ export default function ChatView() {
             </div>
           );
         })()}
-
-        {/* Architectures: visual application architecture diagrams (manual or AI). All users. */}
-        {railCollapsed ? (
-          <Link
-            to="/architectures"
-            title="Architectures"
-            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-              inArchitectures
-                ? "bg-gray-200 text-gray-900"
-                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-            }`}
-          >
-            <ArchitectureIcon className="h-[18px] w-[18px]" />
-          </Link>
-        ) : (
-          <div className="mb-1 px-2">
-            <Link
-              to="/architectures"
-              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                inArchitectures
-                  ? "bg-gray-200 font-medium text-gray-900"
-                  : "text-gray-700 hover:bg-gray-200/60"
-              }`}
-            >
-              <ArchitectureIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-              <span>Architectures</span>
-            </Link>
-          </div>
-        )}
 
         {/* Settings: an expandable menu (mirrors Automations). URL-driven so a refresh
             restores the same panel. Admin-only. */}
@@ -2733,6 +2623,66 @@ export default function ChatView() {
                   })}
                 </div>
               )}
+            </div>
+          ))}
+
+        {/* Monitor: a single link to the central dashboard. Admin-only. */}
+        {me?.role === "admin" &&
+          (railCollapsed ? (
+            <Link
+              to="/monitor"
+              title="Monitor"
+              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+                inMonitor
+                  ? "bg-gray-200 text-gray-900"
+                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+              }`}
+            >
+              <MonitorIcon className="h-[18px] w-[18px]" />
+            </Link>
+          ) : (
+            <div className="mb-1 px-2">
+              <Link
+                to="/monitor"
+                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                  inMonitor
+                    ? "bg-gray-200 font-medium text-gray-900"
+                    : "text-gray-700 hover:bg-gray-200/60"
+                }`}
+              >
+                <MonitorIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                <span>Monitor</span>
+              </Link>
+            </div>
+          ))}
+
+        {/* Stats: a read-only at-a-glance metrics page. Admin-only. */}
+        {me?.role === "admin" &&
+          (railCollapsed ? (
+            <Link
+              to="/stats"
+              title="Stats"
+              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+                inStats
+                  ? "bg-gray-200 text-gray-900"
+                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+              }`}
+            >
+              <StatsIcon className="h-[18px] w-[18px]" />
+            </Link>
+          ) : (
+            <div className="mb-1 px-2">
+              <Link
+                to="/stats"
+                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                  inStats
+                    ? "bg-gray-200 font-medium text-gray-900"
+                    : "text-gray-700 hover:bg-gray-200/60"
+                }`}
+              >
+                <StatsIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                <span>Stats</span>
+              </Link>
             </div>
           ))}
 
@@ -4855,7 +4805,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
             s.kind === "reasoning" ? (
               <div key={i} className="border-l-2 border-gray-300 pl-3 text-xs text-gray-600">
                 <div className="prose-chat">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.text}</ReactMarkdown>
+                  <Markdown>{s.text}</Markdown>
                 </div>
               </div>
             ) : (
@@ -5284,7 +5234,7 @@ function TypedText({ text, live }: { text: string; live?: boolean }) {
 
 function TypedMarkdown({ text, live }: { text: string; live?: boolean }) {
   const shown = useTypewriter(text, live);
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{shown}</ReactMarkdown>;
+  return <Markdown>{shown}</Markdown>;
 }
 
 function ProgressLines({
@@ -5440,9 +5390,9 @@ function LiveProgress({
           {answer && answer.trim() && (
             <div className="border-t border-brand/10 px-3 py-2">
               <div className="prose-chat text-sm text-gray-900">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                <Markdown components={MARKDOWN_COMPONENTS}>
                   {answer}
-                </ReactMarkdown>
+                </Markdown>
               </div>
             </div>
           )}
@@ -5703,9 +5653,9 @@ const Bubble = memo(function Bubble({
       <div className="w-full max-w-full">
         <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm">
           <div className="prose-chat">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+            <Markdown components={MARKDOWN_COMPONENTS}>
               {content}
-            </ReactMarkdown>
+            </Markdown>
           </div>
         </div>
         {(ts || model || durationMs != null) && (
@@ -6482,9 +6432,10 @@ function MarkdownTable({ children }: { children?: React.ReactNode }) {
 }
 
 /** Shared react-markdown component overrides (adds copy buttons to code blocks). */
-const MARKDOWN_COMPONENTS: import("react-markdown").Components = {
-  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-  table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
+type MarkdownComponents = import("react-markdown").Components;
+const MARKDOWN_COMPONENTS: MarkdownComponents = {
+  pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
+  table: ({ children }: { children?: React.ReactNode }) => <MarkdownTable>{children}</MarkdownTable>,
 };
 
 /** Right-side drawer that lets the user edit a command / KQL query before running it.

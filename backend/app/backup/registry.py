@@ -1,7 +1,9 @@
 """Whole-tenant Backup & Restore — manifest format + section registry.
 
-Produces a single portable JSON archive (``azsupagent.backup`` v1) of a tenant's
-configuration and operational data, and restores it on the same (or a rebuilt) instance.
+Produces a portable JSON manifest (``azsupagent.backup`` v1) of a tenant's
+configuration and operational data, and packages it into a ZIP archive for export.
+The ZIP can also carry an export-only nested chats archive rendered as HTML.
+Restores work from the manifest data on the same (or a rebuilt) instance.
 Mirrors :mod:`app.automations.portability`: a versioned manifest, a registry of sections
 (each knows how to count / collect / restore itself), secret redaction on export, and
 conflict handling on import (``skip`` | ``overwrite`` | ``merge``).
@@ -22,22 +24,29 @@ backup onto a live instance keeps its working credentials.
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from sqlalchemy import DateTime, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     AssessmentFindingState,
     AssessmentWaiver,
+    Chat,
     NotificationRule,
+    Message,
     ScheduledTask,
 )
 
@@ -163,6 +172,161 @@ def _collection(data: Any, key: str) -> dict[str, Any]:
     if isinstance(data, dict) and isinstance(data.get(key), dict):
         return data[key]
     return {}
+
+
+def _safe_slug(text: str, fallback: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip(".-_")
+    return slug or fallback
+
+
+def _message_html(message: Message) -> str:
+    meta_bits = [message.role]
+    if message.provider:
+        meta_bits.append(f"provider={escape(message.provider)}")
+    if message.model:
+        meta_bits.append(f"model={escape(message.model)}")
+    if message.duration_ms is not None:
+        meta_bits.append(f"{message.duration_ms} ms")
+    body = escape(message.content or "")
+    extra: list[str] = []
+    if message.activity_json:
+        extra.append(
+            f"<details><summary>Activity</summary><pre>{escape(json.dumps(message.activity_json, indent=2, ensure_ascii=False))}</pre></details>"
+        )
+    if message.images_json:
+        extra.append(
+            f"<details><summary>Images</summary><pre>{escape(json.dumps(message.images_json, indent=2, ensure_ascii=False))}</pre></details>"
+        )
+    if getattr(message, "investigation_json", None):
+        extra.append(
+            f"<details><summary>Investigation</summary><pre>{escape(json.dumps(message.investigation_json, indent=2, ensure_ascii=False))}</pre></details>"
+        )
+    return f"""
+      <article class=\"message role-{escape(message.role or 'unknown')}\">
+        <div class=\"message-meta\">{' · '.join(meta_bits)}</div>
+        <pre class=\"message-content\">{body}</pre>
+        {''.join(extra)}
+      </article>
+    """
+
+
+def _chat_html(chat: Chat) -> str:
+    messages = list(chat.messages or [])
+    title = escape(chat.title or "New Chat")
+    meta = [
+        f"Chat ID: {escape(chat.id)}",
+        f"User: {escape(chat.user_id)}",
+        f"Created: {escape(chat.created_at.isoformat())}",
+        f"Archived: {'yes' if chat.archived else 'no'}",
+        f"Pinned: {'yes' if chat.pinned else 'no'}",
+    ]
+    if chat.provider:
+        meta.append(f"Provider: {escape(chat.provider)}")
+    if chat.model:
+        meta.append(f"Model: {escape(chat.model)}")
+    if chat.connection_id:
+        meta.append(f"Connection: {escape(chat.connection_id)}")
+    if chat.thinking_level:
+        meta.append(f"Thinking: {escape(chat.thinking_level)}")
+    if chat.agent_id:
+        meta.append(f"Agent: {escape(chat.agent_id)}")
+    if chat.workload_id:
+        meta.append(f"Workload: {escape(chat.workload_id)}")
+
+    system_prompt = (
+        f"<section class=\"system-prompt\"><h2>System prompt</h2><pre>{escape(chat.system_prompt or '')}</pre></section>"
+        if chat.system_prompt
+        else ""
+    )
+    messages_html = "".join(_message_html(message) for message in messages)
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>{title}</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    body {{ margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f7fb; color: #101828; }}
+    .page {{ max-width: 980px; margin: 0 auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08); }}
+    header h1 {{ margin: 0 0 12px; font-size: 28px; line-height: 1.15; }}
+    .meta {{ display: grid; gap: 6px; margin-bottom: 18px; font-size: 12px; color: #475467; }}
+    section {{ margin-top: 20px; }}
+    h2 {{ margin: 0 0 10px; font-size: 16px; }}
+    pre {{ margin: 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }}
+    .message {{ border: 1px solid #d0d5dd; border-radius: 14px; padding: 14px; margin-top: 12px; background: #fcfcfd; }}
+    .message.role-assistant {{ border-color: #b2ddff; background: #f8fbff; }}
+    .message.role-user {{ border-color: #d6bbfb; background: #fbf8ff; }}
+    .message.role-system, .message.role-tool {{ border-color: #d0d5dd; }}
+    .message-meta {{ margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #667085; }}
+    details {{ margin-top: 10px; }}
+    summary {{ cursor: pointer; font-size: 12px; font-weight: 600; color: #344054; }}
+  </style>
+</head>
+<body>
+  <div class=\"page\">
+    <header>
+      <h1>{title}</h1>
+      <div class=\"meta\">{''.join(f'<div>{item}</div>' for item in meta)}</div>
+    </header>
+    {system_prompt}
+    <section>
+      <h2>Messages</h2>
+      {messages_html or '<div>No messages in this chat.</div>'}
+    </section>
+  </div>
+</body>
+</html>"""
+
+
+async def build_chat_archive(tenant_id: str, db: AsyncSession) -> bytes:
+    """Build a ZIP archive of all tenant chats as HTML pages plus an index."""
+    result = await db.execute(
+        select(Chat)
+        .options(selectinload(Chat.messages))
+        .where(Chat.tenant_id == tenant_id)
+        .order_by(Chat.created_at, Chat.id)
+    )
+    chats = list(result.scalars().all())
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as zf:
+        index_lines = [
+            "<!doctype html>",
+            '<html lang="en">',
+            "<head>",
+            '  <meta charset="utf-8" />',
+            '  <meta name="viewport" content="width=device-width, initial-scale=1" />',
+            "  <title>Chats export</title>",
+            "  <style>",
+            "    body { margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f7fb; color: #101828; }",
+            "    .page { max-width: 980px; margin: 0 auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 24px; }",
+            "    .chat { margin-top: 14px; padding: 14px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; }",
+            "    a { color: #175cd3; text-decoration: none; }",
+            "    a:hover { text-decoration: underline; }",
+            "    .meta { margin-top: 4px; font-size: 12px; color: #667085; }",
+            "  </style>",
+            "</head>",
+            "<body>",
+            '  <div class="page">',
+            "    <h1>Chats export</h1>",
+            f"    <p>Tenant {escape(tenant_id)} · {len(chats)} chat{'s' if len(chats) != 1 else ''}</p>",
+        ]
+        if not chats:
+            index_lines.append('    <div class="chat">No chats were found for this tenant.</div>')
+        for idx, chat in enumerate(chats, start=1):
+            filename = f"chats/chat-{idx:04d}-{chat.id}.html"
+            zf.writestr(filename, _chat_html(chat))
+            index_lines.extend(
+                [
+                    '    <div class="chat">',
+                    f'      <a href="{escape(filename)}">{escape(chat.title or "New Chat")}</a>',
+                    f'      <div class="meta">{escape(chat.id)} · {escape(chat.created_at.isoformat())} · {len(chat.messages or [])} message{"s" if len(chat.messages or []) != 1 else ""}</div>',
+                    '    </div>',
+                ]
+            )
+        index_lines.extend(["  </div>", "</body>", "</html>"])
+        zf.writestr("index.html", "\n".join(index_lines))
+    return buffer.getvalue()
 
 
 # --------------------------------------------------------------------------- secrets

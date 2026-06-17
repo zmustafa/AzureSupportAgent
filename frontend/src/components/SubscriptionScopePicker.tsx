@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TreeNode } from "../api";
 import { formatError } from "../utils/format";
+import { AzureIcon } from "./AzureIcon";
 
 // One row of the subscription picker's management-group → subscription tree. MGs expand
 // (lazily); subscriptions are the selectable leaves.
@@ -47,7 +48,7 @@ function ScopeNodeRow({
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           title={node.kind === "subscription" ? node.id : node.name}
         >
-          <span className="shrink-0">{isMg ? "🗂️" : "📦"}</span>
+          <AzureIcon kind={isMg ? "mg" : "subscription"} className="h-4 w-4" />
           <span className="truncate">{node.name}</span>
         </button>
       </div>
@@ -157,7 +158,7 @@ export function SubscriptionScopePicker({
         title={value ? `${valueName || ""} ${value}`.trim() : "Pick a subscription from the management-group tree"}
         data-testid="sub-picker-trigger"
       >
-        <span className="shrink-0">📦</span>
+        <AzureIcon kind="subscription" className="h-4 w-4" />
         <span className="truncate">{value ? valueName || value : "Select subscription…"}</span>
         <span className="ml-auto shrink-0 text-gray-400">▾</span>
       </button>

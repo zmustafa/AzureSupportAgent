@@ -11,17 +11,31 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Poll unread count every 20s (poll-based, per the design decision).
+  // Poll unread count every 60s (long interval keeps the badge fresh enough without
+  // chatter). We also force an immediate refetch when the tab regains visibility, so
+  // returning from another window updates the badge instantly without paying for fast
+  // background polling.
   const countQ = useQuery({
     queryKey: ["notificationsUnread"],
     queryFn: api.notificationsUnread,
-    refetchInterval: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
   const listQ = useQuery({
     queryKey: ["notificationsList"],
     queryFn: () => api.notifications(false),
     enabled: open,
   });
+
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") {
+        qc.invalidateQueries({ queryKey: ["notificationsUnread"] });
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [qc]);
 
   const unread = countQ.data?.count ?? 0;
   const notes = listQ.data?.notifications ?? [];

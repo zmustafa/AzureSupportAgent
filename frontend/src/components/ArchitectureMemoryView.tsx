@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "./LazyMarkdown";
 import {
   api,
   streamGenerateMemory,
@@ -961,9 +960,9 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
               </div>
             ) : (
               <div className="prose prose-sm max-w-none rounded-xl border border-gray-200 bg-white p-5 prose-headings:font-semibold prose-h1:text-xl prose-h2:mt-4 prose-h2:text-base prose-h2:text-gray-800">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <Markdown>
                   {previewRev ? (previewQ.data?.markdown ?? "Loading…") : markdown}
-                </ReactMarkdown>
+                </Markdown>
               </div>
             )}
           </div>

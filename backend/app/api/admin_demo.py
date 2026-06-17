@@ -77,6 +77,13 @@ def _purge_features(tenant_id: str) -> dict[str, Any]:
         lambda w: any(coverage_trends.delete_scope(f, tenant_id, "workload", w) for f in coverage_trends.FEATURES)
     ))
 
+    # Coverage scan history (shared store: Monitoring / Telemetry / Backup-DR).
+    from app.core import coverage_runs
+
+    step("coverage_runs", lambda: _del_all(
+        lambda w: any(coverage_runs.delete_scope(f, tenant_id, "workload", w) for f in coverage_runs.FEATURES)
+    ))
+
     from app.identity import appregs_cache
     step("app_registrations", lambda: appregs_cache.delete_demo(tenant_id))
 

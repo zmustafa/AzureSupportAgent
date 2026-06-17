@@ -15,6 +15,7 @@ import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
+import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 
 const CELL_CLS: Record<string, string> = {
   green: "text-green-600",
@@ -161,6 +162,7 @@ export function BackupDrCoveragePanel() {
       const fresh = await api.refreshBackupDr(p);
       qc.setQueryData(dataKey, fresh);
       await qc.invalidateQueries({ queryKey: trendKey });
+      await qc.invalidateQueries({ queryKey: coverageRunsKey("backupdr", scopeKind, effectiveWorkloadId, subId) });
     });
   }
 
@@ -381,6 +383,20 @@ export function BackupDrCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+        {enabled && tab === "backup" && (
+          <CoverageHistory<BackupDrCoverage>
+            feature="backupdr"
+            scopeKind={scopeKind}
+            workloadId={effectiveWorkloadId}
+            subId={subId}
+            enabled={enabled}
+            headlineLabel="Protected"
+            onView={(snap) => {
+              qc.setQueryData(["backupdr", scopeKind, effectiveWorkloadId, subId], snap);
+              setLoadedScope(scopeKey);
+            }}
+          />
+        )}
         {!enabled ? (
           <div className="py-16 text-center text-sm text-gray-400">
             {scopeReady

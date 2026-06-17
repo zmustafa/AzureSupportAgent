@@ -28,6 +28,7 @@ dependencies = [
     "PyJWT>=2.10",
     "cryptography>=42.0",
     "lxml>=5.0",
+    "xhtml2pdf>=0.2.17",
 ]
 
 [project.optional-dependencies]

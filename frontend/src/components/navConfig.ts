@@ -64,6 +64,7 @@ export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?:
   // Core configuration
   { id: "settings", label: "General", icon: "⚙️", group: "Configuration" },
   { id: "providers", label: "AI Providers", icon: "🧠" },
+  { id: "tenants", label: "Azure Tenants", icon: "🏢" },
   { id: "prompts", label: "System Prompts", icon: "📝" },
   { id: "scoring", label: "Assessments & Architecture", icon: "📐" },
   { id: "amba", label: "AMBA Reference Set", icon: "📡" },
@@ -73,8 +74,6 @@ export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?:
   { id: "backupdr", label: "Backup/DR Reference Set", icon: "🔁" },
   { id: "backupdrchanges", label: "Backup/DR Change Requests", icon: "💾" },
   { id: "radar", label: "Retirement Radar Reference", icon: "📡" },
-  // Connections & integrations
-  { id: "tenants", label: "Azure Tenants", icon: "🏢", group: "Connections" },
   { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️" },
   { id: "connectors", label: "Connectors", icon: "🔌" },
   { id: "tools", label: "Azure MCP Tools", icon: "🧰" },

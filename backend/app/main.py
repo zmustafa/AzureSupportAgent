@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -151,6 +152,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compress large JSON payloads on the wire. SSE clients (EventSource API) always
+# send `Accept: text/event-stream`; we bypass GZipMiddleware for those requests
+# so per-event delivery latency is preserved (gzip's internal buffer would
+# otherwise batch/delay events).
+class _SafeGZip:
+    def __init__(self, app, minimum_size: int = 1024) -> None:
+        self._raw_app = app
+        self._gz_app = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope.get("type") != "http":
+            await self._raw_app(scope, receive, send)
+            return
+        is_sse = False
+        for name, value in scope.get("headers", []):
+            if name == b"accept" and b"text/event-stream" in value.lower():
+                is_sse = True
+                break
+        if is_sse:
+            await self._raw_app(scope, receive, send)
+            return
+        await self._gz_app(scope, receive, send)
+
+
+app.add_middleware(_SafeGZip, minimum_size=1024)
 
 # All application endpoints live under /api so the SPA can own every other path
 # (client-side routes like /inventory, /admin, /policy collide with API prefixes

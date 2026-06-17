@@ -12,11 +12,12 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.assessments import catalog
 from app.assessments import custom_checks as cc_registry
@@ -821,6 +822,17 @@ async def export_run_endpoint(
             rid = r.get("id", "")
             r["portal_url"] = f"https://portal.azure.com/#@/resource{rid}/overview" if rid else ""
             r["subscription_name"] = sub_names.get(r.get("subscription_id", ""), "")
+    if format == "pdf":
+        from app.assessments.pdf_report import build_pdf
+
+        pdf_bytes = await run_in_threadpool(build_pdf, payload)
+        safe_name = (run.workload_name or "workload").replace(" ", "_")
+        date = (run.ended_at or run.started_at or _now()).strftime("%Y%m%d")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="assessment-{safe_name}-{date}.pdf"'},
+        )
     return StreamingResponse(
         iter([json.dumps(payload, indent=2)]),
         media_type="application/json",

@@ -242,7 +242,8 @@ export function NotificationsPanel() {
   const q = useQuery({
     queryKey: ["notificationsList"],
     queryFn: () => api.notifications(false),
-    refetchInterval: 20_000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
   const all = q.data?.notifications ?? [];
   const sources = useMemo(() => Array.from(new Set(all.map((n) => n.source))).sort(), [all]);

@@ -1,15 +1,19 @@
 """Admin endpoints for whole-tenant Backup & Restore.
 
-Exposes the backup section catalog, a secret-free export (downloadable JSON manifest),
-a dry-run import preview, and the import apply (with skip|overwrite|merge conflict
-handling). All endpoints are admin-only and write an audit-log row.
+Exposes the backup section catalog, a secret-free export ZIP (with a JSON manifest and
+an optional nested chats archive), a dry-run import preview, and the import apply
+(with skip|overwrite|merge conflict handling). All endpoints are admin-only and write
+an audit-log row.
 """
 from __future__ import annotations
 
+import io
+import json
 import logging
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +29,8 @@ logger = logging.getLogger("app.api.backup")
 class ExportRequest(BaseModel):
     # When omitted/empty, export every available section.
     sections: list[str] = Field(default_factory=list)
+    # When true, also include the export-only chats HTML archive in the ZIP.
+    include_chats: bool = False
 
 
 class ImportRequest(BaseModel):
@@ -50,8 +56,14 @@ async def export_endpoint(
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Build a secret-free backup manifest for the chosen sections (download in the UI)."""
+    """Build a secret-free backup ZIP for the chosen sections (download in the UI)."""
     manifest = await backup.build_backup(payload.sections or None, principal.tenant_id, db)
+    chats_bytes = await backup.build_chat_archive(principal.tenant_id, db) if payload.include_chats else None
+    archive = io.BytesIO()
+    with ZipFile(archive, "w", compression=ZIP_DEFLATED) as zf:
+        zf.writestr("backup.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+        if chats_bytes is not None:
+            zf.writestr("chats.zip", chats_bytes)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -65,7 +77,12 @@ async def export_endpoint(
         )
     )
     await db.commit()
-    return manifest
+    filename = f"azsupagent-backup-{principal.tenant_id}-{manifest['exported_at'][:19].replace(':', '-')}.zip"
+    return Response(
+        content=archive.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/import/preview")

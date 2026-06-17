@@ -7,14 +7,16 @@ tenant remapping.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.backup import registry as backup
-from app.models import Base, ScheduledTask
+from app.models import Base, Chat, Message, ScheduledTask
 
 
 @pytest.fixture()
@@ -187,6 +189,34 @@ def test_db_section_roundtrip_and_tenant_remap(tmp_path):
     counts, got = asyncio.run(run())
     assert counts["created"] == 1
     assert got is not None and got.tenant_id == "dest" and got.name == "Nightly"
+
+
+def test_chat_archive_exports_html_pages(tmp_path):
+    async def run():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'chat-export.db'}")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+        async with Session() as s:
+            chat = Chat(tenant_id="src", user_id="u1", title="Exported Chat", provider="openai", model="gpt-5")
+            s.add(chat)
+            await s.flush()
+            s.add(Message(chat_id=chat.id, role="user", content="Hello export"))
+            await s.commit()
+
+            archive = await backup.build_chat_archive("src", s)
+            await engine.dispose()
+            return chat.id, archive
+
+    chat_id, archive = asyncio.run(run())
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        names = set(zf.namelist())
+        assert "index.html" in names
+        html_name = f"chats/chat-0001-{chat_id}.html"
+        assert html_name in names
+        html = zf.read(html_name).decode("utf-8")
+        assert "Exported Chat" in html
+        assert "Hello export" in html
 
 
 def test_preview_reports_counts_without_writing(data_dir):

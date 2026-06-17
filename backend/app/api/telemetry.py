@@ -115,11 +115,16 @@ async def refresh(
     # Shield so the compute finishes + caches even if the client navigates away mid-refresh.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True))
     # Record a compact trend point so this scan can be charted over time.
-    from app.core import coverage_trends
+    from app.core import coverage_trends, coverage_runs
 
     coverage_trends.record(
         "telemetry", principal.tenant_id or "default", scope_kind, scope_id,
         pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
+    )
+    coverage_runs.save_run(
+        "telemetry", principal.tenant_id or "default", scope_kind, scope_id, snap,
+        headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
+        resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
     )
     db.add(
         AuditLog(
@@ -153,6 +158,76 @@ async def trend(
             current_pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {},
         )
     return coverage_trends.trend("telemetry", tenant_id, scope_kind, scope_id)
+
+
+# ----------------------------------------------------------------------- run history
+@router.get("/runs")
+async def list_runs(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Saved scan history for the scope (newest first). Each 'Refresh now' adds a run."""
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"runs": coverage_runs.list_runs("telemetry", principal.tenant_id or "default", scope_kind, scope_id)}
+
+
+@router.get("/runs/trash")
+async def list_trashed_runs(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"runs": coverage_runs.list_trashed_runs("telemetry", principal.tenant_id or "default", scope_kind, scope_id)}
+
+
+@router.get("/run/{run_id}")
+async def get_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """Re-open a saved run's full snapshot (renders exactly like a fresh scan)."""
+    from app.core import coverage_runs
+
+    run = coverage_runs.get_run("telemetry", principal.tenant_id or "default", run_id)
+    if run is None:
+        return {"ok": False, "detail": "Run not found."}
+    return {"ok": True, "run": _decorate(run, _settings()[0])}
+
+
+@router.delete("/run/{run_id}")
+async def delete_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.delete_run("telemetry", principal.tenant_id or "default", run_id)}
+
+
+@router.post("/run/{run_id}/restore")
+async def restore_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.restore_run("telemetry", principal.tenant_id or "default", run_id)}
+
+
+@router.delete("/run/{run_id}/purge")
+async def purge_run(run_id: str, principal: Principal = Depends(require_admin)) -> dict[str, bool]:
+    from app.core import coverage_runs
+
+    return {"ok": coverage_runs.purge_run("telemetry", principal.tenant_id or "default", run_id)}
+
+
+@router.post("/runs/trash/empty")
+async def empty_trash(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, int]:
+    from app.core import coverage_runs
+
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    return {"purged": coverage_runs.empty_trash("telemetry", principal.tenant_id or "default", scope_kind, scope_id)}
 
 
 
