@@ -19,21 +19,42 @@ import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 _KEY_PATH = Path(__file__).resolve().parents[2] / ".data" / "secret.key"
 _PREFIX = "enc:v1:"
+
+# When SECRETS_ENCRYPTION_KEY is a passphrase (not a raw 32-byte urlsafe-b64 Fernet key)
+# we derive the key with PBKDF2-HMAC-SHA256 instead of the old pad/truncate, which had
+# almost no work factor and let a short passphrase map to a trivially low-entropy key.
+# The salt is a FIXED application constant (not secret — it only pins the derivation so
+# the same passphrase always yields the same key); confidentiality comes from the
+# passphrase + iteration count, not the salt.
+_KDF_SALT = b"aznetagent.secrets.fernet.v1"
+_KDF_ITERATIONS = 480_000
+
+
+def _derive_fernet_key(passphrase: str) -> bytes:
+    """Derive a urlsafe-b64 32-byte Fernet key from an arbitrary passphrase via PBKDF2."""
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=_KDF_SALT,
+        iterations=_KDF_ITERATIONS,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
 
 
 def _load_or_create_key() -> bytes:
     env_key = os.environ.get("SECRETS_ENCRYPTION_KEY", "").strip()
     if env_key:
-        # Accept either a raw Fernet key or arbitrary text (derive a key from it).
+        # Accept either a raw Fernet key or an arbitrary passphrase (KDF-derived).
         try:
             Fernet(env_key.encode("utf-8"))
             return env_key.encode("utf-8")
         except (ValueError, TypeError):
-            digest = base64.urlsafe_b64encode(env_key.encode("utf-8").ljust(32)[:32])
-            return digest
+            return _derive_fernet_key(env_key)
     if _KEY_PATH.exists():
         return _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
     # Generate and persist a new key (dev).

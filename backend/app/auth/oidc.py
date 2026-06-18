@@ -148,9 +148,15 @@ def extract_identity(claims: dict[str, Any], idp_cfg: dict[str, Any]) -> dict[st
     groups = claims.get(group_claim) or []
     if isinstance(groups, str):
         groups = [g.strip() for g in groups.split(",") if g.strip()]
+    # email_verified: honour the provider's claim when present; default True when absent
+    # (most enterprise IdPs only emit verified addresses and omit the claim). An explicit
+    # false blocks email-based account linking in provisioning (account-takeover defense).
+    ev = claims.get("email_verified")
+    email_verified = True if ev is None else bool(ev)
     return {
         "external_id": str(claims.get("sub", "")),
         "email": claims.get("email") or claims.get("preferred_username") or "",
         "display_name": claims.get("name") or claims.get("preferred_username") or "",
         "groups": [str(g) for g in groups],
+        "email_verified": email_verified,
     }

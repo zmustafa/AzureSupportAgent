@@ -57,23 +57,20 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-app = FastAPI(title="Azure Support Agent", version="0.1.0")
-
+import os  # noqa: E402
 
 # --------------------------------------------------------------- Production safety
 #
-# In production (`environment != "local"`) we disable the interactive OpenAPI UI to
-# avoid information disclosure (full schema = free reconnaissance for an attacker).
-# Local dev keeps `/docs` + `/redoc` for convenience. Override via OPENAPI_PUBLIC=1
-# if a deployment genuinely needs the docs (e.g. an internal-only deployment).
+# In production (`environment != "local"`) we disable the interactive OpenAPI UI to avoid
+# information disclosure (the full schema is free reconnaissance for an attacker). Local
+# dev keeps `/docs` + `/redoc` for convenience. Override with OPENAPI_PUBLIC=1 for an
+# internal-only deployment that genuinely wants the docs.
 #
-# FastAPI registers the `/docs` / `/redoc` / `/openapi.json` routes at construction
-# time, so the only way to truly remove them is to pass the URLs as None to the
-# constructor (post-hoc assignment leaves the routes registered). The block above
-# instantiated the app with the defaults; we re-create it here once we know whether
-# docs should be enabled, **before** any router is mounted.
-import os  # noqa: E402
-
+# FastAPI registers the `/docs` / `/redoc` / `/openapi.json` routes at CONSTRUCTION time,
+# so the only reliable way to remove them is to pass the URLs as None to the constructor.
+# That's why the app is instantiated exactly ONCE, here, after we've resolved whether docs
+# should be enabled. A startup log line records the decision so operators can verify it in
+# the running container (the env var must be set on the active revision).
 _OPENAPI_PUBLIC = os.getenv("OPENAPI_PUBLIC", "").lower() in ("1", "true", "yes")
 _DOCS_ENABLED = (settings.environment == "local") or _OPENAPI_PUBLIC
 app = FastAPI(
@@ -82,6 +79,9 @@ app = FastAPI(
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
     openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
+logging.getLogger("app.main").info(
+    "Startup: environment=%s, openapi_docs_enabled=%s", settings.environment, _DOCS_ENABLED
 )
 
 
@@ -315,6 +315,72 @@ class _SecurityHeaders:
 
 
 app.add_middleware(_SecurityHeaders)
+
+
+# --------------------------------------------------------------- CSRF / cross-origin guard
+#
+# Cookie auth means the browser attaches the session automatically, so a state-changing
+# request forged by another site would otherwise carry the victim's credentials. SameSite
+# helps, but collapses for deployments that must run `cookie_samesite=none` (cross-site).
+# This middleware adds an explicit Origin / Sec-Fetch-Site check for unsafe methods,
+# rejecting cross-origin writes regardless of the SameSite mode.
+class _CsrfGuard:
+    """Reject cross-origin state-changing requests (POST/PUT/PATCH/DELETE).
+
+    A request is allowed when:
+      * the method is safe (GET/HEAD/OPTIONS/TRACE), or
+      * it targets the SAML ACS (an IdP-posted cross-site form, protected instead by the
+        signed assertion + single-use InResponseTo cookie), or
+      * its Origin is same-origin / on the configured allowlist, or
+      * it carries no Origin and is not flagged cross-site (non-browser client such as
+        curl or the test suite — these have no ambient cookies to abuse).
+    """
+
+    def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
+        self._app = app
+        cfg = get_settings()
+        self._allow = {o for o in (cfg.frontend_origin, cfg.public_base_url) if o}
+
+    def _origin_ok(self, origin: str, host: str) -> bool:
+        if origin in self._allow:
+            return True
+        from urllib.parse import urlparse
+
+        try:
+            return urlparse(origin).netloc == host
+        except ValueError:
+            return False
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+        method = scope.get("method", "GET").upper()
+        path = scope.get("path", "")
+        if method in ("GET", "HEAD", "OPTIONS", "TRACE") or (
+            path.startswith("/api/auth/saml/") and path.endswith("/acs")
+        ):
+            await self._app(scope, receive, send)
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        origin = headers.get("origin", "")
+        host = headers.get("host", "")
+        sec_fetch_site = headers.get("sec-fetch-site", "")
+        blocked = False
+        if origin:
+            blocked = not self._origin_ok(origin, host)
+        elif sec_fetch_site == "cross-site":
+            blocked = True
+        if blocked:
+            resp = JSONResponse(
+                status_code=403, content={"detail": "Cross-origin request blocked."}
+            )
+            await resp(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
+app.add_middleware(_CsrfGuard)
 
 # All application endpoints live under /api so the SPA can own every other path
 # (client-side routes like /inventory, /admin, /policy collide with API prefixes

@@ -13,7 +13,8 @@ import { formatError } from "../utils/format";
 import { TrendChart } from "./TrendChart";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
-import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { ScopePicker } from "./ScopePicker";
+import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 
@@ -98,7 +99,9 @@ export function BackupDrCoveragePanel() {
   const [subName, setSubName] = usePersistedState("azsup.backupdr.subName", "");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.backupdr.density", "expanded");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [drawer, setDrawer] = useState<{ group: BackupDrGroup; row: BackupDrRow } | null>(null);
   const [drawerTab, setDrawerTab] = useState<"details" | "fix">("details");
   const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
@@ -247,7 +250,8 @@ export function BackupDrCoveragePanel() {
   }
 
   function toggleGroup(t: string) {
-    setCollapsed((p) => { const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n; });
+    const setter = density === "compact" ? setOpenGroups : setCollapsed;
+    setter((p) => { const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n; });
   }
   function rowVisible(r: BackupDrRow): boolean {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
@@ -302,24 +306,19 @@ export function BackupDrCoveragePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
-              <button onClick={() => setScopeKind("workload")} className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Workload</button>
-              <button onClick={() => setScopeKind("subscription")} className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Subscription</button>
-            </div>
-            {scopeKind === "workload" ? (
-              <select value={effectiveWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs">
-                {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            ) : (
-              <SubscriptionScopePicker
-                value={subId}
-                valueName={subName}
-                onPick={(id, name) => {
-                  setSubId(id);
-                  setSubName(name);
-                }}
-              />
-            )}
+            <ScopePicker
+              scopeKind={scopeKind}
+              onScopeKindChange={setScopeKind}
+              workloads={workloads}
+              workloadId={effectiveWorkloadId}
+              onWorkloadChange={setWorkloadId}
+              subId={subId}
+              subName={subName}
+              onSubPick={(id, name) => {
+                setSubId(id);
+                setSubName(name);
+              }}
+            />
             <span className="text-xs text-gray-500">
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale_cache && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
               {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
@@ -365,6 +364,8 @@ export function BackupDrCoveragePanel() {
                 <option value="amber">🟠 At risk</option>
                 <option value="green">🟢 Protected</option>
               </select>
+              <span className="text-gray-300">·</span>
+              <DensityToggle value={density} onChange={setDensity} title="Compact shows just the resource-type rows; Expanded shows the full protection matrix." />
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-gray-500">{allGaps.length} gap(s):</span>
@@ -434,15 +435,15 @@ export function BackupDrCoveragePanel() {
         ) : visibleGroups.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-400">{data?.error || "No resources match the current scope/filters."}</div>
         ) : (
-          <div className="space-y-4">
+          <div className={density === "compact" ? "space-y-1.5" : "space-y-4"}>
             {data?.error && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">{data.error}</div>}
             {visibleGroups.map((g) => {
-              const isCollapsed = collapsed.has(g.resource_type);
+              const isCollapsed = density === "compact" ? !openGroups.has(g.resource_type) : collapsed.has(g.resource_type);
               return (
-                <section key={g.resource_type} className="overflow-hidden rounded-xl border bg-white">
-                  <button onClick={() => toggleGroup(g.resource_type)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
+                <section key={g.resource_type} className={`overflow-hidden border bg-white ${density === "compact" ? "rounded-lg" : "rounded-xl"}`}>
+                  <button onClick={() => toggleGroup(g.resource_type)} className={`flex w-full items-center gap-2 text-left ${density === "compact" ? "px-3 py-1.5" : "px-4 py-3"}`}>
                     <span className="text-gray-400">{isCollapsed ? "▸" : "▾"}</span>
-                    <h2 className="text-sm font-semibold text-gray-900">{g.display}</h2>
+                    <h2 className={`font-semibold text-gray-900 ${density === "compact" ? "text-xs" : "text-sm"}`}>{g.display}</h2>
                     <span className="font-mono text-[10px] text-gray-400">{g.resource_type}</span>
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{g.rows.length}</span>
                     <span className="ml-auto flex items-center gap-2 text-[11px]">

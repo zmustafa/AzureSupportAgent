@@ -38,6 +38,24 @@ class OpenAIProvider(LLMProvider):
         else:
             self._client = AsyncOpenAI(api_key=api_key, default_headers=default_headers)
 
+    # Friendly provider label for the connection status line (e.g. "OpenAI · gpt-4.1").
+    _PROVIDER_NAMES = {
+        "openai": "OpenAI",
+        "azure_openai": "Azure OpenAI",
+        "github": "GitHub Models",
+        "github_copilot": "GitHub Copilot",
+        "gemini": "Google Gemini",
+        "grok": "Grok (xAI)",
+        "mistral": "Mistral",
+        "openrouter": "OpenRouter",
+        "ollama": "Ollama",
+        "lmstudio": "LM Studio",
+    }
+
+    def _label(self) -> str:
+        name = self._PROVIDER_NAMES.get(self._provider, self._provider.replace("_", " ").title())
+        return f"{name} · {self._model}" if self._model else name
+
     @staticmethod
     def _to_openai_tools(tools: list[ToolSpec] | None) -> list[dict[str, Any]] | None:
         if not tools:
@@ -75,16 +93,24 @@ class OpenAIProvider(LLMProvider):
             "max_tokens": int(max_tokens) if max_tokens else params["max_tokens"],
         }
 
+        # Surface connection milestones so the chat's "Working on your request…" feed shows
+        # measured progress (instead of a static line) while the model is contacted.
+        yield StreamEvent(type="status", phase="connecting", text=f"Connecting to {self._label()}…")
         try:
             stream = await self._client.chat.completions.create(**kwargs)
         except Exception:  # noqa: BLE001 - retry once without optional params on rejection
             kwargs.pop("max_tokens", None)
             stream = await self._client.chat.completions.create(**kwargs)
+        yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
 
         prompt_tokens = 0
         completion_tokens = 0
+        first_chunk = True
 
         async for chunk in stream:
+            if first_chunk:
+                first_chunk = False
+                yield StreamEvent(type="status", phase="response", text="Response received · generating…")
             if chunk.usage:
                 prompt_tokens = chunk.usage.prompt_tokens
                 completion_tokens = chunk.usage.completion_tokens

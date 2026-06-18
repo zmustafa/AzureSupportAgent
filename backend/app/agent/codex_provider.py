@@ -148,6 +148,8 @@ class CodexProvider(LLMProvider):
         from app.core.app_settings import request_timeout_seconds
 
         _timeout = httpx.Timeout(float(request_timeout_seconds()), connect=15.0)
+        _first_tok = True
+        yield StreamEvent(type="status", phase="connecting", text=f"Connecting to ChatGPT Codex · {self._model}…")
         async with httpx.AsyncClient(timeout=_timeout) as client:
             # ChatGPT can revoke an access token BEFORE its JWT expiry (e.g. a newer
             # `codex login` rotates the session), so a token that still looks valid is
@@ -168,6 +170,7 @@ class CodexProvider(LLMProvider):
                         body = (await resp.aread()).decode("utf-8", "replace")
                         raise RuntimeError(f"ChatGPT Codex API error {resp.status_code}: {body[:500]}")
                     else:
+                        yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
                         async for line in resp.aiter_lines():
                             if not line:
                                 continue
@@ -195,6 +198,9 @@ class CodexProvider(LLMProvider):
 
                             if not delta:
                                 continue
+                            if _first_tok:
+                                _first_tok = False
+                                yield StreamEvent(type="status", phase="response", text="Response received · generating…")
                             completion_chars += len(delta)
                             for tok in detector.feed(delta):
                                 yield StreamEvent(type="token", text=tok)

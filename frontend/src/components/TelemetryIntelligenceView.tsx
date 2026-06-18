@@ -10,7 +10,7 @@ import { useNavigate } from "react-router-dom";import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
-import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { ScopePicker } from "./ScopePicker";
 
 const SEV_TONE: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -319,35 +319,20 @@ export function TelemetryIntelligencePanel() {
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
-              <button
-                onClick={() => setScopeKind("workload")}
-                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
-              >
-                Workload
-              </button>
-              <button
-                onClick={() => setScopeKind("subscription")}
-                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
-              >
-                Subscription
-              </button>
-            </div>
-            {scopeKind === "workload" ? (
-              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[240px] rounded-lg border px-2 py-1.5 text-xs">
-                <option value="">Select a workload…</option>
-                {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            ) : (
-              <SubscriptionScopePicker
-                value={subId}
-                valueName={subName}
-                onPick={(id, name) => {
-                  setSubId(id);
-                  setSubName(name);
-                }}
-              />
-            )}
+            <ScopePicker
+              scopeKind={scopeKind}
+              onScopeKindChange={setScopeKind}
+              workloads={workloads}
+              workloadId={effWorkloadId}
+              onWorkloadChange={setWorkloadId}
+              subId={subId}
+              subName={subName}
+              onSubPick={(id, name) => {
+                setSubId(id);
+                setSubName(name);
+              }}
+              workloadPlaceholder="Select a workload…"
+            />
             <button
               onClick={loadTelemetry}
               disabled={!selectionReady}

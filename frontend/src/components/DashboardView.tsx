@@ -1,7 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type AssessmentRunSummary, type RadarRailItem, type ReservationItem } from "../api";
+import { usePersistedState } from "../utils/persistedState";
+import { TrendChart } from "./TrendChart";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -115,6 +117,87 @@ export function DashboardPanel() {
     queryFn: () => api.deepInvestigations(5),
     retry: false,
     staleTime: 2 * 60_000,
+  });
+
+  // --- Primary workload (drives the per-scope coverage lenses below) -------------
+  // Coverage / telemetry / backup / performance are per-scope, so the dashboard reads
+  // them for ONE persisted "primary workload" (defaults to the first discovered one).
+  const [primaryWorkloadId, setPrimaryWorkloadId] = usePersistedState<string>("azsup.dashboard.primaryWorkload", "");
+
+  // --- Posture signals that aren't in the base dashboard yet ---------------------
+  // All non-blocking + cache-friendly: a failure hides the affected tile, never breaks
+  // the page. Coverage trends are cheap (they read the trend store, not a fresh scan).
+  const covParams = primaryWorkloadId ? { workload_id: primaryWorkloadId } : undefined;
+  const ambaTrendQ = useQuery({
+    queryKey: ["dashAmbaTrend", primaryWorkloadId],
+    queryFn: () => api.coverageTrend("amba", covParams!),
+    enabled: isAdmin && !!primaryWorkloadId,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const telemetryTrendQ = useQuery({
+    queryKey: ["dashTelemetryTrend", primaryWorkloadId],
+    queryFn: () => api.coverageTrend("telemetry", covParams!),
+    enabled: isAdmin && !!primaryWorkloadId,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const backupTrendQ = useQuery({
+    queryKey: ["dashBackupTrend", primaryWorkloadId],
+    queryFn: () => api.coverageTrend("backupdr", covParams!),
+    enabled: isAdmin && !!primaryWorkloadId,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const perfTrendQ = useQuery({
+    queryKey: ["dashPerfTrend", primaryWorkloadId],
+    queryFn: () => api.coverageTrend("performance", covParams!),
+    enabled: isAdmin && !!primaryWorkloadId,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const perfRunsQ = useQuery({
+    queryKey: ["dashPerfRuns", primaryWorkloadId],
+    queryFn: () => api.perfRuns(covParams!),
+    enabled: isAdmin && !!primaryWorkloadId,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const identityQ = useQuery({
+    queryKey: ["dashIdentity"],
+    queryFn: () => api.identityOverview(30),
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const rbacQ = useQuery({
+    queryKey: ["dashRbac"],
+    queryFn: () => api.rbacOverview(),
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const optimizationQ = useQuery({
+    queryKey: ["dashOptimization"],
+    queryFn: () => api.inventoryOptimization(),
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
+  const tasksQ = useQuery({
+    queryKey: ["dashScheduledTasks"],
+    queryFn: api.scheduledTasks,
+    enabled: isAdmin,
+    retry: false,
+    staleTime: 60_000,
   });
 
   const activeProvider = llmQ.data?.active_provider ?? "";
@@ -392,12 +475,138 @@ export function DashboardPanel() {
     || "there";
   const defaultConn = conns.find((c) => c.is_default) || conns[0];
 
+  // -------- Primary workload bootstrap + coverage signals ------------------------
+  useEffect(() => {
+    if (!primaryWorkloadId && workloads.length > 0) {
+      setPrimaryWorkloadId(workloads[0].id);
+    }
+  }, [primaryWorkloadId, workloads, setPrimaryWorkloadId]);
+
+  const primaryWorkloadName = workloads.find((w) => w.id === primaryWorkloadId)?.name ?? "";
+
+  type Lens = { key: string; label: string; icon: string; to: string; current: number | null; delta: number | null; points: { at: string; pct: number | null }[]; loading: boolean; hasData: boolean };
+  const lenses: Lens[] = useMemo(() => {
+    const mk = (key: string, label: string, icon: string, to: string, q: typeof ambaTrendQ): Lens => ({
+      key, label, icon, to,
+      current: q.data?.current ?? null,
+      delta: q.data?.delta ?? null,
+      points: q.data?.points ?? [],
+      loading: q.isLoading,
+      hasData: (q.data?.points?.length ?? 0) > 0 || q.data?.current != null,
+    });
+    return [
+      mk("amba", "Monitoring", "📈", "/coverage", ambaTrendQ),
+      mk("telemetry", "Telemetry", "🛰️", "/telemetry", telemetryTrendQ),
+      mk("backupdr", "Backup & DR", "💾", "/backupdr", backupTrendQ),
+      mk("performance", "Performance", "⚡", "/performance", perfTrendQ),
+    ];
+  }, [ambaTrendQ, telemetryTrendQ, backupTrendQ, perfTrendQ]);
+
+  const topBottleneck = useMemo(() => {
+    const latest = (perfRunsQ.data?.runs ?? []).find((r) => r.top_bottleneck);
+    return latest?.top_bottleneck ?? null;
+  }, [perfRunsQ.data]);
+
+  // -------- Estate Health Score (blended 0-100) ---------------------------------
+  // Weighted blend of what we can read cheaply: assessment avg, the three coverage
+  // lenses, minus penalties for due retirements and expiring identity credentials.
+  const identityKpis = identityQ.data?.kpis;
+  const estateHealth = useMemo(() => {
+    const parts: { v: number; w: number }[] = [];
+    if (avgScore != null) parts.push({ v: avgScore, w: 2 });
+    for (const l of lenses) {
+      if (l.key !== "performance" && l.current != null) parts.push({ v: l.current, w: 1 });
+    }
+    if (!parts.length) return null;
+    let base = parts.reduce((s, p) => s + p.v * p.w, 0) / parts.reduce((s, p) => s + p.w, 0);
+    // Risk penalties (bounded) so live threats visibly drag the score.
+    base -= Math.min(15, retirementsSoon.length * 3);
+    const idGaps = (identityKpis?.expiring_secrets ?? 0) + (identityKpis?.expiring_certs ?? 0) + (identityKpis?.keyvault_expiring ?? 0);
+    base -= Math.min(10, idGaps * 2);
+    return Math.max(0, Math.min(100, Math.round(base)));
+  }, [avgScore, lenses, retirementsSoon.length, identityKpis]);
+
+  // -------- "This week" summary --------------------------------------------------
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const assessmentsThisWeek = useMemo(
+    () => runs.filter((r) => { const t = new Date(r.ended_at || r.started_at || "").getTime(); return Number.isFinite(t) && t >= weekAgo; }).length,
+    [runs, weekAgo],
+  );
+  const investigationsThisWeek = useMemo(
+    () => recentInvestigations.filter((i) => { const t = new Date(i.created_at).getTime(); return Number.isFinite(t) && t >= weekAgo; }).length,
+    [recentInvestigations, weekAgo],
+  );
+
+  // -------- Attention triage (what needs me today) ------------------------------
+  type Attention = { id: string; icon: string; sev: "red" | "amber"; text: string; to: string; action: string };
+  const attention: Attention[] = useMemo(() => {
+    const out: Attention[] = [];
+    for (const r of runs) {
+      if ((r.status || "").toLowerCase() === "failed") {
+        out.push({ id: `run-${r.id}`, icon: "🛡️", sev: "amber", text: `Assessment failed · ${r.workload_name}`, to: `/assessments/${r.id}`, action: "Open" });
+      }
+    }
+    const idSecrets = (identityKpis?.expiring_secrets ?? 0) + (identityKpis?.expiring_certs ?? 0);
+    if (idSecrets > 0) {
+      out.push({ id: "id-secrets", icon: "🔑", sev: idSecrets >= 3 ? "red" : "amber", text: `${plural(idSecrets, "credential")} expiring within 30 days`, to: "/identity", action: "Review" });
+    }
+    if ((identityKpis?.users_without_mfa ?? 0) > 0) {
+      out.push({ id: "id-mfa", icon: "🔐", sev: "red", text: `${plural(identityKpis!.users_without_mfa, "privileged user")} without MFA`, to: "/identity", action: "Review" });
+    }
+    for (const r of retirementsSoon.slice(0, 3)) {
+      if ((r.days_until ?? 999) <= 60) {
+        out.push({ id: `ret-${r.id}`, icon: "📡", sev: r.severity === "red" ? "red" : "amber", text: `Retiring in ${r.days_until}d · ${r.title}`, to: "/radar", action: "Plan" });
+      }
+    }
+    for (const r of reservationsExpiringSoon.slice(0, 2)) {
+      out.push({ id: `ri-${r.id}`, icon: "🏷️", sev: r.severity === "red" ? "red" : "amber", text: `Reservation expiring in ${r.days_until ?? "—"}d · ${r.display_name}`, to: "/reservations", action: "Review" });
+    }
+    return out.sort((a, b) => (a.sev === "red" ? -1 : 1) - (b.sev === "red" ? -1 : 1)).slice(0, 6);
+  }, [runs, identityKpis, retirementsSoon, reservationsExpiringSoon]);
+
+  // -------- Upcoming scheduled automations --------------------------------------
+  const upcomingTasks = useMemo(() => {
+    const tasks = tasksQ.data?.tasks ?? [];
+    return tasks
+      .filter((t) => t.status === "active" && t.next_run_at)
+      .sort((a, b) => new Date(a.next_run_at!).getTime() - new Date(b.next_run_at!).getTime())
+      .slice(0, 4);
+  }, [tasksQ.data]);
+
+  // -------- FinOps signal --------------------------------------------------------
+  const optimization = optimizationQ.data;
+
+  // -------- Dashboard refresh + layout customization ----------------------------
+  const qc = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  async function refreshDashboard() {
+    setRefreshing(true);
+    try {
+      await qc.invalidateQueries();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  // Section visibility (persisted) — the "Customize" control toggles these off/on.
+  const [hiddenSections, setHiddenSections] = usePersistedState<string[]>("azsup.dashboard.hidden", []);
+  const [customizing, setCustomizing] = useState(false);
+  // "What's set up" config detail is collapsed by default — it's admin-config noise on a
+  // daily dashboard. Persist the user's choice.
+  const [configOpen, setConfigOpen] = usePersistedState<boolean>("azsup.dashboard.configOpen", false);
+  const isHidden = (key: string) => hiddenSections.includes(key);
+  const toggleSection = (key: string) =>
+    setHiddenSections(isHidden(key) ? hiddenSections.filter((k) => k !== key) : [...hiddenSections, key]);
+
+  const anyPostureLoading = ambaTrendQ.isLoading || identityQ.isLoading || rbacQ.isLoading;
+  const coreLoading = meQ.isLoading || wlQ.isLoading || runsQ.isLoading || archQ.isLoading;
+
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
       <div className="mx-auto max-w-6xl space-y-6 p-6">
-        {/* Hero — personalized greeting */}
+        {/* Hero — personalized greeting + estate health */}
         <div className="rounded-2xl border bg-gradient-to-br from-brand/10 to-violet-50 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
               <span className="text-3xl">🤖</span>
               <div className="min-w-0">
@@ -418,21 +627,77 @@ export function DashboardPanel() {
                     </span>
                   )}
                 </div>
+                {/* This-week summary line */}
+                <div className="mt-1.5 text-[11px] text-gray-500">
+                  <span className="font-medium text-gray-600">This week:</span>{" "}
+                  {plural(assessmentsThisWeek, "assessment")} · {plural(investigationsThisWeek, "investigation")}
+                  {retirementsSoon.length > 0 && <> · <span className="text-amber-700">{plural(retirementsSoon.length, "retirement")} ≤90d</span></>}
+                  {identityKpis && (identityKpis.expiring_secrets + identityKpis.expiring_certs) > 0 && (
+                    <> · <span className="text-red-600">{identityKpis.expiring_secrets + identityKpis.expiring_certs} credentials expiring</span></>
+                  )}
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Link to="/chat" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">💬 New chat</Link>
-              <Link to="/chat?deep=1" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100">🔎 Deep investigation</Link>
-              <Link to="/assessments" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">🛡️ Run assessment</Link>
-              {isAdmin && (
-                <Link to="/monitor" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">📊 Monitor</Link>
+
+            <div className="flex items-center gap-4">
+              {/* Estate Health ring */}
+              {estateHealth != null && (
+                <Link to="/assessments" className="flex items-center gap-2 rounded-xl bg-white/70 px-3 py-1.5 hover:bg-white" title="Blended health across assessments, coverage and live risks">
+                  <HealthRing value={estateHealth} />
+                  <div className="leading-tight">
+                    <div className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Estate health</div>
+                    <div className="text-[11px] text-gray-500">blended posture</div>
+                  </div>
+                </Link>
               )}
+              {/* Toolbar */}
+              <div className="flex flex-col items-end gap-2">
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => void refreshDashboard()} disabled={refreshing} title="Refresh all dashboard data" className="rounded-lg border bg-white/70 px-2 py-1.5 text-xs text-gray-600 hover:bg-white disabled:opacity-50">
+                    {refreshing || anyPostureLoading ? "⟳ Refreshing…" : "⟳ Refresh"}
+                  </button>
+                  <button onClick={() => setCustomizing((v) => !v)} title="Show or hide dashboard sections" className={`rounded-lg border px-2 py-1.5 text-xs ${customizing ? "border-brand/40 bg-brand/5 text-brand" : "bg-white/70 text-gray-600 hover:bg-white"}`}>
+                    ⚙ Customize
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Link to="/chat" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">💬 New chat</Link>
+                  <Link to="/chat?deep=1" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100">🔎 Deep investigation</Link>
+                  <Link to="/assessments" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">🛡️ Run assessment</Link>
+                  {isAdmin && (
+                    <Link to="/monitor" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">📊 Monitor</Link>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* Customize panel — toggle section visibility (persisted) */}
+          {customizing && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border bg-white/80 p-3">
+              <span className="text-[11px] font-medium text-gray-500">Sections:</span>
+              {SECTION_TOGGLES.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => toggleSection(s.key)}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] ${isHidden(s.key) ? "border-gray-200 bg-gray-50 text-gray-400 line-through" : "border-brand/30 bg-brand/5 text-brand"}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+              {hiddenSections.length > 0 && (
+                <button onClick={() => setHiddenSections([])} className="ml-1 text-[11px] text-gray-500 hover:underline">Reset</button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* KPI strip — at-a-glance signals */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {coreLoading ? (
+            Array.from({ length: 6 }).map((_, i) => <SkeletonTile key={i} />)
+          ) : (
+          <>
           <KpiTile to="/workloads" icon="🧩" label="Workloads" value={workloads.length} />
           <KpiTile
             to="/assessments"
@@ -467,9 +732,69 @@ export function DashboardPanel() {
               tone={reservationsExpiringSoon.length > 0 ? "red" : undefined}
             />
           )}
+          </>
+          )}
         </div>
 
+        {/* Attention — what needs me today (failed runs, expiring creds, deadlines) */}
+        {isAdmin && !isHidden("attention") && attention.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-sm font-semibold text-amber-800">⚠ Needs attention</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">{attention.length}</span>
+            </div>
+            <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {attention.map((a) => (
+                <li key={a.id}>
+                  <Link to={a.to} className="flex items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 hover:border-brand/40">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${a.sev === "red" ? "bg-red-500" : "bg-amber-500"}`} />
+                    <span className="text-base">{a.icon}</span>
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-gray-700" title={a.text}>{a.text}</span>
+                    <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium text-brand">{a.action} →</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Coverage lenses — per-workload posture (Monitoring / Telemetry / Backup / Performance) */}
+        {isAdmin && !isHidden("coverage") && (
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Coverage</h2>
+              {workloads.length > 0 && (
+                <select
+                  value={primaryWorkloadId}
+                  onChange={(e) => setPrimaryWorkloadId(e.target.value)}
+                  className="max-w-[220px] rounded-lg border bg-white px-2 py-1 text-xs"
+                  title="Primary workload for the coverage lenses"
+                >
+                  {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              )}
+            </div>
+            {!primaryWorkloadId ? (
+              <Empty text="Discover a workload to see its coverage." />
+            ) : (
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {lenses.map((l) => (
+                  <CoverageLensTile key={l.key} lens={l} scopeName={primaryWorkloadName} />
+                ))}
+              </div>
+            )}
+            {topBottleneck && (
+              <Link to="/performance" className="mt-2 flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-[12px] text-gray-600 hover:border-brand/40">
+                <span>⚡</span>
+                <span className="min-w-0 flex-1 truncate">Top bottleneck: <span className="font-medium text-gray-800">{topBottleneck.resource_name}</span> · {topBottleneck.metric_name}</span>
+                <span className="shrink-0 font-semibold text-amber-600">{topBottleneck.pct_of_threshold}%</span>
+              </Link>
+            )}
+          </div>
+        )}
+
         {/* Posture & risks — the actual reason an admin opens the dashboard */}
+        {!isHidden("posture") && (
         <div>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Posture &amp; risks</h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -530,11 +855,100 @@ export function DashboardPanel() {
                 )}
               </Card>
             )}
+
+            {/* Identity risk */}
+            {isAdmin && (
+              <Card title="Identity risk" icon="🔑" manageTo="/identity">
+                {identityQ.isError ? (
+                  <Empty text="Identity data not available." />
+                ) : identityQ.data?.never_loaded ? (
+                  <Empty text="Not loaded yet — open Identity and press Refresh." />
+                ) : !identityKpis ? (
+                  <Empty text="No identity signals." />
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <MiniStat to="/identity" label="Secrets ≤30d" value={identityKpis.expiring_secrets} tone={identityKpis.expiring_secrets > 0 ? "red" : "ok"} />
+                    <MiniStat to="/identity" label="Certs ≤30d" value={identityKpis.expiring_certs} tone={identityKpis.expiring_certs > 0 ? "red" : "ok"} />
+                    <MiniStat to="/identity" label="Ownerless apps" value={identityKpis.ownerless_apps} tone={identityKpis.ownerless_apps > 0 ? "amber" : "ok"} />
+                    <MiniStat to="/identity" label="Admins w/o MFA" value={identityKpis.users_without_mfa} tone={identityKpis.users_without_mfa > 0 ? "red" : "ok"} />
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* Access (RBAC) */}
+            {isAdmin && (
+              <Card title="Access (RBAC)" icon="🛂" manageTo="/rbac">
+                {rbacQ.isError ? (
+                  <Empty text="RBAC data not available." />
+                ) : rbacQ.data?.never_loaded ? (
+                  <Empty text="Not loaded yet — open RBAC and refresh a scope." />
+                ) : !rbacQ.data ? (
+                  <Empty text="No access data." />
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <MiniStat to="/rbac" label="Privileged" value={rbacQ.data.kpis.privileged} tone={rbacQ.data.kpis.privileged > 0 ? "amber" : "ok"} />
+                    <MiniStat to="/rbac" label="Principals" value={rbacQ.data.kpis.unique_principals} tone="ok" />
+                    <MiniStat to="/rbac" label="Group-derived" value={rbacQ.data.kpis.group_derived} tone="ok" />
+                    <MiniStat to="/rbac" label="Eligible (PIM)" value={rbacQ.data.kpis.eligible} tone="ok" />
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* Cost optimization (FinOps) */}
+            {isAdmin && (
+              <Card title="Cost optimization" icon="💰" manageTo="/inventory">
+                {optimizationQ.isError ? (
+                  <Empty text="Optimization data not available." />
+                ) : !optimization?.available ? (
+                  <Empty text="Open Inventory to scan for savings." />
+                ) : optimization.total_count === 0 ? (
+                  <Empty text="No optimization opportunities found. 🎉" />
+                ) : (
+                  <Link to="/inventory" className="block rounded-lg border bg-gray-50 p-3 hover:border-brand/40 hover:bg-white">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-gray-800">{plural(optimization.total_count, "opportunity")}</span>
+                      {optimization.total_monthly_cost != null && optimization.cost_available && (
+                        <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-700">
+                          ~{formatMoney(optimization.total_monthly_cost, optimization.currency)}/mo
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[11px] text-gray-500">
+                      {optimization.categories.slice(0, 3).map((c) => c.label).join(" · ") || "Idle, orphaned and oversized resources."}
+                    </p>
+                  </Link>
+                )}
+              </Card>
+            )}
           </div>
         </div>
+        )}
+
+        {/* Scheduled automations — what's coming up */}
+        {isAdmin && !isHidden("scheduled") && upcomingTasks.length > 0 && (
+          <div>
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Scheduled next</h2>
+            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {upcomingTasks.map((t) => (
+                <li key={t.id}>
+                  <Link to="/automations" className="flex items-center gap-3 rounded-xl border bg-white px-3 py-2 shadow-sm hover:border-brand/40">
+                    <span className="text-base">{t.target_meta?.icon || "⏰"}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-gray-800">{t.name}</div>
+                      <div className="truncate text-[11px] text-gray-500">{t.schedule_label || t.schedule_kind}{t.target_meta?.label ? ` · ${t.target_meta.label}` : ""}</div>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-gray-400">{t.next_run_at ? formatNextRun(t.next_run_at) : ""}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Recent activity feed */}
-        {recentActivity.length > 0 && (
+        {!isHidden("activity") && recentActivity.length > 0 && (
           <div>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Recent activity</h2>
             <ul className="divide-y rounded-xl border bg-white shadow-sm">
@@ -555,7 +969,7 @@ export function DashboardPanel() {
         )}
 
         {/* Setup guide — full when in progress, collapsed banner when complete */}
-        {allDone ? (
+        {!isHidden("setup") && (allDone ? (
           <div className="rounded-xl border border-green-200 bg-green-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm text-green-800">
@@ -646,11 +1060,19 @@ export function DashboardPanel() {
               })}
             </div>
           </div>
-        )}
+        ))}
 
-        {/* What's set up — detailed */}
+        {/* What's set up — detailed (collapsed by default; admin-config noise) */}
+        {!isHidden("configured") && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What's set up</h2>
+          <button onClick={() => setConfigOpen(!configOpen)} className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700">
+            <span className="text-gray-400">{configOpen ? "▾" : "▸"}</span>
+            What's set up
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-gray-500">
+              {plural(configuredProviders.length || (effectiveProvider ? 1 : 0), "provider")} · {plural(conns.length, "tenant")}{isAdmin ? ` · ${plural(connectors.length, "connector")}` : ""}
+            </span>
+          </button>
+          {configOpen && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* AI providers */}
             <Card title="AI providers" icon="🧠" manageTo={isAdmin ? "/admin/providers" : undefined}>
@@ -768,10 +1190,12 @@ export function DashboardPanel() {
               </Card>
             )}
           </div>
+          )}
         </div>
+        )}
 
         {/* Explore — only when setup still in progress, so it acts as onboarding */}
-        {!allDone && (
+        {!allDone && !isHidden("explore") && (
         <div>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What can I do here?</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -823,6 +1247,18 @@ function Empty({ text }: { text: string }) {
   return <div className="rounded-lg border border-dashed bg-gray-50/60 p-3 text-center text-xs text-gray-400">{text}</div>;
 }
 
+function SkeletonTile() {
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border bg-white p-3 shadow-sm">
+      <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-gray-100" />
+      <div className="min-w-0 flex-1">
+        <div className="h-4 w-10 animate-pulse rounded bg-gray-100" />
+        <div className="mt-1 h-2.5 w-16 animate-pulse rounded bg-gray-100" />
+      </div>
+    </div>
+  );
+}
+
 function StatusDot({ ok }: { ok: boolean | undefined }) {
   const cls = ok === true ? "bg-green-500" : ok === false ? "bg-gray-300" : "bg-amber-400";
   return <span className={`mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} title={ok === true ? "Connected" : ok === false ? "Not connected" : "Unknown"} />;
@@ -850,8 +1286,105 @@ function scoreTone(score: number | null | undefined): string {
   return "bg-red-100 text-red-700";
 }
 
+// Hideable dashboard sections, shown in the "Customize" panel.
+const SECTION_TOGGLES: { key: string; label: string }[] = [
+  { key: "attention", label: "Needs attention" },
+  { key: "coverage", label: "Coverage" },
+  { key: "posture", label: "Posture & risks" },
+  { key: "scheduled", label: "Scheduled next" },
+  { key: "activity", label: "Recent activity" },
+  { key: "setup", label: "Setup guide" },
+  { key: "configured", label: "What's set up" },
+  { key: "explore", label: "Explore" },
+];
+
+function ringTone(v: number): string {
+  if (v >= 80) return "#16a34a";
+  if (v >= 60) return "#d97706";
+  return "#dc2626";
+}
+
+/** Compact SVG donut ring for the blended Estate Health score (0-100). */
+function HealthRing({ value }: { value: number }) {
+  const r = 18;
+  const c = 2 * Math.PI * r;
+  const off = c * (1 - Math.max(0, Math.min(100, value)) / 100);
+  return (
+    <svg viewBox="0 0 44 44" className="h-12 w-12 -rotate-90">
+      <circle cx="22" cy="22" r={r} fill="none" stroke="#e5e7eb" strokeWidth="5" />
+      <circle cx="22" cy="22" r={r} fill="none" stroke={ringTone(value)} strokeWidth="5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off} />
+      <text x="22" y="23" textAnchor="middle" dominantBaseline="middle" className="rotate-90" transform="rotate(90 22 22)" fontSize="13" fontWeight="700" fill={ringTone(value)}>{value}</text>
+    </svg>
+  );
+}
+
+/** Per-workload coverage lens tile: headline %, delta badge, and a mini trend sparkline. */
+function CoverageLensTile({ lens, scopeName }: { lens: { key: string; label: string; icon: string; to: string; current: number | null; delta: number | null; points: { at: string; pct: number | null }[]; loading: boolean; hasData: boolean }; scopeName: string }) {
+  const pct = lens.current;
+  const valueTone = pct == null ? "text-gray-400" : pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600";
+  return (
+    <Link to={lens.to} className="rounded-xl border bg-white p-3 shadow-sm transition hover:border-brand/40 hover:shadow-md" title={scopeName}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[12px] font-medium text-gray-600"><span>{lens.icon}</span>{lens.label}</span>
+        {lens.delta != null && lens.delta !== 0 && (
+          <span className={`rounded px-1 text-[10px] font-bold ${lens.delta > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+            {lens.delta > 0 ? "▲" : "▼"} {Math.abs(lens.delta)}
+          </span>
+        )}
+      </div>
+      {lens.loading ? (
+        <div className="mt-2 h-7 w-16 animate-pulse rounded bg-gray-100" />
+      ) : lens.hasData ? (
+        <>
+          <div className={`mt-1 text-2xl font-bold leading-tight ${valueTone}`}>{pct != null ? `${pct}${lens.key === "performance" ? "" : "%"}` : "—"}</div>
+          {lens.points.length > 1 && (
+            <div className="mt-1 [&_svg]:!h-7">
+              <TrendChart points={lens.points} current={lens.current} delta={lens.delta} unit={lens.key === "performance" ? "" : "%"} />
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-2 text-[11px] text-gray-400">No scan yet — open to run one.</div>
+      )}
+    </Link>
+  );
+}
+
+/** Small labelled stat used inside the Identity / RBAC posture cards. */
+function MiniStat({ to, label, value, tone }: { to: string; label: string; value: number; tone: "red" | "amber" | "ok" }) {
+  const cls = value === 0 || tone === "ok" ? "text-gray-700" : tone === "red" ? "text-red-700" : "text-amber-700";
+  return (
+    <Link to={to} className="rounded-lg border bg-gray-50 px-2.5 py-1.5 hover:border-brand/40 hover:bg-white">
+      <div className={`text-base font-bold leading-tight ${cls}`}>{value}</div>
+      <div className="truncate text-[10px] text-gray-500">{label}</div>
+    </Link>
+  );
+}
+
+function formatMoney(n: number, currency?: string): string {
+  const cur = currency || "USD";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return `$${Math.round(n)}`;
+  }
+}
+
+/** Relative "in 3h / tomorrow / in 2d" label for an upcoming scheduled run. */
+function formatNextRun(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diff = t - Date.now();
+  if (diff <= 0) return "due now";
+  const m = Math.round(diff / 60000);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `in ${h}h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "tomorrow" : `in ${d}d`;
+}
+
 function formatRelative(iso: string): string {
-  if (!iso) return "";
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return "";
   const diff = Date.now() - t;

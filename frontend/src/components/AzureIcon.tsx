@@ -16,6 +16,16 @@ function S({ children, vb = "0 0 18 18" }: { children: ReactNode; vb?: string })
 }
 
 // ---- Scope containers ------------------------------------------------------
+// Tenant / directory (Microsoft Entra ID) — the root of the scope hierarchy. Used for the
+// "Tenant Root Group" node so it no longer falls back to a bare 🌐 emoji.
+const Tenant = (
+  <S>
+    <circle cx="9" cy="9" r="7.2" fill="#0078D4" />
+    <path d="M9 2.4a6.6 6.6 0 0 0 0 13.2M2.6 7.1h12.8M2.6 10.9h12.8" stroke="#50E6FF" strokeWidth="0.9" fill="none" />
+    <ellipse cx="9" cy="9" rx="3" ry="6.6" fill="none" stroke="#50E6FF" strokeWidth="0.9" />
+  </S>
+);
+
 const ManagementGroup = (
   <S>
     <rect x="6.5" y="1.5" width="5" height="4" rx="0.5" fill="#5E9624" />
@@ -48,6 +58,16 @@ const ResourceGroup = (
     <path d="M9 4.2l3.6 2.1v4.2L9 12.6 5.4 10.5V6.3z" fill="#0078D4" />
     <path d="M9 4.2l3.6 2.1L9 8.4 5.4 6.3z" fill="#50E6FF" />
     <path d="M9 8.4v4.2L5.4 10.5V6.3z" fill="#198AB3" />
+  </S>
+);
+
+// Workload — a curated group of resources (app concept, not an ARM scope). Stacked layers
+// so the "Workload | Subscription" scope switcher reads consistently with the Azure scopes.
+const Workload = (
+  <S>
+    <path d="M9 1.8l6.4 3-6.4 3-6.4-3z" fill="#0078D4" />
+    <path d="M2.6 8.4L9 11.4l6.4-3 1 .9-7.4 3.5-7.4-3.5z" fill="#50E6FF" />
+    <path d="M2.6 11.8L9 14.8l6.4-3 1 .9-7.4 3.5-7.4-3.5z" fill="#198AB3" />
   </S>
 );
 
@@ -219,12 +239,14 @@ export function AzureIcon({
   type,
   className = "h-4 w-4",
 }: {
-  kind: WorkloadNodeKind;
+  kind: WorkloadNodeKind | "tenant" | "workload";
   type?: string | null;
   className?: string;
 }) {
   let glyph: ReactNode;
-  if (kind === "mg") glyph = ManagementGroup;
+  if (kind === "tenant") glyph = Tenant;
+  else if (kind === "workload") glyph = Workload;
+  else if (kind === "mg") glyph = ManagementGroup;
   else if (kind === "subscription") glyph = Subscription;
   else if (kind === "resource_group") glyph = ResourceGroup;
   else glyph = resourceIcon(type);

@@ -29,11 +29,14 @@ class ToolCallRequest:
 class StreamEvent:
     """One event emitted while the model generates a response."""
 
-    type: str  # "token" | "tool_calls" | "done"
+    type: str  # "token" | "tool_calls" | "done" | "status"
     text: str = ""
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # For type=="status": a short machine phase ("connecting" | "request_sent" |
+    # "response") so the UI can pick an icon; `text` carries the human message.
+    phase: str = ""
 
 
 class LLMProvider(ABC):

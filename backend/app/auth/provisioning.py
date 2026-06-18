@@ -29,15 +29,23 @@ async def provision_sso_user(
     email: str,
     display_name: str,
     groups: list[str],
+    email_verified: bool = True,
+    **_extra: object,
 ) -> User | None:
     """Find-or-create a user from an SSO assertion and apply group→role mapping.
 
     Returns the active User, or None if provisioning is not allowed / user disabled.
+
+    SECURITY (account-takeover defense): the primary match is the cryptographic
+    ``(idp, external_id)`` subject. Falling back to email-matching is dangerous — a
+    crafted assertion claiming ``email=admin@local`` must NOT take over the local admin.
+    So email linking is allowed ONLY onto an existing *SSO-managed* account (never a
+    local/password account) and only when the IdP asserts the email is verified.
     """
     cfg = load_auth_settings()
     email = (email or "").strip().lower()
 
-    # Match by (idp, external_id) first, then by verified email (account linking).
+    # Match by (idp, external_id) first — this is the trustworthy, signed subject.
     user = (
         await db.execute(
             select(User).where(
@@ -46,9 +54,18 @@ async def provision_sso_user(
         )
     ).scalars().first()
     if user is None and email:
-        user = (
+        candidate = (
             await db.execute(select(User).where(User.email == email))
         ).scalars().first()
+        if candidate is not None:
+            is_local_or_password = (
+                candidate.auth_source == "local" or bool(candidate.password_hash)
+            )
+            # Refuse to auto-link an SSO identity onto a local/password account (the
+            # admin-takeover vector), or when the email is not verified by the IdP.
+            if is_local_or_password or not email_verified:
+                return None
+            user = candidate
 
     auto = bool(idp.config_json.get("auto_provision", cfg.get("sso_auto_provision", True)))
     if user is None:

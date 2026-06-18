@@ -9,13 +9,15 @@ import {
   type PerfMetricCell,
   type PerfProfile,
   type PerfResourceRow,
+  type PerfRunSummary,
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { queryClient } from "../queryClient";
 import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
-import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { ScopePicker } from "./ScopePicker";
+import { RunHistoryShell } from "./RunHistoryShell";
 
 // ---- Background profile-run registry --------------------------------------------
 // A profile started from this screen keeps streaming even if the user switches scope or
@@ -468,34 +470,19 @@ export function PerformancePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
-              <button
-                onClick={() => setScopeKind("workload")}
-                className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
-              >
-                Workload
-              </button>
-              <button
-                onClick={() => setScopeKind("subscription")}
-                className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}
-              >
-                Subscription
-              </button>
-            </div>
-            {scopeKind === "workload" ? (
-              <select value={effWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="max-w-[220px] rounded-lg border px-2 py-1.5 text-xs">
-                {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            ) : (
-              <SubscriptionScopePicker
-                value={subId}
-                valueName={subName}
-                onPick={(id, name) => {
-                  setSubId(id);
-                  setSubName(name);
-                }}
-              />
-            )}
+            <ScopePicker
+              scopeKind={scopeKind}
+              onScopeKindChange={setScopeKind}
+              workloads={workloads}
+              workloadId={effWorkloadId}
+              onWorkloadChange={setWorkloadId}
+              subId={subId}
+              subName={subName}
+              onSubPick={(id, name) => {
+                setSubId(id);
+                setSubName(name);
+              }}
+            />
             {!useRange ? (
               <select value={windowSel} onChange={(e) => setWindowSel(e.target.value)} className="rounded-md border px-2 py-1.5 text-sm" title="Metric window">
                 {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.l}</option>)}
@@ -518,13 +505,6 @@ export function PerformancePanel() {
             >
               {runningHere ? "Profiling…" : "▶ Run profile"}
             </button>
-            <button
-              onClick={() => setShowTrash((v) => !v)}
-              title="Show trashed profile runs"
-              className={`rounded-md border px-3 py-1.5 text-sm font-medium ${showTrash ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}
-            >
-              🗑 Trash
-            </button>
           </div>
         </div>
         {runningHere && runningEntry?.lastResource && (
@@ -537,125 +517,76 @@ export function PerformancePanel() {
           <div className={`mb-3 rounded-md border px-3 py-2 text-sm ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>
         )}
 
-        {/* History grid (top) */}
-        <div className="mb-5">
-          <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-gray-900">Profile history</h2>
-            <span className="text-[11px] text-gray-400">{runs.length} run(s) for this scope</span>
-            {runningHere && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />1 running
-              </span>
-            )}
-          </div>
-          <div className="overflow-x-auto rounded-lg border bg-white">
-            <table className="w-full text-[12px]">
-              <thead className="bg-gray-50 text-left text-gray-500">
-                <tr>
-                  <th className="px-3 py-2">Run time</th>
-                  <th className="px-3 py-2">Window</th>
-                  <th className="px-3 py-2">Score</th>
-                  <th className="px-3 py-2">Breach / Approach / Healthy</th>
-                  <th className="px-3 py-2">Top bottleneck</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runningHere && runningEntry && (
-                  <tr className="border-t bg-amber-50/50" data-testid="perf-running-row">
-                    <td className="px-3 py-2 text-gray-700">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</td>
-                    <td className="px-3 py-2 text-gray-500">{runningEntry.windowLabel}</td>
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />Running
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-gray-400" colSpan={2}>
-                      Profiling… {runningEntry.lastResource || "gathering metrics"}
-                      {runningEntry.steps ? ` (${runningEntry.steps} step${runningEntry.steps === 1 ? "" : "s"})` : ""}
-                    </td>
-                    <td className="px-3 py-2 text-right text-gray-300">—</td>
-                  </tr>
-                )}
-                {runsQ.isLoading ? (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Loading history…</td></tr>
-                ) : runs.length === 0 && !runningHere ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">No profiles yet — pick a window and click <b>Run profile</b>.</td></tr>
-                ) : (
-                  runs.map((r) => (
-                    <tr key={r.id} className={`border-t hover:bg-gray-50 ${data?.id === r.id ? "bg-blue-50" : ""}`}>
-                      <td className="px-3 py-2 text-gray-700">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</td>
-                      <td className="px-3 py-2 text-gray-500">{r.requested_start && r.requested_end ? "custom range" : r.window}</td>
-                      <td className={`px-3 py-2 font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</td>
-                      <td className="px-3 py-2">
-                        <span className="text-red-600">{r.breaching}</span> / <span className="text-amber-600">{r.approaching}</span> / <span className="text-green-600">{r.healthy}</span>
-                      </td>
-                      <td className="px-3 py-2 text-gray-600">
-                        {r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name} (${r.top_bottleneck.pct_of_threshold}%)` : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button onClick={() => viewRun(r.id)} disabled={busy === `view:${r.id}`} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">View</button>
-                        <button onClick={() => deleteRun(r.id)} disabled={busy === `del:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Trash panel (soft-deleted runs for this scope) */}
-        {showTrash && (
-          <div className="mb-5 rounded-lg border bg-white">
-            <div className="flex items-center justify-between border-b px-3 py-2">
-              <div className="flex items-center gap-2">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">🗑 Trash</h2>
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">{trashed.length}</span>
-              </div>
-              {trashed.length > 0 && (
-                <button onClick={() => void emptyTrash()} disabled={busy === "empty-trash"}
-                  className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Empty trash</button>
-              )}
-            </div>
-            <p className="border-b px-3 py-1.5 text-[11px] text-gray-500">Deleted profile runs are kept here until you restore or permanently delete them.</p>
-            {trashQ.isLoading ? (
-              <div className="px-3 py-4 text-center text-sm text-gray-400">Loading…</div>
-            ) : trashed.length === 0 ? (
-              <div className="px-3 py-6 text-center text-sm text-gray-400">Trash is empty.</div>
-            ) : (
-              <table className="w-full text-[12px]">
-                <thead className="bg-gray-50 text-left text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2">Run time</th>
-                    <th className="px-3 py-2">Window</th>
-                    <th className="px-3 py-2">Score</th>
-                    <th className="px-3 py-2">Top bottleneck</th>
-                    <th className="px-3 py-2">Deleted</th>
-                    <th className="px-3 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trashed.map((r) => (
-                    <tr key={r.id} className="border-t hover:bg-gray-50">
-                      <td className="px-3 py-2 text-gray-700">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</td>
-                      <td className="px-3 py-2 text-gray-500">{r.requested_start && r.requested_end ? "custom range" : r.window}</td>
-                      <td className={`px-3 py-2 font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</td>
-                      <td className="px-3 py-2 text-gray-600">{r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name}` : "—"}</td>
-                      <td className="px-3 py-2 text-gray-400">{r.deleted_at ? fmtTime(r.deleted_at) : "—"}</td>
-                      <td className="px-3 py-2 text-right">
-                        <button onClick={() => void restoreRun(r.id)} disabled={busy === `restore:${r.id}`}
-                          className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50">↩ Restore</button>
-                        <button onClick={() => void purgeRun(r.id)} disabled={busy === `purge:${r.id}`}
-                          className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete forever</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
+        {/* Run history (shared shell) */}
+        <RunHistoryShell<PerfRunSummary>
+          title="Profile history"
+          countText={`${runs.length} run(s) for this scope`}
+          headerExtra={runningHere ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />1 running
+            </span>
+          ) : undefined}
+          rows={runs}
+          loading={runsQ.isLoading}
+          suppressEmpty={runningHere}
+          emptyHint={<>No profiles yet — pick a window and click <b>Run profile</b>.</>}
+          rowClassName={(r) => (data?.id === r.id ? "bg-blue-50" : "")}
+          testId="perf-history"
+          prependRow={runningHere && runningEntry ? (
+            <tr className="border-t bg-amber-50/50" data-testid="perf-running-row">
+              <td className="px-3 py-2 text-gray-700">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</td>
+              <td className="px-3 py-2 text-gray-500">{runningEntry.windowLabel}</td>
+              <td className="px-3 py-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />Running
+                </span>
+              </td>
+              <td className="px-3 py-2 text-gray-400" colSpan={2}>
+                Profiling… {runningEntry.lastResource || "gathering metrics"}
+                {runningEntry.steps ? ` (${runningEntry.steps} step${runningEntry.steps === 1 ? "" : "s"})` : ""}
+              </td>
+              <td className="px-3 py-2 text-right text-gray-300">—</td>
+            </tr>
+          ) : undefined}
+          showTrash={showTrash}
+          onToggleTrash={() => setShowTrash((v) => !v)}
+          trashedCount={trashed.length}
+          trashNote="Deleted profile runs are kept here until you restore or permanently delete them."
+          trashedRows={trashed}
+          trashLoading={trashQ.isLoading}
+          onEmptyTrash={() => void emptyTrash()}
+          emptyingTrash={busy === "empty-trash"}
+          columns={[
+            { header: "Run time", className: "text-gray-700", render: (r) => <>{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</> },
+            { header: "Window", className: "text-gray-500", render: (r) => (r.requested_start && r.requested_end ? "custom range" : r.window) },
+            { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
+            { header: "Breach / Approach / Healthy", render: (r) => <><span className="text-red-600">{r.breaching}</span> / <span className="text-amber-600">{r.approaching}</span> / <span className="text-green-600">{r.healthy}</span></> },
+            { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name} (${r.top_bottleneck.pct_of_threshold}%)` : "—") },
+            {
+              header: "Actions", align: "right", render: (r) => (
+                <>
+                  <button onClick={() => viewRun(r.id)} disabled={busy === `view:${r.id}`} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">View</button>
+                  <button onClick={() => deleteRun(r.id)} disabled={busy === `del:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
+                </>
+              ),
+            },
+          ]}
+          trashColumns={[
+            { header: "Run time", className: "text-gray-700", render: (r) => <>{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</> },
+            { header: "Window", className: "text-gray-500", render: (r) => (r.requested_start && r.requested_end ? "custom range" : r.window) },
+            { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
+            { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name}` : "—") },
+            { header: "Deleted", className: "text-gray-400", render: (r) => (r.deleted_at ? fmtTime(r.deleted_at) : "—") },
+            {
+              header: "Actions", align: "right", render: (r) => (
+                <>
+                  <button onClick={() => void restoreRun(r.id)} disabled={busy === `restore:${r.id}`} className="rounded border border-brand/40 bg-brand/5 px-2 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-50">↩ Restore</button>
+                  <button onClick={() => void purgeRun(r.id)} disabled={busy === `purge:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete forever</button>
+                </>
+              ),
+            },
+          ]}
+        />
         {runningHere && !data ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-white p-10 text-center">
             <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none">

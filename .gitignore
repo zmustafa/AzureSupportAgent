@@ -99,3 +99,11 @@ logs/
 *.tmp
 *.bak
 *.pptx
+# --- Throwaway deck-inspection + render scratch (not app code) ---------------
+backend/_deck_*.py
+docs/_build_usecases.py
+docs/_uc_helpers.py
+docs/_usecases_build.py
+docs/_render.py
+docs/usecase-assets/
+docs/usecase-render/

@@ -40,75 +40,125 @@ def _run(coro):
         loop.close()
 
 
-def test_ip_lockout_blocks_after_threshold_and_auto_unlocks():
+async def _throttle_session(tmp_path):
+    """Fresh SQLite engine + sessionmaker for the DB-backed IP lockout store."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    import app.models  # noqa: F401 - register ORM models on Base.metadata
+    import app.models.auth  # noqa: F401 - registers LoginThrottle
+    from app.core.db import Base
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'throttle.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+def test_ip_lockout_blocks_after_threshold_and_auto_unlocks(tmp_path):
     """Threshold reached -> locked. Cooldown elapses -> auto-unlocked."""
     store = IpLockoutStore()
     ip = "203.0.113.5"
-    # Three failures with a 3-attempt limit and a tiny 0.05s cooldown.
-    for _ in range(2):
-        locked, _ = _run(
-            store.record_failure(ip, max_attempts=3, window_seconds=60, lockout_seconds=0.05)
-        )
-        assert locked is False
-    locked, remaining = _run(
-        store.record_failure(ip, max_attempts=3, window_seconds=60, lockout_seconds=0.05)
-    )
-    assert locked is True
-    assert 0 < remaining <= 0.05 + 0.01
-    # While inside the cooldown window the IP stays locked.
-    is_locked, _ = _run(store.check_locked(ip, lockout_seconds=0.05))
-    assert is_locked is True
-    # After the cooldown, check_locked must auto-unlock.
-    _run(asyncio.sleep(0.06))
-    is_locked, _ = _run(store.check_locked(ip, lockout_seconds=0.05))
-    assert is_locked is False
+
+    async def run():
+        engine, Session = await _throttle_session(tmp_path)
+        async with Session() as db:
+            for _ in range(2):
+                locked, _r = await store.record_failure(
+                    db, ip, max_attempts=3, window_seconds=60, lockout_seconds=0.2
+                )
+                assert locked is False
+            locked, remaining = await store.record_failure(
+                db, ip, max_attempts=3, window_seconds=60, lockout_seconds=0.2
+            )
+            assert locked is True
+            assert 0 < remaining <= 0.2 + 0.01
+            # While inside the cooldown window the IP stays locked.
+            is_locked, _r = await store.check_locked(db, ip)
+            assert is_locked is True
+            # After the cooldown, check_locked must auto-unlock.
+            await asyncio.sleep(0.25)
+            is_locked, _r = await store.check_locked(db, ip)
+            assert is_locked is False
+        await engine.dispose()
+
+    _run(run())
 
 
-def test_ip_lockout_window_only_counts_recent_failures():
+def test_ip_lockout_window_only_counts_recent_failures(tmp_path):
     """Failures older than the sliding window must not contribute to the count."""
     store = IpLockoutStore()
     ip = "198.51.100.7"
-    # First failure inside a 0.05s window.
-    _run(store.record_failure(ip, max_attempts=2, window_seconds=0.05, lockout_seconds=60))
-    _run(asyncio.sleep(0.06))
-    # The next failure starts a fresh window — should NOT trip the threshold.
-    locked, _ = _run(
-        store.record_failure(ip, max_attempts=2, window_seconds=0.05, lockout_seconds=60)
-    )
-    assert locked is False
+
+    async def run():
+        engine, Session = await _throttle_session(tmp_path)
+        async with Session() as db:
+            await store.record_failure(db, ip, max_attempts=2, window_seconds=0.2, lockout_seconds=60)
+            await asyncio.sleep(0.25)
+            # The next failure starts a fresh window — should NOT trip the threshold.
+            locked, _r = await store.record_failure(
+                db, ip, max_attempts=2, window_seconds=0.2, lockout_seconds=60
+            )
+            assert locked is False
+        await engine.dispose()
+
+    _run(run())
 
 
-def test_ip_lockout_clear_resets_state():
+def test_ip_lockout_clear_resets_state(tmp_path):
     store = IpLockoutStore()
     ip = "192.0.2.42"
-    _run(store.record_failure(ip, max_attempts=3, window_seconds=60, lockout_seconds=60))
-    _run(store.record_failure(ip, max_attempts=3, window_seconds=60, lockout_seconds=60))
-    _run(store.clear(ip))
-    locked, _ = _run(
-        store.record_failure(ip, max_attempts=3, window_seconds=60, lockout_seconds=60)
-    )
-    assert locked is False  # counter was wiped, single failure can't trip threshold
+
+    async def run():
+        engine, Session = await _throttle_session(tmp_path)
+        async with Session() as db:
+            await store.record_failure(db, ip, max_attempts=3, window_seconds=60, lockout_seconds=60)
+            await store.record_failure(db, ip, max_attempts=3, window_seconds=60, lockout_seconds=60)
+            await store.clear(db, ip)
+            locked, _r = await store.record_failure(
+                db, ip, max_attempts=3, window_seconds=60, lockout_seconds=60
+            )
+            assert locked is False  # counter was wiped, single failure can't trip threshold
+        await engine.dispose()
+
+    _run(run())
 
 
-def test_ip_lockout_none_ip_is_noop():
+def test_ip_lockout_none_ip_is_noop(tmp_path):
     """Missing client IP must never block legitimate requests."""
     store = IpLockoutStore()
-    assert _run(store.check_locked(None, lockout_seconds=10)) == (False, 0.0)
-    locked, _ = _run(
-        store.record_failure(None, max_attempts=1, window_seconds=60, lockout_seconds=60)
-    )
-    assert locked is False
+
+    async def run():
+        engine, Session = await _throttle_session(tmp_path)
+        async with Session() as db:
+            assert await store.check_locked(db, None) == (False, 0.0)
+            locked, _r = await store.record_failure(
+                db, None, max_attempts=1, window_seconds=60, lockout_seconds=60
+            )
+            assert locked is False
+        await engine.dispose()
+
+    _run(run())
 
 
-def test_ip_lockout_evicts_oldest_when_full():
-    """Memory bound: an attacker can't OOM the process by cycling 50k+ random IPs."""
-    store = IpLockoutStore(max_ips_tracked=5)
-    for i in range(10):
-        _run(store.record_failure(
-            f"192.0.2.{i}", max_attempts=99, window_seconds=60, lockout_seconds=60
-        ))
-    # The store keeps only ~max_ips_tracked entries.
-    assert len(store._states) <= 5  # type: ignore[attr-defined]
+def test_ip_lockout_persists_across_sessions(tmp_path):
+    """H4: the counter is stored in the DB, so a NEW session (≈ another replica or a
+    process restart) still sees the lockout — the property the in-process store lacked."""
+    store = IpLockoutStore()
+    ip = "203.0.113.99"
+
+    async def run():
+        engine, Session = await _throttle_session(tmp_path)
+        async with Session() as db:
+            for _ in range(3):
+                await store.record_failure(db, ip, max_attempts=3, window_seconds=60, lockout_seconds=60)
+        # Fresh session = a different worker/replica: the lock must still be enforced.
+        async with Session() as db2:
+            is_locked, remaining = await store.check_locked(db2, ip)
+            assert is_locked is True
+            assert remaining > 0
+        await engine.dispose()
+
+    _run(run())
 
 
 # --------------------------------------------------- C1+C2: architecture tenant guard

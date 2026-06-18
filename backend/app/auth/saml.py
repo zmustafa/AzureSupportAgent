@@ -17,14 +17,18 @@ Config (config_json on IdentityProvider):
 from __future__ import annotations
 
 import base64
+import json
 import secrets
+import time
 import zlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
 from lxml import etree
 from signxml import XMLVerifier
+
+from app.core.crypto import decrypt, encrypt
 
 NS = {
     "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -33,9 +37,31 @@ NS = {
     "md": "urn:oasis:names:tc:SAML:2.0:metadata",
 }
 
+# How long an in-flight SP-initiated request stays valid (the AuthnRequest ID is carried
+# in an encrypted, single-use cookie so the ACS can bind the response via InResponseTo).
+RELAY_TTL_SECONDS = 600
+# Tolerance for IdP/SP clock drift when checking assertion validity windows.
+_CLOCK_SKEW = timedelta(seconds=120)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def encode_relay(payload: dict[str, Any]) -> str:
+    """Encrypt the in-flight SAML request state (AuthnRequest ID + idp) for the cookie."""
+    return encrypt(json.dumps({**payload, "ts": int(time.time())}))
+
+
+def decode_relay(token: str) -> dict[str, Any] | None:
+    """Decrypt + freshness-check the SAML request-state cookie. None if invalid/expired."""
+    try:
+        data = json.loads(decrypt(token))
+    except Exception:  # noqa: BLE001
+        return None
+    if int(time.time()) - int(data.get("ts", 0)) > RELAY_TTL_SECONDS:
+        return None
+    return data
 
 
 def _pem(cert: str) -> str:
@@ -72,8 +98,12 @@ def sp_metadata(public_base_url: str, idp_id: str) -> str:
     )
 
 
-def build_authn_request(idp_cfg: dict[str, Any], public_base_url: str, idp_id: str) -> str:
-    """Return the IdP redirect URL with a deflated, base64'd AuthnRequest (HTTP-Redirect)."""
+def build_authn_request(idp_cfg: dict[str, Any], public_base_url: str, idp_id: str) -> tuple[str, str]:
+    """Return ``(redirect_url, request_id)`` for an SP-initiated AuthnRequest.
+
+    The caller persists ``request_id`` in a single-use encrypted cookie so the ACS can
+    bind the response to this request (``InResponseTo``) and reject replays / unsolicited
+    responses."""
     req_id = "_" + secrets.token_hex(16)
     issue_instant = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
     acs = acs_url(public_base_url, idp_id)
@@ -93,62 +123,122 @@ def build_authn_request(idp_cfg: dict[str, Any], public_base_url: str, idp_id: s
     deflated = co.compress(xml.encode("utf-8")) + co.flush()
     encoded = base64.b64encode(deflated).decode("ascii")
     params = {"SAMLRequest": encoded}
-    return idp_cfg["sso_url"] + ("&" if "?" in idp_cfg["sso_url"] else "?") + urlencode(params)
+    url = idp_cfg["sso_url"] + ("&" if "?" in idp_cfg["sso_url"] else "?") + urlencode(params)
+    return url, req_id
 
 
-def validate_response(saml_response_b64: str, idp_cfg: dict[str, Any]) -> dict[str, Any]:
+def validate_response(
+    saml_response_b64: str,
+    idp_cfg: dict[str, Any],
+    *,
+    sp_entity_id: str = "",
+    acs_url: str = "",
+    expected_in_response_to: str | None = None,
+) -> dict[str, Any]:
     """Verify signature + conditions and extract identity from the SAML Response.
 
-    Raises on any validation failure. Returns identity dict."""
+    SECURITY (XML Signature Wrapping defense): identity is extracted **only** from the
+    element the signature actually covers (``signxml``'s returned ``signed_xml`` subtree),
+    never from a re-parse of the raw document. An attacker who wraps a signed element
+    around an injected, unsigned assertion therefore can't get that injected assertion
+    honoured — we only ever read the verified subtree.
+
+    Additional binding checks (replay / audience confusion defense):
+    - exactly one signed reference / assertion is required;
+    - issuer must match the configured IdP entityID;
+    - NotBefore / NotOnOrAfter (with small clock skew) on Conditions and on the
+      SubjectConfirmationData;
+    - AudienceRestriction must include our SP entityID (when present);
+    - SubjectConfirmationData Recipient must equal our ACS URL (when present);
+    - SubjectConfirmationData InResponseTo must equal the AuthnRequest we issued
+      (``expected_in_response_to``) — this rejects replayed and unsolicited responses.
+
+    Raises on any validation failure. Returns the identity dict."""
     raw = base64.b64decode(saml_response_b64)
     cert_pem = _pem(idp_cfg.get("certificate", ""))
     if not cert_pem.strip():
         raise RuntimeError("IdP signing certificate is not configured.")
 
-    # Verify the XML signature against the configured cert. signxml returns the verified
-    # element(s); we then re-parse for attribute extraction.
+    # Verify the XML signature against the configured cert. We require EXACTLY ONE signed
+    # reference; multiple signatures are a classic wrapping vector.
     try:
-        verified = XMLVerifier().verify(raw, x509_cert=cert_pem).signed_xml
+        result = XMLVerifier().verify(raw, x509_cert=cert_pem)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"SAML signature validation failed: {exc}") from exc
+    if isinstance(result, list):
+        if len(result) != 1:
+            raise RuntimeError("Expected exactly one signed element in the SAML response.")
+        result = result[0]
+    verified = getattr(result, "signed_xml", None)
+    if verified is None:
+        raise RuntimeError("SAML signature did not cover any element.")
 
-    # The signed element may be the Response or the Assertion. Re-parse the full doc to
-    # read conditions/attributes (signature already verified above).
-    doc = etree.fromstring(raw)
-    assertion = doc.find(".//saml:Assertion", NS)
-    if assertion is None and verified is not None and verified.tag.endswith("}Assertion"):
+    # Resolve the verified Assertion. The signature covers either the Assertion directly
+    # (WantAssertionsSigned) or the Response that contains exactly one Assertion. In both
+    # cases we ONLY look inside the verified subtree.
+    qn = etree.QName(verified.tag)
+    if qn.localname == "Assertion":
         assertion = verified
-    if assertion is None:
-        raise RuntimeError("No assertion found in the SAML response.")
+    elif qn.localname == "Response":
+        found = verified.findall("saml:Assertion", NS)
+        if len(found) != 1:
+            raise RuntimeError("Expected exactly one assertion in the signed response.")
+        assertion = found[0]
+    else:
+        raise RuntimeError("Signed element is neither a SAML Response nor a SAML Assertion.")
 
-    # Issuer check.
+    now = _now()
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+
+    def _parse(t: str) -> datetime:
+        t = t.split(".")[0].rstrip("Z") + "Z"
+        return datetime.strptime(t, fmt).replace(tzinfo=timezone.utc)
+
+    # Issuer check (read from the verified assertion).
     issuer_el = assertion.find("saml:Issuer", NS)
     expected_issuer = idp_cfg.get("entity_id", "")
     if expected_issuer and (issuer_el is None or (issuer_el.text or "").strip() != expected_issuer):
         raise RuntimeError("SAML issuer mismatch.")
 
-    # Conditions (NotBefore / NotOnOrAfter).
+    # Conditions: validity window + audience restriction.
     cond = assertion.find("saml:Conditions", NS)
-    now = _now()
     if cond is not None:
         nb = cond.get("NotBefore")
         na = cond.get("NotOnOrAfter")
-        fmt = "%Y-%m-%dT%H:%M:%SZ"
-
-        def _parse(t: str) -> datetime:
-            t = t.split(".")[0].rstrip("Z") + "Z"
-            return datetime.strptime(t, fmt).replace(tzinfo=timezone.utc)
-
-        if nb and now < _parse(nb):
+        if nb and now < _parse(nb) - _CLOCK_SKEW:
             raise RuntimeError("SAML assertion not yet valid.")
-        if na and now >= _parse(na):
+        if na and now >= _parse(na) + _CLOCK_SKEW:
             raise RuntimeError("SAML assertion expired.")
+        audiences = [
+            (a.text or "").strip()
+            for a in cond.findall(".//saml:AudienceRestriction/saml:Audience", NS)
+            if (a.text or "").strip()
+        ]
+        if sp_entity_id and audiences and sp_entity_id not in audiences:
+            raise RuntimeError("SAML audience restriction does not include this service provider.")
 
-    # NameID (subject).
+    # Subject confirmation: recipient binding + window + InResponseTo (replay defense).
+    scd = assertion.find(
+        ".//saml:Subject/saml:SubjectConfirmation/saml:SubjectConfirmationData", NS
+    )
+    in_resp = scd.get("InResponseTo") if scd is not None else None
+    if scd is not None:
+        recipient = scd.get("Recipient")
+        if acs_url and recipient and recipient != acs_url:
+            raise RuntimeError("SAML SubjectConfirmation recipient mismatch.")
+        scd_na = scd.get("NotOnOrAfter")
+        if scd_na and now >= _parse(scd_na) + _CLOCK_SKEW:
+            raise RuntimeError("SAML subject confirmation expired.")
+    if expected_in_response_to is not None:
+        # SP-initiated SSO: the assertion MUST be a response to the request we issued.
+        if not in_resp or in_resp != expected_in_response_to:
+            raise RuntimeError("SAML InResponseTo mismatch (replayed or unsolicited response).")
+
+    # NameID (subject) — read from the verified subtree only.
     nameid_el = assertion.find(".//saml:Subject/saml:NameID", NS)
     name_id = (nameid_el.text or "").strip() if nameid_el is not None else ""
 
-    # Attributes.
+    # Attributes (verified subtree).
     attrs: dict[str, list[str]] = {}
     for attr in assertion.findall(".//saml:AttributeStatement/saml:Attribute", NS):
         name = attr.get("Name") or attr.get("FriendlyName") or ""
@@ -188,4 +278,8 @@ def validate_response(saml_response_b64: str, idp_cfg: dict[str, Any]) -> dict[s
         "email": email,
         "display_name": display,
         "groups": list(groups),
+        "assertion_id": assertion.get("ID") or "",
+        "in_response_to": in_resp or "",
+        # email comes from a cryptographically-signed assertion → treat as verified.
+        "email_verified": True,
     }

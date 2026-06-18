@@ -1117,8 +1117,12 @@ async def stream_message(
     # Resolve sandbox troubleshooting VMs linked to this turn's workload. Their tools
     # (vm_exec/vm_list/vm_read_file) are registered below; here we tell the model they
     # exist and what OS/toolkit each box has.
+    # SECURITY (H3): vm_exec runs arbitrary commands on a box inside a customer VNet, so it
+    # is gated behind the `sandbox.exec` permission. Without it we neither advertise the
+    # boxes to the model nor register the tools.
     turn_sandbox_vms: list[dict] = []
-    if turn_workload_id:
+    _can_exec_vms = principal.is_admin or principal.has("sandbox.exec")
+    if turn_workload_id and _can_exec_vms:
         from app.core.sandbox_vms import resolve_for_workload as _resolve_vms
 
         turn_sandbox_vms = _resolve_vms(turn_workload_id)

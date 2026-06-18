@@ -14,7 +14,8 @@ import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { TrendChart } from "./TrendChart";
-import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { ScopePicker } from "./ScopePicker";
+import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 
@@ -289,24 +290,19 @@ export function TelemetryCoveragePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
-              <button onClick={() => setScopeKind("workload")} className={`rounded-md px-2.5 py-1 ${scopeKind === "workload" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Workload</button>
-              <button onClick={() => setScopeKind("subscription")} className={`rounded-md px-2.5 py-1 ${scopeKind === "subscription" ? "bg-white font-medium shadow-sm" : "text-gray-500"}`}>Subscription</button>
-            </div>
-            {scopeKind === "workload" ? (
-              <select value={effectiveWorkloadId} onChange={(e) => setWorkloadId(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs">
-                {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            ) : (
-              <SubscriptionScopePicker
-                value={subId}
-                valueName={subName}
-                onPick={(id, name) => {
-                  setSubId(id);
-                  setSubName(name);
-                }}
-              />
-            )}
+            <ScopePicker
+              scopeKind={scopeKind}
+              onScopeKindChange={setScopeKind}
+              workloads={workloads}
+              workloadId={effectiveWorkloadId}
+              onWorkloadChange={setWorkloadId}
+              subId={subId}
+              subName={subName}
+              onSubPick={(id, name) => {
+                setSubId(id);
+                setSubName(name);
+              }}
+            />
             <span className="text-xs text-gray-500">
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
               {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
@@ -341,10 +337,7 @@ export function TelemetryCoveragePanel() {
             <option value="compliant">🟢 Compliant</option>
           </select>
           <span className="text-gray-300">·</span>
-          <div className="inline-flex overflow-hidden rounded-lg border" title="Compact shows just the resource-type rows; Expanded shows the full detail table.">
-            <button onClick={() => setDensity("compact")} className={`px-2 py-1.5 ${density === "compact" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Compact</button>
-            <button onClick={() => setDensity("expanded")} className={`px-2 py-1.5 ${density === "expanded" ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Expanded</button>
-          </div>
+          <DensityToggle value={density} onChange={setDensity} title="Compact shows just the resource-type rows; Expanded shows the full detail table." />
         </div>
         )}
 

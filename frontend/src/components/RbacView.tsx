@@ -58,6 +58,28 @@ const PATH_LABEL: Record<string, string> = {
   Owner: "owner",
 };
 
+// Friendly Scope-column rendering: classify by the row's scopeType and prefix the name —
+// "Subscription: <name>", "RG: <name>", "MG: <name>" — with the matching Azure scope icon.
+function scopeCell(r: RbacRow): { icon: "mg" | "subscription" | "resource_group" | "resource" | "tenant" | null; label: string } {
+  const str = (k: string) => (typeof r[k] === "string" ? (r[k] as string).trim() : "");
+  switch (str("scopeType")) {
+    case "subscription":
+      return { icon: "subscription", label: `Subscription: ${str("subscriptionName") || str("subscriptionId") || "—"}` };
+    case "resourceGroup":
+      return { icon: "resource_group", label: `RG: ${str("resourceGroup") || "—"}` };
+    case "managementGroup":
+      return { icon: "mg", label: `MG: ${str("managementGroupName") || str("scopeDisplayName") || str("managementGroupId") || "—"}` };
+    case "resource":
+      return { icon: "resource", label: str("resourceName") || str("scopeDisplayName") || str("scope") || "Resource" };
+    case "tenantRoot":
+      return { icon: "tenant", label: str("scopeDisplayName") || "Tenant Root Group" };
+    case "directory":
+      return { icon: null, label: "Directory" };
+    default:
+      return { icon: null, label: str("scopeDisplayName") || str("subscriptionName") || str("scope") || "directory" };
+  }
+}
+
 function KpiTile({ label, value, tone }: { label: string; value: number; tone?: "red" | "amber" | "sky" }) {
   const toneCls = tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-600" : tone === "sky" ? "text-sky-600" : "text-gray-900";
   return (
@@ -145,7 +167,7 @@ function ScopeTreeRow({
   const hasKids = node.children.length > 0;
   const isOpen = expanded.has(node.id);
   const selected = selectedId === node.id;
-  const azKind = node.type === "managementGroup" ? "mg" : node.type === "subscription" ? "subscription" : null;
+  const azKind = node.type === "managementGroup" ? "mg" : node.type === "subscription" ? "subscription" : "tenant";
   return (
     <div>
       <div
@@ -160,7 +182,7 @@ function ScopeTreeRow({
           <span className="w-4 shrink-0" />
         )}
         <button onClick={() => onPick(node)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {azKind ? <AzureIcon kind={azKind} className="h-4 w-4" /> : <span className="shrink-0">🌐</span>}
+          <AzureIcon kind={azKind} className="h-4 w-4" />
           <span className="truncate" title={node.name}>{node.name}</span>
           {node.inferred && node.type === "managementGroup" && (
             <span className="shrink-0 text-[10px] text-gray-400" title="Subscription nesting inferred (single management group)">~</span>
@@ -366,7 +388,7 @@ function AccessGrid({ tab }: { tab: string }) {
                 {rows.map((r, i) => {
                   const who = (r.effectivePrincipalName || r.principalDisplayName || r.effectivePrincipalId || "—") as string;
                   const upn = (r.effectivePrincipalUserPrincipalName || r.principalUserPrincipalName || "") as string;
-                  const scopeLabel = (r.scopeDisplayName || r.subscriptionName || r.scope || "directory") as string;
+                  const scope = scopeCell(r);
                   const path = (r.accessPath as string) || "";
                   return (
                     <tr key={i} className="border-b last:border-0 hover:bg-gray-50">
@@ -378,7 +400,12 @@ function AccessGrid({ tab }: { tab: string }) {
                       <td className="px-3 py-1.5">
                         <span className="text-gray-800">{r.roleName as string}</span> <PrivBadge row={r} />
                       </td>
-                      <td className="max-w-[280px] truncate px-3 py-1.5 text-gray-600" title={r.scope as string}>{scopeLabel}</td>
+                      <td className="max-w-[280px] px-3 py-1.5 text-gray-600" title={r.scope as string}>
+                        <div className="flex items-center gap-1.5">
+                          {scope.icon && <AzureIcon kind={scope.icon} className="h-3.5 w-3.5 shrink-0" />}
+                          <span className="min-w-0 truncate">{scope.label}</span>
+                        </div>
+                      </td>
                       <td className="px-3 py-1.5 text-gray-600">
                         {PATH_LABEL[path] || path}
                         {path === "GroupTransitive" && r.sourceGroupName ? ` (${r.sourceGroupName})` : ""}

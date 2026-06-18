@@ -125,3 +125,22 @@ class IdentityProvider(Base):
     config_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class LoginThrottle(Base):
+    """Per-IP brute-force counter for the login endpoint, shared across workers/replicas.
+
+    Replaces the previous in-process dict so a multi-replica deployment enforces ONE
+    global limit and a restart no longer resets the window. One row per client IP;
+    auto-unlocks after the configured cooldown (``locked_until``)."""
+
+    __tablename__ = "login_throttle"
+
+    ip: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Count of failures inside the current sliding window.
+    fail_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Start of the current sliding window (reset when the window elapses).
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When set and in the future, all attempts from this IP are blocked until then.
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

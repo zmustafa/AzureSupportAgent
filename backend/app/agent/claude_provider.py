@@ -165,12 +165,16 @@ class ClaudeProvider(LLMProvider):
         from app.core.app_settings import request_timeout_seconds
 
         _timeout = httpx.Timeout(float(request_timeout_seconds()), connect=15.0)
+        # Connection milestones for the chat progress feed.
+        yield StreamEvent(type="status", phase="connecting", text=f"Connecting to Claude · {self._model}…")
         async with httpx.AsyncClient(timeout=_timeout) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode("utf-8", "replace")
                     raise RuntimeError(f"Claude API error {resp.status_code}: {body[:500]}")
+                yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
 
+                _first = True
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -182,6 +186,9 @@ class ClaudeProvider(LLMProvider):
                     except json.JSONDecodeError:
                         continue
                     etype = evt.get("type")
+                    if _first:
+                        _first = False
+                        yield StreamEvent(type="status", phase="response", text="Response received · generating…")
 
                     if etype == "content_block_start":
                         idx = evt.get("index", 0)

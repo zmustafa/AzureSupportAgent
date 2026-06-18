@@ -19,6 +19,7 @@ import {
 import { formatError, formatTimestamp } from "../utils/format";
 import { CopyButton } from "./CopyButton";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
+import { PillarRadar } from "./PillarRadar";
 
 // Render AI-authored text (executive summary, per-finding impact) as Markdown so **bold**,
 // lists, etc. display formatted instead of raw. Styling is via arbitrary variants (this app
@@ -1165,14 +1166,21 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
       )}
 
       <div className="grid w-full gap-5 rounded-lg border bg-white p-5 2xl:grid-cols-[auto_minmax(0,1fr)_auto] 2xl:items-center">
-        <button
-          type="button"
-          onClick={() => { setTab("findings"); setPillar("all"); setStatusFilter("all"); }}
-          title="Show all controls"
-          className={`w-fit rounded-lg p-1 transition hover:bg-gray-50 ${pillar === "all" && statusFilter === "all" ? "ring-1 ring-brand/40" : ""}`}
-        >
-          <ScoreGauge score={run.overall_score} size={130} label="Overall" />
-        </button>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => { setTab("findings"); setPillar("all"); setStatusFilter("all"); }}
+            title="Show all controls"
+            className={`w-fit rounded-lg p-1 transition hover:bg-gray-50 ${pillar === "all" && statusFilter === "all" ? "ring-1 ring-brand/40" : ""}`}
+          >
+            <ScoreGauge score={run.overall_score} size={130} label="Overall" />
+          </button>
+          {Object.keys(run.scores).length >= 3 && (
+            <div title="Score across the Well-Architected pillars">
+              <PillarRadar scores={run.scores} size={188} showLegend={false} />
+            </div>
+          )}
+        </div>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-3">
           {Object.entries(run.scores).map(([p, s]) => (
             <PillarCard key={p} pillar={p} score={s} active={pillar === p} onClick={() => focusPillar(p)} />
@@ -1366,64 +1374,172 @@ function RunFlow({ onQueued }: { onQueued: () => void }) {
 
 function RunHistory({ runs, onOpen, onDelete, onCancel }: { runs: AssessmentRunSummary[]; onOpen: (id: string) => void; onDelete: (id: string) => void; onCancel: (id: string) => void }) {
   const [groupBy, setGroupBy] = useState<"none" | "workload" | "status">("workload");
+  // "all" = full grouped history; "latest" = one row per workload (its newest run).
+  const [view, setView] = useState<"all" | "latest">("all");
+  // Recency window in days (0 = all time). Active runs are always kept regardless.
+  const [windowDays, setWindowDays] = useState<0 | 7 | 30 | 90>(0);
+  // Per-group open/closed override (key → bool). Unset keys fall back to the busy heuristic.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+
+  // Window filter first — applies to both views. Always keep in-progress runs visible.
+  const windowed = useMemo(() => {
+    if (!windowDays) return runs;
+    const cutoff = Date.now() - windowDays * 86_400_000;
+    return runs.filter((r) => {
+      if (r.status === "queued" || r.status === "running") return true;
+      const t = r.started_at ? new Date(r.started_at).getTime() : 0;
+      return t >= cutoff;
+    });
+  }, [runs, windowDays]);
+
+  // Latest run per workload (newest by start time) — drives the "Latest per workload" view.
+  const latestPerWorkload = useMemo(() => {
+    const map = new Map<string, AssessmentRunSummary>();
+    for (const r of windowed) {
+      const prev = map.get(r.workload_id);
+      const t = r.started_at ? new Date(r.started_at).getTime() : 0;
+      const pt = prev?.started_at ? new Date(prev.started_at).getTime() : -1;
+      if (!prev || t > pt) map.set(r.workload_id, r);
+    }
+    return Array.from(map.values());
+  }, [windowed]);
 
   const groups = useMemo(() => {
-    if (groupBy === "none") return [{ key: "", label: "", runs }];
+    if (groupBy === "none") return [{ key: "", label: "", runs: windowed }];
     if (groupBy === "status") {
       const order = ["running", "queued", "failed", "cancelled", "succeeded"];
       const map = new Map<string, AssessmentRunSummary[]>();
-      for (const r of runs) { const k = r.status || "succeeded"; (map.get(k) ?? map.set(k, []).get(k)!).push(r); }
+      for (const r of windowed) { const k = r.status || "succeeded"; (map.get(k) ?? map.set(k, []).get(k)!).push(r); }
       return order.filter((k) => map.has(k)).map((k) => ({ key: k, label: RUN_STATUS_META[k]?.label ?? k, runs: map.get(k)! }));
     }
     // by workload
     const map = new Map<string, { name: string; runs: AssessmentRunSummary[] }>();
-    for (const r of runs) {
+    for (const r of windowed) {
       const g = map.get(r.workload_id) ?? map.set(r.workload_id, { name: r.workload_name, runs: [] }).get(r.workload_id)!;
       g.runs.push(r);
     }
     return Array.from(map.entries())
       .sort((a, b) => a[1].name.localeCompare(b[1].name))
       .map(([key, v]) => ({ key, label: v.name, runs: v.runs }));
-  }, [runs, groupBy]);
+  }, [windowed, groupBy]);
 
   if (runs.length === 0) return <div className="rounded-lg border border-dashed bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">No assessments run yet.</div>;
 
-  const active = runs.filter((r) => r.status === "queued" || r.status === "running").length;
+  const active = windowed.filter((r) => r.status === "queued" || r.status === "running").length;
 
+  // Collapse groups by default once the history gets busy — many workloads or lots of
+  // runs would otherwise stack into a wall of tables. Small histories stay expanded.
+  const busy = groups.length > 3 || windowed.length > 12;
+  const isOpen = (key: string) => openMap[key] ?? !busy;
+  const toggle = (key: string) => setOpenMap((m) => ({ ...m, [key]: !(m[key] ?? !busy) }));
+  const expandAll = () => setOpenMap(Object.fromEntries(groups.map((g) => [g.key || "all", true])));
+  const collapseAll = () => setOpenMap(Object.fromEntries(groups.map((g) => [g.key || "all", false])));
+  // Latest 3 within each grouped section, with a "show older" disclosure (no limit when
+  // grouping is "None" or in the latest-per-workload view, which are already compact).
+  const groupLimit = groupBy === "none" ? 0 : 3;
+
+  const segBtn = (activeSel: boolean) =>
+    `px-2.5 py-1 text-xs transition ${activeSel ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`;
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-gray-500">
-          {runs.length} run{runs.length === 1 ? "" : "s"}{active > 0 && <span className="ml-2 text-blue-600">· {active} in progress</span>}
+          {view === "latest"
+            ? <>{latestPerWorkload.length} workload{latestPerWorkload.length === 1 ? "" : "s"}</>
+            : <>{windowed.length} run{windowed.length === 1 ? "" : "s"}{windowDays ? <span className="text-gray-400"> of {runs.length}</span> : null}</>}
+          {active > 0 && <span className="ml-2 text-blue-600">· {active} in progress</span>}
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-          <span>Group by:</span>
-          <div className="inline-flex overflow-hidden rounded-md border">
-            {(["workload", "status", "none"] as const).map((g) => (
-              <button key={g} onClick={() => setGroupBy(g)}
-                className={`px-2.5 py-1 text-xs transition ${groupBy === g ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-                {g === "workload" ? "Workload" : g === "status" ? "Status" : "None"}
-              </button>
-            ))}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-gray-500">
+          {/* Recency window */}
+          <div className="inline-flex items-center gap-1.5">
+            <span>Window:</span>
+            <div className="inline-flex overflow-hidden rounded-md border">
+              {([[7, "7d"], [30, "30d"], [90, "90d"], [0, "All"]] as const).map(([d, lbl]) => (
+                <button key={lbl} onClick={() => setWindowDays(d)} className={segBtn(windowDays === d)}>{lbl}</button>
+              ))}
+            </div>
           </div>
+          {/* View: full history vs latest-per-workload */}
+          <div className="inline-flex items-center gap-1.5">
+            <span>View:</span>
+            <div className="inline-flex overflow-hidden rounded-md border">
+              <button onClick={() => setView("all")} className={segBtn(view === "all")}>All runs</button>
+              <button onClick={() => setView("latest")} className={segBtn(view === "latest")} title="One row per workload — its newest run">Latest per workload</button>
+            </div>
+          </div>
+          {view === "all" && groupBy !== "none" && groups.length > 1 && (
+            <div className="inline-flex items-center gap-1">
+              <button onClick={expandAll} className="rounded px-1.5 py-0.5 hover:bg-gray-100">Expand all</button>
+              <span className="text-gray-300">·</span>
+              <button onClick={collapseAll} className="rounded px-1.5 py-0.5 hover:bg-gray-100">Collapse all</button>
+            </div>
+          )}
+          {view === "all" && (
+            <div className="inline-flex items-center gap-1.5">
+              <span>Group by:</span>
+              <div className="inline-flex overflow-hidden rounded-md border">
+                {(["workload", "status", "none"] as const).map((g) => (
+                  <button key={g} onClick={() => setGroupBy(g)} className={segBtn(groupBy === g)}>
+                    {g === "workload" ? "Workload" : g === "status" ? "Status" : "None"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
-      {groups.map((grp) => (
-        <RunGroup key={grp.key || "all"} label={grp.label} runs={grp.runs} onOpen={onOpen} onDelete={onDelete} onCancel={onCancel} />
-      ))}
+
+      {windowed.length === 0 ? (
+        <div className="rounded-lg border border-dashed bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">No runs in the last {windowDays} days. <button onClick={() => setWindowDays(0)} className="font-medium text-brand hover:underline">Show all</button></div>
+      ) : view === "latest" ? (
+        <RunGroup key="latest" label="" runs={latestPerWorkload} open onToggle={() => {}} limit={0} onOpen={onOpen} onDelete={onDelete} onCancel={onCancel} />
+      ) : (
+        groups.map((grp) => {
+          const key = grp.key || "all";
+          return (
+            <RunGroup key={key} label={grp.label} runs={grp.runs} open={isOpen(key)} onToggle={() => toggle(key)} limit={groupLimit} onOpen={onOpen} onDelete={onDelete} onCancel={onCancel} />
+          );
+        })
+      )}
     </div>
   );
 }
 
-function RunGroup({ label, runs, onOpen, onDelete, onCancel }: { label: string; runs: AssessmentRunSummary[]; onOpen: (id: string) => void; onDelete: (id: string) => void; onCancel: (id: string) => void }) {
-  const [open, setOpen] = useState(true);
+function RunGroup({ label, runs, open, onToggle, limit = 0, onOpen, onDelete, onCancel }: { label: string; runs: AssessmentRunSummary[]; open: boolean; onToggle: () => void; limit?: number; onOpen: (id: string) => void; onDelete: (id: string) => void; onCancel: (id: string) => void }) {
   // Column sort: click a header to sort, click again to flip direction.
   type RunSortKey = "workload" | "status" | "score" | "failed" | "when";
   const [sortKey, setSortKey] = useState<RunSortKey>("when");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // When a group has more than `limit` runs, show only the top `limit` (latest, by the
+  // current sort) and tuck the rest behind a "Show N older runs" disclosure.
+  const [showAll, setShowAll] = useState(false);
   const done = (r: AssessmentRunSummary) => r.status === "succeeded" || r.status === "failed" || r.status === "cancelled";
   const cancellable = (r: AssessmentRunSummary) => r.status === "queued" || r.status === "running";
+
+  // Always show the table when there's no group header (the "None" grouping) — otherwise
+  // a collapsed state would leave the user with no way to re-open it.
+  const showTable = open || !label;
+
+  // Header summary so a collapsed group still tells you its latest state at a glance:
+  // latest score (colored), a score trend sparkline, failed count, last-run time, and any
+  // in-progress runs — no need to expand to know how a workload is doing.
+  const summary = useMemo(() => {
+    const t = (r: AssessmentRunSummary) => (r.started_at ? new Date(r.started_at).getTime() : 0);
+    const byTimeDesc = [...runs].sort((a, b) => t(b) - t(a));
+    const completedAsc = runs
+      .filter((r) => r.status === "succeeded" && r.overall_score != null)
+      .sort((a, b) => t(a) - t(b));
+    const latestCompleted = completedAsc[completedAsc.length - 1];
+    return {
+      trend: completedAsc.map((r) => r.overall_score as number),
+      latestScore: latestCompleted?.overall_score ?? null,
+      latestFailed: latestCompleted ? latestCompleted.totals.failed : null,
+      latestSeverity: latestCompleted?.severity ?? "info",
+      activeCount: runs.filter((r) => r.status === "queued" || r.status === "running").length,
+      lastWhen: byTimeDesc[0]?.started_at ?? null,
+    };
+  }, [runs]);
 
   function toggleSort(key: RunSortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -1450,6 +1566,10 @@ function RunGroup({ label, runs, onOpen, onDelete, onCancel }: { label: string; 
     });
   }, [runs, sortKey, sortDir]);
 
+  const limited = limit > 0 && !showAll && sortedRuns.length > limit;
+  const visibleRuns = limited ? sortedRuns.slice(0, limit) : sortedRuns;
+  const hiddenCount = sortedRuns.length - visibleRuns.length;
+
   const SortTh = ({ k, label: thLabel, className = "" }: { k: RunSortKey; label: string; className?: string }) => (
     <th
       onClick={() => toggleSort(k)}
@@ -1466,13 +1586,34 @@ function RunGroup({ label, runs, onOpen, onDelete, onCancel }: { label: string; 
   return (
     <div className="overflow-hidden rounded-lg border bg-white">
       {label && (
-        <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 border-b bg-gray-50 px-4 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-100">
-          <span className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
-          {label}
-          <span className="ml-1 rounded-full bg-gray-200 px-1.5 text-[10px] text-gray-600">{runs.length}</span>
+        <button onClick={onToggle} className="flex w-full items-center gap-2 border-b bg-gray-50 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100">
+          <span className={`shrink-0 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+          <span className="truncate font-medium">{label}</span>
+          <span className="ml-0.5 shrink-0 rounded-full bg-gray-200 px-1.5 text-[10px] text-gray-600">{runs.length}</span>
+          {/* At-a-glance summary, right-aligned — meaningful even while collapsed. */}
+          <span className="ml-auto flex shrink-0 items-center gap-3 text-xs">
+            {summary.activeCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-blue-600">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />{summary.activeCount} running
+              </span>
+            )}
+            {summary.trend.length > 1 && <span className="hidden sm:inline-flex"><Sparkline values={summary.trend} width={60} height={18} /></span>}
+            {summary.latestScore != null && (
+              <span className="inline-flex items-baseline gap-1">
+                <span className="text-[10px] text-gray-400">latest</span>
+                <span className={`font-semibold ${scoreColor(summary.latestScore)}`}>{summary.latestScore}</span>
+              </span>
+            )}
+            {summary.latestFailed != null && summary.latestFailed > 0 && (
+              <span className="hidden items-center gap-1 text-gray-500 md:inline-flex">
+                <SeverityChip severity={summary.latestSeverity} /> {summary.latestFailed}
+              </span>
+            )}
+            {summary.lastWhen && <span className="hidden text-gray-400 lg:inline">{formatTimestamp(summary.lastWhen)}</span>}
+          </span>
         </button>
       )}
-      {open && (
+      {showTable && (
         <table className="w-full text-sm">
           <thead className="bg-gray-50/60 text-left text-gray-500"><tr className="border-b">
             <SortTh k="workload" label="Workload" className="py-2 pl-4" />
@@ -1484,7 +1625,7 @@ function RunGroup({ label, runs, onOpen, onDelete, onCancel }: { label: string; 
             <th className="py-2 pr-3" />
           </tr></thead>
           <tbody>
-            {sortedRuns.map((r) => {
+            {visibleRuns.map((r) => {
               const clickable = r.status === "succeeded" || r.status === "failed";
               return (
                 <tr key={r.id} className={`border-b last:border-0 ${clickable ? "cursor-pointer hover:bg-gray-50" : "opacity-90"}`} onClick={() => clickable && onOpen(r.id)}>
@@ -1503,6 +1644,18 @@ function RunGroup({ label, runs, onOpen, onDelete, onCancel }: { label: string; 
                 </tr>
               );
             })}
+            {limit > 0 && sortedRuns.length > limit && (
+              <tr className="border-b last:border-0 bg-gray-50/40">
+                <td colSpan={7} className="py-1.5 text-center">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowAll((v) => !v); }}
+                    className="text-xs font-medium text-brand hover:underline"
+                  >
+                    {showAll ? "Show fewer ▴" : `Show ${hiddenCount} older run${hiddenCount === 1 ? "" : "s"} ▾`}
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       )}

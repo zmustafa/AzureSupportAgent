@@ -8,6 +8,7 @@ import {
   type WorkloadCandidate,
 } from "../api";
 import { formatError } from "../utils/format";
+import { AzureIcon } from "./AzureIcon";
 
 const input =
   "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
@@ -192,10 +193,11 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                     <button
                       key={k}
                       onClick={() => setScopeKind(k)}
-                      className={`rounded-lg border px-3 py-1.5 text-sm transition ${
+                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition ${
                         scopeKind === k ? "border-brand bg-brand/5 font-medium text-brand" : "border-gray-200 text-gray-600 hover:bg-gray-50"
                       }`}
                     >
+                      <AzureIcon kind={k === "mg" ? "mg" : "subscription"} className="h-4 w-4" />
                       {k === "subscription" ? "Subscription" : "Management group"}
                     </button>
                   ))}
@@ -203,24 +205,29 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
               </div>
               <div>
                 <label className={label}>{scopeKind === "mg" ? "Management group" : "Subscription"}</label>
-                <select
-                  className={input}
-                  value={scopeId}
-                  disabled={!connectionId || scopeLoading}
-                  onChange={(e) => {
-                    setScopeId(e.target.value);
-                    setScopeName(scopeOptions.find((o) => o.id === e.target.value)?.name ?? "");
-                  }}
-                >
-                  <option value="">
-                    {scopeLoading ? "Loading…" : !connectionId ? "Pick a connection first" : "Select…"}
-                  </option>
-                  {scopeOptions.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.depth ? `${"\u00A0\u00A0".repeat(o.depth)}↳ ${o.name}` : o.name}
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2">
+                    <AzureIcon kind={scopeKind === "mg" ? "mg" : "subscription"} className="h-4 w-4" />
+                  </span>
+                  <select
+                    className={`${input} pl-8`}
+                    value={scopeId}
+                    disabled={!connectionId || scopeLoading}
+                    onChange={(e) => {
+                      setScopeId(e.target.value);
+                      setScopeName(scopeOptions.find((o) => o.id === e.target.value)?.name ?? "");
+                    }}
+                  >
+                    <option value="">
+                      {scopeLoading ? "Loading…" : !connectionId ? "Pick a connection first" : "Select…"}
                     </option>
-                  ))}
-                </select>
+                    {scopeOptions.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.depth ? `${"\u00A0\u00A0".repeat(o.depth)}↳ ${o.name}` : o.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               {error && <div className="text-xs text-red-600">{error}</div>}
             </div>

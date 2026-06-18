@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import ALL_PERMISSIONS
@@ -19,6 +19,18 @@ from app.core.db import get_db
 settings = get_settings()
 
 SESSION_COOKIE = "azsupagent_session"
+
+# When a principal must change their password, only these endpoints are reachable until
+# they do. Everything else returns 403 server-side — the forced reset is no longer just a
+# client-side nudge that an attacker could skip by calling the API directly (M1).
+_PASSWORD_CHANGE_ALLOWLIST = frozenset(
+    {
+        "/api/auth/change-password",
+        "/api/auth/me",
+        "/api/auth/logout",
+        "/api/me",
+    }
+)
 
 
 @dataclass
@@ -52,6 +64,7 @@ def _dev_principal() -> Principal:
 
 
 async def get_principal(
+    request: Request,
     azsupagent_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
     db: AsyncSession = Depends(get_db),
 ) -> Principal:
@@ -67,7 +80,7 @@ async def get_principal(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     _sess, user = resolved
     perms, role_names = await effective(db, user)
-    return Principal(
+    principal = Principal(
         subject=user.id,
         email=user.email,
         tenant_id=user.tenant_id,
@@ -77,6 +90,15 @@ async def get_principal(
         auth_source=user.auth_source,
         must_change_password=user.must_change_password,
     )
+    # Enforce a forced password change server-side: until the user sets a new password,
+    # block every endpoint except the change-password / identity / logout allowlist. This
+    # closes the gap where a seeded/forced-reset credential could call the API directly.
+    if principal.must_change_password and request.url.path not in _PASSWORD_CHANGE_ALLOWLIST:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password change required before continuing.",
+        )
+    return principal
 
 
 async def require_admin(principal: Principal = Depends(get_principal)) -> Principal:

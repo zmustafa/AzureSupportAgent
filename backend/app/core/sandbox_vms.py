@@ -35,7 +35,10 @@ _DEFAULTS: dict[str, Any] = {
     "username": "",
     "auth_method": "ssh_password",  # ssh_key | ssh_password
     # Governance.
-    "strict_mode": False,  # True = destructive commands need approval; False = autonomous
+    # SECURITY: default to strict (approval-required) so an agent-driven / prompt-injected
+    # destructive command can't auto-run on a box inside a customer VNet. An operator can
+    # opt a specific sandbox into autonomous mode after reviewing its blast radius.
+    "strict_mode": True,  # True = destructive commands need approval; False = autonomous
     "disabled": False,
     "allow_sudo": True,  # may the agent use sudo on this box (e.g. to auto-install tools)?
     # Workloads this sandbox can serve (its VNet reach). Resolved in chat.
@@ -219,7 +222,7 @@ def public_vm(vm: dict[str, Any]) -> dict[str, Any]:
         "port": vm.get("port", 22),
         "username": vm.get("username", ""),
         "auth_method": vm.get("auth_method", "ssh_password"),
-        "strict_mode": bool(vm.get("strict_mode", False)),
+        "strict_mode": bool(vm.get("strict_mode", True)),
         "disabled": bool(vm.get("disabled", False)),
         "allow_sudo": bool(vm.get("allow_sudo", True)),
         "workload_ids": list(vm.get("workload_ids", []) or []),

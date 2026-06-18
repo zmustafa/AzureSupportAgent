@@ -1,4 +1,4 @@
-"""In-process per-IP brute-force lockout for the login endpoint.
+"""Database-backed per-IP brute-force lockout for the login endpoint.
 
 Why this exists
 ---------------
@@ -12,10 +12,13 @@ counter keyed by client IP that:
   configurable cooldown (auto-unlock);
 * clears the counter on a successful login.
 
-Storage is in-process (``dict`` + ``asyncio.Lock``) — appropriate for a single
-worker. A future multi-worker deployment can swap the backend for Redis without
-changing the call sites; the API surface ``record_failure`` / ``check_locked``
-/ ``clear`` is intentionally small.
+Why the database (not an in-process dict)
+-----------------------------------------
+The state lives in the ``login_throttle`` table so the limit is enforced GLOBALLY
+across every worker / replica, and a process restart no longer wipes the counter.
+The previous in-process dict only protected a single-worker deployment and was
+silently bypassable behind a multi-replica Container App (each replica kept its own
+counter, and every restart reset it).
 
 Configuration keys (read from ``auth_settings.json`` via ``load_auth_settings``):
 
@@ -26,65 +29,63 @@ Configuration keys (read from ``auth_settings.json`` via ``load_auth_settings``)
 """
 from __future__ import annotations
 
-import threading
-import time
-from dataclasses import dataclass, field
-from typing import Iterable
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.auth import LoginThrottle
 
 
-@dataclass
-class _IpState:
-    # Monotonic timestamps (time.monotonic()) of recent failed attempts within the
-    # current window. Old entries are dropped lazily on each record/check.
-    failures: list[float] = field(default_factory=list)
-    # When set, all attempts are blocked until this monotonic timestamp.
-    locked_until: float = 0.0
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    """SQLite returns naive datetimes; treat them as UTC for comparison."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class IpLockoutStore:
-    """Per-IP failed-login tracker with auto-unlock.
+    """Per-IP failed-login tracker persisted in the database (shared across replicas).
 
-    All public methods are safe to call concurrently from multiple asyncio tasks
-    via a single ``threading.Lock`` — the critical sections are purely synchronous
-    (no ``await`` inside the lock) so a thread lock is sufficient and avoids the
-    event-loop binding fragility of ``asyncio.Lock``.
-
-    Memory usage is bounded by ``max_ips_tracked`` — the oldest entries are evicted
-    when full so a flood from random IPs cannot OOM the process.
+    The API mirrors the previous in-process store but every method now takes an
+    ``AsyncSession``. There is a small read-modify-write race under heavy concurrency
+    (two simultaneous failures from one IP could read the same count); the worst case is
+    undercounting by one — irrelevant to brute-force defense and far safer than the
+    previous per-process state.
     """
 
-    def __init__(self, *, max_ips_tracked: int = 50_000) -> None:
-        self._states: dict[str, _IpState] = {}
-        self._lock = threading.Lock()
-        self._max_ips = max_ips_tracked
-
-    @staticmethod
-    def _trim_window(failures: list[float], window_seconds: float, now: float) -> list[float]:
-        cutoff = now - window_seconds
-        return [t for t in failures if t >= cutoff]
-
     async def check_locked(
-        self, ip: str | None, *, lockout_seconds: float
+        self, db: AsyncSession, ip: str | None, *, lockout_seconds: float = 0.0
     ) -> tuple[bool, float]:
-        """Return ``(is_locked, seconds_remaining)``. Pure observation; mutates only
-        to clear a lockout that has fully expired."""
+        """Return ``(is_locked, seconds_remaining)``. Auto-unlocks an expired lockout.
+
+        ``lockout_seconds`` is accepted for call-site compatibility but unused — the
+        lockout deadline is already persisted in ``locked_until``."""
         if not ip:
             return (False, 0.0)
-        now = time.monotonic()
-        with self._lock:
-            st = self._states.get(ip)
-            if st is None:
-                return (False, 0.0)
-            if st.locked_until and st.locked_until > now:
-                return (True, st.locked_until - now)
-            # Lockout has expired -> auto-unlock by resetting the counter.
-            if st.locked_until and st.locked_until <= now:
-                st.locked_until = 0.0
-                st.failures.clear()
+        row = await db.get(LoginThrottle, ip)
+        if row is None:
             return (False, 0.0)
+        now = _now()
+        locked_until = _aware(row.locked_until)
+        if locked_until and locked_until > now:
+            return (True, (locked_until - now).total_seconds())
+        if locked_until and locked_until <= now:
+            # Cooldown elapsed -> auto-unlock by resetting the counter.
+            row.locked_until = None
+            row.fail_count = 0
+            row.window_start = None
+            row.updated_at = now
+            await db.commit()
+        return (False, 0.0)
 
     async def record_failure(
         self,
+        db: AsyncSession,
         ip: str | None,
         *,
         max_attempts: int,
@@ -94,49 +95,60 @@ class IpLockoutStore:
         """Record one failed attempt from ``ip``. Returns ``(now_locked, seconds_remaining)``."""
         if not ip:
             return (False, 0.0)
-        now = time.monotonic()
-        with self._lock:
-            self._evict_if_full()
-            st = self._states.setdefault(ip, _IpState())
-            if st.locked_until and st.locked_until > now:
-                return (True, st.locked_until - now)
-            st.failures = self._trim_window(st.failures, window_seconds, now)
-            st.failures.append(now)
-            if len(st.failures) >= max(1, max_attempts):
-                st.locked_until = now + max(0.001, lockout_seconds)
-                # Don't keep the list growing; the lockout window now owns the timer.
-                st.failures.clear()
-                return (True, max(0.001, lockout_seconds))
-            return (False, 0.0)
+        now = _now()
+        row = await db.get(LoginThrottle, ip)
+        if row is None:
+            row = LoginThrottle(ip=ip, fail_count=0, window_start=now, updated_at=now)
+            db.add(row)
+        locked_until = _aware(row.locked_until)
+        if locked_until and locked_until > now:
+            return (True, (locked_until - now).total_seconds())
+        # Slide the window: start a fresh one if the previous window has elapsed.
+        window_start = _aware(row.window_start)
+        if window_start is None or (now - window_start).total_seconds() > window_seconds:
+            row.window_start = now
+            row.fail_count = 0
+        row.fail_count = (row.fail_count or 0) + 1
+        row.updated_at = now
+        if row.fail_count >= max(1, int(max_attempts)):
+            lock_for = max(0.001, float(lockout_seconds))
+            row.locked_until = now + timedelta(seconds=lock_for)
+            # The lockout deadline now owns the timer; reset the window counter.
+            row.fail_count = 0
+            row.window_start = None
+            await db.commit()
+            return (True, lock_for)
+        await db.commit()
+        return (False, 0.0)
 
-    async def clear(self, ip: str | None) -> None:
+    async def clear(self, db: AsyncSession, ip: str | None) -> None:
         """Drop all state for an IP (call this on a successful login)."""
         if not ip:
             return
-        with self._lock:
-            self._states.pop(ip, None)
+        row = await db.get(LoginThrottle, ip)
+        if row is not None:
+            await db.delete(row)
+            await db.commit()
 
-    async def reset_all(self) -> None:
-        """Wipe all tracked IPs (admin-tunable from the security policy page)."""
-        with self._lock:
-            self._states.clear()
+    async def reset_all(self, db: AsyncSession) -> None:
+        """Wipe all tracked IPs (admin action from the security policy page)."""
+        await db.execute(delete(LoginThrottle))
+        await db.commit()
 
-    def _evict_if_full(self) -> None:
-        # Called BEFORE inserting a new entry. Make room for one additional entry
-        # by evicting until len < max, so the final size never exceeds max_ips.
-        if len(self._states) < self._max_ips:
-            return
-        ordered: Iterable[str] = sorted(
-            self._states,
-            key=lambda key: max(
-                self._states[key].failures + [self._states[key].locked_until or 0.0]
-            ),
+    async def purge_expired(self, db: AsyncSession, *, older_than_seconds: float = 86_400) -> int:
+        """Hard-delete idle rows (no active lockout, untouched for ``older_than_seconds``).
+
+        Keeps the table from growing unbounded under a random-IP flood. Run periodically."""
+        cutoff = _now() - timedelta(seconds=older_than_seconds)
+        result = await db.execute(
+            delete(LoginThrottle).where(
+                LoginThrottle.locked_until.is_(None),
+                LoginThrottle.updated_at < cutoff,
+            )
         )
-        evict = max(1, len(self._states) - self._max_ips + 1)
-        for key in list(ordered)[:evict]:
-            self._states.pop(key, None)
+        await db.commit()
+        return result.rowcount or 0
 
 
-# Module-level singleton — the FastAPI app uses one worker so this is sufficient.
-# Tests can construct their own IpLockoutStore directly.
+# Module-level singleton; all state lives in the database so this is safe across replicas.
 ip_lockout = IpLockoutStore()

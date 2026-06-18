@@ -456,7 +456,9 @@ class GitHubCopilotChatProvider(LLMProvider):
         completion_chars = 0
         current_event: str | None = None
         _timeout = httpx.Timeout(float(request_timeout_seconds()), connect=15.0)
+        _first_tok = True
 
+        yield StreamEvent(type="status", phase="connecting", text=f"Connecting to GitHub Copilot · {self._model}…")
         async with httpx.AsyncClient(timeout=_timeout) as client:
             for attempt in range(2):
                 retry = False
@@ -475,6 +477,7 @@ class GitHubCopilotChatProvider(LLMProvider):
                             f"GitHub Copilot Responses API error {resp.status_code}: {body[:500]}"
                         )
                     else:
+                        yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
                         async for line in resp.aiter_lines():
                             if not line:
                                 continue
@@ -500,6 +503,9 @@ class GitHubCopilotChatProvider(LLMProvider):
                                 raise RuntimeError(f"GitHub Copilot Responses error: {m or data[:200]}")
                             if not delta:
                                 continue
+                            if _first_tok:
+                                _first_tok = False
+                                yield StreamEvent(type="status", phase="response", text="Response received · generating…")
                             completion_chars += len(delta)
                             for tok in detector.feed(delta):
                                 yield StreamEvent(type="token", text=tok)

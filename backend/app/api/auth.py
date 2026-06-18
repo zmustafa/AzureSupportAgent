@@ -35,6 +35,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 _OIDC_STATE_COOKIE = "azsupagent_oidc_state"
+_SAML_REQ_COOKIE = "azsupagent_saml_req"
 
 
 def _aware_now():
@@ -152,7 +153,7 @@ async def login(
     ip_lock_secs = float(cfg.get("ip_rate_limit_lockout_seconds", 900))
     if ip_enabled and client_ip:
         is_locked, remaining = await ip_lockout.check_locked(
-            client_ip, lockout_seconds=ip_lock_secs
+            db, client_ip, lockout_seconds=ip_lock_secs
         )
         if is_locked:
             retry_after = max(1, int(remaining))
@@ -172,6 +173,7 @@ async def login(
         if not (ip_enabled and client_ip):
             return
         await ip_lockout.record_failure(
+            db,
             client_ip,
             max_attempts=ip_max,
             window_seconds=ip_window,
@@ -210,7 +212,7 @@ async def login(
     user.locked_until = None
     # Clear the per-IP counter on a successful login so the user isn't punished
     # for past mistakes from the same network.
-    await ip_lockout.clear(client_ip)
+    await ip_lockout.clear(db, client_ip)
     sess = await create_session(db, user, client_ip, request.headers.get("user-agent"))
     _set_session_cookie(response, sess.id)
     await _audit(db, user.username, "auth.login", {"source": "local"})
@@ -344,8 +346,23 @@ async def oidc_callback(
 @router.get("/saml/{idp_id}/login")
 async def saml_login(idp_id: str, db: AsyncSession = Depends(get_db)):
     idp = await _get_idp(db, idp_id, "saml")
-    url = saml_mod.build_authn_request(idp.config_json, settings.public_base_url, idp_id)
-    return RedirectResponse(url, status_code=302)
+    url, req_id = saml_mod.build_authn_request(idp.config_json, settings.public_base_url, idp_id)
+    resp = RedirectResponse(url, status_code=302)
+    # Single-use encrypted cookie carrying the AuthnRequest ID so the ACS can bind the
+    # response (InResponseTo) and reject replays / unsolicited responses. The ACS is a
+    # cross-site POST from the IdP, so the cookie needs SameSite=None — which browsers
+    # only honour with Secure (HTTPS). Fall back to Lax for local HTTP dev.
+    _samesite = "none" if settings.cookie_secure else "lax"
+    resp.set_cookie(
+        _SAML_REQ_COOKIE,
+        saml_mod.encode_relay({"id": req_id, "idp": idp_id}),
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=_samesite,  # type: ignore[arg-type]
+        max_age=saml_mod.RELAY_TTL_SECONDS,
+        path="/",
+    )
+    return resp
 
 
 @router.get("/saml/{idp_id}/metadata")
@@ -355,22 +372,44 @@ async def saml_metadata(idp_id: str):
 
 
 @router.post("/saml/{idp_id}/acs")
-async def saml_acs(idp_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def saml_acs(
+    idp_id: str,
+    request: Request,
+    azsupagent_saml_req: str | None = Cookie(default=None, alias=_SAML_REQ_COOKIE),
+    db: AsyncSession = Depends(get_db),
+):
     front = settings.frontend_origin
     form = await request.form()
     saml_response = form.get("SAMLResponse")
     if not saml_response:
         return RedirectResponse(f"{front}/login?error=saml_missing", status_code=302)
     idp = await _get_idp(db, idp_id, "saml")
+    # Bind the response to the AuthnRequest we issued (single-use cookie). Missing or
+    # foreign request state ⇒ unsolicited / replayed response ⇒ reject before parsing.
+    relay = saml_mod.decode_relay(azsupagent_saml_req or "")
+    if not relay or relay.get("idp") != idp_id:
+        return RedirectResponse(f"{front}/login?error=saml_state", status_code=302)
     try:
-        identity = saml_mod.validate_response(str(saml_response), idp.config_json)
+        identity = saml_mod.validate_response(
+            str(saml_response),
+            idp.config_json,
+            sp_entity_id=saml_mod.sp_entity_id(settings.public_base_url),
+            acs_url=saml_mod.acs_url(settings.public_base_url, idp_id),
+            expected_in_response_to=relay.get("id"),
+        )
         user = await provision_sso_user(db, idp, **identity)
     except Exception:  # noqa: BLE001
-        return RedirectResponse(f"{front}/login?error=saml_failed", status_code=302)
+        resp = RedirectResponse(f"{front}/login?error=saml_failed", status_code=302)
+        resp.delete_cookie(_SAML_REQ_COOKIE, path="/")
+        return resp
     if user is None:
-        return RedirectResponse(f"{front}/login?error=sso_denied", status_code=302)
+        resp = RedirectResponse(f"{front}/login?error=sso_denied", status_code=302)
+        resp.delete_cookie(_SAML_REQ_COOKIE, path="/")
+        return resp
     sess = await create_session(db, user, _client_ip(request), request.headers.get("user-agent"))
     await _audit(db, user.username, "auth.login", {"source": "saml", "idp": idp.name})
     resp = RedirectResponse(f"{front}/", status_code=302)
     _set_session_cookie(resp, sess.id)
+    # Consume the single-use request cookie so the same response can't be replayed.
+    resp.delete_cookie(_SAML_REQ_COOKIE, path="/")
     return resp

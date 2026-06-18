@@ -135,8 +135,15 @@ class Orchestrator:
         """Run one assistant turn. `history` is prior messages (user/assistant/tool)
         in OpenAI message format, without the system prompt. `scope_hint`, when set,
         is an extra system instruction constraining which subscription(s) to use."""
+        # Surface tool-loading as the first measured milestone — the initial message pays
+        # the MCP cold-start (npx @azure/mcp spawn), which is the biggest "stuck" window.
+        yield AgentEvent(type="status", data={"phase": "tools", "message": "Loading Azure tools…"})
         tools, tool_index = await self._load_tools()
         tool_specs = MCPClient.to_tool_specs(tools)
+        _azure_n = len(tool_specs)
+        _graph_n = len(self._entra_tool_names) if self._entra is not None else 0
+        _ready = f"Ready — {_azure_n} Azure" + (f" + {_graph_n} Graph" if _graph_n else "") + " tool(s)"
+        yield AgentEvent(type="status", data={"phase": "tools_ready", "message": _ready})
         # Merge in connector tools (Teams/Outlook/Jira/Grafana), if any.
         if self._connectors is not None:
             for spec in self._connectors.specs():
@@ -204,14 +211,21 @@ class Orchestrator:
         data_result_cap = _rt["tool_result_limit"]
         discovery_result_cap = _rt["tool_discovery_limit"]
 
-        for _ in range(max_iterations):
+        for _iter in range(max_iterations):
             assistant_text = ""
             pending_calls = []
+
+            # On follow-up rounds (after a tool result), tell the user we're going back to
+            # the model with the new evidence — otherwise there's another silent gap.
+            if _iter > 0:
+                yield AgentEvent(type="status", data={"phase": "iterating", "message": "Sending results back to the model…"})
 
             async for ev in self._provider.stream(messages, tool_specs):
                 if ev.type == "token":
                     assistant_text += ev.text
                     yield AgentEvent(type="token", data={"text": ev.text})
+                elif ev.type == "status":
+                    yield AgentEvent(type="status", data={"phase": ev.phase, "message": ev.text})
                 elif ev.type == "tool_calls":
                     pending_calls = ev.tool_calls
                 elif ev.type == "done":

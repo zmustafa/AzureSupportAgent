@@ -1410,10 +1410,17 @@ export default function ChatView() {
 
     await runner(
       {
+        // Pre-token connection milestones (loading tools, connecting to the model,
+        // request sent, response received). Each replaces the prior pending line and is
+        // live-only (thinking:true ⇒ cleared from the persisted feed when the turn ends).
+        onStatus: (d) => {
+          firstEvent = false;
+          log({ kind: "info", text: d.message, pending: true, thinking: true });
+          paint();
+        },
         onToken: (t) => {
           markResponding();
-          liveBuf += t;
-          stream.started = true;
+          liveBuf += t;          stream.started = true;
           stream.streamText += t;
           if (!writingLogged && stream.streamText.trim()) {
             writingLogged = true;
@@ -2238,7 +2245,7 @@ export default function ChatView() {
           {!railCollapsed && <span>New chat</span>}
         </button>
 
-        {railCollapsed ? (
+        {railCollapsed && (
           // Collapsed rail: a search affordance that expands back to the full list.
           <button
             onClick={toggleRail}
@@ -2247,46 +2254,6 @@ export default function ChatView() {
           >
             <SearchIcon className="h-[18px] w-[18px]" />
           </button>
-        ) : (
-          <>
-            <div className="relative mx-2 mb-2">
-              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
-                <SearchIcon className="h-3.5 w-3.5" />
-              </span>
-              <input
-                value={chatSearch}
-                onChange={(e) => setChatSearch(e.target.value)}
-                placeholder="Search chats…"
-                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-0"
-              />
-              {chatSearch && (
-                <button
-                  onClick={() => setChatSearch("")}
-                  title="Clear"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            {/* Quick filter chips */}
-            <div className="mb-1 flex gap-1.5 px-2">
-              {(["all", "pinned"] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setChatFilter(f)}
-                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize transition ${
-                    chatFilter === f
-                      ? "bg-gray-200 text-gray-800"
-                      : "text-gray-500 hover:bg-gray-100"
-                  }`}
-                >
-                  {f === "all" ? "All" : "Pinned"}
-                </button>
-              ))}
-            </div>
-          </>
         )}
 
         {/* Scrollable region: the nav menus (Automations, Custom Agents, …) and the
@@ -2685,6 +2652,49 @@ export default function ChatView() {
               </Link>
             </div>
           ))}
+
+        {/* Search + quick filter — sit just above the chat list (Favorites / Recents). */}
+        {!railCollapsed && (
+          <>
+            <div className="relative mx-2 mb-2 mt-1">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
+                <SearchIcon className="h-3.5 w-3.5" />
+              </span>
+              <input
+                value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)}
+                placeholder="Search chats…"
+                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-7 text-sm text-gray-700 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-0"
+              />
+              {chatSearch && (
+                <button
+                  onClick={() => setChatSearch("")}
+                  title="Clear"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Quick filter chips */}
+            <div className="mb-1 flex gap-1.5 px-2">
+              {(["all", "pinned"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setChatFilter(f)}
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize transition ${
+                    chatFilter === f
+                      ? "bg-gray-200 text-gray-800"
+                      : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  {f === "all" ? "All" : "Pinned"}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Chat list (hidden when collapsed) */}
         {!railCollapsed && (

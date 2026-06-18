@@ -6686,6 +6686,7 @@ export interface DeepInvestigationSummary {
 
 export interface StreamHandlers {
   onToken: (text: string) => void;
+  onStatus?: (data: { phase: string; message: string }) => void;
   onToolStart?: (data: { tool_name: string; arguments: unknown; agent?: string; node_id?: string }) => void;
   onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; agent?: string; node_id?: string }) => void;
   onApprovalRequired?: (data: { tool_name: string; arguments: unknown }) => void;
@@ -6895,6 +6896,9 @@ async function consumeSSE(res: Response, handlers: StreamHandlers): Promise<void
       switch (event) {
         case "token":
           handlers.onToken(parsed.text ?? "");
+          break;
+        case "status":
+          handlers.onStatus?.(parsed);
           break;
         case "tool_start":
           handlers.onToolStart?.(parsed);
