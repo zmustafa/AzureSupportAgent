@@ -23,11 +23,7 @@ every page via xhtml2pdf static ``@frame`` blocks.
 """
 from __future__ import annotations
 
-import html
 import io
-import base64
-import math
-import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
@@ -35,13 +31,28 @@ from typing import Any
 from pypdf import PdfReader
 
 from app.assessments import catalog
+from app.core.pdf_common import (
+    BRAND as _BRAND,
+    INK as _INK,
+    LINE as _LINE,
+    MUTED as _MUTED,
+    bar as _bar,
+    donut_svg as _donut_svg,
+    esc as _esc,
+    fmt_date as _fmt_date,
+    fmt_duration as _fmt_duration,
+    score_color as _score_color,
+    stacked_bar as _stacked_bar,
+    svg_attr as _svg_attr,
+    svg_color as _svg_color,
+    svg_data_uri as _svg_data_uri,
+    viz_card as _viz_card,
+)
 
 # ---------------------------------------------------------------- palette / labels
-
-_BRAND = "#4f46e5"
-_INK = "#111827"
-_MUTED = "#6b7280"
-_LINE = "#e5e7eb"
+# Brand palette + the shared rendering primitives (esc, svg helpers, bars, donut, viz card)
+# are factored into ``app.core.pdf_common`` and shared with the coverage reports. The
+# assessment-specific status/severity vocabulary stays local.
 
 _SEV_RANK = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 _SEV_COLOR = {
@@ -69,179 +80,7 @@ _STATUS_LABEL = {
 _FAILING = ("fail", "error")
 
 
-def _esc(value: Any) -> str:
-    return html.escape("" if value is None else str(value))
-
-
-def _svg_attr(value: Any) -> str:
-    """Escape a string for safe insertion into an SVG attribute or text node.
-
-    Uses ``html.escape(quote=True)`` so single + double quotes are escaped as
-    well — important when the value lands inside ``'…'`` or ``"…"`` attribute
-    delimiters in the SVG fragments below. Defense-in-depth: today every
-    user-controlled field that reaches the SVG already passes through ``_esc``,
-    but using a dedicated helper makes future changes explicit and prevents a
-    silent regression from introducing SVG injection.
-    """
-    return html.escape("" if value is None else str(value), quote=True)
-
-
-# Hex color pattern used to reject anything that doesn't look like a `#rrggbb` or
-# `#rgb` literal before it's inlined into an SVG stroke/fill. The PDF builder only
-# ever passes hardcoded hex constants today; the guard makes that an enforced
-# invariant rather than a convention.
-_HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def _svg_color(value: str, *, fallback: str = "#9ca3af") -> str:
-    """Return a safe hex color literal, falling back to neutral grey on mismatch."""
-    if isinstance(value, str) and _HEX_COLOR.match(value.strip()):
-        return value.strip()
-    return fallback
-
-
-def _score_color(score: Any) -> str:
-    try:
-        s = float(score)
-    except (TypeError, ValueError):
-        return _MUTED
-    if s >= 80:
-        return "#16a34a"
-    if s >= 50:
-        return "#d97706"
-    return "#dc2626"
-
-
-def _fmt_date(iso: str | None) -> str:
-    if not iso:
-        return "—"
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.strftime("%d %b %Y, %H:%M UTC")
-    except (ValueError, AttributeError):
-        return _esc(iso)
-
-
-def _fmt_duration(ms: Any) -> str:
-    try:
-        secs = int(ms) / 1000.0
-    except (TypeError, ValueError):
-        return "—"
-    if secs < 60:
-        return f"{secs:.0f}s"
-    return f"{int(secs // 60)}m {int(secs % 60)}s"
-
-
-# ---------------------------------------------------------------- chart helpers (CSS-only)
-
-
-def _bar(pct: Any, color: str) -> str:
-    """A horizontal progress bar using explicit cell widths that xhtml2pdf paints reliably."""
-    try:
-        width = max(0.0, min(100.0, float(pct)))
-    except (TypeError, ValueError):
-        width = 0.0
-    total = 168
-    filled = int(round(total * width / 100.0))
-    if 0 < width < 100:
-        filled = max(1, min(total - 1, filled))
-    if width <= 0:
-        return f'<table class="bartracktbl" cellpadding="0" cellspacing="0"><tr><td width="{total}" style="background-color:{_LINE}; height:9px">&nbsp;</td></tr></table>'
-    if width >= 100:
-        return f'<table class="bartracktbl" cellpadding="0" cellspacing="0"><tr><td width="{total}" style="background-color:{color}; height:9px">&nbsp;</td></tr></table>'
-    return (
-        f'<table class="bartracktbl" cellpadding="0" cellspacing="0"><tr>'
-        f'<td width="{filled}" style="background-color:{color}; height:9px">&nbsp;</td>'
-        f'<td width="{total - filled}" style="background-color:{_LINE}; height:9px">&nbsp;</td>'
-        f'</tr></table>'
-    )
-
-
-def _stacked_bar(segments: list[tuple[float, str]]) -> str:
-    """A single stacked bar from (pct, color) segments rendered as one table row."""
-    total = 420
-    cells = [
-        f'<td width="{max(1, int(round(total * max(0.0, pct) / 100.0)))}" style="background-color:{color}; height:14px">&nbsp;</td>'
-        for pct, color in segments
-        if pct and pct > 0
-    ]
-    if not cells:
-        cells = [f'<td width="{total}" style="background-color:#e5e7eb; height:14px">&nbsp;</td>']
-    return (
-        '<table class="stack" cellpadding="0" cellspacing="0"><tr>'
-        + "".join(cells)
-        + "</tr></table>"
-    )
-
-
-def _svg_data_uri(svg: str) -> str:
-    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
-
-
-def _donut_svg(slices: list[tuple[str, float]], *, center: str, accent: str) -> str:
-    total = sum(max(0.0, float(value)) for _, value in slices)
-    size = 170
-    cx = cy = 85
-    radius = 56
-    circumference = 2 * math.pi * radius
-    # Defense-in-depth: every dynamic string that lands inside an SVG attribute is
-    # escaped (`_svg_attr`) or color-validated (`_svg_color`) here, even though
-    # current callers only pass hardcoded values. Prevents a silent regression
-    # from a future caller passing user-controlled data into the chart.
-    accent_safe = _svg_color(accent, fallback="#2563eb")
-    center_safe = _svg_attr(center)
-    if total <= 0:
-        return f"""
-        <svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}' viewBox='0 0 {size} {size}'>
-          <circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='#e5e7eb' stroke-width='18'/>
-          <circle cx='{cx}' cy='{cy}' r='33' fill='white'/>
-          <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent_safe}' font-weight='700'>0</text>
-          <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{center_safe}</text>
-        </svg>
-        """
-
-    offset = 0.0
-    pieces: list[str] = []
-    for color, value in slices:
-        value = max(0.0, float(value))
-        if value <= 0:
-            continue
-        length = circumference * value / total
-        gap = max(0.0, circumference - length)
-        color_safe = _svg_color(color)
-        pieces.append(
-            f"<circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='{color_safe}' stroke-width='18' "
-            f"stroke-linecap='butt' stroke-dasharray='{length:.3f} {gap:.3f}' stroke-dashoffset='{-offset:.3f}' "
-            f"transform='rotate(-90 {cx} {cy})'/>")
-        offset += length
-
-    return f"""
-    <svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}' viewBox='0 0 {size} {size}'>
-      <circle cx='{cx}' cy='{cy}' r='{radius}' fill='none' stroke='#e5e7eb' stroke-width='18'/>
-      {''.join(pieces)}
-      <circle cx='{cx}' cy='{cy}' r='33' fill='white'/>
-      <text x='{cx}' y='82' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='14' fill='{accent_safe}' font-weight='700'>{_svg_attr(str(int(total)))}</text>
-      <text x='{cx}' y='100' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='8' fill='#6b7280'>{center_safe}</text>
-    </svg>
-    """
-
-
-def _viz_card(title: str, subtitle: str, svg: str, legend_rows: list[tuple[str, str, str]]) -> str:
-    legend = "".join(
-        f"<tr><td><span class='viz-swatch' style='background:{_svg_color(color)}'></span></td>"
-        f"<td>{_esc(label)}</td><td class='num'>{_esc(value)}</td></tr>"
-        for label, value, color in legend_rows
-    )
-    return f"""
-    <div class="viz-card">
-      <div class="viz-title">{_esc(title)}</div>
-      <div class="viz-sub">{_esc(subtitle)}</div>
-      <div class="viz-body">
-        <img class="viz-img" src="{_svg_data_uri(svg)}" alt="{_esc(title)}" />
-        <table class="viz-legend" cellpadding="0" cellspacing="0">{legend}</table>
-      </div>
-    </div>
-    """
+# ---------------------------------------------------------------- chart helpers (assessment-specific)
 
 
 def _findings_by_pillar(findings: list[dict]) -> Counter[str]:

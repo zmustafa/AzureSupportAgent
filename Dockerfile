@@ -23,6 +23,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
+# Release/image version, exposed to the backend at runtime (the frontend gets it via the
+# builder stage's VITE_APP_VERSION). Shown in Help → About and reported by /api/meta.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 # Node.js (for `npx @azure/mcp`), the Azure CLI (DefaultAzureCredential), Xvfb (a
 # virtual display so the OAuth sign-in flows can launch a headful Chromium in this
 # server container without a real screen), and the networking CLIs the built-in utility

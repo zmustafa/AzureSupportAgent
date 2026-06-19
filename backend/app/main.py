@@ -24,10 +24,12 @@ from app.api import (
     chats,
     connections,
     connectors,
+    coverage_reports,
     dnsdebug,
     evidence,
     identity,
     inventory,
+    meta,
     netcheck,
     notifications,
     playbooks,
@@ -389,6 +391,7 @@ api = APIRouter(prefix="/api")
 
 api.include_router(auth.router)
 api.include_router(users.router)
+api.include_router(meta.router)
 api.include_router(chats.router)
 api.include_router(charts.router)
 api.include_router(admin.router)
@@ -409,6 +412,7 @@ api.include_router(identity.router)
 api.include_router(amba.router)
 api.include_router(telemetry.router)
 api.include_router(backupdr.router)
+api.include_router(coverage_reports.router)
 api.include_router(netcheck.router)
 api.include_router(dnsdebug.router)
 api.include_router(evidence.router)

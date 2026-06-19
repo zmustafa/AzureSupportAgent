@@ -49,7 +49,7 @@ export default function LoginPage() {
   const providers = config?.providers ?? [];
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-slate-100 p-6">
+    <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-slate-100 p-6">
       <div className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <span className="text-3xl">🤖</span>
@@ -123,6 +123,13 @@ export default function LoginPage() {
             No sign-in methods are configured. Contact your administrator.
           </p>
         )}
+      </div>
+
+      {/* Trust strip — signal the enterprise security posture before sign-in. */}
+      <div className="w-full max-w-sm text-center">
+        <p className="text-[11px] leading-relaxed text-slate-400">
+          🔒 Runs in your tenant · 👁️ read-only by default · ✅ approval-gated writes · 🧾 audited
+        </p>
       </div>
     </div>
   );

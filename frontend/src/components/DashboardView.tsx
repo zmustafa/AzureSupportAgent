@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type AssessmentRunSummary, type RadarRailItem, type ReservationItem } from "../api";
 import { usePersistedState } from "../utils/persistedState";
 import { TrendChart } from "./TrendChart";
+import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -385,10 +386,66 @@ export function DashboardPanel() {
   // Per-step bullet expansion. Completed steps keep their bullet list collapsed by
   // default so the checklist is scannable; pending steps expand to surface the value.
   const [expandedSteps, setExpandedSteps] = useState<Record<string, boolean>>({});
-  const isStepExpanded = (s: Step) => expandedSteps[s.id] ?? (s.done !== true);
   // When the user has finished onboarding the entire setup guide collapses to a banner
   // the user can still expand.
   const [setupGuideOpen, setSetupGuideOpen] = useState<boolean>(false);
+
+  // Renders the rich step cards (status, title, badges, expandable bullets, detail, CTA).
+  // `forceExpanded` opens every card's bullet list by default — used when the user
+  // explicitly opens the guide from the completed-state banner. The per-card
+  // "Learn more / Hide details" toggle still wins once clicked.
+  const renderSetupCards = (forceExpanded: boolean) => (
+    <div className="space-y-2">
+      {steps.map((s, i) => {
+        const blocked = s.adminOnly && !isAdmin;
+        const expanded = expandedSteps[s.id] ?? (forceExpanded || s.done !== true);
+        return (
+          <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
+            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+              s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
+            }`}>
+              {s.done === true ? "✓" : s.done === undefined ? "?" : i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-800">{s.title}</span>
+                {s.done === true && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">done</span>}
+                {s.done === undefined && <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">admin-managed</span>}
+                {s.bullets && s.bullets.length > 0 && (
+                  <button
+                    onClick={() => setExpandedSteps((m) => ({ ...m, [s.id]: !expanded }))}
+                    className="ml-auto rounded-md border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+                  >
+                    {expanded ? "Hide details" : "Learn more"}
+                  </button>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-gray-500">{s.desc}</p>
+              {expanded && s.bullets && (
+                <ul className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
+                  {s.bullets.map((b, bi) => (
+                    <li key={bi} className="text-[11px] leading-snug text-gray-600">{b}</li>
+                  ))}
+                </ul>
+              )}
+              {s.detail && (
+                <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">
+                  <span className="text-green-500">●</span>{s.detail}
+                </p>
+              )}
+            </div>
+            {blocked ? (
+              <span className="shrink-0 self-center rounded-lg border px-3 py-1.5 text-xs text-gray-400">Ask an admin</span>
+            ) : (
+              <Link to={s.to} className={`shrink-0 self-center rounded-lg px-3 py-1.5 text-xs font-medium ${s.done ? "border text-gray-600 hover:bg-gray-50" : "bg-brand text-white hover:bg-brand/90"}`}>
+                {s.done ? "Review" : s.cta} →
+              </Link>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   // -------- Derived KPIs / posture signals --------------------------------------
   const reservations = reservationsQ.data?.items ?? [];
@@ -588,6 +645,33 @@ export function DashboardPanel() {
     }
   }
 
+  // Combined "Estate Coverage" PDF (Monitoring + Telemetry + Backup & DR) for the primary workload.
+  const [estatePdfBusy, setEstatePdfBusy] = useState(false);
+  const estatePdfAbortRef = useRef<AbortController | null>(null);
+  async function downloadEstatePdf() {
+    if (estatePdfBusy || !primaryWorkloadId) return;
+    const controller = new AbortController();
+    estatePdfAbortRef.current = controller;
+    setEstatePdfBusy(true);
+    try {
+      const blob = await api.estateCoveragePdf({ workload_id: primaryWorkloadId }, controller.signal);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `estate-coverage-${primaryWorkloadName || "report"}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* best-effort download (incl. user cancel); surfaced via the disabled state */
+    } finally {
+      estatePdfAbortRef.current = null;
+      setEstatePdfBusy(false);
+    }
+  }
+  function cancelEstatePdf() {
+    estatePdfAbortRef.current?.abort();
+  }
+
   // Section visibility (persisted) — the "Customize" control toggles these off/on.
   const [hiddenSections, setHiddenSections] = usePersistedState<string[]>("azsup.dashboard.hidden", []);
   const [customizing, setCustomizing] = useState(false);
@@ -763,16 +847,28 @@ export function DashboardPanel() {
           <div>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Coverage</h2>
-              {workloads.length > 0 && (
-                <select
-                  value={primaryWorkloadId}
-                  onChange={(e) => setPrimaryWorkloadId(e.target.value)}
-                  className="max-w-[220px] rounded-lg border bg-white px-2 py-1 text-xs"
-                  title="Primary workload for the coverage lenses"
-                >
-                  {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              )}
+              <div className="flex items-center gap-2">
+                {primaryWorkloadId && (
+                  <button
+                    onClick={() => void downloadEstatePdf()}
+                    disabled={estatePdfBusy}
+                    title="Download a combined Estate Coverage PDF (Monitoring · Telemetry · Backup & DR) for this workload"
+                    className="rounded-lg border bg-white px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {estatePdfBusy ? "Generating…" : "📄 Estate PDF"}
+                  </button>
+                )}
+                {workloads.length > 0 && (
+                  <select
+                    value={primaryWorkloadId}
+                    onChange={(e) => setPrimaryWorkloadId(e.target.value)}
+                    className="max-w-[220px] rounded-lg border bg-white px-2 py-1 text-xs"
+                    title="Primary workload for the coverage lenses"
+                  >
+                    {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                )}
+              </div>
             </div>
             {!primaryWorkloadId ? (
               <Empty text="Discover a workload to see its coverage." />
@@ -984,20 +1080,9 @@ export function DashboardPanel() {
               </button>
             </div>
             {setupGuideOpen && (
-              <ul className="mt-3 space-y-1.5">
-                {steps.map((s) => (
-                  <li key={s.id} className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-1.5">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                        s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
-                      }`}>{s.done === true ? "✓" : s.done === undefined ? "?" : "•"}</span>
-                      <span className="truncate text-xs font-medium text-gray-700">{s.title}</span>
-                      {s.detail && <span className="truncate text-[11px] text-gray-400">· {s.detail}</span>}
-                    </div>
-                    <Link to={s.to} className="shrink-0 text-[11px] font-medium text-brand hover:underline">Review →</Link>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-3">
+                {renderSetupCards(true)}
+              </div>
             )}
           </div>
         ) : (
@@ -1009,56 +1094,7 @@ export function DashboardPanel() {
             <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-gray-200">
               <div className={`h-full rounded-full transition-all ${allDone ? "bg-green-500" : "bg-brand"}`} style={{ width: `${pct}%` }} />
             </div>
-            <div className="space-y-2">
-              {steps.map((s, i) => {
-                const blocked = s.adminOnly && !isAdmin;
-                const expanded = isStepExpanded(s);
-                return (
-                  <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
-                    <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                      s.done === true ? "bg-green-500 text-white" : s.done === false ? "bg-gray-200 text-gray-500" : "bg-amber-100 text-amber-600"
-                    }`}>
-                      {s.done === true ? "✓" : s.done === undefined ? "?" : i + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-800">{s.title}</span>
-                        {s.done === true && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">done</span>}
-                        {s.done === undefined && <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">admin-managed</span>}
-                        {s.bullets && s.bullets.length > 0 && (
-                          <button
-                            onClick={() => setExpandedSteps((m) => ({ ...m, [s.id]: !expanded }))}
-                            className="ml-auto rounded-md border px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
-                          >
-                            {expanded ? "Hide details" : "Learn more"}
-                          </button>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-xs text-gray-500">{s.desc}</p>
-                      {expanded && s.bullets && (
-                        <ul className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
-                          {s.bullets.map((b, bi) => (
-                            <li key={bi} className="text-[11px] leading-snug text-gray-600">{b}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {s.detail && (
-                        <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600">
-                          <span className="text-green-500">●</span>{s.detail}
-                        </p>
-                      )}
-                    </div>
-                    {blocked ? (
-                      <span className="shrink-0 self-center rounded-lg border px-3 py-1.5 text-xs text-gray-400">Ask an admin</span>
-                    ) : (
-                      <Link to={s.to} className={`shrink-0 self-center rounded-lg px-3 py-1.5 text-xs font-medium ${s.done ? "border text-gray-600 hover:bg-gray-50" : "bg-brand text-white hover:bg-brand/90"}`}>
-                        {s.done ? "Review" : s.cta} →
-                      </Link>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            {renderSetupCards(false)}
           </div>
         ))}
 
@@ -1194,22 +1230,45 @@ export function DashboardPanel() {
         </div>
         )}
 
-        {/* Explore — only when setup still in progress, so it acts as onboarding */}
-        {!allDone && !isHidden("explore") && (
+        {/* Explore — full onboarding cards while setting up; a compact launcher strip once complete */}
+        {!isHidden("explore") && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What can I do here?</h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <ExploreCard to="/chat" icon="💬" title="Chat with the agent" desc="Ask anything about your Azure estate. It investigates with live data and explains its reasoning." />
-            <ExploreCard to="/workloads" icon="🧩" title="Azure Workloads" desc="Group resources into applications — or let ✨ Autopilot discover them for you." />
-            <ExploreCard to="/assessments" icon="🛡️" title="Assessments" desc="Score workloads against the Well-Architected Framework, mapped to CIS / NIST / ISO." />
-            <ExploreCard to="/architectures" icon="🗺️" title="Architectures" desc="AI-built, editable diagrams of your apps — with drift detection and best-practice review." />
-            {isAdmin && <ExploreCard to="/policy" icon="📐" title="Azure Policy" desc="Explore assignments, scan compliance, and simulate guardrails before you enforce — read-only." />}
-            <ExploreCard to="/automations" icon="⚙️" title="Automations" desc="Schedule recurring jobs, build workbooks & playbooks, and create specialized sub agents." />
-            {isAdmin && <ExploreCard to="/monitor" icon="📊" title="Monitor" desc="Central dashboard of activity, runs, usage, and audit across the workspace." />}
-          </div>
+          {allDone ? (
+            <>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Quick links</h2>
+              <div className="flex flex-wrap gap-2">
+                <QuickLink to="/chat" icon="💬" label="Chat" />
+                <QuickLink to="/workloads" icon="🧩" label="Workloads" />
+                <QuickLink to="/assessments" icon="🛡️" label="Assessments" />
+                <QuickLink to="/architectures" icon="🗺️" label="Architectures" />
+                {isAdmin && <QuickLink to="/policy" icon="📐" label="Policy" />}
+                <QuickLink to="/automations" icon="⚙️" label="Automations" />
+                {isAdmin && <QuickLink to="/monitor" icon="📊" label="Monitor" />}
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What can I do here?</h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <ExploreCard to="/chat" icon="💬" title="Chat with the agent" desc="Ask anything about your Azure estate. It investigates with live data and explains its reasoning." />
+                <ExploreCard to="/workloads" icon="🧩" title="Azure Workloads" desc="Group resources into applications — or let ✨ Autopilot discover them for you." />
+                <ExploreCard to="/assessments" icon="🛡️" title="Assessments" desc="Score workloads against the Well-Architected Framework, mapped to CIS / NIST / ISO." />
+                <ExploreCard to="/architectures" icon="🗺️" title="Architectures" desc="AI-built, editable diagrams of your apps — with drift detection and best-practice review." />
+                {isAdmin && <ExploreCard to="/policy" icon="📐" title="Azure Policy" desc="Explore assignments, scan compliance, and simulate guardrails before you enforce — read-only." />}
+                <ExploreCard to="/automations" icon="⚙️" title="Automations" desc="Schedule recurring jobs, build workbooks & playbooks, and create specialized sub agents." />
+                {isAdmin && <ExploreCard to="/monitor" icon="📊" title="Monitor" desc="Central dashboard of activity, runs, usage, and audit across the workspace." />}
+              </div>
+            </>
+          )}
         </div>
         )}
       </div>
+      <PdfGeneratingOverlay
+        open={estatePdfBusy}
+        onCancel={cancelEstatePdf}
+        title="Generating Estate Coverage PDF"
+        message="Compiling Monitoring, Telemetry and Backup & DR coverage for this workload into one report. You can cancel while it is processing."
+      />
     </div>
   );
 }
@@ -1407,6 +1466,19 @@ function ExploreCard({ to, icon, title, desc }: { to: string; icon: string; titl
         <span className="text-sm font-semibold text-gray-800 group-hover:text-brand">{title}</span>
       </div>
       <p className="mt-1 text-xs text-gray-500">{desc}</p>
+    </Link>
+  );
+}
+
+// Compact icon+label chip used for the quick-links launcher strip once setup is complete.
+function QuickLink({ to, icon, label }: { to: string; icon: string; label: string }) {
+  return (
+    <Link
+      to={to}
+      className="group inline-flex items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:border-brand/40 hover:text-brand hover:shadow"
+    >
+      <span className="text-sm">{icon}</span>
+      <span>{label}</span>
     </Link>
   );
 }

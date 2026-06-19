@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -17,6 +17,9 @@ import { ScopePicker } from "./ScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
+import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
+import { PageIntro } from "./PageIntro";
+import { PAGE_INTROS } from "../help/content";
 
 const CELL_CLS: Record<string, string> = {
   green: "text-green-600",
@@ -107,6 +110,7 @@ export function BackupDrCoveragePanel() {
   const [iacView, setIacView] = useState<{ title: string; text: string; format: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const pdfAbortRef = useRef<AbortController | null>(null);
   const [ticketFor, setTicketFor] = useState<string | null>(null);
 
   const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
@@ -183,6 +187,37 @@ export function BackupDrCoveragePanel() {
     const a = document.createElement("a");
     a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function downloadPdf() {
+    if (busy === "pdf" || !scopeReady) return;
+    const controller = new AbortController();
+    pdfAbortRef.current = controller;
+    setBusy("pdf"); setMsg(null);
+    try {
+      const blob = await api.coverageReportPdf("backupdr", params, controller.signal);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `backupdr-coverage-${data?.scope_name || "report"}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name !== "AbortError") setMsg({ text: formatError(e), ok: false });
+    } finally { pdfAbortRef.current = null; setBusy(""); }
+  }
+
+  function cancelPdf() {
+    pdfAbortRef.current?.abort();
+  }
+
+  async function saveEvidence() {
+    if (busy === "evidence" || !scopeReady) return;
+    setBusy("evidence"); setMsg(null);
+    try {
+      const r = await api.coverageSaveEvidence("backupdr", params);
+      setMsg({ text: `Saved to Evidence Locker: ${r.snapshot.name}`, ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally { setBusy(""); }
   }
 
   async function genIac(gaps: BackupDrGap[], format: "bicep" | "runbook", title: string) {
@@ -328,6 +363,8 @@ export function BackupDrCoveragePanel() {
             )}
             <button onClick={doRefresh} disabled={refreshing || !scopeReady} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" data-testid="coverage-refresh">{refreshing ? "Refreshing…" : "↻ Refresh now"}</button>
             <button onClick={() => download(JSON.stringify(data, null, 2), `backupdr-${data?.scope_name || "export"}.json`)} disabled={!data} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">⬇ Export</button>
+            <button onClick={() => void downloadPdf()} disabled={!data || busy === "pdf"} title="Download a branded PDF coverage report for this scope" className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{busy === "pdf" ? "…" : "📄 PDF"}</button>
+            <button onClick={() => void saveEvidence()} disabled={!data || busy === "evidence"} title="Capture this coverage scan as an immutable Evidence Locker snapshot" className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{busy === "evidence" ? "Saving…" : "🗄 Save to Evidence"}</button>
           </div>
         </div>
 
@@ -384,6 +421,7 @@ export function BackupDrCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+        <PageIntro {...PAGE_INTROS["/backupdr"]} icon="💾" storageKey="backupdr" />
         {enabled && tab === "backup" && (
           <CoverageHistory<BackupDrCoverage>
             feature="backupdr"
@@ -408,6 +446,13 @@ export function BackupDrCoveragePanel() {
           <div className="py-16 text-center text-sm text-gray-400">Loading backup &amp; DR coverage…</div>
         ) : covQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(covQ.error)}</div>
+        ) : data && data.report_exists === false ? (
+          <div className="py-16 text-center">
+            <div className="text-2xl">💾</div>
+            <div className="mt-2 text-sm font-medium text-gray-600">No coverage scan yet for this scope</div>
+            <div className="mx-auto mt-1 max-w-md text-xs text-gray-400">Run a scan to audit this scope's backup &amp; DR posture against the reference. It runs live against Azure and is saved to history.</div>
+            <button onClick={() => void doRefresh()} disabled={refreshing} className="mt-3 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">{refreshing ? "Scanning…" : "↻ Run first scan"}</button>
+          </div>
         ) : tab === "all" ? (
           <AllResourcesTab resources={data?.all_resources ?? []} />
         ) : tab === "dr" ? (
@@ -569,6 +614,7 @@ export function BackupDrCoveragePanel() {
           </div>
         </div>
       )}
+      <PdfGeneratingOverlay open={busy === "pdf"} onCancel={cancelPdf} />
     </div>
   );
 }

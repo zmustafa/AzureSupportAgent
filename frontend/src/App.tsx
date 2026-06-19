@@ -2,6 +2,9 @@ import { Link, Navigate, Route, Routes } from "react-router-dom";
 import ChatView from "./components/ChatView";
 import { useAuth } from "./components/AuthContext";
 import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
+import { HelpMenu } from "./components/HelpMenu";
+import { CommandPalette } from "./components/CommandPalette";
+import { WelcomeModal } from "./components/WelcomeModal";
 import { APP_VERSION } from "./version";
 
 export default function App() {
@@ -32,7 +35,19 @@ export default function App() {
             Azure Support Agent
           </Link>
         </div>
-        <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-3 text-sm">
+          <button
+            onClick={() => {
+              // Synthesize the palette hotkey so the button mirrors Ctrl/⌘+K.
+              window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }));
+            }}
+            title="Search (Ctrl/⌘ + K)"
+            className="hidden items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs text-white/80 hover:bg-white/20 sm:flex"
+          >
+            <span>⌕ Search</span>
+            <kbd className="rounded bg-white/20 px-1 text-[10px]">⌘K</kbd>
+          </button>
+          <HelpMenu />
           <span
             className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
             title={`Azure Support Agent ${APP_VERSION}`}
@@ -59,6 +74,9 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      <CommandPalette />
+      <WelcomeModal />
 
       <div className="min-h-0 flex-1">
         <Routes>

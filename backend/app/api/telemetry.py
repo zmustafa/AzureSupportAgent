@@ -19,7 +19,7 @@ from app.core.db import get_db
 from app.core.security import Principal, require_admin
 from app.models import AuditLog
 from app.telemetry import cache, change_requests, demo
-from app.telemetry.collector import collect_coverage, list_workspaces
+from app.telemetry.collector import _empty_snapshot, collect_coverage, list_workspaces
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 log = logging.getLogger("app.api.telemetry")
@@ -42,11 +42,12 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
     out["age_seconds"] = int(age) if age is not None else None
     out["stale"] = (age is None) or (age >= ttl_s)
     out.setdefault("all_resources", [])  # consistent shape for snapshots cached pre-feature
+    out.setdefault("report_exists", True)  # a saved/computed snapshot exists for this scope
     return out
 
 
 async def _get_snapshot(
-    principal: Principal, scope_kind: str, scope_id: str, *, force: bool
+    principal: Principal, scope_kind: str, scope_id: str, *, force: bool, compute: bool = True
 ) -> dict[str, Any]:
     from app.core.azure_connections import get_default_connection
     from app.workloads.registry import get_workload
@@ -64,6 +65,18 @@ async def _get_snapshot(
         snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
         if snap and cache.is_fresh(snap, ttl):
             return _decorate(snap, ttl)
+
+    # Cached-only mode (page loads, PDF/evidence): never trigger a live Azure scan — that can
+    # hang and leave the view stuck on "Loading…". Return any saved snapshot (even stale), else
+    # a lightweight "no report yet" sentinel the UI renders as an empty state. Computing a fresh
+    # scan happens only on an explicit Refresh (force=True).
+    if not compute:
+        snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
+        if snap:
+            return _decorate(snap, ttl)
+        empty = _empty_snapshot(scope_kind, scope_id, error="")
+        empty["report_exists"] = False
+        return _decorate(empty, ttl)
 
     lock = cache.get_lock(tenant_id, scope_kind, scope_id)
     async with lock:
@@ -93,6 +106,57 @@ def _resolve_scope_params(workload_id: str | None, subscription_id: str | None) 
     return "workload", demo.DEMO_WORKLOAD_ID
 
 
+# ----------------------------------------------------------------- reports (PDF + evidence)
+_REPORT_FEATURE = "telemetry"
+
+
+async def latest_snapshot(
+    principal: Principal, workload_id: str | None, subscription_id: str | None
+) -> tuple[str, str, dict[str, Any]]:
+    """Latest cached coverage snapshot for a scope (no forced re-scan). Public so the
+    combined estate report can gather all three coverage features."""
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    snap = await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False)
+    return scope_kind, scope_id, snap
+
+
+@router.get("/coverage/pdf")
+async def coverage_pdf(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> Any:
+    from app.core.coverage_report_helpers import coverage_pdf_response
+
+    scope_kind, scope_id, snap = await latest_snapshot(principal, workload_id, subscription_id)
+    return await coverage_pdf_response(
+        _REPORT_FEATURE, snap, tenant_id=principal.tenant_id or "default",
+        scope_kind=scope_kind, scope_id=scope_id,
+    )
+
+
+@router.post("/coverage/evidence")
+async def coverage_evidence(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.core.coverage_report_helpers import capture_coverage_evidence
+
+    scope_kind, scope_id, snap = await latest_snapshot(principal, workload_id, subscription_id)
+    meta = capture_coverage_evidence(
+        _REPORT_FEATURE, snap, tenant_id=principal.tenant_id or "default", actor=principal.subject,
+    )
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action=f"{_REPORT_FEATURE}.coverage.evidence", target=meta["id"],
+        metadata_json={"sha256": meta["sha256"], "scope": scope_id, "name": meta["name"]},
+    ))
+    await db.commit()
+    return {"ok": True, "snapshot": meta}
+
+
 # ----------------------------------------------------------------------- coverage
 @router.get("/coverage")
 async def coverage(
@@ -101,7 +165,7 @@ async def coverage(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    return await _get_snapshot(principal, scope_kind, scope_id, force=False)
+    return await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False)
 
 
 @router.post("/refresh")

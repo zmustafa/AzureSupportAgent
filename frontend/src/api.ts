@@ -333,6 +333,9 @@ export type AmbaCoverage = {
   age_seconds: number | null;
   stale: boolean;
   all_resources: CoverageResource[];
+  // False when no saved scan exists for the scope yet (the GET is cached-only — it never
+  // triggers a live compute), so the UI shows an empty "run first scan" state.
+  report_exists?: boolean;
 };
 
 export type AmbaAlertRef = {
@@ -476,6 +479,7 @@ export type TelemetryCoverage = {
   age_seconds: number | null;
   stale: boolean;
   all_resources: CoverageResource[];
+  report_exists?: boolean;
 };
 
 export type TelemetryReference = {
@@ -593,6 +597,7 @@ export type BackupDrCoverage = {
   age_seconds: number | null;
   stale_cache: boolean;
   all_resources: CoverageResource[];
+  report_exists?: boolean;
 };
 
 export type BackupDrReference = {
@@ -1592,6 +1597,9 @@ export const api = {
     http<DemoResult>("/admin/demo/seed", { method: "POST", body: "{}" }),
   purgeDemoData: () =>
     http<DemoResult>("/admin/demo/purge", { method: "POST", body: "{}" }),
+  // App metadata + health (About dialog + System Status panel).
+  meta: () => http<AppMeta>("/meta"),
+  metaStatus: () => http<AppStatus>("/meta/status"),
   aiPrompts: () => http<{ prompts: AiPrompt[] }>("/admin/ai-prompts"),
   updateAiPrompts: (values: Record<string, string>) =>
     http<{ prompts: AiPrompt[] }>("/admin/ai-prompts", {
@@ -2435,6 +2443,35 @@ export const api = {
     return http<{ purged: number }>(`/${feature}/runs/trash/empty?${q.toString()}`, { method: "POST", body: "{}" });
   },
   // AMBA Monitoring Coverage
+  // Coverage reports — branded PDF download + Evidence Locker capture (shared by amba/telemetry/backupdr).
+  coverageReportPdf: (
+    feature: CoverageFeature,
+    params: { workload_id?: string; subscription_id?: string },
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return httpBlob(`/${feature}/coverage/pdf?${q.toString()}`, { signal });
+  },
+  coverageSaveEvidence: (
+    feature: CoverageFeature,
+    params: { workload_id?: string; subscription_id?: string },
+  ) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ ok: boolean; snapshot: { id: string; name: string; sha256: string } }>(
+      `/${feature}/coverage/evidence?${q.toString()}`,
+      { method: "POST", body: "{}" },
+    );
+  },
+  estateCoveragePdf: (params: { workload_id?: string; subscription_id?: string }, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return httpBlob(`/coverage-reports/estate/pdf?${q.toString()}`, { signal });
+  },
   ambaCoverage: (params: { workload_id?: string; subscription_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -5292,6 +5329,21 @@ export type DemoResult = {
   removed?: Record<string, number | boolean>;
   errors: Record<string, string>;
   status: DemoStatus;
+};
+
+export type AppMeta = {
+  name: string;
+  version: string;
+  environment: string;
+};
+
+export type AppStatusCheck = { ok: boolean; label: string; count?: number };
+export type AppStatus = {
+  name: string;
+  version: string;
+  environment: string;
+  uptime_seconds: number;
+  checks: Record<string, AppStatusCheck>;
 };
 
 export interface AppSettings {
