@@ -42,7 +42,7 @@ CLAUDE_BASE_URL = "https://api.anthropic.com"
 LOCAL_PROVIDERS = frozenset({"ollama", "lmstudio"})
 # Providers set up via an OAuth sign-in flow rather than a pasted key. They are enabled
 # when the sign-in completes and disabled again on sign-out.
-OAUTH_PROVIDERS = frozenset({"chatgpt", "github_copilot"})
+OAUTH_PROVIDERS = frozenset({"chatgpt", "github_copilot", "claude_oauth"})
 
 # Curated fallback model lists shown when the live model list can't be fetched.
 OPENAI_FALLBACK_MODELS = [
@@ -210,6 +210,11 @@ def _default_config() -> dict[str, Any]:
             },
             "lmstudio": {"api_key": "lmstudio", "model": "local-model", "base_url": LMSTUDIO_BASE_URL},
             "claude": {"api_key": "", "model": "claude-sonnet-4-6", "base_url": CLAUDE_BASE_URL},
+            "claude_oauth": {
+                "api_key": "",  # OAuth access token lives outside this file (claude_oauth).
+                "model": "claude-sonnet-4-6",
+                "base_url": CLAUDE_BASE_URL,
+            },
     }
     # Disable every provider by default; only enable those configured via the
     # environment (real credential) or explicitly selected via LLM_PROVIDER.
@@ -298,6 +303,7 @@ def get_active(
         "openrouter": OPENROUTER_BASE_URL,
         "lmstudio": LMSTUDIO_BASE_URL,
         "claude": CLAUDE_BASE_URL,
+        "claude_oauth": CLAUDE_BASE_URL,
     }
     if not base_url and provider in _defaults:
         base_url = _defaults[provider]

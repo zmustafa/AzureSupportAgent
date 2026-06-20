@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import JSZip from "jszip";
@@ -90,6 +90,13 @@ const PROVIDERS: {
     auth: "key",
   },
   {
+    id: "claude_oauth",
+    label: "Claude (Pro/Max OAuth)",
+    keyLabel: "Claude sign-in",
+    keyHint: "Sign in with your Claude Pro/Max subscription (browser or paste-code OAuth)",
+    auth: "oauth",
+  },
+  {
     id: "gemini",
     label: "Google Gemini",
     keyLabel: "Google AI API key",
@@ -130,7 +137,7 @@ const PROVIDERS: {
 // mirroring the Settings sidebar clusters.
 const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
   { label: "Microsoft / OpenAI", ids: ["openai", "openai_eu", "azure_openai", "github", "github_copilot", "chatgpt"] },
-  { label: "Frontier", ids: ["claude", "gemini", "grok", "mistral", "openrouter"] },
+  { label: "Frontier", ids: ["claude", "claude_oauth", "gemini", "grok", "mistral", "openrouter"] },
   { label: "Local", ids: ["ollama", "lmstudio"] },
 ];
 
@@ -300,6 +307,24 @@ const BACKUP_TIER_LABEL: Record<string, string> = {
   data: "Operational data",
 };
 const BACKUP_TIER_ORDER = ["config", "data", "reference", "secrets"];
+
+// A checkbox that can render the tri-state "indeterminate" look (set via a ref, since React
+// has no `indeterminate` prop). Used for the backup category headers.
+function IndeterminateCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return <input ref={ref} type="checkbox" checked={checked} onChange={onChange} />;
+}
 const BACKUP_MODE_HELP: Record<BackupConflictMode, string> = {
   merge: "Add new items and update matching ones; keep everything else.",
   overwrite: "Replace matching items with the backup's version (new items added).",
@@ -331,6 +356,19 @@ function BackupRestoreCard() {
     setSelected((cur) => {
       const next = new Set(cur);
       next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  // Select / deselect every section in a category at once. If all of the category's items
+  // are already selected, clicking clears them; otherwise it selects them all.
+  const toggleTier = (ids: string[]) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      const allOn = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allOn) next.delete(id);
+        else next.add(id);
+      }
       return next;
     });
 
@@ -434,18 +472,29 @@ function BackupRestoreCard() {
         </p>
         {sectionsQ.isLoading && <div className="h-16 animate-pulse rounded-lg border bg-gray-100" />}
         <div className="space-y-4">
-          {byTier.map((g) => (
+          {byTier.map((g) => {
+            const ids = g.items.map((s) => s.id);
+            const selectedCount = ids.filter((id) => selected.has(id)).length;
+            const allOn = selectedCount === ids.length;
+            const someOn = selectedCount > 0 && !allOn;
+            return (
             <div key={g.tier}>
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+              <label className="mb-1.5 flex cursor-pointer items-center gap-2 select-none">
+                <IndeterminateCheckbox
+                  checked={allOn}
+                  indeterminate={someOn}
+                  onChange={() => toggleTier(ids)}
+                />
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600">
                   {BACKUP_TIER_LABEL[g.tier] ?? g.tier}
                 </span>
+                <span className="text-[10px] text-gray-300">{selectedCount}/{ids.length}</span>
                 {g.tier === "secrets" && (
                   <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
                     secrets redacted
                   </span>
                 )}
-              </div>
+              </label>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {g.items.map((s) => (
                   <label
@@ -461,7 +510,8 @@ function BackupRestoreCard() {
                 ))}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
         <label className="mt-4 flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" checked={includeChats} onChange={(e) => setIncludeChats(e.target.checked)} />
@@ -1341,6 +1391,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   chatgpt: "ChatGPT Codex",
   azure_openai: "Azure OpenAI",
   claude: "Claude",
+  claude_oauth: "Claude (Pro/Max)",
   gemini: "Google Gemini",
   grok: "Grok",
   mistral: "Mistral",
@@ -3590,6 +3641,9 @@ function AIProviderCard() {
   // ChatGPT paste-URL sign-in state (for headless/remote hosts).
   const [chatgptAuthUrl, setChatgptAuthUrl] = useState("");
   const [chatgptCallback, setChatgptCallback] = useState("");
+  // Claude (Pro/Max) paste-code sign-in state (for headless/remote hosts).
+  const [claudeAuthUrl, setClaudeAuthUrl] = useState("");
+  const [claudeCallback, setClaudeCallback] = useState("");
   // GitHub Copilot OAuth device-flow state (headless/remote sign-in).
   const [ghDevice, setGhDevice] = useState<{ user_code: string; verification_uri: string } | null>(null);
   const ghStatus = useQuery({
@@ -3599,6 +3653,10 @@ function AIProviderCard() {
   const cgStatus = useQuery({
     queryKey: ["chatgptStatus"],
     queryFn: api.chatgptStatus,
+  });
+  const claudeStatus = useQuery({
+    queryKey: ["claudeOauthStatus"],
+    queryFn: api.claudeStatus,
   });
 
   async function chatgptRefresh() {
@@ -3678,6 +3736,90 @@ function AIProviderCard() {
       setChatgptAuthUrl("");
       setChatgptCallback("");
       cgStatus.refetch();
+    } catch (e) {
+      setImportMsg(formatError(e));
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  async function claudeRefresh() {
+    setGhBusy(true);
+    setImportMsg("Refreshing token…");
+    try {
+      await api.claudeRefresh();
+      setImportMsg("✓ Token refreshed");
+      claudeStatus.refetch();
+    } catch (e) {
+      setImportMsg(formatError(e));
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  async function claudeLogin() {
+    setGhBusy(true);
+    setImportMsg("Opening browser — sign in to Claude…");
+    try {
+      await api.claudeLogin();
+      setImportMsg("✓ Signed in & token captured");
+      claudeStatus.refetch();
+      qc.invalidateQueries({ queryKey: ["activeLlm"] });
+    } catch (e) {
+      setImportMsg(formatError(e));
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  async function claudeGetLink() {
+    setGhBusy(true);
+    setImportMsg("Creating sign-in link…");
+    try {
+      const r = await api.claudeAuthorizeUrl();
+      setClaudeAuthUrl(r.authorize_url);
+      setImportMsg("Open the link, sign in, then paste the code you're shown below.");
+      try {
+        window.open(r.authorize_url, "_blank", "noopener");
+      } catch {
+        /* popup blocked — the link is still shown for manual copy */
+      }
+    } catch (e) {
+      setImportMsg(formatError(e));
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  async function claudeComplete() {
+    if (!claudeCallback.trim()) {
+      setImportMsg("Paste the code shown on the Claude callback page (it looks like 'code#state').");
+      return;
+    }
+    setGhBusy(true);
+    setImportMsg("Completing sign-in…");
+    try {
+      await api.claudeComplete(claudeCallback.trim());
+      setImportMsg("✓ Signed in & token captured");
+      setClaudeCallback("");
+      setClaudeAuthUrl("");
+      claudeStatus.refetch();
+      qc.invalidateQueries({ queryKey: ["activeLlm"] });
+    } catch (e) {
+      setImportMsg(formatError(e));
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  async function claudeSignout() {
+    setGhBusy(true);
+    try {
+      await api.claudeSignout();
+      setImportMsg("Signed out");
+      setClaudeAuthUrl("");
+      setClaudeCallback("");
+      claudeStatus.refetch();
     } catch (e) {
       setImportMsg(formatError(e));
     } finally {
@@ -4370,6 +4512,109 @@ function AIProviderCard() {
                       <button
                         onClick={() => void chatgptComplete()}
                         disabled={ghBusy || !chatgptCallback.trim()}
+                        className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+                      >
+                        Complete
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {p.auth === "oauth" && p.id === "claude_oauth" && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <div className="mb-2 text-xs text-gray-600">
+                  Sign in with your Claude Pro/Max subscription using the in-app browser
+                  below. The token is stored by this app and refreshed automatically.
+                </div>
+
+                <div className="mb-2 flex items-center gap-2 text-xs">
+                  {claudeStatus.data?.has_token && !claudeStatus.data?.expired ? (
+                    <span className="rounded-full bg-green-100 px-2 py-0.5 font-medium text-green-700">
+                      ✓ Connected
+                    </span>
+                  ) : claudeStatus.data?.signed_in ? (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">
+                      Signed in — token stale
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-gray-200 px-2 py-0.5 font-medium text-gray-600">
+                      Not signed in
+                    </span>
+                  )}
+                  {claudeStatus.data?.account_id && (
+                    <span className="text-gray-400">{claudeStatus.data.account_id}</span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => void claudeLogin()}
+                    disabled={ghBusy}
+                    className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5 disabled:opacity-50"
+                  >
+                    Sign in with Claude
+                  </button>
+                  {claudeStatus.data?.signed_in && (
+                    <button
+                      onClick={() => void claudeRefresh()}
+                      disabled={ghBusy}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Force refresh
+                    </button>
+                  )}
+                  {claudeStatus.data?.signed_in && (
+                    <button
+                      onClick={() => void claudeSignout()}
+                      disabled={ghBusy}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Sign out
+                    </button>
+                  )}
+                  {importMsg && <span className="text-xs text-gray-500">{importMsg}</span>}
+                </div>
+
+                {/* Paste-code fallback for headless / remote (non-localhost) hosts */}
+                <details className="mt-3 text-xs text-gray-600">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                    Can't open a browser here? Use a sign-in link instead
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    <p className="text-[11px] text-gray-500">
+                      Use this when the app runs on a remote/headless host. Get a link,
+                      open it in any browser, sign in, then paste the code shown on the
+                      Claude callback page (it looks like{" "}
+                      <code className="rounded bg-white px-1">code#state</code>).
+                    </p>
+                    <button
+                      onClick={() => void claudeGetLink()}
+                      disabled={ghBusy}
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Get sign-in link
+                    </button>
+                    {claudeAuthUrl && (
+                      <input
+                        readOnly
+                        value={claudeAuthUrl}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="w-full rounded border bg-white px-2 py-1 text-[11px] text-gray-600"
+                      />
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={claudeCallback}
+                        onChange={(e) => setClaudeCallback(e.target.value)}
+                        placeholder="Paste the code shown (code#state)"
+                        className="flex-1 rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand"
+                      />
+                      <button
+                        onClick={() => void claudeComplete()}
+                        disabled={ghBusy || !claudeCallback.trim()}
                         className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
                       >
                         Complete

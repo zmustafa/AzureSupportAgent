@@ -178,6 +178,7 @@ class DeepInvestigator:
                             "tool_name": "sub-agent",
                             "summary": f"Error: {format_error(exc)}",
                             "duration_ms": 0,
+                            "is_error": True,
                         })
                     )
                 finally:

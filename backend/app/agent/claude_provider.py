@@ -17,6 +17,11 @@ from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSp
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
 MAX_TOKENS = 8000
+# Beta header + system preamble required for inference with a Pro/Max OAuth token: the
+# token is only authorized for the Claude Code identity, so the first system block must
+# be exactly this line and the request must advertise the oauth beta.
+OAUTH_BETA = "oauth-2025-04-20"
+CLAUDE_CODE_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude."
 
 CLAUDE_FALLBACK_MODELS = [
     "claude-opus-4-6",
@@ -120,10 +125,38 @@ def _tools_to_anthropic(tools: list[ToolSpec] | None) -> list[dict[str, Any]] | 
 class ClaudeProvider(LLMProvider):
     """Streams chat via Anthropic's native Messages API with native tool calling."""
 
-    def __init__(self, *, model: str, api_key: str = "", base_url: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        api_key: str = "",
+        base_url: str = "",
+        use_oauth: bool = False,
+    ) -> None:
         self._model = model or "claude-sonnet-4-6"
         self._api_key = (api_key or "").strip()
         self._base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self._use_oauth = use_oauth
+
+    async def _auth_headers(self) -> dict[str, str]:
+        """Build request headers — Pro/Max OAuth Bearer token, or the x-api-key path."""
+        if self._use_oauth:
+            from app.agent import claude_oauth
+
+            token = await claude_oauth.get_token()
+            return {
+                "authorization": f"Bearer {token}",
+                "anthropic-version": ANTHROPIC_VERSION,
+                "anthropic-beta": OAUTH_BETA,
+                "content-type": "application/json",
+                "accept": "text/event-stream",
+            }
+        return {
+            "x-api-key": self._api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        }
 
     async def stream(
         self,
@@ -131,7 +164,7 @@ class ClaudeProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        if not self._api_key:
+        if not self._use_oauth and not self._api_key:
             raise RuntimeError("Claude API key is not set. Add it in the admin AI Provider settings.")
 
         system_text, anthropic_msgs = _to_anthropic(messages)
@@ -144,18 +177,19 @@ class ClaudeProvider(LLMProvider):
             "messages": anthropic_msgs,
             "stream": True,
         }
-        if system_text:
+        if self._use_oauth:
+            # The OAuth token requires the Claude Code identity as the FIRST system block.
+            sys_blocks: list[dict[str, Any]] = [{"type": "text", "text": CLAUDE_CODE_SYSTEM}]
+            if system_text:
+                sys_blocks.append({"type": "text", "text": system_text})
+            payload["system"] = sys_blocks
+        elif system_text:
             payload["system"] = system_text
         anth_tools = _tools_to_anthropic(tools)
         if anth_tools:
             payload["tools"] = anth_tools
 
-        headers = {
-            "x-api-key": self._api_key,
-            "anthropic-version": ANTHROPIC_VERSION,
-            "content-type": "application/json",
-            "accept": "text/event-stream",
-        }
+        headers = await self._auth_headers()
         url = f"{self._base_url}/v1/messages"
 
         # Accumulate streamed content blocks (text + tool_use).
@@ -168,55 +202,76 @@ class ClaudeProvider(LLMProvider):
         # Connection milestones for the chat progress feed.
         yield StreamEvent(type="status", phase="connecting", text=f"Connecting to Claude · {self._model}…")
         async with httpx.AsyncClient(timeout=_timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                if resp.status_code >= 400:
-                    body = (await resp.aread()).decode("utf-8", "replace")
-                    raise RuntimeError(f"Claude API error {resp.status_code}: {body[:500]}")
-                yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
+            # An OAuth access token can be revoked before its stored expiry (e.g. a newer
+            # sign-in rotates it), so a token that still looks valid is rejected with 401.
+            # On the first 401, force a refresh and retry once so the turn self-heals.
+            for attempt in range(2):
+                retry = False
+                blocks.clear()
+                completion_tokens = 0
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code == 401 and self._use_oauth and attempt == 0:
+                        retry = True
+                    elif resp.status_code >= 400:
+                        body = (await resp.aread()).decode("utf-8", "replace")
+                        raise RuntimeError(f"Claude API error {resp.status_code}: {body[:500]}")
+                    else:
+                        yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
 
-                _first = True
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[len("data:"):].strip()
-                    if not data:
-                        continue
+                        _first = True
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if not data:
+                                continue
+                            try:
+                                evt = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            etype = evt.get("type")
+                            if _first:
+                                _first = False
+                                yield StreamEvent(type="status", phase="response", text="Response received · generating…")
+
+                            if etype == "content_block_start":
+                                idx = evt.get("index", 0)
+                                cb = evt.get("content_block", {})
+                                blocks[idx] = {
+                                    "type": cb.get("type"),
+                                    "id": cb.get("id", ""),
+                                    "name": cb.get("name", ""),
+                                    "json": "",
+                                    "text": "",
+                                }
+                            elif etype == "content_block_delta":
+                                idx = evt.get("index", 0)
+                                delta = evt.get("delta", {})
+                                blk = blocks.setdefault(idx, {"type": "text", "json": "", "text": ""})
+                                if delta.get("type") == "text_delta":
+                                    text = delta.get("text", "")
+                                    if text:
+                                        blk["text"] += text
+                                        yield StreamEvent(type="token", text=text)
+                                elif delta.get("type") == "input_json_delta":
+                                    blk["json"] += delta.get("partial_json", "")
+                            elif etype == "message_delta":
+                                usage = evt.get("usage", {})
+                                completion_tokens = usage.get("output_tokens", completion_tokens)
+                            elif etype == "error":
+                                msg = (evt.get("error") or {}).get("message", "unknown")
+                                raise RuntimeError(f"Claude error: {msg}")
+                if retry:
+                    # Refresh the OAuth token, rebuild auth headers, and retry once.
                     try:
-                        evt = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    etype = evt.get("type")
-                    if _first:
-                        _first = False
-                        yield StreamEvent(type="status", phase="response", text="Response received · generating…")
+                        from app.agent import claude_oauth
 
-                    if etype == "content_block_start":
-                        idx = evt.get("index", 0)
-                        cb = evt.get("content_block", {})
-                        blocks[idx] = {
-                            "type": cb.get("type"),
-                            "id": cb.get("id", ""),
-                            "name": cb.get("name", ""),
-                            "json": "",
-                            "text": "",
-                        }
-                    elif etype == "content_block_delta":
-                        idx = evt.get("index", 0)
-                        delta = evt.get("delta", {})
-                        blk = blocks.setdefault(idx, {"type": "text", "json": "", "text": ""})
-                        if delta.get("type") == "text_delta":
-                            text = delta.get("text", "")
-                            if text:
-                                blk["text"] += text
-                                yield StreamEvent(type="token", text=text)
-                        elif delta.get("type") == "input_json_delta":
-                            blk["json"] += delta.get("partial_json", "")
-                    elif etype == "message_delta":
-                        usage = evt.get("usage", {})
-                        completion_tokens = usage.get("output_tokens", completion_tokens)
-                    elif etype == "error":
-                        msg = (evt.get("error") or {}).get("message", "unknown")
-                        raise RuntimeError(f"Claude error: {msg}")
+                        await claude_oauth.force_refresh()
+                    except Exception:  # noqa: BLE001 - fall through to retry with current token
+                        pass
+                    headers = await self._auth_headers()
+                    continue
+                break
 
         # Collect any tool_use blocks into tool calls.
         calls: list[ToolCallRequest] = []

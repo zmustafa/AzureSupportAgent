@@ -18,7 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import get_settings
 from app.core.db import get_db, _is_sqlite
-from app.agent import chatgpt_oauth, github_copilot_auth
+from app.agent import chatgpt_oauth, claude_oauth, github_copilot_auth
 from app.core.llm_config import (
     CHATGPT_FALLBACK_MODELS,
     CLAUDE_FALLBACK_MODELS,
@@ -385,7 +385,7 @@ async def _fetch_provider_models(
     if provider == "chatgpt":
         return {"models": CHATGPT_FALLBACK_MODELS}
 
-    if provider == "claude":
+    if provider in ("claude", "claude_oauth"):
         return {"models": CLAUDE_FALLBACK_MODELS}
 
     # OpenAI-compatible third parties: try a live /models fetch, else curated list.
@@ -622,6 +622,16 @@ async def _diagnose_provider(provider: str):
             yield _ev("auth", "warn", "ChatGPT token expired", "Will auto-refresh on first request.", _ms_since(t0))
         else:
             yield _ev("auth", "ok", "ChatGPT OAuth token valid", f"account {st.get('account_id', '')}", _ms_since(t0))
+    elif provider == "claude_oauth":
+        st = claude_oauth.status()
+        if not st.get("has_token"):
+            yield _ev("auth", "error", "Not signed in to Claude", "Use the Sign in button above.", _ms_since(t0))
+            yield {"event": "done", "data": json.dumps({"ok": False, "detail": "Sign-in required"})}
+            return
+        if st.get("expired"):
+            yield _ev("auth", "warn", "Claude token expired", "Will auto-refresh on first request.", _ms_since(t0))
+        else:
+            yield _ev("auth", "ok", "Claude OAuth token valid", "", _ms_since(t0))
     elif provider in ("ollama", "lmstudio"):
         yield _ev("auth", "skip", "No authentication needed", "Local server — API key is ignored.", _ms_since(t0))
     else:
@@ -1007,6 +1017,114 @@ async def chatgpt_oauth_complete(
             actor_id=principal.subject,
             action="llm.chatgpt_oauth_complete",
             target="chatgpt",
+        )
+    )
+    await db.commit()
+    return {"ok": True, "status": st}
+
+
+@router.get("/llm/oauth/claude/status")
+async def claude_oauth_status(_: Principal = Depends(require_admin)):
+    """Report Claude (Pro/Max) sign-in / token status for the admin UI."""
+    return claude_oauth.status()
+
+
+@router.post("/llm/oauth/claude/refresh")
+async def claude_oauth_refresh(_: Principal = Depends(require_admin)):
+    """Force a Claude OAuth token refresh using the stored refresh token."""
+    try:
+        st = await claude_oauth.force_refresh()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "status": st}
+
+
+@router.post("/llm/oauth/claude/login")
+async def claude_oauth_login(
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Open a browser for Claude OAuth sign-in and capture/store the token.
+
+    Launches a visible browser, the user signs in to their Claude Pro/Max account, and
+    the OAuth authorization code is captured + exchanged for tokens. For headless or
+    remote hosts where a browser can't be launched, use the 'authorize-url' + 'complete'
+    endpoints (paste-the-code flow) instead.
+    """
+    try:
+        st = await claude_oauth.interactive_login()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Signing in sets up the provider — make it available in the model picker.
+    set_provider_enabled("claude_oauth", True)
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="llm.claude_oauth_login",
+            target="claude_oauth",
+        )
+    )
+    await db.commit()
+    return {"ok": True, "status": st}
+
+
+@router.post("/llm/oauth/claude/authorize-url")
+async def claude_oauth_authorize_url(_: Principal = Depends(require_admin)):
+    """Start a sign-in and return the Claude authorize URL to open in any browser.
+
+    The admin opens the link, signs in, and is shown a code on the console callback page.
+    They copy that code (shown as 'code#state') and POST it to '/complete'. This works
+    even when the app is not hosted on localhost (prod)."""
+    try:
+        return {"ok": True, **claude_oauth.build_authorize_url()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ClaudeCallbackBody(BaseModel):
+    callback_url: str
+
+
+@router.post("/llm/oauth/claude/complete")
+async def claude_oauth_complete(
+    body: ClaudeCallbackBody,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Finish a paste-code sign-in: exchange the code shown on the Claude callback page."""
+    try:
+        st = await claude_oauth.complete_with_callback_url(body.callback_url)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Signing in sets up the provider — make it available in the model picker.
+    set_provider_enabled("claude_oauth", True)
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="llm.claude_oauth_complete",
+            target="claude_oauth",
+        )
+    )
+    await db.commit()
+    return {"ok": True, "status": st}
+
+
+@router.post("/llm/oauth/claude/signout")
+async def claude_oauth_signout(
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sign out of Claude: forget the stored tokens and disable the provider."""
+    st = claude_oauth.sign_out()
+    set_provider_enabled("claude_oauth", False)
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="llm.claude_oauth_signout",
+            target="claude_oauth",
         )
     )
     await db.commit()

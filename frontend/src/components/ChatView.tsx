@@ -232,7 +232,7 @@ type Step =
       kind: "tool";
       name: string;
       args: unknown;
-      status: "running" | "done";
+      status: "running" | "done" | "error";
       summary?: string;
       duration?: number;
     };
@@ -1466,12 +1466,13 @@ export default function ChatView() {
           paint(true);
         },
         onToolResult: (d) => {
+          const isErr = !!d.is_error;
           for (let i = localSteps.length - 1; i >= 0; i--) {
             const s = localSteps[i];
             if (s.kind === "tool" && s.status === "running") {
               localSteps[i] = {
                 ...s,
-                status: "done",
+                status: isErr ? "error" : "done",
                 summary: d.summary,
                 duration: d.duration_ms,
               };
@@ -1480,7 +1481,7 @@ export default function ChatView() {
           }
           log({
             kind: "result",
-            text: d.summary || "Done",
+            text: isErr ? `⚠ ${d.tool_name} failed — ${d.summary || "error"}` : (d.summary || "Done"),
             detail: formatDuration(d.duration_ms),
           });
           // War room: tally the agent's completed tool call.
@@ -4786,12 +4787,33 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
   const [open, setOpen] = useState(true);
 
   const toolCount = steps.filter((s) => s.kind === "tool").length;
+  const errorSteps = steps.filter(
+    (s): s is Extract<Step, { kind: "tool" }> => s.kind === "tool" && s.status === "error",
+  );
   const header = live
     ? "Working…"
     : `Thinking Process · ${toolCount} Step${toolCount === 1 ? "" : "s"}`;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/70">
+      {/* Prominent, always-visible failure banner — a tool (e.g. a Sandbox VM) errored, so
+          surface it even while the step detail below stays collapsed. */}
+      {errorSteps.length > 0 && (
+        <div className="m-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <span aria-hidden>⚠️</span>
+            {errorSteps.length === 1
+              ? `Tool failed: ${errorSteps[0].name}`
+              : `${errorSteps.length} tools failed`}
+          </div>
+          {errorSteps.map((s, i) => (
+            <div key={i} className="mt-1 break-words text-[11px] leading-snug text-red-700">
+              <span className="font-mono font-medium">{s.name}</span>
+              {s.summary ? ` — ${s.summary.replace(/^Error:\s*/i, "")}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-600"
@@ -4819,16 +4841,21 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
                 </div>
               </div>
             ) : (
-              <div key={i} className="rounded border border-gray-200 bg-white px-3 py-2 text-xs">
+              <div key={i} className={`rounded border px-3 py-2 text-xs ${s.status === "error" ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}>
                 <div className="flex items-center gap-2">
                   {s.status === "running" && live ? (
                     <Spinner />
                   ) : s.status === "running" ? (
                     <span className="text-gray-300">◦</span>
+                  ) : s.status === "error" ? (
+                    <span className="text-red-600">✗</span>
                   ) : (
                     <span className="text-green-600">✓</span>
                   )}
                   <span className="font-mono font-medium text-gray-800">{s.name}</span>
+                  {s.status === "error" && (
+                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">failed</span>
+                  )}
                   {s.duration != null && (
                     <span className="text-gray-400">{formatDuration(s.duration)}</span>
                   )}
@@ -4838,7 +4865,9 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
                     {JSON.stringify(s.args)}
                   </pre>
                 )}
-                {s.summary && <div className="mt-1 text-gray-600">{s.summary}</div>}
+                {s.summary && (
+                  <div className={`mt-1 ${s.status === "error" ? "text-red-700" : "text-gray-600"}`}>{s.summary}</div>
+                )}
               </div>
             ),
           )}

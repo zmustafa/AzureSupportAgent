@@ -1253,7 +1253,7 @@ function RolloutPlanner({ inv, connectionId, handoff }: { inv: PolicyInventory; 
   const totalMs = (steps.reduce((a, s) => a + (s.durationMs ?? 0), 0)) || (startedAt ? (busy ? now : 0) - startedAt : 0);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
       <div className="rounded-xl border bg-gradient-to-br from-brand/10 to-violet-50 p-4">
         <h2 className="flex items-center gap-2 text-base font-bold text-gray-800">🚦 AI Safe-Rollout Planner</h2>
         <p className="mt-0.5 text-xs text-gray-600">

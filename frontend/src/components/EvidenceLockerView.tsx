@@ -359,7 +359,7 @@ export function EvidenceLockerPanel() {
         {showTrash ? (
           trashQ.isLoading ? <div className="py-16 text-center text-sm text-gray-400">Loading…</div> :
           trashed.length === 0 ? <div className="py-16 text-center text-sm text-gray-400">Trash is empty.</div> : (
-            <div className="mx-auto max-w-4xl space-y-2">
+            <div className="mx-auto max-w-6xl space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-gray-500">{trashed.length} snapshot(s) in Trash. Restore brings them back; deleting forever removes the hash-stamped blob.</div>
                 <button onClick={() => void emptyTrash()} disabled={busy === "empty"} className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Empty Trash</button>
@@ -386,7 +386,7 @@ export function EvidenceLockerPanel() {
           )
         ) : listQ.isLoading ? <div className="py-16 text-center text-sm text-gray-400">Loading…</div> :
          snaps.length === 0 ? <div className="py-16 text-center text-sm text-gray-400">No snapshots yet — capture one or seed the demo.</div> : (
-          <div className="mx-auto max-w-4xl space-y-2">
+          <div className="mx-auto max-w-6xl space-y-2">
             {selected.length > 0 && <div className="text-xs text-gray-500">{selected.length} selected {selected.length === 2 ? "(ready to diff)" : "(pick 2 to diff)"}</div>}
             {snaps.map((s: EvidenceSnapshot) => (
               <div key={s.id} className={`flex items-center gap-3 rounded-xl border bg-white px-4 py-3 ${selected.includes(s.id) ? "ring-2 ring-brand" : ""}`}>

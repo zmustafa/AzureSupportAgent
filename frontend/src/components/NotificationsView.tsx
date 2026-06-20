@@ -271,7 +271,7 @@ export function NotificationsPanel() {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-3xl space-y-4 p-6">
+      <div className="mx-auto max-w-5xl space-y-4 p-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-gray-800">Notifications</h1>

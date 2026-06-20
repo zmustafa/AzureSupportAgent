@@ -1581,6 +1581,32 @@ export const api = {
       body: "{}",
     }),
   chatgptStatus: () => http<ChatgptStatus>("/admin/llm/oauth/chatgpt/status"),
+  claudeRefresh: () =>
+    http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/refresh", {
+      method: "POST",
+      body: "{}",
+    }),
+  claudeLogin: () =>
+    http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/login", {
+      method: "POST",
+      body: "{}",
+    }),
+  claudeAuthorizeUrl: () =>
+    http<{ ok: boolean; authorize_url: string; state: string }>(
+      "/admin/llm/oauth/claude/authorize-url",
+      { method: "POST", body: "{}" },
+    ),
+  claudeComplete: (callbackUrl: string) =>
+    http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/complete", {
+      method: "POST",
+      body: JSON.stringify({ callback_url: callbackUrl }),
+    }),
+  claudeSignout: () =>
+    http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/signout", {
+      method: "POST",
+      body: "{}",
+    }),
+  claudeStatus: () => http<ClaudeOauthStatus>("/admin/llm/oauth/claude/status"),
   appSettings: () =>
     http<{ settings: AppSettings; response_styles: string[]; command_binaries?: string[] }>(
       "/admin/settings",
@@ -5391,6 +5417,13 @@ export interface ChatgptStatus {
   account_id: string;
 }
 
+export interface ClaudeOauthStatus {
+  signed_in: boolean;
+  has_token: boolean;
+  expired: boolean;
+  account_id: string;
+}
+
 export interface GithubCopilotStatus {
   signed_in: boolean;
   has_token: boolean;
@@ -6740,7 +6773,7 @@ export interface StreamHandlers {
   onToken: (text: string) => void;
   onStatus?: (data: { phase: string; message: string }) => void;
   onToolStart?: (data: { tool_name: string; arguments: unknown; agent?: string; node_id?: string }) => void;
-  onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; agent?: string; node_id?: string }) => void;
+  onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; is_error?: boolean; agent?: string; node_id?: string }) => void;
   onApprovalRequired?: (data: { tool_name: string; arguments: unknown }) => void;
   onPhase?: (data: { phase: string; label: string; summary: string | null }) => void;
   onHypothesis?: (data: HypothesisNode) => void;

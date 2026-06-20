@@ -349,7 +349,7 @@ function IdentityFindingsPanel() {
             )}
           </div>
         ) : (
-          <div className="mx-auto max-w-5xl space-y-4">
+          <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
             {msg && (
               <div
                 className={`rounded-lg border p-2 text-xs ${

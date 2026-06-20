@@ -388,6 +388,7 @@ class Orchestrator:
                         "result": result,
                         "summary": _summarize_result(result),
                         "duration_ms": duration_ms,
+                        "is_error": bool(result.get("isError")),
                     },
                 )
                 # Feed the tool result back to the model. Discovery ("learn") outputs

@@ -1053,7 +1053,7 @@ export function SecurityPanel({ section }: { section: SecuritySection }) {
   }, [section]);
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-4xl space-y-6 p-8">{body}</div>
+      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-6 p-6">{body}</div>
     </div>
   );
 }
@@ -1067,7 +1067,7 @@ export function AccessControlPanel({ section }: { section: string }) {
     : "users";
   return (
     <div className="flex h-full flex-col bg-gray-50">
-      <div className="shrink-0 border-b border-gray-200 bg-white px-8 pt-5">
+      <div className="shrink-0 border-b border-gray-200 bg-white px-6 pt-5">
         <h2 className="text-lg font-semibold text-gray-800">Access Control</h2>
         <p className="mt-0.5 text-sm text-gray-500">
           Manage users, roles, groups, and single sign-on for this workspace.

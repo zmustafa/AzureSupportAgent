@@ -241,6 +241,25 @@ async def _vm_exec(config: dict[str, Any], args: dict[str, Any]) -> dict[str, An
             "operator approval before it can run. Try a read-only diagnostic instead, or "
             "ask the user to approve the change."
         )
+
+    # Infrastructure failure: the box never ran the command (SSH connection refused,
+    # host unreachable, auth/host-key error, or a connect/exec timeout). The command
+    # never executes, so exit_code stays None and there's no stdout/stderr — only an
+    # error. Surface this PROMINENTLY and distinctly from "command ran but failed", so a
+    # dead sandbox doesn't masquerade as a successful diagnostic.
+    if cap.exit_code is None and cap.error and not cap.stdout and not cap.stderr:
+        name = vm.get("display_name") or vm.get("id") or "sandbox VM"
+        timed_out = "timed out" in (cap.error or "").lower()
+        await _record_run(config, vm, command, cap, "timeout" if timed_out else "failed")
+        detail = _redact_secrets(cap.error.strip(), vm)
+        return err(
+            f"Sandbox VM '{name}' (host {vm.get('host') or '?'}) is unavailable — the "
+            f"command did NOT run. {detail} "
+            "Check the VM is powered on, reachable from this app, and that its SSH "
+            "credentials/host key are still valid (re-test it under Settings → Sandbox "
+            "VMs), then retry."
+        )
+
     status = "succeeded" if cap.ok else ("timeout" if "timed out" in (cap.error or "").lower() else "failed")
     await _record_run(config, vm, command, cap, status)
 

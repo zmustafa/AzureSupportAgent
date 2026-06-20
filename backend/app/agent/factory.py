@@ -63,6 +63,14 @@ def build_provider_for(
         return ClaudeProvider(
             model=cfg["model"], api_key=cfg["api_key"], base_url=cfg["base_url"]
         )
+    if provider == "claude_oauth":
+        # Claude Pro/Max subscription via OAuth. The token (auto-refreshed in
+        # app.agent.claude_oauth) is the source of truth, so we deliberately do NOT pass
+        # the stored config api_key. The provider adds the Bearer token + oauth beta
+        # header + Claude Code system preamble required for OAuth inference.
+        return ClaudeProvider(
+            model=cfg["model"], base_url=cfg["base_url"], use_oauth=True
+        )
     if provider in _OPENAI_COMPATIBLE:
         return OpenAIProvider(
             provider=provider,

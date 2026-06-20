@@ -1433,9 +1433,10 @@ async def stream_message(
                         await checkpoint()
 
                     if ev.type == "tool_result":
+                        is_tool_error = bool(ev.data.get("is_error"))
                         for step in reversed(activity):
                             if step.get("kind") == "tool" and step.get("status") == "running":
-                                step["status"] = "done"
+                                step["status"] = "error" if is_tool_error else "done"
                                 step["summary"] = ev.data.get("summary")
                                 step["duration"] = ev.data.get("duration_ms")
                                 break

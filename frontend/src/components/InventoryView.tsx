@@ -1503,7 +1503,7 @@ function OverviewMode({ inv, connectionId }: {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-5xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
         {/* AI insights */}
         <div className="rounded-xl border bg-gradient-to-br from-brand/5 to-violet-50 p-4 shadow-sm">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insQ.data?.source === "local" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
@@ -1735,7 +1735,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-5xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
         {/* Header: estimated monthly savings */}
         <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
           <div>
@@ -1861,7 +1861,7 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-5xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
         {/* Header: total + refresh */}
         <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
           <span className="text-2xl">💰</span>
@@ -2023,7 +2023,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
-      <div className="mx-auto max-w-4xl space-y-4">
+      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-gray-700">Inventory drift</h3>
