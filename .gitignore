@@ -107,3 +107,5 @@ docs/_usecases_build.py
 docs/_render.py
 docs/usecase-assets/
 docs/usecase-render/
+docs/_build_journey_slides.py
+docs/_journey_render/

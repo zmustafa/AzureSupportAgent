@@ -42,17 +42,29 @@ def _scope(workload_id: str | None, subscription_id: str | None) -> tuple[str, s
     return "workload", demo.DEMO_WORKLOAD_ID
 
 
+def _conn_for(scope_kind: str, scope_id: str) -> dict[str, Any] | None:
+    """Azure connection for a Telemetry-Intelligence scope: a workload's OWN connection
+    (falling back to default when it has none), so a workload whose Application Insights /
+    Log Analytics lives in a subscription reachable only via a non-default connection still
+    returns rows instead of nothing."""
+    from app.core.azure_connections import connection_for_workload, get_default_connection
+    from app.workloads.registry import get_workload
+
+    if scope_kind == "workload":
+        return connection_for_workload(get_workload(scope_id))
+    return get_default_connection()
+
+
 async def _resolve(principal: Principal, scope_kind: str, scope_id: str) -> dict[str, Any]:
     """Resolve the component set + SLI context for a scope (demo short-circuits)."""
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.resolver import resolve_components, sli_context_for_workload
     from app.workloads.registry import get_workload
 
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.build_overview()
 
-    connection = get_default_connection()
     workload = get_workload(scope_id) if scope_kind == "workload" else None
+    connection = _conn_for(scope_kind, scope_id)
     res = await resolve_components(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)
     return {
         "scope_kind": scope_kind,
@@ -99,7 +111,6 @@ class AskRequest(BaseModel):
 @router.post("/ask")
 async def ask(payload: AskRequest, principal: Principal = Depends(require_admin)):
     """NL→KQL over SSE: draft → validate → run → answer (start → kql → rows → answer/error)."""
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.nlkql import draft_kql, narrate_answer, validate_kql
     from app.teleintel.resolver import run_component_kql
 
@@ -132,7 +143,7 @@ async def ask(payload: AskRequest, principal: Principal = Depends(require_admin)
             if comp is None:
                 yield {"event": "error", "data": json.dumps({"message": "No Application Insights component in scope."})}
                 return
-            connection = get_default_connection()
+            connection = _conn_for(scope_kind, scope_id)
             res = await run_component_kql(comp, clean, connection, timespan=default_ts)
             if not res.get("ok"):
                 yield {"event": "error", "data": json.dumps({"message": res.get("error", "Query failed.")})}
@@ -159,7 +170,6 @@ class QueryRequest(BaseModel):
 @router.post("/query")
 async def run_query(payload: QueryRequest, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
     """Run an edited KQL directly (validated read-only) for transparency / re-run."""
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.nlkql import validate_kql
     from app.teleintel.resolver import run_component_kql
 
@@ -175,7 +185,7 @@ async def run_query(payload: QueryRequest, principal: Principal = Depends(requir
     comp = _pick_component(overview, payload.component_id)
     if comp is None:
         return {"ok": False, "error": "No Application Insights component in scope.", "kql": clean}
-    res = await run_component_kql(comp, clean, get_default_connection(), timespan=default_ts)
+    res = await run_component_kql(comp, clean, _conn_for(scope_kind, scope_id), timespan=default_ts)
     return {"ok": res.get("ok"), "kql": clean, "rows": res.get("rows", []), "error": res.get("error", ""), "path": res.get("path", "")}
 
 
@@ -190,7 +200,6 @@ async def triage(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.demo_triage()
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.triage import run_triage
 
     _ttl, default_ts, _rows = _settings()
@@ -199,7 +208,7 @@ async def triage(
     if comp is None:
         return {"error": "No Application Insights component in scope.", "has_spike": False, "evidence": []}
     return await run_triage(
-        comp, get_default_connection(),
+        comp, _conn_for(scope_kind, scope_id),
         predicate=overview.get("predicate", ""), timespan=default_ts, sli_context=overview.get("sli_context", ""),
     )
 
@@ -215,7 +224,6 @@ async def timeline(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.demo_timeline()
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.timeline import build_timeline
 
     _ttl, default_ts, _rows = _settings()
@@ -223,7 +231,7 @@ async def timeline(
     comp = _pick_component(overview, component_id)
     if comp is None:
         return {"series_keys": [], "points": [], "change_events": [], "signal_count": 0, "notes": "No component in scope."}
-    return await build_timeline(comp, get_default_connection(), predicate=overview.get("predicate", ""), timespan=default_ts)
+    return await build_timeline(comp, _conn_for(scope_kind, scope_id), predicate=overview.get("predicate", ""), timespan=default_ts)
 
 
 # ----------------------------------------------------------------------- smart detection
@@ -236,11 +244,10 @@ async def smart_detection(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.demo_smart_detection()
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.smartdetect import aggregate
 
     overview = await _resolve(principal, scope_kind, scope_id)
-    return await aggregate(overview.get("components", []), get_default_connection())
+    return await aggregate(overview.get("components", []), _conn_for(scope_kind, scope_id))
 
 
 # ----------------------------------------------------------------------- transaction
@@ -256,7 +263,6 @@ async def transaction(payload: TransactionRequest, principal: Principal = Depend
     scope_kind, scope_id = _scope(payload.workload_id, payload.subscription_id)
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.demo_transaction()
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.transaction import explain_transaction
 
     _ttl, default_ts, _rows = _settings()
@@ -264,7 +270,7 @@ async def transaction(payload: TransactionRequest, principal: Principal = Depend
     comp = _pick_component(overview, payload.component_id)
     if comp is None:
         return {"ok": False, "error": "No Application Insights component in scope.", "spans": []}
-    return await explain_transaction(comp, payload.operation_id, get_default_connection(), timespan=default_ts)
+    return await explain_transaction(comp, payload.operation_id, _conn_for(scope_kind, scope_id), timespan=default_ts)
 
 
 # ----------------------------------------------------------------------- code optimizations
@@ -278,14 +284,13 @@ async def code_optimizations(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     if demo.is_demo_scope(scope_kind, scope_id):
         return demo.demo_code_optimizations()
-    from app.core.azure_connections import get_default_connection
     from app.teleintel.code_opt import code_optimizations as fetch
 
     overview = await _resolve(principal, scope_kind, scope_id)
     comp = _pick_component(overview, component_id)
     if comp is None:
         return {"items": [], "note": "No component in scope."}
-    return await fetch(comp, get_default_connection())
+    return await fetch(comp, _conn_for(scope_kind, scope_id))
 
 
 # ----------------------------------------------------------------------- findings

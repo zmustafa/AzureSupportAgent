@@ -146,6 +146,17 @@ def resolve_connection(connection_id: str | None) -> dict[str, Any] | None:
     return get_default_connection()
 
 
+def connection_for_workload(workload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The Azure connection to use when operating on a WORKLOAD scope.
+
+    A workload is scanned with ITS OWN connection (``connection_id``), falling back to the
+    default only when it has none. Using the default for a workload whose subscription is
+    reachable only via a non-default connection silently returns zero resources — the bug
+    this helper prevents across every workload-scoped feature (coverage, radar, teleintel,
+    evidence, performance profiler, …)."""
+    return resolve_connection((workload or {}).get("connection_id") or None)
+
+
 def upsert_connection(conn: dict[str, Any]) -> dict[str, Any]:
     """Create or update a connection. Secrets are encrypted before write. An empty
     secret field on update means 'keep the existing value' (so the UI never has to

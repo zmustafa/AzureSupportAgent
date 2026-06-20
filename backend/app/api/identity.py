@@ -115,11 +115,11 @@ def _recount_kpis(snap: dict[str, Any]) -> None:
     }
 
 
-async def _get_snapshot(principal: Principal, days: int, *, force: bool) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
+async def _get_snapshot(principal: Principal, days: int, *, force: bool, connection_id: str | None = None) -> dict[str, Any]:
+    from app.core.azure_connections import resolve_connection
 
     ttl, mfa_cap = _settings()
-    connection = get_default_connection()
+    connection = resolve_connection(connection_id)
     tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
 
     if not force:
@@ -146,21 +146,23 @@ async def _get_snapshot(principal: Principal, days: int, *, force: bool) -> dict
 @router.get("/overview")
 async def overview(
     days: int = Query(default=90),
+    connection_id: str | None = None,
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """Return the identity snapshot for the expiry window — cached when fresh."""
-    return await _get_snapshot(principal, _clamp_days(days), force=False)
+    return await _get_snapshot(principal, _clamp_days(days), force=False, connection_id=connection_id)
 
 
 @router.post("/refresh")
 async def refresh(
     days: int = Query(default=90),
+    connection_id: str | None = None,
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Force a recompute and overwrite the cache (the dashboard Refresh button)."""
     d = _clamp_days(days)
-    snap = await _get_snapshot(principal, d, force=True)
+    snap = await _get_snapshot(principal, d, force=True, connection_id=connection_id)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -219,9 +221,9 @@ async def _appregs_snapshot(principal: Principal, *, connection_id: str | None, 
 
 def _appregs_target(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
     """Resolve (connection, tenant_id, cache-connection-id) for app-registrations."""
-    from app.core.azure_connections import get_default_connection
+    from app.core.azure_connections import resolve_connection
 
-    connection = get_default_connection()
+    connection = resolve_connection(connection_id)
     tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
     cid = connection_id or (connection or {}).get("id") or ""
     return connection, tenant_id, cid

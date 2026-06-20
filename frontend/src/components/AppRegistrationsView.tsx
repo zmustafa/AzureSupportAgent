@@ -87,7 +87,7 @@ function Kpi({ label, value, tone }: { label: string; value: number; tone?: stri
   );
 }
 
-export function AppRegistrationsView() {
+export function AppRegistrationsView({ connectionId = null }: { connectionId?: string | null }) {
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -108,8 +108,8 @@ export function AppRegistrationsView() {
   const [permSearch, setPermSearch] = useState("");
 
   const q = useQuery({
-    queryKey: ["appRegistrations"],
-    queryFn: () => api.appRegistrations(null),
+    queryKey: ["appRegistrations", connectionId],
+    queryFn: () => api.appRegistrations(connectionId),
     staleTime: Infinity,
     retry: false,
   });
@@ -126,7 +126,7 @@ export function AppRegistrationsView() {
       {
         onProgress: (p) => setProgress((prev) => [...prev, p]),
         onDone: (fresh) => {
-          qc.setQueryData(["appRegistrations"], fresh);
+          qc.setQueryData(["appRegistrations", connectionId], fresh);
           setRefreshing(false);
           setMsg({ text: `Refreshed — ${fresh.summary?.total ?? 0} app registration(s).`, ok: true });
         },
@@ -135,12 +135,12 @@ export function AppRegistrationsView() {
           setMsg({ text: m, ok: false });
         },
       },
-      null,
+      connectionId,
     ).catch((e) => {
       setRefreshing(false);
       setMsg({ text: formatError(e), ok: false });
     });
-  }, [qc]);
+  }, [qc, connectionId]);
 
   function doRefresh() {
     followStream();
@@ -151,7 +151,7 @@ export function AppRegistrationsView() {
   useEffect(() => {
     let cancelled = false;
     void api
-      .appRegistrationsJob(null)
+      .appRegistrationsJob(connectionId)
       .then((r) => {
         if (!cancelled && r.job && r.job.status === "running") followStream();
       })
@@ -307,7 +307,7 @@ export function AppRegistrationsView() {
               ⬇ Export CSV
             </button>
             <a
-              href={data && !data.never_loaded && data.apps.length ? api.appRegistrationsWorkbookUrl() : undefined}
+              href={data && !data.never_loaded && data.apps.length ? api.appRegistrationsWorkbookUrl(connectionId) : undefined}
               aria-disabled={!data || data.never_loaded || !data.apps.length}
               className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${
                 data && !data.never_loaded && data.apps.length

@@ -18,6 +18,7 @@ import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { ScopePicker } from "./ScopePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
+import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 
 // ---- Background profile-run registry --------------------------------------------
 // A profile started from this screen keeps streaming even if the user switches scope or
@@ -226,6 +227,7 @@ export function PerformancePanel() {
   const [hmTypesOpen, setHmTypesOpen] = useState(false);
   const hmTypesRef = useRef<HTMLDivElement>(null);
   const ticketRef = useRef<HTMLDivElement>(null);
+  const pdfAbortRef = useRef<AbortController | null>(null);
   const hmFiltersActive =
     hmPosture !== "all" || hmHideNoData || hmTypes.length > 0 || hmRegion !== "" || hmScore !== "all" || hmSearch.trim() !== "";
   function clearHeatmapFilters() {
@@ -526,6 +528,53 @@ export function PerformancePanel() {
     }
   }
 
+  // Branded PDF for the currently-viewed run (by id), or the scope's latest if unsaved.
+  async function downloadPdf(runId?: string) {
+    if (busy === "pdf") return;
+    const controller = new AbortController();
+    pdfAbortRef.current = controller;
+    setBusy("pdf");
+    setMsg(null);
+    try {
+      const id = runId ?? data?.id;
+      const blob = id
+        ? await api.perfRunPdf(id, controller.signal)
+        : await api.perfLatestPdf(params, controller.signal);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `performance-profile-${data?.scope_name || "report"}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name !== "AbortError") setMsg({ text: formatError(e), ok: false });
+    } finally {
+      pdfAbortRef.current = null;
+      setBusy("");
+    }
+  }
+
+  function cancelPdf() {
+    pdfAbortRef.current?.abort();
+  }
+
+  // Capture the currently-viewed run as an immutable Evidence Locker snapshot.
+  async function saveEvidence() {
+    if (busy === "evidence") return;
+    setBusy("evidence");
+    setMsg(null);
+    try {
+      const r = data?.id
+        ? await api.perfRunEvidence(data.id)
+        : await api.perfLatestEvidence(params);
+      setMsg({ text: `Saved to Evidence Locker: ${r.snapshot.name}`, ok: true });
+    } catch (e) {
+      setMsg({ text: formatError(e), ok: false });
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function createTicket(b: PerfBottleneck, connectorId: string) {
     setBusy("ticket");
     setMsg(null);
@@ -677,6 +726,7 @@ export function PerformancePanel() {
               header: "Actions", align: "right", render: (r) => (
                 <>
                   <button onClick={() => viewRun(r.id)} disabled={busy === `view:${r.id}`} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">View</button>
+                  <button onClick={() => void downloadPdf(r.id)} disabled={busy === "pdf"} title="Download a branded PDF report for this run" className="ml-1 rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">📄 PDF</button>
                   <button onClick={() => deleteRun(r.id)} disabled={busy === `del:${r.id}`} className="ml-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
                 </>
               ),
@@ -810,7 +860,11 @@ export function PerformancePanel() {
             <div className="mb-2 flex items-center gap-2">
               <h2 className="text-sm font-semibold text-gray-900">Heatmap — resources × AMBA metrics</h2>
               <span className="text-[11px] text-gray-400">cell = % of its AMBA threshold</span>
-              <button onClick={registerFindings} disabled={busy === "findings" || (data.bottlenecks ?? []).length === 0} className="ml-auto rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">🛡️ Register findings</button>
+              <div className="ml-auto flex items-center gap-1.5">
+                <button onClick={registerFindings} disabled={busy === "findings" || (data.bottlenecks ?? []).length === 0} className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">🛡️ Register findings</button>
+                <button onClick={() => void downloadPdf()} disabled={busy === "pdf"} title="Download a branded PDF performance report for this run" className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">{busy === "pdf" ? "…" : "📄 PDF"}</button>
+                <button onClick={() => void saveEvidence()} disabled={busy === "evidence"} title="Capture this profile run as an immutable Evidence Locker snapshot" className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">{busy === "evidence" ? "Saving…" : "🗄 Evidence"}</button>
+              </div>
             </div>
 
             {/* Heatmap filter toolbar */}
@@ -998,6 +1052,8 @@ export function PerformancePanel() {
           </>
         )}
       </div>
+
+      <PdfGeneratingOverlay open={busy === "pdf"} onCancel={cancelPdf} />
 
       {/* Drill drawer */}
       {drawer && (

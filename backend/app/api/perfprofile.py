@@ -55,10 +55,18 @@ def _scope(workload_id: str | None, subscription_id: str | None) -> tuple[str, s
     return "workload", demo.DEMO_WORKLOAD_ID
 
 
-async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
-    from app.perfprofile.collector import profile_workload
+def _conn_and_workload(scope_kind: str, scope_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve the workload (when the scope is a workload) and the Azure connection to profile
+    it with — the workload's OWN connection, falling back to the default only when it has none."""
+    from app.core.azure_connections import connection_for_workload
     from app.workloads.registry import get_workload
+
+    workload = get_workload(scope_id) if scope_kind == "workload" else None
+    return connection_for_workload(workload), workload
+
+
+async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
+    from app.perfprofile.collector import profile_workload
 
     ttl, window, interval, cap = _settings()
     tenant_id = principal.tenant_id or "default"
@@ -80,8 +88,7 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
             snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
             if snap and cache.is_fresh(snap, ttl):
                 return _decorate(snap, ttl)
-        connection = get_default_connection()
-        workload = get_workload(scope_id) if scope_kind == "workload" else None
+        connection, workload = _conn_and_workload(scope_kind, scope_id)
         fresh = await profile_workload(
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             timespan=window, interval=interval, scan_cap=cap,
@@ -177,6 +184,137 @@ async def get_run(run_id: str, principal: Principal = Depends(require_admin)) ->
     return {"ok": True, "run": run}
 
 
+# --------------------------------------------------------------- report (PDF + Evidence)
+def _safe_filename(text: str, *, fallback: str = "performance") -> str:
+    import re
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", (text or "").strip()).strip("-")
+    return slug[:80] or fallback
+
+
+async def _resolve_run_snapshot(
+    principal: Principal, run_id: str | None, workload_id: str | None, subscription_id: str | None
+) -> dict[str, Any] | None:
+    """The snapshot to report on: a specific run by id, else the latest run for the scope."""
+    from app.perfprofile import runs
+
+    tenant_id = principal.tenant_id or "default"
+    if run_id:
+        return runs.get_run(tenant_id, run_id)
+    scope_kind, scope_id = _scope(workload_id, subscription_id)
+    if demo.is_demo_scope(scope_kind, scope_id):
+        snap = await _get_snapshot(principal, scope_kind, scope_id, force=False)
+        return snap
+    return runs.latest_run(tenant_id, scope_kind, scope_id)
+
+
+def _trend_for(snap: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+    from app.core import coverage_trends
+
+    return coverage_trends.trend(
+        "performance", tenant_id,
+        str(snap.get("scope_kind") or "workload"), str(snap.get("scope_id") or ""),
+    )
+
+
+async def _performance_pdf_response(snap: dict[str, Any], tenant_id: str):
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import Response
+
+    from app.core.performance_pdf import build_performance_pdf
+
+    trend = _trend_for(snap, tenant_id)
+    pdf = await run_in_threadpool(build_performance_pdf, snap, trend)
+    scope_name = snap.get("scope_name") or snap.get("scope_id") or "scope"
+    fname = f"performance-profile-{_safe_filename(scope_name)}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/run/{run_id}/pdf")
+async def run_pdf(run_id: str, principal: Principal = Depends(require_admin)) -> Any:
+    """Branded PDF for one specific profile run."""
+    snap = await _resolve_run_snapshot(principal, run_id, None, None)
+    if snap is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return await _performance_pdf_response(snap, principal.tenant_id or "default")
+
+
+@router.get("/pdf")
+async def latest_pdf(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+) -> Any:
+    """Branded PDF for the latest profile run of a scope (no run_id needed)."""
+    snap = await _resolve_run_snapshot(principal, None, workload_id, subscription_id)
+    if snap is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="No profile run for this scope yet — run the profiler first.")
+    return await _performance_pdf_response(snap, principal.tenant_id or "default")
+
+
+def _capture_evidence(snap: dict[str, Any], *, tenant_id: str, actor: str) -> dict[str, Any]:
+    from app.core.performance_pdf import build_evidence_content
+    from app.evidence import registry
+
+    name, scope, included, tags, content = build_evidence_content(snap)
+    return registry.create_snapshot(
+        tenant_id=tenant_id, name=name, scope=scope, included=included,
+        retention_class="standard", tags=tags, content=content,
+        created_by=actor or "system", demo=bool(snap.get("demo")),
+    )
+
+
+@router.post("/run/{run_id}/evidence")
+async def run_evidence(
+    run_id: str, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    """Capture one specific profile run as an immutable Evidence Locker snapshot."""
+    from fastapi import HTTPException
+
+    snap = await _resolve_run_snapshot(principal, run_id, None, None)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    meta = _capture_evidence(snap, tenant_id=principal.tenant_id or "default", actor=principal.subject)
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="performance.evidence", target=meta["id"],
+        metadata_json={"sha256": meta["sha256"], "scope": snap.get("scope_id"), "name": meta["name"]},
+    ))
+    await db.commit()
+    return {"ok": True, "snapshot": meta}
+
+
+@router.post("/evidence")
+async def latest_evidence(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Capture the latest profile run of a scope as an Evidence Locker snapshot."""
+    from fastapi import HTTPException
+
+    snap = await _resolve_run_snapshot(principal, None, workload_id, subscription_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="No profile run for this scope yet — run the profiler first.")
+    meta = _capture_evidence(snap, tenant_id=principal.tenant_id or "default", actor=principal.subject)
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="performance.evidence", target=meta["id"],
+        metadata_json={"sha256": meta["sha256"], "scope": snap.get("scope_id"), "name": meta["name"]},
+    ))
+    await db.commit()
+    return {"ok": True, "snapshot": meta}
+
+
 @router.delete("/run/{run_id}")
 async def delete_run(
     run_id: str, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
@@ -256,11 +394,9 @@ async def refresh_stream(
 ):
     """Live profiling over SSE: start → progress* → done. Saves the result to run history
     and returns it (with run id) in the done payload."""
-    from app.core.azure_connections import get_default_connection
     from app.perfprofile import runs
     from app.perfprofile.collector import profile_workload
     from app.perfprofile.narrative import narrate
-    from app.workloads.registry import get_workload
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     _ttl, default_window, interval, cap = _settings()
@@ -289,8 +425,7 @@ async def refresh_stream(
                 async def _collect(name: str, rtype: str):
                     events.append({"resource": name, "type": rtype})
 
-                connection = get_default_connection()
-                workload = get_workload(scope_id) if scope_kind == "workload" else None
+                connection, workload = _conn_and_workload(scope_kind, scope_id)
                 snap = await profile_workload(
                     connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
                     timespan=eff_window, interval=interval, scan_cap=cap,
@@ -321,11 +456,9 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Non-streaming profile + save to history (returns the stored run)."""
-    from app.core.azure_connections import get_default_connection
     from app.perfprofile import runs
     from app.perfprofile.collector import profile_workload
     from app.perfprofile.narrative import narrate
-    from app.workloads.registry import get_workload
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     _ttl, default_window, interval, cap = _settings()
@@ -343,8 +476,7 @@ async def refresh(
         else:
             snap["requested_window"] = eff_window
     else:
-        connection = get_default_connection()
-        workload = get_workload(scope_id) if scope_kind == "workload" else None
+        connection, workload = _conn_and_workload(scope_kind, scope_id)
         snap = await profile_workload(
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             timespan=eff_window, interval=interval, scan_cap=cap, start_time=st, end_time=et,

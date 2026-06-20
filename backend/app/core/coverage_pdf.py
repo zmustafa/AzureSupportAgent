@@ -39,6 +39,7 @@ from app.core.pdf_common import (
     base_css,
     donut_svg,
     esc,
+    esc_breakable,
     fmt_date,
     normalize_severity,
     render_two_pass,
@@ -459,7 +460,7 @@ def _gaps_by_type_card(model: dict[str, Any]) -> str:
         body = '<tr><td>No open gaps — baseline met.</td><td class="num">0</td></tr>'
     else:
         body = "".join(
-            f'<tr><td class="viz-lb">{swatch(accent)}&nbsp;{esc(_short_arm(t) or t)}</td>'
+            f'<tr><td class="viz-lb">{swatch(accent)}&nbsp;{esc_breakable(_short_arm(t) or t)}</td>'
             f'<td class="num">{n}</td></tr>'
             for t, n in rows_data
         )
@@ -522,7 +523,7 @@ def _gaps_by_type_table(model: dict[str, Any]) -> str:
     if not data:
         return ""
     cells = "".join(
-        f'<td class="gt"><b>{n}</b>&nbsp;<span class="muted">{esc(_short_arm(t) or t)}</span></td>'
+        f'<td class="gt"><b>{n}</b>&nbsp;<span class="muted">{esc_breakable(_short_arm(t) or t)}</span></td>'
         for t, n in data[:6]
     )
     return f'<table class="gaptypes" cellpadding="0" cellspacing="0"><tr>{cells}</tr></table>'
@@ -546,12 +547,12 @@ def _gaps_section(model: dict[str, Any], *, anchor: str = "gaps", cap: int | Non
     rows = []
     for g in shown:
         sub = _short_sub(g["sub"])
-        loc = esc(g["rg"]) + (f'<br/><span class="muted">{esc(sub)}</span>' if sub else "")
-        name_link = _resource_link(f'<b>{esc(g["name"])}</b>', g.get("id"))
+        loc = esc_breakable(g["rg"]) + (f'<br/><span class="muted">{esc(sub)}</span>' if sub else "")
+        name_link = _resource_link(f'<b>{esc_breakable(g["name"])}</b>', g.get("id"))
         rows.append(
             f'<tr>'
             f'<td>{_sev_label_chip(g["severity"])}</td>'
-            f'<td>{name_link}<br/><span class="muted">{esc(_short_arm(g["type"]) or g["type"])}</span></td>'
+            f'<td>{name_link}<br/><span class="muted">{esc_breakable(_short_arm(g["type"]) or g["type"])}</span></td>'
             f'<td>{loc or "—"}</td>'
             f'<td>{esc(g["detail"])}</td>'
             f'<td class="fix">{esc(g.get("fix") or "—")}</td>'
@@ -591,13 +592,13 @@ def _resources_section(model: dict[str, Any], *, anchor: str = "appendix-resourc
         gapped = _is_gapped(r)
         status = '<span style="color:#dc2626; font-weight:bold">✗ gap</span>' if gapped else '<span style="color:#16a34a">✓</span>'
         sub = _short_sub(r.get("subscription_id"))
-        name_link = _resource_link(esc(r.get("name") or "—"), r.get("id"))
+        name_link = _resource_link(esc_breakable(r.get("name") or "—"), r.get("id"))
         rows.append(
             f'<tr>'
             f'<td>{status}</td>'
             f'<td>{name_link}</td>'
-            f'<td>{esc(_short_arm(r.get("type")) or r.get("type") or "—")}</td>'
-            f'<td>{esc(r.get("resource_group") or "")}</td>'
+            f'<td>{esc_breakable(_short_arm(r.get("type")) or r.get("type") or "—")}</td>'
+            f'<td>{esc_breakable(r.get("resource_group") or "")}</td>'
             f'<td>{esc(r.get("location") or "")}</td>'
             f'<td>{esc(sub)}</td>'
             f'</tr>'

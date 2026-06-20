@@ -46,12 +46,21 @@ class CreateRequest(BaseModel):
 
 @router.post("")
 async def create(payload: CreateRequest, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
+    from app.core.azure_connections import connection_for_workload, get_default_connection
     from app.evidence.collector import collect_content
 
-    connection = get_default_connection()
+    # A workload-scoped snapshot must collect with the WORKLOAD's OWN connection (else a
+    # workload whose subscription is reachable only via a non-default connection captures an
+    # empty inventory). Subscription/other scopes use the default connection.
+    scope = payload.scope.model_dump()
+    if str(scope.get("kind")) == "workload" and scope.get("id"):
+        from app.workloads.registry import get_workload
+
+        connection = connection_for_workload(get_workload(str(scope["id"])))
+    else:
+        connection = get_default_connection()
     content = await collect_content(
-        tenant_id=principal.tenant_id, scope=payload.scope.model_dump(),
+        tenant_id=principal.tenant_id, scope=scope,
         included=payload.included, connection=connection,
     )
     # Link any failing findings for locker filtering.

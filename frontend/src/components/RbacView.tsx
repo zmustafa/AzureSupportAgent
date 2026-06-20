@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -11,8 +11,15 @@ import {
   type RbacProgress,
 } from "../api";
 import { formatError } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
 import { RBAC_NAV, type RbacTab } from "./navConfig";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { AzureIcon } from "./AzureIcon";
+
+// Active connection/tenant scope for the whole RBAC review. "" => default connection.
+// Shared via context so every tab + the refresh stream re-scope together without prop drilling.
+const RbacConnectionContext = createContext<string>("");
+const useRbacConnectionId = () => useContext(RbacConnectionContext) || null;
 
 // ---- helpers --------------------------------------------------------------------
 function agoText(seconds: number | null): string {
@@ -93,6 +100,7 @@ function KpiTile({ label, value, tone }: { label: string; value: number; tone?: 
 // ---- per-scope refresh hook -----------------------------------------------------
 function useRbacRefresh() {
   const qc = useQueryClient();
+  const connectionId = useRbacConnectionId();
   const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
   const [log, setLog] = useState<RbacProgress[]>([]);
   const [activeLabel, setActiveLabel] = useState<string>("");
@@ -113,7 +121,7 @@ function useRbacRefresh() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     await streamRbacRefresh(
-      params,
+      { ...params, connection_id: connectionId ?? undefined },
       {
         onProgress: (d) => setLog((l) => [...l, d]),
         onDone: () => invalidate(),
@@ -200,7 +208,8 @@ function ScopeTreeRow({
 function FilterRail({ filter, onChange }: { filter: AccessFilter | null; onChange: (f: AccessFilter | null) => void }) {
   const [mode, setMode] = useState<"scope" | "workload">("scope");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const treeQ = useQuery({ queryKey: ["rbac", "scope-tree"], queryFn: api.rbacScopeTree });
+  const connectionId = useRbacConnectionId();
+  const treeQ = useQuery({ queryKey: ["rbac", "scope-tree", connectionId ?? ""], queryFn: () => api.rbacScopeTree(connectionId) });
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const root = treeQ.data?.root;
   const workloads = wlQ.data?.workloads ?? [];
@@ -309,8 +318,9 @@ function AccessGrid({ tab }: { tab: string }) {
   const [ptype, setPtype] = useState("");
   const [privOnly, setPrivOnly] = useState(false);
   const [filter, setFilter] = useState<AccessFilter | null>(null);
+  const connectionId = useRbacConnectionId();
   const q = useQuery({
-    queryKey: ["rbac", "access", tab, search, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? ""],
+    queryKey: ["rbac", "access", tab, search, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
     queryFn: () =>
       api.rbacAccess({
         tab,
@@ -322,6 +332,7 @@ function AccessGrid({ tab }: { tab: string }) {
         scope_id: filter?.scope_id,
         subscription_ids: filter?.subscription_ids,
         workload_id: filter?.workload_id,
+        connection_id: connectionId,
       }),
   });
   const rows = q.data?.rows ?? [];
@@ -330,6 +341,7 @@ function AccessGrid({ tab }: { tab: string }) {
     scope_id: filter?.scope_id,
     subscription_ids: filter?.subscription_ids,
     workload_id: filter?.workload_id,
+    connection_id: connectionId,
   };
 
   return (
@@ -608,7 +620,8 @@ function OverviewTab({
 }
 
 function ScopesTab({ refreshCtl }: { refreshCtl: ReturnType<typeof useRbacRefresh> }) {
-  const q = useQuery({ queryKey: ["rbac", "scopes"], queryFn: api.rbacScopes });
+  const connectionId = useRbacConnectionId();
+  const q = useQuery({ queryKey: ["rbac", "scopes", connectionId ?? ""], queryFn: () => api.rbacScopes(connectionId) });
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   const scopes = q.data?.scopes ?? [];
   return (
@@ -622,7 +635,8 @@ function ScopesTab({ refreshCtl }: { refreshCtl: ReturnType<typeof useRbacRefres
 }
 
 function RolesTab() {
-  const q = useQuery({ queryKey: ["rbac", "roles"], queryFn: api.rbacRoles });
+  const connectionId = useRbacConnectionId();
+  const q = useQuery({ queryKey: ["rbac", "roles", connectionId ?? ""], queryFn: () => api.rbacRoles(connectionId) });
   const [search, setSearch] = useState("");
   const roleDefs = (q.data?.role_defs ?? []) as Record<string, unknown>[];
   const principals = (q.data?.principals ?? []) as Record<string, unknown>[];
@@ -671,13 +685,15 @@ function RolesTab() {
 
 function InsightsTab() {
   const [filter, setFilter] = useState<AccessFilter | null>(null);
+  const connectionId = useRbacConnectionId();
   const q = useQuery({
-    queryKey: ["rbac", "pivots", filter?.scope_id ?? "", filter?.workload_id ?? ""],
+    queryKey: ["rbac", "pivots", filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
     queryFn: () =>
       api.rbacPivots({
         scope_id: filter?.scope_id,
         subscription_ids: filter?.subscription_ids,
         workload_id: filter?.workload_id,
+        connection_id: connectionId,
       }),
   });
   const pivots = q.data?.pivots ?? {};
@@ -687,6 +703,7 @@ function InsightsTab() {
     scope_id: filter?.scope_id,
     subscription_ids: filter?.subscription_ids,
     workload_id: filter?.workload_id,
+    connection_id: connectionId,
   };
   return (
     <div className="flex h-full min-h-0">
@@ -716,7 +733,8 @@ function InsightsTab() {
 }
 
 function DiagnosticsTab() {
-  const q = useQuery({ queryKey: ["rbac", "diagnostics"], queryFn: api.rbacDiagnostics });
+  const connectionId = useRbacConnectionId();
+  const q = useQuery({ queryKey: ["rbac", "diagnostics", connectionId ?? ""], queryFn: () => api.rbacDiagnostics(connectionId) });
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   const collectors = q.data?.collectors ?? [];
   const errors = q.data?.errors ?? [];
@@ -771,17 +789,63 @@ function DiagnosticsTab() {
 export function RbacPanel({ tab = "overview" }: { tab?: RbacTab }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [connectionId, setConnectionId] = usePersistedState("azsup.rbac.connectionId", "");
   const [seeding, setSeeding] = useState(false);
   const [purging, setPurging] = useState(false);
   const [err, setErr] = useState("");
+
+  return (
+    <RbacConnectionContext.Provider value={connectionId}>
+      <RbacPanelBody
+        tab={tab}
+        navigate={navigate}
+        qc={qc}
+        connectionId={connectionId}
+        setConnectionId={setConnectionId}
+        seeding={seeding}
+        setSeeding={setSeeding}
+        purging={purging}
+        setPurging={setPurging}
+        err={err}
+        setErr={setErr}
+      />
+    </RbacConnectionContext.Provider>
+  );
+}
+
+function RbacPanelBody({
+  tab,
+  navigate,
+  qc,
+  connectionId,
+  setConnectionId,
+  seeding,
+  setSeeding,
+  purging,
+  setPurging,
+  err,
+  setErr,
+}: {
+  tab: RbacTab;
+  navigate: ReturnType<typeof useNavigate>;
+  qc: ReturnType<typeof useQueryClient>;
+  connectionId: string;
+  setConnectionId: (v: string) => void;
+  seeding: boolean;
+  setSeeding: (v: boolean) => void;
+  purging: boolean;
+  setPurging: (v: boolean) => void;
+  err: string;
+  setErr: (v: string) => void;
+}) {
   const refreshCtl = useRbacRefresh();
 
-  const overviewQ = useQuery({ queryKey: ["rbac", "overview"], queryFn: api.rbacOverview });
+  const overviewQ = useQuery({ queryKey: ["rbac", "overview", connectionId], queryFn: () => api.rbacOverview(connectionId) });
 
   // Reconnect to any in-flight refresh job on mount (the job survives navigation).
   useEffect(() => {
     let cancelled = false;
-    api.rbacJob({ mode: "all" }).then((r) => {
+    api.rbacJob({ mode: "all", connection_id: connectionId || null }).then((r) => {
       if (!cancelled && r.job?.status === "running") {
         refreshCtl.refreshAll();
       }
@@ -790,7 +854,7 @@ export function RbacPanel({ tab = "overview" }: { tab?: RbacTab }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [connectionId]);
 
   const setTab = (v: RbacTab) => navigate(v === "overview" ? "/rbac" : `/rbac/${v}`);
 
@@ -834,6 +898,9 @@ export function RbacPanel({ tab = "overview" }: { tab?: RbacTab }) {
         <div className="mb-2 flex items-center gap-2">
           <h1 className="text-lg font-semibold text-gray-900">RBAC — Access Review</h1>
           <span className="text-xs text-gray-500">Who can access what across Azure RBAC, Entra roles, groups & ownership</span>
+          <div className="ml-auto">
+            <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
+          </div>
         </div>
         <div className="flex items-center gap-1">
           {RBAC_NAV.map(({ id, label }) => (

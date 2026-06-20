@@ -8,8 +8,10 @@ import {
   type IdentityOverview,
 } from "../api";
 import { formatError } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
 import { IDENTITY_NAV, type IdentityTab } from "./navConfig";
 import { AppRegistrationsView } from "./AppRegistrationsView";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_META: Record<string, { label: string; cls: string; dot: string; rank: number }> = {
   critical: { label: "Critical", cls: "bg-red-100 text-red-700", dot: "bg-red-500", rank: 4 },
@@ -73,6 +75,7 @@ function DaysBadge({ days }: { days?: number | null }) {
 export function IdentityPanel({ tab = "overview" }: { tab?: IdentityTab }) {
   const navigate = useNavigate();
   const setTab = (v: IdentityTab) => navigate(v === "overview" ? "/identity" : `/identity/${v}`);
+  const [connectionId, setConnectionId] = usePersistedState("azsup.identity.connectionId", "");
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
       {/* Tab bar */}
@@ -88,13 +91,16 @@ export function IdentityPanel({ tab = "overview" }: { tab?: IdentityTab }) {
             {label}
           </button>
         ))}
+        <div className="ml-auto pb-1.5">
+          <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
+        </div>
       </div>
-      {tab === "app-registrations" ? <AppRegistrationsView /> : <IdentityFindingsPanel />}
+      {tab === "app-registrations" ? <AppRegistrationsView connectionId={connectionId || null} /> : <IdentityFindingsPanel connectionId={connectionId || null} />}
     </div>
   );
 }
 
-function IdentityFindingsPanel() {
+function IdentityFindingsPanel({ connectionId = null }: { connectionId?: string | null }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [days, setDays] = useState(90);
@@ -108,8 +114,8 @@ function IdentityFindingsPanel() {
   const [msg, setMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
 
   const overviewQ = useQuery({
-    queryKey: ["identity", days],
-    queryFn: () => api.identityOverview(days),
+    queryKey: ["identity", days, connectionId],
+    queryFn: () => api.identityOverview(days, connectionId),
   });
   const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
   const ticketConnectors = (connectorsQ.data?.connectors ?? []).filter(
@@ -124,16 +130,16 @@ function IdentityFindingsPanel() {
   // The cache write happens INSIDE the mutationFn so a result still lands if the user is on
   // another screen when the scan finishes.
   const refreshMutation = useMutation({
-    mutationKey: ["identity-refresh", days],
+    mutationKey: ["identity-refresh", days, connectionId],
     mutationFn: async (d: number) => {
-      const fresh = await api.refreshIdentity(d);
-      qc.setQueryData(["identity", d], fresh);
+      const fresh = await api.refreshIdentity(d, connectionId);
+      qc.setQueryData(["identity", d, connectionId], fresh);
       return fresh;
     },
     onError: (e) => setMsg({ id: "refresh", text: formatError(e), ok: false }),
   });
   // In-flight refresh for the CURRENT day window — survives unmount/remount.
-  const refreshing = useIsMutating({ mutationKey: ["identity-refresh", days] }) > 0;
+  const refreshing = useIsMutating({ mutationKey: ["identity-refresh", days, connectionId] }) > 0;
 
   function doRefresh() {
     if (refreshing) return; // re-entrancy guard (buttons are also disabled while busy)

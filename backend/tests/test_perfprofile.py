@@ -188,3 +188,29 @@ def test_demo_snapshot_has_all_resources_tab_data():
         assert set(row) >= {"id", "name", "type", "resource_group", "subscription_id", "location", "in_reference"}
         assert isinstance(row["in_reference"], bool)
 
+
+def test_profiler_uses_workloads_own_connection(monkeypatch):
+    """Regression: the profiler must scan a workload with ITS OWN connection, not the default.
+    A workload whose subscription is only reachable via a non-default connection used to
+    return zero resources because the API hard-coded get_default_connection()."""
+    from app.api import perfprofile
+
+    wl = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
+    import app.core.azure_connections as conns
+    import app.workloads.registry as reg
+
+    monkeypatch.setattr(reg, "get_workload", lambda scope_id, **kw: wl if scope_id == "wl-x" else None)
+    seen = {}
+
+    def _fake_resolve(cid):
+        seen["cid"] = cid
+        return {"id": cid or "default-conn"}
+
+    monkeypatch.setattr(conns, "resolve_connection", _fake_resolve)
+
+    connection, workload = perfprofile._conn_and_workload("workload", "wl-x")
+    assert seen["cid"] == "conn-workload"  # resolved the workload's own connection id
+    assert connection == {"id": "conn-workload"}
+    assert workload is wl
+
+

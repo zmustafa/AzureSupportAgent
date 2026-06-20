@@ -57,3 +57,37 @@ def test_purge_features_idempotent(monkeypatch, tmp_path):
     removed = admin_demo._purge_features("t-empty")
     assert removed["errors"] == {}
     assert removed["removed"]["monitoring_coverage"] is False
+
+
+def test_seed_includes_rbac_reservations_appregs(monkeypatch, tmp_path):
+    """The central Load button must populate RBAC, Reservations and App Registrations too —
+    previously these had demo data but were not wired into the orchestrator."""
+    import app.rbac.cache as rbac_cache
+    import app.reservations.cache as res_cache
+    import app.identity.appregs_cache as appregs_cache
+
+    monkeypatch.setattr(rbac_cache, "_DATA", tmp_path / "rbac")
+    monkeypatch.setattr(res_cache, "_PATH", tmp_path / "res.json")
+    monkeypatch.setattr(appregs_cache, "_CACHE_PATH", tmp_path / "appregs.json")
+    monkeypatch.setattr(appregs_cache, "_mem_cache", None)
+
+    tenant = "t-demo3"
+    res = admin_demo._seed_all(tenant)
+    for feat in ("rbac", "reservations", "app_registrations"):
+        assert feat in res["seeded"], f"{feat} not seeded (errors={res['errors']})"
+
+    st = admin_demo._status(tenant)
+    assert st["present"]["rbac"] is True
+    assert st["present"]["reservations"] is True
+    assert st["present"]["app_registrations"] is True
+
+    # And the purge clears all three.
+    monkeypatch.setattr(appregs_cache, "_mem_cache", None)
+    purged = admin_demo._purge_features(tenant)
+    assert purged["removed"]["rbac"]
+    assert purged["removed"]["reservations"]
+    assert purged["removed"]["app_registrations"]
+    after = admin_demo._status(tenant)
+    assert after["present"]["rbac"] is False
+    assert after["present"]["reservations"] is False
+    assert after["present"]["app_registrations"] is False

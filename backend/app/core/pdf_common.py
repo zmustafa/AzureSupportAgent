@@ -61,6 +61,33 @@ def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
+def esc_breakable(value: Any, *, width: int = 18) -> str:
+    """Escape an identifier and hard-wrap it at separator boundaries (``- . / _``) so a long
+    token like ``rg-002-shoppingsite-demo-eus2`` cannot overflow its narrow table column.
+
+    xhtml2pdf/reportlab won't reliably break such tokens on their own: a zero-width space
+    renders as a tofu box in the core Helvetica font, and a soft hyphen is only a
+    *discretionary* break the engine often declines to use under fixed column widths. So we
+    insert explicit ``<br/>`` breaks ourselves, greedily keeping each line within ``width``
+    characters. Strings already short enough are returned unwrapped (no ``<br/>``)."""
+    s = "" if value is None else str(value)
+    if len(s) <= width:
+        return esc(s)
+    # Chunks that each keep a trailing separator, so breaks land *after* the separator.
+    chunks = [c for c in re.findall(r"[^\-._/]*[\-._/]?", s) if c]
+    lines: list[str] = []
+    cur = ""
+    for c in chunks:
+        if cur and len(cur) + len(c) > width:
+            lines.append(cur)
+            cur = c
+        else:
+            cur += c
+    if cur:
+        lines.append(cur)
+    return "<br/>".join(esc(ln) for ln in lines)
+
+
 def svg_attr(value: Any) -> str:
     """Escape a string for safe insertion into an SVG attribute or text node
     (``quote=True`` so single + double quotes are escaped too)."""

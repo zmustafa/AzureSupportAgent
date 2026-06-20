@@ -74,12 +74,14 @@ def _empty_radar(scope_kind: str, scope_id: str, *, connection_configured: bool)
 
 
 async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
+    from app.core.azure_connections import connection_for_workload
     from app.radar.collector import collect_radar
     from app.workloads.registry import get_workload
 
     ttl, _lead = _settings()
     tenant_id = principal.tenant_id or "default"
+
+    workload = get_workload(scope_id) if scope_kind == "workload" else None
 
     if demo.is_demo_scope(scope_kind, scope_id):
         # Demo data is synthesised locally (no Azure calls), so seeding stays instant on visit.
@@ -96,13 +98,12 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
         snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
         if snap:
             return _decorate(snap, ttl, tenant_id)
-        connection = get_default_connection()
+        connection = connection_for_workload(workload)
         return _decorate(_empty_radar(scope_kind, scope_id, connection_configured=connection is not None), ttl, tenant_id)
 
     lock = cache.get_lock(tenant_id, scope_kind, scope_id)
     async with lock:
-        connection = get_default_connection()
-        workload = get_workload(scope_id) if scope_kind == "workload" else None
+        connection = connection_for_workload(workload)
         fresh = await collect_radar(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl, tenant_id)

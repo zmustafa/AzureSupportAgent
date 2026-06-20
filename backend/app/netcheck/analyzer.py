@@ -167,11 +167,24 @@ async def run_analysis(
 
     verdict = _verdict(steps)
 
-    # Azure control-plane evidence (best-effort).
-    from app.core.azure_connections import get_default_connection
+    # Azure control-plane evidence (best-effort). Use the architecture's OWN connection (it
+    # carries the workload's connection_id), falling back to that workload's connection or the
+    # default — so an NSG/route lookup against a subscription reachable only via a non-default
+    # connection still returns evidence instead of nothing.
+    from app.core.azure_connections import connection_for_workload, resolve_connection
     from app.netcheck.evidence import gather_evidence, matched_deny_rule
 
-    connection = get_default_connection()
+    conn_id = architecture.get("connection_id") or ""
+    if conn_id:
+        connection = resolve_connection(conn_id)
+    elif architecture.get("workload_id"):
+        from app.workloads.registry import get_workload
+
+        connection = connection_for_workload(get_workload(str(architecture["workload_id"])))
+    else:
+        from app.core.azure_connections import get_default_connection
+
+        connection = get_default_connection()
     target_node = arm_nodes.get(target_node_id, {})
     evidence = await gather_evidence(
         connection,

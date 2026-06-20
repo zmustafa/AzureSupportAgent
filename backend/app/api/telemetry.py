@@ -49,7 +49,7 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
 async def _get_snapshot(
     principal: Principal, scope_kind: str, scope_id: str, *, force: bool, compute: bool = True
 ) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
+    from app.core.azure_connections import connection_for_workload
     from app.workloads.registry import get_workload
 
     ttl, approved, cap = _settings()
@@ -84,8 +84,8 @@ async def _get_snapshot(
             snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
             if snap and cache.is_fresh(snap, ttl):
                 return _decorate(snap, ttl)
-        connection = get_default_connection()
         workload = get_workload(scope_id) if scope_kind == "workload" else None
+        connection = connection_for_workload(workload)
         fresh = await collect_coverage(
             connection,
             scope_kind=scope_kind,

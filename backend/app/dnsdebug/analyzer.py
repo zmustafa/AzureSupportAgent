@@ -101,11 +101,23 @@ async def run_analysis(
 
     yield {"event": "start", "data": {"architecture_id": architecture_id, "fqdn": fqdn, "source_count": len(vms)}}
 
-    # Azure-side truth (once; shared across sources).
-    from app.core.azure_connections import get_default_connection
+    # Azure-side truth (once; shared across sources). Use the architecture's OWN connection
+    # (its workload's connection_id) so private-DNS zone facts resolve even when the
+    # subscription is reachable only via a non-default connection.
+    from app.core.azure_connections import connection_for_workload, resolve_connection
     from app.dnsdebug.zones import gather_zone_facts
 
-    connection = get_default_connection()
+    conn_id = architecture.get("connection_id") or ""
+    if conn_id:
+        connection = resolve_connection(conn_id)
+    elif architecture.get("workload_id"):
+        from app.workloads.registry import get_workload
+
+        connection = connection_for_workload(get_workload(str(architecture["workload_id"])))
+    else:
+        from app.core.azure_connections import get_default_connection
+
+        connection = get_default_connection()
     zone_facts = await gather_zone_facts(connection, fqdn=fqdn, source_vnet_id=source_vnet_id)
     yield {"event": "evidence", "data": zone_facts}
 

@@ -647,3 +647,33 @@ async def collect_app_registrations(
         "facets": {"audiences": agg["audiences"], "permissions": agg["permissions"], "owners": agg["owners"]},
         "summary": agg["summary"],
     }
+
+
+def build_demo_snapshot(tenant_id: str = "default") -> dict[str, Any]:
+    """Build the App Registrations demo snapshot synchronously (no Graph/connection).
+
+    Mirrors the demo fallback inside ``build_snapshot`` so the admin 'Load demo data' button
+    can pre-seed the cache without spinning up the Graph MCP."""
+    apps = build_demo_app_registrations()
+    apps.sort(key=lambda a: a["displayName"].lower())
+    agg = aggregate(apps)
+    return {
+        "generated_at": _now_iso(),
+        "tenant_id": tenant_id,
+        "connection_configured": False,
+        "source": "demo_dummy_data",
+        "note": "Demo data — not a live Entra enumeration.",
+        "apps": apps,
+        "facets": {"audiences": agg["audiences"], "permissions": agg["permissions"], "owners": agg["owners"]},
+        "summary": agg["summary"],
+    }
+
+
+def seed_demo(tenant_id: str = "default") -> dict[str, Any]:
+    """Seed the App Registrations demo snapshot into the cache (keyed by tenant + empty
+    connection id, matching the no-connection read path). Returns the stored payload."""
+    from app.identity import appregs_cache
+
+    payload = build_demo_snapshot(tenant_id)
+    appregs_cache.set_(tenant_id, "", payload)
+    return payload

@@ -2337,10 +2337,16 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   // Identity dashboard
-  identityOverview: (days: number) =>
-    http<IdentityOverview>(`/identity/overview?days=${encodeURIComponent(days)}`),
-  refreshIdentity: (days: number) =>
-    http<IdentityOverview>(`/identity/refresh?days=${encodeURIComponent(days)}`, { method: "POST" }),
+  identityOverview: (days: number, connectionId?: string | null) => {
+    const q = new URLSearchParams({ days: String(days) });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<IdentityOverview>(`/identity/overview?${q.toString()}`);
+  },
+  refreshIdentity: (days: number, connectionId?: string | null) => {
+    const q = new URLSearchParams({ days: String(days) });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<IdentityOverview>(`/identity/refresh?${q.toString()}`, { method: "POST" });
+  },
   createIdentityTicket: (body: { connector_id: string; finding: IdentityFinding }) =>
     http<{ ok: boolean; connector_type?: string; ticket_id?: string; ticket_url?: string; detail?: string }>(
       "/identity/ticket",
@@ -2379,7 +2385,8 @@ export const api = {
   reservationsDigestPreview: (demo = false) =>
     http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}`),
   // RBAC / Access Review — server cache, per-scope refresh.
-  rbacOverview: () => http<RbacOverview>("/rbac/overview"),
+  rbacOverview: (connectionId?: string | null) =>
+    http<RbacOverview>(`/rbac/overview${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
   rbacAccess: (params: {
     tab?: string;
     scope?: string;
@@ -2392,6 +2399,7 @@ export const api = {
     workload_id?: string;
     offset?: number;
     limit?: number;
+    connection_id?: string | null;
   }) => {
     const q = new URLSearchParams();
     if (params.tab) q.set("tab", params.tab);
@@ -2405,43 +2413,48 @@ export const api = {
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.offset != null) q.set("offset", String(params.offset));
     if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<RbacAccessPage>(`/rbac/access?${q.toString()}`);
   },
-  rbacScopeTree: () => http<RbacScopeTree>("/rbac/scope-tree"),
-  rbacScopes: () => http<{ scopes: RbacScopeFreshness[]; directory: RbacDirectoryFreshness; ttl_s: number }>("/rbac/scopes"),
-  rbacRoles: () => http<{ role_defs: Record<string, unknown>[]; principals: Record<string, unknown>[] }>("/rbac/roles"),
-  rbacPivots: (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+  rbacScopeTree: (connectionId?: string | null) => http<RbacScopeTree>(`/rbac/scope-tree${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  rbacScopes: (connectionId?: string | null) => http<{ scopes: RbacScopeFreshness[]; directory: RbacDirectoryFreshness; ttl_s: number }>(`/rbac/scopes${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  rbacRoles: (connectionId?: string | null) => http<{ role_defs: Record<string, unknown>[]; principals: Record<string, unknown>[] }>(`/rbac/roles${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  rbacPivots: (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (params?.scope_id) q.set("scope_id", params.scope_id);
     if (params?.subscription_ids) q.set("subscription_ids", params.subscription_ids);
     if (params?.workload_id) q.set("workload_id", params.workload_id);
+    if (params?.connection_id) q.set("connection_id", params.connection_id);
     const qs = q.toString();
     return http<RbacPivots>(`/rbac/pivots${qs ? `?${qs}` : ""}`);
   },
-  rbacDiagnostics: () =>
-    http<{ collectors: RbacCollector[]; errors: Record<string, string>[]; directory: RbacDirectoryFreshness }>("/rbac/diagnostics"),
-  rbacRefresh: (body: { scope?: string; mode?: string; display_name?: string }) =>
+  rbacDiagnostics: (connectionId?: string | null) =>
+    http<{ collectors: RbacCollector[]; errors: Record<string, string>[]; directory: RbacDirectoryFreshness }>(`/rbac/diagnostics${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  rbacRefresh: (body: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null }) =>
     http<RbacJob & { already_running: boolean }>("/rbac/refresh", { method: "POST", body: JSON.stringify(body) }),
-  rbacJob: (params: { scope?: string; mode?: string }) => {
+  rbacJob: (params: { scope?: string; mode?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (params.scope) q.set("scope", params.scope);
     if (params.mode) q.set("mode", params.mode);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<{ job: RbacJob }>(`/rbac/job?${q.toString()}`);
   },
   rbacRuns: () => http<{ runs: RbacRun[] }>("/rbac/runs"),
   rbacRun: (id: string) => http<{ run: RbacRun | null }>(`/rbac/run/${encodeURIComponent(id)}`),
-  rbacExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+  rbacExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams({ fmt, tab });
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
     if (filter?.workload_id) q.set("workload_id", filter.workload_id);
+    if (filter?.connection_id) q.set("connection_id", filter.connection_id);
     return `${API_BASE}/rbac/export?${q.toString()}`;
   },
-  rbacWorkbookUrl: (filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string }) => {
+  rbacWorkbookUrl: (filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
     if (filter?.workload_id) q.set("workload_id", filter.workload_id);
+    if (filter?.connection_id) q.set("connection_id", filter.connection_id);
     const qs = q.toString();
     return `${API_BASE}/rbac/export/workbook${qs ? `?${qs}` : ""}`;
   },
@@ -2838,6 +2851,27 @@ export const api = {
   },
   perfRun: (run_id: string) => http<{ ok: boolean; run?: PerfProfile; detail?: string }>(`/performance/run/${encodeURIComponent(run_id)}`),
   deletePerfRun: (run_id: string) => http<{ ok: boolean }>(`/performance/run/${encodeURIComponent(run_id)}`, { method: "DELETE" }),
+  // Performance report — branded PDF download + Evidence Locker capture (a specific run, or the latest for a scope).
+  perfRunPdf: (run_id: string, signal?: AbortSignal) =>
+    httpBlob(`/performance/run/${encodeURIComponent(run_id)}/pdf`, { signal }),
+  perfLatestPdf: (params: { workload_id?: string; subscription_id?: string }, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return httpBlob(`/performance/pdf?${q.toString()}`, { signal });
+  },
+  perfRunEvidence: (run_id: string) =>
+    http<{ ok: boolean; snapshot: { id: string; name: string; sha256: string } }>(
+      `/performance/run/${encodeURIComponent(run_id)}/evidence`, { method: "POST", body: "{}" },
+    ),
+  perfLatestEvidence: (params: { workload_id?: string; subscription_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    return http<{ ok: boolean; snapshot: { id: string; name: string; sha256: string } }>(
+      `/performance/evidence?${q.toString()}`, { method: "POST", body: "{}" },
+    );
+  },
   perfTrashedRuns: (params: { workload_id?: string; subscription_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -4142,7 +4176,7 @@ export async function streamPerfRefresh(
 /** Follow a per-scope RBAC refresh over SSE. The server job keeps running even if this stream
  *  disconnects — re-calling re-attaches and replays the log. mode: scope | directory | all. */
 export async function streamRbacRefresh(
-  params: { scope?: string; mode?: string; display_name?: string },
+  params: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null },
   handlers: {
     onStart?: (d: RbacJob) => void;
     onProgress?: (d: RbacProgress) => void;
@@ -4155,6 +4189,7 @@ export async function streamRbacRefresh(
   if (params.scope) q.set("scope", params.scope);
   if (params.mode) q.set("mode", params.mode);
   if (params.display_name) q.set("display_name", params.display_name);
+  if (params.connection_id) q.set("connection_id", params.connection_id);
   const res = await fetch(`${API_BASE}/rbac/refresh/stream?${q.toString()}`, {
     method: "GET",
     credentials: "include",

@@ -341,7 +341,7 @@ class RadarTarget(Target):
 
     async def execute(self, task: Any) -> ExecResult:
         from app.core.app_settings import load_settings
-        from app.core.azure_connections import get_default_connection
+        from app.core.azure_connections import connection_for_workload
         from app.radar import cache as radar_cache
         from app.radar import demo as radar_demo
         from app.radar import state as radar_state
@@ -364,8 +364,8 @@ class RadarTarget(Target):
             if radar_demo.is_demo_scope(scope_kind, scope_id):
                 snap = radar_demo.seed_demo(tenant_id=tenant_id)
             else:
-                connection = get_default_connection()
                 workload = get_workload(scope_id) if scope_kind == "workload" else None
+                connection = connection_for_workload(workload)
                 snap = await collect_radar(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)
                 radar_cache.write_snapshot(tenant_id, scope_kind, scope_id, snap)
         except Exception as exc:  # noqa: BLE001

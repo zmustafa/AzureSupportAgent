@@ -134,6 +134,17 @@ def test_coverage_pdf_embeds_azure_portal_links():
     assert "https://portal.azure.com/#@/resource" in res_html
 
 
+def test_esc_breakable_wraps_long_identifiers_at_separators():
+    """Long ARM identifiers must hard-wrap at separators so they can't overflow a column."""
+    from app.core.pdf_common import esc_breakable
+
+    out = esc_breakable("rg-002-shoppingsite-demo-eus2")
+    assert "<br/>" in out  # wrapped
+    assert max(len(seg) for seg in out.split("<br/>")) <= 19  # each line stays short
+    assert esc_breakable("vm-1") == "vm-1"  # short string returned unchanged
+    assert "<br/>" in esc_breakable("network/privatednszones/virtualnetworklinks")
+
+
 def test_estate_pdf_has_blended_score_and_all_features():
     items = [("amba", _amba_snap(78), _TREND), ("telemetry", _telemetry_snap(91), _TREND),
              ("backupdr", _backupdr_snap(80), _TREND)]
