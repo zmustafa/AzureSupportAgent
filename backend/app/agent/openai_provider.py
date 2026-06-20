@@ -9,6 +9,11 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSpec
 
+# Models (e.g. Azure gpt-5 / o-series) that reject `max_tokens` and require
+# `max_completion_tokens` instead. Learned at runtime so the failed first call is paid
+# only once per process, then the correct param is sent up front.
+_NEEDS_MAX_COMPLETION_TOKENS: set[str] = set()
+
 
 class OpenAIProvider(LLMProvider):
     def __init__(
@@ -31,9 +36,18 @@ class OpenAIProvider(LLMProvider):
                 default_headers=default_headers,
             )
         elif base_url:
-            # GitHub Models and any OpenAI-compatible gateway.
+            # GitHub Models, Azure AI Foundry, and any OpenAI-compatible gateway.
+            default_query = None
+            if provider == "azure_foundry":
+                # Azure AI Foundry's model-inference endpoint
+                # (…services.ai.azure.com/models) requires an api-version query param on
+                # every call; the SDK posts to {base_url}/chat/completions with Bearer auth.
+                default_query = {"api-version": api_version or "2024-05-01-preview"}
             self._client = AsyncOpenAI(
-                api_key=api_key, base_url=base_url, default_headers=default_headers
+                api_key=api_key,
+                base_url=base_url,
+                default_headers=default_headers,
+                default_query=default_query,
             )
         else:
             self._client = AsyncOpenAI(api_key=api_key, default_headers=default_headers)
@@ -42,6 +56,7 @@ class OpenAIProvider(LLMProvider):
     _PROVIDER_NAMES = {
         "openai": "OpenAI",
         "azure_openai": "Azure OpenAI",
+        "azure_foundry": "Azure Foundry",
         "github": "GitHub Models",
         "github_copilot": "GitHub Copilot",
         "gemini": "Google Gemini",
@@ -84,22 +99,37 @@ class OpenAIProvider(LLMProvider):
         from app.core.app_settings import generation_params
 
         params = generation_params()
+        cap = int(max_tokens) if max_tokens else params["max_tokens"]
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "tools": self._to_openai_tools(tools),
             "stream": True,
             "stream_options": {"include_usage": True},
-            "max_tokens": int(max_tokens) if max_tokens else params["max_tokens"],
         }
+        # gpt-5 / o-series Azure models use `max_completion_tokens`; everything else uses
+        # `max_tokens`. Pick up front for known models so we don't fail-then-retry.
+        cap_param = (
+            "max_completion_tokens"
+            if self._model in _NEEDS_MAX_COMPLETION_TOKENS
+            else "max_tokens"
+        )
+        kwargs[cap_param] = cap
 
         # Surface connection milestones so the chat's "Working on your request…" feed shows
         # measured progress (instead of a static line) while the model is contacted.
         yield StreamEvent(type="status", phase="connecting", text=f"Connecting to {self._label()}…")
         try:
             stream = await self._client.chat.completions.create(**kwargs)
-        except Exception:  # noqa: BLE001 - retry once without optional params on rejection
-            kwargs.pop("max_tokens", None)
+        except Exception as exc:  # noqa: BLE001 - retry once on token-param rejection
+            # Move the cap to `max_completion_tokens` when the model demands it (Azure
+            # gpt-5 / o-series); otherwise drop the cap entirely and retry.
+            msg = str(exc).lower()
+            cap_val = kwargs.pop("max_tokens", None)
+            cap_val = kwargs.pop("max_completion_tokens", cap_val)
+            if cap_val and "max_completion_tokens" in msg:
+                _NEEDS_MAX_COMPLETION_TOKENS.add(self._model)
+                kwargs["max_completion_tokens"] = cap_val
             stream = await self._client.chat.completions.create(**kwargs)
         yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
 

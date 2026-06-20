@@ -71,6 +71,20 @@ def build_provider_for(
         return ClaudeProvider(
             model=cfg["model"], base_url=cfg["base_url"], use_oauth=True
         )
+    if provider == "azure_foundry":
+        # Azure AI Foundry model-inference endpoint (…services.ai.azure.com/models):
+        # OpenAI-compatible chat/completions with an api-version query param + Bearer auth.
+        # Normalize the saved endpoint to the "/models" inference root the SDK appends to.
+        base = (cfg["base_url"] or "").rstrip("/")
+        if base and not base.endswith("/models"):
+            base += "/models"
+        return OpenAIProvider(
+            provider="azure_foundry",
+            api_key=cfg["api_key"],
+            model=cfg["model"],
+            base_url=base,
+            api_version=cfg["api_version"] or "2024-05-01-preview",
+        )
     if provider in _OPENAI_COMPATIBLE:
         return OpenAIProvider(
             provider=provider,

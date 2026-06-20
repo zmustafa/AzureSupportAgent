@@ -55,6 +55,13 @@ const PROVIDERS: {
     auth: "key",
   },
   {
+    id: "azure_foundry",
+    label: "Azure Foundry",
+    keyLabel: "Azure AI Foundry key",
+    keyHint: "From your Azure AI Foundry resource → Keys (…services.ai.azure.com)",
+    auth: "key",
+  },
+  {
     id: "github",
     label: "GitHub Models",
     keyLabel: "GitHub token (PAT)",
@@ -136,7 +143,7 @@ const PROVIDERS: {
 // Provider list grouping for the AI Providers screen. Grayed all-caps subheadings,
 // mirroring the Settings sidebar clusters.
 const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
-  { label: "Microsoft / OpenAI", ids: ["openai", "openai_eu", "azure_openai", "github", "github_copilot", "chatgpt"] },
+  { label: "Microsoft / OpenAI", ids: ["openai", "openai_eu", "azure_openai", "azure_foundry", "github", "github_copilot", "chatgpt"] },
   { label: "Frontier", ids: ["claude", "claude_oauth", "gemini", "grok", "mistral", "openrouter"] },
   { label: "Local", ids: ["ollama", "lmstudio"] },
 ];
@@ -1390,6 +1397,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   ollama: "Ollama",
   chatgpt: "ChatGPT Codex",
   azure_openai: "Azure OpenAI",
+  azure_foundry: "Azure Foundry",
   claude: "Claude",
   claude_oauth: "Claude (Pro/Max)",
   gemini: "Google Gemini",
@@ -4032,7 +4040,7 @@ function AIProviderCard() {
         providers[name] = { model: f.model };
         const meta = PROVIDERS.find((p) => p.id === name);
         if (name === "openrouter") providers[name].free_only = f.freeOnly;
-        if (name === "azure_openai") {
+        if (name === "azure_openai" || name === "azure_foundry") {
           // Azure needs the resource endpoint + API version alongside the key.
           if (f.endpoint.trim()) providers[name].base_url = f.endpoint.trim();
           if (f.apiVersion.trim()) providers[name].api_version = f.apiVersion.trim();
@@ -4274,7 +4282,7 @@ function AIProviderCard() {
               </div>
             )}
 
-            {p.id === "azure_openai" && (
+            {(p.id === "azure_openai" || p.id === "azure_foundry") && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">
@@ -4286,11 +4294,17 @@ function AIProviderCard() {
                     onChange={(e) =>
                       setForms((m) => ({ ...m, [p.id]: { ...form, endpoint: e.target.value } }))
                     }
-                    placeholder="https://<resource>.openai.azure.com"
+                    placeholder={
+                      p.id === "azure_foundry"
+                        ? "https://<resource>.services.ai.azure.com"
+                        : "https://<resource>.openai.azure.com"
+                    }
                     className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
                   />
                   <p className="mt-1 text-[11px] text-gray-400">
-                    Your Azure OpenAI resource endpoint.
+                    {p.id === "azure_foundry"
+                      ? "Your Azure AI Foundry resource endpoint (…services.ai.azure.com)."
+                      : "Your Azure OpenAI resource endpoint."}
                   </p>
                 </div>
                 <div>
@@ -4303,11 +4317,13 @@ function AIProviderCard() {
                     onChange={(e) =>
                       setForms((m) => ({ ...m, [p.id]: { ...form, apiVersion: e.target.value } }))
                     }
-                    placeholder="2024-10-21"
+                    placeholder={p.id === "azure_foundry" ? "2024-05-01-preview" : "2024-10-21"}
                     className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
                   />
                   <p className="mt-1 text-[11px] text-gray-400">
-                    The deployment's API version. Model = your deployment name.
+                    {p.id === "azure_foundry"
+                      ? "The Foundry inference API version. Model = a deployed model name."
+                      : "The deployment's API version. Model = your deployment name."}
                   </p>
                 </div>
               </div>

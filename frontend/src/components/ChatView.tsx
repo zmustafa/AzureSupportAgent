@@ -1738,13 +1738,9 @@ export default function ChatView() {
     // Switch the chat's model first if a new one was chosen via "Retry with…".
     if (provider && model) {
       try {
+        // Per-chat only — a retry with a different model must not change the global default.
         await api.setChatModel(activeId, provider, model);
-        await api.updateLlmConfig({
-          active_provider: provider,
-          providers: { [provider]: { model } },
-        });
         qc.invalidateQueries({ queryKey: ["chats"] });
-        qc.invalidateQueries({ queryKey: ["activeLlm"] });
       } catch {
         /* ignore — fall back to current model */
       }
@@ -1790,13 +1786,9 @@ export default function ChatView() {
     const user = messages[userIdx];
     if (provider && model) {
       try {
+        // Per-chat only — a retry with a different model must not change the global default.
         await api.setChatModel(activeId, provider, model);
-        await api.updateLlmConfig({
-          active_provider: provider,
-          providers: { [provider]: { model } },
-        });
         qc.invalidateQueries({ queryKey: ["chats"] });
-        qc.invalidateQueries({ queryKey: ["activeLlm"] });
       } catch {
         /* ignore */
       }
@@ -3630,9 +3622,21 @@ export default function ChatView() {
                     variant="bare"
                     onPick={(prov, m) => {
                       if (activeId) {
+                        // Existing chat: set only THIS chat's model. Don't touch the
+                        // global default — switching a model mid-conversation must not
+                        // re-point what new chats / automations inherit.
                         void api.setChatModel(activeId, prov, m).then(() => {
                           qc.invalidateQueries({ queryKey: ["chats"] });
                         });
+                      } else {
+                        // No chat yet (welcome screen): choosing a model here is the
+                        // explicit way to set the global default for the next new chat.
+                        void api
+                          .updateLlmConfig({ active_provider: prov, providers: { [prov]: { model: m } } })
+                          .then(() => {
+                            qc.invalidateQueries({ queryKey: ["activeLlm"] });
+                            qc.invalidateQueries({ queryKey: ["llmConfig"] });
+                          });
                       }
                     }}
                   />
@@ -4884,7 +4888,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama",
   chatgpt: "ChatGPT Codex",
   azure_openai: "Azure OpenAI",
+  azure_foundry: "Azure Foundry",
   claude: "Claude",
+  claude_oauth: "Claude (Pro/Max)",
   gemini: "Google Gemini",
   grok: "Grok",
   mistral: "Mistral",
@@ -4898,6 +4904,7 @@ const KEY_BASED_PROVIDERS = new Set([
   "openai",
   "github",
   "azure_openai",
+  "azure_foundry",
   "claude",
   "gemini",
   "grok",
@@ -4987,9 +4994,11 @@ function ModelPicker({
   async function pick(pid: string, m: string) {
     setBusy(true);
     try {
-      // Update the global default so new chats inherit this choice.
-      await api.updateLlmConfig({ active_provider: pid, providers: { [pid]: { model: m } } });
-      // And persist it on the active chat (so each chat keeps its own model).
+      // Apply the chosen model via the parent. An active chat keeps it as its OWN
+      // per-chat model; the welcome screen (no chat yet) sets the global default so the
+      // next new chat inherits it. Picking a model never silently changes the global
+      // default mid-conversation — that is only set explicitly (on the welcome screen,
+      // or in Settings → AI Providers → "Set as default").
       onPick?.(pid, m);
       setRecent(pushRecentModel(pid, m));
       qc.invalidateQueries({ queryKey: ["activeLlm"] });
@@ -5191,7 +5200,7 @@ function ModelPicker({
             <button
               onClick={() => {
                 setOpen(false);
-                navigate("/admin");
+                navigate("/admin/providers");
               }}
               className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-gray-600 hover:bg-gray-100"
             >

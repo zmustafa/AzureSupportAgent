@@ -200,6 +200,12 @@ def _default_config() -> dict[str, Any]:
                 "base_url": s.azure_openai_endpoint or "",
                 "api_version": s.azure_openai_api_version or "2024-10-21",
             },
+            "azure_foundry": {
+                "api_key": "",
+                "model": "",
+                "base_url": "",  # resource-specific …services.ai.azure.com endpoint
+                "api_version": "2024-05-01-preview",
+            },
             "grok": {"api_key": "", "model": "grok-4", "base_url": GROK_BASE_URL},
             "mistral": {"api_key": "", "model": "mistral-large-latest", "base_url": MISTRAL_BASE_URL},
             "gemini": {"api_key": "", "model": "gemini-2.5-flash", "base_url": GEMINI_BASE_URL},

@@ -388,6 +388,59 @@ async def _fetch_provider_models(
     if provider in ("claude", "claude_oauth"):
         return {"models": CLAUDE_FALLBACK_MODELS}
 
+    if provider == "azure_openai":
+        # List the resource's live deployments (the names usable as the "model").
+        base = (prov.get("base_url") or "").rstrip("/")
+        if base and api_key:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.get(
+                        f"{base}/openai/deployments?api-version=2023-03-15-preview",
+                        headers={"api-key": api_key},
+                    )
+                if r.status_code == 200:
+                    ids = sorted(
+                        {
+                            d.get("id") or d.get("model")
+                            for d in r.json().get("data", [])
+                            if (d.get("id") or d.get("model"))
+                        }
+                    )
+                    if ids:
+                        return {"models": ids}
+            except Exception:  # noqa: BLE001 - no usable list endpoint; user types the deployment
+                pass
+        return {"models": []}
+
+    if provider == "azure_foundry":
+        # Azure AI Foundry (…services.ai.azure.com/models) has no standard model-list
+        # endpoint, but the SAME resource's sibling …openai.azure.com host exposes the
+        # deployments list. Best-effort: derive it and list the deployed models.
+        base = (prov.get("base_url") or "").rstrip("/")
+        list_host = (
+            base.replace("/models", "").replace(".services.ai.azure.com", ".openai.azure.com")
+        )
+        if list_host and api_key:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.get(
+                        f"{list_host}/openai/deployments?api-version=2023-03-15-preview",
+                        headers={"api-key": api_key},
+                    )
+                if r.status_code == 200:
+                    ids = sorted(
+                        {
+                            d.get("id") or d.get("model")
+                            for d in r.json().get("data", [])
+                            if (d.get("id") or d.get("model"))
+                        }
+                    )
+                    if ids:
+                        return {"models": ids}
+            except Exception:  # noqa: BLE001 - no list endpoint; user types the model name
+                pass
+        return {"models": []}
+
     # OpenAI-compatible third parties: try a live /models fetch, else curated list.
     _compat = {
         "grok": GROK_FALLBACK_MODELS,
@@ -649,6 +702,11 @@ async def _diagnose_provider(provider: str):
             # Anthropic doesn't expose a cheap list endpoint without auth; HEAD /v1/messages 405s.
             # Use a tiny messages request as the actual request step instead.
             yield _ev("auth", "skip", "Auth check deferred", "Anthropic has no list endpoint — verified during request step.", _ms_since(t0))
+            probe_url = ""
+        elif provider == "azure_foundry":
+            # Foundry's model-inference endpoint has no cheap auth-only GET; verify during
+            # the request step (the SDK posts to /models/chat/completions with Bearer).
+            yield _ev("auth", "skip", "Auth check deferred", "Verified during request step.", _ms_since(t0))
             probe_url = ""
         else:
             base = eff_base.rstrip("/") if eff_base else "https://api.openai.com/v1"
