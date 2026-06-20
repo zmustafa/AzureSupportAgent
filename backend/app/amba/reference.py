@@ -68,6 +68,29 @@ def load_reference() -> dict[str, Any]:
     if doc is None:
         doc = builtin_reference()
         _write(doc)
+        return doc
+    # Additive upgrade: when the built-in seed version advances, merge in any NEW built-in
+    # types and any NEW alert keys into existing types. This is purely additive — it never
+    # overwrites or removes a user's edits — so newly-shipped recommended alerts (e.g. the
+    # Key Vault status-code metrics) appear without resetting customizations.
+    if int(doc.get("builtin_seed_version", 0) or 0) < BUILTIN_SEED_VERSION:
+        builtin = builtin_reference()
+        types = doc.setdefault("types", {})
+        changed = False
+        for t, spec in builtin.get("types", {}).items():
+            if t not in types:
+                types[t] = copy.deepcopy(spec)
+                changed = True
+                continue
+            existing = types[t].setdefault("alerts", [])
+            have = {a.get("key") for a in existing}
+            for a in spec.get("alerts", []) or []:
+                if a.get("key") not in have:
+                    existing.append(copy.deepcopy(a))
+                    changed = True
+        doc["builtin_seed_version"] = BUILTIN_SEED_VERSION
+        if changed:
+            _write(doc)
     return doc
 
 
@@ -96,6 +119,7 @@ def _sanitize_alert(raw: dict[str, Any]) -> dict[str, Any] | None:
         "window": str(raw.get("window", "PT5M") or "PT5M")[:16],
         "severity": sev if sev in _SEVERITIES else "warning",
         "requires_action_group": bool(raw.get("requires_action_group", True)),
+        "dimension_filter": str(raw.get("dimension_filter", "") or "")[:200],
         "why": str(raw.get("why", "") or "")[:600],
     }
 

@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -238,6 +239,24 @@ async def app_registrations(
     """List Entra ID app registrations with credential counts, permission split and owners.
     Served from the permanent server-side cache (computed on first miss)."""
     return await _appregs_snapshot(principal, connection_id=connection_id, force=False)
+
+
+@router.get("/app-registrations/workbook")
+async def app_registrations_workbook(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> Response:
+    """Download the app registrations as a multi-sheet Excel workbook (apps, credentials,
+    permissions, owners, high-risk and a permission pivot). Serves the cached snapshot."""
+    from app.identity import appregs_export
+
+    snap = await _appregs_snapshot(principal, connection_id=connection_id, force=False)
+    content = appregs_export.to_workbook(snap)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="app-registrations.xlsx"'},
+    )
 
 
 @router.post("/app-registrations/refresh")

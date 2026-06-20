@@ -60,6 +60,7 @@ _WORKLOADS: dict[str, dict[str, Any]] = {
             ("microsoft.cache/redis", "contoso-redis", RED, "eastus"),
             ("microsoft.containerservice/managedclusters", "contoso-aks", AMBER, "eastus"),
             ("microsoft.compute/virtualmachines", "contoso-pms-vm", RED, "westeurope"),
+            ("microsoft.compute/disks", "contoso-pms-vm-datadisk", RED, "westeurope"),
         ],
     },
     ZAVA_WEB_ID: {

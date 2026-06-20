@@ -155,9 +155,21 @@ def _portal_url(resource_id: Any) -> str:
 
 
 def _resource_link(name_html: str, resource_id: Any) -> str:
-    """Wrap already-escaped resource name HTML in an Azure Portal link when one is available."""
+    """Render the resource name as plain text plus a trailing Azure-portal launch arrow.
+
+    Per design: the resource NAME is no longer the hyperlink. Instead a small top-right
+    arrow (↗) follows the name and is the clickable link, opening the resource's Azure
+    portal blade in a new window/tab. When no real ARM id is available (demo/zero ids),
+    only the plain name is rendered.
+    """
     url = _portal_url(resource_id)
-    return f'<a href="{url}">{name_html}</a>' if url else name_html
+    if not url:
+        return name_html
+    arrow = (
+        f'<a href="{url}" target="_blank" class="portal-link" '
+        f'title="Open in Azure portal (new window)">&#10138;</a>'
+    )
+    return f"{name_html}&nbsp;{arrow}"
 
 
 def _bdr_remediation(failed_checks: list[str]) -> str:
@@ -552,7 +564,7 @@ def _gaps_section(model: dict[str, Any], *, anchor: str = "gaps", cap: int | Non
     {brk}
     <a name="{anchor}"></a>
     <h1>Gaps &amp; remediation</h1>
-    <p class="muted">{total} open gap(s), grouped by severity then resource type. Each row is one resource failing the reference baseline — resource names link to the Azure portal.</p>
+    <p class="muted">{total} open gap(s), grouped by severity then resource type. Each row is one resource failing the reference baseline — the ➚ arrow opens the resource in the Azure portal.</p>
     {_gaps_by_type_table(model)}
     <table class="grid gaps" cellpadding="0" cellspacing="0">
       <tr><th width="8%">Severity</th><th width="22%">Resource</th><th width="15%">Group / sub</th><th width="30%">Why it's a gap</th><th width="25%">Remediation</th></tr>
@@ -595,7 +607,7 @@ def _resources_section(model: dict[str, Any], *, anchor: str = "appendix-resourc
     <div class="pagebreak"></div>
     <a name="{anchor}"></a>
     <h1>Appendix — Scanned resource inventory</h1>
-    <p class="muted">{len(resources)} resource(s) evaluated — {gapped_count} with open gap(s), shown first. Resource names link to the Azure portal.</p>
+    <p class="muted">{len(resources)} resource(s) evaluated — {gapped_count} with open gap(s), shown first. The ➚ arrow opens the resource in the Azure portal.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
       <tr><th width="10%">Status</th><th width="26%">Name</th><th width="26%">Type</th><th width="18%">Resource group</th><th width="12%">Location</th><th width="8%">Sub</th></tr>
       {''.join(rows)}
@@ -632,6 +644,8 @@ def _doc_css() -> str:
     return base_css() + f"""
 /* coverage-report cover: tighter top margin + connected score card */
 .cover {{ margin-top: 1.4cm; }}
+/* portal launch arrow trailing a resource name (the name itself is not a link) */
+.portal-link {{ color: {BRAND}; text-decoration: none; font-weight: bold; }}
 .cover-section-lbl {{ font-size: 9px; font-weight: bold; color: {MUTED}; text-transform: uppercase;
     letter-spacing: 0.5px; margin: 14px 0 4px 0; }}
 .score-card {{ width: 200px; }}

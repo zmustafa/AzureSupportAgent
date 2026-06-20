@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type InventoryCost,
@@ -45,7 +45,6 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
   const connections = connQ.data?.connections ?? [];
   const [connectionId, setConnectionId] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
   const effectiveConn = connectionId || connections.find((c) => c.is_default)?.id || "";
 
   const invQ = useQuery({
@@ -58,23 +57,32 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
   });
   const inv = invQ.data;
 
-  async function refresh() {
-    // The force re-collect (slow Azure scan) is a direct call, not the query, so track its
-    // own state — invQ.isFetching only covers the trailing cache read and would otherwise
-    // leave the button live with no "Refreshing…" status for the whole scan.
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      const fresh = await api.inventory(effectiveConn || null, true);
-      qc.setQueryData(["inventory", effectiveConn], fresh);
-    } catch {
-      await invQ.refetch().catch(() => null);
-    } finally {
-      setRefreshing(false);
-    }
+  // The force re-collect (a slow Azure scan) runs as a React Query MUTATION rather than a
+  // local useState flag, so its in-flight status survives navigating away and back: the
+  // mutation lives in the MutationCache (not the component), and useIsMutating below reads
+  // that cache. The cache write happens INSIDE the mutationFn so a result still lands even
+  // if the user is on another screen when the scan finishes.
+  const refreshMutation = useMutation({
+    mutationKey: ["inventory-refresh", effectiveConn],
+    mutationFn: async (conn: string) => {
+      const fresh = await api.inventory(conn || null, true);
+      qc.setQueryData(["inventory", conn], fresh);
+      return fresh;
+    },
+    onError: () => {
+      // Clear any half-applied state so a return visit reads the cached snapshot cleanly.
+      void qc.invalidateQueries({ queryKey: ["inventory", effectiveConn] });
+    },
+  });
+  // Count of in-flight refreshes for THIS connection — survives unmount/remount.
+  const isRefreshing = useIsMutating({ mutationKey: ["inventory-refresh", effectiveConn] }) > 0;
+
+  function refresh() {
+    if (isRefreshing) return; // re-entrancy guard (the button is also disabled while busy)
+    refreshMutation.mutate(effectiveConn);
   }
 
-  const busy = refreshing || invQ.isFetching;
+  const busy = isRefreshing || invQ.isFetching;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">

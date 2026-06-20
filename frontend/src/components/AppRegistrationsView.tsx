@@ -304,8 +304,20 @@ export function AppRegistrationsView() {
               disabled={!filtered.length}
               className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              ⬇ Export
+              ⬇ Export CSV
             </button>
+            <a
+              href={data && !data.never_loaded && data.apps.length ? api.appRegistrationsWorkbookUrl() : undefined}
+              aria-disabled={!data || data.never_loaded || !data.apps.length}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${
+                data && !data.never_loaded && data.apps.length
+                  ? "border-green-300 bg-green-50 text-green-700 hover:bg-green-100"
+                  : "pointer-events-none border bg-white text-gray-400 opacity-50"
+              }`}
+              title="Download a multi-sheet Excel workbook: Applications, Credentials, API Permissions, Owners, High Risk and a Permission pivot (all apps)"
+            >
+              ⬇ Excel (all sheets)
+            </a>
             <button
               onClick={() => void doRefresh()}
               disabled={refreshing}

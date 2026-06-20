@@ -939,6 +939,7 @@ async def run_metrics_capture(
     interval: str = "PT5M",
     timespan: str | None = None,
     end_time: str | None = None,
+    dimension_filter: str | None = None,
     session_config_dir: str | None = None,
 ) -> CaptureResult:
     """Run `az monitor metrics list` for a resource + metric(s) and capture JSON.
@@ -971,6 +972,9 @@ async def run_metrics_capture(
         argv_tail += ["--start-time", timespan]
     if end_time:
         argv_tail += ["--end-time", end_time]
+    if dimension_filter:
+        # Splits the metric by an Azure Monitor dimension, e.g. "StatusCode eq '403'".
+        argv_tail += ["--filter", dimension_filter]
     return await _capture(
         _run_az_argv_stream(
             argv_tail, connection,

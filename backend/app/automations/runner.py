@@ -219,6 +219,7 @@ async def run_task(task_id: str, trigger: str = "schedule") -> str:
                 tenant_id=task.tenant_id if task else "",
                 user_id="scheduler",
                 chat_id=chat_id,
+                provider=turn_provider or None,
                 model=turn_model,
                 prompt_tokens=usage["prompt_tokens"],
                 completion_tokens=usage["completion_tokens"],

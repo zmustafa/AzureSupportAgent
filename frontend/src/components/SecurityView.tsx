@@ -870,19 +870,54 @@ function IdpForm({
 // ================================================================= Sessions
 function SessionsCard() {
   const qc = useQueryClient();
-  const sessions = useQuery({ queryKey: ["ac-sessions"], queryFn: api.acSessions });
+  const [showExpired, setShowExpired] = useState(false);
+  const sessions = useQuery({
+    queryKey: ["ac-sessions", showExpired],
+    queryFn: () => api.acSessions(showExpired),
+  });
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const rows = sessions.data?.sessions ?? [];
+  const expiredCount = sessions.data?.expired_count ?? 0;
   return (
     <Card
       title="Active Sessions"
-      actions={<Btn variant="ghost" onClick={() => void qc.invalidateQueries({ queryKey: ["ac-sessions"] })}>Refresh</Btn>}
+      actions={
+        <div className="flex items-center gap-2">
+          {expiredCount > 0 && (
+            <Btn
+              variant="ghost"
+              onClick={async () => {
+                setBusy(true);
+                setErr(null);
+                try {
+                  await api.acRevokeExpiredSessions();
+                  void qc.invalidateQueries({ queryKey: ["ac-sessions"] });
+                } catch (e) {
+                  setErr(errMsg(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Revoking…" : `Revoke ${expiredCount} expired`}
+            </Btn>
+          )}
+          <Btn variant="ghost" onClick={() => void qc.invalidateQueries({ queryKey: ["ac-sessions"] })}>Refresh</Btn>
+        </div>
+      }
     >
       {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+      <label className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+        <input type="checkbox" checked={showExpired} onChange={(e) => setShowExpired(e.target.checked)} />
+        Show expired sessions{expiredCount > 0 ? ` (${expiredCount})` : ""}
+      </label>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="py-2 pr-3">User</th>
+              <th className="py-2 pr-3">Status</th>
               <th className="py-2 pr-3">IP</th>
               <th className="py-2 pr-3">Client</th>
               <th className="py-2 pr-3">Last seen</th>
@@ -890,11 +925,18 @@ function SessionsCard() {
             </tr>
           </thead>
           <tbody>
-            {sessions.data?.map((s) => (
-              <tr key={s.id} className="border-b last:border-0">
+            {rows.map((s) => (
+              <tr key={s.id} className={`border-b last:border-0 ${s.expired ? "opacity-60" : ""}`}>
                 <td className="py-2 pr-3">
                   <div className="font-medium text-slate-800">{s.display_name || s.username}</div>
                   <div className="text-xs text-slate-500">{s.username}</div>
+                </td>
+                <td className="py-2 pr-3">
+                  {s.expired ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">Expired</span>
+                  ) : (
+                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">Active</span>
+                  )}
                 </td>
                 <td className="py-2 pr-3 text-xs text-slate-500">{s.ip ?? "—"}</td>
                 <td className="py-2 pr-3 max-w-xs truncate text-xs text-slate-500" title={s.user_agent ?? ""}>{s.user_agent ?? "—"}</td>
@@ -914,7 +956,11 @@ function SessionsCard() {
             ))}
           </tbody>
         </table>
-        {sessions.data?.length === 0 && <p className="py-4 text-sm text-slate-500">No active sessions.</p>}
+        {rows.length === 0 && (
+          <p className="py-4 text-sm text-slate-500">
+            {showExpired ? "No sessions." : "No active sessions."}
+          </p>
+        )}
       </div>
     </Card>
   );

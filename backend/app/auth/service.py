@@ -169,15 +169,27 @@ async def revoke_all_for_user(db: AsyncSession, user_id: str) -> int:
 
 
 async def purge_stale_sessions(db: AsyncSession, retain_days: int = 7) -> int:
-    """Hard-delete expired or revoked sessions older than ``retain_days``.
+    """Hard-delete sessions that are revoked, absolute-expired, or idle-dead.
 
-    Sessions are validated on each request, but expired/revoked rows are never removed
-    on their own — without this the ``sessions`` table grows unbounded and slows every
-    login. Run periodically (see the scheduler)."""
-    cutoff = _now() - timedelta(days=retain_days)
+    Sessions are validated on each request, but invalid rows are never removed on their
+    own — without this the ``sessions`` table grows unbounded (full of zombies that are
+    dead on the auth path but still linger) and slows every login. Run periodically
+    (see the scheduler).
+
+    Deletes: revoked sessions, sessions whose absolute lifetime ended more than
+    ``retain_days`` ago, AND sessions idle past the configured idle window (plus the same
+    grace) — the idle-dead case the old absolute-only purge left behind for up to the
+    full absolute lifetime.
+    """
+    now = _now()
+    grace = timedelta(days=retain_days)
+    cfg = load_auth_settings()
+    idle_cutoff = now - timedelta(minutes=int(cfg["session_idle_minutes"])) - grace
     result = await db.execute(
         delete(Session).where(
-            (Session.revoked.is_(True)) | (Session.expires_at < cutoff)
+            (Session.revoked.is_(True))
+            | (Session.expires_at < now - grace)
+            | (Session.last_seen_at < idle_cutoff)
         )
     )
     await db.commit()

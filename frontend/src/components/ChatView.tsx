@@ -2444,10 +2444,10 @@ export default function ChatView() {
         {me?.role === "admin" && (() => {
           const items = [
             { to: "/assessments", label: "Assessments", Icon: AssessmentIcon, active: inAssessments },
+            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/coverage", label: "Monitoring Coverage", Icon: CoverageIcon, active: inCoverage },
             { to: "/telemetry", label: "Telemetry Coverage", Icon: TelemetryIcon, active: inTelemetry },
             { to: "/backupdr", label: "Backup & DR Coverage", Icon: BackupIcon, active: inBackupDr },
-            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
             { to: "/radar", label: "Retirement Radar", Icon: RadarIcon, active: inRadar },
             { to: "/reservations", label: "Reservations Monitor", Icon: ReservationIcon, active: inReservations },
             { to: "/inventory", label: "Inventory", Icon: InventoryIcon, active: inInventory },

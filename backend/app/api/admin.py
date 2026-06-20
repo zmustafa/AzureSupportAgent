@@ -1458,24 +1458,26 @@ async def usage_summary(
 ):
     result = await db.execute(
         select(
+            Usage.provider,
             Usage.model,
             func.count(Usage.id),
             func.coalesce(func.sum(Usage.prompt_tokens), 0),
             func.coalesce(func.sum(Usage.completion_tokens), 0),
         )
         .where(Usage.tenant_id == principal.tenant_id)
-        .group_by(Usage.model)
+        .group_by(Usage.provider, Usage.model)
     )
     from app.core.pricing import estimate_cost, is_priced
 
     return [
         {
-            "model": row[0],
-            "requests": row[1],
-            "prompt_tokens": int(row[2]),
-            "completion_tokens": int(row[3]),
-            "cost_usd": estimate_cost(row[0], int(row[2]), int(row[3])),
-            "estimated": not is_priced(row[0]),
+            "provider": row[0] or "",
+            "model": row[1],
+            "requests": row[2],
+            "prompt_tokens": int(row[3]),
+            "completion_tokens": int(row[4]),
+            "cost_usd": estimate_cost(row[1], int(row[3]), int(row[4])),
+            "estimated": not is_priced(row[1]),
         }
         for row in result.all()
     ]

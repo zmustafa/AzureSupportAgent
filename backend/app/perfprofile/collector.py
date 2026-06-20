@@ -35,6 +35,31 @@ _STATE_RANK = {STATE_BREACHING: 0, STATE_APPROACHING: 1, STATE_HEALTHY: 2, STATE
 # A metric is "approaching" once it passes this fraction of its threshold (toward breach).
 _APPROACH_FRAC = 0.70
 
+# --- Managed disk performance ------------------------------------------------------------
+# A managed disk's own metrics are absolute throughput counters (Composite Disk Read/Write
+# Operations & Bytes per second), with NO built-in saturation %. So the profiler derives a
+# saturation % itself: total (read+write) IOPS / throughput divided by the disk's PROVISIONED
+# limits (diskIOPSReadWrite / diskMBpsReadWrite, hydrated from Azure Resource Graph). The two
+# synthetic "% of provisioned" series are stored under these labels and then scored like any
+# other %-of-threshold metric (threshold 80, ceiling 100).
+DISK_TYPE = "microsoft.compute/disks"
+DISK_IOPS_SAT = "Disk IOPS saturation"
+DISK_BW_SAT = "Disk throughput saturation"
+_DISK_READ_OPS = "Composite Disk Read Operations/sec"
+_DISK_WRITE_OPS = "Composite Disk Write Operations/sec"
+_DISK_READ_BYTES = "Composite Disk Read Bytes/sec"
+_DISK_WRITE_BYTES = "Composite Disk Write Bytes/sec"
+
+
+def _num(value: Any) -> float | None:
+    """Best-effort float (None on blank/garbage), for resource properties like IOPS limits."""
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -70,6 +95,15 @@ def _series_stats(series: list[dict[str, Any]]) -> dict[str, Any]:
     return {"current": round(current, 2), "peak": round(peak, 2), "avg": round(avg, 2), "trend_pct": trend_pct}
 
 
+def _series_key(rec: dict[str, Any]) -> str:
+    """Cache key for a metric series. Two alerts can share a metric name but differ by
+    dimension filter (e.g. Key Vault ServiceApiResult split into 401/403 vs 429), so the
+    filter is folded into the key to keep their series distinct."""
+    metric = rec.get("metric", "")
+    dim = (rec.get("dimension_filter") or "").strip()
+    return f"{metric}|{dim}" if dim else metric
+
+
 def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, Any]]) -> dict[str, Any]:
     """Evaluate one AMBA metric alert against a metric series → a profile cell."""
     metric = rec.get("metric", "")
@@ -85,6 +119,12 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
         higher_is_worse = True
 
     stats = _series_stats(series)
+    # A dimension-filtered error COUNT (e.g. Transactions split to ResponseType 403/503)
+    # returns an EMPTY series when zero such errors occurred — which is the HEALTHY case, not
+    # "no data". Treat that as an observed 0 so a clean resource shows green ✓ rather than grey.
+    if stats["current"] is None and rec.get("dimension_filter") and threshold == 0:
+        stats = {"current": 0.0, "peak": 0.0, "avg": 0.0, "trend_pct": 0.0}
+        series = [{"timestamp": "", "value": 0.0}]
     # The value we compare = the worst observed in the direction of concern.
     if stats["current"] is None:
         observed = None
@@ -201,7 +241,7 @@ def compute_profile(
         if not metric_alerts:
             continue
         series_map = metrics_by_resource.get(rid, {})
-        cells = [_evaluate_metric(rec, rtype, series_map.get(rec.get("metric", ""), [])) for rec in metric_alerts]
+        cells = [_evaluate_metric(rec, rtype, series_map.get(_series_key(rec), [])) for rec in metric_alerts]
         score = _resource_score(cells)
         worst = min(cells, key=lambda c: (_STATE_RANK.get(c["state"], 3), -(c.get("pct_of_threshold") or 0)), default=None)
         row_state = worst["state"] if worst else STATE_NODATA
@@ -284,13 +324,18 @@ async def _query_resources(predicates: list[str], connection: dict[str, Any] | N
 
 
 def _parse_metric_series(stdout: str, aggregation: str) -> list[dict[str, Any]]:
-    """Parse an `az monitor metrics list` JSON blob into [{timestamp, value}]."""
+    """Parse an `az monitor metrics list` JSON blob into [{timestamp, value}].
+
+    A dimension filter (e.g. status code) can return MULTIPLE timeseries; for count-style
+    metrics (Total/Count aggregation) those are summed per timestamp so the combined total
+    is reported (e.g. 401 + 403). Other aggregations only ever have a single series."""
     try:
         data = json.loads(stdout or "{}")
     except (json.JSONDecodeError, TypeError):
         return []
-    out: list[dict[str, Any]] = []
     agg = (aggregation or "average").lower()
+    sum_mode = agg in ("total", "count")
+    acc: dict[str, float] = {}
     for m in data.get("value", []) or []:
         for ts in (m.get("timeseries") or []):
             for pt in (ts.get("data") or []):
@@ -302,8 +347,121 @@ def _parse_metric_series(stdout: str, aggregation: str) -> list[dict[str, Any]]:
                     val = pt.get("average") or pt.get("maximum") or pt.get("total") or pt.get("count") or pt.get("minimum")
                 if val is None:
                     continue
-                out.append({"timestamp": t, "value": float(val)})
-    out.sort(key=lambda p: p["timestamp"])
+                if t in acc:
+                    # Multiple dimension series at the same bucket: sum counts; for other
+                    # aggregations keep the first (single-series metrics never collide).
+                    if sum_mode:
+                        acc[t] += float(val)
+                else:
+                    acc[t] = float(val)
+    return [{"timestamp": t, "value": acc[t]} for t in sorted(acc)]
+
+
+def _parse_combined_series(stdout: str) -> list[dict[str, Any]]:
+    """Parse `az monitor metrics list` JSON and SUM every metric's datapoints per timestamp.
+
+    Used to combine the separate read + write disk rate counters into one total-rate series
+    (avg read/sec + avg write/sec = avg total/sec over the same bucket)."""
+    try:
+        data = json.loads(stdout or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    acc: dict[str, float] = {}
+    for m in data.get("value", []) or []:
+        for ts in (m.get("timeseries") or []):
+            for pt in (ts.get("data") or []):
+                t = pt.get("timeStamp") or pt.get("timestamp")
+                if not t:
+                    continue
+                val = pt.get("average")
+                if val is None:
+                    val = pt.get("total") or pt.get("maximum") or pt.get("count") or pt.get("minimum")
+                if val is None:
+                    continue
+                acc[t] = acc.get(t, 0.0) + float(val)
+    return [{"timestamp": t, "value": acc[t]} for t in sorted(acc)]
+
+
+async def _hydrate_disk_limits(targets: list[dict[str, Any]], connection: dict[str, Any] | None) -> None:
+    """Backfill provisioned IOPS / MB-per-second onto in-scope managed-disk resources.
+
+    The main resource query stays light (no `properties`); this runs ONE supplementary ARG
+    query for just the disk ids so we can compute each disk's saturation against its own
+    provisioned limits. No-op when the scope has no disks."""
+    disk_ids = [
+        str(r.get("id", "")) for r in targets
+        if str(r.get("type", "")).lower() == DISK_TYPE and r.get("id")
+    ]
+    if not disk_ids:
+        return
+    from app.assessments.runner import query_resources_batched
+
+    id_list = ", ".join(f"'{_esc(i.lower())}'" for i in disk_ids)
+    pred = f"type =~ '{DISK_TYPE}' and tolower(id) in ({id_list})"
+    try:
+        rows = await query_resources_batched(
+            [pred], connection,
+            projection="id, provisioned_iops=properties.diskIOPSReadWrite, provisioned_mbps=properties.diskMBpsReadWrite",
+        )
+    except RuntimeError:
+        return
+    by_id = {str(r.get("id", "")).lower(): r for r in rows}
+    for r in targets:
+        if str(r.get("type", "")).lower() == DISK_TYPE:
+            hit = by_id.get(str(r.get("id", "")).lower())
+            if hit:
+                r["provisioned_iops"] = hit.get("provisioned_iops")
+                r["provisioned_mbps"] = hit.get("provisioned_mbps")
+
+
+async def _disk_saturation_series(
+    res: dict[str, Any],
+    connection: dict[str, Any] | None,
+    *,
+    interval: str,
+    start: str,
+    end: str,
+    sem_lock: "asyncio.Semaphore",
+    run_metrics_capture,
+) -> dict[str, list[dict[str, Any]]]:
+    """Derive a managed disk's IOPS + throughput saturation as a % of its provisioned limits.
+
+    Fetches the Composite read+write counters, sums them to a total rate, and divides by the
+    disk's provisioned IOPS / MB-per-second (hydrated by ``_hydrate_disk_limits``). Returns a
+    {label: %-series} map consumed exactly like any other metric series."""
+    rid = res.get("id", "")
+    iops_limit = _num(res.get("provisioned_iops"))
+    mbps_limit = _num(res.get("provisioned_mbps"))
+    out: dict[str, list[dict[str, Any]]] = {}
+
+    if iops_limit and iops_limit > 0:
+        async with sem_lock:
+            cap = await run_metrics_capture(
+                rid, [_DISK_READ_OPS, _DISK_WRITE_OPS], connection,
+                aggregation="Average", interval=interval,
+                timespan=start or None, end_time=end or None,
+            )
+        if cap.ok:
+            total = _parse_combined_series(cap.stdout)
+            out[DISK_IOPS_SAT] = [
+                {"timestamp": p["timestamp"], "value": round(100.0 * p["value"] / iops_limit, 2)}
+                for p in total
+            ]
+
+    if mbps_limit and mbps_limit > 0:
+        async with sem_lock:
+            cap = await run_metrics_capture(
+                rid, [_DISK_READ_BYTES, _DISK_WRITE_BYTES], connection,
+                aggregation="Average", interval=interval,
+                timespan=start or None, end_time=end or None,
+            )
+        if cap.ok:
+            total = _parse_combined_series(cap.stdout)
+            # bytes/sec → MB/sec (÷1e6) → % of provisioned MB/sec.
+            out[DISK_BW_SAT] = [
+                {"timestamp": p["timestamp"], "value": round(100.0 * (p["value"] / 1_000_000.0) / mbps_limit, 2)}
+                for p in total
+            ]
     return out
 
 
@@ -351,6 +509,9 @@ async def profile_workload(
 
     ref_types = load_reference().get("types", {})
     targets = [r for r in resources if str(r.get("type", "")).lower() in ref_types][:scan_cap]
+    # Managed disks evaluate against their own provisioned IOPS/MB-per-second, so hydrate
+    # those limits for any in-scope disks before gathering metrics.
+    await _hydrate_disk_limits(targets, connection)
 
     sem_lock = asyncio.Semaphore(6)
     metrics_by_resource: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -361,17 +522,25 @@ async def profile_workload(
         alerts = [a for a in (spec.get("alerts") or []) if a.get("signal", "metric") == "metric" and a.get("metric")]
         rid = str(res.get("id", "")).lower()
         out: dict[str, list[dict[str, Any]]] = {}
-        for rec in alerts:
-            metric = rec.get("metric", "")
-            sem = metric_semantics(rtype, metric, rec.get("unit", ""))
-            async with sem_lock:
-                cap = await run_metrics_capture(
-                    res.get("id", ""), [metric], connection,
-                    aggregation=sem["aggregation"], interval=interval,
-                    timespan=eff_start or None, end_time=eff_end or None,
-                )
-            if cap.ok:
-                out[metric] = _parse_metric_series(cap.stdout, sem["aggregation"])
+        if rtype == DISK_TYPE:
+            # Disks: derive saturation % from the Composite counters + provisioned limits.
+            out = await _disk_saturation_series(
+                res, connection, interval=interval, start=eff_start, end=eff_end,
+                sem_lock=sem_lock, run_metrics_capture=run_metrics_capture,
+            )
+        else:
+            for rec in alerts:
+                metric = rec.get("metric", "")
+                sem = metric_semantics(rtype, metric, rec.get("unit", ""))
+                async with sem_lock:
+                    cap = await run_metrics_capture(
+                        res.get("id", ""), [metric], connection,
+                        aggregation=sem["aggregation"], interval=interval,
+                        timespan=eff_start or None, end_time=eff_end or None,
+                        dimension_filter=rec.get("dimension_filter") or None,
+                    )
+                if cap.ok:
+                    out[_series_key(rec)] = _parse_metric_series(cap.stdout, sem["aggregation"])
         metrics_by_resource[rid] = out
         if progress is not None:
             await progress(res.get("name", ""), rtype)

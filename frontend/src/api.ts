@@ -1413,6 +1413,7 @@ export const api = {
     }>("/admin/builtin/tools"),
   usage: () =>
     http<{
+      provider: string;
       model: string;
       requests: number;
       prompt_tokens: number;
@@ -1968,9 +1969,17 @@ export const api = {
     }),
   acDeleteIdp: (id: string) =>
     http<{ ok: boolean }>(`/admin/access/identity-providers/${id}`, { method: "DELETE" }),
-  acSessions: () => http<AcSession[]>("/admin/access/sessions"),
+  acSessions: (includeExpired = false) =>
+    http<{ sessions: AcSession[]; expired_count: number }>(
+      `/admin/access/sessions${includeExpired ? "?include_expired=true" : ""}`,
+    ),
   acRevokeSession: (id: string) =>
     http<{ ok: boolean }>(`/admin/access/sessions/${id}`, { method: "DELETE" }),
+  acRevokeExpiredSessions: () =>
+    http<{ ok: boolean; revoked: number }>("/admin/access/sessions/revoke-expired", {
+      method: "POST",
+      body: "{}",
+    }),
   acPolicies: () =>
     http<{ values: AuthPolicies; defaults: AuthPolicies }>("/admin/access/policies"),
   acUpdatePolicies: (body: Partial<AuthPolicies>) =>
@@ -2349,6 +2358,11 @@ export const api = {
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
       { method: "POST", body: "{}" },
     ),
+  // Multi-sheet Excel workbook (Applications / Credentials / Permissions / Owners / High
+  // Risk / Permission Pivot) of the full cached snapshot — direct download (cookie auth).
+  appRegistrationsWorkbookUrl: (connectionId?: string | null) =>
+    `${API_BASE}/identity/app-registrations/workbook` +
+    (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
   appRegistrationsJob: (connectionId?: string | null) =>
     http<{ job: { id: string; status: string; started_at: string; finished_at: string | null; progress_count: number; last_message: string; error: string } | null }>(
       "/identity/app-registrations/job" +
@@ -4579,6 +4593,8 @@ export interface AcSession {
   created_at: string | null;
   last_seen_at: string | null;
   expires_at: string | null;
+  expired?: boolean;
+  status?: "active" | "expired";
 }
 
 export interface AuthPolicies {

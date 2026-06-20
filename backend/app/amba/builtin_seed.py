@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 # Bumped whenever the seed below changes so the registry can offer "reset to builtin vN".
-BUILTIN_SEED_VERSION = 2
+BUILTIN_SEED_VERSION = 6
 
 
 def _a(
@@ -40,6 +40,7 @@ def _a(
     window: str = "PT5M",
     severity: str = "warning",
     requires_action_group: bool = True,
+    dimension_filter: str = "",
     why: str = "",
 ) -> dict[str, Any]:
     return {
@@ -54,6 +55,9 @@ def _a(
         "window": window,
         "severity": severity,
         "requires_action_group": requires_action_group,
+        # Optional Azure Monitor metric dimension filter (e.g. "StatusCode eq '403'"),
+        # so one metric (ServiceApiResult) can be split into distinct signals.
+        "dimension_filter": dimension_filter,
         "why": why,
     }
 
@@ -77,6 +81,10 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("vm_network_in", "Inbound network unusually high", "performance", metric="Network In Total",
                operator="GreaterThan", threshold=None, unit="bytes", window="PT5M", severity="info",
                why="Abnormal inbound traffic can signal an incident or a misbehaving client."),
+            _a("vm_network_out", "Outbound network unusually high", "performance", metric="Network Out Total",
+               operator="GreaterThan", threshold=None, unit="bytes", window="PT5M", severity="info",
+               why="A spike in outbound traffic can signal data exfiltration, a runaway backup/replication "
+                   "job, or a chatty dependency — and on metered egress it drives cost."),
         ],
     },
     "microsoft.web/sites": {
@@ -122,6 +130,31 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("sql_deadlocks", "Deadlocks detected", "performance", metric="deadlock",
                operator="GreaterThan", threshold=1, unit="count", window="PT15M", severity="warning",
                why="Deadlocks cause failed transactions and user-visible errors."),
+            _a("sql_cpu", "CPU utilization high", "performance", metric="cpu_percent",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="cpu_percent is the vCore/serverless compute utilization (the DTU metric does not exist on "
+                   "vCore databases). Sustained high CPU throttles queries and stalls the application — the "
+                   "primary scale signal for a General Purpose / serverless database."),
+            _a("sql_log_write", "Log write utilization high", "performance", metric="log_write_percent",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="log_write_percent is how hard the transaction-log writer is pushed against its rate "
+                   "limit. A pegged log throttles every INSERT/UPDATE/DELETE — a classic hidden bottleneck "
+                   "during bulk loads, index rebuilds, and write bursts that CPU alone won't reveal."),
+            _a("sql_workers", "Worker utilization high", "performance", metric="workers_percent",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="workers_percent is the share of the database's max concurrent workers (requests) in use. "
+                   "Near 100% means new queries queue or fail with worker-limit errors — the saturation point "
+                   "behind 'the database stopped responding' even when CPU looks moderate."),
+            _a("sql_sessions", "Session utilization high", "performance", metric="sessions_percent",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="sessions_percent is open sessions as a share of the database limit. Connection leaks or a "
+                   "missing pool cap drive this toward 100%, after which new connections are refused — an "
+                   "outage that looks like an app bug, not a database one."),
+            _a("sql_connection_failed", "Failed connections elevated", "availability", metric="connection_failed",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="warning",
+               why="A rise in failed connections signals auth failures, hitting the connection/worker limit, "
+                   "or firewall/network blocks — callers can't reach the data tier even though it reports "
+                   "healthy."),
         ],
     },
     "microsoft.storage/storageaccounts": {
@@ -133,13 +166,61 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
                why="Any availability dip on storage cascades to everything that depends on it."),
             _a("stor_latency", "Success E2E latency high", "performance", metric="SuccessE2ELatency",
                operator="GreaterThan", threshold=1000, unit="ms", window="PT5M", severity="warning",
-               why="High storage latency slows every read/write across dependent apps."),
-            _a("stor_throttle", "Throttling errors", "availability", metric="Transactions",
-               operator="GreaterThan", threshold=None, unit="count", window="PT5M", severity="warning",
-               why="Throttling (429s) means the account is over its limits and requests are failing."),
+               why="High end-to-end storage latency slows every read/write across dependent apps. "
+                   "Compare against server latency below to tell storage-side slowness from client/network."),
+            _a("stor_server_latency", "Server-side latency high", "performance", metric="SuccessServerLatency",
+               operator="GreaterThan", threshold=1000, unit="ms", window="PT5M", severity="warning",
+               why="Server latency is the storage-side processing time only. High server latency points at "
+                   "the storage tier (large ops, archive/cool reads, onset of throttling); high E2E but normal "
+                   "server latency points at the client/network instead."),
+            _a("stor_throttle", "Throttled requests (503)", "performance", metric="Transactions",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="warning",
+               dimension_filter="ResponseType eq 'ServerBusyError'",
+               why="ServerBusyError (503) means the account is exceeding its per-account or per-partition "
+                   "scalability targets and requests are being throttled \u2014 callers should back off, and a hot "
+                   "prefix/partition may need to be spread out."),
+            _a("stor_auth_failures", "Authorization failures (403)", "security", metric="Transactions",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               dimension_filter="ResponseType eq 'AuthorizationError'",
+               why="AuthorizationError (403) means callers are being denied \u2014 usually a firewall/network-ACL "
+                   "rule, a missing RBAC data-plane role, or an expired/invalid SAS. The account can read 100% "
+                   "'available' while every dependent app fails to read its data, so this is the signal that "
+                   "actually catches access outages."),
+            _a("stor_authn_failures", "Authentication failures (403)", "security", metric="Transactions",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               dimension_filter="ResponseType eq 'AuthenticationError'",
+               why="AuthenticationError (403) is the OTHER half of access failures, distinct from "
+                   "AuthorizationError: it's a network-ACL/firewall deny (public access disabled or default "
+                   "action Deny), an invalid/expired SAS token, or a wrong account key \u2014 the request is "
+                   "rejected before authorization is even evaluated. This is the single most common "
+                   "'storage reports 100% available but the app can't reach it' outage, so it must be caught "
+                   "separately from RBAC-style AuthorizationError."),
+            _a("stor_capacity", "Used capacity growing", "performance", metric="UsedCapacity",
+               operator="GreaterThan", threshold=None, unit="bytes", window="PT1H", severity="info",
+               why="UsedCapacity is the total bytes stored. A sudden climb can signal a runaway producer, a "
+                   "stuck lifecycle/cleanup job, or unbounded log/blob growth — worth watching before it drives "
+                   "cost or hits a quota."),
         ],
-    },
-    "microsoft.containerservice/managedclusters": {
+    },    "microsoft.compute/disks": {
+        "display": "Managed Disk",
+        "category": "data",
+        "alerts": [
+            _a("disk_iops_saturation", "Disk IOPS saturation high", "performance",
+               metric="Disk IOPS saturation", operator="GreaterThan", threshold=80, unit="%",
+               window="PT5M", severity="warning",
+               why="Total disk IOPS (read+write) as a percentage of the disk's provisioned IOPS. Sustained "
+                   "high IOPS saturation means the disk — not the CPU — is the bottleneck: reads/writes queue "
+                   "and every dependent app (DB, app server) slows down. Once burst credits are exhausted the "
+                   "disk is capped at its baseline IOPS. Bump the disk tier/size or enable on-demand bursting."),
+            _a("disk_throughput_saturation", "Disk throughput saturation high", "performance",
+               metric="Disk throughput saturation", operator="GreaterThan", threshold=80, unit="%",
+               window="PT5M", severity="warning",
+               why="Total disk throughput (read+write MB/s) as a percentage of the disk's provisioned "
+                   "bandwidth. High throughput saturation throttles large sequential I/O — backups, ETL, log "
+                   "flushes, restores — long before IOPS run out. Move to a higher tier or stripe the load "
+                   "across multiple disks."),
+        ],
+    },    "microsoft.containerservice/managedclusters": {
         "display": "AKS Cluster",
         "category": "compute",
         "alerts": [
@@ -171,6 +252,17 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("kv_saturation", "Vault API saturation high", "performance", metric="SaturationShoebox",
                operator="GreaterThan", threshold=75, unit="%", window="PT5M", severity="warning",
                why="Approaching the vault's transaction limits leads to throttling and failures."),
+            _a("kv_auth_failures", "Authorization failures (401/403)", "security", metric="ServiceApiResult",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               dimension_filter="StatusCode eq '401' or StatusCode eq '403'",
+               why="401/403 results mean callers are being denied — usually a missing access policy / RBAC "
+                   "role assignment or an expired identity. Secret and key fetches fail at runtime even though "
+                   "the vault reports 100% 'available', so this is the signal that actually catches access outages."),
+            _a("kv_throttling", "Throttled requests (429)", "performance", metric="ServiceApiResult",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="warning",
+               dimension_filter="StatusCode eq '429'",
+               why="429 responses mean the vault is hitting its per-vault transaction limits; callers should "
+                   "cache secrets and back off, and heavy workloads may need to spread load across vaults."),
         ],
     },
     "microsoft.network/frontdoors": {
@@ -218,6 +310,29 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
         "display": "Cosmos DB",
         "category": "data",
         "alerts": [
+            _a("cosmos_normalized_ru", "Normalized RU consumption high", "performance",
+               metric="NormalizedRUConsumption", operator="GreaterThan", threshold=80, unit="%",
+               window="PT5M", severity="warning",
+               why="NormalizedRUConsumption is the MAX RU utilization across partition key ranges as a percent "
+                   "of provisioned (or autoscale-max) RU/s. Sustained values near 100% mean a single partition "
+                   "is saturated — requests there get 429-throttled even while the account average looks fine. "
+                   "This is the earliest, truest signal of a hot partition or an under-provisioned container. "
+                   "Note: this is a provisioned/autoscale metric \u2014 SERVERLESS accounts don't emit it (there is "
+                   "no provisioned RU/s to normalize against), so on serverless it reads 'no data' and you "
+                   "should watch server-side latency and 429s instead."),
+            _a("cosmos_429", "Rate-limited requests (429)", "availability", metric="TotalRequests",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               dimension_filter="StatusCode eq '429'",
+               why="A 429 means Cosmos rejected the request for exceeding the provisioned RU/s for that "
+                   "partition (or the serverless ceiling). The SDK retries with backoff, but sustained 429s "
+                   "surface to the app as added latency and eventually failures — the direct signal that the "
+                   "data tier is over its throughput budget."),
+            _a("cosmos_server_latency", "Server-side latency high", "performance",
+               metric="ServerSideLatency", operator="GreaterThan", threshold=100, unit="ms", window="PT5M",
+               severity="warning",
+               why="ServerSideLatency is the time Cosmos itself spent servicing the request (excludes network "
+                   "and SDK). Rising server latency points at expensive cross-partition queries, missing "
+                   "indexes, or large documents — tuning targets that no amount of client-side scaling fixes."),
             _a("cosmos_throttle", "Throttled requests (429)", "availability", metric="TotalRequestUnits",
                operator="GreaterThan", threshold=None, unit="RU", window="PT5M", severity="warning",
                why="429s mean the container is over-provisioned RU/s limits and requests fail."),
@@ -307,15 +422,34 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
         "display": "Container App",
         "category": "containers",
         "alerts": [
+            _a("aca_http_5xx", "5xx server errors", "availability", metric="Requests",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               dimension_filter="statusCodeCategory eq '5xx'",
+               why="Requests split to the 5xx status category are the app's own server errors — the single "
+                   "clearest signal users are seeing failures right now. Unfiltered request counts can't tell "
+                   "a healthy spike from an error spike; this dimension filter does."),
+            _a("aca_cpu_pct", "CPU utilization high", "performance", metric="CpuPercentage",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="CpuPercentage is CPU against the revision's allocated cores. Sustained high CPU throttles "
+                   "request handling and inflates latency — the signal that the app needs more cores per "
+                   "replica or more replicas."),
+            _a("aca_memory_pct", "Memory utilization high", "performance", metric="MemoryPercentage",
+               operator="GreaterThan", threshold=90, unit="%", window="PT5M", severity="warning",
+               why="MemoryPercentage near 100% precedes OOM kills, which show up as replica restarts and 5xx. "
+                   "Catching memory pressure early explains crash-loops that look mysterious from request "
+                   "metrics alone."),
             _a("aca_replica_restarts", "Replica restart count elevated", "availability", metric="RestartCount",
                operator="GreaterThan", threshold=0, unit="count", window="PT15M", severity="warning",
-               why="Frequent replica restarts indicate crash-looping revisions."),
-            _a("aca_requests_5xx", "5xx responses elevated", "availability", metric="Requests",
-               operator="GreaterThan", threshold=None, unit="count", window="PT5M", severity="error",
-               why="5xx responses from the app mean users are seeing failures."),
-            _a("aca_cpu", "CPU usage high", "performance", metric="UsageNanoCores",
+               why="Frequent replica restarts indicate crash-looping revisions (bad image, failing readiness "
+                   "probe, or OOM)."),
+            _a("aca_replicas", "Active replica count", "performance", metric="Replicas",
+               operator="GreaterThan", threshold=None, unit="count", window="PT5M", severity="info",
+               why="Replicas is the current replica count. Pinned at the max scale bound under load means the "
+                   "app is capacity-capped (raise maxReplicas or the scale rule); flapping to zero explains "
+                   "cold-start latency on the next request."),
+            _a("aca_cpu", "CPU usage (nanocores)", "performance", metric="UsageNanoCores",
                operator="GreaterThan", threshold=None, unit="ncores", window="PT5M", severity="info",
-               why="CPU near the revision limit throttles request handling."),
+               why="Absolute CPU consumption in nanocores — a raw companion to CpuPercentage for sizing."),
         ],
     },
     "microsoft.containerregistry/registries": {
@@ -392,6 +526,11 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("sb_active_messages", "Active message backlog high", "performance", metric="ActiveMessages",
                operator="GreaterThan", threshold=None, unit="count", window="PT15M", severity="info",
                why="A growing backlog signals consumers can't keep up with the producers."),
+            _a("sb_user_errors", "User errors elevated", "availability", metric="UserErrors",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="warning",
+               why="UserErrors are client-side failures (bad auth, message-too-large, entity-not-found, lock "
+                   "lost). Unlike ServerErrors they point at the producer/consumer code or config — a spike "
+                   "usually means a recent deploy broke how the app talks to the namespace."),
         ],
     },
     "microsoft.eventhub/namespaces": {
@@ -407,6 +546,19 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("eh_capture_backlog", "Capture backlog", "performance", metric="CaptureBacklog",
                operator="GreaterThan", threshold=None, unit="count", window="PT15M", severity="info",
                why="A capture backlog means events aren't landing in storage on time."),
+            _a("eh_quota_exceeded", "Quota exceeded errors", "availability", metric="QuotaExceededErrors",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               why="QuotaExceededErrors mean producers/consumers hit a hard namespace quota (throughput-unit "
+                   "ceiling, connection count, or entity size). Events are rejected outright — a sharper signal "
+                   "than generic throttling that the tier is undersized for the load."),
+            _a("eh_incoming_messages", "Incoming message throughput", "performance", metric="IncomingMessages",
+               operator="GreaterThan", threshold=None, unit="count", window="PT5M", severity="info",
+               why="IncomingMessages is the ingest rate. Read alongside ThrottledRequests it shows whether a "
+                   "throttle is driven by real volume (scale up TUs) or a hot partition (fix the partition key)."),
+            _a("eh_outgoing_messages", "Outgoing message throughput", "performance", metric="OutgoingMessages",
+               operator="GreaterThan", threshold=None, unit="count", window="PT5M", severity="info",
+               why="OutgoingMessages is the consumer egress rate. Persistently far below IncomingMessages means "
+                   "consumers are falling behind — the lag that eventually breaches retention and loses events."),
         ],
     },
     "microsoft.eventgrid/topics": {
@@ -545,6 +697,27 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
             _a("law_ingestion_spike", "Ingestion volume spike", "performance", metric="Ingestion Volume",
                operator="GreaterThan", threshold=None, unit="bytes", window="PT1H", severity="info",
                why="An ingestion spike can blow the cost budget or hit the daily cap (losing data)."),
+        ],
+    },
+    "microsoft.appconfiguration/configurationstores": {
+        "display": "App Configuration",
+        "category": "integration",
+        "alerts": [
+            _a("appcfg_throttled", "Throttled requests (429)", "availability", metric="ThrottledHttpRequestCount",
+               operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
+               why="ThrottledHttpRequestCount is requests rejected with 429 for exceeding the store's request "
+                   "quota (the Free tier caps daily requests hard, Standard caps per-second). Throttling means "
+                   "apps can't read their configuration/feature flags at runtime — startup stalls and flags go "
+                   "stale. The fix is client-side caching/Sentinel polling or moving off Free."),
+            _a("appcfg_quota", "Request quota utilization high", "performance", metric="RequestQuotaUsage",
+               operator="GreaterThan", threshold=80, unit="%", window="PT5M", severity="warning",
+               why="RequestQuotaUsage is how close the store is to its request-quota ceiling. Watching it climb "
+                   "toward 100% is the early warning before throttling actually starts — time to add caching or "
+                   "upgrade the tier before config reads begin failing."),
+            _a("appcfg_latency", "Request latency high", "performance", metric="HttpIncomingRequestDuration",
+               operator="GreaterThan", threshold=1000, unit="ms", window="PT5M", severity="warning",
+               why="HttpIncomingRequestDuration is server-side request latency. Slow config reads add directly "
+                   "to app cold-start and the latency of any flag/refresh check on the hot path."),
         ],
     },
 }

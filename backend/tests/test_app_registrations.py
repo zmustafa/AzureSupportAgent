@@ -90,3 +90,59 @@ def test_cache_roundtrip(tmp_path, monkeypatch):
     assert hit is not None
     assert hit["payload"] == payload
     assert hit["age_seconds"] >= 0
+
+
+def test_workbook_multi_sheet():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.identity import appregs_export
+
+    snap = _snap()
+    content = appregs_export.to_workbook(snap)
+    assert isinstance(content, bytes) and content[:2] == b"PK"  # xlsx is a zip
+
+    wb = load_workbook(BytesIO(content), read_only=True)
+    names = set(wb.sheetnames)
+    assert {
+        "Summary", "Applications", "Credentials", "API Permissions",
+        "Owners", "High Risk", "Permission Pivot",
+    } <= names
+
+    # Applications sheet: header + one row per app.
+    ws = wb["Applications"]
+    assert ws.max_row == len(snap["apps"]) + 1
+
+    # Credentials sheet: header + one row per credential across all apps.
+    cred_total = sum(len(a.get("credentials") or []) for a in snap["apps"])
+    assert wb["Credentials"].max_row == cred_total + 1
+
+    # API Permissions sheet: header + one row per granted permission.
+    perm_total = sum(len(a.get("permissions") or []) for a in snap["apps"])
+    assert wb["API Permissions"].max_row == perm_total + 1
+
+    # High Risk sheet: header + only the flagged apps.
+    hr = sum(1 for a in snap["apps"] if a.get("highRisk"))
+    assert wb["High Risk"].max_row == hr + 1
+    wb.close()
+
+
+def test_workbook_neutralizes_formula_injection():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.identity import appregs_export
+
+    snap = _snap()
+    # Inject a formula-style display name into one app.
+    snap["apps"][0]["displayName"] = "=cmd|'/c calc'!A1"
+    content = appregs_export.to_workbook(snap)
+    wb = load_workbook(BytesIO(content), read_only=True)
+    ws = wb["Applications"]
+    # The cell must be neutralized to literal text (leading apostrophe / not a live formula).
+    val = ws.cell(row=2, column=1).value
+    assert str(val).startswith("'=") or not str(val).startswith("=")
+    wb.close()
+

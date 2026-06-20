@@ -54,6 +54,32 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(dt: datetime | None) -> datetime | None:
+    """Coerce a possibly-naive datetime to UTC-aware for safe comparison."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _session_expired(sess: Session, cfg: dict[str, Any], now: datetime) -> bool:
+    """A session is dead when it's past its absolute cap OR its idle window.
+
+    Mirrors the validity checks in app.auth.service.resolve_session so the admin list
+    and the auth path agree on what "active" means.
+    """
+    exp = _aware(sess.expires_at)
+    if exp is not None and now > exp:
+        return True
+    last_seen = _aware(sess.last_seen_at)
+    if last_seen is not None:
+        from datetime import timedelta
+
+        idle_cap = last_seen + timedelta(minutes=int(cfg["session_idle_minutes"]))
+        if now > idle_cap:
+            return True
+    return False
+
+
 async def _audit(
     db: AsyncSession, actor: Principal, action: str, target: str, meta: dict[str, Any]
 ) -> None:
@@ -564,7 +590,11 @@ async def delete_idp(
 
 # ============================================================================ sessions
 @router.get("/sessions")
-async def list_sessions(_: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    include_expired: bool = False,
+    _: Principal = Depends(_guard),
+    db: AsyncSession = Depends(get_db),
+):
     rows = (
         await db.execute(
             select(Session).where(Session.revoked.is_(False)).order_by(Session.last_seen_at.desc())
@@ -575,8 +605,16 @@ async def list_sessions(_: Principal = Depends(_guard), db: AsyncSession = Depen
     if user_ids:
         for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():
             users[u.id] = u
+    cfg = load_auth_settings()
+    now = _now()
     out = []
+    expired_count = 0
     for s in rows:
+        expired = _session_expired(s, cfg, now)
+        if expired:
+            expired_count += 1
+            if not include_expired:
+                continue
         u = users.get(s.user_id)
         out.append(
             {
@@ -589,9 +627,11 @@ async def list_sessions(_: Principal = Depends(_guard), db: AsyncSession = Depen
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "last_seen_at": s.last_seen_at.isoformat() if s.last_seen_at else None,
                 "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+                "expired": expired,
+                "status": "expired" if expired else "active",
             }
         )
-    return out
+    return {"sessions": out, "expired_count": expired_count}
 
 
 @router.delete("/sessions/{session_id}")
@@ -607,6 +647,32 @@ async def revoke_one_session(
     await db.commit()
     await _audit(db, principal, "access.session_revoked", session_id, {})
     return {"ok": True}
+
+
+@router.post("/sessions/revoke-expired")
+async def revoke_expired_sessions(
+    principal: Principal = Depends(_guard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke every session that is already past its idle window or absolute lifetime.
+
+    These are 'zombie' rows: invalid on the auth path but still listed until the
+    periodic purge removes them. This gives admins one-click cleanup of the backlog.
+    """
+    rows = (
+        await db.execute(select(Session).where(Session.revoked.is_(False)))
+    ).scalars().all()
+    cfg = load_auth_settings()
+    now = _now()
+    revoked = 0
+    for s in rows:
+        if _session_expired(s, cfg, now):
+            s.revoked = True
+            revoked += 1
+    if revoked:
+        await db.commit()
+    await _audit(db, principal, "access.expired_sessions_revoked", "sessions", {"count": revoked})
+    return {"ok": True, "revoked": revoked}
 
 
 # =================================================================== security policies

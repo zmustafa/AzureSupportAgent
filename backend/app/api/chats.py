@@ -1464,6 +1464,7 @@ async def stream_message(
                         tenant_id=tenant_id,
                         user_id=actor_id,
                         chat_id=chat_id,
+                        provider=chat.provider or turn_provider or None,
                         model=fallback_model,
                         prompt_tokens=usage["prompt_tokens"],
                         completion_tokens=usage["completion_tokens"],

@@ -84,21 +84,21 @@ const PROVIDERS: {
   },
   {
     id: "chatgpt",
-    label: "ChatGPT (Codex OAuth)",
+    label: "ChatGPT OAuth",
     keyLabel: "ChatGPT OAuth token",
     keyHint: "Sign in with your ChatGPT account (browser or paste-URL OAuth)",
     auth: "oauth",
   },
   {
     id: "claude",
-    label: "Claude (Anthropic)",
+    label: "Claude API",
     keyLabel: "Anthropic API key",
     keyHint: "Starts with sk-ant-… (console.anthropic.com)",
     auth: "key",
   },
   {
     id: "claude_oauth",
-    label: "Claude (Pro/Max OAuth)",
+    label: "Claude OAuth",
     keyLabel: "Claude sign-in",
     keyHint: "Sign in with your Claude Pro/Max subscription (browser or paste-code OAuth)",
     auth: "oauth",
@@ -144,7 +144,7 @@ const PROVIDERS: {
 // mirroring the Settings sidebar clusters.
 const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
   { label: "Microsoft / OpenAI", ids: ["openai", "openai_eu", "azure_openai", "azure_foundry", "github", "github_copilot", "chatgpt"] },
-  { label: "Frontier", ids: ["claude", "claude_oauth", "gemini", "grok", "mistral", "openrouter"] },
+  { label: "Other providers", ids: ["claude", "claude_oauth", "gemini", "grok", "mistral", "openrouter"] },
   { label: "Local", ids: ["ollama", "lmstudio"] },
 ];
 
@@ -243,6 +243,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
             <table className="w-full text-sm">
               <thead className="text-left text-gray-500">
                 <tr>
+                  <th className="py-1">Provider</th>
                   <th className="py-1">Model</th>
                   <th>Requests</th>
                   <th>Prompt</th>
@@ -252,7 +253,8 @@ export function AdminPanel({ section }: { section: AdminSection }) {
               </thead>
               <tbody>
                 {usage.data?.map((u) => (
-                  <tr key={u.model} className="border-t">
+                  <tr key={`${u.provider}|${u.model}`} className="border-t">
+                    <td className="py-1">{u.provider ? (PROVIDER_DISPLAY[u.provider] ?? u.provider) : "—"}</td>
                     <td className="py-1 font-mono">{u.model}</td>
                     <td>{u.requests}</td>
                     <td>{u.prompt_tokens}</td>
@@ -265,7 +267,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
                 ))}
                 {usage.data && usage.data.length > 0 && (
                   <tr className="border-t-2 border-gray-300 font-semibold">
-                    <td className="py-1">Total</td>
+                    <td className="py-1" colSpan={2}>Total</td>
                     <td>{usage.data.reduce((a, u) => a + u.requests, 0)}</td>
                     <td>{usage.data.reduce((a, u) => a + u.prompt_tokens, 0)}</td>
                     <td>{usage.data.reduce((a, u) => a + u.completion_tokens, 0)}</td>
@@ -274,7 +276,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
                 )}
                 {usage.data && usage.data.length === 0 && (
                   <tr className="border-t">
-                    <td colSpan={5} className="py-3 text-center text-gray-400">No usage recorded yet.</td>
+                    <td colSpan={6} className="py-3 text-center text-gray-400">No usage recorded yet.</td>
                   </tr>
                 )}
               </tbody>
@@ -3618,6 +3620,9 @@ function AIProviderCard() {
   const qc = useQueryClient();
   const cfg = useQuery({ queryKey: ["llmConfig"], queryFn: api.llmConfig });
   const [active, setActive] = useState<string>("openai");
+  // Collapse not-yet-configured providers behind a "Show all" expander to keep the
+  // rail short — only set-up/active/currently-viewed providers show by default.
+  const [showAllProviders, setShowAllProviders] = useState(false);
   // Per-provider local form state.
   const [forms, setForms] = useState<
     Record<
@@ -3919,24 +3924,38 @@ function AIProviderCard() {
     }
   }
 
-  // Seed local state from server config once loaded.
+  // Seed local state from server config. Runs whenever cfg.data changes (incl. the
+  // optimistic cache write when toggling model visibility), so it must NOT re-seed the
+  // viewed provider or clobber in-progress edits each time.
+  const seededRef = useRef(false);
   useEffect(() => {
     if (!cfg.data) return;
-    setActive(cfg.data.active_provider);
-    const next: Record<
-      string,
-      { model: string; newKey: string; freeOnly: boolean; endpoint: string; apiVersion: string }
-    > = {};
-    for (const [name, p] of Object.entries(cfg.data.providers)) {
-      next[name] = {
-        model: p.model,
-        newKey: "",
-        freeOnly: !!p.free_only,
-        endpoint: p.base_url || "",
-        apiVersion: p.api_version || "",
-      };
+    // `active` (which provider is being viewed) is seeded only ONCE. Re-seeding on every
+    // cfg.data change yanked the admin off the provider they were viewing back to the
+    // global default (e.g. when clicking Hide in the model-visibility panel).
+    if (!seededRef.current) {
+      setActive(cfg.data.active_provider);
+      seededRef.current = true;
     }
-    setForms(next);
+    // Add a form entry for any provider that doesn't have one yet (first load / a newly
+    // added provider), but preserve existing entries so unsaved key/endpoint/model edits
+    // aren't wiped when the config object changes for an unrelated reason.
+    setForms((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [name, p] of Object.entries(cfg.data!.providers)) {
+        if (next[name]) continue;
+        next[name] = {
+          model: p.model,
+          newKey: "",
+          freeOnly: !!p.free_only,
+          endpoint: p.base_url || "",
+          apiVersion: p.api_version || "",
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
   }, [cfg.data]);
 
   async function refreshModels(provider: string, freeOnly?: boolean) {
@@ -4133,62 +4152,97 @@ function AIProviderCard() {
       <div className="flex">
         {/* Provider list */}
         <div className="w-52 shrink-0 space-y-2 border-r p-2">
-          {PROVIDER_GROUPS.map((group) => (
-            <div key={group.label} className="space-y-1">
-              <div className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                {group.label}
-              </div>
-              {group.ids.map((id) => {
-                const p = PROVIDERS.find((x) => x.id === id);
-                if (!p) return null;
-                const isViewing = active === p.id;
-                const isActive = activeProvider === p.id;
-                const hasKey = cfg.data?.providers[p.id]?.has_key;
-                const isDisabled = cfg.data?.providers[p.id]?.disabled;
-                const providerModel = cfg.data?.providers[p.id]?.model;
-                return (
+          {(() => {
+            // A provider is "primary" (always visible) when it's enabled, the global
+            // default, or the one being viewed; disabled/not-set-up providers are tucked
+            // behind "Show all".
+            const isPrimary = (id: string) => {
+              const prov = cfg.data?.providers[id];
+              return (
+                active === id ||
+                activeProvider === id ||
+                (prov ? !prov.disabled : false)
+              );
+            };
+            const hiddenCount = PROVIDERS.filter(
+              (p) => cfg.data?.providers[p.id] && !isPrimary(p.id),
+            ).length;
+            return (
+              <>
+                {PROVIDER_GROUPS.map((group) => {
+                  const shownIds = group.ids.filter((id) => {
+                    if (!cfg.data?.providers[id]) return false;
+                    return showAllProviders || isPrimary(id);
+                  });
+                  if (shownIds.length === 0) return null;
+                  return (
+                    <div key={group.label} className="space-y-1">
+                      <div className="px-3 pt-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        {group.label}
+                      </div>
+                      {shownIds.map((id) => {
+                        const p = PROVIDERS.find((x) => x.id === id);
+                        if (!p) return null;
+                        const isViewing = active === p.id;
+                        const isActive = activeProvider === p.id;
+                        const hasKey = cfg.data?.providers[p.id]?.has_key;
+                        const isDisabled = cfg.data?.providers[p.id]?.disabled;
+                        const providerModel = cfg.data?.providers[p.id]?.model;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => setActive(p.id)}
+                            className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                              isViewing
+                                ? "bg-brand/10 font-medium text-brand"
+                                : "text-gray-700 hover:bg-gray-100"
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className={`block truncate ${isDisabled ? "text-gray-400" : ""}`}>{p.label}</span>
+                              {providerModel && (
+                                <span
+                                  className={`block truncate text-[11px] font-normal ${
+                                    isViewing ? "text-brand/70" : "text-gray-400"
+                                  }`}
+                                  title={`Default model: ${providerModel}`}
+                                >
+                                  {providerModel}
+                                </span>
+                              )}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-1">
+                              {isActive && (
+                                <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
+                                  default
+                                </span>
+                              )}
+                              {isDisabled && (
+                                <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                                  hidden
+                                </span>
+                              )}
+                              {hasKey && !isActive && !isDisabled && (
+                                <span className="text-green-500" title="Configured">●</span>
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                {(hiddenCount > 0 || showAllProviders) && (
                   <button
-                    key={p.id}
-                    onClick={() => setActive(p.id)}
-                    className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                      isViewing
-                        ? "bg-brand/10 font-medium text-brand"
-                        : "text-gray-700 hover:bg-gray-100"
-                    }`}
+                    onClick={() => setShowAllProviders((v) => !v)}
+                    className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
                   >
-                    <span className="min-w-0 flex-1">
-                      <span className={`block truncate ${isDisabled ? "text-gray-400" : ""}`}>{p.label}</span>
-                      {providerModel && (
-                        <span
-                          className={`block truncate text-[11px] font-normal ${
-                            isViewing ? "text-brand/70" : "text-gray-400"
-                          }`}
-                          title={`Default model: ${providerModel}`}
-                        >
-                          {providerModel}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1">
-                      {isActive && (
-                        <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
-                          default
-                        </span>
-                      )}
-                      {isDisabled && (
-                        <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                          hidden
-                        </span>
-                      )}
-                      {hasKey && !isActive && !isDisabled && (
-                        <span className="text-green-500" title="Configured">●</span>
-                      )}
-                    </span>
+                    {showAllProviders ? "Show less" : `Show all (${hiddenCount} more)`}
                   </button>
-                );
-              })}
-            </div>
-          ))}
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Active provider config */}

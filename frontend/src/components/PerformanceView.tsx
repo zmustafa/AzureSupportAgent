@@ -212,6 +212,31 @@ export function PerformancePanel() {
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
+  // --- Heatmap filters (client-side, applied to the loaded run's resources) -------------
+  const [hmPosture, setHmPosture] = useState<"all" | "problems" | "atrisk" | "healthy">("all");
+  const [hmHideNoData, setHmHideNoData] = useState(false);
+  const [hmTypes, setHmTypes] = useState<string[]>([]); // empty = all types
+  const [hmRegion, setHmRegion] = useState("");
+  const [hmScore, setHmScore] = useState<"all" | "crit" | "risk" | "healthy">("all");
+  const [hmSearch, setHmSearch] = useState("");
+  const [hmSort, setHmSort] = useState<"score" | "breaching" | "name">("score");
+  const [hmPrune, setHmPrune] = useState(true);
+  // Popover open-state + refs so the Types dropdown (and the ticket menu) close on an
+  // outside click or Escape — the native <details> didn't, which felt buggy.
+  const [hmTypesOpen, setHmTypesOpen] = useState(false);
+  const hmTypesRef = useRef<HTMLDivElement>(null);
+  const ticketRef = useRef<HTMLDivElement>(null);
+  const hmFiltersActive =
+    hmPosture !== "all" || hmHideNoData || hmTypes.length > 0 || hmRegion !== "" || hmScore !== "all" || hmSearch.trim() !== "";
+  function clearHeatmapFilters() {
+    setHmPosture("all");
+    setHmHideNoData(false);
+    setHmTypes([]);
+    setHmRegion("");
+    setHmScore("all");
+    setHmSearch("");
+  }
+
   const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
   const ticketConnectors = (connectorsQ.data?.connectors ?? []).filter(
@@ -260,6 +285,41 @@ export function PerformancePanel() {
     setData(null);
   }, [scopeKind, effWorkloadId, subId]);
 
+  // Reset the heatmap filters whenever a different run is loaded (or cleared). Without this,
+  // a "Problems" filter set on a degraded run would hide every row when you then view a
+  // healthy run — making it look empty/broken rather than "all healthy".
+  useEffect(() => {
+    setHmPosture("all");
+    setHmHideNoData(false);
+    setHmTypes([]);
+    setHmRegion("");
+    setHmScore("all");
+    setHmSearch("");
+    setHmTypesOpen(false);
+  }, [data?.id]);
+
+  // Close the Types dropdown + ticket menu on an outside click or the Escape key.
+  useEffect(() => {
+    if (!hmTypesOpen && !ticketOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (hmTypesOpen && hmTypesRef.current && !hmTypesRef.current.contains(t)) setHmTypesOpen(false);
+      if (ticketOpen && ticketRef.current && !ticketRef.current.contains(t)) setTicketOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setHmTypesOpen(false);
+        setTicketOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [hmTypesOpen, ticketOpen]);
+
   // Auto-show a run that finished in the background while viewing its scope. Only surfaces
   // completions that happen after this component mounted (older ones stay in the grid only).
   const seenCompletionRef = useRef(Date.now());
@@ -280,19 +340,69 @@ export function PerformancePanel() {
     { v: "P30D", l: "Last 30 days" },
   ];
 
-  const metricCols = useMemo(() => {
-    const seen = new Set<string>();
-    const cols: { metric: string; name: string }[] = [];
-    for (const r of data?.resources ?? []) {
+  // Distinct resource types + regions in the loaded run (for the filter controls).
+  const hmAllTypes = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of data?.resources ?? []) if (!m.has(r.resource_type)) m.set(r.resource_type, r.display);
+    return [...m.entries()].map(([type, display]) => ({ type, display })).sort((a, b) => a.display.localeCompare(b.display));
+  }, [data]);
+  const hmAllRegions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of data?.resources ?? []) if (r.region) s.add(r.region);
+    return [...s].sort();
+  }, [data]);
+
+  const breachCellCount = (r: PerfResourceRow) => r.cells.filter((c) => c.state === "breaching").length;
+
+  // Apply the heatmap filters + sort to the loaded run's resources.
+  const filteredResources = useMemo(() => {
+    let rows = data?.resources ?? [];
+    if (hmPosture === "problems") rows = rows.filter((r) => r.state === "breaching");
+    else if (hmPosture === "atrisk") rows = rows.filter((r) => r.state === "breaching" || r.state === "approaching");
+    else if (hmPosture === "healthy") rows = rows.filter((r) => r.state === "healthy");
+    if (hmHideNoData) rows = rows.filter((r) => r.state !== "no_data");
+    if (hmTypes.length) rows = rows.filter((r) => hmTypes.includes(r.resource_type));
+    if (hmRegion) rows = rows.filter((r) => (r.region || "") === hmRegion);
+    if (hmScore === "crit") rows = rows.filter((r) => r.score < 50);
+    else if (hmScore === "risk") rows = rows.filter((r) => r.score >= 50 && r.score < 80);
+    else if (hmScore === "healthy") rows = rows.filter((r) => r.score >= 80);
+    const q = hmSearch.trim().toLowerCase();
+    if (q) rows = rows.filter((r) => r.resource_name.toLowerCase().includes(q) || r.display.toLowerCase().includes(q) || r.resource_type.toLowerCase().includes(q));
+    const sorted = [...rows];
+    if (hmSort === "score") sorted.sort((a, b) => a.score - b.score || a.resource_name.localeCompare(b.resource_name));
+    else if (hmSort === "breaching") sorted.sort((a, b) => breachCellCount(b) - breachCellCount(a) || a.score - b.score);
+    else sorted.sort((a, b) => a.resource_name.localeCompare(b.resource_name));
+    return sorted;
+  }, [data, hmPosture, hmHideNoData, hmTypes, hmRegion, hmScore, hmSearch, hmSort]);
+
+  // Group the heatmap columns by resource type so the header can show a resource-type band
+  // above the vertical metric labels. metricCols stays a flat, type-ordered list (all of a
+  // type's metrics contiguous) keyed by `${type}|${metric}` so same-named metrics on
+  // different types don't collapse into one column. When "prune empty columns" is on the
+  // columns derive from the FILTERED rows, so hiding rows also drops their now-empty columns.
+  const { metricGroups, metricCols } = useMemo(() => {
+    const source = hmPrune ? filteredResources : (data?.resources ?? []);
+    const order: string[] = [];
+    const map = new Map<string, { type: string; display: string; metrics: { key: string; metric: string; name: string }[] }>();
+    for (const r of source) {
+      let g = map.get(r.resource_type);
+      if (!g) {
+        g = { type: r.resource_type, display: r.display, metrics: [] };
+        map.set(r.resource_type, g);
+        order.push(r.resource_type);
+      }
+      const seen = new Set(g.metrics.map((m) => m.metric));
       for (const c of r.cells) {
         if (!seen.has(c.metric)) {
           seen.add(c.metric);
-          cols.push({ metric: c.metric, name: c.name });
+          g.metrics.push({ key: `${r.resource_type}|${c.metric}`, metric: c.metric, name: c.name });
         }
       }
     }
-    return cols;
-  }, [data]);
+    const groups = order.map((t) => map.get(t)!);
+    const cols = groups.flatMap((g) => g.metrics.map((m) => ({ ...m, type: g.type })));
+    return { metricGroups: groups, metricCols: cols };
+  }, [data, filteredResources, hmPrune]);
 
   function runProfile() {
     if (!enabled || runningHere) return;
@@ -449,19 +559,11 @@ export function PerformancePanel() {
       <div className="border-b bg-white px-5 py-3">
         <div className="flex flex-wrap items-center gap-4">
           <ScoreDonut score={data?.scorecard?.workload_score ?? runs[0]?.workload_score ?? null} />
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-md">
             <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">🔥 Performance Profiler</h1>
             <p className="text-xs text-gray-500">
-              Profile a workload's metrics against its AMBA thresholds to find the binding bottleneck. Runs are kept as history — pick a window and click Run. Read-only.
+              Reads live Azure Monitor metrics for every resource in a workload and lays them out in a single matrix — so you can see the whole workload's performance holistically and spot the binding bottleneck against its AMBA thresholds. Pick a window and click Run. Read-only.
             </p>
-            {data?.scorecard && (
-              <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
-                <span className="text-red-600">{data.scorecard.breaching} breaching</span>
-                <span className="text-amber-600">{data.scorecard.approaching} approaching</span>
-                <span className="text-green-600">{data.scorecard.healthy} healthy</span>
-                <span>· {data.scorecard.resources_profiled} resource(s) profiled</span>
-              </div>
-            )}
           </div>
           {enabled && (
             <div className="flex flex-col gap-0.5">
@@ -507,6 +609,15 @@ export function PerformancePanel() {
             </button>
           </div>
         </div>
+        {data?.scorecard && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <Stat label="Performance score" value={`${data.scorecard.workload_score}`} tone={scoreTone(data.scorecard.workload_score)} />
+            <Stat label="Resources profiled" value={`${data.scorecard.resources_profiled}`} />
+            <Stat label="Breaching" value={`${data.scorecard.breaching}`} tone={data.scorecard.breaching ? "text-red-600" : undefined} />
+            <Stat label="Approaching" value={`${data.scorecard.approaching}`} tone={data.scorecard.approaching ? "text-amber-600" : undefined} />
+            <Stat label="Healthy" value={`${data.scorecard.healthy}`} tone="text-green-600" />
+          </div>
+        )}
         {runningHere && runningEntry?.lastResource && (
           <div className="mt-1 truncate text-[11px] text-gray-500">profiling… {runningEntry.lastResource}</div>
         )}
@@ -634,14 +745,6 @@ export function PerformancePanel() {
               </div>
             )}
 
-            <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-              <Stat label="Performance score" value={`${data.scorecard.workload_score}`} tone={scoreTone(data.scorecard.workload_score)} />
-              <Stat label="Resources profiled" value={`${data.scorecard.resources_profiled}`} />
-              <Stat label="Breaching" value={`${data.scorecard.breaching}`} tone={data.scorecard.breaching ? "text-red-600" : undefined} />
-              <Stat label="Approaching" value={`${data.scorecard.approaching}`} tone={data.scorecard.approaching ? "text-amber-600" : undefined} />
-              <Stat label="Healthy" value={`${data.scorecard.healthy}`} tone="text-green-600" />
-            </div>
-
             {/* Sub-tabs: the metric heatmap vs the full in-scope resource list */}
             <div className="mb-3 flex gap-1 border-b">
               {([
@@ -667,57 +770,8 @@ export function PerformancePanel() {
               <AllResourcesTab resources={data.all_resources ?? []} />
             ) : (
             <>
-            <div className="mb-2 flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-gray-900">Heatmap — resources × AMBA metrics</h2>
-              <span className="text-[11px] text-gray-400">cell = % of its AMBA threshold</span>
-              <button onClick={registerFindings} disabled={busy === "findings" || (data.bottlenecks ?? []).length === 0} className="ml-auto rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">🛡️ Register findings</button>
-            </div>
-
-            <div className="overflow-x-auto rounded-lg border bg-white">
-              <table className="w-full text-[12px]">
-                <thead className="bg-gray-50 text-left text-gray-500">
-                  <tr>
-                    <th className="sticky left-0 bg-gray-50 px-2 py-2">Resource</th>
-                    <th className="px-2 py-2">Score</th>
-                    {metricCols.map((c) => (
-                      <th key={c.metric} className="px-2 py-2 text-center" title={c.metric}>{c.name}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.resources.map((r) => {
-                    const byMetric: Record<string, PerfMetricCell> = {};
-                    for (const c of r.cells) byMetric[c.metric] = c;
-                    return (
-                      <tr key={r.resource_id} className="cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
-                        <td className="sticky left-0 bg-white px-2 py-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`inline-block h-2 w-2 rounded-full ${STATE_TONE[r.state]}`} />
-                            <span className="font-medium text-gray-800">{r.resource_name}</span>
-                          </div>
-                          <div className="text-[10px] text-gray-400">{r.display}</div>
-                        </td>
-                        <td className={`px-2 py-1.5 font-semibold ${scoreTone(r.score)}`}>{r.score}</td>
-                        {metricCols.map((mc) => {
-                          const cell = byMetric[mc.metric];
-                          if (!cell) return <td key={mc.metric} className="px-2 py-1.5 text-center text-gray-200">·</td>;
-                          return (
-                            <td key={mc.metric} className="px-1 py-1 text-center">
-                              <span className={`inline-block min-w-[44px] rounded border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit}`}>
-                                {cell.pct_of_threshold != null ? `${cell.pct_of_threshold}%` : cell.state === "no_data" ? "—" : "ok"}
-                              </span>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
             {(data.bottlenecks ?? []).length > 0 && (
-              <div className="mt-6">
+              <div className="mb-6">
                 <h2 className="mb-2 text-sm font-semibold text-gray-900">Ranked bottlenecks</h2>
                 <div className="space-y-1.5">
                   {data.bottlenecks.slice(0, 12).map((b, i) => (
@@ -730,7 +784,7 @@ export function PerformancePanel() {
                       <div className="ml-auto flex gap-1.5">
                         <button onClick={() => investigate(b)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">🔎 War Room</button>
                         {i === 0 && (
-                          <div className="relative">
+                          <div className="relative" ref={ticketRef}>
                             <button onClick={() => setTicketOpen(!ticketOpen)} disabled={ticketConnectors.length === 0} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50 disabled:opacity-50">🎫 Ticket</button>
                             {ticketOpen && (
                               <div className="absolute right-0 z-10 mt-1 w-48 rounded-md border bg-white shadow-lg">
@@ -747,6 +801,198 @@ export function PerformancePanel() {
                 </div>
               </div>
             )}
+
+            {/* Sticky bounded panel: toolbar (always visible) + internally-scrolling table.
+                Because they live in one flex column, the sticky table header always pins
+                directly below the toolbar regardless of browser zoom (no magic offset). */}
+            <div className="sticky top-0 z-30 flex max-h-[82vh] min-h-[420px] flex-col">
+            <div className="shrink-0 border-b bg-white pb-2 pt-1">
+            <div className="mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-900">Heatmap — resources × AMBA metrics</h2>
+              <span className="text-[11px] text-gray-400">cell = % of its AMBA threshold</span>
+              <button onClick={registerFindings} disabled={busy === "findings" || (data.bottlenecks ?? []).length === 0} className="ml-auto rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">🛡️ Register findings</button>
+            </div>
+
+            {/* Heatmap filter toolbar */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {/* Posture segmented chips */}
+              <div className="inline-flex overflow-hidden rounded-md border">
+                {([
+                  ["all", "All"],
+                  ["problems", "Problems"],
+                  ["atrisk", "At-risk"],
+                  ["healthy", "Healthy"],
+                ] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => setHmPosture(id)}
+                    className={`px-2.5 py-1 font-medium transition ${hmPosture === id ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Resource-type multiselect (controlled so it closes on outside click / Esc) */}
+              <div className="relative" ref={hmTypesRef}>
+                <button
+                  type="button"
+                  onClick={() => setHmTypesOpen((v) => !v)}
+                  className="flex cursor-pointer items-center gap-1 rounded-md border bg-white px-2.5 py-1 hover:bg-gray-50"
+                >
+                  <span className="text-gray-600">Types</span>
+                  {hmTypes.length > 0 && <span className="rounded bg-brand/10 px-1.5 text-[10px] font-medium text-brand">{hmTypes.length}</span>}
+                  <span className="text-gray-400">▾</span>
+                </button>
+                {hmTypesOpen && (
+                <div className="absolute z-50 mt-1 max-h-72 w-60 overflow-auto rounded-md border bg-white p-1.5 shadow-lg">
+                  {hmAllTypes.length === 0 ? (
+                    <div className="px-2 py-1 text-gray-400">No types</div>
+                  ) : (
+                    hmAllTypes.map((t) => (
+                      <label key={t.type} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-gray-50">
+                        <input
+                          type="checkbox"
+                          checked={hmTypes.includes(t.type)}
+                          onChange={(e) => setHmTypes((prev) => (e.target.checked ? [...prev, t.type] : prev.filter((x) => x !== t.type)))}
+                        />
+                        <span className="text-gray-700">{t.display}</span>
+                      </label>
+                    ))
+                  )}
+                  {hmTypes.length > 0 && (
+                    <button onClick={() => setHmTypes([])} className="mt-1 w-full rounded border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear types</button>
+                  )}
+                </div>
+                )}
+              </div>
+
+              {/* Region */}
+              {hmAllRegions.length > 1 && (
+                <select value={hmRegion} onChange={(e) => setHmRegion(e.target.value)} className="rounded-md border bg-white px-2 py-1 text-gray-600">
+                  <option value="">All regions</option>
+                  {hmAllRegions.map((rg) => (
+                    <option key={rg} value={rg}>{rg}</option>
+                  ))}
+                </select>
+              )}
+
+              {/* Score bucket */}
+              <select value={hmScore} onChange={(e) => setHmScore(e.target.value as typeof hmScore)} className="rounded-md border bg-white px-2 py-1 text-gray-600">
+                <option value="all">Any score</option>
+                <option value="crit">Critical &lt;50</option>
+                <option value="risk">At-risk 50–79</option>
+                <option value="healthy">Healthy 80–100</option>
+              </select>
+
+              {/* Sort */}
+              <select value={hmSort} onChange={(e) => setHmSort(e.target.value as typeof hmSort)} className="rounded-md border bg-white px-2 py-1 text-gray-600">
+                <option value="score">Sort: worst score</option>
+                <option value="breaching">Sort: most breaching</option>
+                <option value="name">Sort: name</option>
+              </select>
+
+              {/* Search */}
+              <input
+                value={hmSearch}
+                onChange={(e) => setHmSearch(e.target.value)}
+                placeholder="Search resource…"
+                className="w-40 rounded-md border bg-white px-2 py-1 text-gray-700 placeholder:text-gray-400"
+              />
+
+              {/* Hide no-data toggle */}
+              <label className="inline-flex items-center gap-1.5 text-gray-600">
+                <input type="checkbox" checked={hmHideNoData} onChange={(e) => setHmHideNoData(e.target.checked)} />
+                Hide no-data
+              </label>
+
+              {/* Prune empty columns toggle */}
+              <label className="inline-flex items-center gap-1.5 text-gray-600" title="Drop metric columns that have no values in the filtered rows">
+                <input type="checkbox" checked={hmPrune} onChange={(e) => setHmPrune(e.target.checked)} />
+                Trim empty columns
+              </label>
+
+              {/* Result counter + clear */}
+              <span className="ml-auto text-gray-400">
+                Showing {filteredResources.length} of {data.resources.length} resource(s)
+              </span>
+              {hmFiltersActive && (
+                <button onClick={clearHeatmapFilters} className="rounded border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
+              )}
+            </div>
+            </div>
+
+            {filteredResources.length === 0 ? (
+              <div className="mt-2 flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed bg-white py-12 text-center text-sm text-gray-400">
+                <div>No resources match the current filters.</div>
+                {hmFiltersActive && (
+                  <button onClick={clearHeatmapFilters} className="mt-2 rounded border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
+                )}
+              </div>
+            ) : (
+            <div className="mt-2 min-h-0 flex-1 overflow-auto rounded-lg border bg-white">
+              <table className="w-full text-[12px]">
+                <thead className="bg-gray-50 text-left text-gray-500">
+                  <tr>
+                    <th rowSpan={2} className="sticky left-0 top-0 z-30 bg-gray-50 px-2 align-bottom py-2">Resource</th>
+                    <th rowSpan={2} className="sticky top-0 z-20 bg-gray-50 px-2 align-bottom py-2">Score</th>
+                    {metricGroups.map((g) => (
+                      <th key={g.type} colSpan={g.metrics.length} className="sticky top-0 z-20 box-border h-[26px] truncate border-l border-gray-200 bg-gray-100 px-1 py-1 text-center text-[10px] font-semibold text-gray-600" title={g.type}>
+                        {g.display}
+                      </th>
+                    ))}
+                    {/* spacer soaks up slack width (so Resource/Score don't stretch) */}
+                    <th rowSpan={2} className="sticky top-0 z-20 w-full min-w-[16px] bg-gray-50" aria-hidden="true" />
+                  </tr>
+                  <tr>
+                    {metricCols.map((c, i) => {
+                      const firstInGroup = i === 0 || metricCols[i - 1].type !== c.type;
+                      return (
+                        <th key={c.key} className={`sticky top-[26px] z-20 h-[176px] w-[34px] min-w-[34px] bg-gray-50 p-0 align-bottom ${firstInGroup ? "border-l border-gray-200" : ""}`} title={c.metric}>
+                          <div className="flex h-full items-end justify-center pb-1.5">
+                            <span className="[writing-mode:vertical-rl] rotate-180 whitespace-nowrap text-[10px] font-normal leading-none text-gray-500">{c.name}</span>
+                          </div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredResources.map((r) => {
+                    const byKey: Record<string, PerfMetricCell> = {};
+                    for (const c of r.cells) byKey[`${r.resource_type}|${c.metric}`] = c;
+                    return (
+                      <tr key={r.resource_id} className="cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
+                        <td className="sticky left-0 z-10 max-w-[220px] bg-white px-2 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${STATE_TONE[r.state]}`} />
+                            <span className="truncate font-medium text-gray-800" title={r.resource_name}>{r.resource_name}</span>
+                          </div>
+                          <div className="truncate text-[10px] text-gray-400">{r.display}</div>
+                        </td>
+                        <td className={`px-2 py-1.5 font-semibold ${scoreTone(r.score)}`}>{r.score}</td>
+                        {metricCols.map((mc, i) => {
+                          const firstInGroup = i === 0 || metricCols[i - 1].type !== mc.type;
+                          const border = firstInGroup ? "border-l border-gray-100" : "";
+                          const cell = byKey[mc.key];
+                          if (!cell) return <td key={mc.key} className={`px-2 py-1.5 text-center text-gray-200 ${border}`}>·</td>;
+                          return (
+                            <td key={mc.key} className={`px-1 py-1 text-center ${border}`}>
+                              <span className={`inline-block min-w-[38px] rounded border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit}`}>
+                                {cell.pct_of_threshold != null ? `${cell.pct_of_threshold}%` : cell.state === "no_data" ? "—" : "ok"}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td aria-hidden="true" className="w-full" />
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            )}
+            </div>
             </>
             )}
           </>

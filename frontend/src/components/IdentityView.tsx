@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   api,
@@ -103,7 +103,6 @@ function IdentityFindingsPanel() {
   const [sevFilter, setSevFilter] = useState("all");
   const [mappedOnly, setMappedOnly] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<IdentityGroupKey>>(new Set());
-  const [refreshing, setRefreshing] = useState(false);
   const [ticketFor, setTicketFor] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
@@ -119,16 +118,26 @@ function IdentityFindingsPanel() {
 
   const data = overviewQ.data;
 
-  async function doRefresh() {
-    setRefreshing(true);
-    try {
-      const fresh = await api.refreshIdentity(days);
-      qc.setQueryData(["identity", days], fresh);
-    } catch (e) {
-      setMsg({ id: "refresh", text: formatError(e), ok: false });
-    } finally {
-      setRefreshing(false);
-    }
+  // The force re-scan (slow EntraID/Graph collect) runs as a React Query MUTATION rather
+  // than a local useState flag, so its in-flight status survives navigating away and back:
+  // the mutation lives in the MutationCache (not the component), and useIsMutating reads it.
+  // The cache write happens INSIDE the mutationFn so a result still lands if the user is on
+  // another screen when the scan finishes.
+  const refreshMutation = useMutation({
+    mutationKey: ["identity-refresh", days],
+    mutationFn: async (d: number) => {
+      const fresh = await api.refreshIdentity(d);
+      qc.setQueryData(["identity", d], fresh);
+      return fresh;
+    },
+    onError: (e) => setMsg({ id: "refresh", text: formatError(e), ok: false }),
+  });
+  // In-flight refresh for the CURRENT day window — survives unmount/remount.
+  const refreshing = useIsMutating({ mutationKey: ["identity-refresh", days] }) > 0;
+
+  function doRefresh() {
+    if (refreshing) return; // re-entrancy guard (buttons are also disabled while busy)
+    refreshMutation.mutate(days);
   }
 
   function applyCustom() {
@@ -350,7 +359,7 @@ function IdentityFindingsPanel() {
           </div>
         ) : (
           <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
-            {msg && (
+            {msg && msg.id === "refresh" && (
               <div
                 className={`rounded-lg border p-2 text-xs ${
                   msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"
@@ -470,6 +479,15 @@ function IdentityFindingsPanel() {
                                 🔎 Investigate
                               </button>
                             </div>
+                            {msg && msg.id === f.id && (
+                              <div
+                                className={`basis-full text-right text-[11px] font-medium ${
+                                  msg.ok ? "text-green-700" : "text-red-600"
+                                }`}
+                              >
+                                {msg.text}
+                              </div>
+                            )}
                           </div>
                         ))
                       )}

@@ -15,6 +15,7 @@ from typing import Any
 from app.amba.reference import load_reference
 from app.demo_catalog import CONTOSO_ID, resources_for
 from app.perfprofile.collector import compute_profile
+from app.perfprofile.collector import _series_key
 
 DEMO_WORKLOAD_ID = CONTOSO_ID  # default demo scope used by the API when none is supplied
 
@@ -92,7 +93,7 @@ def demo_metrics_by_resource(scope_id: str = CONTOSO_ID) -> dict[str, dict[str, 
         series_map: dict[str, list[dict[str, Any]]] = {}
         for i, a in enumerate(alerts):
             state = headline_state if i == headline else "healthy"
-            series_map[a["metric"]] = _value_series(state, a, res["type"])
+            series_map[_series_key(a)] = _value_series(state, a, res["type"])
         out[res["id"].lower()] = series_map
     return out
 

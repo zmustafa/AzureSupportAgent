@@ -56,6 +56,84 @@ def test_count_metric_no_threshold_breaches_on_nonzero():
     assert cell["state"] == STATE_BREACHING
 
 
+def test_dimension_filtered_error_count_empty_is_healthy():
+    """A status-code-split error count (e.g. Storage Transactions → 403) returns an EMPTY
+    series when zero such errors occurred — that's the healthy case, not no-data."""
+    rec = {"key": "stor_auth_failures", "metric": "Transactions", "name": "Authorization failures (403)",
+           "amba_category": "security", "severity": "error", "unit": "count", "operator": "GreaterThan",
+           "threshold": 0, "dimension_filter": "ResponseType eq 'AuthorizationError'"}
+    # No data at all (the dimension value never appeared) → healthy 0, not no-data.
+    cell = _evaluate_metric(rec, "microsoft.storage/storageaccounts", [])
+    assert cell["state"] == STATE_HEALTHY
+    assert cell["observed"] == 0.0
+    # A nonzero 403 count still breaches.
+    cell2 = _evaluate_metric(rec, "microsoft.storage/storageaccounts", _flat(0, 4))
+    assert cell2["state"] == STATE_BREACHING
+
+
+def test_managed_disk_in_reference():
+    from app.amba.reference import load_reference
+
+    ref = load_reference()
+    spec = ref["types"].get("microsoft.compute/disks")
+    assert spec is not None
+    metrics = {a["metric"] for a in spec["alerts"]}
+    assert {"Disk IOPS saturation", "Disk throughput saturation"} <= metrics
+
+
+def test_parse_combined_series_sums_metrics():
+    import json
+
+    from app.perfprofile.collector import _parse_combined_series
+
+    blob = json.dumps({"value": [
+        {"timeseries": [{"data": [{"timeStamp": "t1", "average": 100.0}, {"timeStamp": "t2", "average": 120.0}]}]},
+        {"timeseries": [{"data": [{"timeStamp": "t1", "average": 80.0}, {"timeStamp": "t2", "average": 100.0}]}]},
+    ]})
+    out = _parse_combined_series(blob)
+    assert out == [{"timestamp": "t1", "value": 180.0}, {"timestamp": "t2", "value": 220.0}]
+
+
+def test_disk_saturation_series_percentage_of_provisioned():
+    import asyncio
+    import json
+
+    from app.perfprofile.collector import DISK_BW_SAT, DISK_IOPS_SAT, _disk_saturation_series
+
+    class _Cap:
+        def __init__(self, ok, out):
+            self.ok, self.stdout = ok, out
+
+    async def fake_capture(rid, metrics, conn, **kw):
+        # read 180 + write 40 = 220 (for both ops and bytes calls)
+        return _Cap(True, json.dumps({"value": [
+            {"timeseries": [{"data": [{"timeStamp": "t1", "average": 180.0}]}]},
+            {"timeseries": [{"data": [{"timeStamp": "t1", "average": 40.0}]}]},
+        ]}))
+
+    res = {"id": "/disk", "type": "microsoft.compute/disks", "provisioned_iops": 240, "provisioned_mbps": 50}
+
+    async def run():
+        return await _disk_saturation_series(
+            res, None, interval="PT5M", start="", end="",
+            sem_lock=asyncio.Semaphore(1), run_metrics_capture=fake_capture,
+        )
+
+    out = asyncio.new_event_loop().run_until_complete(run())
+    # 220 IOPS / 240 provisioned = 91.67%
+    assert out[DISK_IOPS_SAT][0]["value"] == 91.67
+    # 220 bytes/sec is negligible vs 50 MB/sec → ~0%
+    assert out[DISK_BW_SAT][0]["value"] == 0.0
+
+
+def test_demo_disk_breaches_iops():
+    snap = build_demo_snapshot()
+    disks = [r for r in snap["resources"] if str(r.get("resource_type", "")).lower() == "microsoft.compute/disks"]
+    assert disks, "demo should include a managed disk"
+    cells = {c["name"]: c["state"] for c in disks[0]["cells"]}
+    assert cells.get("Disk IOPS saturation high") == STATE_BREACHING
+
+
 def test_trend_detected():
     rec = {"key": "k", "metric": "serverLoad", "name": "Load", "amba_category": "performance",
            "severity": "warning", "unit": "%", "operator": "GreaterThan", "threshold": 90}

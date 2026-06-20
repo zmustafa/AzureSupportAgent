@@ -142,6 +142,7 @@ class Usage(Base):
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
     user_id: Mapped[str] = mapped_column(String(128), index=True)
     chat_id: Mapped[str] = mapped_column(String(36), index=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str] = mapped_column(String(128))
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)

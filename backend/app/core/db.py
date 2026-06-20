@@ -90,6 +90,9 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         "completeness_pct": "INTEGER",
         "confidence": "VARCHAR(8)",
     },
+    "usage": {
+        "provider": "VARCHAR(64)",
+    },
 }
 
 
