@@ -198,7 +198,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
   }, []);
 
   const follow = useCallback(
-    async (missionId: string) => {
+    async (missionId: string, quiet = false) => {
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
@@ -221,7 +221,10 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
             historyQ.refetch();
           },
           onError: (msg) => {
-            setErr(msg);
+            // A reconnect is best-effort: if the mission can no longer be streamed (it
+            // finished and aged out, or was reaped after a restart) just stop quietly —
+            // don't flash a scary "Mission not found." banner over a healthy board.
+            if (!quiet) setErr(msg);
             setRunning(false);
           },
         },
@@ -287,7 +290,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
         if (!cancelled && latest && (latest.status === "running" || latest.status === "queued")) {
           setActive(latest);
           mergeMissionSystems(latest.systems);
-          void follow(latest.id);
+          void follow(latest.id, true);
         }
       })
       .catch(() => {});

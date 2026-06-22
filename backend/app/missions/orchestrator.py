@@ -158,7 +158,17 @@ class _Manager:
         """SSE generator: emit a snapshot then live deltas until the mission ends."""
         m = self.get_live(mission_id, tenant_id)
         if m is None:
-            yield {"event": "error", "data": _json({"message": "Mission not found."})}
+            # Not live in this process. It either finished and aged out of the in-memory
+            # retain window, or it was orphaned by a server restart (the driving task died
+            # but the DB row may still read running/queued). Fall back to the durable DB
+            # record and emit a final snapshot instead of a bare "Mission not found." — a
+            # reconnect should show the mission's last persisted state, not a scary error.
+            snap = await get_mission(mission_id, tenant_id)
+            if snap is None:
+                yield {"event": "error", "data": _json({"message": "Mission not found."})}
+                return
+            yield {"event": "snapshot", "data": _json(snap)}
+            yield {"event": "done", "data": _json(snap)}
             return
         q: asyncio.Queue = asyncio.Queue()
         m.subscribers.add(q)
@@ -496,6 +506,35 @@ async def list_missions(tenant_id: str, workload_id: str | None = None, limit: i
         stmt = stmt.order_by(MissionRun.started_at.desc()).limit(limit)
         rows = (await db.execute(stmt)).scalars().all()
     return [_row_public(r) for r in rows]
+
+
+async def reap_orphaned_missions() -> int:
+    """Fail any missions left ``queued``/``running`` by a previous process.
+
+    A mission only advances inside a live in-process task (the in-memory ``_Manager``);
+    once the process exits, an in-flight mission can never resume, so a row stuck at
+    ``running``/``queued`` is an orphan. If left as-is the board's reconnect-on-mount sees
+    that stale "running" row, tries to follow its (now non-existent) live stream, and the
+    user gets a spurious "Mission not found." Called once at startup so history never shows
+    a mission as perpetually in progress and the board never tries to resume a dead run.
+    Returns the number of missions reaped."""
+    from sqlalchemy import update
+
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    async with SessionLocal() as db:
+        result = await db.execute(
+            update(MissionRun)
+            .where(MissionRun.status.in_(("queued", "running")))
+            .values(
+                status="failed",
+                error="Interrupted by a server restart before completion.",
+                ended_at=_now(),
+            )
+        )
+        await db.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def get_mission(mission_id: str, tenant_id: str) -> dict[str, Any] | None:

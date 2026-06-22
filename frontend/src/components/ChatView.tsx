@@ -6103,6 +6103,12 @@ function useMermaidRender(code: string): { svg: string; error: string } {
             securityLevel: "strict", // sanitize labels/links — never inject raw HTML
             theme: "neutral",
             fontFamily: "inherit",
+            // Render node/edge labels as native SVG <text> (not HTML <foreignObject>).
+            // We sanitize the output with DOMPurify's SVG profile below, which strips
+            // <foreignObject>'s XHTML content — that would leave the shapes but BLANK out
+            // every label. SVG <text> labels survive the SVG-profile sanitize intact.
+            htmlLabels: false,
+            flowchart: { htmlLabels: false },
           });
           // `render` validates + produces SVG without touching the DOM tree we control.
           const { svg: out } = await mermaid.render(renderId, trimmed);

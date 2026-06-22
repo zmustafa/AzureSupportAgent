@@ -143,6 +143,54 @@ def test_state_board_without_running(tmp_path, monkeypatch):
     assert by["telemetry"]["status"] == "idle"
 
 
+# ------------------------------------------------------- orphan reaper + reconnect
+def test_reap_orphaned_missions(tmp_path, monkeypatch):
+    """A mission left running/queued by a dead process is reaped to a terminal state so the
+    board's reconnect never tries to follow a non-existent live stream."""
+    Session = _patch_env(monkeypatch, tmp_path, [_fake_system("monitoring")])
+
+    async def seed_and_reap():
+        async with Session() as db:
+            db.add(MissionRun(id="orphan-run", tenant_id="t1", workload_id="w1", status="running"))
+            db.add(MissionRun(id="orphan-queued", tenant_id="t1", workload_id="w1", status="queued"))
+            db.add(MissionRun(id="done-run", tenant_id="t1", workload_id="w1", status="succeeded"))
+            await db.commit()
+        reaped = await orch.reap_orphaned_missions()
+        async with Session() as db:
+            orphan = await db.get(MissionRun, "orphan-run")
+            queued = await db.get(MissionRun, "orphan-queued")
+            done = await db.get(MissionRun, "done-run")
+        return reaped, orphan, queued, done
+
+    reaped, orphan, queued, done = asyncio.run(seed_and_reap())
+    assert reaped == 2  # only the two non-terminal rows
+    assert orphan.status == "failed" and orphan.error and orphan.ended_at is not None
+    assert queued.status == "failed"
+    assert done.status == "succeeded"  # terminal rows are untouched
+
+
+def test_stream_falls_back_to_db_when_not_live(tmp_path, monkeypatch):
+    """Reconnecting to a mission that isn't live in this process (finished + evicted, or
+    orphaned by a restart) emits the DB snapshot + done — NOT a 'Mission not found.' error."""
+    Session = _patch_env(monkeypatch, tmp_path, [_fake_system("monitoring")])
+
+    async def go():
+        async with Session() as db:
+            db.add(MissionRun(id="past-run", tenant_id="t1", workload_id="w1",
+                              workload_name="WL", status="succeeded", readiness="go"))
+            await db.commit()
+        # past-run is NOT in manager._missions (simulating an evicted/orphaned mission).
+        events = [ev async for ev in orch.manager.stream("past-run", "t1")]
+        # A genuinely unknown id still errors.
+        missing = [ev async for ev in orch.manager.stream("nope", "t1")]
+        return events, missing
+
+    events, missing = asyncio.run(go())
+    kinds = [e["event"] for e in events]
+    assert kinds == ["snapshot", "done"] and "error" not in kinds
+    assert [e["event"] for e in missing] == ["error"]
+
+
 # --------------------------------------------------------------------- scheduler target
 def test_mission_target_validate_and_label():
     from app.automations.targets import get_target

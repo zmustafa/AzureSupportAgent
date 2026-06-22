@@ -156,6 +156,17 @@ async def _startup() -> None:
             logging.getLogger("app.main").info("Reaped %d orphaned assessment run(s)", reaped)
     except Exception:  # noqa: BLE001
         logging.getLogger("app.main").warning("Assessment orphan reaper failed", exc_info=True)
+    # Same orphan problem for Mission Control: a mission left 'queued'/'running' by a previous
+    # process can't resume, and the board's reconnect-on-mount would otherwise try to follow its
+    # dead stream and surface a spurious "Mission not found." Reap them to a terminal state.
+    from app.missions.orchestrator import reap_orphaned_missions
+
+    try:
+        reaped_missions = await reap_orphaned_missions()
+        if reaped_missions:
+            logging.getLogger("app.main").info("Reaped %d orphaned mission(s)", reaped_missions)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app.main").warning("Mission orphan reaper failed", exc_info=True)
     # Seed the curated starter sub-agents (a full Azure troubleshooting team) on first run,
     # then backfill categories. Both idempotent (seed only when the registry is empty).
     from app.automations.agents import seed_categories, seed_if_empty
