@@ -264,6 +264,14 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_COLS));
   const [picked, setPicked] = useState<Set<string>>(new Set()); // bulk selection (resource ids)
 
+  // Deep-link handoff: when opened from the Estate Graph ("Inventory →") with
+  // `?workload_id=`, pre-select that workload facet so the grid is scoped to it on arrival.
+  useEffect(() => {
+    const wid = new URLSearchParams(window.location.search).get("workload_id");
+    if (wid) { setScope("workloads"); setWlSel(new Set([wid])); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Cost overlay (Theme 4). Auto-restores the SERVER-cached cost on mount (cached_only never
   // runs the slow Azure query); "Load cost" / "Refresh cost" run the full/forced query. Shared
   // by the grid's Cost (30d) column and the Cost tab (which rolls it up over the filtered set).

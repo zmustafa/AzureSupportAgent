@@ -181,3 +181,32 @@ def test_dedupe_collapses_repeats():
     )
     sub_nodes = [n for n in g["nodes"] if n["kind"] == "subscription"]
     assert len(sub_nodes) == 1
+
+
+# --------------------------------------------------------------------- view prefs (per-tenant)
+def test_view_prefs_default_set_and_isolation(monkeypatch, tmp_path):
+    """Per-tenant graph layout prefs: default Organic, persist a choice, fall back on bad input,
+    and keep tenants isolated. Isolated to tmp_path so it never touches the real .data store."""
+    from app.graph import prefs
+
+    monkeypatch.setattr(prefs, "_PATH", tmp_path / "graph_prefs.json")
+
+    # Unknown tenant → default Organic.
+    assert prefs.get_prefs("tenant-a")["layout"] == "organic"
+
+    # Persist a valid choice, read it back.
+    assert prefs.set_prefs("tenant-a", layout="hierarchy")["layout"] == "hierarchy"
+    assert prefs.get_prefs("tenant-a")["layout"] == "hierarchy"
+
+    # A different tenant is unaffected (still default).
+    assert prefs.get_prefs("tenant-b")["layout"] == "organic"
+
+    # Invalid layout falls back to the default.
+    assert prefs.set_prefs("tenant-b", layout="nonsense")["layout"] == "organic"
+
+    # Tenant key is case-insensitive + blank → "default" bucket.
+    prefs.set_prefs("TENANT-A", layout="concentric")
+    assert prefs.get_prefs("tenant-a")["layout"] == "concentric"
+    assert prefs.set_prefs("", layout="hierarchy")["layout"] == "hierarchy"
+    assert prefs.get_prefs("")["layout"] == "hierarchy"
+

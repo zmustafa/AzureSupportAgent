@@ -319,6 +319,15 @@ function AccessGrid({ tab }: { tab: string }) {
   const [privOnly, setPrivOnly] = useState(false);
   const [filter, setFilter] = useState<AccessFilter | null>(null);
   const connectionId = useRbacConnectionId();
+
+  // Deep-link handoff: opened from the Estate Graph ("RBAC →") with `?workload_id=` (and an
+  // optional `?workload_name=` for the chip label) → scope the access grid to that workload.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const wid = params.get("workload_id");
+    if (wid) setFilter({ type: "workload", label: params.get("workload_name") || wid, workload_id: wid });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const q = useQuery({
     queryKey: ["rbac", "access", tab, search, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
     queryFn: () =>

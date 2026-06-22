@@ -34,6 +34,9 @@ uvicorn.err.log
 # --- Internal / non-distributable assets -------------------------------------
 sap.txt
 
+# Personal build/deploy runbook (operational notes, invoked as a skill — not product code).
+DEPLOY_RUNBOOK.md
+
 # Spreadsheets (workbooks, exports, scratch) — not distributable.
 *.xlsx
 

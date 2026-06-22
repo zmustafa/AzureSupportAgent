@@ -53,10 +53,14 @@ def _resolve(connection_id: str | None) -> tuple[dict[str, Any] | None, str]:
 def _load_inventory(tenant_id: str, connection_id_param: str | None, resolved_cid: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Read inventory resources from the server cache without ever scanning Azure.
 
-    Inventory is keyed ``(principal.tenant_id | connection_id)`` where ``connection_id`` is the
-    raw query param the Inventory page used. We try the resolved connection id, the raw param,
-    and the legacy empty key so the graph reuses whatever the user last scanned."""
-    for cid in _dedupe_keep_order([resolved_cid, connection_id_param or "", ""]):
+    Inventory is keyed ``(principal.tenant_id | connection_id)``. We try the resolved
+    connection id and the raw query param ONLY — never the legacy empty-connection key,
+    which could surface a DIFFERENT connection's resources (a cross-tenant leak). If the
+    selected connection has no cached inventory, resources come back empty and the graph
+    reports 'inventory not scanned'."""
+    for cid in _dedupe_keep_order([resolved_cid, connection_id_param or ""]):
+        if not cid:
+            continue
         hit = inv_cache.get(tenant_id, cid)
         if hit and hit.get("payload"):
             payload = hit["payload"]
@@ -150,6 +154,47 @@ def _connection_public(conn: dict[str, Any] | None, cid: str) -> dict[str, Any]:
     return {"id": cid or "default", "display_name": "No Azure connection", "tenant_id": "", "status": "unconfigured", "is_default": False}
 
 
+def _scoped_workloads(cid: str, *, include_deleted: bool = False) -> list[dict[str, Any]]:
+    """Workloads belonging to the SELECTED connection.
+
+    A named connection NEVER shows another connection's workloads — this is the
+    cross-tenant leak fix (selecting tenant A previously showed tenant B's workloads,
+    because the registry list is global). Connection-less workloads (demo / unassigned,
+    e.g. the seeded Contoso/Zava demos) carry no estate identity, so they're shown under
+    every connection rather than vanishing entirely. When no connection resolves (cid
+    empty) everything is returned (single-tenant / unconfigured fallback)."""
+    from app.workloads.registry import list_workloads
+
+    wls = list_workloads(include_deleted=include_deleted)
+    if not cid:
+        return wls
+    return [w for w in wls if (w.get("connection_id") or "") in ("", cid)]
+
+
+def _scoped_architectures(tenant_id: str, cid: str) -> list[dict[str, Any]]:
+    """Architectures for the principal tenant, further scoped to the SELECTED connection.
+
+    Same rationale as ``_scoped_workloads``: ``list_architectures(tenant_id)`` only filters
+    by the *principal* tenant (e.g. ``default``), so without this every connection showed the
+    same architecture set. Connection-less architectures are shown everywhere."""
+    from app.architectures.registry import list_architectures
+
+    archs = list_architectures(tenant_id)
+    if not cid:
+        return archs
+    return [a for a in archs if (a.get("connection_id") or "") in ("", cid)]
+
+
+def _workload_in_scope(workload: dict[str, Any] | None, cid: str) -> bool:
+    """True if a single workload belongs to the selected connection (or is connection-less).
+    Guards the single-workload build/node/drift paths against cross-connection access."""
+    if workload is None:
+        return False
+    if not cid:
+        return True
+    return (workload.get("connection_id") or "") in ("", cid)
+
+
 # --------------------------------------------------------------------- overview
 @router.get("/overview")
 async def overview(
@@ -158,15 +203,12 @@ async def overview(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """The landing graph: connection → subscriptions → workloads → architectures."""
-    from app.architectures.registry import list_architectures
-    from app.workloads.registry import list_workloads
-
     tenant_id = principal.tenant_id or "default"
     conn, cid = _resolve(connection_id)
     conn_pub = _connection_public(conn, cid)
 
-    workloads = list_workloads()
-    architectures = list_architectures(tenant_id)
+    workloads = _scoped_workloads(cid)
+    architectures = _scoped_architectures(tenant_id, cid)
     resources, payload = _load_inventory(tenant_id, connection_id, cid)
     subscriptions = _subscriptions(payload, workloads, conn)
     risk = await _risk_by_workload(db, tenant_id)
@@ -207,8 +249,7 @@ async def expand(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Lazily expand one node's children/neighbours (one hop)."""
-    from app.architectures.registry import list_architectures
-    from app.workloads.registry import get_workload, list_workloads
+    from app.workloads.registry import get_workload
 
     tenant_id = principal.tenant_id or "default"
     conn, cid = _resolve(body.connection_id)
@@ -217,8 +258,8 @@ async def expand(
 
     if prefix == "conn":
         # Same shape as the overview (re-list subs + workloads + archs).
-        workloads = list_workloads()
-        architectures = list_architectures(tenant_id)
+        workloads = _scoped_workloads(cid)
+        architectures = _scoped_architectures(tenant_id, cid)
         subscriptions = _subscriptions(_payload, workloads, conn)
         risk = await _risk_by_workload(db, tenant_id)
         return A.build_overview(
@@ -230,7 +271,7 @@ async def expand(
         )
 
     if prefix == "sub":
-        workloads = list_workloads()
+        workloads = _scoped_workloads(cid)
         return A.expand_subscription(
             subscription_id=value, name=value, resources=resources, workloads=workloads
         )
@@ -241,9 +282,9 @@ async def expand(
 
     if prefix == "wl":
         workload = get_workload(value)
-        if not workload:
+        if not _workload_in_scope(workload, cid):
             return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "by_kind": {}}}
-        architectures = list_architectures(tenant_id)
+        architectures = _scoped_architectures(tenant_id, cid)
         memory = _load_memory(value, architectures)
         run = await _latest_run(db, tenant_id, value)
         risk = None
@@ -304,15 +345,14 @@ async def build(
 ) -> dict[str, Any]:
     """Assemble a focused subgraph for a workload or subscription, optionally enriched with
     overlays (cost/retirement/coverage/rbac/change) and intent-vs-reality drift tagging."""
-    from app.architectures.registry import list_architectures
-    from app.workloads.registry import get_workload, list_workloads
+    from app.workloads.registry import get_workload
 
     tenant_id = principal.tenant_id or "default"
     conn, cid = _resolve(body.connection_id)
     resources, _payload = _load_inventory(tenant_id, body.connection_id, cid)
 
     if body.scope_kind == "subscription":
-        workloads = list_workloads()
+        workloads = _scoped_workloads(cid)
         sub_graph = A.expand_subscription(
             subscription_id=body.scope_id, name=body.scope_id, resources=resources, workloads=workloads
         )
@@ -325,9 +365,9 @@ async def build(
         return sub_graph
 
     workload = get_workload(body.scope_id)
-    if not workload:
+    if not _workload_in_scope(workload, cid):
         return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "by_kind": {}}, "error": "Workload not found."}
-    architectures = list_architectures(tenant_id)
+    architectures = _scoped_architectures(tenant_id, cid)
     memory = _load_memory(body.scope_id, architectures)
     run = await _latest_run(db, tenant_id, body.scope_id)
     risk = None
@@ -412,6 +452,96 @@ def _load_changes(tenant_id: str, connection_id: str) -> list[dict[str, Any]]:
     return []
 
 
+# --------------------------------------------------------------------- multi-workload focus
+class WorkloadsRequest(BaseModel):
+    workload_ids: list[str] = Field(default_factory=list)
+    connection_id: str | None = None
+    overlays: list[str] = Field(default_factory=list)  # cost|retirement|coverage|rbac|change
+    drift: bool = False
+
+
+@router.post("/workloads")
+async def build_workloads(
+    body: WorkloadsRequest,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Focus on ONE OR MORE workloads at once: merges each workload's subgraph (member
+    resources, architecture, memory, top findings, reverse-engineered dependency edges) into
+    a single canvas, optionally with overlays + intent-vs-reality drift tagging.
+
+    Cross-connection ids are silently dropped (only in-scope workloads are built), so a stray
+    id from another tenant can never leak in."""
+    from app.workloads.registry import get_workload
+
+    tenant_id = principal.tenant_id or "default"
+    conn, cid = _resolve(body.connection_id)
+    resources, _payload = _load_inventory(tenant_id, body.connection_id, cid)
+    architectures = _scoped_architectures(tenant_id, cid)
+
+    # In-scope, de-duplicated workloads in the requested order.
+    seen: set[str] = set()
+    wls: list[dict[str, Any]] = []
+    for wid in body.workload_ids:
+        if wid in seen:
+            continue
+        seen.add(wid)
+        wl = get_workload(wid)
+        if _workload_in_scope(wl, cid):
+            wls.append(wl)
+
+    if not wls:
+        return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "by_kind": {}}, "workload_ids": [], "error": "No matching workloads in this connection."}
+
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    drift_by_workload: dict[str, Any] = {}
+    drift_classes: dict[str, str] = {}
+
+    for wl in wls:
+        wid = wl.get("id", "")
+        memory = _load_memory(wid, architectures)
+        run = await _latest_run(db, tenant_id, wid)
+        risk = None
+        findings: list[dict[str, Any]] = []
+        if run:
+            totals = run.totals_json or {}
+            risk = {"run_id": run.id, "severity": run.severity or "", "score": run.overall_score, "failed": int(totals.get("failed", 0) or 0), "passed": int(totals.get("passed", 0) or 0)}
+            findings = run.findings_json or []
+        sub = A.expand_workload(
+            workload=wl, resources=resources, architectures=architectures, memory=memory, risk=risk, findings=findings
+        )
+        nodes.append(A.workload_node(wl, risk=risk))
+        nodes.extend(sub["nodes"])
+        edges.extend(sub["edges"])
+        if body.drift:
+            members = [r for r in resources if any((w or {}).get("id") == wid for w in (r.get("workloads") or []))]
+            arch = next((a for a in architectures if a.get("workload_id") == wid), None)
+            d = DR.compute_drift(architecture=arch, member_resources=members)
+            drift_by_workload[wid] = d
+            drift_classes.update(DR.drift_classification(d))
+
+    # Dedupe (resources shared by 2+ focused workloads collapse to one node, keeping both
+    # belongs_to edges — that's exactly how shared services surface).
+    nodes, edges = A._dedupe(nodes, edges)
+
+    if body.drift:
+        for n in nodes:
+            if n["kind"] == A.KIND_RESOURCE:
+                arm = (n["data"].get("arm_id", "") or "").lower()
+                if arm in drift_classes:
+                    n["data"]["drift"] = drift_classes[arm]
+
+    graph: dict[str, Any] = {"nodes": nodes, "edges": edges, "stats": A._stats(nodes, edges)}
+    _apply_build_overlays(graph, body.overlays, tenant_id=tenant_id, connection_id=cid, workloads=wls, subscriptions=[], resources=resources)
+    graph["workload_ids"] = [w.get("id", "") for w in wls]
+    graph["workload_count"] = len(wls)
+    if drift_by_workload:
+        graph["drift_by_workload"] = drift_by_workload
+    graph["generated_at"] = _now()
+    return graph
+
+
 # --------------------------------------------------------------------- search
 @router.get("/search")
 async def search(
@@ -420,13 +550,10 @@ async def search(
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    from app.architectures.registry import list_architectures
-    from app.workloads.registry import list_workloads
-
     tenant_id = principal.tenant_id or "default"
     conn, cid = _resolve(connection_id)
-    workloads = list_workloads()
-    architectures = list_architectures(tenant_id)
+    workloads = _scoped_workloads(cid)
+    architectures = _scoped_architectures(tenant_id, cid)
     resources, payload = _load_inventory(tenant_id, connection_id, cid)
     subscriptions = _subscriptions(payload, workloads, conn)
     risk = await _risk_by_workload(db, tenant_id)
@@ -450,7 +577,7 @@ async def node_detail(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Full dossier for the selected node (workload/resource/architecture/sub/finding)."""
-    from app.architectures.registry import get_architecture, list_architectures
+    from app.architectures.registry import get_architecture
     from app.workloads.registry import get_workload
 
     tenant_id = principal.tenant_id or "default"
@@ -460,9 +587,9 @@ async def node_detail(
 
     if prefix == "wl":
         workload = get_workload(value)
-        if not workload:
+        if not _workload_in_scope(workload, cid):
             return {"found": False, "detail": "Workload not found."}
-        architectures = [a for a in list_architectures(tenant_id) if a.get("workload_id") == value]
+        architectures = [a for a in _scoped_architectures(tenant_id, cid) if a.get("workload_id") == value]
         run = await _latest_run(db, tenant_id, value)
         members = [r for r in resources if any((w or {}).get("id") == value for w in (r.get("workloads") or []))]
         risk = None
@@ -617,11 +744,8 @@ async def _full_graph(
     """A comprehensive, cache-only estate graph: overview + every workload expanded with its
     member resources and reverse-engineered dependency edges (findings omitted to stay lean).
     Returns ``(graph, raw)`` where ``raw`` carries the source lists for analytics."""
-    from app.architectures.registry import list_architectures
-    from app.workloads.registry import list_workloads
-
-    workloads = list_workloads()
-    architectures = list_architectures(tenant_id)
+    workloads = _scoped_workloads(cid)
+    architectures = _scoped_architectures(tenant_id, cid)
     resources, payload = _load_inventory(tenant_id, connection_id_param, cid)
     subscriptions = _subscriptions(payload, workloads, conn)
     risk = await _risk_by_workload(db, tenant_id)
@@ -746,17 +870,16 @@ async def drift(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Intent-vs-reality drift for a single workload (documented architecture vs live inventory)."""
-    from app.architectures.registry import list_architectures
     from app.workloads.registry import get_workload
 
     tenant_id = principal.tenant_id or "default"
     conn, cid = _resolve(connection_id)
     workload = get_workload(workload_id)
-    if not workload:
+    if not _workload_in_scope(workload, cid):
         return {"found": False, "detail": "Workload not found."}
     resources, _payload = _load_inventory(tenant_id, connection_id, cid)
     members = [r for r in resources if any((w or {}).get("id") == workload_id for w in (r.get("workloads") or []))]
-    arch = next((a for a in list_architectures(tenant_id) if a.get("workload_id") == workload_id), None)
+    arch = next((a for a in _scoped_architectures(tenant_id, cid) if a.get("workload_id") == workload_id), None)
     d = DR.compute_drift(architecture=arch, member_resources=members)
     return {"found": True, "workload_id": workload_id, "workload_name": workload.get("name", ""), "drift": d}
 
@@ -857,6 +980,34 @@ async def ask(
     matched_set = set(result["matched"])
     result["nodes"] = [n for n in graph["nodes"] if n["id"] in matched_set]
     return result
+
+
+# ===================================================================== view preferences
+class GraphPrefsRequest(BaseModel):
+    tenant_id: str = ""
+    layout: str = "organic"
+
+
+@router.get("/prefs")
+async def get_view_prefs(
+    tenant_id: str = Query(default=""),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """The remembered graph layout ("view") for an Azure tenant (defaults to Organic)."""
+    from app.graph import prefs
+
+    return prefs.get_prefs(tenant_id)
+
+
+@router.put("/prefs")
+async def put_view_prefs(
+    body: GraphPrefsRequest,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Remember the chosen graph layout per Azure tenant (server-side)."""
+    from app.graph import prefs
+
+    return prefs.set_prefs(body.tenant_id, layout=body.layout)
 
 
 # ===================================================================== saved views

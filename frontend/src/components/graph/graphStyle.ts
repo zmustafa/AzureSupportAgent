@@ -1,4 +1,5 @@
 import type { GraphEdge, GraphNode, GraphNodeKind } from "../../api";
+import { nodeIconUri } from "./graphIcons";
 
 // ----------------------------------------------------------------- visual language
 export type KindMeta = { color: string; shape: string; size: number; label: string; glyph: string };
@@ -110,71 +111,130 @@ function colorFromString(s: string): string {
 }
 
 // Built loosely (Cytoscape stylesheet union types reject literal blobs) — presentation only.
-export function buildStylesheet(lens: Lens): any[] {
+// Nodes render as white "chips" with the kind/Azure-service icon as a background-image and the
+// kind (or lens) colour as the ring (border), so the graph reads like the Portal.
+const HUB_KINDS = new Set(["tenant_connection", "management_group", "subscription", "workload"]);
+
+export function buildStylesheet(_lens: Lens, dark = false): any[] {
+  const labelColor = dark ? "#e2e8f0" : "#0f172a";
+  const labelBg = dark ? "#0b1220" : "#ffffff";
+  const chipBg = dark ? "#1e293b" : "#ffffff";
   const styles: any[] = [
     {
       selector: "node",
       style: {
-        label: "data(label)", color: "#0f172a", "font-size": 9, "text-wrap": "ellipsis",
-        "text-max-width": "120px", "text-valign": "bottom", "text-margin-y": 3,
-        "border-width": 1.5, "border-color": "#ffffff", "background-color": "#94a3b8",
-        width: 28, height: 28, "overlay-padding": 6,
+        label: "data(label)", color: labelColor, "font-size": 9, "font-weight": 500,
+        "text-wrap": "wrap", "text-max-width": "96px",
+        "text-valign": "bottom", "text-margin-y": 5,
+        "text-background-color": labelBg, "text-background-opacity": dark ? 0.55 : 0.82,
+        "text-background-shape": "round-rectangle", "text-background-padding": 2,
+        "background-color": chipBg,
+        "background-image": "data(iconUri)",
+        "background-fit": "contain",
+        "background-clip": "none",
+        "background-width": "60%", "background-height": "60%",
+        "border-width": 2.4, "border-color": "data(ring)",
+        shape: "round-rectangle",
+        width: 30, height: 30, "overlay-padding": 6,
+        "transition-property": "border-width width height underlay-opacity",
+        "transition-duration": "120ms",
+      },
+    },
+    // Hub kinds get a bolder, larger label so the structure reads at a glance.
+    { selector: "node.hub", style: { "font-size": 11, "font-weight": 700, "text-max-width": "130px" } },
+    // The tenant/connection node is the hero root.
+    {
+      selector: 'node[kind = "tenant_connection"]',
+      style: {
+        "font-size": 13, "font-weight": 800,
+        "underlay-color": "#6366f1", "underlay-opacity": 0.18, "underlay-padding": 14, "underlay-shape": "ellipse",
       },
     },
   ];
+  // Per-kind size; resources render as round chips (ellipse), the rest as rounded squares.
   for (const kind of ALL_KINDS) {
     const m = KIND_META[kind];
-    styles.push({ selector: `node[kind = "${kind}"]`, style: { "background-color": m.color, shape: m.shape, width: m.size, height: m.size } });
+    const style: Record<string, any> = { width: m.size, height: m.size };
+    if (kind === "resource") style.shape = "ellipse";
+    styles.push({ selector: `node[kind = "${kind}"]`, style });
   }
-  // Lens overrides via a per-node data field set by applyLens().
-  styles.push({ selector: "node[lensColor]", style: { "background-color": "data(lensColor)" } });
-  // Drift visual language.
+  // Risk/criticality HALO (underlay glow) — keeps the icon crisp while signalling severity.
+  styles.push({ selector: "node[halo]", style: { "underlay-color": "data(halo)", "underlay-opacity": 0.4, "underlay-padding": 11, "underlay-shape": "ellipse" } });
+  // Collapsed super-node (e.g. "62 findings") reads as a stacked chip.
+  styles.push({ selector: "node[collapsed]", style: { "border-width": 3, "border-style": "double", "font-weight": 700 } });
+  // Drift visual language — recolour the RING (not the fill) so the icon stays readable.
   styles.push(
-    { selector: 'node[drift = "documented_missing"]', style: { "background-color": DRIFT_COLOR.documented_missing, "border-width": 2, "border-color": "#b45309", "border-style": "dashed" } },
-    { selector: 'node[drift = "live_uncontrolled"]', style: { "background-color": DRIFT_COLOR.live_uncontrolled, "border-width": 2, "border-color": "#991b1b" } },
+    { selector: 'node[drift = "documented_missing"]', style: { "border-color": DRIFT_COLOR.documented_missing, "border-width": 3, "border-style": "dashed" } },
+    { selector: 'node[drift = "live_uncontrolled"]', style: { "border-color": DRIFT_COLOR.live_uncontrolled, "border-width": 3 } },
   );
   styles.push(
-    { selector: "node:selected", style: { "border-width": 3, "border-color": "#1e293b" } },
-    { selector: "node.dim", style: { opacity: 0.1 } },
-    { selector: "node.highlight", style: { "border-width": 4, "border-color": "#f59e0b" } },
-    { selector: "node.path", style: { "border-width": 4, "border-color": "#2563eb", "background-blacken": -0.2 } },
-    { selector: "node.blast-direct", style: { "border-width": 4, "border-color": "#dc2626" } },
+    { selector: "node.hover", style: { "underlay-color": "#64748b", "underlay-opacity": 0.22, "underlay-padding": 7, "underlay-shape": "ellipse", "z-index": 999 } },
+    { selector: "node:selected", style: { "border-width": 3.5, "border-color": dark ? "#f1f5f9" : "#1e293b", "underlay-color": "#3b82f6", "underlay-opacity": 0.3, "underlay-padding": 10, "underlay-shape": "ellipse" } },
+    { selector: "node.dim", style: { opacity: 0.08 } },
+    { selector: "node.highlight", style: { "border-width": 4, "border-color": "#f59e0b", "underlay-color": "#f59e0b", "underlay-opacity": 0.3, "underlay-padding": 9, "underlay-shape": "ellipse" } },
+    { selector: "node.path", style: { "border-width": 4, "border-color": "#2563eb", "underlay-color": "#2563eb", "underlay-opacity": 0.3, "underlay-padding": 9, "underlay-shape": "ellipse" } },
+    { selector: "node.blast-direct", style: { "border-width": 4, "border-color": "#dc2626", "underlay-color": "#dc2626", "underlay-opacity": 0.3, "underlay-padding": 9, "underlay-shape": "ellipse" } },
     { selector: "node.blast-indirect", style: { "border-width": 3, "border-color": "#f59e0b" } },
-    { selector: "node.pulse", style: { "border-width": 4, "border-color": "#2563eb" } },
     {
       selector: "edge",
       style: {
-        width: 1.4, "line-color": "#cbd5e1", "target-arrow-color": "#cbd5e1",
-        "target-arrow-shape": "triangle", "arrow-scale": 0.8, "curve-style": "bezier", opacity: 0.8,
+        width: "data(weight)", "line-color": "#94a3b8", "target-arrow-color": "#94a3b8",
+        "target-arrow-shape": "triangle", "arrow-scale": 0.85, "curve-style": "bezier", opacity: 0.62,
       },
     },
-    { selector: "edge.dim", style: { opacity: 0.05 } },
-    { selector: "edge.path", style: { width: 3.5, "line-color": "#2563eb", "target-arrow-color": "#2563eb", opacity: 1 } },
+    { selector: "edge.dim", style: { opacity: 0.04 } },
+    { selector: "edge.path", style: { width: 4, "line-color": "#2563eb", "target-arrow-color": "#2563eb", opacity: 1, "z-index": 900 } },
     { selector: 'edge[kind = "models"], edge[kind = "documents"]', style: { "line-style": "dashed" } },
-    { selector: 'edge[dependency = "1"]', style: { "line-style": "solid", width: 2 } },
+    { selector: 'edge[dependency = "1"]', style: { "line-style": "solid", width: 2.4, opacity: 0.85 } },
+    // Data-flow / dependency edges get animated marching dashes (offset driven from JS).
+    { selector: "edge.flow", style: { "line-style": "dashed", "line-dash-pattern": [6, 4] } },
   );
   for (const [kind, color] of Object.entries(EDGE_COLOR)) {
     styles.push({ selector: `edge[kind = "${kind}"]`, style: { "line-color": color, "target-arrow-color": color } });
   }
-  void lens; // lens colours are applied as node data, not via selector
   return styles;
 }
 
 const DEP_KINDS = new Set(["depends_on", "connects_to", "data_flow", "private_endpoint_to", "vnet_link", "subnet_link", "monitors", "identity_dependency"]);
+const FLOW_KINDS = new Set(["data_flow", "connects_to", "depends_on"]);
+
+/** The default ring (border) colour for a node: shared-service resources get a violet ring,
+ * everything else its kind colour. */
+export function defaultRing(node: GraphNode): string {
+  if (node.kind === "resource" && (node.data?.workloads || []).length > 1) return "#9333ea";
+  return KIND_META[node.kind]?.color || "#94a3b8";
+}
+
+/** Risk/criticality halo colour for a node under a given lens (empty = no halo). */
+export function haloColor(lens: Lens, node: GraphNode): string {
+  if (node.kind !== "workload") return "";
+  if (lens === "risk") return RISK_COLOR[node.data?.risk?.level || "ok"] || "";
+  if (lens === "criticality") return CRITICALITY_COLOR[(node.data?.criticality || "").toLowerCase()] || "";
+  return "";
+}
 
 export function toElements(nodes: GraphNode[], edges: GraphEdge[], lens: Lens = "none"): any[] {
   const out: any[] = [];
   for (const n of nodes) {
+    const ring = lensColor(lens, n) || defaultRing(n);
     const data: Record<string, any> = {
       id: n.id, kind: n.kind, label: n.label,
       expandable: n.expandable, drift: n.data?.drift || "",
+      iconUri: nodeIconUri(n), ring,
     };
-    const lc = lensColor(lens, n);
-    if (lc) data.lensColor = lc;
-    out.push({ group: "nodes", data });
+    const halo = haloColor(lens, n);
+    if (halo) data.halo = halo;
+    if (n.data?.collapsed) data.collapsed = "1";
+    const classes = HUB_KINDS.has(n.kind) ? "hub" : "";
+    out.push({ group: "nodes", data, classes });
   }
   for (const e of edges) {
-    out.push({ group: "edges", data: { id: e.id, source: e.source, target: e.target, kind: e.kind, dependency: DEP_KINDS.has(e.kind) ? "1" : "0" } });
+    const dep = DEP_KINDS.has(e.kind);
+    out.push({
+      group: "edges",
+      data: { id: e.id, source: e.source, target: e.target, kind: e.kind, dependency: dep ? "1" : "0", weight: dep ? 2.2 : 1.5 },
+      classes: FLOW_KINDS.has(e.kind) ? "flow" : "",
+    });
   }
   return out;
 }

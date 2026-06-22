@@ -13,15 +13,15 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-const CTA: { key: string; label: string; link: string }[] = [
-  { key: "inventory", label: "Inventory", link: "/inventory" },
-  { key: "architecture", label: "Architecture", link: "" },
-  { key: "memory", label: "Memory", link: "" },
-  { key: "assessment", label: "Assessment", link: "" },
-  { key: "change", label: "Change Explorer", link: "/change-explorer" },
-  { key: "rbac", label: "RBAC", link: "/rbac" },
-  { key: "telemetry", label: "Telemetry Intel", link: "/telemetry-intel" },
-  { key: "backupdr", label: "Backup & DR", link: "/backupdr" },
+const CTA: { key: string; label: string }[] = [
+  { key: "inventory", label: "Inventory" },
+  { key: "architecture", label: "Architecture" },
+  { key: "memory", label: "Memory" },
+  { key: "assessment", label: "Assessment" },
+  { key: "change", label: "Change Explorer" },
+  { key: "rbac", label: "RBAC" },
+  { key: "telemetry", label: "Telemetry Intel" },
+  { key: "backupdr", label: "Backup & DR" },
 ];
 
 export function GraphInspector({
@@ -54,6 +54,51 @@ export function GraphInspector({
   const links = (dossier?.links || {}) as Record<string, string>;
   const isWorkload = kind === "workload";
 
+  // Carry the workload context to whatever section the user opens, so the destination loads
+  // already scoped to this workload instead of the last-used/empty scope. Each target reads it
+  // via the mechanism it supports: `?workload_id=` (coverage/change/backupdr/perf/tag/radar +
+  // the inventory/rbac readers we added), a sessionStorage handoff (Telemetry Intel,
+  // Assessments), or a backend-provided scoped URL (Architecture / Memory / the specific run).
+  const openIn = (key: string) => {
+    const wid: string = node?.data?.workload_id || (node?.id?.startsWith("wl:") ? node.id.slice(3) : "");
+    const wname: string = node?.label || "";
+    const archId: string = Array.isArray(dossier?.architectures) && dossier!.architectures[0]?.id ? dossier!.architectures[0].id : "";
+    const runId: string = dossier?.risk?.run_id || "";
+    const wlParam = wid ? `?workload_id=${encodeURIComponent(wid)}&workload_name=${encodeURIComponent(wname)}` : "";
+    switch (key) {
+      case "inventory":
+        navigate(`/inventory${wlParam}`);
+        break;
+      case "architecture":
+        navigate(archId ? `/architectures/${archId}` : links.architecture || "/architectures");
+        break;
+      case "memory":
+        if (archId) navigate(`/architectures/${archId}/memory`);
+        break;
+      case "assessment":
+        if (runId) navigate(`/assessments/${runId}`);
+        else { try { if (wid) sessionStorage.setItem("azsup.assessWorkload", wid); } catch { /* ignore */ } navigate("/assessments"); }
+        break;
+      case "change":
+        navigate(`/change-explorer${wlParam}`);
+        break;
+      case "rbac":
+        navigate(`/rbac/effective${wlParam}`);
+        break;
+      case "telemetry":
+        try { if (wid) sessionStorage.setItem("azsup.teleintelHandoff", JSON.stringify({ workloadId: wid })); } catch { /* ignore */ }
+        navigate("/telemetry-intel");
+        break;
+      case "backupdr":
+        navigate(`/backupdr${wlParam}`);
+        break;
+    }
+  };
+
+  // Hide CTAs that have no destination for this workload (e.g. no architecture → no Memory).
+  const hasArch = Array.isArray(dossier?.architectures) && dossier!.architectures.length > 0;
+  const ctaVisible = (key: string) => (key === "architecture" || key === "memory" ? hasArch : true);
+
   return (
     <div className="absolute right-0 top-0 z-30 flex h-full w-80 flex-col border-l bg-white shadow-xl">
       <div className="flex items-start justify-between border-b px-4 py-3">
@@ -72,24 +117,20 @@ export function GraphInspector({
         {!loading && detail && detail.found === false && <div className="text-slate-500">{detail.detail || "No details available."}</div>}
         {!loading && node && dossier && <DossierBody node={node} dossier={dossier} />}
 
-        {/* Workload CTA grid (Phase 2) */}
+        {/* Workload CTA grid (Phase 2) — each opens the section scoped to this workload */}
         {isWorkload && dossier && (
           <div className="mt-4">
             <div className="mb-1.5 text-[11px] font-semibold uppercase text-slate-400">Open in</div>
             <div className="grid grid-cols-2 gap-1.5">
-              {CTA.map((c) => {
-                const href = links[c.key] || c.link;
-                if (!href) return null;
-                return (
-                  <button
-                    key={c.key}
-                    onClick={() => navigate(href)}
-                    className="rounded-md border border-slate-200 px-2 py-1 text-left text-xs text-slate-600 hover:bg-slate-50"
-                  >
-                    {c.label} →
-                  </button>
-                );
-              })}
+              {CTA.filter((c) => ctaVisible(c.key)).map((c) => (
+                <button
+                  key={c.key}
+                  onClick={() => openIn(c.key)}
+                  className="rounded-md border border-slate-200 px-2 py-1 text-left text-xs text-slate-600 hover:bg-slate-50"
+                >
+                  {c.label} →
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -117,18 +158,26 @@ function DossierBody({ node, dossier }: { node: GraphNode; dossier: Record<strin
     return (
       <div className="space-y-3">
         {dossier.description && <p className="text-slate-600">{dossier.description}</p>}
-        <div className="space-y-0.5">
-          <Row label="Type" value={node.data.workload_type} />
-          <Row label="Environment" value={node.data.environment} />
-          <Row label="Criticality" value={node.data.criticality} />
-          <Row label="Resources" value={dossier.member_resources} />
+        <div className="flex flex-wrap gap-1.5">
+          {node.data.criticality && <Chip tone={critTone(node.data.criticality)}>{node.data.criticality}</Chip>}
+          {node.data.environment && <Chip tone="slate">{node.data.environment}</Chip>}
+          {node.data.workload_type && <Chip tone="slate">{String(node.data.workload_type).replace(/_/g, " ")}</Chip>}
+          <Chip tone="slate">{dossier.member_resources ?? 0} resources</Chip>
         </div>
         {risk && (
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
-            <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">Latest assessment</div>
-            <Row label="Score" value={risk.score != null ? `${risk.score}/100` : "—"} />
-            <Row label="Failing" value={risk.failed} />
-            <Row label="Worst severity" value={risk.severity} />
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <div className="mb-2 text-[11px] font-semibold uppercase text-slate-400">Latest assessment</div>
+            <div className="flex items-center gap-3">
+              <ScoreRing score={risk.score} />
+              <div className="flex-1 space-y-1.5">
+                <div className="flex flex-wrap gap-1.5">
+                  {risk.failed != null && <Chip tone={risk.failed > 0 ? "red" : "green"}>{risk.failed} failing</Chip>}
+                  {risk.passed != null && <Chip tone="green">{risk.passed} passing</Chip>}
+                  {risk.severity && <Chip tone={sevTone(risk.severity)}>{risk.severity}</Chip>}
+                </div>
+                <RiskBar passed={risk.passed} failed={risk.failed} na={risk.na} />
+              </div>
+            </div>
           </div>
         )}
         {Array.isArray(dossier.architectures) && dossier.architectures.length > 0 && (
@@ -208,4 +257,72 @@ function driftLabel(d: string): string {
   if (d === "documented_missing") return "Documented, not live ⚠";
   if (d === "live_uncontrolled") return "Live, undocumented ⛔";
   return d;
+}
+
+// ----------------------------------------------------------------- viz primitives
+function scoreColor(score: number): string {
+  if (score >= 80) return "#16a34a";
+  if (score >= 60) return "#65a30d";
+  if (score >= 40) return "#d97706";
+  return "#dc2626";
+}
+
+function ScoreRing({ score }: { score: number | null | undefined }) {
+  if (score == null) {
+    return <div className="flex h-14 w-14 items-center justify-center rounded-full border-4 border-slate-200 text-xs text-slate-400">—</div>;
+  }
+  const r = 24;
+  const c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, score));
+  const col = scoreColor(pct);
+  return (
+    <svg width="56" height="56" viewBox="0 0 56 56" className="shrink-0">
+      <circle cx="28" cy="28" r={r} fill="none" stroke="#e2e8f0" strokeWidth="6" />
+      <circle
+        cx="28" cy="28" r={r} fill="none" stroke={col} strokeWidth="6" strokeLinecap="round"
+        strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} transform="rotate(-90 28 28)"
+      />
+      <text x="28" y="31" textAnchor="middle" fontSize="14" fontWeight="700" fill={col}>{pct}</text>
+    </svg>
+  );
+}
+
+function RiskBar({ passed, failed, na }: { passed?: number; failed?: number; na?: number }) {
+  const p = Math.max(0, passed || 0), f = Math.max(0, failed || 0), n = Math.max(0, na || 0);
+  const total = p + f + n;
+  if (total === 0) return null;
+  const pct = (x: number) => `${(x / total) * 100}%`;
+  return (
+    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+      <div style={{ width: pct(p), backgroundColor: "#16a34a" }} />
+      <div style={{ width: pct(f), backgroundColor: "#dc2626" }} />
+      <div style={{ width: pct(n), backgroundColor: "#cbd5e1" }} />
+    </div>
+  );
+}
+
+const CHIP_TONE: Record<string, string> = {
+  slate: "bg-slate-100 text-slate-600",
+  green: "bg-emerald-100 text-emerald-700",
+  red: "bg-red-100 text-red-700",
+  amber: "bg-amber-100 text-amber-700",
+  orange: "bg-orange-100 text-orange-700",
+};
+
+function Chip({ children, tone = "slate" }: { children: ReactNode; tone?: string }) {
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${CHIP_TONE[tone] || CHIP_TONE.slate}`}>{children}</span>;
+}
+
+function sevTone(sev: string): string {
+  const s = (sev || "").toLowerCase();
+  if (s === "critical" || s === "high" || s === "error") return "red";
+  if (s === "medium" || s === "warning") return "amber";
+  return "slate";
+}
+function critTone(c: string): string {
+  const s = (c || "").toLowerCase();
+  if (s === "critical") return "red";
+  if (s === "high") return "orange";
+  if (s === "medium") return "amber";
+  return "slate";
 }

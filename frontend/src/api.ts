@@ -2920,6 +2920,16 @@ export const api = {
         drift: !!opts.drift,
       }),
     }),
+  graphBuildWorkloads: (workloadIds: string[], opts: { connectionId?: string; overlays?: string[]; drift?: boolean } = {}) =>
+    http<GraphResult & { workload_ids: string[]; workload_count: number; drift_by_workload?: Record<string, GraphDrift> }>("/graph/workloads", {
+      method: "POST",
+      body: JSON.stringify({
+        workload_ids: workloadIds,
+        connection_id: opts.connectionId || null,
+        overlays: opts.overlays || [],
+        drift: !!opts.drift,
+      }),
+    }),
   graphSearch: (q: string, connectionId = "") => {
     const p = new URLSearchParams();
     p.set("q", q);
@@ -2956,6 +2966,9 @@ export const api = {
   graphViews: () => http<{ views: GraphView[] }>("/graph/views"),
   graphSaveView: (view: Partial<GraphView>) => http<{ view: GraphView }>("/graph/views", { method: "POST", body: JSON.stringify(view) }),
   graphDeleteView: (id: string) => http<{ ok: boolean }>(`/graph/views/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  graphPrefs: (tenantId = "") => http<{ layout: string; updated_at?: string }>(`/graph/prefs?tenant_id=${encodeURIComponent(tenantId)}`),
+  graphSavePrefs: (tenantId: string, layout: string) =>
+    http<{ layout: string; updated_at?: string }>("/graph/prefs", { method: "PUT", body: JSON.stringify({ tenant_id: tenantId, layout }) }),
   // --- Workload Mission Control ---
   missionSystems: () => http<{ systems: MissionSystemDef[] }>("/missions/systems"),
   missionState: (workloadId: string) =>

@@ -8,8 +8,8 @@ param location string = 'westus3'
 @maxLength(40)
 param appName string = 'azure-support-agent'
 
-@description('Container image to deploy. Defaults to the public Docker Hub image. Switch to GHCR after the GitHub package is made public.')
-param containerImage string = 'docker.io/zmustafa/azure-support-agent:v46'
+@description('Container image to deploy. Defaults to the public Docker Hub image, :latest tag, so the one-click button always provisions the newest published release. Switch to GHCR after the GitHub package is made public.')
+param containerImage string = 'docker.io/zmustafa/azure-support-agent:latest'
 
 @description('Bootstrap local admin username for first login.')
 @minLength(3)
