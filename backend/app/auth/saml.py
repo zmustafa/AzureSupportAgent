@@ -75,11 +75,15 @@ def _pem(cert: str) -> str:
 
 
 def sp_entity_id(public_base_url: str) -> str:
-    return public_base_url.rstrip("/") + "/auth/saml/metadata"
+    # The auth router is mounted under the global ``/api`` prefix, so every SAML route
+    # (metadata + ACS) lives under ``/api/auth/saml/...``. The SP EntityID + ACS URL are
+    # built off the public base URL and MUST include ``/api`` so the IdP posts the signed
+    # assertion back to a real route and the AudienceRestriction / Recipient checks match.
+    return public_base_url.rstrip("/") + "/api/auth/saml/metadata"
 
 
 def acs_url(public_base_url: str, idp_id: str) -> str:
-    return public_base_url.rstrip("/") + f"/auth/saml/{idp_id}/acs"
+    return public_base_url.rstrip("/") + f"/api/auth/saml/{idp_id}/acs"
 
 
 def sp_metadata(public_base_url: str, idp_id: str) -> str:

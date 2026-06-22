@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "5698064788796385617"
+      "templateHash": "10382632681959626024"
     }
   },
   "parameters": {
@@ -326,6 +326,14 @@
                 {
                   "name": "AZURE_EXTENSION_DIR",
                   "value": "/opt/az-extensions"
+                },
+                {
+                  "name": "PUBLIC_BASE_URL",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "FRONTEND_ORIGIN",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)]"
                 }
               ],
               "resources": {

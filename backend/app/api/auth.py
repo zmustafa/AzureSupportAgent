@@ -279,7 +279,13 @@ async def change_password(
 
 # ----------------------------------------------------------------------- OIDC SSO
 def _redirect_uri_oidc(idp_id: str) -> str:
-    return settings.public_base_url.rstrip("/") + f"/auth/oidc/{idp_id}/callback"
+    # The auth router is mounted under the global ``/api`` prefix (see app.main:
+    # ``api = APIRouter(prefix="/api")``), so the callback the IdP redirects back to is
+    # ``/api/auth/oidc/{id}/callback``. The redirect_uri sent in the authorize request
+    # MUST include ``/api`` or Entra/OIDC returns the user to a path that doesn't match
+    # any backend route (it falls through to the SPA / 404s, and the auth code is never
+    # exchanged). This value must also match the Redirect URI registered on the app.
+    return settings.public_base_url.rstrip("/") + f"/api/auth/oidc/{idp_id}/callback"
 
 
 async def _get_idp(db: AsyncSession, idp_id: str, kind: str) -> IdentityProvider:

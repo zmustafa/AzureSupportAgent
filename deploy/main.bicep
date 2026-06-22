@@ -249,6 +249,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AZURE_EXTENSION_DIR'
               value: '/opt/az-extensions'
             }
+            // Public base URL of THIS API + the front-end origin. Both are the app's own
+            // external ingress FQDN (single container serves the SPA + API same-origin).
+            // The backend builds OIDC/SAML redirect URIs from PUBLIC_BASE_URL, and sends
+            // the post-login redirect to FRONTEND_ORIGIN — without these the defaults fall
+            // back to http://localhost:* and cloud SSO redirects point at localhost.
+            // Constructed from the environment's defaultDomain (no circular self-reference).
+            {
+              name: 'PUBLIC_BASE_URL'
+              value: 'https://${containerAppName}.${containerEnv.properties.defaultDomain}'
+            }
+            {
+              name: 'FRONTEND_ORIGIN'
+              value: 'https://${containerAppName}.${containerEnv.properties.defaultDomain}'
+            }
           ]
           resources: {
             cpu: json(containerCpu)
