@@ -15,9 +15,19 @@ import { api, type TenantOption } from "../api";
 export function ConnectionScopePicker({
   value,
   onChange,
+  align = "right",
+  disabled = false,
+  disabledTitle,
 }: {
   value: string;
   onChange: (connectionId: string) => void;
+  /** Which edge the popover aligns to. Use "left" when the picker sits at the left of a bar so
+   *  the menu opens rightward instead of off-screen. Defaults to "right" (top-right placements). */
+  align?: "left" | "right";
+  /** Render a quiet static label (no dropdown) — e.g. when the connection is locked to a
+   *  selected workload. */
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,6 +65,16 @@ export function ConnectionScopePicker({
 
   const active = conns.find((c) => c.id === value) ?? conns.find((c) => c.is_default) ?? conns[0];
 
+  // Locked (e.g. connection follows the selected workload) — show a quiet static label.
+  if (disabled) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs text-gray-400" title={disabledTitle || active?.tenant_id}>
+        <span>🏢</span>
+        <span className="max-w-[160px] truncate">{active?.display_name ?? "—"}</span>
+      </span>
+    );
+  }
+
   return (
     <div ref={ref} className="relative">
       <button
@@ -67,7 +87,7 @@ export function ConnectionScopePicker({
         <span className="text-gray-400">▾</span>
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-1 w-72 rounded-md border bg-white p-1.5 shadow-lg">
+        <div className={`absolute z-50 mt-1 w-72 rounded-md border bg-white p-1.5 shadow-lg ${align === "left" ? "left-0" : "right-0"}`}>
           <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-gray-400">Azure tenant</div>
           {conns.map((c) => (
             <button

@@ -26,6 +26,31 @@ import pytest
 # --------------------------------------------------------------- shared fixtures
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_registries(tmp_path_factory):
+    """Redirect the file-backed architecture + playbook registries to a temp dir for the
+    whole module so these full-stack tests don't leak rows ("Alpha pb", "Bundle src
+    (imported N)", …) into the real ``.data`` registries. The API reads ``registry._PATH``
+    at call time, so patching the module attribute before any request is sufficient."""
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from app.architectures import activity as arch_activity
+    from app.architectures import registry as arch_registry
+    from app.architectures import revisions as arch_revisions
+    from app.playbooks import registry as pb_registry
+
+    d = tmp_path_factory.mktemp("e2e_registries")
+    mp = MonkeyPatch()
+    mp.setattr(arch_registry, "_PATH", d / "architectures.json")
+    mp.setattr(arch_revisions, "_PATH", d / "architecture_revisions.json")
+    mp.setattr(arch_activity, "_PATH", d / "architecture_activity.json")
+    mp.setattr(pb_registry, "_PATH", d / "playbooks.json")
+    try:
+        yield
+    finally:
+        mp.undo()
+
+
 @pytest.fixture(scope="module")
 def client():
     """Shared TestClient for the whole module. See module docstring for why."""

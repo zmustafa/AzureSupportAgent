@@ -42,20 +42,19 @@ def _scope(workload_id: str | None, subscription_id: str | None) -> tuple[str, s
     return "workload", demo.DEMO_WORKLOAD_ID
 
 
-def _conn_for(scope_kind: str, scope_id: str) -> dict[str, Any] | None:
-    """Azure connection for a Telemetry-Intelligence scope: a workload's OWN connection
-    (falling back to default when it has none), so a workload whose Application Insights /
-    Log Analytics lives in a subscription reachable only via a non-default connection still
-    returns rows instead of nothing."""
-    from app.core.azure_connections import connection_for_workload, get_default_connection
+def _conn_for(scope_kind: str, scope_id: str, connection_id: str | None = None) -> dict[str, Any] | None:
+    """Azure connection for a Telemetry-Intelligence scope. An explicit ``connection_id`` (the
+    Azure-tenant picker) wins; otherwise a workload's OWN connection (falling back to default
+    when it has none), so a workload whose Application Insights / Log Analytics lives in a
+    subscription reachable only via a non-default connection still returns rows."""
+    from app.core.azure_connections import connection_for_scope
     from app.workloads.registry import get_workload
 
-    if scope_kind == "workload":
-        return connection_for_workload(get_workload(scope_id))
-    return get_default_connection()
+    workload = get_workload(scope_id) if scope_kind == "workload" else None
+    return connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
 
 
-async def _resolve(principal: Principal, scope_kind: str, scope_id: str) -> dict[str, Any]:
+async def _resolve(principal: Principal, scope_kind: str, scope_id: str, connection_id: str | None = None) -> dict[str, Any]:
     """Resolve the component set + SLI context for a scope (demo short-circuits)."""
     from app.teleintel.resolver import resolve_components, sli_context_for_workload
     from app.workloads.registry import get_workload
@@ -64,7 +63,7 @@ async def _resolve(principal: Principal, scope_kind: str, scope_id: str) -> dict
         return demo.build_overview()
 
     workload = get_workload(scope_id) if scope_kind == "workload" else None
-    connection = _conn_for(scope_kind, scope_id)
+    connection = _conn_for(scope_kind, scope_id, connection_id)
     res = await resolve_components(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)
     return {
         "scope_kind": scope_kind,
@@ -94,10 +93,11 @@ def _pick_component(overview: dict[str, Any], component_id: str | None) -> dict[
 async def overview(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _scope(workload_id, subscription_id)
-    return await _resolve(principal, scope_kind, scope_id)
+    return await _resolve(principal, scope_kind, scope_id, connection_id)
 
 
 # ----------------------------------------------------------------------- NL → KQL (SSE)
@@ -105,6 +105,7 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=1)
     workload_id: str | None = None
     subscription_id: str | None = None
+    connection_id: str | None = None
     component_id: str | None = None
 
 
@@ -119,7 +120,7 @@ async def ask(payload: AskRequest, principal: Principal = Depends(require_admin)
 
     async def _gen():
         try:
-            overview = await _resolve(principal, scope_kind, scope_id)
+            overview = await _resolve(principal, scope_kind, scope_id, payload.connection_id)
             sli = overview.get("sli_context", "")
             yield {"event": "start", "data": json.dumps({"question": payload.question})}
 
@@ -143,7 +144,7 @@ async def ask(payload: AskRequest, principal: Principal = Depends(require_admin)
             if comp is None:
                 yield {"event": "error", "data": json.dumps({"message": "No Application Insights component in scope."})}
                 return
-            connection = _conn_for(scope_kind, scope_id)
+            connection = _conn_for(scope_kind, scope_id, payload.connection_id)
             res = await run_component_kql(comp, clean, connection, timespan=default_ts)
             if not res.get("ok"):
                 yield {"event": "error", "data": json.dumps({"message": res.get("error", "Query failed.")})}
@@ -194,6 +195,7 @@ async def run_query(payload: QueryRequest, principal: Principal = Depends(requir
 async def triage(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     component_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
@@ -203,12 +205,12 @@ async def triage(
     from app.teleintel.triage import run_triage
 
     _ttl, default_ts, _rows = _settings()
-    overview = await _resolve(principal, scope_kind, scope_id)
+    overview = await _resolve(principal, scope_kind, scope_id, connection_id)
     comp = _pick_component(overview, component_id)
     if comp is None:
         return {"error": "No Application Insights component in scope.", "has_spike": False, "evidence": []}
     return await run_triage(
-        comp, _conn_for(scope_kind, scope_id),
+        comp, _conn_for(scope_kind, scope_id, connection_id),
         predicate=overview.get("predicate", ""), timespan=default_ts, sli_context=overview.get("sli_context", ""),
     )
 
@@ -218,6 +220,7 @@ async def triage(
 async def timeline(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     component_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
@@ -227,11 +230,11 @@ async def timeline(
     from app.teleintel.timeline import build_timeline
 
     _ttl, default_ts, _rows = _settings()
-    overview = await _resolve(principal, scope_kind, scope_id)
+    overview = await _resolve(principal, scope_kind, scope_id, connection_id)
     comp = _pick_component(overview, component_id)
     if comp is None:
         return {"series_keys": [], "points": [], "change_events": [], "signal_count": 0, "notes": "No component in scope."}
-    return await build_timeline(comp, _conn_for(scope_kind, scope_id), predicate=overview.get("predicate", ""), timespan=default_ts)
+    return await build_timeline(comp, _conn_for(scope_kind, scope_id, connection_id), predicate=overview.get("predicate", ""), timespan=default_ts)
 
 
 # ----------------------------------------------------------------------- smart detection
@@ -239,6 +242,7 @@ async def timeline(
 async def smart_detection(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _scope(workload_id, subscription_id)
@@ -246,8 +250,8 @@ async def smart_detection(
         return demo.demo_smart_detection()
     from app.teleintel.smartdetect import aggregate
 
-    overview = await _resolve(principal, scope_kind, scope_id)
-    return await aggregate(overview.get("components", []), _conn_for(scope_kind, scope_id))
+    overview = await _resolve(principal, scope_kind, scope_id, connection_id)
+    return await aggregate(overview.get("components", []), _conn_for(scope_kind, scope_id, connection_id))
 
 
 # ----------------------------------------------------------------------- transaction
@@ -278,6 +282,7 @@ async def transaction(payload: TransactionRequest, principal: Principal = Depend
 async def code_optimizations(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     component_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
@@ -286,11 +291,11 @@ async def code_optimizations(
         return demo.demo_code_optimizations()
     from app.teleintel.code_opt import code_optimizations as fetch
 
-    overview = await _resolve(principal, scope_kind, scope_id)
+    overview = await _resolve(principal, scope_kind, scope_id, connection_id)
     comp = _pick_component(overview, component_id)
     if comp is None:
         return {"items": [], "note": "No component in scope."}
-    return await fetch(comp, _conn_for(scope_kind, scope_id))
+    return await fetch(comp, _conn_for(scope_kind, scope_id, connection_id))
 
 
 # ----------------------------------------------------------------------- findings

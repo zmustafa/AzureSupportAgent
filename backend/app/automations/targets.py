@@ -20,7 +20,7 @@ from typing import Any
 
 logger = logging.getLogger("app.automations.targets")
 
-TARGET_TYPES = ("agent", "assessment", "workbook", "playbook", "radar")
+TARGET_TYPES = ("agent", "assessment", "workbook", "playbook", "radar", "mission")
 
 TARGET_META: dict[str, dict[str, str]] = {
     "agent": {"label": "Sub Agent", "icon": "🤖"},
@@ -28,6 +28,7 @@ TARGET_META: dict[str, dict[str, str]] = {
     "workbook": {"label": "Workbook", "icon": "📓"},
     "playbook": {"label": "Playbook", "icon": "📋"},
     "radar": {"label": "Retirement Radar", "icon": "📡"},
+    "mission": {"label": "Mission Control", "icon": "🚀"},
 }
 
 
@@ -410,12 +411,78 @@ class RadarTarget(Target):
             logger.warning("Radar digest publish failed", exc_info=True)
 
 
+class MissionTarget(Target):
+    """Runs a full Workload Mission Control sweep (architecture, memory, assessment,
+    coverage, performance, radar) on a cadence for one or more workloads. cfg:
+    {workload_ids:[...], systems?:[...], force?:bool, connection_id?}."""
+
+    type_name = "mission"
+
+    def validate(self, cfg: dict[str, Any]) -> str | None:
+        if not cfg.get("workload_ids") and not cfg.get("workload_id"):
+            return "Select at least one workload for the mission schedule."
+        return None
+
+    def label(self, cfg: dict[str, Any]) -> str:
+        wids = cfg.get("workload_ids") or ([cfg["workload_id"]] if cfg.get("workload_id") else [])
+        sysn = cfg.get("systems")
+        scope = f"{len(sysn)} systems" if sysn else "all systems"
+        return f"Mission Control · {len(wids)} workload(s) · {scope}"
+
+    async def execute(self, task: Any) -> ExecResult:
+        from app.core.azure_connections import connection_for_workload
+        from app.missions.orchestrator import run_to_completion
+        from app.workloads.registry import get_workload
+
+        cfg = task.target_config or {}
+        wids = cfg.get("workload_ids") or ([cfg["workload_id"]] if cfg.get("workload_id") else [])
+        systems = cfg.get("systems") or None
+        force = bool(cfg.get("force"))
+        conn_override = cfg.get("connection_id") or None
+        tenant_id = task.tenant_id or "default"
+        actor = task.created_by or "scheduler"
+
+        results: list[dict[str, Any]] = []
+        last_id = ""
+        for wid in wids:
+            wl = get_workload(wid)
+            if wl is None:
+                continue
+            conn = connection_for_workload(wl)
+            conn_id = conn_override or (conn or {}).get("id", "")
+            try:
+                final = await run_to_completion(
+                    tenant_id=tenant_id,
+                    workload_id=wid,
+                    workload_name=wl.get("name", "workload"),
+                    connection_id=conn_id,
+                    actor=actor,
+                    force=force,
+                    trigger="schedule",
+                    system_keys=systems,
+                )
+                results.append(final)
+                last_id = final.get("id", last_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Scheduled mission for %s failed: %s", wid, exc)
+
+        if not results:
+            return ExecResult(status="failed", error="No workloads were found for the mission schedule.")
+        go = sum(1 for r in results if r.get("readiness") == "go")
+        warn = sum(1 for r in results if r.get("readiness") == "warn")
+        nogo = sum(1 for r in results if r.get("readiness") == "nogo")
+        summary = f"Missions: {len(results)} workload(s) — {go} go · {warn} warn · {nogo} no-go"
+        status = "failed" if all(r.get("status") == "failed" for r in results) else "succeeded"
+        return ExecResult(status=status, summary=summary, result_ref={"kind": "mission", "id": last_id})
+
+
 _REGISTRY: dict[str, Target] = {
     "agent": AgentTarget(),
     "assessment": AssessmentTarget(),
     "workbook": WorkbookTarget(),
     "playbook": PlaybookTarget(),
     "radar": RadarTarget(),
+    "mission": MissionTarget(),
 }
 
 

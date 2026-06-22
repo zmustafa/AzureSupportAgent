@@ -20,6 +20,7 @@ from app.api import (
     automations,
     backup,
     backupdr,
+    changeexplorer,
     charts,
     chats,
     connections,
@@ -27,9 +28,11 @@ from app.api import (
     coverage_reports,
     dnsdebug,
     evidence,
+    graph,
     identity,
     inventory,
     meta,
+    missions,
     netcheck,
     notifications,
     playbooks,
@@ -38,6 +41,7 @@ from app.api import (
     radar,
     rbac,
     reservations,
+    tagintel,
     telemetry,
     teleintel,
     users,
@@ -169,6 +173,20 @@ async def _startup() -> None:
             logging.getLogger("app.main").info("Categorized %d sub agent(s)", catn)
     except Exception:  # noqa: BLE001
         logging.getLogger("app.main").warning("Sub agent categorization failed", exc_info=True)
+
+    # Prune orphaned architecture memories — memory records whose architecture was
+    # hard-deleted (purged) before the cascade existed. These are unreachable from the UI
+    # (every memory endpoint 404s once the architecture is gone), so clean them up once.
+    # Trashed (restorable) architectures keep their memory.
+    from app.architectures.memory import prune_orphans
+    from app.architectures.registry import all_architecture_ids
+
+    try:
+        pruned = prune_orphans(all_architecture_ids())
+        if pruned:
+            logging.getLogger("app.main").info("Pruned %d orphaned architecture memor(ies)", pruned)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("app.main").warning("Orphaned memory prune failed", exc_info=True)
 
     # Start the automations scheduler (recurring tasks).
     from app.automations.scheduler import scheduler
@@ -408,6 +426,8 @@ api.include_router(assessments.router)
 api.include_router(architectures.router)
 api.include_router(policy.router)
 api.include_router(inventory.router)
+api.include_router(tagintel.router)
+api.include_router(changeexplorer.router)
 api.include_router(identity.router)
 api.include_router(amba.router)
 api.include_router(telemetry.router)
@@ -416,9 +436,11 @@ api.include_router(coverage_reports.router)
 api.include_router(netcheck.router)
 api.include_router(dnsdebug.router)
 api.include_router(evidence.router)
+api.include_router(graph.router)
 api.include_router(radar.router)
 api.include_router(teleintel.router)
 api.include_router(perfprofile.router)
+api.include_router(missions.router)
 api.include_router(rbac.router)
 api.include_router(reservations.router)
 api.include_router(vms.router)

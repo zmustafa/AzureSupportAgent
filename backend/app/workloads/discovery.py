@@ -360,6 +360,101 @@ async def resources_in_subscriptions(
     return [_norm_resource(r) for r in _parse_rows(capres.stdout)]
 
 
+async def enumerate_resources_paged(
+    connection: dict | None,
+    subscription_ids: list[str],
+    *,
+    cap: int = 5000,
+) -> tuple[list[dict[str, Any]], bool]:
+    """All resources across the given subscriptions, PAGED up to ``cap`` (default 5000).
+
+    Unlike ``resources_in_subscriptions`` (single ``take 1000`` page), this pages through
+    ``$skipToken`` via ``run_kql_collect`` so whole-estate discovery isn't silently capped
+    at 1000. Returns ``(resources, truncated)`` — truncated is True when more exist beyond
+    the cap."""
+    if not subscription_ids:
+        return [], False
+    from app.exec.command_runner import run_kql_collect
+
+    joined = ", ".join(f"'{_esc(s)}'" for s in subscription_ids)
+    kql = (
+        "Resources "
+        f"| where subscriptionId in~ ({joined}) "
+        "| project name, type, location, id, resourceGroup, subscriptionId, tags "
+        "| order by subscriptionId asc, resourceGroup asc, name asc"
+    )
+    res = await run_kql_collect(kql, connection, max_rows=cap, page_size=1000)
+    if not res.ok:
+        logger.warning("Paged resource enumeration failed: %r", (res.error or "")[:300])
+        # Fall back to the single-page helper so discovery still returns something.
+        rows = await resources_in_subscriptions(connection, subscription_ids, cap=min(cap, 1000))
+        return rows, False
+    resources = [_norm_resource(r) for r in res.rows]
+    truncated = not res.complete
+    return resources, truncated
+
+
+async def gather_signals(
+    connection: dict | None, subscription_ids: list[str]
+) -> dict[str, Any]:
+    """Collect dependency/topology/provenance SIGNALS that strengthen workload grouping
+    beyond names+tags. Best-effort: each query failure degrades gracefully to empty.
+
+    Returns ``{network: {<nicId>: <vnetId>}, private_endpoints: [{pe, target}],
+    provenance: {<resId>: <deployment/azd marker>}}`` — compact, id-keyed so the grouper
+    can cite concrete evidence."""
+    out: dict[str, Any] = {"network": {}, "private_endpoints": [], "provenance": {}}
+    if not subscription_ids:
+        return out
+    from app.exec.command_runner import run_kql_collect
+
+    subs = ", ".join(f"'{_esc(s)}'" for s in subscription_ids)
+
+    # Private endpoints → their target PaaS resource (a strong same-workload link).
+    pe_kql = (
+        "Resources "
+        f"| where subscriptionId in~ ({subs}) "
+        "| where type =~ 'microsoft.network/privateendpoints' "
+        "| mv-expand conn = properties.privateLinkServiceConnections "
+        "| extend target = tolower(tostring(conn.properties.privateLinkServiceId)) "
+        "| where isnotempty(target) "
+        "| project pe = tolower(id), target"
+    )
+    try:
+        r = await run_kql_collect(pe_kql, connection, max_rows=2000, page_size=1000)
+        if r.ok:
+            out["private_endpoints"] = [
+                {"pe": row.get("pe", ""), "target": row.get("target", "")}
+                for row in r.rows
+                if row.get("pe") and row.get("target")
+            ]
+    except Exception:  # noqa: BLE001
+        logger.debug("private-endpoint signal query failed", exc_info=True)
+
+    # Deployment provenance: azd-env-name / cost-center / application tags pin co-deployed
+    # resources together regardless of resource-group layout.
+    prov_kql = (
+        "Resources "
+        f"| where subscriptionId in~ ({subs}) "
+        "| extend azd = tostring(tags['azd-env-name']), cc = tostring(tags['cost-center']), "
+        "app = tostring(tags['application']) "
+        "| where isnotempty(azd) or isnotempty(cc) or isnotempty(app) "
+        "| project rid = tolower(id), marker = coalesce(azd, app, cc)"
+    )
+    try:
+        r = await run_kql_collect(prov_kql, connection, max_rows=4000, page_size=1000)
+        if r.ok:
+            for row in r.rows:
+                rid = row.get("rid")
+                marker = row.get("marker")
+                if rid and marker:
+                    out["provenance"][rid] = marker
+    except Exception:  # noqa: BLE001
+        logger.debug("provenance signal query failed", exc_info=True)
+
+    return out
+
+
 async def resources_in_resource_groups(
     connection: dict | None, pairs: list[tuple[str, str]], *, cap: int = 1000
 ) -> list[dict[str, Any]]:

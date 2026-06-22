@@ -716,6 +716,59 @@ export type RadarSnapshot = {
   never_loaded?: boolean;
 };
 
+// ---- Workload Mission Control --------------------------------------------------
+export type MissionSystem = {
+  key: string;
+  label: string;
+  icon: string;
+  status: string; // queued|running|done|skipped|fail|error|idle
+  headline: string;
+  detail?: string;
+  score: number | null;
+  attention: boolean;
+  link: string;
+  result_ref?: { kind: string; id?: string; workload_id?: string } | null;
+  error?: string;
+  started_at?: string;
+  ended_at?: string;
+  informational?: boolean;
+  age_seconds?: number | null;
+  fresh?: boolean;
+};
+
+export type MissionLog = { ts: string; key: string; message: string };
+
+export type Mission = {
+  id: string;
+  workload_id: string;
+  workload_name: string;
+  connection_id: string;
+  status: string; // queued|running|succeeded|partial|failed|cancelled
+  readiness: string; // go|warn|nogo|unknown
+  force: boolean;
+  trigger: string;
+  systems_total: number;
+  systems_done: number;
+  systems_attention: number;
+  systems: MissionSystem[];
+  log?: MissionLog[];
+  error?: string;
+  created_at: string;
+  started_at: string;
+  ended_at: string;
+  duration_ms?: number | null;
+};
+
+export type MissionState = {
+  workload_id: string;
+  workload_name?: string;
+  connection_id?: string;
+  systems: MissionSystem[];
+  error?: string;
+};
+
+export type MissionSystemDef = { key: string; label: string; icon: string; informational: boolean };
+
 export type RadarClassificationRule = {
   id: string;
   keywords: string[];
@@ -1339,6 +1392,123 @@ export type RbacRun = {
 };
 
 export type RbacProgress = { seq: number; ts: string; level: "info" | "ok" | "warning" | "error"; message: string };
+
+// ---- Central knowledge graph (/graph) ----
+export type GraphNodeKind =
+  | "tenant_connection"
+  | "management_group"
+  | "subscription"
+  | "resource_group"
+  | "resource"
+  | "workload"
+  | "architecture"
+  | "architecture_memory"
+  | "assessment_finding"
+  | "rbac_principal"
+  | "cost_bucket"
+  | "retirement_item"
+  | "change_event"
+  | "coverage_gap"
+  | "identity_finding";
+
+export type GraphNode = {
+  id: string;
+  kind: GraphNodeKind;
+  label: string;
+  data: Record<string, any>;
+  badges: Record<string, any>;
+  expandable: boolean;
+  parent?: string;
+};
+
+export type GraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  label: string;
+};
+
+export type GraphStats = { node_count: number; edge_count: number; by_kind: Record<string, number> };
+
+export type GraphResult = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: GraphStats;
+  truncated?: boolean;
+  error?: string;
+  generated_at?: string;
+};
+
+export type GraphOverview = GraphResult & {
+  connection: AzureConnection;
+  inventory_loaded: boolean;
+  counts: { subscriptions: number; workloads: number; architectures: number; resources: number };
+};
+
+export type GraphNodeDetail = {
+  found: boolean;
+  detail?: string;
+  node?: GraphNode;
+  dossier?: Record<string, any>;
+};
+
+export type GraphPathResult = { found: boolean; path: string[]; hops: number; edges: string[] };
+export type GraphBlastResult = {
+  source: string;
+  direct: string[];
+  indirect: string[];
+  by_depth: Record<string, string[]>;
+  impacted_workloads: { id: string; label: string }[];
+  impacted_count: number;
+};
+export type GraphDrift = {
+  has_architecture: boolean;
+  ok: { arm_id: string; name: string; type: string }[];
+  documented_missing: { arm_id: string; name: string; type: string }[];
+  live_uncontrolled: { arm_id: string; name: string; type: string }[];
+  counts: { ok: number; documented_missing: number; live_uncontrolled: number };
+  drift_score: number | null;
+  summary: string;
+};
+export type GraphAnalytics = {
+  stats: GraphStats;
+  concentration_risk: { id: string; label: string; kind: string; betweenness: number; degree: number }[];
+  communities: { size: number; kinds: Record<string, number>; sample: string[] }[];
+  community_count: number;
+  orphans: {
+    unowned_resources: { id: string; name: string; type: string }[];
+    unowned_count: number;
+    workloads_without_architecture: { id: string; name: string }[];
+    architectures_without_workload: { id: string; name: string }[];
+  };
+  candidate_workloads: { size: number; reason: string; resource_ids: string[]; types: { type: string; count: number }[]; resource_group: string; subscription_id: string }[];
+};
+export type GraphCompare = {
+  left: { id: string; node_count: number };
+  right: { id: string; node_count: number };
+  only_left: { id: string; label: string; kind: string }[];
+  only_right: { id: string; label: string; kind: string }[];
+  shared: { id: string; label: string; kind: string }[];
+};
+export type GraphNarrative = { narrative: string; used_ai: boolean; summary: Record<string, any> };
+export type GraphAskResult = { matched: string[]; count: number; filter: Record<string, any>; explanation: string; used_ai: boolean; nodes: GraphNode[] };
+export type GraphView = {
+  id: string;
+  name: string;
+  tenant_id: string;
+  connection_id: string;
+  scope_kind: string;
+  scope_id: string;
+  lens: string;
+  layout: string;
+  hidden_kinds: string[];
+  expanded: string[];
+  camera: Record<string, any>;
+  overlays: string[];
+  created_at: string;
+  updated_at: string;
+};
 
 export const api = {
   me: () => http<Me>("/me"),
@@ -2120,11 +2290,16 @@ export const api = {
     scope_id: string;
     scope_name: string;
     candidates: WorkloadCandidate[];
+    decisions?: { action: string; name?: string; from?: string; to?: string; excluded?: string }[];
+    auto_assess?: boolean;
+    auto_architecture?: boolean;
   }) =>
-    http<{ saved: Workload[]; count: number }>("/workloads/autopilot/save", {
+    http<{ saved: Workload[]; count: number; launched: { missions: string[]; architectures: string[] } }>("/workloads/autopilot/save", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  estateCoverage: (connectionId: string) =>
+    http<EstateCoverage>(`/workloads/estate-coverage?connection_id=${encodeURIComponent(connectionId)}`),
   refreshWorkload: (id: string) =>
     http<{ workload: Workload; diff: WorkloadRefreshDiff }>(`/workloads/${id}/refresh`, {
       method: "POST",
@@ -2375,15 +2550,15 @@ export const api = {
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
   // Reservations Monitor — server cache; demo scope for synthetic data.
-  reservationsOverview: (demo = false) =>
-    http<ReservationsSnapshot>(`/reservations/overview?demo=${demo ? "true" : "false"}`),
-  refreshReservations: (demo = false) =>
-    http<ReservationsSnapshot>(`/reservations/refresh?demo=${demo ? "true" : "false"}`, {
+  reservationsOverview: (demo = false, connectionId = "") =>
+    http<ReservationsSnapshot>(`/reservations/overview?demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  refreshReservations: (demo = false, connectionId = "") =>
+    http<ReservationsSnapshot>(`/reservations/refresh?demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`, {
       method: "POST",
       body: "{}",
     }),
-  reservationsDigestPreview: (demo = false) =>
-    http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}`),
+  reservationsDigestPreview: (demo = false, connectionId = "") =>
+    http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`),
   // RBAC / Access Review — server cache, per-scope refresh.
   rbacOverview: (connectionId?: string | null) =>
     http<RbacOverview>(`/rbac/overview${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
@@ -2525,16 +2700,18 @@ export const api = {
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     return httpBlob(`/coverage-reports/estate/pdf?${q.toString()}`, { signal });
   },
-  ambaCoverage: (params: { workload_id?: string; subscription_id?: string }) => {
+  ambaCoverage: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<AmbaCoverage>(`/amba/coverage?${q.toString()}`);
   },
-  refreshAmba: (params: { workload_id?: string; subscription_id?: string }) => {
+  refreshAmba: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<AmbaCoverage>(`/amba/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
   ambaIac: (body: { gaps: AmbaGap[]; format: "bicep" | "terraform" }) =>
@@ -2583,16 +2760,18 @@ export const api = {
       body: "{}",
     }),
   // Telemetry Coverage (diagnostic settings auditor)
-  telemetryCoverage: (params: { workload_id?: string; subscription_id?: string }) => {
+  telemetryCoverage: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<TelemetryCoverage>(`/telemetry/coverage?${q.toString()}`);
   },
-  refreshTelemetry: (params: { workload_id?: string; subscription_id?: string }) => {
+  refreshTelemetry: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<TelemetryCoverage>(`/telemetry/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
   telemetryIac: (body: { gaps: TelemetryGap[]; format: "bicep" | "policy"; workspace_id?: string }) =>
@@ -2646,16 +2825,18 @@ export const api = {
       body: "{}",
     }),
   // Backup & DR Coverage
-  backupDrCoverage: (params: { workload_id?: string; subscription_id?: string }) => {
+  backupDrCoverage: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<BackupDrCoverage>(`/backupdr/coverage?${q.toString()}`);
   },
-  refreshBackupDr: (params: { workload_id?: string; subscription_id?: string }) => {
+  refreshBackupDr: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<BackupDrCoverage>(`/backupdr/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
   backupDrIac: (body: { gaps: BackupDrGap[]; format: "bicep" | "runbook" }) =>
@@ -2703,18 +2884,97 @@ export const api = {
       body: "{}",
     }),
   // Retirement & Breaking-Change Radar
-  radarOverview: (params: { workload_id?: string; subscription_id?: string }) => {
+  radarOverview: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<RadarSnapshot>(`/radar/overview?${q.toString()}`);
   },
-  refreshRadar: (params: { workload_id?: string; subscription_id?: string }) => {
+  refreshRadar: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<RadarSnapshot>(`/radar/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
+  // --- Central knowledge graph (/graph) ---
+  graphOverview: (connectionId = "") => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<GraphOverview>(`/graph/overview?${q.toString()}`);
+  },
+  graphExpand: (nodeId: string, connectionId = "") =>
+    http<GraphResult>("/graph/expand", {
+      method: "POST",
+      body: JSON.stringify({ node_id: nodeId, connection_id: connectionId || null }),
+    }),
+  graphBuild: (scopeKind: string, scopeId: string, opts: { connectionId?: string; overlays?: string[]; drift?: boolean } = {}) =>
+    http<GraphResult & { drift?: GraphDrift }>("/graph/build", {
+      method: "POST",
+      body: JSON.stringify({
+        scope_kind: scopeKind,
+        scope_id: scopeId,
+        connection_id: opts.connectionId || null,
+        overlays: opts.overlays || [],
+        drift: !!opts.drift,
+      }),
+    }),
+  graphSearch: (q: string, connectionId = "") => {
+    const p = new URLSearchParams();
+    p.set("q", q);
+    if (connectionId) p.set("connection_id", connectionId);
+    return http<{ nodes: GraphNode[]; query: string; count: number }>(`/graph/search?${p.toString()}`);
+  },
+  graphNode: (nodeId: string, connectionId = "") => {
+    const p = new URLSearchParams();
+    p.set("node_id", nodeId);
+    if (connectionId) p.set("connection_id", connectionId);
+    return http<GraphNodeDetail>(`/graph/node?${p.toString()}`);
+  },
+  graphPath: (nodes: GraphNode[], edges: GraphEdge[], source: string, target: string, directed = false) =>
+    http<GraphPathResult>("/graph/path", { method: "POST", body: JSON.stringify({ nodes, edges, source, target, directed }) }),
+  graphBlastRadius: (nodes: GraphNode[], edges: GraphEdge[], source: string, maxDepth = 3, directed = false) =>
+    http<GraphBlastResult>("/graph/blast-radius", { method: "POST", body: JSON.stringify({ nodes, edges, source, max_depth: maxDepth, directed }) }),
+  graphAnalytics: (connectionId = "") => {
+    const p = new URLSearchParams();
+    if (connectionId) p.set("connection_id", connectionId);
+    return http<GraphAnalytics>(`/graph/analytics?${p.toString()}`);
+  },
+  graphDrift: (workloadId: string, connectionId = "") => {
+    const p = new URLSearchParams();
+    p.set("workload_id", workloadId);
+    if (connectionId) p.set("connection_id", connectionId);
+    return http<{ found: boolean; detail?: string; workload_id: string; workload_name: string; drift: GraphDrift }>(`/graph/drift?${p.toString()}`);
+  },
+  graphCompare: (scopeKind: string, leftId: string, rightId: string, connectionId = "") =>
+    http<GraphCompare>("/graph/compare", { method: "POST", body: JSON.stringify({ scope_kind: scopeKind, left_id: leftId, right_id: rightId, connection_id: connectionId || null }) }),
+  graphNarrative: (scopeKind = "overview", scopeId = "", connectionId = "") =>
+    http<GraphNarrative>("/graph/narrative", { method: "POST", body: JSON.stringify({ scope_kind: scopeKind, scope_id: scopeId, connection_id: connectionId || null }) }),
+  graphAsk: (question: string, connectionId = "") =>
+    http<GraphAskResult>("/graph/ask", { method: "POST", body: JSON.stringify({ question, connection_id: connectionId || null }) }),
+  graphViews: () => http<{ views: GraphView[] }>("/graph/views"),
+  graphSaveView: (view: Partial<GraphView>) => http<{ view: GraphView }>("/graph/views", { method: "POST", body: JSON.stringify(view) }),
+  graphDeleteView: (id: string) => http<{ ok: boolean }>(`/graph/views/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // --- Workload Mission Control ---
+  missionSystems: () => http<{ systems: MissionSystemDef[] }>("/missions/systems"),
+  missionState: (workloadId: string) =>
+    http<MissionState>(`/missions/state?workload_id=${encodeURIComponent(workloadId)}`),
+  runMission: (body: { workload_id: string; systems?: string[]; force?: boolean; connection_id?: string | null }) =>
+    http<{ mission: Mission }>("/missions/run", { method: "POST", body: JSON.stringify(body) }),
+  runFleet: (body: { workload_ids: string[]; systems?: string[]; force?: boolean; connection_id?: string | null }) =>
+    http<{ missions: Mission[]; launched: number }>("/missions/fleet", { method: "POST", body: JSON.stringify(body) }),
+  listMissions: (workloadId?: string, limit = 50) => {
+    const q = new URLSearchParams();
+    if (workloadId) q.set("workload_id", workloadId);
+    q.set("limit", String(limit));
+    return http<{ missions: Mission[] }>(`/missions?${q.toString()}`);
+  },
+  getMission: (id: string) => http<{ mission: Mission }>(`/missions/${encodeURIComponent(id)}`),
+  cancelMission: (id: string) =>
+    http<{ ok: boolean }>(`/missions/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  deleteMission: (id: string) =>
+    http<{ ok: boolean }>(`/missions/${encodeURIComponent(id)}`, { method: "DELETE" }),
   radarRunbook: (body: { event: RadarEvent; architecture_id?: string }) =>
     http<{ ok: boolean; runbook: string; used_ai: boolean }>("/radar/runbook", {
       method: "POST",
@@ -2773,10 +3033,11 @@ export const api = {
       body: "{}",
     }),
   // Telemetry Intelligence
-  teleintelOverview: (params: { workload_id?: string; subscription_id?: string }) => {
+  teleintelOverview: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<TeleIntelOverview>(`/teleintel/overview?${q.toString()}`);
   },
   teleintelQuery: (body: { kql: string; workload_id?: string; subscription_id?: string; component_id?: string }) =>
@@ -2784,32 +3045,36 @@ export const api = {
       "/teleintel/query",
       { method: "POST", body: JSON.stringify(body) },
     ),
-  teleintelTriage: (params: { workload_id?: string; subscription_id?: string; component_id?: string }) => {
+  teleintelTriage: (params: { workload_id?: string; subscription_id?: string; connection_id?: string; component_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.component_id) q.set("component_id", params.component_id);
     return http<TeleIntelTriage>(`/teleintel/triage?${q.toString()}`);
   },
-  teleintelTimeline: (params: { workload_id?: string; subscription_id?: string; component_id?: string }) => {
+  teleintelTimeline: (params: { workload_id?: string; subscription_id?: string; connection_id?: string; component_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.component_id) q.set("component_id", params.component_id);
     return http<TeleIntelTimeline>(`/teleintel/timeline?${q.toString()}`);
   },
-  teleintelSmartDetection: (params: { workload_id?: string; subscription_id?: string }) => {
+  teleintelSmartDetection: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<TeleIntelSmartDetection>(`/teleintel/smart-detection?${q.toString()}`);
   },
-  teleintelTransaction: (body: { operation_id: string; workload_id?: string; subscription_id?: string; component_id?: string }) =>
+  teleintelTransaction: (body: { operation_id: string; workload_id?: string; subscription_id?: string; connection_id?: string; component_id?: string }) =>
     http<TeleIntelTransaction>("/teleintel/transaction", { method: "POST", body: JSON.stringify(body) }),
-  teleintelCodeOptimizations: (params: { workload_id?: string; subscription_id?: string; component_id?: string }) => {
+  teleintelCodeOptimizations: (params: { workload_id?: string; subscription_id?: string; connection_id?: string; component_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.component_id) q.set("component_id", params.component_id);
     return http<TeleIntelCodeOpt>(`/teleintel/code-optimizations?${q.toString()}`);
   },
@@ -2829,10 +3094,11 @@ export const api = {
       body: "{}",
     }),
   // Performance Profiler
-  perfProfile: (params: { workload_id?: string; subscription_id?: string }) => {
+  perfProfile: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<PerfProfile>(`/performance/profile?${q.toString()}`);
   },
   perfResource: (params: { resource_id: string; run_id?: string; workload_id?: string; subscription_id?: string }) => {
@@ -3123,7 +3389,576 @@ export const api = {
     http<InventoryOptimization>(
       "/inventory/optimization" + (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
+
+  // --- Tag Intelligence (F1-F12) ---
+  tagintelCensus: (sel: TagScopeSel, force = false) =>
+    http<TagCensusResponse>(`/tagintel/census?${tagQ(sel, { force: force ? "1" : "0" })}`),
+  tagintelAsk: (body: { question: string } & TagScopeSel, signal?: AbortSignal) =>
+    http<TagAskResponse>("/tagintel/ask", { method: "POST", body: JSON.stringify(tagBody(body)), signal }),
+  tagintelHygiene: (sel: TagScopeSel) =>
+    http<TagHygieneResponse>(`/tagintel/hygiene?${tagQ(sel)}`),
+  tagintelCatalog: () => http<{ entries: TagCatalogEntry[] }>("/tagintel/catalog"),
+  tagintelCatalogSave: (entry: Partial<TagCatalogEntry>) =>
+    http<TagCatalogEntry>("/tagintel/catalog", { method: "POST", body: JSON.stringify(entry) }),
+  tagintelCatalogDelete: (id: string) =>
+    http<{ deleted: boolean }>(`/tagintel/catalog/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tagintelCatalogSeed: (sel: TagScopeSel, limit = 12) =>
+    http<{ available: boolean; created: TagCatalogEntry[]; entries: TagCatalogEntry[] }>(
+      "/tagintel/catalog/seed", { method: "POST", body: JSON.stringify(tagBody({ ...sel, limit })) }),
+  tagintelCoverage: (sel: TagScopeSel, required?: string) =>
+    http<TagCoverageResponse>(`/tagintel/coverage?${tagQ(sel, required ? { required } : {})}`),
+  tagintelCost: (sel: TagScopeSel, dimension = "workload") =>
+    http<TagCostResponse>(`/tagintel/cost?${tagQ(sel, { dimension })}`),
+  tagintelBillingMap: (sel: TagScopeSel) =>
+    http<TagBillingMapResponse>(`/tagintel/billing-map?${tagQ(sel)}`),
+  tagintelCmdbReconcile: (sel: TagScopeSel, cmdb_codes: string[]) =>
+    http<TagCmdbReconcile>("/tagintel/cmdb-reconcile", { method: "POST", body: JSON.stringify(tagBody({ ...sel, cmdb_codes })) }),
+  tagintelDrift: (sel: TagScopeSel) =>
+    http<{ snapshots: TagDriftSnapshot[] }>(`/tagintel/drift?${tagQ(sel)}`),
+  tagintelDriftSnapshot: (sel: TagScopeSel) =>
+    http<{ available: boolean; snapshot?: TagDriftSnapshot }>(`/tagintel/drift/snapshot?${tagQ(sel)}`, { method: "POST" }),
+  tagintelDriftDiff: (sel: TagScopeSel, base: string, head: string) =>
+    http<TagDriftDiff>(`/tagintel/drift/diff?${tagQ(sel, { base, head })}`),
+  tagintelPolicygen: (selections: { tag: string; effect: string; default_value?: string }[]) =>
+    http<TagPolicyGenResponse>("/tagintel/policygen", { method: "POST", body: JSON.stringify({ selections }) }),
+  tagintelPolicyLadder: () => http<{ ladder: TagPolicyLadderStep[] }>("/tagintel/policy/ladder"),
+  tagintelRemediatePreview: (sel: TagScopeSel, op: TagRemediationOp) =>
+    http<TagRemediationPlan>("/tagintel/remediate/preview", { method: "POST", body: JSON.stringify(tagBody({ ...sel, op })) }),
+  tagintelRemediateScripts: (sel: TagScopeSel, op: TagRemediationOp) =>
+    http<TagRemediationScripts>("/tagintel/remediate/scripts", { method: "POST", body: JSON.stringify(tagBody({ ...sel, op })) }),
+  // Multi-operation change-set variants (preload/save flow).
+  tagintelRemediatePreviewSet: (sel: TagScopeSel, operations: TagRemediationOp[]) =>
+    http<TagRemediationPlan>("/tagintel/remediate/preview", { method: "POST", body: JSON.stringify(tagBody({ ...sel, operations })) }),
+  tagintelRemediateScriptsSet: (sel: TagScopeSel, operations: TagRemediationOp[]) =>
+    http<TagRemediationScripts>("/tagintel/remediate/scripts", { method: "POST", body: JSON.stringify(tagBody({ ...sel, operations })) }),
+  tagintelRemediateApply: (sel: TagScopeSel, operations: TagRemediationOp[], changeset_id?: string) =>
+    http<TagApplyResult>("/tagintel/remediate/apply", { method: "POST", body: JSON.stringify(tagBody({ ...sel, operations, approved: true, changeset_id: changeset_id || "" })) }),
+  tagintelChangesets: () => http<{ changesets: TagChangeSet[]; groups: TagChangeSetGroup[] }>("/tagintel/changesets"),
+  tagintelChangesetSave: (cs: { id?: string; name: string; description?: string; group_id?: string; labels?: string[]; operations: TagRemediationOp[] }) =>
+    http<TagChangeSet>("/tagintel/changesets", { method: "POST", body: JSON.stringify(cs) }),
+  tagintelChangesetDelete: (id: string) =>
+    http<{ deleted: boolean }>(`/tagintel/changesets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tagintelChangesetDuplicate: (id: string) =>
+    http<TagChangeSet>(`/tagintel/changesets/${encodeURIComponent(id)}/duplicate`, { method: "POST" }),
+  tagintelChangesetMove: (id: string, group_id: string) =>
+    http<TagChangeSet>(`/tagintel/changesets/${encodeURIComponent(id)}/move`, { method: "POST", body: JSON.stringify({ group_id }) }),
+  tagintelChangesetGroups: () => http<{ groups: TagChangeSetGroup[] }>("/tagintel/changeset-groups"),
+  tagintelChangesetGroupSave: (g: { id?: string; name: string; color?: string; description?: string; order?: number }) =>
+    http<TagChangeSetGroup>("/tagintel/changeset-groups", { method: "POST", body: JSON.stringify(g) }),
+  tagintelChangesetGroupDelete: (id: string) =>
+    http<{ deleted: boolean }>(`/tagintel/changeset-groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  tagintelChangesetsExport: (ids?: string[]) =>
+    http<TagChangeSetBundle>(`/tagintel/changesets/export${ids?.length ? `?ids=${encodeURIComponent(ids.join(","))}` : ""}`),
+  tagintelChangesetsImport: (bundle: TagChangeSetBundle) =>
+    http<TagChangeSetImportResult>("/tagintel/changesets/import", { method: "POST", body: JSON.stringify(bundle) }),
+  tagintelRbacAdvice: () => http<TagRbacAdvice>("/tagintel/rbac-advice"),
+  tagintelSummary: (sel: TagScopeSel) =>
+    http<TagSummary>(`/tagintel/summary?${tagQ(sel)}`),
+
+  // --- Change Explorer ---
+  changeExplorerWorkloads: () => http<{ workloads: ChangeWorkload[] }>("/changeexplorer/workloads"),
+  changeExplorerAnalyze: (body: {
+    workload_id?: string; subscription_id?: string; subscription_name?: string;
+    connection_id?: string; start_time: string; end_time: string; scope_mode: string;
+  }) => http<ChangeAnalysisRun>("/changeexplorer/analyze", { method: "POST", body: JSON.stringify(body) }),
+  changeExplorerRuns: (workloadId: string) =>
+    http<{ runs: ChangeRunSummary[] }>(`/changeexplorer/runs?workload_id=${encodeURIComponent(workloadId)}`),
+  changeExplorerRun: (runId: string) => http<ChangeAnalysisRun>(`/changeexplorer/runs/${encodeURIComponent(runId)}`),
+  changeExplorerDeleteRun: (runId: string) =>
+    http<{ deleted: boolean }>(`/changeexplorer/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+  changeExplorerTrash: (workloadId: string) =>
+    http<{ runs: ChangeRunSummary[] }>(`/changeexplorer/runs/trash?workload_id=${encodeURIComponent(workloadId)}`),
+  changeExplorerRestoreRun: (runId: string) =>
+    http<{ restored: boolean }>(`/changeexplorer/runs/${encodeURIComponent(runId)}/restore`, { method: "POST", body: "{}" }),
+  changeExplorerPurgeRun: (runId: string) =>
+    http<{ purged: boolean }>(`/changeexplorer/runs/${encodeURIComponent(runId)}/purge`, { method: "DELETE" }),
+  changeExplorerExport: (runId: string, format: string) =>
+    http<{ filename?: string; mime?: string; content?: string; queries?: Record<string, string> }>(
+      `/changeexplorer/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
 };
+
+export interface TagScopeSel {
+  connection_id?: string | null;
+  scope?: string;
+  workload_id?: string;
+}
+function tagQ(sel: TagScopeSel, extra: Record<string, string> = {}): string {
+  const p = new URLSearchParams();
+  if (sel.connection_id) p.set("connection_id", sel.connection_id);
+  if (sel.scope) p.set("scope", sel.scope);
+  if (sel.workload_id) p.set("workload_id", sel.workload_id);
+  for (const [k, v] of Object.entries(extra)) if (v !== undefined && v !== "") p.set(k, v);
+  return p.toString();
+}
+function tagBody<T extends TagScopeSel>(body: T): T {
+  return { ...body, connection_id: body.connection_id ?? "", scope: body.scope ?? "", workload_id: body.workload_id ?? "" };
+}
+
+// --- Tag Intelligence types ---
+export interface TagCensusKey {
+  key: string;
+  count: number;
+  coverage_pct: number;
+  subscription_count: number;
+  distinct_values: number;
+  category: string;
+  high_cardinality: boolean;
+  single_subscription: boolean;
+  top_values: { value: string; count: number }[];
+  casing_variants: string[];
+}
+export interface TagCensus {
+  total_resources: number;
+  tagged_count: number;
+  untagged_count: number;
+  tag_coverage_pct: number;
+  distinct_keys: number;
+  distinct_pairs: number;
+  keys: TagCensusKey[];
+  scope_coverage: {
+    by_subscription: { id: string; name: string; total: number; tagged: number; coverage_pct: number }[];
+    by_resource_group: { key: string; total: number; tagged: number; coverage_pct: number }[];
+  };
+  untagged_sample: { id: string; name: string; type: string; resource_group: string; subscription_id: string }[];
+  category_breakdown: { category: string; count: number }[];
+  flags: { high_cardinality: number; single_subscription: number };
+}
+export interface TagCensusResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  fetched_at: string;
+  age_seconds?: number;
+  truncated?: boolean;
+  estate_cap?: number;
+  census?: TagCensus;
+}
+export interface TagAskResponse {
+  available?: boolean;
+  kind: string;
+  answer: string;
+  data?: unknown[];
+  key?: string;
+  generated_query?: string;
+  source?: string;
+  needs_ai?: boolean;
+}
+export interface TagKeyCluster {
+  canonical: string;
+  members: string[];
+  counts: Record<string, number>;
+  affected: number;
+  confidence: string;
+  reason: string;
+  category: string;
+}
+export interface TagValueCluster {
+  key: string;
+  category: string;
+  distinct_values: number;
+  variants: { canonical: string; members: string[]; affected: number; confidence: string }[];
+}
+export interface TagGroupingGroup {
+  id: string;
+  label: string;
+  signal: string;
+  confidence: string;
+  resource_count: number;
+  subscription_count: number;
+  top_types: { type: string; count: number }[];
+  needs_review: boolean;
+}
+export interface TagHygieneResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  fetched_at?: string;
+  truncated?: boolean;
+  key_clusters?: TagKeyCluster[];
+  value_clusters?: TagValueCluster[];
+  grouping?: {
+    confirmed_resources: number;
+    inferred_groups: TagGroupingGroup[];
+    summary: { confirmed: number; high: number; medium: number; low: number };
+  };
+}
+export interface TagCatalogEntry {
+  id: string;
+  canonical: string;
+  aliases: string[];
+  category: string;
+  purpose: string;
+  required: boolean;
+  inherited: boolean;
+  scope: string;
+  allowed_values: string[];
+  example_values: string[];
+  owner: string;
+  description: string;
+  created_at?: string;
+  updated_at?: string;
+}
+export interface TagCoverageResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  needs_required?: boolean;
+  message?: string;
+  fetched_at?: string;
+  required?: string[];
+  total_resources?: number;
+  evaluated?: number;
+  exempt?: number;
+  compliant?: number;
+  non_compliant?: number;
+  coverage_pct?: number;
+  per_key?: { key: string; missing: number; present: number; coverage_pct: number }[];
+  missing_one?: { key: string; count: number; resources: { id: string; name: string; type: string; resource_group: string; subscription_id: string }[] }[];
+  missing_one_total?: number;
+  matrix?: { key: string; subscription: string; resource_group: string; total: number; missing: Record<string, number>; compliant_pct: number }[];
+}
+export interface TagCostResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  cost_available?: boolean;
+  message?: string;
+  dimension?: string;
+  currency?: string;
+  total_cost?: number;
+  allocatable_cost?: number;
+  unallocatable_cost?: number;
+  allocatable_pct?: number;
+  tagged_cost?: number;
+  untagged_cost?: number;
+  breakdown?: { label: string; cost: number }[];
+  unallocatable_resources?: { id: string; name: string; type: string; cost: number; resource_group: string }[];
+  shared_candidates?: { id: string; name: string; cost: number; workloads: string[] }[];
+}
+export interface TagBillingMapResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  cost_available?: boolean;
+  currency?: string;
+  total_codes?: number;
+  rows?: {
+    billing_code: string;
+    cost: number;
+    resource_count: number;
+    subscription_count: number;
+    workloads: { name: string; count: number }[];
+    owners: { name: string; count: number }[];
+    owner_coverage_pct: number;
+    unallocated: boolean;
+  }[];
+}
+export interface TagCmdbReconcile {
+  available?: boolean;
+  in_both: string[];
+  only_in_azure: string[];
+  only_in_cmdb: string[];
+  match_pct: number;
+}
+export interface TagDriftSnapshot {
+  id: string;
+  taken_at: string;
+  actor: string;
+  resource_count: number;
+  distinct_keys: number;
+  coverage_pct: number;
+}
+export interface TagDriftKeyDetail {
+  key: string;
+  count: number;
+  resources: { id: string; name: string }[];
+}
+export interface TagDriftChangedResource {
+  id: string;
+  name: string;
+  added: { key: string; to?: unknown }[];
+  removed: { key: string; from?: unknown }[];
+  changed: { key: string; from?: unknown; to?: unknown }[];
+}
+export interface TagDriftDiff {
+  error?: string;
+  base?: TagDriftSnapshot;
+  head?: TagDriftSnapshot;
+  added_keys?: string[];
+  removed_keys?: string[];
+  added_key_details?: TagDriftKeyDetail[];
+  removed_key_details?: TagDriftKeyDetail[];
+  value_changes?: { id: string; name?: string; key: string; from: unknown; to: unknown }[];
+  value_change_count?: number;
+  billing_changes?: { id: string; name?: string; key: string; from: unknown; to: unknown }[];
+  added_resources?: { id: string; name: string }[];
+  removed_resources?: { id: string; name: string }[];
+  changed_resources?: TagDriftChangedResource[];
+  changed_resource_count?: number;
+  coverage_delta?: number;
+  resource_delta?: number;
+}
+export interface TagPolicyDefinition {
+  name: string;
+  properties: Record<string, unknown>;
+  _effect: string;
+  _tag: string;
+}
+export interface TagPolicyGenResponse {
+  definitions: TagPolicyDefinition[];
+  initiative: { name: string; properties: Record<string, unknown> };
+  warnings: string[];
+}
+export interface TagPolicyLadderStep {
+  phase: number;
+  name: string;
+  effect: string | null;
+  description: string;
+  risk: string;
+}
+export interface TagRemediationOp {
+  type: "add_tag" | "set_tag" | "rename_key" | "normalize_value";
+  key?: string;
+  value?: string;
+  to_key?: string;
+  from_value?: string;
+  to_value?: string;
+  resource_ids?: string[];
+}
+export interface TagRemediationItem {
+  id: string;
+  name: string;
+  type: string;
+  resource_group: string;
+  subscription_id: string;
+  before: Record<string, string>;
+  after: Record<string, string>;
+  overwrite: boolean;
+}
+export interface TagRemediationPlan {
+  available?: boolean;
+  never_loaded?: boolean;
+  op?: TagRemediationOp;
+  items?: TagRemediationItem[];
+  count?: number;
+  overwrites?: number;
+  subscription_count?: number;
+  generated_at?: string;
+}
+export interface TagRemediationScripts {
+  available?: boolean;
+  count?: number;
+  overwrites?: number;
+  scripts?: { powershell: string; azcli: string; arg: string; rollback: string };
+}
+export interface TagChangeSet {
+  id: string;
+  name: string;
+  description: string;
+  group_id?: string;
+  labels?: string[];
+  operations: TagRemediationOp[];
+  op_breakdown?: Record<string, number>;
+  affected_keys?: string[];
+  actor?: string;
+  created_at?: string;
+  updated_at?: string;
+  run_count?: number;
+  last_run?: { scope?: string; actor?: string; applied?: number; failed?: number; total?: number; at?: string } | null;
+}
+export interface TagChangeSetGroup {
+  id: string;
+  name: string;
+  color: string;
+  description: string;
+  order: number;
+  count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+/** Portable change-set library bundle (export download / import upload). */
+export interface TagChangeSetBundle {
+  kind?: string;
+  version?: number;
+  exported_at?: string;
+  groups: { id?: string; name: string; color?: string; description?: string; order?: number }[];
+  changesets: { name: string; description?: string; group_id?: string; labels?: string[]; operations: TagRemediationOp[] }[];
+}
+export interface TagChangeSetImportResult {
+  imported: number;
+  groups_created: number;
+  skipped: number;
+  errors: string[];
+}
+export interface TagApplyResult {
+  available?: boolean;
+  never_loaded?: boolean;
+  count?: number;
+  overwrites?: number;
+  applied?: number;
+  failed?: number;
+  total?: number;
+  blocked?: boolean;
+  reason?: string;
+  results?: { id: string; name: string; ok: boolean; error: string }[];
+}
+export interface TagRbacAdvice {
+  rows: { action: string; role: string; scope: string; why: string; role_definition_id: string; assignment_example: string }[];
+  principle: string;
+}
+export interface TagSummary {
+  available: boolean;
+  never_loaded?: boolean;
+  fetched_at?: string;
+  truncated?: boolean;
+  total_resources?: number;
+  tag_coverage_pct?: number;
+  distinct_keys?: number;
+  untagged_count?: number;
+  required_coverage_pct?: number | null;
+  missing_one_total?: number | null;
+  high_cardinality?: number;
+}
+
+// --- Change Explorer types ---
+export interface ChangeWorkload {
+  id: string;
+  name: string;
+  demo: boolean;
+  connection_id: string;
+}
+export interface ChangeEventDetail {
+  detailId: string;
+  changeId: string;
+  propertyPath: string;
+  beforeValue: unknown;
+  afterValue: unknown;
+  changeType: string;
+  technicalSummary: string;
+}
+export interface ChangeRiskFactor { label: string; delta: number }
+export interface ChangeEvent {
+  changeId: string;
+  runId: string;
+  tenantId: string;
+  subscriptionId: string;
+  workloadId: string;
+  resourceId: string;
+  resourceName: string;
+  resourceType: string;
+  resourceGroup: string;
+  location: string;
+  eventTime: string;
+  operation: string;
+  category: string;
+  riskScore: number;
+  riskLabel: string;
+  actor: string;
+  actorType: string;
+  source: string;
+  correlationId: string;
+  plainEnglishSummary: string;
+  possibleImpact: string;
+  confidence: string;
+  rawEventJson: Record<string, unknown>;
+  riskFactors: ChangeRiskFactor[];
+  dependencyRole: string;
+  blastRadius: string;
+  whyRisk: string;
+  details: ChangeEventDetail[];
+}
+export interface ChangeInsight {
+  insightId: string;
+  runId: string;
+  insightType: string;
+  title: string;
+  summary: string;
+  severity: string;
+  relatedChangeIds: string[];
+}
+export interface ChangeResourceRollup {
+  resourceId: string;
+  resourceName: string;
+  resourceType: string;
+  resourceGroup: string;
+  subscriptionId: string;
+  changes: number;
+  highestRiskScore: number;
+  highestRiskLabel: string;
+  lastChanged: string;
+  lastActor: string;
+  role: string;
+}
+export interface ChangeActorRollup {
+  actor: string;
+  actorType: string;
+  changes: number;
+  highestRiskScore: number;
+  highestRiskLabel: string;
+  categories: string[];
+  resources: number;
+  firstChange: string;
+  lastChange: string;
+}
+export interface ChangeHeadline {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  informational: number;
+  resources_changed: number;
+  unique_actors: number;
+  most_active_actor: string;
+  most_active_actor_changes: number;
+  most_changed_resource_type: string;
+  most_risky_category: string;
+}
+export interface ChangeAnalysisRun {
+  runId: string;
+  tenantId: string;
+  workloadId: string;
+  workloadName: string;
+  startTime: string;
+  endTime: string;
+  scopeMode: string;
+  requestedBy: string;
+  createdAt: string;
+  completedAt: string;
+  status: string;
+  totalChanges: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  informationalCount: number;
+  summary: string;
+  demo: boolean;
+  truncated: boolean;
+  changeLimit?: number;
+  notes: string[];
+  scopeInfo: Record<string, unknown>;
+  facets: { risks: string[]; categories: string[]; actors: string[]; resource_types: string[] };
+  events: ChangeEvent[];
+  insights: ChangeInsight[];
+  headline: ChangeHeadline;
+  resources: ChangeResourceRollup[];
+  actors: ChangeActorRollup[];
+}
+export interface ChangeRunSummary {
+  runId: string;
+  workloadId: string;
+  workloadName: string;
+  startTime: string;
+  endTime: string;
+  scopeMode: string;
+  requestedBy: string;
+  completedAt: string;
+  status: string;
+  totalChanges: number;
+  criticalCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  informationalCount: number;
+  demo: boolean;
+  deleted_at?: string;
+}
 
 
 // --- Inventory types ---
@@ -3777,6 +4612,21 @@ export interface PolicyHandoff {
   findings: PolicyHandoffFinding[];
 }
 
+// Hand-off from Tag Intelligence → Policy generator into the Rollout Planner: the generated tag
+// policy definitions, pre-loaded into the planner's deploy mode as ready-to-simulate context.
+export interface PolicyTagHandoffDefinition {
+  tag: string;
+  effect: string;        // audit | deny | modify
+  name: string;
+  displayName: string;
+  json: string;          // the policy definition `properties` JSON (pretty-printed)
+}
+export interface PolicyTagHandoff {
+  source: "tagintel";
+  scope?: string;
+  definitions: PolicyTagHandoffDefinition[];
+}
+
 // A saved Safe-Rollout simulation. The list endpoint returns summaries (no `result`); opening
 // one fetches the full record including the original simulation result.
 export interface PolicySimulationSummary {
@@ -4033,7 +4883,7 @@ export async function streamDnsDebug(
 }
 
 export async function streamTeleintelAsk(
-  body: { question: string; workload_id?: string; subscription_id?: string; component_id?: string },
+  body: { question: string; workload_id?: string; subscription_id?: string; connection_id?: string; component_id?: string },
   handlers: {
     onStart?: (d: { question: string }) => void;
     onKql?: (d: { kql: string; explanation: string }) => void;
@@ -4101,7 +4951,7 @@ export async function streamTeleintelAsk(
 }
 
 export async function streamPerfRefresh(
-  params: { workload_id?: string; subscription_id?: string; window?: string; start_time?: string; end_time?: string },
+  params: { workload_id?: string; subscription_id?: string; connection_id?: string; window?: string; start_time?: string; end_time?: string },
   handlers: {
     onStart?: (d: { scope_kind: string; scope_id: string }) => void;
     onProgress?: (d: { resource: string; type: string }) => void;
@@ -4113,6 +4963,7 @@ export async function streamPerfRefresh(
   const q = new URLSearchParams();
   if (params.workload_id) q.set("workload_id", params.workload_id);
   if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+  if (params.connection_id) q.set("connection_id", params.connection_id);
   if (params.window) q.set("window", params.window);
   if (params.start_time) q.set("start_time", params.start_time);
   if (params.end_time) q.set("end_time", params.end_time);
@@ -4168,6 +5019,214 @@ export async function streamPerfRefresh(
       else if (event === "progress") handlers.onProgress?.(parsed as never);
       else if (event === "done") handlers.onDone?.(parsed as unknown as PerfProfile);
       else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Profiling failed.");
+    }
+  }
+}
+
+// ---- Change Explorer (SSE) -----------------------------------------------------
+export interface ChangeAnalyzeBody {
+  workload_id?: string; subscription_id?: string; subscription_name?: string;
+  connection_id?: string; start_time: string; end_time: string; scope_mode: string;
+}
+export interface ChangeProgress { phase: string; message: string; done?: number; total?: number }
+/** Live change analysis over SSE: start → progress* (collecting / classifying / AI analyzing) →
+ *  done(run). The server persists the run before 'done', so a dropped stream is recoverable from
+ *  history. */
+export async function streamChangeExplorerAnalyze(
+  body: ChangeAnalyzeBody,
+  handlers: {
+    onStart?: (d: { workloadName: string; scopeMode: string }) => void;
+    onProgress?: (d: ChangeProgress) => void;
+    onDone?: (run: ChangeAnalysisRun) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/changeexplorer/analyze/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try { const b = await res.json(); if (b?.detail) detail = b.detail; } catch { /* ignore */ }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (event === "start") handlers.onStart?.(parsed as never);
+      else if (event === "progress") handlers.onProgress?.(parsed as unknown as ChangeProgress);
+      else if (event === "done") handlers.onDone?.(parsed as unknown as ChangeAnalysisRun);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Analysis failed.");
+    }
+  }
+}
+
+// ---- Tag Intelligence — apply remediation (SSE) --------------------------------
+export interface TagApplyStart { total: number; connection?: string; subscription_count?: number }
+export interface TagApplyItemStart {
+  index: number; total: number; id: string; name: string; type?: string; resource_group?: string; change: string;
+}
+export interface TagApplyItemDone {
+  index: number; total: number; id: string; name: string; ok: boolean; error: string; applied: number; failed: number;
+}
+/** Apply a tag change-set to Azure with a live per-resource status feed over SSE:
+ *  start → (item_start → item_done)* → done(TagApplyResult). The server persists the audit
+ *  trail before 'done', and governance (read-only connection / approval) surfaces as a blocked
+ *  'done'. */
+export async function streamTagintelRemediateApply(
+  sel: TagScopeSel,
+  operations: TagRemediationOp[],
+  changeset_id: string | undefined,
+  handlers: {
+    onStart?: (d: TagApplyStart) => void;
+    onItemStart?: (d: TagApplyItemStart) => void;
+    onItemDone?: (d: TagApplyItemDone) => void;
+    onDone?: (r: TagApplyResult) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/tagintel/remediate/apply/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tagBody({ ...sel, operations, approved: true, changeset_id: changeset_id || "" })),
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try { const b = await res.json(); if (b?.detail) detail = b.detail; } catch { /* ignore */ }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (event === "start") handlers.onStart?.(parsed as unknown as TagApplyStart);
+      else if (event === "item_start") handlers.onItemStart?.(parsed as unknown as TagApplyItemStart);
+      else if (event === "item_done") handlers.onItemDone?.(parsed as unknown as TagApplyItemDone);
+      else if (event === "done") handlers.onDone?.(parsed as unknown as TagApplyResult);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Apply failed.");
+    }
+  }
+}
+
+// ---- Workload Mission Control (SSE) --------------------------------------------
+/** Follow a mission's live progress over SSE: snapshot → per-system + log deltas → done.
+ *  The mission keeps running server-side even if this stream disconnects. */
+export async function streamMission(
+  missionId: string,
+  handlers: {
+    onSnapshot?: (m: Mission) => void;
+    onSystem?: (s: MissionSystem) => void;
+    onLog?: (d: MissionLog) => void;
+    onDone?: (m: Mission) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/missions/${encodeURIComponent(missionId)}/stream`, {
+    method: "GET",
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "snapshot") handlers.onSnapshot?.(parsed as unknown as Mission);
+      else if (event === "system") handlers.onSystem?.(parsed as unknown as MissionSystem);
+      else if (event === "log") handlers.onLog?.(parsed as unknown as MissionLog);
+      else if (event === "done") handlers.onDone?.(parsed as unknown as Mission);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Mission failed.");
     }
   }
 }
@@ -5552,10 +6611,20 @@ export interface Workload {
   summary?: WorkloadSummary;
   reasoning?: string;
   confidence?: number;
+  workload_type?: string;
+  environment?: string;
+  criticality?: string;
+  data_classification?: string;
+  evidence?: WorkloadEvidence[];
   last_refreshed?: string;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string;
+}
+
+export interface WorkloadEvidence {
+  kind: string; // provenance | network | scope | rbac
+  detail: string;
 }
 
 export interface TypeCount {
@@ -5579,6 +6648,29 @@ export interface WorkloadCandidate {
   types: TypeCount[];
   resource_groups: string[];
   nodes: WorkloadNode[];
+  workload_type?: string;
+  environment?: string;
+  criticality?: string;
+  data_classification?: string;
+  evidence?: WorkloadEvidence[];
+}
+
+export interface EstateCoverage {
+  connection_id: string;
+  total: number;
+  organized: number;
+  orphaned: number;
+  organized_pct: number;
+  truncated: boolean;
+  orphan_resource_groups: { resource_group: string; count: number }[];
+  orphans: {
+    id: string;
+    name: string;
+    resource_type: string;
+    resource_group: string;
+    subscription_id: string;
+    location: string;
+  }[];
 }
 
 export interface WorkloadRefreshDiff {

@@ -13,14 +13,20 @@ import re
 from typing import Any
 
 from app.exec.command_runner import (
-    KQL_MAX_ROWS,
     close_sp_session,
     open_sp_session,
-    run_kql_capture,
+    run_kql_collect,
 )
 from app.workloads.registry import list_workloads
 
 logger = logging.getLogger("app.inventory.service")
+
+# Per-subscription paging ceiling. A subscription can hold thousands of resources; the previous
+# single-page ``run_kql_capture`` (≤1000 rows, 256 KB) silently truncated big subscriptions to
+# ZERO on REST connections (pasted-token / managed identity) whose output is sliced rather than
+# erroring. ``run_kql_collect`` pages through ``$skipToken`` fail-closed, so it returns the real
+# count up to this cap.
+_INVENTORY_MAX_ROWS = 10_000
 
 # Compact projection keeps each row small so a subscription's worth of resources fits well
 # under the 256 KB capture cap. ``size`` surfaces VM hardware profile so NL search like
@@ -41,17 +47,15 @@ def _esc(val: str) -> str:
 
 
 async def _arg(kql: str, connection: dict[str, Any] | None, session_dir: str | None) -> tuple[list[dict[str, Any]], str]:
-    """Run a Resource Graph query, return (rows, error)."""
-    res = await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
-    if not res.ok:
-        return [], (res.error or res.stderr or "Query failed.").strip()[:400]
-    try:
-        data = json.loads(res.stdout or "[]")
-    except json.JSONDecodeError:
-        return [], "Could not parse Resource Graph output."
-    if isinstance(data, dict):
-        data = data.get("data", data.get("value", []))
-    return (data if isinstance(data, list) else []), ""
+    """Run a Resource Graph query, return (rows, error).
+
+    Uses the PAGED, fail-closed ``run_kql_collect`` (not a single 256 KB capture) so a large
+    subscription returns its real resource set instead of silently truncating to zero on a REST
+    connection (pasted-token / managed identity) whose output is sliced rather than erroring."""
+    kr = await run_kql_collect(kql, connection, session_config_dir=session_dir, max_rows=_INVENTORY_MAX_ROWS)
+    if not kr.ok:
+        return [], (kr.error or "Query failed.").strip()[:400]
+    return kr.rows, ""
 
 
 async def _subscriptions(connection: dict[str, Any] | None, session_dir: str | None) -> list[dict[str, str]]:
@@ -354,11 +358,14 @@ async def collect(connection: dict[str, Any] | None, scope: str = "") -> dict[st
                 f"| where subscriptionId =~ '{_esc(s['id'])}' "
                 f"| project {_PROJECT} | order by name asc"
             )
+            # Page the whole subscription (fail-closed) rather than a single 256 KB capture, so a
+            # large subscription on a REST connection (pasted-token / managed identity) returns its
+            # real resource set instead of silently truncating to zero.
             rows, err = await _arg(kql, connection, session_dir)
             if err:
-                errors.append(f"{s['name'][:24]}: {err}")
+                errors.append(f"{s['name'][:24]}: {err[:200]}")
                 continue
-            if len(rows) >= KQL_MAX_ROWS:
+            if len(rows) >= _INVENTORY_MAX_ROWS:
                 truncated_subs.append(s["name"] or s["id"])
             resources.extend(_normalize(r, wl_scopes) for r in rows)
     finally:

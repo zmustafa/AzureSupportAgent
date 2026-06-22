@@ -12,14 +12,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-
-from app.exec.command_runner import run_command_capture
 
 logger = logging.getLogger("app.inventory.cost")
 
@@ -104,35 +100,41 @@ def _col_index(columns: list[dict[str, Any]], *names: str) -> int:
 
 
 async def _subscription_cost(
-    connection: dict[str, Any] | None, sub_id: str, body_file: str
+    connection: dict[str, Any] | None, sub_id: str, body: dict[str, Any]
 ) -> tuple[dict[str, float], str, str]:
     """Trailing-30-days actual cost per resource for one subscription, via the Cost Management
-    REST API (``az rest``). Returns (cost_by_resource_id_lower, currency, error)."""
+    REST API. Returns (cost_by_resource_id_lower, currency, error).
+
+    Uses ARM REST with the connection's own token (``get_arm_token``) so it works for EVERY
+    connection type — service principal, pasted ARM token, and managed identity — not just
+    those with an ambient ``az`` login."""
+    from app.azure.arm import arm_rest
+    from app.azure.credentials import get_arm_token
+
+    token, terr = await get_arm_token(connection or {})
+    if not token:
+        return {}, "", (terr or "No Azure token for this connection.")[:200]
     url = (
         f"https://management.azure.com/subscriptions/{sub_id}"
         f"/providers/Microsoft.CostManagement/query?api-version={_API_VERSION}"
     )
-    # Forward slashes so the posix-style command tokenizer doesn't eat Windows backslashes.
-    body_ref = body_file.replace("\\", "/")
-    cmd = f'az rest --method post --url "{url}" --body "@{body_ref}" --output json'
     # The Cost Management query API is aggressively throttled (429); retry with backoff.
-    res = None
+    text, err = "", ""
     for attempt in range(4):
-        res = await run_command_capture(cmd, connection, read_only=True)
-        if res.ok:
+        text, err = await arm_rest(token, "POST", url, body)
+        if not err:
             break
-        err_text = (res.error or res.stderr or "")
-        if "429" in err_text or "Too Many Requests" in err_text or "throttl" in err_text.lower():
+        if "429" in err or "Too Many Requests" in err or "throttl" in err.lower():
             await asyncio.sleep(2 + attempt * 4)  # 2s, 6s, 10s
             continue
         break
-    if res is None or not res.ok:
-        msg = (res.error or res.stderr or "Cost query failed.").strip() if res else "Cost query failed."
+    if err:
+        msg = err.strip()
         if "429" in msg or "Too Many Requests" in msg:
             msg = "Azure Cost Management is rate-limiting requests right now — try again in a minute."
         return {}, "", msg[:200]
     try:
-        data = json.loads(res.stdout or "{}")
+        data = json.loads(text or "{}")
     except json.JSONDecodeError:
         return {}, "", "Could not parse cost output."
     props = data.get("properties", data)
@@ -195,31 +197,22 @@ async def get_cost(
     errors: list[str] = []
     currency = ""
 
-    # Write the query body once to a temp file referenced as `--body @file` (avoids fragile
-    # inline-JSON shell quoting on Windows).
-    fd, body_file = tempfile.mkstemp(prefix="azcost-", suffix=".json")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(_query_body(), fh)
-        for i, sub in enumerate(subscriptions[:25]):  # bound the number of (slow) cost queries
-            if i:
-                await asyncio.sleep(1.0)  # gentle spacing to avoid Cost Management throttling
-            costs, cur, err = await _subscription_cost(connection, sub, body_file)
-            if err:
-                errors.append(f"{sub[:8]}…: {err}")
-                continue
-            if cur and not currency:
-                currency = cur
-            sub_total = 0.0
-            for rid, amount in costs.items():
-                by_resource[rid] = by_resource.get(rid, 0.0) + amount
-                sub_total += amount
-            by_subscription[sub] = round(sub_total, 2)
-    finally:
-        try:
-            os.unlink(body_file)
-        except OSError:
-            pass
+    # The Cost Management query body is identical per subscription.
+    body = _query_body()
+    for i, sub in enumerate(subscriptions[:25]):  # bound the number of (slow) cost queries
+        if i:
+            await asyncio.sleep(1.0)  # gentle spacing to avoid Cost Management throttling
+        costs, cur, err = await _subscription_cost(connection, sub, body)
+        if err:
+            errors.append(f"{sub[:8]}…: {err}")
+            continue
+        if cur and not currency:
+            currency = cur
+        sub_total = 0.0
+        for rid, amount in costs.items():
+            by_resource[rid] = by_resource.get(rid, 0.0) + amount
+            sub_total += amount
+        by_subscription[sub] = round(sub_total, 2)
 
     available = bool(by_resource)
     payload = {

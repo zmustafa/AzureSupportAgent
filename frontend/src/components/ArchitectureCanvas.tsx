@@ -1580,9 +1580,9 @@ function CanvasInner({
           </select>
           {/* Well-Architected pillar overlay */}
           {assessReady && assessScore !== null && (
-            <select value={pillarOverlay} onChange={(e) => setPillarOverlay(e.target.value)} title="Tint resources failing a Well-Architected pillar"
+            <select value={pillarOverlay} onChange={(e) => setPillarOverlay(e.target.value)} title="Tint resources failing a Well-Architected (WAF) assessment pillar"
               className="rounded-lg border px-1.5 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand">
-              <option value="">No pillar tint</option>
+              <option value="">WAF Tint</option>
               <option value="security">🛡 Security</option>
               <option value="reliability">🔄 Reliability</option>
               <option value="cost">💰 Cost</option>

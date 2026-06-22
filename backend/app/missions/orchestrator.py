@@ -1,0 +1,548 @@
+"""Mission Control orchestrator.
+
+In-process manager that drives a *mission* (one sweep over a workload): it runs the
+selected systems, streams live progress to SSE subscribers, and persists a ``MissionRun``
+row incrementally so partial progress + history survive a crash. Mirrors the
+``architectures.jobs`` manager pattern (in-memory live state; DB is the durable record).
+
+Concurrency: the architecture system runs first (so Memory has a diagram to document),
+then the remaining systems run concurrently under a small semaphore so the slow Azure
+Resource Graph / metrics scans overlap without hammering Azure all at once.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from app.missions import systems as sysreg
+
+logger = logging.getLogger("app.missions.orchestrator")
+
+_MAX_SYSTEM_CONCURRENCY = 3
+_RETAIN_SECONDS = 1800  # keep finished missions in memory briefly for live SSE replay
+_TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else ""
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@dataclass
+class _Mission:
+    id: str
+    tenant_id: str
+    workload_id: str
+    workload_name: str
+    connection_id: str
+    actor: str
+    force: bool
+    trigger: str
+    system_keys: list[str]
+    status: str = "queued"
+    readiness: str = "unknown"
+    systems: dict[str, dict[str, Any]] = field(default_factory=dict)
+    log: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+    created_at: float = field(default_factory=time.time)
+    started_at: float = 0.0
+    ended_at: float = 0.0
+    task: asyncio.Task | None = field(default=None, repr=False)
+    cancel_requested: bool = field(default=False, repr=False)
+    subscribers: set[asyncio.Queue] = field(default_factory=set, repr=False)
+
+    def public(self) -> dict[str, Any]:
+        systems = [self.systems[k] for k in self.system_keys if k in self.systems]
+        done = sum(1 for s in systems if s.get("status") in ("done", "skipped"))
+        attention = sum(1 for s in systems if s.get("attention") or s.get("status") in ("fail", "error"))
+        return {
+            "id": self.id,
+            "workload_id": self.workload_id,
+            "workload_name": self.workload_name,
+            "connection_id": self.connection_id,
+            "status": self.status,
+            "readiness": self.readiness,
+            "force": self.force,
+            "trigger": self.trigger,
+            "systems_total": len(self.system_keys),
+            "systems_done": done,
+            "systems_attention": attention,
+            "systems": systems,
+            "log": self.log[-50:],
+            "error": self.error,
+            "created_at": _iso(self.created_at),
+            "started_at": _iso(self.started_at),
+            "ended_at": _iso(self.ended_at),
+        }
+
+
+class _Manager:
+    def __init__(self) -> None:
+        self._missions: dict[str, _Mission] = {}
+        self._bg: set[asyncio.Task] = set()
+
+    # ----------------------------------------------------------------- public API
+    def create(
+        self,
+        *,
+        tenant_id: str,
+        workload_id: str,
+        workload_name: str,
+        connection_id: str,
+        actor: str,
+        force: bool,
+        trigger: str,
+        system_keys: list[str],
+    ) -> dict[str, Any]:
+        self._prune()
+        mission = _Mission(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
+            workload_id=workload_id,
+            workload_name=workload_name,
+            connection_id=connection_id,
+            actor=actor,
+            force=force,
+            trigger=trigger,
+            system_keys=sysreg.resolve_keys(system_keys),
+        )
+        # Seed each system as "queued" so the board renders immediately.
+        for key in mission.system_keys:
+            sd = sysreg.get_system(key)
+            mission.systems[key] = {
+                "key": key,
+                "label": sd.label if sd else key,
+                "icon": sd.icon if sd else "•",
+                "status": "queued",
+                "headline": "",
+                "detail": "",
+                "score": None,
+                "attention": False,
+                "link": "",
+                "result_ref": None,
+                "error": "",
+                "started_at": "",
+                "ended_at": "",
+            }
+        self._missions[mission.id] = mission
+        task = asyncio.create_task(self._run(mission))
+        mission.task = task
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        return mission.public()
+
+    def get_live(self, mission_id: str, tenant_id: str) -> _Mission | None:
+        m = self._missions.get(mission_id)
+        if m is None or m.tenant_id != tenant_id:
+            return None
+        return m
+
+    def cancel(self, mission_id: str, tenant_id: str) -> bool:
+        m = self.get_live(mission_id, tenant_id)
+        if m is None or m.status in _TERMINAL:
+            return False
+        m.cancel_requested = True
+        if m.task is not None:
+            m.task.cancel()
+        return True
+
+    async def stream(self, mission_id: str, tenant_id: str):
+        """SSE generator: emit a snapshot then live deltas until the mission ends."""
+        m = self.get_live(mission_id, tenant_id)
+        if m is None:
+            yield {"event": "error", "data": _json({"message": "Mission not found."})}
+            return
+        q: asyncio.Queue = asyncio.Queue()
+        m.subscribers.add(q)
+        try:
+            yield {"event": "snapshot", "data": _json(m.public())}
+            if m.status in _TERMINAL:
+                yield {"event": "done", "data": _json(m.public())}
+                return
+            while True:
+                ev = await q.get()
+                yield ev
+                if ev.get("event") == "done":
+                    return
+        finally:
+            m.subscribers.discard(q)
+
+    async def state(self, *, tenant_id: str, workload_id: str, actor: str) -> dict[str, Any]:
+        """Build the board from each system's cached last_state — never scans Azure."""
+        from app.core.azure_connections import connection_for_workload
+        from app.workloads.registry import get_workload
+
+        wl = get_workload(workload_id)
+        if wl is None:
+            return {"workload_id": workload_id, "systems": [], "error": "Workload not found."}
+        conn = connection_for_workload(wl)
+        ctx = sysreg.MissionContext(
+            tenant_id=tenant_id,
+            actor=actor,
+            workload_id=workload_id,
+            workload=wl,
+            connection=conn,
+            connection_id=(conn or {}).get("id", ""),
+        )
+        systems: list[dict[str, Any]] = []
+        for sd in sysreg.SYSTEMS:
+            try:
+                st = await sd.last_state(ctx)
+            except Exception:  # noqa: BLE001
+                logger.warning("last_state failed for %s", sd.key, exc_info=True)
+                st = None
+            entry = {"key": sd.key, "label": sd.label, "icon": sd.icon, "informational": sd.informational}
+            if st:
+                age = st.get("age_seconds")
+                entry.update(
+                    {
+                        "status": st.get("status", "done"),
+                        "headline": st.get("headline", ""),
+                        "score": st.get("score"),
+                        "attention": bool(st.get("attention")),
+                        "link": st.get("link", ""),
+                        "age_seconds": age,
+                        "fresh": age is not None and age < sysreg.FRESH_SECONDS,
+                    }
+                )
+            else:
+                entry.update({"status": "idle", "headline": "", "score": None, "attention": False, "link": "", "age_seconds": None, "fresh": False})
+            systems.append(entry)
+        return {
+            "workload_id": workload_id,
+            "workload_name": wl.get("name", ""),
+            "connection_id": (conn or {}).get("id", ""),
+            "systems": systems,
+        }
+
+    # ----------------------------------------------------------------- internals
+    def _emit(self, mission: _Mission, event: str, data: dict[str, Any]) -> None:
+        payload = {"event": event, "data": _json(data)}
+        for q in list(mission.subscribers):
+            try:
+                q.put_nowait(payload)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _log(self, mission: _Mission, message: str, key: str = "") -> None:
+        mission.log.append({"ts": _now().isoformat(), "key": key, "message": message})
+        self._emit(mission, "log", {"message": message, "key": key, "ts": _now().isoformat()})
+
+    async def _persist(self, mission: _Mission) -> None:
+        from app.core.db import SessionLocal
+        from app.models import MissionRun
+
+        pub = mission.public()
+        try:
+            async with SessionLocal() as db:
+                row = await db.get(MissionRun, mission.id)
+                if row is None:
+                    return
+                row.status = mission.status
+                row.readiness = mission.readiness
+                row.systems_total = pub["systems_total"]
+                row.systems_done = pub["systems_done"]
+                row.systems_attention = pub["systems_attention"]
+                row.systems_json = pub["systems"]
+                row.error = mission.error or None
+                if mission.status in _TERMINAL and row.ended_at is None:
+                    row.ended_at = _now()
+                    if mission.started_at:
+                        row.duration_ms = int((time.time() - mission.started_at) * 1000)
+                await db.commit()
+        except Exception:  # noqa: BLE001
+            logger.warning("Mission persist failed for %s", mission.id, exc_info=True)
+
+    async def _create_row(self, mission: _Mission) -> None:
+        from app.core.db import SessionLocal
+        from app.models import MissionRun
+
+        try:
+            async with SessionLocal() as db:
+                db.add(
+                    MissionRun(
+                        id=mission.id,
+                        tenant_id=mission.tenant_id,
+                        workload_id=mission.workload_id,
+                        workload_name=mission.workload_name,
+                        connection_id=mission.connection_id or None,
+                        status="running",
+                        readiness="unknown",
+                        systems_total=len(mission.system_keys),
+                        systems_json=[mission.systems[k] for k in mission.system_keys],
+                        force=mission.force,
+                        triggered_by=mission.actor,
+                        trigger=mission.trigger,
+                    )
+                )
+                await db.commit()
+        except Exception:  # noqa: BLE001
+            logger.warning("Mission row create failed for %s", mission.id, exc_info=True)
+
+    async def _exec_system(self, mission: _Mission, ctx: sysreg.MissionContext, key: str, sem: asyncio.Semaphore) -> None:
+        sd = sysreg.get_system(key)
+        if sd is None:
+            return
+        entry = mission.systems[key]
+        async with sem:
+            if mission.cancel_requested:
+                entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
+                self._emit(mission, "system", entry)
+                return
+            entry["status"] = "running"
+            entry["started_at"] = _now().isoformat()
+            self._emit(mission, "system", entry)
+            self._log(mission, f"{sd.label}: started", key)
+
+            # Freshness skip (unless forced).
+            if not mission.force:
+                try:
+                    st = await sd.last_state(ctx)
+                except Exception:  # noqa: BLE001
+                    st = None
+                age = (st or {}).get("age_seconds")
+                if st and age is not None and age < sysreg.FRESH_SECONDS:
+                    entry.update(
+                        {
+                            "status": "skipped",
+                            "headline": st.get("headline", "fresh"),
+                            "detail": "Fresh — skipped (force to re-run)",
+                            "score": st.get("score"),
+                            "attention": bool(st.get("attention")),
+                            "link": st.get("link", ""),
+                            "ended_at": _now().isoformat(),
+                        }
+                    )
+                    self._emit(mission, "system", entry)
+                    self._log(mission, f"{sd.label}: skipped (fresh)", key)
+                    await self._persist(mission)
+                    return
+
+            async def _progress(msg: str) -> None:
+                self._log(mission, f"{sd.label}: {msg}", key)
+
+            try:
+                res = await sd.run(ctx, force=mission.force, progress=_progress)
+            except asyncio.CancelledError:
+                entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
+                self._emit(mission, "system", entry)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Mission system %s failed", key)
+                res = sysreg.SystemResult(status="error", headline=str(exc)[:140], error=str(exc)[:300], attention=True)
+
+            entry.update(
+                {
+                    "status": res.status,
+                    "headline": res.headline,
+                    "detail": res.detail,
+                    "score": res.score,
+                    "attention": res.attention,
+                    "link": res.link,
+                    "result_ref": res.result_ref,
+                    "error": res.error,
+                    "ended_at": _now().isoformat(),
+                }
+            )
+            self._emit(mission, "system", entry)
+            self._log(mission, f"{sd.label}: {res.status} — {res.headline}", key)
+            await self._persist(mission)
+
+    def _rollup(self, mission: _Mission) -> None:
+        systems = [mission.systems[k] for k in mission.system_keys]
+        hard_fail = any(s["status"] in ("fail", "error") for s in systems)
+        attention = any(s.get("attention") or s["status"] in ("fail", "error") for s in systems)
+        ran = [s for s in systems if s["status"] in ("done", "fail", "error")]
+        if hard_fail:
+            mission.readiness = "nogo"
+        elif attention:
+            mission.readiness = "warn"
+        else:
+            mission.readiness = "go"
+        if mission.cancel_requested:
+            mission.status = "cancelled"
+        elif ran and all(s["status"] in ("fail", "error") for s in ran):
+            mission.status = "failed"
+        elif any(s["status"] in ("fail", "error") for s in systems):
+            mission.status = "partial"
+        else:
+            mission.status = "succeeded"
+
+    async def _run(self, mission: _Mission) -> None:
+        from app.core.azure_connections import connection_for_workload, resolve_connection
+        from app.workloads.registry import get_workload
+
+        mission.status = "running"
+        mission.started_at = time.time()
+        await self._create_row(mission)
+        self._log(mission, f"Mission launched for '{mission.workload_name}' ({len(mission.system_keys)} systems)")
+
+        try:
+            wl = get_workload(mission.workload_id)
+            if wl is None:
+                mission.error = "Workload not found."
+                mission.status = "failed"
+                mission.ended_at = time.time()
+                self._emit(mission, "done", {})
+                await self._persist(mission)
+                return
+            conn = resolve_connection(mission.connection_id) if mission.connection_id else connection_for_workload(wl)
+            ctx = sysreg.MissionContext(
+                tenant_id=mission.tenant_id,
+                actor=mission.actor,
+                workload_id=mission.workload_id,
+                workload=wl,
+                connection=conn,
+                connection_id=mission.connection_id or (conn or {}).get("id", ""),
+            )
+
+            sem = asyncio.Semaphore(_MAX_SYSTEM_CONCURRENCY)
+            keys = list(mission.system_keys)
+
+            # Architecture first (Memory documents the diagram it produces), then the rest
+            # concurrently.
+            if "architecture" in keys:
+                keys.remove("architecture")
+                await self._exec_system(mission, ctx, "architecture", sem)
+                self._checkpoint(mission)
+
+            await asyncio.gather(*(self._exec_system(mission, ctx, k, sem) for k in keys))
+
+            self._rollup(mission)
+            mission.ended_at = time.time()
+            self._log(mission, f"Mission complete — {mission.readiness.upper()} ({mission.status})")
+        except asyncio.CancelledError:
+            mission.cancel_requested = True
+            self._rollup(mission)
+            mission.ended_at = time.time()
+            self._log(mission, "Mission cancelled")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Mission run failed")
+            mission.error = str(exc)[:300]
+            mission.status = "failed"
+            mission.ended_at = time.time()
+        finally:
+            await self._persist(mission)
+            self._emit(mission, "done", mission.public())
+
+    def _checkpoint(self, mission: _Mission) -> None:
+        if mission.cancel_requested:
+            raise asyncio.CancelledError()
+
+    def _prune(self) -> None:
+        now = time.time()
+        stale = [mid for mid, m in self._missions.items() if m.status in _TERMINAL and m.ended_at and (now - m.ended_at) > _RETAIN_SECONDS]
+        for mid in stale:
+            self._missions.pop(mid, None)
+
+
+def _json(data: Any) -> str:
+    import json
+
+    return json.dumps(data, default=str)
+
+
+manager = _Manager()
+
+
+async def run_to_completion(
+    *,
+    tenant_id: str,
+    workload_id: str,
+    workload_name: str,
+    connection_id: str,
+    actor: str,
+    force: bool,
+    trigger: str,
+    system_keys: list[str] | None,
+) -> dict[str, Any]:
+    """Launch a mission and await its completion (used by the scheduler)."""
+    pub = manager.create(
+        tenant_id=tenant_id,
+        workload_id=workload_id,
+        workload_name=workload_name,
+        connection_id=connection_id,
+        actor=actor,
+        force=force,
+        trigger=trigger,
+        system_keys=system_keys or [],
+    )
+    mission = manager.get_live(pub["id"], tenant_id)
+    if mission is not None and mission.task is not None:
+        try:
+            await mission.task
+        except Exception:  # noqa: BLE001
+            logger.warning("Awaited mission %s ended with error", pub["id"], exc_info=True)
+    return (await get_mission(pub["id"], tenant_id)) or pub
+
+async def list_missions(tenant_id: str, workload_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    async with SessionLocal() as db:
+        stmt = select(MissionRun).where(MissionRun.tenant_id == tenant_id, MissionRun.deleted_at.is_(None))
+        if workload_id:
+            stmt = stmt.where(MissionRun.workload_id == workload_id)
+        stmt = stmt.order_by(MissionRun.started_at.desc()).limit(limit)
+        rows = (await db.execute(stmt)).scalars().all()
+    return [_row_public(r) for r in rows]
+
+
+async def get_mission(mission_id: str, tenant_id: str) -> dict[str, Any] | None:
+    # Prefer the live in-memory mission (has the log + latest deltas); fall back to DB.
+    live = manager.get_live(mission_id, tenant_id)
+    if live is not None:
+        return live.public()
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    async with SessionLocal() as db:
+        row = await db.get(MissionRun, mission_id)
+    if row is None or row.tenant_id != tenant_id or row.deleted_at is not None:
+        return None
+    return _row_public(row)
+
+
+async def delete_mission(mission_id: str, tenant_id: str) -> bool:
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    async with SessionLocal() as db:
+        row = await db.get(MissionRun, mission_id)
+        if row is None or row.tenant_id != tenant_id or row.deleted_at is not None:
+            return False
+        row.deleted_at = _now()
+        await db.commit()
+    return True
+
+
+def _row_public(row: Any) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "workload_id": row.workload_id,
+        "workload_name": row.workload_name,
+        "connection_id": row.connection_id,
+        "status": row.status,
+        "readiness": row.readiness,
+        "force": row.force,
+        "trigger": row.trigger,
+        "systems_total": row.systems_total,
+        "systems_done": row.systems_done,
+        "systems_attention": row.systems_attention,
+        "systems": row.systems_json or [],
+        "error": row.error or "",
+        "created_at": row.started_at.isoformat() if row.started_at else "",
+        "started_at": row.started_at.isoformat() if row.started_at else "",
+        "ended_at": row.ended_at.isoformat() if row.ended_at else "",
+        "duration_ms": row.duration_ms,
+    }

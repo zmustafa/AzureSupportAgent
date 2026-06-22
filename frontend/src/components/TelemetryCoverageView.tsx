@@ -11,10 +11,11 @@ import {
   type TelemetryRow,
 } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { TrendChart } from "./TrendChart";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
@@ -80,8 +81,10 @@ export function TelemetryCoveragePanel() {
   const navigate = useNavigate();
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.telemetry.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.telemetry.workloadId", "");
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [subId, setSubId] = usePersistedState("azsup.telemetry.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.telemetry.subName", "");
+  const [connId, setConnId] = usePersistedState("azsup.telemetry.connId", "");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [tab, setTab] = useState<"coverage" | "all">("coverage");
@@ -108,9 +111,9 @@ export function TelemetryCoveragePanel() {
       ? workloadId || workloads.find((w) => w.id === "demo-amba-coverage")?.id || workloads[0]?.id || ""
       : "";
 
-  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId } : { subscription_id: subId };
+  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId, connection_id: connId } : { subscription_id: subId, connection_id: connId };
   const scopeReady = scopeKind === "workload" ? !!effectiveWorkloadId : !!subId;
-  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}`;
+  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}:${connId}`;
   // Coverage loads ONLY on an explicit click — switching workload/subscription does NOT
   // auto-fetch (a fetch can compute against Azure). The user clicks "Load coverage".
   // Persisted so revisiting restores the last loaded workload + its cached data.
@@ -123,7 +126,7 @@ export function TelemetryCoveragePanel() {
   const refreshing = isRefreshing(refreshKey);
 
   const covQ = useQuery({
-    queryKey: ["telemetry", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["telemetry", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.telemetryCoverage(params),
     enabled,
   });
@@ -132,7 +135,7 @@ export function TelemetryCoveragePanel() {
 
   // Coverage-% trend over time (loads with the coverage data).
   const trendQ = useQuery({
-    queryKey: ["telemetry-trend", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["telemetry-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("telemetry", params),
     enabled,
   });
@@ -146,8 +149,8 @@ export function TelemetryCoveragePanel() {
     setMsg(null);
     setLoadedScope(scopeKey);
     const p = params;
-    const dataKey = ["telemetry", scopeKind, effectiveWorkloadId, subId] as const;
-    const trendKey = ["telemetry-trend", scopeKind, effectiveWorkloadId, subId] as const;
+    const dataKey = ["telemetry", scopeKind, effectiveWorkloadId, subId, connId] as const;
+    const trendKey = ["telemetry-trend", scopeKind, effectiveWorkloadId, subId, connId] as const;
     startBackgroundRefresh(refreshKey, async () => {
       const fresh = await api.refreshTelemetry(p);
       qc.setQueryData(dataKey, fresh);
@@ -325,6 +328,7 @@ export function TelemetryCoveragePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -333,6 +337,7 @@ export function TelemetryCoveragePanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

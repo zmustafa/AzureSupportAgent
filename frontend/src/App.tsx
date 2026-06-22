@@ -88,8 +88,14 @@ export default function App() {
           <Route path="/automations/:section" element={<ChatView />} />
           <Route path="/workloads" element={<ChatView />} />
           <Route path="/workloads/:id" element={<ChatView />} />
+          <Route path="/mission-control" element={<ChatView />} />
+          <Route path="/mission-control/:id" element={<ChatView />} />
           <Route path="/inventory" element={<ChatView />} />
           <Route path="/inventory/:tab" element={<ChatView />} />
+          <Route path="/tagintel" element={<ChatView />} />
+          <Route path="/tagintel/:tab" element={<ChatView />} />
+          <Route path="/change-explorer" element={<ChatView />} />
+          <Route path="/change-explorer/:tab" element={<ChatView />} />
           <Route path="/rbac" element={<ChatView />} />
           <Route path="/rbac/:tab" element={<ChatView />} />
           <Route path="/assessments" element={<ChatView />} />
@@ -98,6 +104,8 @@ export default function App() {
           <Route path="/architectures/memory" element={<ChatView />} />
           <Route path="/architectures/:id" element={<ChatView />} />
           <Route path="/architectures/:id/memory" element={<ChatView />} />
+          <Route path="/graph" element={<ChatView />} />
+          <Route path="/graph/:focusId" element={<ChatView />} />
           <Route path="/policy" element={<ChatView />} />
           <Route path="/policy/:tab" element={<ChatView />} />
           <Route path="/identity" element={<ChatView />} />

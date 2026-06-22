@@ -64,6 +64,15 @@ export function InventoryIcon({ className }: { className?: string }) {
   );
 }
 
+export function TagIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M10.3 2.5H4a1.5 1.5 0 0 0-1.5 1.5v6.3a1.5 1.5 0 0 0 .44 1.06l5.7 5.7a1.5 1.5 0 0 0 2.12 0l5.3-5.3a1.5 1.5 0 0 0 0-2.12l-5.7-5.7A1.5 1.5 0 0 0 10.3 2.5Z" strokeLinejoin="round" />
+      <circle cx="6.6" cy="6.6" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function WorkloadIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -75,11 +84,32 @@ export function WorkloadIcon({ className }: { className?: string }) {
   );
 }
 
+export function ChangeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M3.5 7a6.5 6.5 0 0 1 11-2.3L16.5 6.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M16.5 13a6.5 6.5 0 0 1-11 2.3L3.5 13.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M16.5 3v3.5H13M3.5 17v-3.5H7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function DashboardIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M3 8.5L10 3l7 5.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4.5 8v8a.5.5 0 00.5.5h3.5V12h3v4.5H15a.5.5 0 00.5-.5V8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function MissionControlIcon({ className }: { className?: string }) {
+  // Rocket — "launch a mission" for a workload.
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M10 2.5c2.5 1 4 3.4 4 6.2 0 1.6-.5 3-1.2 4L10 14l-2.8-1.3C6.5 11.7 6 10.3 6 8.7 6 5.9 7.5 3.5 10 2.5z" strokeLinejoin="round" />
+      <circle cx="10" cy="8" r="1.5" />
+      <path d="M7.2 12.7c-1 .4-1.7 1.3-1.9 2.8 1.5-.2 2.4-.9 2.8-1.9M12.8 12.7c1 .4 1.7 1.3 1.9 2.8-1.5-.2-2.4-.9-2.8-1.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -122,6 +152,17 @@ export function ArchitectureIcon({ className }: { className?: string }) {
       <rect x="11.5" y="2.5" width="6" height="5" rx="1" />
       <rect x="7" y="12.5" width="6" height="5" rx="1" />
       <path d="M5.5 7.5v2.5h9V7.5M10 10v2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function GraphIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="10" cy="4" r="2" />
+      <circle cx="4" cy="14" r="2" />
+      <circle cx="16" cy="14" r="2" />
+      <path d="M8.6 5.6 5.4 12.2M11.4 5.6l3.2 6.6M6 14h8" strokeLinecap="round" />
     </svg>
   );
 }

@@ -257,6 +257,28 @@ def delete_memory(architecture_id: str) -> bool:
     return False
 
 
+def prune_orphans(valid_architecture_ids: set[str]) -> int:
+    """Delete memories whose architecture no longer exists (hard-deleted), cascading to
+    each memory's revisions. ``valid_architecture_ids`` should include BOTH active and
+    trashed architectures so a restorable (trashed) architecture keeps its memory.
+
+    Returns the number of orphan memories removed. Idempotent; safe to call on startup."""
+    data = _read()
+    memories = data.get("memories", {})
+    orphans = [aid for aid in list(memories.keys()) if aid not in valid_architecture_ids]
+    if not orphans:
+        return 0
+    for aid in orphans:
+        del memories[aid]
+    _write(data)
+    from app.architectures import memory_revisions
+
+    for aid in orphans:
+        memory_revisions.delete_for(aid)
+    return len(orphans)
+
+
+
 def restore_revision(architecture_id: str, revision_id: str, actor: str = "") -> dict[str, Any] | None:
     """Restore a past revision's content onto the live memory. The pre-restore version is
     itself snapshotted (via the upsert auto-snapshot) so nothing is lost."""

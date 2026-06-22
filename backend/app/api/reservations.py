@@ -55,12 +55,15 @@ def _empty(window_days: int, *, connection_configured: bool) -> dict[str, Any]:
     return empty_snapshot(connection_configured=connection_configured, window_days=window_days, never_loaded=True)
 
 
-async def _get_snapshot(principal: Principal, *, use_demo: bool, force: bool) -> dict[str, Any]:
-    from app.core.azure_connections import get_default_connection
+async def _get_snapshot(principal: Principal, *, use_demo: bool, force: bool, connection_id: str | None = None) -> dict[str, Any]:
+    from app.core.azure_connections import resolve_connection
 
     ttl, window = _settings()
     tenant_id = principal.tenant_id or "default"
-    scope_id = demo.DEMO_SCOPE_ID if use_demo else _LIVE_SCOPE
+    # Reservation orders are billing/tenant-scoped, so two connections (tenants) return genuinely
+    # different data — key the cache by the chosen connection so picking a tenant never shows
+    # another tenant's reservations.
+    scope_id = demo.DEMO_SCOPE_ID if use_demo else f"{_LIVE_SCOPE}:{connection_id or 'default'}"
 
     if use_demo:
         snap = cache.read_snapshot(tenant_id, scope_id)
@@ -74,14 +77,14 @@ async def _get_snapshot(principal: Principal, *, use_demo: bool, force: bool) ->
         snap = cache.read_snapshot(tenant_id, scope_id)
         if snap:
             return _decorate(snap, ttl, scope_id=scope_id)
-        connection = get_default_connection()
+        connection = resolve_connection(connection_id)
         return _decorate(_empty(window, connection_configured=connection is not None), ttl, scope_id=scope_id)
 
     lock = cache.get_lock(tenant_id, scope_id)
     async with lock:
         from app.reservations.collector import collect_reservations
 
-        connection = get_default_connection()
+        connection = resolve_connection(connection_id)
         fresh = await collect_reservations(connection, window_days=window)
         cache.write_snapshot(tenant_id, scope_id, fresh)
         return _decorate(fresh, ttl, scope_id=scope_id)
@@ -90,18 +93,20 @@ async def _get_snapshot(principal: Principal, *, use_demo: bool, force: bool) ->
 @router.get("/overview")
 async def overview(
     demo: bool = Query(default=False),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
-    return await _get_snapshot(principal, use_demo=demo, force=False)
+    return await _get_snapshot(principal, use_demo=demo, force=False, connection_id=connection_id)
 
 
 @router.post("/refresh")
 async def refresh(
     demo: bool = Query(default=False),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    snap = await _get_snapshot(principal, use_demo=demo, force=True)
+    snap = await _get_snapshot(principal, use_demo=demo, force=True, connection_id=connection_id)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -118,13 +123,14 @@ async def refresh(
 @router.get("/digest/preview")
 async def digest_preview(
     demo: bool = Query(default=False),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """Preview exactly what the weekly digest would send right now (read-only)."""
     from app.reservations.digest import render_html, select_digest_items
 
     _ttl, window = _settings()
-    snap = await _get_snapshot(principal, use_demo=demo, force=False)
+    snap = await _get_snapshot(principal, use_demo=demo, force=False, connection_id=connection_id)
     sel = select_digest_items(snap, window_days=window)
     html = render_html(sel["items"], window_days=window)
     return {**sel, "html": html, "never_loaded": snap.get("never_loaded", False), "error": snap.get("error", "")}

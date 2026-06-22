@@ -73,8 +73,8 @@ def _empty_radar(scope_kind: str, scope_id: str, *, connection_configured: bool)
     return snap
 
 
-async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
-    from app.core.azure_connections import connection_for_workload
+async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool, connection_id: str | None = None) -> dict[str, Any]:
+    from app.core.azure_connections import connection_for_scope
     from app.radar.collector import collect_radar
     from app.workloads.registry import get_workload
 
@@ -98,12 +98,12 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
         snap = cache.read_snapshot(tenant_id, scope_kind, scope_id)
         if snap:
             return _decorate(snap, ttl, tenant_id)
-        connection = connection_for_workload(workload)
+        connection = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
         return _decorate(_empty_radar(scope_kind, scope_id, connection_configured=connection is not None), ttl, tenant_id)
 
     lock = cache.get_lock(tenant_id, scope_kind, scope_id)
     async with lock:
-        connection = connection_for_workload(workload)
+        connection = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
         fresh = await collect_radar(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload)
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl, tenant_id)
@@ -122,21 +122,23 @@ def _resolve_scope_params(workload_id: str | None, subscription_id: str | None) 
 async def overview(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    return await _get_snapshot(principal, scope_kind, scope_id, force=False)
+    return await _get_snapshot(principal, scope_kind, scope_id, force=False, connection_id=connection_id)
 
 
 @router.post("/refresh")
 async def refresh(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    snap = await _get_snapshot(principal, scope_kind, scope_id, force=True)
+    snap = await _get_snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id, actor_id=principal.subject, action="radar.refresh",

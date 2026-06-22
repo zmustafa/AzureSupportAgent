@@ -18,9 +18,26 @@ from fastapi import HTTPException
 
 from app.api import architectures as arch_api
 from app.api import playbooks as pb_api
+from app.architectures import activity as arch_activity
 from app.architectures import registry as arch_registry
+from app.architectures import revisions as arch_revisions
 from app.auth.ip_lockout import IpLockoutStore
 from app.playbooks import registry as pb_registry
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registries(monkeypatch, tmp_path):
+    """Point the architecture + playbook JSON stores at a temp dir so these tests never
+    write to the real ``.data`` registries.
+
+    Without this, every run leaked synthetic rows ("Legacy global", "Owner reads",
+    "Foreign read", "Bundle src", their ``*_pb`` playbook twins) into
+    ``backend/.data/architectures.json`` + ``playbooks.json`` — hundreds accumulated."""
+    monkeypatch.setattr(arch_registry, "_PATH", tmp_path / "architectures.json")
+    monkeypatch.setattr(arch_revisions, "_PATH", tmp_path / "architecture_revisions.json")
+    monkeypatch.setattr(arch_activity, "_PATH", tmp_path / "architecture_activity.json")
+    monkeypatch.setattr(pb_registry, "_PATH", tmp_path / "playbooks.json")
+    yield
 
 
 # ----------------------------------------------------------------- C5: IP lockout

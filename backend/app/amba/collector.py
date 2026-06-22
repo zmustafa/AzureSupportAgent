@@ -33,13 +33,8 @@ def _now_iso() -> str:
 
 
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
-    try:
-        data = json.loads(stdout or "[]")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if isinstance(data, dict):
-        data = data.get("data") or data.get("value") or []
-    return data if isinstance(data, list) else []
+    from app.exec.command_runner import parse_kql_rows
+    return parse_kql_rows(stdout)
 
 
 def _esc(val: str) -> str:
@@ -178,7 +173,7 @@ async def _query_resources(predicates: list[str], connection: dict[str, Any] | N
 
 async def _query_alerts(subscriptions: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
     """All alert rules across the in-scope subscriptions (with full properties)."""
-    from app.exec.command_runner import run_kql_capture
+    from app.exec.command_runner import KQL_RESOURCE_CAPTURE_BYTES, run_kql_capture
 
     if not subscriptions:
         return []
@@ -190,7 +185,7 @@ async def _query_alerts(subscriptions: list[str], connection: dict[str, Any] | N
         f"| where subscriptionId in~ ({joined}) "
         "| project id, name, type, properties | take 2000"
     )
-    cap = await run_kql_capture(kql, connection, output="json")
+    cap = await run_kql_capture(kql, connection, output="json", max_bytes=KQL_RESOURCE_CAPTURE_BYTES)
     if not cap.ok:
         raise RuntimeError(cap.error or "Alert-rule query failed.")
     return _parse_rows(cap.stdout)

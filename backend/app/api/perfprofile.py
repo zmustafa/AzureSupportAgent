@@ -55,14 +55,15 @@ def _scope(workload_id: str | None, subscription_id: str | None) -> tuple[str, s
     return "workload", demo.DEMO_WORKLOAD_ID
 
 
-def _conn_and_workload(scope_kind: str, scope_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _conn_and_workload(scope_kind: str, scope_id: str, connection_id: str | None = None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Resolve the workload (when the scope is a workload) and the Azure connection to profile
-    it with — the workload's OWN connection, falling back to the default only when it has none."""
-    from app.core.azure_connections import connection_for_workload
+    it with. An explicit ``connection_id`` (the Azure-tenant picker) wins; otherwise the
+    workload's OWN connection, falling back to the default only when it has none."""
+    from app.core.azure_connections import connection_for_scope
     from app.workloads.registry import get_workload
 
     workload = get_workload(scope_id) if scope_kind == "workload" else None
-    return connection_for_workload(workload), workload
+    return connection_for_scope(scope_kind, connection_id=connection_id, workload=workload), workload
 
 
 async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool) -> dict[str, Any]:
@@ -387,6 +388,7 @@ async def trend(
 async def refresh_stream(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     window: str | None = Query(default=None),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
@@ -425,7 +427,7 @@ async def refresh_stream(
                 async def _collect(name: str, rtype: str):
                     events.append({"resource": name, "type": rtype})
 
-                connection, workload = _conn_and_workload(scope_kind, scope_id)
+                connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
                 snap = await profile_workload(
                     connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
                     timespan=eff_window, interval=interval, scan_cap=cap,
@@ -449,6 +451,7 @@ async def refresh_stream(
 async def refresh(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     window: str | None = Query(default=None),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
@@ -476,7 +479,7 @@ async def refresh(
         else:
             snap["requested_window"] = eff_window
     else:
-        connection, workload = _conn_and_workload(scope_kind, scope_id)
+        connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
         snap = await profile_workload(
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             timespan=eff_window, interval=interval, scan_cap=cap, start_time=st, end_time=et,

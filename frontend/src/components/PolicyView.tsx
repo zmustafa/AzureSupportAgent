@@ -12,6 +12,7 @@ import {
   type PolicyDriftResult,
   type PolicyHandoff,
   type PolicyHandoffFinding,
+  type PolicyTagHandoff,
   type PolicyInventory,
   type PolicySimStatus,
   type PolicySimulateReq,
@@ -21,6 +22,7 @@ import {
   type PolicyWhatIf,
 } from "../api";
 import { POLICY_NAV, type PolicyTab } from "./navConfig";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 function agoLabel(ts: number): string {
   if (!ts) return "";
@@ -85,6 +87,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
     try { return sessionStorage.getItem("policyWorkloadId") ?? ""; } catch { return ""; }
   });
   const [handoff, setHandoff] = useState<PolicyHandoff | null>(null);
+  const [tagHandoff, setTagHandoff] = useState<PolicyTagHandoff | null>(null);
 
   // Persist the scope choice (including an explicit clear) so a refresh restores exactly it.
   useEffect(() => {
@@ -105,6 +108,21 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
           // NOT re-applied here — otherwise clearing the scope then refreshing would re-select it.
           setHandoff(h);
         }
+      }
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Ingest a hand-off from Tag Intelligence's policy generator: the generated tag policy
+  // definitions, pre-loaded into the Rollout Planner's deploy mode as ready-to-simulate context.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("policyTagHandoff");
+      if (raw) {
+        const h = JSON.parse(raw) as PolicyTagHandoff;
+        if (h?.definitions?.length) setTagHandoff(h);
       }
     } catch {
       /* ignore */
@@ -181,17 +199,12 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
               </select>
             )}
             {connections.length > 0 && (
-              <select
+              <ConnectionScopePicker
                 value={effectiveConn}
-                onChange={(e) => setConnectionId(e.target.value)}
+                onChange={setConnectionId}
                 disabled={!!workloadId}
-                className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 disabled:opacity-60"
-                title={workloadId ? "Connection follows the selected workload" : "Azure connection"}
-              >
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>🔑 {c.display_name}{c.is_default ? " (default)" : ""}</option>
-                ))}
-              </select>
+                disabledTitle="Connection follows the selected workload"
+              />
             )}
             <button
               onClick={() => refresh(true)}
@@ -283,7 +296,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
             {tab === "inventory" && <Inventory inv={inv} />}
             {tab === "effective" && <Effective key={scopeKey} inv={inv} />}
             {tab === "advisors" && <Advisors key={scopeKey} inv={inv} connectionId={effectiveConn} />}
-            {tab === "rollout" && <RolloutPlanner key={scopeKey} inv={inv} connectionId={effectiveConn} handoff={handoff} />}
+            {tab === "rollout" && <RolloutPlanner key={scopeKey} inv={inv} connectionId={effectiveConn} handoff={handoff} tagHandoff={tagHandoff} />}
             {tab === "ai" && <AiTools key={scopeKey} inv={inv} connectionId={effectiveConn} />}
             {tab === "drift" && <DriftIac key={scopeKey} inv={inv} />}
             {tab === "history" && <History key={scopeKey} connectionId={effectiveConn} />}
@@ -957,7 +970,7 @@ function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connecti
 // =========================================================================== Rollout Planner
 const TARGET_EFFECTS = ["audit", "auditIfNotExists", "deny", "denyAction", "append", "deployIfNotExists", "modify", "disabled"];
 
-function RolloutPlanner({ inv, connectionId, handoff }: { inv: PolicyInventory; connectionId: string; handoff?: PolicyHandoff | null }) {
+function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: PolicyInventory; connectionId: string; handoff?: PolicyHandoff | null; tagHandoff?: PolicyTagHandoff | null }) {
   const [step, setStep] = useState(1);
   const [mode, setMode] = useState<"promote" | "deploy" | "finding">("promote");
   // promote
@@ -1027,11 +1040,33 @@ function RolloutPlanner({ inv, connectionId, handoff }: { inv: PolicyInventory; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handoff]);
 
+  // Ingest the Tag Intelligence hand-off: switch to deploy mode and pre-load the generated tag
+  // policy definitions, with the first one's JSON + intent + effect ready to simulate. A small
+  // selector (rendered below) lets the user switch which generated definition is loaded.
+  const tagDefs = tagHandoff?.definitions ?? [];
+  const [tagDefIdx, setTagDefIdx] = useState(0);
+  function loadTagDef(i: number) {
+    const d = tagDefs[i];
+    if (!d) return;
+    setTagDefIdx(i);
+    setMode("deploy");
+    setIntent(`${d.displayName} (generated from your tag usage by Tag Intelligence)`);
+    setPolicyJson(d.json);
+    if (d.effect) setEffect(d.effect);
+    setStep(1);
+  }
+  useEffect(() => {
+    if (tagDefs.length) loadTagDef(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tagHandoff]);
+
   // The hand-off can land before the workload-scoped inventory has loaded (keepPreviousData
   // still shows the wider tenant view), which would leave the target scope empty and Simulate
-  // disabled. Re-assert a sensible default scope once the workload resolves.
+  // disabled. Re-assert a sensible default scope once the workload resolves. Applies to the
+  // assessment finding hand-off and the Tag Intelligence deploy hand-off.
   useEffect(() => {
-    if (mode !== "finding" || scope) return;
+    const handoffActive = mode === "finding" || (mode === "deploy" && tagDefs.length > 0);
+    if (!handoffActive || scope) return;
     const s = inv.workload?.scope_ids?.[0] || inv.scope_tree?.[0]?.scope || "";
     if (s) setScope(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1394,8 +1429,24 @@ function RolloutPlanner({ inv, connectionId, handoff }: { inv: PolicyInventory; 
           </div>
         ) : (
           <div className="space-y-2">
+            {tagDefs.length > 0 && (
+              <div className="rounded-lg border border-brand/30 bg-brand/5 p-2.5">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-600">
+                  <span className="font-medium text-brand">🏷️ From Tag Intelligence</span>
+                  <span>· {tagDefs.length} generated definition{tagDefs.length > 1 ? "s" : ""} loaded. Pick one to simulate:</span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {tagDefs.map((d, i) => (
+                    <button key={d.name} onClick={() => loadTagDef(i)}
+                      className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] ${i === tagDefIdx ? "border-brand bg-white font-medium text-brand" : "border-gray-200 text-gray-600 hover:bg-white"}`}>
+                      <Pill cls={effectTone(d.effect)}>{d.effect}</Pill>{d.tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <input value={intent} onChange={(e) => setIntent(e.target.value)} placeholder="Describe the policy: e.g. Deny storage accounts that allow public blob access" className="w-full rounded-lg border border-gray-200 px-2.5 py-2 text-sm" />
-            <details className="text-xs"><summary className="cursor-pointer text-gray-500">…or paste policy JSON</summary>
+            <details className="text-xs" open={tagDefs.length > 0}><summary className="cursor-pointer text-gray-500">{tagDefs.length > 0 ? "Generated policy JSON (ready to simulate)" : "…or paste policy JSON"}</summary>
               <textarea value={policyJson} onChange={(e) => setPolicyJson(e.target.value)} placeholder='{"properties":{"policyRule":{...}}}' className="mt-1 h-24 w-full rounded-lg border border-gray-200 p-2 font-mono text-[11px]" />
             </details>
           </div>

@@ -216,6 +216,39 @@ class TaskRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class MissionRun(Base):
+    """One Workload Mission Control run — a single sweep that runs many per-workload
+    analyses (architecture, memory, assessment, monitoring/telemetry/backup coverage,
+    performance, radar) and rolls their outcomes into a readiness verdict.
+
+    History is preserved so missions can be diffed over time. ``systems_json`` holds the
+    per-system outcomes (status, headline, deep-link ref); ``readiness`` is the go/warn/
+    nogo rollup. The mission is driven by an in-process orchestrator that updates this row
+    incrementally, so partial progress survives a crash."""
+
+    __tablename__ = "mission_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    workload_id: Mapped[str] = mapped_column(String(36), index=True)
+    workload_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued|running|succeeded|partial|failed|cancelled
+    readiness: Mapped[str] = mapped_column(String(8), default="unknown")  # go|warn|nogo|unknown
+    systems_total: Mapped[int] = mapped_column(Integer, default=0)
+    systems_done: Mapped[int] = mapped_column(Integer, default=0)
+    systems_attention: Mapped[int] = mapped_column(Integer, default=0)
+    systems_json: Mapped[list] = mapped_column(JSON, default=list)  # [{key,label,status,headline,detail,score,link,result_ref,started_at,ended_at,error}]
+    force: Mapped[bool] = mapped_column(default=False)  # re-ran systems even if fresh
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str] = mapped_column(String(128), default="")
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual|schedule|fleet
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # soft-delete (trash)
+
+
 class WorkbookRun(Base):
     """One execution of a workbook (az/KQL/PowerShell snippet) with AI'fied output.
 

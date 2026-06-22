@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.architectures import activity, registry, revisions
+from app.architectures import activity, memory, memory_revisions, registry, revisions
 
 
 @pytest.fixture(autouse=True)
@@ -12,6 +12,8 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(registry, "_PATH", tmp_path / "architectures.json")
     monkeypatch.setattr(revisions, "_PATH", tmp_path / "architecture_revisions.json")
     monkeypatch.setattr(activity, "_PATH", tmp_path / "architecture_activity.json")
+    monkeypatch.setattr(memory, "_PATH", tmp_path / "architecture_memory.json")
+    monkeypatch.setattr(memory_revisions, "_PATH", tmp_path / "architecture_memory_revisions.json")
     yield
 
 
@@ -100,3 +102,63 @@ def test_trash_and_restore_log_activity():
     registry.restore_architecture(a["id"], actor="alice")
     events = [e["event"] for e in activity.list_activity(a["id"])]
     assert activity.RESTORED in events
+
+
+# --------------------------------------------------------------- memory cascade / orphans
+def _add_memory(architecture_id, tenant="t1"):
+    return memory.upsert_memory(
+        architecture_id,
+        sections=[{"key": "overview", "label": "Overview", "content": "Hi."}],
+        tenant_id=tenant,
+        actor="alice",
+    )
+
+
+def test_purge_cascades_to_memory_and_its_revisions():
+    a = _make()
+    _add_memory(a["id"])
+    # Edit once so there's a memory revision too.
+    _add_memory(a["id"])
+    assert memory.get_memory(a["id"]) is not None
+    assert len(memory_revisions.list_revisions(a["id"])) >= 1
+
+    registry.delete_architecture(a["id"])
+    assert registry.purge_architecture(a["id"]) is True
+    # The memory + its revisions are gone — no unreachable orphan left behind.
+    assert memory.get_memory(a["id"]) is None
+    assert memory_revisions.list_revisions(a["id"]) == []
+
+
+def test_empty_trash_cascades_memory_for_each_purged_architecture():
+    gone = _make("Gone", tenant="t1")
+    _add_memory(gone["id"])
+    registry.delete_architecture(gone["id"])
+
+    registry.empty_architecture_trash("t1")
+    assert memory.get_memory(gone["id"]) is None
+
+
+def test_prune_orphans_removes_only_truly_gone_memories():
+    active = _make("Active", tenant="t1")
+    trashed = _make("Trashed", tenant="t1")
+    _add_memory(active["id"])
+    _add_memory(trashed["id"])
+    registry.delete_architecture(trashed["id"])  # soft-delete → still in store, restorable
+
+    # Simulate a pre-existing orphan: a memory whose architecture was hard-deleted before
+    # the cascade existed (so it lingers with no architecture record).
+    _add_memory("ghost-architecture-id")
+    assert memory.get_memory("ghost-architecture-id") is not None
+
+    valid = registry.all_architecture_ids()  # includes BOTH active and trashed
+    assert active["id"] in valid and trashed["id"] in valid
+
+    removed = memory.prune_orphans(valid)
+    assert removed == 1  # only the ghost
+    assert memory.get_memory("ghost-architecture-id") is None
+    # Active + trashed (restorable) memories are preserved.
+    assert memory.get_memory(active["id"]) is not None
+    assert memory.get_memory(trashed["id"]) is not None
+    # Idempotent.
+    assert memory.prune_orphans(registry.all_architecture_ids()) == 0
+

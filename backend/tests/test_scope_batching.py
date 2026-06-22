@@ -17,7 +17,7 @@ from app.assessments.runner import (
     query_resources_batched,
     scope_predicate_batches,
 )
-from app.exec.command_runner import CaptureResult
+from app.exec.command_runner import CaptureResult, KqlResult
 
 _SUB = "c3f6ae08-38a1-466d-abc2-972ad76b8661"
 _PROJ = "id, name, type, resourceGroup, subscriptionId, location, properties, sku, tags"
@@ -84,7 +84,7 @@ def test_query_resources_batched_runs_each_and_dedupes(monkeypatch):
     """Each predicate is queried; rows are merged and de-duplicated by id."""
     seen_queries: list[str] = []
 
-    async def _fake_capture(kql, connection, *, output="json", session_config_dir=None):
+    async def _fake_capture(kql, connection, *, output="json", session_config_dir=None, max_bytes=None):
         seen_queries.append(kql)
         # Return a row whose id is embedded in the predicate's first quoted token, plus a
         # shared duplicate row to prove de-duplication across batches.
@@ -110,7 +110,7 @@ def test_query_resources_batched_runs_each_and_dedupes(monkeypatch):
 
 def test_query_resources_batched_fail_closed(monkeypatch):
     """A failed query raises (so the caller surfaces 'error', never a misleading empty pass)."""
-    async def _fail(kql, connection, *, output="json", session_config_dir=None):
+    async def _fail(kql, connection, *, output="json", session_config_dir=None, max_bytes=None):
         return CaptureResult(ok=False, error="boom")
 
     monkeypatch.setattr(runner, "run_kql_capture", _fail)
@@ -129,7 +129,7 @@ def test_heavy_projection_bisects_on_truncation(monkeypatch):
     # Simulate: any query with >2 ids "truncates"; <=2 ids succeeds.
     calls = {"n": 0}
 
-    async def _capture(kql, connection, *, output="json", session_config_dir=None):
+    async def _capture(kql, connection, *, output="json", session_config_dir=None, max_bytes=None):
         calls["n"] += 1
         toks = re.findall(r"'([^']+)'", kql)
         if len(toks) > 2:
@@ -151,7 +151,7 @@ def test_heavy_projection_skips_single_oversized_resource(monkeypatch):
     """A single resource whose properties exceed the cap is skipped (logged), not fatal."""
     import json
 
-    async def _capture(kql, connection, *, output="json", session_config_dir=None):
+    async def _capture(kql, connection, *, output="json", session_config_dir=None, max_bytes=None):
         toks = re.findall(r"'([^']+)'", kql)
         if "/r/huge" in toks:
             # Even alone, this one truncates.
@@ -168,59 +168,90 @@ def test_heavy_projection_skips_single_oversized_resource(monkeypatch):
     assert ids == ["/r/a", "/r/b"], ids
 
 
-def test_light_projection_does_not_chunk(monkeypatch):
-    """A light projection (no properties) runs one query per predicate — no id re-chunking."""
-    import json
+def test_light_projection_pages_up_to_take(monkeypatch):
+    """A light projection (no properties) pages through ``run_kql_collect`` (up to ``take``)
+    rather than a single 1000-row query — one paged collection per predicate."""
+    seen: list[tuple[str, int]] = []
 
-    seen: list[str] = []
-
-    async def _capture(kql, connection, *, output="json", session_config_dir=None):
-        seen.append(kql)
+    async def _collect(kql, connection, *, session_config_dir=None, max_rows=5000, page_size=1000, max_bytes=None):
+        seen.append((kql, max_rows))
         toks = re.findall(r"'([^']+)'", kql)
-        return CaptureResult(ok=True, stdout=json.dumps([{"id": t} for t in toks]))
+        return KqlResult(ok=True, rows=[{"id": t} for t in toks], complete=True)
 
-    monkeypatch.setattr(runner, "run_kql_capture", _capture)
+    monkeypatch.setattr(runner, "run_kql_collect", _collect)
     ids = [f"'/r/{i}'" for i in range(50)]
     pred = "id in~ (" + ", ".join(ids) + ")"
     light = "id, name, type, resourceGroup, subscriptionId, location, tags"
     rows = asyncio.run(query_resources_batched([pred], None, projection=light))
-    assert len(seen) == 1  # single query, no chunking for the light projection
+    assert len(seen) == 1                       # single paged collection for the light projection
+    assert seen[0][1] == 10_000                 # pages up to the 10k cap
+    assert "take" not in seen[0][0].lower()     # collect pages itself; no take operator in the KQL
     assert len(rows) == 50
 
 
-def test_heavy_subscription_predicate_falls_back_to_id_enumeration(monkeypatch):
-    """A whole-subscription predicate (no id list to bisect) that truncates under a heavy
-    projection must fall back to enumerating ids with a light projection, then re-query in
-    adaptive id-batches — so the scan succeeds instead of surfacing 'Output truncated'.
+def test_light_projection_fail_closed(monkeypatch):
+    """A failed paged collection raises (never a misleading empty pass)."""
+    async def _collect(kql, connection, *, session_config_dir=None, max_rows=5000, page_size=1000, max_bytes=None):
+        return KqlResult(ok=False, error="boom")
 
-    This is the Backup & DR subscription-scope bug: ``subscriptionId =~ '<guid>'`` with the
-    full-``properties`` projection blew the 256 KB cap and could not be split."""
+    monkeypatch.setattr(runner, "run_kql_collect", _collect)
+    light = "id, name, type, resourceGroup, subscriptionId, location, tags"
+    try:
+        asyncio.run(query_resources_batched(["subscriptionId =~ 's1'"], None, projection=light))
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "boom" in str(exc)
+
+
+
+def test_heavy_subscription_paged_collect_happy_path(monkeypatch):
+    """A whole-subscription heavy predicate is collected by PAGING (``run_kql_collect``) — fast,
+    no per-resource id-batching — when pages capture cleanly (the REST connection path)."""
+    sub_pred = f"subscriptionId =~ '{_SUB}'"
+    all_ids = [f"/subscriptions/{_SUB}/providers/Microsoft.Compute/virtualMachines/vm-{i}" for i in range(30)]
+    collect_calls = {"n": 0}
+
+    async def _collect(kql, connection, *, session_config_dir=None, max_rows=5000, page_size=1000, max_bytes=None):
+        collect_calls["n"] += 1
+        assert "properties" in kql and "subscriptionId =~" in kql
+        return KqlResult(ok=True, rows=[{"id": i, "name": "n", "type": "t"} for i in all_ids], complete=True)
+
+    monkeypatch.setattr(runner, "run_kql_collect", _collect)
+    rows = asyncio.run(query_resources_batched([sub_pred], None, projection=_PROJ))
+    assert sorted(r["id"] for r in rows) == sorted(all_ids)
+    assert collect_calls["n"] == 1   # one paged collection, no id re-enumeration
+
+
+def test_heavy_subscription_predicate_falls_back_to_id_enumeration(monkeypatch):
+    """If a heavy page can't be captured (a 1000-row full-``properties`` page exceeds the cap on
+    the CLI path), fall back to enumerating ids with a paged light projection, then re-query in
+    adaptive id-batches — so a subscription with thousands of heavy resources is still collected."""
     import json
 
     sub_pred = f"subscriptionId =~ '{_SUB}'"
     all_ids = [f"/subscriptions/{_SUB}/providers/Microsoft.Compute/virtualMachines/vm-{i}" for i in range(30)]
-    calls = {"heavy_sub": 0, "id_enum": 0, "heavy_ids": 0}
+    calls = {"heavy_page": 0, "id_enum": 0, "heavy_ids": 0}
 
-    async def _capture(kql, connection, *, output="json", session_config_dir=None):
-        is_heavy = "properties" in kql
-        # The whole-subscription heavy query truncates (too many heavy rows, no id list).
-        if is_heavy and "subscriptionId =~" in kql:
-            calls["heavy_sub"] += 1
-            return CaptureResult(ok=False, error="Output truncated at 256 KB.")
-        # Light id-only enumeration of the subscription succeeds (ids are tiny).
-        if not is_heavy and "project id" in kql and "subscriptionId =~" in kql:
-            calls["id_enum"] += 1
-            return CaptureResult(ok=True, stdout=json.dumps([{"id": i} for i in all_ids]))
-        # Heavy re-query by id-batch succeeds.
+    async def _collect(kql, connection, *, session_config_dir=None, max_rows=5000, page_size=1000, max_bytes=None):
+        if "properties" in kql:
+            # The whole-subscription heavy page can't be captured.
+            calls["heavy_page"] += 1
+            return KqlResult(ok=False, error="Result parse error: page too large")
+        # Light id-only enumeration succeeds (ids are tiny).
+        calls["id_enum"] += 1
+        return KqlResult(ok=True, rows=[{"id": i} for i in all_ids], complete=True)
+
+    async def _capture(kql, connection, *, output="json", session_config_dir=None, max_bytes=None):
         toks = re.findall(r"'([^']+)'", kql)
         calls["heavy_ids"] += 1
         return CaptureResult(ok=True, stdout=json.dumps([{"id": t, "name": "n", "type": "t"} for t in toks]))
 
+    monkeypatch.setattr(runner, "run_kql_collect", _collect)
     monkeypatch.setattr(runner, "run_kql_capture", _capture)
     rows = asyncio.run(query_resources_batched([sub_pred], None, projection=_PROJ))
     got = sorted(r["id"] for r in rows)
-    assert got == sorted(all_ids), got  # every resource returned despite the truncation
-    assert calls["heavy_sub"] == 1   # tried the whole-subscription heavy query once
-    assert calls["id_enum"] == 1     # then enumerated ids with a light projection
-    assert calls["heavy_ids"] >= 1   # then pulled properties in id-batches
+    assert got == sorted(all_ids), got      # every resource returned despite the page failure
+    assert calls["heavy_page"] == 1         # tried the paged heavy collection once
+    assert calls["id_enum"] == 1            # then enumerated ids with a light paged projection
+    assert calls["heavy_ids"] >= 1          # then pulled properties in id-batches
 

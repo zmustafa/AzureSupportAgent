@@ -8,6 +8,8 @@ selector works even for pasted-token connections.
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -415,3 +417,172 @@ def _retry_after_seconds(resp: "httpx.Response") -> float | None:
         return max(0.0, float(val))
     except (TypeError, ValueError):
         return None
+
+
+async def list_activity_log_events(
+    token: str,
+    subscription_id: str,
+    start_iso: str,
+    end_iso: str,
+    *,
+    max_events: int = 1000,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Read the Azure Monitor Activity Log (management events) for a subscription window via
+    ARM REST. Returns ``(events, error)``.
+
+    This is the credential-independent path used when there is NO ambient Azure CLI login for
+    the subscription's tenant — e.g. a pasted-token (``az_cli_token``) or managed-identity
+    connection. ``az monitor activity-log list`` can only read whatever tenant the host's ``az``
+    is signed into, so for those connections it fails with "subscription not recognized"; this
+    uses the connection's own ARM token instead (mirroring how Resource Graph already falls back
+    to REST). Each returned event matches the shape ``az monitor activity-log list`` emits, so
+    the same row parser handles both paths.
+
+    Pages through ``nextLink`` until ``max_events`` rows or no more pages.
+    """
+    flt = f"eventTimestamp ge '{start_iso}' and eventTimestamp le '{end_iso}'"
+    url = (
+        f"{_ARM}/subscriptions/{subscription_id}"
+        "/providers/microsoft.insights/eventtypes/management/values"
+    )
+    params: dict[str, str] | None = {"api-version": "2015-04-01", "$filter": flt}
+    headers = {"Authorization": f"Bearer {token}"}
+    events: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            for _ in range(50):  # hard page ceiling (safety) — max_events normally stops sooner
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code != 200:
+                    try:
+                        detail = resp.json().get("error", {}).get("message", resp.text)
+                    except (ValueError, AttributeError):
+                        detail = resp.text
+                    return events, f"ARM {resp.status_code}: {str(detail)[:300]}"
+                data = resp.json()
+                page = data.get("value", []) or []
+                events.extend(page)
+                if len(events) >= max_events:
+                    return events[:max_events], None
+                # ``nextLink`` is a full URL already carrying the filter + $skipToken.
+                next_link = data.get("nextLink") or ""
+                if not next_link:
+                    break
+                url, params = next_link, None
+        return events, None
+    except httpx.HTTPError as e:  # noqa: BLE001
+        return events, f"ARM request error: {e}"
+
+
+# ---------------------------------------------------------------- ARM data-plane REST helpers
+# These mirror the `az monitor …` CLI reads but go straight to ARM REST with the connection's
+# own token. They exist so NON-service-principal connections (pasted ARM token / managed
+# identity) — which have NO ambient `az login` for their tenant — can still collect the same
+# data a service-principal connection gets via the CLI. The returned JSON text is shaped to
+# match the corresponding `az` command's stdout so existing parsers consume it unchanged.
+_METRICS_API = "2024-02-01"
+_METRIC_DEFS_API = "2024-02-01"
+_DIAG_SETTINGS_API = "2021-05-01-preview"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+async def get_metrics(
+    token: str,
+    resource_id: str,
+    *,
+    metricnames: list[str],
+    aggregations: list[str],
+    interval: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    dimension_filter: str | None = None,
+) -> tuple[str, str | None]:
+    """Azure Monitor metrics for a resource via ARM REST. Returns ``(json_text, error)`` where
+    ``json_text`` matches ``az monitor metrics list`` stdout — the full ``{value:[…]}`` object
+    whose ``value[].timeseries[].data[]`` the metric parsers read."""
+    if not resource_id:
+        return "", "No resource id provided."
+    if not metricnames:
+        return "", "No metric name provided."
+    params: dict[str, str] = {
+        "api-version": _METRICS_API,
+        "metricnames": ",".join(metricnames),
+        "aggregation": ",".join(aggregations or ["Average"]),
+    }
+    if interval:
+        params["interval"] = interval
+    if start_time:
+        # CLI ``--start-time`` is a start datetime to "now"; REST uses a start/end timespan.
+        params["timespan"] = f"{start_time}/{end_time or _utc_now_iso()}"
+    if dimension_filter:
+        params["$filter"] = dimension_filter
+    data, err = await _get(token, f"{resource_id}/providers/microsoft.insights/metrics", params)
+    if err:
+        return "", err
+    return json.dumps(data or {}), None
+
+
+async def get_metric_definitions(token: str, resource_id: str) -> tuple[str, str | None]:
+    """Metric definitions catalog for a resource via ARM REST. Returns ``(json_text, error)``
+    where ``json_text`` is the BARE LIST ``az monitor metrics list-definitions`` emits (the REST
+    body is ``{value:[…]}`` — we unwrap ``value`` so the definitions parser, which requires a
+    list, consumes it unchanged)."""
+    if not resource_id:
+        return "", "No resource id provided."
+    data, err = await _get(
+        token, f"{resource_id}/providers/microsoft.insights/metricDefinitions",
+        {"api-version": _METRIC_DEFS_API},
+    )
+    if err:
+        return "", err
+    return json.dumps((data or {}).get("value", []) if isinstance(data, dict) else []), None
+
+
+async def get_diagnostic_settings(token: str, resource_id: str) -> tuple[str, str | None]:
+    """Diagnostic settings for a resource via ARM REST. Returns ``(json_text, error)`` shaped
+    like ``az monitor diagnostic-settings list`` (the full ``{value:[…]}`` object)."""
+    if not resource_id:
+        return "", "No resource id provided."
+    data, err = await _get(
+        token, f"{resource_id}/providers/microsoft.insights/diagnosticSettings",
+        {"api-version": _DIAG_SETTINGS_API},
+    )
+    if err:
+        return "", err
+    return json.dumps(data or {}), None
+
+
+async def arm_rest(
+    token: str, method: str, url: str, body: dict[str, Any] | None = None,
+) -> tuple[str, str | None]:
+    """Generic ARM REST call (the direct equivalent of ``az rest --method … --url … [--body]``
+    when the url targets ``management.azure.com``). Returns ``(json_text, error)`` so callers
+    that previously parsed ``az rest`` stdout consume it unchanged. Accepts 200/201/202 (LRO
+    submit) and returns whatever body came back."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.request(method.upper(), url, headers=headers, json=body)
+        if resp.status_code not in (200, 201, 202):
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text)
+            except (ValueError, AttributeError):
+                detail = resp.text
+            return "", f"ARM {resp.status_code}: {str(detail)[:300]}"
+        try:
+            return json.dumps(resp.json()), None
+        except (ValueError, AttributeError):
+            return resp.text or "{}", None
+    except httpx.HTTPError as e:  # noqa: BLE001
+        return "", f"ARM request error: {e}"
+
+
+def is_arm_url(url: str) -> bool:
+    """True when a url targets the Azure Resource Manager plane (so an ``az rest`` call against
+    it can be served by the connection's ARM token)."""
+    u = (url or "").lower()
+    return u.startswith("https://management.azure.com/") or u.startswith("http://management.azure.com/")

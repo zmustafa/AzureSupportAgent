@@ -34,13 +34,8 @@ def _now_iso() -> str:
 
 
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
-    try:
-        data = json.loads(stdout or "[]")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if isinstance(data, dict):
-        data = data.get("data") or data.get("value") or []
-    return data if isinstance(data, list) else []
+    from app.exec.command_runner import parse_kql_rows
+    return parse_kql_rows(stdout)
 
 
 def _esc(val: str) -> str:
@@ -330,7 +325,8 @@ async def _query_vaults(subscriptions: list[str], connection: dict[str, Any] | N
         f"| where subscriptionId in~ ({joined}) "
         "| project id, name, type, location, properties | take 500"
     )
-    cap = await run_kql_capture(kql, connection, output="json")
+    from app.exec.command_runner import KQL_RESOURCE_CAPTURE_BYTES
+    cap = await run_kql_capture(kql, connection, output="json", max_bytes=KQL_RESOURCE_CAPTURE_BYTES)
     return _parse_rows(cap.stdout) if cap.ok else []
 
 
@@ -377,7 +373,8 @@ async def _expand_sql_databases(
         "| project id, name, type, resourceGroup, subscriptionId, location, properties, sku, tags "
         "| order by name asc | take 1000"
     )
-    cap = await run_kql_capture(kql, connection, output="json")
+    from app.exec.command_runner import KQL_RESOURCE_CAPTURE_BYTES
+    cap = await run_kql_capture(kql, connection, output="json", max_bytes=KQL_RESOURCE_CAPTURE_BYTES)
     return _parse_rows(cap.stdout) if cap.ok else []
 
 

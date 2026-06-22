@@ -145,26 +145,119 @@ def _rid(rg: str, ptype: str, name: str) -> str:
     return f"/subscriptions/{DEMO_SUB}/resourceGroups/{rg}/providers/{ptype}/{name}"
 
 
+# --------------------------------------------------------------------------- demo tag profiles
+# Realistic, intentionally-MESSY Azure tags per demo workload so Tag Intelligence has something
+# meaningful to discover: inconsistent casing (CostCenter vs costcenter vs Cost Center), value
+# variants (Production / Prod / PRD), partially-applied required tags (Owner missing on some),
+# high-cardinality keys (CreatedBy), a few fully-untagged resources, and per-workload billing
+# codes + business units. Everything is derived deterministically from the resource id so it's
+# stable across runs (and across drift snapshots).
+_TAG_PROFILE: dict[str, dict[str, Any]] = {
+    CONTOSO_ID: {
+        "app": "contoso-hotels", "bu": "Hospitality",
+        "billing_codes": ["FIN-204", "FIN-204", "FIN-311"],   # FIN-204 dominant
+        "owners": ["hotels-platform@contoso.com", "booking-team@contoso.com", "data-team@contoso.com"],
+        "domain": "contoso.com",
+    },
+    ZAVA_WEB_ID: {
+        "app": "zava-web", "bu": "Ecommerce",
+        "billing_codes": ["ZAVA-1001", "ZAVA-1001", "ZAVA-1007"],
+        "owners": ["web-platform@zava.com", "storefront-team@zava.com"],
+        "domain": "zava.com",
+    },
+    ZAVA_CRM_ID: {
+        "app": "zava-crm", "bu": "Sales",
+        "billing_codes": ["ZAVA-2002", "ZAVA-2002", "ZAVA-2050"],
+        "owners": ["crm-platform@zava.com", "sales-ops@zava.com"],
+        "domain": "zava.com",
+    },
+}
+
+# Spelling variants for the billing key, distributed across resources so Hygiene's near-duplicate
+# key detection has real signal. ``CostCenter`` is intentionally the most common (canonical).
+_COSTCENTER_KEYS = ["CostCenter", "CostCenter", "costcenter", "Cost Center"]
+# Environment value variants (same meaning, different spelling) — Hygiene normalizes these.
+_ENV_VARIANTS = ["Production", "Production", "Prod", "PRD"]
+_CRIT = {GREEN: "high", AMBER: "medium", RED: "low"}
+
+
+def _demo_tags(scope_id: str, rid: str, name: str, tier: str, idx: int) -> dict[str, str]:
+    """Deterministic, realistic-but-messy Azure tags for one demo resource."""
+    prof = _TAG_PROFILE.get(scope_id)
+    if not prof:
+        return {"environment": "prod", "criticality": _CRIT.get(tier, "medium"), "owner": "platform-team"}
+
+    # Neglected (RED-tier) resources are the ones most likely to be untagged; well-run ones
+    # rarely are. Gives every workload a believable "untagged" slice for the census + coverage.
+    if (tier == RED and bucket(rid + "untag", 2) == 0) or bucket(rid + "untag", 12) == 0:
+        return {}
+
+    tags: dict[str, str] = {}
+    # Environment — value variants (Production / Prod / PRD); a couple of non-prod for variety.
+    if bucket(rid + "envkind", 8) == 0:
+        tags["Environment"] = "Staging" if tier == AMBER else "Development"
+    else:
+        tags["Environment"] = _ENV_VARIANTS[bucket(rid + "env", len(_ENV_VARIANTS))]
+
+    # Billing — near-duplicate KEY spellings + per-workload code values.
+    cc_key = _COSTCENTER_KEYS[bucket(rid + "cck", len(_COSTCENTER_KEYS))]
+    tags[cc_key] = prof["billing_codes"][bucket(rid + "ccv", len(prof["billing_codes"]))]
+
+    # Application — mostly present (the workload's app), missing on ~1 in 6.
+    if bucket(rid + "app", 6) != 0:
+        tags["Application"] = prof["app"]
+
+    # Owner — required-ish, present on ~70%; a few use lowercase "owner" (another near-dup key).
+    ob = bucket(rid + "own", 10)
+    if ob < 7:
+        tags["Owner"] = prof["owners"][bucket(rid + "ownv", len(prof["owners"]))]
+    elif ob == 7:
+        tags["owner"] = prof["owners"][bucket(rid + "ownv", len(prof["owners"]))]
+    # ob in (8, 9) -> Owner missing (coverage gap / "missing only one tag").
+
+    # BusinessUnit — present on ~80%.
+    if bucket(rid + "bu", 5) != 0:
+        tags["BusinessUnit"] = prof["bu"]
+
+    # DataClassification — present on ~60%.
+    dcb = bucket(rid + "dc", 5)
+    if dcb < 3:
+        tags["DataClassification"] = ["Confidential", "Internal", "Public"][dcb]
+
+    # ManagedBy — IaC provenance.
+    tags["ManagedBy"] = ["terraform", "bicep", "manual"][bucket(rid + "mb", 3)]
+
+    # Criticality — from the resource's health tier.
+    tags["Criticality"] = _CRIT.get(tier, "medium")
+
+    # CreatedBy — HIGH-CARDINALITY (unique-ish per resource), present on ~half.
+    if bucket(rid + "cb", 2) == 0:
+        tags["CreatedBy"] = f"user{(idx * 7 + bucket(rid, 97)) % 53:02d}@{prof['domain']}"
+
+    return tags
+
+
 def resources_for(scope_id: str) -> list[dict[str, Any]]:
     """Resources in the collector shape: {id,name,type,resourceGroup,subscriptionId,location,tags}."""
     meta = workload_meta(scope_id)
     rg = meta["rg"]
     out: list[dict[str, Any]] = []
-    for ptype, name, tier, region in meta["resources"]:
-        crit = {GREEN: "high", AMBER: "medium", RED: "low"}.get(tier, "medium")
+    for idx, (ptype, name, tier, region) in enumerate(meta["resources"]):
+        rid = _rid(rg, ptype, name)
         out.append(
             {
-                "id": _rid(rg, ptype, name),
+                "id": rid,
                 "name": name,
                 "type": ptype,
                 "resourceGroup": rg,
                 "subscriptionId": DEMO_SUB,
                 "location": region,
                 "tier": tier,
-                "tags": {"environment": "prod", "criticality": crit, "owner": "platform-team"},
+                "tags": _demo_tags(scope_id, rid, name, tier, idx),
             }
         )
     return out
+
 
 
 def nodes_for(scope_id: str) -> list[dict[str, Any]]:

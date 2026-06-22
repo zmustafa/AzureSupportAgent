@@ -12,11 +12,12 @@ import {
   type PerfRunSummary,
 } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { queryClient } from "../queryClient";
 import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 
@@ -65,7 +66,7 @@ function startBackgroundProfile(opts: {
   scopeKey: string;
   scopeLabel: string;
   windowLabel: string;
-  body: { workload_id?: string; subscription_id?: string; window?: string; start_time?: string; end_time?: string };
+  body: { workload_id?: string; subscription_id?: string; connection_id?: string; window?: string; start_time?: string; end_time?: string };
   runsKey: readonly unknown[];
   trendKey: readonly unknown[];
   onError: (msg: string) => void;
@@ -199,6 +200,8 @@ export function PerformancePanel() {
   const [workloadId, setWorkloadId] = usePersistedState("azsup.performance.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.performance.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.performance.subName", "");
+  const [connId, setConnId] = usePersistedState("azsup.performance.connId", "");
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [windowSel, setWindowSel] = useState("P1D");
   const [useRange, setUseRange] = useState(false);
   const [startTime, setStartTime] = useState("");
@@ -249,7 +252,7 @@ export function PerformancePanel() {
     scopeKind === "workload"
       ? workloadId || workloads.find((w) => w.id === "demo-amba-coverage")?.id || workloads[0]?.id || ""
       : "";
-  const params = scopeKind === "workload" ? { workload_id: effWorkloadId } : { subscription_id: subId };
+  const params = scopeKind === "workload" ? { workload_id: effWorkloadId, connection_id: connId } : { subscription_id: subId, connection_id: connId };
   const enabled = scopeKind === "workload" ? !!effWorkloadId : !!subId;
 
   // Per-scope background-run state. A profile is identified by its scope so switching to a
@@ -285,7 +288,7 @@ export function PerformancePanel() {
   // Clear the shown run when the scope changes.
   useEffect(() => {
     setData(null);
-  }, [scopeKind, effWorkloadId, subId]);
+  }, [scopeKind, effWorkloadId, subId, connId]);
 
   // Reset the heatmap filters whenever a different run is loaded (or cleared). Without this,
   // a "Problems" filter set on a degraded run would hide every row when you then view a
@@ -621,6 +624,7 @@ export function PerformancePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -629,6 +633,7 @@ export function PerformancePanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

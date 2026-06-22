@@ -46,8 +46,8 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
     return out
 
 
-async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool, compute: bool = True) -> dict[str, Any]:
-    from app.core.azure_connections import connection_for_workload
+async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *, force: bool, compute: bool = True, connection_id: str | None = None) -> dict[str, Any]:
+    from app.core.azure_connections import connection_for_scope
     from app.workloads.registry import get_workload
 
     ttl, stale, sla, cap = _settings()
@@ -83,7 +83,7 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
             if snap and cache.is_fresh(snap, ttl):
                 return _decorate(snap, ttl)
         workload = get_workload(scope_id) if scope_kind == "workload" else None
-        connection = connection_for_workload(workload)
+        connection = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
         fresh = await collect_coverage(
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             sla_hours=sla, stale_drill_days=stale, scan_cap=cap,
@@ -156,23 +156,25 @@ async def coverage_evidence(
 async def coverage(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
-    return await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False)
+    return await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False, connection_id=connection_id)
 
 
 @router.post("/refresh")
 async def refresh(
     workload_id: str | None = Query(default=None),
     subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
     # Shield the compute so it finishes (and writes the cache) even if the client navigates
     # away or the connection drops mid-refresh — the result is picked up on the next visit.
-    snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True))
+    snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id))
     # Record a compact trend point (% protected) so this scan can be charted over time.
     from app.core import coverage_trends, coverage_runs
 

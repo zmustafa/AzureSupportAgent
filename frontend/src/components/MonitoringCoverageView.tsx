@@ -10,9 +10,10 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { TrendChart } from "./TrendChart";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
@@ -74,8 +75,10 @@ export function MonitoringCoveragePanel() {
   const qc = useQueryClient();
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.amba.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState<string>("azsup.amba.workloadId", "");
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [subId, setSubId] = usePersistedState<string>("azsup.amba.subId", "");
   const [subName, setSubName] = usePersistedState<string>("azsup.amba.subName", "");
+  const [connId, setConnId] = usePersistedState<string>("azsup.amba.connId", "");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [sevFilter, setSevFilter] = useState("all");
@@ -107,10 +110,10 @@ export function MonitoringCoveragePanel() {
 
   const params =
     scopeKind === "workload"
-      ? { workload_id: effectiveWorkloadId }
-      : { subscription_id: subId };
+      ? { workload_id: effectiveWorkloadId, connection_id: connId }
+      : { subscription_id: subId, connection_id: connId };
   const scopeReady = scopeKind === "workload" ? !!effectiveWorkloadId : !!subId;
-  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}`;
+  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}:${connId}`;
   const [loadedScope, setLoadedScope] = usePersistedState("azsup.amba.loadedScope", "");
   const enabled = scopeReady && loadedScope === scopeKey;
 
@@ -121,7 +124,7 @@ export function MonitoringCoveragePanel() {
   const refreshing = isRefreshing(refreshKey);
 
   const covQ = useQuery({
-    queryKey: ["amba", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["amba", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.ambaCoverage(params),
     enabled,
   });
@@ -129,7 +132,7 @@ export function MonitoringCoveragePanel() {
 
   // Coverage-% trend over time (loads with the coverage data).
   const trendQ = useQuery({
-    queryKey: ["amba-trend", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["amba-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("amba", params),
     enabled,
   });
@@ -143,8 +146,8 @@ export function MonitoringCoveragePanel() {
     setMsg(null);
     setLoadedScope(scopeKey);
     const p = params;
-    const dataKey = ["amba", scopeKind, effectiveWorkloadId, subId] as const;
-    const trendKey = ["amba-trend", scopeKind, effectiveWorkloadId, subId] as const;
+    const dataKey = ["amba", scopeKind, effectiveWorkloadId, subId, connId] as const;
+    const trendKey = ["amba-trend", scopeKind, effectiveWorkloadId, subId, connId] as const;
     // Fire-and-forget: keeps running even if the user switches scope or navigates away; the
     // cache update via the shared queryClient lands whenever the scan finishes.
     startBackgroundRefresh(refreshKey, async () => {
@@ -341,7 +344,8 @@ export function MonitoringCoveragePanel() {
           )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {/* Scope switcher */}
+            {/* Azure tenant + scope switcher */}
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -350,6 +354,7 @@ export function MonitoringCoveragePanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

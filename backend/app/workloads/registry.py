@@ -34,6 +34,14 @@ DEFAULTS: dict[str, Any] = {
     # AI reasoning captured when Autopilot proposed this workload.
     "reasoning": "",
     "confidence": 0.0,
+    # Autopilot classification + business context (AI-inferred, user-editable).
+    "workload_type": "",      # web_app | data_pipeline | ai_ml | networking | storage | identity | integration | other
+    "environment": "",        # production | staging | development | test | dr | shared | unknown
+    "criticality": "",        # critical | high | medium | low (drives downstream severity/SLA weighting)
+    "data_classification": "",  # confidential | internal | public | unknown
+    # Evidence the grouper used to justify membership (network/RBAC/dependency/provenance
+    # signals). Shape: [{kind, detail}] — surfaced in the UI for trust.
+    "evidence": [],
     "last_refreshed": "",
     "created_by": "",
     "created_at": "",

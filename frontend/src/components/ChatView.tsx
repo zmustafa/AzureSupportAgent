@@ -31,12 +31,16 @@ import {
   AUTOMATIONS_NAV,
   POLICY_TAB_IDS,
   INVENTORY_TAB_IDS,
+  TAGINTEL_TAB_IDS,
+  CHANGEEXPLORER_TAB_IDS,
   RBAC_TAB_IDS,
   IDENTITY_TAB_IDS,
   type AdminSection,
   type AutomationsSection,
   type PolicyTab,
   type InventoryTab,
+  type TagIntelTab,
+  type ChangeExplorerTab,
   type RbacTab,
   type IdentityTab,
 } from "./navConfig";
@@ -50,11 +54,15 @@ import {
   SettingsIcon,
   InventoryIcon,
   WorkloadIcon,
+  TagIcon,
+  ChangeIcon,
   DashboardIcon,
+  MissionControlIcon,
   AssessmentIcon,
   MonitorIcon,
   StatsIcon,
   ArchitectureIcon,
+  GraphIcon,
   PolicyIcon,
   RbacIcon,
   IdentityIcon,
@@ -88,8 +96,17 @@ const StatsPanel = lazy(() => import("./MonitorView").then((m) => ({ default: m.
 const WorkloadsPanel = lazy(() =>
   import("./WorkloadsView").then((m) => ({ default: m.WorkloadsPanel })),
 );
+const MissionControlPanel = lazy(() =>
+  import("./MissionControlView").then((m) => ({ default: m.MissionControlPanel })),
+);
 const InventoryPanel = lazy(() =>
   import("./InventoryView").then((m) => ({ default: m.InventoryPanel })),
+);
+const TagIntelligencePanel = lazy(() =>
+  import("./TagIntelligenceView").then((m) => ({ default: m.TagIntelligencePanel })),
+);
+const ChangeExplorerPanel = lazy(() =>
+  import("./ChangeExplorerView").then((m) => ({ default: m.ChangeExplorerPanel })),
 );
 const AssessmentsPanel = lazy(() =>
   import("./AssessmentsView").then((m) => ({ default: m.AssessmentsPanel })),
@@ -120,6 +137,9 @@ const EvidenceLockerPanel = lazy(() =>
 );
 const RetirementRadarPanel = lazy(() =>
   import("./RetirementRadarView").then((m) => ({ default: m.RetirementRadarPanel })),
+);
+const GraphPanel = lazy(() =>
+  import("./GraphView").then((m) => ({ default: m.GraphPanel })),
 );
 const TelemetryIntelligencePanel = lazy(() =>
   import("./TelemetryIntelligenceView").then((m) => ({ default: m.TelemetryIntelligencePanel })),
@@ -454,6 +474,7 @@ export default function ChatView() {
   const inStats = location.pathname.startsWith("/stats");
   // Azure Workloads section.
   const inWorkloads = location.pathname.startsWith("/workloads");
+  const inMissionControl = location.pathname.startsWith("/mission-control");
   const inInventory = location.pathname.startsWith("/inventory");
   // Inventory sub-tab lives in the URL (/inventory/:tab) so a refresh restores the same view.
   const inventoryTab: InventoryTab = (() => {
@@ -463,6 +484,18 @@ export default function ChatView() {
   const inAssessments = location.pathname.startsWith("/assessments");
   const inArchitectures = location.pathname.startsWith("/architectures");
   const inPolicy = location.pathname.startsWith("/policy");
+  // Tag Intelligence. Sub-tab lives in the URL (/tagintel/:tab) so a refresh restores the view.
+  const inTagIntel = location.pathname.startsWith("/tagintel");
+  const tagIntelTab: TagIntelTab = (() => {
+    const seg = location.pathname.split("/")[2] as TagIntelTab | undefined;
+    return seg && TAGINTEL_TAB_IDS.has(seg) ? seg : "census";
+  })();
+  // Change Explorer. Sub-tab lives in the URL (/change-explorer/:tab).
+  const inChangeExplorer = location.pathname.startsWith("/change-explorer");
+  const changeExplorerTab: ChangeExplorerTab = (() => {
+    const seg = location.pathname.split("/")[2] as ChangeExplorerTab | undefined;
+    return seg && CHANGEEXPLORER_TAB_IDS.has(seg) ? seg : "summary";
+  })();
   // RBAC / Access Review. Sub-tab lives in the URL (/rbac/:tab) so a refresh restores the view.
   const inRbac = location.pathname.startsWith("/rbac");
   const rbacTab: RbacTab = (() => {
@@ -492,6 +525,8 @@ export default function ChatView() {
   const inReservations = location.pathname.startsWith("/reservations");
   // Performance Profiler (profile against AMBA, admin-only).
   const inPerformance = location.pathname.startsWith("/performance");
+  // Estate Graph: central workload-aware knowledge graph (admin-only).
+  const inGraph = location.pathname.startsWith("/graph");
   // Azure Policy sub-tab lives in the URL (/policy/:tab) so a refresh restores the same view.
   const policyTab: PolicyTab = (() => {
     const seg = location.pathname.split("/")[2] as PolicyTab | undefined;
@@ -577,7 +612,7 @@ export default function ChatView() {
   // expand whenever the user opened Architectures.
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
-    || inTeleIntel || inPerformance;
+    || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2284,98 +2319,33 @@ export default function ChatView() {
           </div>
         )}
 
-        {/* Automations: an expandable menu above the chat list. URL-driven so a
-            browser refresh restores the same panel. Admin-only, like the footer links. */}
+        {/* Mission Control: per-workload "run every analysis" cockpit. Top-level, right
+            below Dashboard. Admin-only (the missions API is admin-gated). */}
         {me?.role === "admin" &&
           (railCollapsed ? (
             <Link
-              to="/automations"
-              title="Automations"
+              to="/mission-control"
+              title="Mission Control"
               className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inAutomations && !inCustomAgents
+                inMissionControl
                   ? "bg-gray-200 text-gray-900"
                   : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
               }`}
             >
-              <BoltIcon className="h-[18px] w-[18px]" />
-            </Link>
-          ) : (
-            <div className="mb-1 px-2">
-              <div className="flex items-center">
-                <Link
-                  to="/automations"
-                  className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                    inAutomations && !inCustomAgents
-                      ? "bg-gray-200 font-medium text-gray-900"
-                      : "text-gray-700 hover:bg-gray-200/60"
-                  }`}
-                >
-                  <BoltIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                  <span>Automations</span>
-                </Link>
-                <button
-                  onClick={() => setAutomationsOpen((v) => !v)}
-                  title={automationsOpen ? "Collapse" : "Expand"}
-                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
-                >
-                  <ChevronRightIcon
-                    className={`h-4 w-4 transition-transform ${
-                      automationsOpen ? "rotate-90" : ""
-                    }`}
-                  />
-                </button>
-              </div>
-              {automationsOpen && (
-                <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {AUTOMATIONS_NAV.map((n) => {
-                    const active = inAutomations && automationsSection === n.id;
-                    return (
-                      <Link
-                        key={n.id}
-                        to={`/automations/${n.id}`}
-                        className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
-                          active
-                            ? "bg-gray-200 font-medium text-gray-900"
-                            : "text-gray-600 hover:bg-gray-200/60"
-                        }`}
-                      >
-                        <span className="text-xs">{n.icon}</span>
-                        {n.label}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
-
-        {/* Sub Agents: a top-level link (next to Automations) to the management page.
-            Admin-only. Clicking opens the management page; it does NOT expand a submenu. */}
-        {me?.role === "admin" &&
-          (railCollapsed ? (
-            <Link
-              to="/automations/agents"
-              title="Sub Agents"
-              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-                inCustomAgents
-                  ? "bg-gray-200 text-gray-900"
-                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-              }`}
-            >
-              <RobotIcon className="h-[18px] w-[18px]" />
+              <MissionControlIcon className="h-[18px] w-[18px]" />
             </Link>
           ) : (
             <div className="mb-1 px-2">
               <Link
-                to="/automations/agents"
+                to="/mission-control"
                 className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                  inCustomAgents
+                  inMissionControl
                     ? "bg-gray-200 font-medium text-gray-900"
                     : "text-gray-700 hover:bg-gray-200/60"
                 }`}
               >
-                <RobotIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-                <span>Sub Agents</span>
+                <MissionControlIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                <span>Mission Control</span>
               </Link>
             </div>
           ))}
@@ -2438,6 +2408,31 @@ export default function ChatView() {
           </div>
         )}
 
+        {/* Estate Graph: central workload-aware knowledge graph of the whole tenant. Admin-only. */}
+        {me?.role === "admin" && (railCollapsed ? (
+          <Link
+            to="/graph"
+            title="Estate Graph"
+            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+              inGraph ? "bg-gray-200 text-gray-900" : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+            }`}
+          >
+            <GraphIcon className="h-[18px] w-[18px]" />
+          </Link>
+        ) : (
+          <div className="mb-1 px-2">
+            <Link
+              to="/graph"
+              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                inGraph ? "bg-gray-200 font-medium text-gray-900" : "text-gray-700 hover:bg-gray-200/60"
+              }`}
+            >
+              <GraphIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+              <span>Estate Graph</span>
+            </Link>
+          </div>
+        ))}
+
         {/* Proactive Support: posture/forensic dashboards grouped under one expandable
             menu (Monitoring/Telemetry/Backup-DR coverage, Evidence Locker, Retirement
             Radar, Telemetry Intelligence, Performance Profiler). Admin-only. */}
@@ -2451,6 +2446,8 @@ export default function ChatView() {
             { to: "/radar", label: "Retirement Radar", Icon: RadarIcon, active: inRadar },
             { to: "/reservations", label: "Reservations Monitor", Icon: ReservationIcon, active: inReservations },
             { to: "/inventory", label: "Inventory", Icon: InventoryIcon, active: inInventory },
+            { to: "/tagintel", label: "Tag Intelligence", Icon: TagIcon, active: inTagIntel },
+            { to: "/change-explorer", label: "Change Explorer", Icon: ChangeIcon, active: inChangeExplorer },
             { to: "/policy", label: "Azure Policy", Icon: PolicyIcon, active: inPolicy },
             { to: "/identity", label: "Identity", Icon: IdentityIcon, active: inIdentity },
             { to: "/rbac", label: "RBAC", Icon: RbacIcon, active: inRbac },
@@ -2583,6 +2580,102 @@ export default function ChatView() {
                   })}
                 </div>
               )}
+            </div>
+          ))}
+
+        {/* Automations: an expandable menu. URL-driven so a browser refresh restores the
+            same panel. Admin-only. Placed below Settings. */}
+        {me?.role === "admin" &&
+          (railCollapsed ? (
+            <Link
+              to="/automations"
+              title="Automations"
+              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+                inAutomations && !inCustomAgents
+                  ? "bg-gray-200 text-gray-900"
+                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+              }`}
+            >
+              <BoltIcon className="h-[18px] w-[18px]" />
+            </Link>
+          ) : (
+            <div className="mb-1 px-2">
+              <div className="flex items-center">
+                <Link
+                  to="/automations"
+                  className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                    inAutomations && !inCustomAgents
+                      ? "bg-gray-200 font-medium text-gray-900"
+                      : "text-gray-700 hover:bg-gray-200/60"
+                  }`}
+                >
+                  <BoltIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                  <span>Automations</span>
+                </Link>
+                <button
+                  onClick={() => setAutomationsOpen((v) => !v)}
+                  title={automationsOpen ? "Collapse" : "Expand"}
+                  className="ml-1 rounded p-1 text-gray-400 transition hover:bg-gray-200/60 hover:text-gray-700"
+                >
+                  <ChevronRightIcon
+                    className={`h-4 w-4 transition-transform ${
+                      automationsOpen ? "rotate-90" : ""
+                    }`}
+                  />
+                </button>
+              </div>
+              {automationsOpen && (
+                <div className="mt-0.5 space-y-0.5 pl-3.5">
+                  {AUTOMATIONS_NAV.map((n) => {
+                    const active = inAutomations && automationsSection === n.id;
+                    return (
+                      <Link
+                        key={n.id}
+                        to={`/automations/${n.id}`}
+                        className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
+                          active
+                            ? "bg-gray-200 font-medium text-gray-900"
+                            : "text-gray-600 hover:bg-gray-200/60"
+                        }`}
+                      >
+                        <span className="text-xs">{n.icon}</span>
+                        {n.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+
+        {/* Sub Agents: a top-level link (next to Automations) to the management page.
+            Admin-only. Clicking opens the management page; it does NOT expand a submenu. */}
+        {me?.role === "admin" &&
+          (railCollapsed ? (
+            <Link
+              to="/automations/agents"
+              title="Sub Agents"
+              className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+                inCustomAgents
+                  ? "bg-gray-200 text-gray-900"
+                  : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+              }`}
+            >
+              <RobotIcon className="h-[18px] w-[18px]" />
+            </Link>
+          ) : (
+            <div className="mb-1 px-2">
+              <Link
+                to="/automations/agents"
+                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                  inCustomAgents
+                    ? "bg-gray-200 font-medium text-gray-900"
+                    : "text-gray-700 hover:bg-gray-200/60"
+                }`}
+              >
+                <RobotIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
+                <span>Sub Agents</span>
+              </Link>
             </div>
           ))}
 
@@ -2809,6 +2902,14 @@ export default function ChatView() {
             </Suspense>
           </PanelErrorBoundary>
         </main>
+      ) : inMissionControl ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Mission Control">
+            <Suspense fallback={<PanelLoading />}>
+              <MissionControlPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
       ) : inWorkloads ? (
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Workloads">
@@ -2822,6 +2923,22 @@ export default function ChatView() {
           <PanelErrorBoundary name="Inventory">
             <Suspense fallback={<PanelLoading />}>
               <InventoryPanel tab={inventoryTab} />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inTagIntel ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Tag Intelligence">
+            <Suspense fallback={<PanelLoading />}>
+              <TagIntelligencePanel tab={tagIntelTab} />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inChangeExplorer ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Change Explorer">
+            <Suspense fallback={<PanelLoading />}>
+              <ChangeExplorerPanel tab={changeExplorerTab} />
             </Suspense>
           </PanelErrorBoundary>
         </main>
@@ -2886,6 +3003,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Backup & DR Coverage">
             <Suspense fallback={<PanelLoading />}>
               <BackupDrCoveragePanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inGraph ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Estate Graph">
+            <Suspense fallback={<PanelLoading />}>
+              <GraphPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>

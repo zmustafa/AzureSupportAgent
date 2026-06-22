@@ -13,6 +13,7 @@ import { AzureIcon, friendlyLocation, friendlyResourceType } from "./AzureIcon";
 import { INVENTORY_NAV, type InventoryTab } from "./navConfig";
 import { LocationMode, LocationFilterToolbar } from "./InventoryLocationMap";
 import { DnsDebugModal } from "./DnsDebugModal";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const FLAG_META: Record<string, { label: string; tone: string }> = {
   untagged: { label: "Untagged", tone: "bg-gray-100 text-gray-600" },
@@ -88,7 +89,6 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
       <Header
         inv={inv}
-        connections={connections}
         connectionId={effectiveConn}
         onConnection={setConnectionId}
         refreshing={busy}
@@ -129,14 +129,12 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
 // =========================================================================== Header
 function Header({
   inv,
-  connections,
   connectionId,
   onConnection,
   refreshing,
   onRefresh,
 }: {
   inv?: InventoryResponse;
-  connections: { id: string; display_name: string; is_default: boolean }[];
   connectionId: string;
   onConnection: (id: string) => void;
   refreshing: boolean;
@@ -154,21 +152,7 @@ function Header({
           </div>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {connections.length > 0 && (
-            <select
-              value={connectionId}
-              onChange={(e) => onConnection(e.target.value)}
-              title="Azure connection"
-              className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm"
-            >
-              {connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  🔑 {c.display_name}
-                  {c.is_default ? " (default)" : ""}
-                </option>
-              ))}
-            </select>
-          )}
+          <ConnectionScopePicker value={connectionId} onChange={onConnection} />
           <button
             onClick={onRefresh}
             disabled={refreshing}

@@ -155,12 +155,18 @@ class CodexProvider(LLMProvider):
             # `codex login` rotates the session), so a token that still looks valid is
             # rejected with 401. On the first 401, force a refresh and retry once so the
             # turn self-heals instead of failing — only surface the error if it persists.
-            for attempt in range(2):
+            # Separately, the Codex backend strictly validates the body and rejects some
+            # Responses-API params (notably max_output_tokens) with a 400; on that we drop
+            # the offending param and retry once (this is what breaks architecture/memory
+            # generation, which request a token cap).
+            for attempt in range(3):
                 retry = False
+                refresh_auth = False
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code == 401:
-                        if attempt == 0 and not self._override_token:
+                        if attempt < 2 and not self._override_token:
                             retry = True
+                            refresh_auth = True
                         else:
                             raise RuntimeError(
                                 "ChatGPT rejected the token (401). Run `codex login` again, "
@@ -168,7 +174,19 @@ class CodexProvider(LLMProvider):
                             )
                     elif resp.status_code >= 400:
                         body = (await resp.aread()).decode("utf-8", "replace")
-                        raise RuntimeError(f"ChatGPT Codex API error {resp.status_code}: {body[:500]}")
+                        # e.g. {"detail":"Unsupported parameter: max_output_tokens"} — the
+                        # Codex backend doesn't accept this cap; drop it and retry rather
+                        # than failing the turn.
+                        if (
+                            attempt < 2
+                            and resp.status_code == 400
+                            and "max_output_tokens" in payload
+                            and "max_output_tokens" in body
+                        ):
+                            payload.pop("max_output_tokens", None)
+                            retry = True
+                        else:
+                            raise RuntimeError(f"ChatGPT Codex API error {resp.status_code}: {body[:500]}")
                     else:
                         yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
                         async for line in resp.aiter_lines():
@@ -205,12 +223,13 @@ class CodexProvider(LLMProvider):
                             for tok in detector.feed(delta):
                                 yield StreamEvent(type="token", text=tok)
                 if retry:
-                    # Refresh the token, rebuild auth headers, and retry the request once.
-                    try:
-                        await oauth.force_refresh()
-                    except Exception:  # noqa: BLE001 - fall through to retry with current token
-                        pass
-                    _token, headers = await self._auth()
+                    if refresh_auth:
+                        # Refresh the token + rebuild auth headers before retrying (401 path).
+                        try:
+                            await oauth.force_refresh()
+                        except Exception:  # noqa: BLE001 - fall through to retry with current token
+                            pass
+                        _token, headers = await self._auth()
                     continue
                 break
 

@@ -179,6 +179,79 @@ export const INVENTORY_NAV: { id: InventoryTab; label: string }[] = [
 
 export const INVENTORY_TAB_IDS = new Set<InventoryTab>(INVENTORY_NAV.map((n) => n.id));
 
+// ---- Tag Intelligence -----------------------------------------------------------
+// Sub-tabs of the Tag Intelligence screen, driven by the /tagintel/:tab URL so a refresh
+// (or a shared link) restores the same view. "census" is the default (bare /tagintel). Each
+// tab carries a one-line description shown under the title (PageIntro-style).
+export type TagIntelTab = "census" | "hygiene" | "coverage" | "cost" | "drift" | "policy" | "remediate";
+
+export const TAGINTEL_NAV: { id: TagIntelTab; label: string; description: string }[] = [
+  {
+    id: "census",
+    label: "🔎 Census",
+    description:
+      "Every tag key and value across your scope — including untagged and partially tagged resources — plus a plain-English console that answers tag questions and shows the Resource Graph query it ran.",
+  },
+  {
+    id: "hygiene",
+    label: "🧹 Hygiene",
+    description:
+      "Find near-duplicate keys, casing drift and value variants (Prod/PRD/Production), build a canonical tag catalog, and see tag-inferred workload boundaries with a confidence score.",
+  },
+  {
+    id: "coverage",
+    label: "✅ Coverage",
+    description:
+      "Measure required-tag coverage per scope and rank the highest-ROI fixes — including resources missing only one required tag — while honoring exceptions for shared/platform services.",
+  },
+  {
+    id: "cost",
+    label: "💰 Cost",
+    description:
+      "Allocate spend by billing code, workload, owner, environment and business unit; expose unallocatable cost from missing billing tags and split shared resources.",
+  },
+  {
+    id: "drift",
+    label: "📈 Drift",
+    description:
+      "Track how tags change over time — keys added or removed, billing-tag value changes and coverage deltas — between snapshots.",
+  },
+  {
+    id: "policy",
+    label: "🛡️ Policy",
+    description:
+      "Generate audit, append, inherit and deny tag policies (plus an initiative) from your real tag usage, following a safe staged rollout.",
+  },
+  {
+    id: "remediate",
+    label: "🔧 Remediate",
+    description:
+      "Fix tags safely: dry-run, preview the exact diff, then generate PowerShell / CLI / Resource Graph / Bicep with a rollback plan — and least-privilege roles shown inline.",
+  },
+];
+
+export const TAGINTEL_TAB_IDS = new Set<TagIntelTab>(TAGINTEL_NAV.map((n) => n.id));
+
+// ---- Change Explorer ------------------------------------------------------------
+// Sub-tabs of the Azure Workload Change Explorer, driven by the /change-explorer/:tab URL so a
+// refresh (or a shared link) restores the same view. "summary" is the default.
+export type ChangeExplorerTab =
+  | "summary" | "timeline" | "changes" | "risk" | "resources" | "actors" | "diff" | "impact" | "export";
+
+export const CHANGEEXPLORER_NAV: { id: ChangeExplorerTab; label: string }[] = [
+  { id: "summary", label: "📊 Summary" },
+  { id: "timeline", label: "🕑 Timeline" },
+  { id: "changes", label: "📋 All Changes" },
+  { id: "risk", label: "⚠️ Risk Insights" },
+  { id: "resources", label: "📦 Resources" },
+  { id: "actors", label: "👤 Actors" },
+  { id: "diff", label: "🔬 Technical Diff" },
+  { id: "impact", label: "🔗 Dependency Impact" },
+  { id: "export", label: "⬇️ Export / Reports" },
+];
+
+export const CHANGEEXPLORER_TAB_IDS = new Set<ChangeExplorerTab>(CHANGEEXPLORER_NAV.map((n) => n.id));
+
 // ---- RBAC / Access Review -------------------------------------------------------
 // Sub-tabs of the RBAC access-review screen, driven by the /rbac/:tab URL so a refresh (or a
 // shared link) restores the same view. "overview" is the default (bare /rbac). The 7 tabs

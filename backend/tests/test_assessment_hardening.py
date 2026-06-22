@@ -98,6 +98,29 @@ def test_retry_after_seconds_parses_header():
     assert arm._retry_after_seconds(_FakeResp(429, {}, {"retry-after": "bad"})) is None
 
 
+# --------------------------------------------------------------------------- ARG output salvage
+def test_parse_kql_rows_parses_clean_array():
+    import json as _json
+    rows = [{"id": f"/r/{i}", "name": f"r{i}"} for i in range(5)]
+    assert command_runner.parse_kql_rows(_json.dumps(rows)) == rows
+    assert command_runner.parse_kql_rows("") == []
+    assert command_runner.parse_kql_rows("[]") == []
+
+
+def test_parse_kql_rows_salvages_truncated_array():
+    """A 256 KB cap that cuts a result mid-array (the bug that turned a big subscription on a REST
+    connection into ZERO resources) must still yield every COMPLETE object."""
+    import json as _json
+    rows = [{"id": f"/r/{i}", "name": f"name-{i}", "tags": {"k": "v" * 20}} for i in range(50)]
+    full = _json.dumps(rows)
+    truncated = full[: full.rindex("}") - 10]  # cut the last object mid-way -> invalid JSON
+    salvaged = command_runner.parse_kql_rows(truncated)
+    assert len(salvaged) == 49  # every complete object recovered, only the cut tail dropped
+    assert salvaged[0]["id"] == "/r/0" and salvaged[48]["id"] == "/r/48"
+    # A dict-wrapped result ({data:[...]}) is unwrapped.
+    assert command_runner.parse_kql_rows(_json.dumps({"data": rows})) == rows
+
+
 def test_run_kql_collect_rest_passes_through_total(monkeypatch):
     async def _fake_token(conn):
         return "tok", None

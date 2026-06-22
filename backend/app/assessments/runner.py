@@ -27,7 +27,7 @@ from sqlalchemy import desc, select
 
 from app.assessments import catalog
 from app.core.db import SessionLocal
-from app.exec.command_runner import run_kql_capture, run_kql_collect
+from app.exec.command_runner import KQL_RESOURCE_CAPTURE_BYTES, parse_kql_rows, run_kql_capture, run_kql_collect
 from app.models import AssessmentRun
 from app.workloads import discovery
 from app.workloads.registry import get_workload
@@ -355,17 +355,21 @@ async def query_resources_batched(
     *,
     projection: str,
     session_dir: str | None = None,
-    take: int = 1000,
+    take: int = 10_000,
 ) -> list[dict[str, Any]]:
     """Run one ARG ``Resources`` query per predicate (each pre-sized under the query-length
     limit by ``scope_predicate_batches``) and return the merged rows, de-duplicated by id.
 
-    A heavy projection (one that pulls the full ``properties`` blob) can blow the 256 KB output
-    capture cap well before the row cap, and the size depends on *which* heavy resources land in
-    a batch, not the count — so a fixed chunk size is fragile. For heavy projections we therefore
-    run each id-batch ADAPTIVELY: start with a moderate chunk and, on an output-truncation, bisect
-    the id list and retry each half (recursively). This converges on a safe size for any property
-    distribution while keeping the query count low in the common (small-property) case.
+    A single ARG query returns at most 1000 rows per page, so a subscription with thousands of
+    resources is collected by PAGING (``run_kql_collect``) up to ``take`` — not a single
+    ``take 1000`` query that would silently cap the result at 1000. This applies to both light
+    and heavy (full-``properties``) projections; the heavy path falls back to id-enumeration +
+    adaptive bisection only if a page can't be captured (a 1000-row properties page exceeding the
+    capture cap on the CLI path).
+
+    Workload-scope id-lists (already chunked under the query-length budget) pull properties in
+    ADAPTIVE id-batches: start with a moderate chunk and, on an output-truncation, bisect the id
+    list and retry each half. This converges on a safe size for any property distribution.
 
     Raises ``RuntimeError`` on the first genuine query failure (fail-closed, matching the
     per-collector ``_query_resources`` it replaces). An output truncation is NOT a genuine failure
@@ -376,21 +380,30 @@ async def query_resources_batched(
     out: list[dict[str, Any]] = []
 
     async def _run(pred: str):
+        # Single-page query — used only for the small heavy id-batches in ``_run_ids_adaptive``
+        # (≤ _HEAVY_PROJECTION_CHUNK ids), which never exceed one page.
         kql = (
             f"Resources | where {pred} | project {projection} "
             f"| order by type asc, name asc | take {take}"
         )
-        return await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
+        return await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir,
+                                     max_bytes=KQL_RESOURCE_CAPTURE_BYTES)
+
+    async def _run_paged(pred: str):
+        # Light-projection predicate (a whole subscription / RG): page through up to ``take`` rows
+        # so a >1000-resource subscription returns its real set instead of a single 1000-row page.
+        kql = f"Resources | where {pred} | project {projection} | order by type asc, name asc"
+        return await run_kql_collect(kql, connection, session_config_dir=session_dir, max_rows=take)
 
     async def _enumerate_ids(pred: str) -> list[str]:
-        # Light id-only projection of the SAME predicate — ids are tiny, so this stays under the
-        # 256 KB capture cap even when the full-``properties`` version of the predicate blows it.
+        # Light id-only projection of the SAME predicate, PAGED to ``take`` — ids are tiny, so this
+        # discovers every matching id even when the full-``properties`` version blows the cap.
         # Returns QUOTED tokens ("'<id>'") to match what ``_run_ids_adaptive`` expects.
-        kql = f"Resources | where {pred} | project id | order by id asc | take {take}"
-        cap = await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
-        if not cap.ok:
-            raise RuntimeError(cap.error or "Resource id enumeration failed.")
-        return [f"'{_esc(str(r.get('id', '')))}'" for r in _parse_rows(cap.stdout) if r.get("id")]
+        kql = f"Resources | where {pred} | project id | order by id asc"
+        kr = await run_kql_collect(kql, connection, session_config_dir=session_dir, max_rows=take)
+        if not kr.ok:
+            raise RuntimeError(kr.error or "Resource id enumeration failed.")
+        return [f"'{_esc(str(r.get('id', '')))}'" for r in kr.rows if r.get("id")]
 
     def _merge(rows: list[dict[str, Any]]) -> None:
         for r in rows:
@@ -415,7 +428,7 @@ async def query_resources_batched(
             await _run_ids_adaptive(toks[mid:])
             return
         if truncated:
-            # A single resource's properties alone exceed the 256 KB cap — skip it instead of
+            # A single resource's properties alone exceed the capture cap — skip it instead of
             # failing the whole coverage scan (it simply won't appear in the resource list).
             logger.warning("query_resources_batched: skipping a resource whose properties exceed the capture cap")
             return
@@ -425,25 +438,28 @@ async def query_resources_batched(
         if not pred:
             continue
         if heavy and pred.startswith("id in~ ("):
+            # Workload-scope id list (already chunked under the query-length budget): pull
+            # properties in adaptive id-batches that bisect on any output truncation.
             toks = [t.strip() for t in pred[len("id in~ ("):-1].split(",") if t.strip()]
             for i in range(0, len(toks), _HEAVY_PROJECTION_CHUNK):
                 await _run_ids_adaptive(toks[i : i + _HEAVY_PROJECTION_CHUNK])
         else:
-            cap = await _run(pred)
-            if cap.ok:
-                _merge(_parse_rows(cap.stdout))
+            # A subscription / RG predicate (light OR heavy): PAGE through up to ``take`` rows.
+            # This collects a >1000-resource subscription in a handful of pages instead of one
+            # capped 1000-row query (or thousands of tiny id-batches).
+            kr = await _run_paged(pred)
+            if kr.ok:
+                _merge(kr.rows)
                 continue
-            truncated = "truncat" in (cap.error or "").lower()
-            if heavy and truncated:
-                # A NON-id-list predicate (e.g. a whole subscription) matched too many heavy
-                # resources to return in one 256 KB capture, and there's no id list to bisect.
-                # Enumerate the matching ids with a light projection, then pull full properties
-                # in adaptive id-batches (which bisect further if any batch still truncates).
+            if heavy:
+                # A heavy page couldn't be captured (a 1000-row full-``properties`` page exceeded
+                # the cap on the CLI path). Fall back to enumerating the ids with a light, paged
+                # projection, then pull properties in adaptive id-batches (which bisect further).
                 ids = await _enumerate_ids(pred)
                 for i in range(0, len(ids), _HEAVY_PROJECTION_CHUNK):
                     await _run_ids_adaptive(ids[i : i + _HEAVY_PROJECTION_CHUNK])
                 continue
-            raise RuntimeError(cap.error or "Resource query failed.")
+            raise RuntimeError(kr.error or "Resource query failed.")
     return out
 
 
@@ -455,13 +471,9 @@ _HEAVY_PROJECTION_CHUNK = 20
 
 
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
-    try:
-        data = json.loads(stdout or "[]")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    if isinstance(data, dict):
-        data = data.get("data") or data.get("value") or []
-    return data if isinstance(data, list) else []
+    # Salvage a cap-truncated array so a big result isn't silently turned into zero rows
+    # (notably on REST connections whose output is sliced rather than erroring).
+    return parse_kql_rows(stdout)
 
 
 def _parse_metric_points(stdout: str, aggregation: str) -> list[float]:

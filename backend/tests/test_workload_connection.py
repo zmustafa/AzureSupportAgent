@@ -65,3 +65,65 @@ def test_perfprofile_conn_and_workload(monkeypatch):
     conn2, wl2 = perfprofile._conn_and_workload("subscription", "sub-x")
     assert conn2["id"] == "conn-default"
     assert wl2 is None
+
+
+# --------------------------------------------------------------------------- connection_for_scope
+def test_connection_for_scope_explicit_override_wins(monkeypatch):
+    """An explicit Azure-tenant picker selection (connection_id) ALWAYS wins — for workload AND
+    subscription scopes — so a subscription reachable only via a non-default connection works."""
+    default, wl_conn = _setup(monkeypatch)
+    other = {"id": "conn-other"}
+    monkeypatch.setattr(conns, "get_connection", lambda cid: {
+        "conn-workload": wl_conn, "conn-default": default, "conn-other": other}.get(cid))
+    wl = {"connection_id": "conn-workload"}
+    # Workload scope, explicit override beats the workload's own connection.
+    assert conns.connection_for_scope("workload", connection_id="conn-other", workload=wl) == other
+    # Subscription scope, explicit override beats the default.
+    assert conns.connection_for_scope("subscription", connection_id="conn-other") == other
+
+
+def test_connection_for_scope_workload_uses_own(monkeypatch):
+    _setup(monkeypatch)
+    wl = {"connection_id": "conn-workload"}
+    # No override → workload scope uses the workload's own connection.
+    assert conns.connection_for_scope("workload", workload=wl)["id"] == "conn-workload"
+
+
+def test_connection_for_scope_subscription_defaults(monkeypatch):
+    default, _ = _setup(monkeypatch)
+    # No override, subscription/tenant scope → default connection.
+    assert conns.connection_for_scope("subscription") == default
+    assert conns.connection_for_scope("tenant") == default
+    # Workload scope with no workload object also defaults.
+    assert conns.connection_for_scope("workload") == default
+
+
+def test_teleintel_conn_for_honors_connection_id(monkeypatch):
+    """The Telemetry-Intelligence connection resolver honors an explicit connection_id override."""
+    from app.api import teleintel
+    import app.workloads.registry as reg
+
+    default, wl_conn = _setup(monkeypatch)
+    other = {"id": "conn-other"}
+    monkeypatch.setattr(conns, "get_connection", lambda cid: {
+        "conn-workload": wl_conn, "conn-default": default, "conn-other": other}.get(cid))
+    monkeypatch.setattr(reg, "get_workload", lambda sid, **kw: {"id": sid, "connection_id": "conn-workload"})
+    # Subscription scope + override → the picked connection (not the default).
+    assert teleintel._conn_for("subscription", "sub-x", "conn-other")["id"] == "conn-other"
+    # Workload scope + override → the picked connection (not the workload's own).
+    assert teleintel._conn_for("workload", "wl-x", "conn-other")["id"] == "conn-other"
+
+
+def test_perfprofile_conn_and_workload_honors_connection_id(monkeypatch):
+    from app.api import perfprofile
+    import app.workloads.registry as reg
+
+    default, wl_conn = _setup(monkeypatch)
+    other = {"id": "conn-other"}
+    monkeypatch.setattr(conns, "get_connection", lambda cid: {
+        "conn-workload": wl_conn, "conn-default": default, "conn-other": other}.get(cid))
+    wl = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
+    monkeypatch.setattr(reg, "get_workload", lambda sid, **kw: wl if sid == "wl-x" else None)
+    conn, _wl = perfprofile._conn_and_workload("workload", "wl-x", "conn-other")
+    assert conn["id"] == "conn-other"   # explicit picker selection wins
+

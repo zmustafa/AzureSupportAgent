@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";import {
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_TONE: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -98,6 +99,7 @@ export function TelemetryIntelligencePanel() {
   const [workloadId, setWorkloadId] = usePersistedState("azsup.teleintel.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.teleintel.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.teleintel.subName", "");
+  const [connId, setConnId] = usePersistedState("azsup.teleintel.connId", "");
   const [hasActivated, setHasActivated] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
@@ -143,36 +145,36 @@ export function TelemetryIntelligencePanel() {
   // once the user explicitly picks a workload (or enters a subscription). The canvas handoff
   // above may set workloadId to pre-select one.
   const effWorkloadId = scopeKind === "workload" ? workloadId : "";
-  const params = scopeKind === "workload" ? { workload_id: effWorkloadId } : { subscription_id: subId };
+  const params = scopeKind === "workload" ? { workload_id: effWorkloadId, connection_id: connId } : { subscription_id: subId, connection_id: connId };
   const selectionReady = scopeKind === "workload" ? !!effWorkloadId : !!subId;
   const enabled = hasActivated && selectionReady;
 
   useEffect(() => {
     setHasActivated(false);
-  }, [scopeKind, effWorkloadId, subId]);
+  }, [scopeKind, effWorkloadId, subId, connId]);
 
   const overviewQ = useQuery({
-    queryKey: ["teleintel-overview", scopeKind, effWorkloadId, subId],
+    queryKey: ["teleintel-overview", scopeKind, effWorkloadId, subId, connId],
     queryFn: () => api.teleintelOverview(params),
     enabled,
   });
   const triageQ = useQuery({
-    queryKey: ["teleintel-triage", scopeKind, effWorkloadId, subId],
+    queryKey: ["teleintel-triage", scopeKind, effWorkloadId, subId, connId],
     queryFn: () => api.teleintelTriage(params),
     enabled,
   });
   const timelineQ = useQuery({
-    queryKey: ["teleintel-timeline", scopeKind, effWorkloadId, subId],
+    queryKey: ["teleintel-timeline", scopeKind, effWorkloadId, subId, connId],
     queryFn: () => api.teleintelTimeline(params),
     enabled,
   });
   const smartQ = useQuery({
-    queryKey: ["teleintel-smart", scopeKind, effWorkloadId, subId],
+    queryKey: ["teleintel-smart", scopeKind, effWorkloadId, subId, connId],
     queryFn: () => api.teleintelSmartDetection(params),
     enabled,
   });
   const codeOptQ = useQuery({
-    queryKey: ["teleintel-codeopt", scopeKind, effWorkloadId, subId],
+    queryKey: ["teleintel-codeopt", scopeKind, effWorkloadId, subId, connId],
     queryFn: () => api.teleintelCodeOptimizations(params),
     enabled,
   });
@@ -319,6 +321,7 @@ export function TelemetryIntelligencePanel() {
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -327,6 +330,7 @@ export function TelemetryIntelligencePanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

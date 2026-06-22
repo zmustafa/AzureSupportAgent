@@ -216,12 +216,25 @@ def purge_architecture(architecture_id: str) -> bool:
     if architecture_id in data.get("architectures", {}):
         del data["architectures"][architecture_id]
         _write(data)
-        from app.architectures import activity, revisions
+        from app.architectures import activity, memory, revisions
 
         revisions.delete_for(architecture_id)
         activity.delete_for(architecture_id)
+        # Cascade to the architecture's memory (which itself deletes the memory's
+        # revisions) so a hard-deleted architecture never leaves an unreachable,
+        # unmanageable orphan memory behind.
+        memory.delete_memory(architecture_id)
         return True
     return False
+
+
+def all_architecture_ids() -> set[str]:
+    """Every architecture id currently in the store (ACTIVE + TRASHED, all tenants).
+
+    A trashed architecture is still present (soft-delete flag); only ``purge`` removes it.
+    Used to detect orphaned memories (memory whose architecture was hard-deleted)."""
+    return set(_read().get("architectures", {}).keys())
+
 
 
 def empty_architecture_trash(tenant_id: str | None = None) -> int:

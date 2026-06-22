@@ -3,8 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, type RadarEvent, type RadarModelItem, type RadarSnapshot } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_DOT: Record<string, string> = { red: "bg-red-500", amber: "bg-amber-500", grey: "bg-gray-400" };
 const SEV_TEXT: Record<string, string> = { red: "text-red-600", amber: "text-amber-600", grey: "text-gray-500" };
@@ -58,8 +59,10 @@ export function RetirementRadarPanel() {
   const navigate = useNavigate();
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.radar.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.radar.workloadId", "");
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [subId, setSubId] = usePersistedState("azsup.radar.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.radar.subName", "");
+  const [connId, setConnId] = usePersistedState("azsup.radar.connId", "");
   const [typeFilter, setTypeFilter] = useState<"all" | "retirement" | "breaking_change">("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -83,11 +86,11 @@ export function RetirementRadarPanel() {
   // No default selection: the radar must NOT auto-fetch on page visit. It only loads once
   // the user explicitly picks a workload (or enters a subscription).
   const effectiveWorkloadId = scopeKind === "workload" ? workloadId : "";
-  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId } : { subscription_id: subId };
+  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId, connection_id: connId } : { subscription_id: subId, connection_id: connId };
   const enabled = scopeKind === "workload" ? !!effectiveWorkloadId : !!subId;
 
   const radarQ = useQuery({
-    queryKey: ["radar", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["radar", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.radarOverview(params),
     enabled,
   });
@@ -111,7 +114,7 @@ export function RetirementRadarPanel() {
     setMsg(null);
     try {
       const fresh = await api.refreshRadar(params);
-      qc.setQueryData(["radar", scopeKind, effectiveWorkloadId, subId], fresh);
+      qc.setQueryData(["radar", scopeKind, effectiveWorkloadId, subId, connId], fresh);
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -228,6 +231,7 @@ export function RetirementRadarPanel() {
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -236,6 +240,7 @@ export function RetirementRadarPanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

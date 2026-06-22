@@ -16,7 +16,6 @@ from typing import Any
 from app.exec.command_runner import (
     close_sp_session,
     open_sp_session,
-    run_command_capture,
     run_kql_capture,
 )
 
@@ -102,17 +101,15 @@ def effect_of(definition: dict[str, Any]) -> str:
 
 # --------------------------------------------------------------------------- ARG runner
 async def _arg(kql: str, connection: dict[str, Any] | None, session_dir: str | None) -> tuple[list[dict[str, Any]], str]:
-    """Run a Resource Graph query, return (rows, error)."""
-    res = await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir)
+    """Run a Resource Graph query, return (rows, error). Salvage-parses a truncated capture so a
+    big policy result is never silently turned into zero rows on a REST connection."""
+    from app.exec.command_runner import KQL_RESOURCE_CAPTURE_BYTES, parse_kql_rows
+
+    res = await run_kql_capture(kql, connection, output="json", session_config_dir=session_dir,
+                                max_bytes=KQL_RESOURCE_CAPTURE_BYTES)
     if not res.ok:
         return [], (res.error or res.stderr or "Query failed.").strip()[:400]
-    try:
-        data = json.loads(res.stdout or "[]")
-    except json.JSONDecodeError:
-        return [], "Could not parse Resource Graph output."
-    if isinstance(data, dict):  # some az versions wrap as {data: [...]}
-        data = data.get("data", data.get("value", []))
-    return (data if isinstance(data, list) else []), ""
+    return parse_kql_rows(res.stdout), ""
 
 
 # --------------------------------------------------------------------------- queries
@@ -395,24 +392,42 @@ def resolve_effective(
 async def compliance_summary(
     connection: dict[str, Any] | None, subscriptions: list[str], *, limit: int = 6
 ) -> dict[str, Any]:
-    """Best-effort per-assignment compliance via ``az policy state summarize``.
+    """Best-effort per-assignment compliance via the Policy Insights ``summarize`` API.
 
     Aggregates non-compliant resource/policy counts per assignment across up to
     ``limit`` subscriptions. Degrades to an empty/partial result when Policy Insights is
-    unavailable (e.g. brand-new tenant)."""
+    unavailable (e.g. brand-new tenant).
+
+    Uses ARM REST with the connection's own token so it works for EVERY connection type
+    (service principal, pasted ARM token, managed identity) — not just those with an ambient
+    ``az`` login (a pasted-token connection has none, and the CLI would return nothing)."""
+    from app.azure.arm import arm_rest
+    from app.azure.credentials import get_arm_token
+
     by_assignment: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     total_nc_resources = 0
     scanned = 0
+    token, terr = await get_arm_token(connection or {})
+    if not token:
+        return {
+            "by_assignment": {}, "subscriptions_scanned": 0,
+            "total_non_compliant_resources": 0, "available": False,
+            "errors": [(terr or "No Azure token for this connection.")[:160]],
+        }
     for sub in subscriptions[:limit]:
-        cmd = f"az policy state summarize --subscription {sub} --top 200"
-        res = await run_command_capture(cmd, connection, read_only=True)
-        if not res.ok:
-            errors.append(f"{sub[:8]}…: {(res.error or res.stderr or '').strip()[:160]}")
+        url = (
+            f"https://management.azure.com/subscriptions/{sub}"
+            "/providers/Microsoft.PolicyInsights/policyStates/latest/summarize"
+            "?api-version=2019-10-01&$top=200"
+        )
+        text, err = await arm_rest(token, "POST", url)
+        if err:
+            errors.append(f"{sub[:8]}…: {err.strip()[:160]}")
             continue
         scanned += 1
         try:
-            payload = json.loads(res.stdout or "{}")
+            payload = json.loads(text or "{}")
         except json.JSONDecodeError:
             continue
         values = payload.get("value") or []

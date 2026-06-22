@@ -11,9 +11,10 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { TrendChart } from "./TrendChart";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { ScopePicker } from "./ScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
@@ -98,8 +99,10 @@ export function BackupDrCoveragePanel() {
   const [tab, setTab] = useState<"backup" | "dr" | "all">("backup");
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.backupdr.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.backupdr.workloadId", "");
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [subId, setSubId] = usePersistedState("azsup.backupdr.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.backupdr.subName", "");
+  const [connId, setConnId] = usePersistedState("azsup.backupdr.connId", "");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.backupdr.density", "expanded");
@@ -124,9 +127,9 @@ export function BackupDrCoveragePanel() {
     scopeKind === "workload"
       ? workloadId || workloads.find((w) => w.id === "demo-amba-coverage")?.id || workloads[0]?.id || ""
       : "";
-  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId } : { subscription_id: subId };
+  const params = scopeKind === "workload" ? { workload_id: effectiveWorkloadId, connection_id: connId } : { subscription_id: subId, connection_id: connId };
   const scopeReady = scopeKind === "workload" ? !!effectiveWorkloadId : !!subId;
-  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}`;
+  const scopeKey = `${scopeKind}:${effectiveWorkloadId || subId}:${connId}`;
   // Coverage is loaded ONLY on an explicit click — switching workload/subscription does NOT
   // auto-fetch (a fetch can compute against Azure). The user clicks "Load coverage".
   // Persisted so revisiting the screen restores the last loaded workload + its cached data
@@ -140,7 +143,7 @@ export function BackupDrCoveragePanel() {
   const refreshing = isRefreshing(refreshKey);
 
   const covQ = useQuery({
-    queryKey: ["backupdr", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["backupdr", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.backupDrCoverage(params),
     enabled,
   });
@@ -149,7 +152,7 @@ export function BackupDrCoveragePanel() {
 
   // % protected trend over time (loads with the coverage data).
   const trendQ = useQuery({
-    queryKey: ["backupdr-trend", scopeKind, effectiveWorkloadId, subId],
+    queryKey: ["backupdr-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("backupdr", params),
     enabled,
   });
@@ -163,8 +166,8 @@ export function BackupDrCoveragePanel() {
     setMsg(null);
     setLoadedScope(scopeKey);
     const p = params;
-    const dataKey = ["backupdr", scopeKind, effectiveWorkloadId, subId] as const;
-    const trendKey = ["backupdr-trend", scopeKind, effectiveWorkloadId, subId] as const;
+    const dataKey = ["backupdr", scopeKind, effectiveWorkloadId, subId, connId] as const;
+    const trendKey = ["backupdr-trend", scopeKind, effectiveWorkloadId, subId, connId] as const;
     startBackgroundRefresh(refreshKey, async () => {
       const fresh = await api.refreshBackupDr(p);
       qc.setQueryData(dataKey, fresh);
@@ -341,6 +344,7 @@ export function BackupDrCoveragePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -349,6 +353,7 @@ export function BackupDrCoveragePanel() {
               onWorkloadChange={setWorkloadId}
               subId={subId}
               subName={subName}
+              connectionId={connId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

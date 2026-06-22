@@ -157,6 +157,30 @@ def connection_for_workload(workload: dict[str, Any] | None) -> dict[str, Any] |
     return resolve_connection((workload or {}).get("connection_id") or None)
 
 
+def connection_for_scope(
+    scope_kind: str,
+    *,
+    connection_id: str | None = None,
+    workload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """The Azure connection to use for any scoped feature (coverage, radar, perf, tag,
+    telemetry-intel, reservations, …), honoring an explicit tenant/connection override.
+
+    Resolution order:
+      1. ``connection_id`` — an explicit Azure-tenant picker selection ALWAYS wins (this is
+         what makes a subscription reachable only via a non-default connection work).
+      2. WORKLOAD scope with no override → the workload's own ``connection_id``.
+      3. otherwise (subscription / tenant scope, no override) → the default connection.
+
+    Centralizing this prevents the recurring 'subscription scope silently uses the default
+    connection → empty results' bug across every screen."""
+    if connection_id:
+        return resolve_connection(connection_id)
+    if scope_kind == "workload" and workload is not None:
+        return connection_for_workload(workload)
+    return get_default_connection()
+
+
 def upsert_connection(conn: dict[str, Any]) -> dict[str, Any]:
     """Create or update a connection. Secrets are encrypted before write. An empty
     secret field on update means 'keep the existing value' (so the UI never has to

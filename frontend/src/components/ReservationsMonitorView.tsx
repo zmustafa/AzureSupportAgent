@@ -7,6 +7,8 @@ import {
   type ReservationsDigestPreview,
 } from "../api";
 import { formatError } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_TEXT: Record<string, string> = {
   red: "text-red-600",
@@ -64,6 +66,7 @@ function Stat({ label, value, tone }: { label: string; value: string | number; t
 export function ReservationsMonitorPanel() {
   const qc = useQueryClient();
   const [demo, setDemo] = useState(false);
+  const [connId, setConnId] = usePersistedState<string>("azsup.reservations.connId", "");
   const [refreshing, setRefreshing] = useState(false);
   const [showDigest, setShowDigest] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -71,16 +74,16 @@ export function ReservationsMonitorPanel() {
   // Selecting the view only READS the server cache (no Azure call), so it's safe to load
   // on mount. A miss returns never_loaded so we prompt for Refresh.
   const resQ = useQuery({
-    queryKey: ["reservations", demo],
-    queryFn: () => api.reservationsOverview(demo),
+    queryKey: ["reservations", demo, connId],
+    queryFn: () => api.reservationsOverview(demo, connId),
   });
   const data: ReservationsSnapshot | undefined = resQ.data;
   const items = data?.items ?? [];
   const counts = data?.counts;
 
   const digestQ = useQuery<ReservationsDigestPreview>({
-    queryKey: ["reservations-digest", demo],
-    queryFn: () => api.reservationsDigestPreview(demo),
+    queryKey: ["reservations-digest", demo, connId],
+    queryFn: () => api.reservationsDigestPreview(demo, connId),
     enabled: showDigest,
   });
 
@@ -90,9 +93,9 @@ export function ReservationsMonitorPanel() {
     setRefreshing(true);
     setMsg(null);
     try {
-      const fresh = await api.refreshReservations(demo);
-      qc.setQueryData(["reservations", demo], fresh);
-      if (showDigest) qc.invalidateQueries({ queryKey: ["reservations-digest", demo] });
+      const fresh = await api.refreshReservations(demo, connId);
+      qc.setQueryData(["reservations", demo, connId], fresh);
+      if (showDigest) qc.invalidateQueries({ queryKey: ["reservations-digest", demo, connId] });
       if (fresh.error) setMsg({ text: fresh.error, ok: false });
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
@@ -117,6 +120,7 @@ export function ReservationsMonitorPanel() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {!demo && <ConnectionScopePicker value={connId} onChange={setConnId} />}
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
               <input type="checkbox" checked={demo} onChange={(e) => setDemo(e.target.checked)} />
               Demo data

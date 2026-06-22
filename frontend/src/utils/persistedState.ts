@@ -26,3 +26,22 @@ export function usePersistedState<T>(key: string, initial: T): [T, (v: T) => voi
 
   return [value, setValue];
 }
+
+/**
+ * On first mount, if the URL carries `?workload_id=`, switch the screen's scope to that
+ * workload. Powers Workload Mission Control deep links (e.g. /coverage?workload_id=…) so
+ * the destination opens already scoped to the workload instead of the last-used scope.
+ */
+export function useWorkloadDeepLink(
+  setScopeKind: (k: "workload" | "subscription") => void,
+  setWorkloadId: (id: string) => void,
+): void {
+  useEffect(() => {
+    const wid = new URLSearchParams(window.location.search).get("workload_id");
+    if (wid) {
+      setScopeKind("workload");
+      setWorkloadId(wid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}

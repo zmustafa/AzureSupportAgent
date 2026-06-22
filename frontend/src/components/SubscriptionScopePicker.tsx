@@ -82,10 +82,13 @@ export function SubscriptionScopePicker({
   value,
   valueName,
   onPick,
+  connectionId: connectionIdProp,
 }: {
   value: string;
   valueName: string;
   onPick: (id: string, name: string) => void;
+  /** Enumerate subscriptions from THIS connection/tenant. Falls back to the default when empty. */
+  connectionId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -96,7 +99,7 @@ export function SubscriptionScopePicker({
 
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections });
   const connections = connQ.data?.connections ?? [];
-  const connectionId = connections.find((c) => c.is_default)?.id || connections[0]?.id || "";
+  const connectionId = connectionIdProp || connections.find((c) => c.is_default)?.id || connections[0]?.id || "";
 
   // Top of the tree (root management groups, or a flat subscription list when no MGs exist).
   // Only fetched once the dropdown is opened, to avoid a Resource Graph call on every render.
@@ -116,6 +119,14 @@ export function SubscriptionScopePicker({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
+
+  // When the connection/tenant changes, drop the lazily-loaded tree so we never show another
+  // tenant's subscriptions (topQ refetches automatically via its connection-scoped queryKey).
+  useEffect(() => {
+    setExpanded(new Set());
+    setChildrenMap(new Map());
+    setLoading(new Set());
+  }, [connectionId]);
 
   async function toggle(node: TreeNode) {
     const next = new Set(expanded);

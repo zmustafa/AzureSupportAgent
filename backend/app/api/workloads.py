@@ -43,6 +43,10 @@ class WorkloadUpsert(BaseModel):
     tenant_id: str = ""
     nodes: list[WorkloadNode] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    workload_type: str = ""
+    environment: str = ""
+    criticality: str = ""
+    data_classification: str = ""
 
 
 @router.get("")
@@ -413,6 +417,21 @@ class CandidateSave(BaseModel):
     reasoning: str = ""
     confidence: float = 0.0
     nodes: list[WorkloadNode] = Field(default_factory=list)
+    workload_type: str = ""
+    environment: str = ""
+    criticality: str = ""
+    data_classification: str = ""
+    evidence: list[dict] = Field(default_factory=list)
+
+
+class GroupingDecision(BaseModel):
+    action: str  # accept | reject | rename | exclude | split | merge
+    name: str = ""
+    from_: str = Field(default="", alias="from")
+    to: str = ""
+    excluded: str = ""
+
+    model_config = {"populate_by_name": True}
 
 
 class AutopilotSaveRequest(BaseModel):
@@ -421,13 +440,22 @@ class AutopilotSaveRequest(BaseModel):
     scope_id: str = ""
     scope_name: str = ""
     candidates: list[CandidateSave] = Field(default_factory=list)
+    # Corrections the user made while reviewing (feed the grouping memory so the next run
+    # respects them) + decisions about candidates they rejected.
+    decisions: list[GroupingDecision] = Field(default_factory=list)
+    # Discover -> Act: optionally kick off a Mission Control sweep + architecture/memory
+    # generation for each saved workload right away.
+    auto_assess: bool = False
+    auto_architecture: bool = False
 
 
 @router.post("/autopilot/save")
 async def autopilot_save_endpoint(
     payload: AutopilotSaveRequest, principal: Principal = Depends(get_principal)
 ):
-    """Persist selected Autopilot candidates as Azure Workloads."""
+    """Persist selected Autopilot candidates as Azure Workloads. Records the user's
+    grouping corrections into memory and (optionally) launches a Mission Control sweep +
+    architecture generation for each new workload."""
     conn = resolve_connection(payload.connection_id or None)
     tenant_id = conn.get("tenant_id", "") if conn else ""
     origin = (
@@ -447,11 +475,132 @@ async def autopilot_save_endpoint(
                 "origin": origin,
                 "reasoning": cand.reasoning,
                 "confidence": cand.confidence,
+                "workload_type": cand.workload_type,
+                "environment": cand.environment,
+                "criticality": cand.criticality,
+                "data_classification": cand.data_classification,
+                "evidence": cand.evidence,
                 "created_by": principal.subject,
             }
         )
         saved.append(wl)
-    return {"saved": saved, "count": len(saved)}
+
+    # Learn from this review: persist accepted candidates + explicit corrections so the
+    # next discovery honors them.
+    try:
+        from app.workloads import grouping_memory
+
+        decisions = [{"action": "accept", "name": c.name} for c in payload.candidates]
+        decisions += [d.model_dump(by_alias=True) for d in payload.decisions]
+        if decisions:
+            grouping_memory.record_decisions(tenant_id or "default", payload.connection_id, decisions)
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to record autopilot grouping memory", exc_info=True)
+
+    # Discover -> Act: fire-and-forget downstream generation (never blocks the save).
+    launched: dict[str, list[str]] = {"missions": [], "architectures": []}
+    if payload.auto_assess or payload.auto_architecture:
+        for wl in saved:
+            if payload.auto_architecture:
+                try:
+                    from app.architectures.jobs import manager as arch_jobs
+
+                    job = arch_jobs.create(
+                        tenant_id=principal.tenant_id,
+                        workload_id=wl["id"],
+                        workload_name=wl["name"],
+                        connection_id=wl.get("connection_id", ""),
+                        created_by=principal.subject,
+                    )
+                    launched["architectures"].append(job.get("id", ""))
+                except Exception:  # noqa: BLE001
+                    logger.warning("Auto-architecture launch failed for %s", wl["id"], exc_info=True)
+            if payload.auto_assess:
+                try:
+                    from app.missions import orchestrator as missions
+
+                    m = missions.manager.create(
+                        tenant_id=principal.tenant_id,
+                        workload_id=wl["id"],
+                        workload_name=wl["name"],
+                        connection_id=wl.get("connection_id", ""),
+                        actor=principal.subject,
+                        force=False,
+                        trigger="autopilot",
+                        system_keys=[],
+                    )
+                    launched["missions"].append(m.get("id", ""))
+                except Exception:  # noqa: BLE001
+                    logger.warning("Auto-assess launch failed for %s", wl["id"], exc_info=True)
+
+    return {"saved": saved, "count": len(saved), "launched": launched}
+
+
+# ----------------------------------------------------------------- estate coverage
+@router.get("/estate-coverage")
+async def estate_coverage_endpoint(
+    connection_id: str = "", _: Principal = Depends(get_principal)
+):
+    """How much of the Azure estate (under a connection) is organized into workloads.
+
+    Returns the organized %, the total/organized/orphaned counts, and a sample of orphaned
+    resources (those belonging to no workload) for triage. Read-only; cached enumeration."""
+    conn = resolve_connection(connection_id or None)
+    if not conn:
+        raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
+    cid = conn.get("id", "")
+
+    # All resource ids already claimed by a workload on this connection.
+    claimed: set[str] = set()
+    for wl in wl_registry.list_workloads():
+        if cid and wl.get("connection_id") and wl.get("connection_id") != cid:
+            continue
+        for n in wl.get("nodes", []):
+            if n.get("kind") == "resource" and n.get("id"):
+                claimed.add(str(n["id"]).lower())
+
+    # Enumerate the estate (paged to 5000) across all subscriptions visible to the connection.
+    subs = await discovery.list_top_level(conn, "subscription")
+    sub_ids = [
+        (s["id"].split("/")[-1] if "/" in s.get("id", "") else s.get("id", ""))
+        for s in subs
+    ]
+    sub_ids = [s for s in sub_ids if s]
+    resources, truncated = await discovery.enumerate_resources_paged(conn, sub_ids, cap=5000)
+
+    total = len(resources)
+    orphans = [r for r in resources if str(r.get("id", "")).lower() not in claimed]
+    organized = total - len(orphans)
+    pct = round(100 * organized / total) if total else 100
+
+    # Group orphans by resource group for triage; sample the first 200.
+    by_rg: dict[str, int] = {}
+    for r in orphans:
+        by_rg[r.get("resource_group", "") or "(none)"] = by_rg.get(r.get("resource_group", "") or "(none)", 0) + 1
+    orphan_rgs = sorted(({"resource_group": k, "count": v} for k, v in by_rg.items()), key=lambda x: -x["count"])
+
+    return {
+        "connection_id": cid,
+        "total": total,
+        "organized": organized,
+        "orphaned": len(orphans),
+        "organized_pct": pct,
+        "truncated": truncated,
+        "orphan_resource_groups": orphan_rgs[:50],
+        "orphans": [
+            {
+                "id": r.get("id", ""),
+                "name": r.get("name", ""),
+                "resource_type": r.get("resource_type", ""),
+                "resource_group": r.get("resource_group", ""),
+                "subscription_id": r.get("subscription_id", ""),
+                "location": r.get("location", ""),
+            }
+            for r in orphans[:200]
+        ],
+    }
+
+
 
 
 # ----------------------------------------------------------------- refresh

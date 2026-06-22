@@ -268,7 +268,15 @@ DEFAULTS: dict[str, Any] = {
     "reservations_digest_weekday": 0,
     "reservations_digest_time": "08:00",
     "reservations_digest_timezone": "America/New_York",
+    # Autopilot autonomy: candidates at/above this confidence (0..1) are pre-selected for
+    # one-click save in the review step. 0 = off (user selects everything manually).
+    "autopilot_autosave_confidence": 0.0,
+    # On save, optionally auto-launch a Mission Control sweep / architecture generation for
+    # each new workload (Discover -> Act). Default off; the UI offers per-run toggles.
+    "autopilot_auto_assess": False,
+    "autopilot_auto_architecture": False,
 }
+
 
 # Binaries an admin is permitted to add to the allowlist (defense-in-depth: even if the
 # settings file is tampered with, only these can ever run).
@@ -435,6 +443,13 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     _rt = str(current.get("reservations_digest_time", "08:00") or "08:00").strip()
     current["reservations_digest_time"] = _rt if re.match(r"^([01]?\d|2[0-3]):[0-5]\d$", _rt) else "08:00"
     current["reservations_digest_timezone"] = str(current.get("reservations_digest_timezone", "America/New_York") or "America/New_York")[:64]
+    # Autopilot autonomy: clamp confidence 0..1; coerce the auto-act flags.
+    try:
+        current["autopilot_autosave_confidence"] = max(0.0, min(1.0, float(current.get("autopilot_autosave_confidence", 0.0) or 0.0)))
+    except (TypeError, ValueError):
+        current["autopilot_autosave_confidence"] = 0.0
+    current["autopilot_auto_assess"] = bool(current.get("autopilot_auto_assess", False))
+    current["autopilot_auto_architecture"] = bool(current.get("autopilot_auto_architecture", False))
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     _PATH.write_text(json.dumps(current, indent=2), encoding="utf-8")
     return current

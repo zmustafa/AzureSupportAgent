@@ -21,6 +21,7 @@ export function ScopePicker({
   onSubPick,
   workloadOnly = false,
   workloadPlaceholder,
+  connectionId,
 }: {
   scopeKind: ScopeKind;
   onScopeKindChange: (k: ScopeKind) => void;
@@ -34,6 +35,8 @@ export function ScopePicker({
   workloadOnly?: boolean;
   /** Leading empty option label (for views that must not auto-select a workload). */
   workloadPlaceholder?: string;
+  /** Enumerate subscriptions from THIS connection/tenant (defaults to the default connection). */
+  connectionId?: string;
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -74,7 +77,7 @@ export function ScopePicker({
           </select>
         </div>
       ) : (
-        <SubscriptionScopePicker value={subId} valueName={subName} onPick={onSubPick} />
+        <SubscriptionScopePicker value={subId} valueName={subName} onPick={onSubPick} connectionId={connectionId} />
       )}
     </div>
   );
