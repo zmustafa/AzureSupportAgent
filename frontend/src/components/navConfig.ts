@@ -13,6 +13,7 @@ export type SecuritySection =
   | "policies";
 
 export type AdminSection =
+  | "overview"
   | "providers"
   | "tenants"
   | "sandboxvms"
@@ -60,33 +61,35 @@ export const ACCESS_SUB_IDS = new Set<string>(ACCESS_NAV.map((n) => n.id));
 // Ordered in logical clusters (the `group` marks the first item of each cluster so the
 // UI can draw a subtle divider): core configuration, connections/integrations,
 // security & access, then observability.
-export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?: string }[] = [
+export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?: string; desc?: string }[] = [
   // Core configuration
-  { id: "settings", label: "General", icon: "⚙️", group: "Configuration" },
-  { id: "providers", label: "AI Providers", icon: "🧠" },
-  { id: "tenants", label: "Azure Tenants", icon: "🏢" },
-  { id: "prompts", label: "System Prompts", icon: "📝" },
-  { id: "scoring", label: "Assessments & Architecture", icon: "📐" },
-  { id: "amba", label: "AMBA Reference Set", icon: "📡" },
-  { id: "ambachanges", label: "AMBA Change Requests", icon: "📥" },
-  { id: "telemetry", label: "Telemetry Reference Set", icon: "📊" },
-  { id: "telemetrychanges", label: "Telemetry Change Requests", icon: "📝" },
-  { id: "backupdr", label: "Backup/DR Reference Set", icon: "🔁" },
-  { id: "backupdrchanges", label: "Backup/DR Change Requests", icon: "💾" },
-  { id: "radar", label: "Retirement Radar Reference", icon: "📡" },
-  { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️" },
-  { id: "connectors", label: "Connectors", icon: "🔌" },
-  { id: "tools", label: "Azure MCP Tools", icon: "🧰" },
-  { id: "entratools", label: "EntraID MCP Tools", icon: "🆔" },
+  { id: "settings", label: "General", icon: "⚙️", group: "Configuration", desc: "Core application behavior, safety toggles, and runtime tuning." },
+  { id: "providers", label: "AI Providers", icon: "🧠", desc: "Configure OpenAI, Azure OpenAI, GitHub Copilot, Claude and other model providers." },
+  { id: "tenants", label: "Azure Tenants", icon: "🏢", desc: "Manage Azure tenant connections and service-principal / token credentials." },
+  { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️", desc: "Onboard troubleshooting sandbox VMs for in-guest diagnostics (vm_exec)." },
+  { id: "connectors", label: "Connectors", icon: "🔌", desc: "Wire up Teams, Slack, email, Jira, ServiceNow and Grafana integrations." },
   // Security & access
-  { id: "access", label: "Access Control", icon: "🔐", group: "Security & access" },
-  { id: "policies", label: "Security Policy", icon: "🔒" },
-  { id: "sessions", label: "Active Sessions", icon: "🖥️" },
+  { id: "access", label: "Access Control", icon: "🔐", group: "Security & access", desc: "Manage users, roles, groups and single sign-on (OIDC / SAML) providers." },
+  { id: "policies", label: "Security Policy", icon: "🔒", desc: "Password rules, lockout, session lifetimes and SSO auto-provisioning defaults." },
+  { id: "sessions", label: "Active Sessions", icon: "🖥️", desc: "View and revoke active user sessions across the workspace." },
+  // Tool preference — reference sets, change-request inboxes, prompts & scoring tuning.
+  { id: "prompts", label: "System Prompts", icon: "📝", group: "Tool Preference", desc: "Edit the system prompts that steer the agent and its sub-agents." },
+  { id: "scoring", label: "Assessments & Architecture", icon: "📐", desc: "Tune assessment severity weights, score bands and architecture-designer settings." },
+  { id: "amba", label: "AMBA Reference Set", icon: "📡", desc: "Curate the recommended Azure Monitor baseline alerts per resource type." },
+  { id: "ambachanges", label: "AMBA Change Requests", icon: "📥", desc: "Review and approve pending changes to monitoring coverage." },
+  { id: "telemetry", label: "Telemetry Reference Set", icon: "📊", desc: "Curate the recommended diagnostic-settings categories per resource type." },
+  { id: "telemetrychanges", label: "Telemetry Change Requests", icon: "📝", desc: "Review and approve pending changes to telemetry coverage." },
+  { id: "backupdr", label: "Backup/DR Reference Set", icon: "🔁", desc: "Curate the recommended backup & disaster-recovery protection checks." },
+  { id: "backupdrchanges", label: "Backup/DR Change Requests", icon: "💾", desc: "Review and approve pending changes to backup/DR coverage." },
+  { id: "radar", label: "Retirement Radar Reference", icon: "📡", desc: "Tune retirement/breaking-change classification rules and the model-lifecycle table." },
   // Observability
-  { id: "usage", label: "Usage", icon: "📊", group: "Observability" },
-  { id: "audit", label: "Audit Log", icon: "📋" },
-  { id: "backup", label: "Backup & Restore", icon: "💾" },
-  { id: "demodata", label: "Demo Data", icon: "🎬" },
+  { id: "usage", label: "Usage", icon: "📊", group: "Observability", desc: "Token usage and estimated cost by AI provider and model." },
+  { id: "audit", label: "Audit Log", icon: "📋", desc: "Searchable record of administrative and security-relevant actions." },
+  // Miscellaneous
+  { id: "tools", label: "Azure MCP Tools", icon: "🧰", group: "Miscellaneous", desc: "Review the Azure MCP tools exposed to the agent and the built-in utilities." },
+  { id: "entratools", label: "EntraID MCP Tools", icon: "🆔", desc: "Review the Microsoft Graph (Entra ID) tools available to the agent." },
+  { id: "backup", label: "Backup & Restore", icon: "💾", desc: "Export and import the whole-tenant configuration (secret-free)." },
+  { id: "demodata", label: "Demo Data", icon: "🎬", desc: "Load or remove the synthetic sample tenant for exploring features." },
 ];
 
 // Every valid /admin/:section id — top-level nav items plus the Access Control sub-tabs.

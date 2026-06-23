@@ -727,7 +727,11 @@ function IdentityProvidersCard() {
       {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
       <p className="mb-3 text-sm text-slate-500">
         Connect Microsoft Entra ID, Okta, Auth0, Google, ADFS, PingFederate, or any
-        OIDC/SAML 2.0 provider. Local password sign-in is configured under Security Policy.
+        OIDC/SAML 2.0 provider. Local password sign-in is configured under{" "}
+        <Link to="/admin/policies" className="font-semibold text-brand-dark hover:underline">
+          Security Policy
+        </Link>
+        .
       </p>
       {(creating || editing) && (
         <IdpForm

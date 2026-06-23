@@ -471,7 +471,9 @@ export default function ChatView() {
   const inAdmin = location.pathname.startsWith("/admin");
   const adminSection: AdminSection = (() => {
     const seg = location.pathname.split("/")[2] as AdminSection | undefined;
-    return seg && ADMIN_SECTION_IDS.has(seg) ? seg : "settings";
+    // Bare /admin (no section) shows the Settings overview landing page; the submenu still
+    // auto-expands. A concrete /admin/<section> renders that section.
+    return seg && ADMIN_SECTION_IDS.has(seg) ? seg : "overview";
   })();
   // Monitor dashboard lives in the shell too.
   const inMonitor = location.pathname.startsWith("/monitor");
