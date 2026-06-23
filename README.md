@@ -15,10 +15,13 @@ investigate, monitor, and remediate.
 [![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](frontend/package.json)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/zmustafa/AzureSupportAgent?style=social)](https://github.com/zmustafa/AzureSupportAgent/stargazers)
 
 [Deploy](#-deploy-to-azure-one-click) · [Install guide](docs/INSTALLATION.md) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
 
 </div>
+
+> 🆕 **Latest (v54):** a Workloads cockpit (health scores, fleet board, per-workload command center, Autopilot discovery), an **Estate Graph** knowledge map, and **Ownership**, **Tag Intelligence** & **Change Explorer** — all under a new **Proactive Support** hub.
 
 ![Architecture designer reverse-engineering live Azure resources with AI rationale](docs/assets/architecture-designer.png)
 
@@ -182,7 +185,7 @@ nothing about your estate is more than a click away.
 <td width="50%" valign="top">
 
 ### 🔌 Bring your own AI
-11+ providers — OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, GitHub
+A dozen+ providers — OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, GitHub
 Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), **Claude OAuth (Pro/Max, incl.
 Opus 4.8)**, Ollama, LM Studio — switchable at runtime with live model catalogs.
 **Disabled until you set them up.**
@@ -235,7 +238,7 @@ connections.
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
-<td width="50%"></td>
+<td width="50%"><img src="docs/assets/identity.png" alt="Identity risks"><br/><sub><b>Identity</b> — expiring credentials, ownerless apps, MFA &amp; conditional-access gaps, ranked by severity.</sub></td>
 </tr>
 </table>
 
@@ -321,8 +324,8 @@ For local dev nothing is deployed to Azure — the MCP server reaches your real 
 | Layer | Tech |
 | --- | --- |
 | **Backend** | Python 3.12 · FastAPI · async SQLAlchemy 2 · Pydantic v2 · Alembic · SSE |
-| **Frontend** | React 18 · TypeScript · Vite · Tailwind · TanStack Query · Recharts · XYFlow · Mermaid |
-| **AI** | Provider abstraction with streaming + normalized tool-calls (11+ providers) |
+| **Frontend** | React 18 · TypeScript · Vite · Tailwind · TanStack Query · Recharts · XYFlow · Cytoscape · Mermaid |
+| **AI** | Provider abstraction with streaming + normalized tool-calls (a dozen+ providers) |
 | **Azure** | Official Azure MCP server (`@azure/mcp`) · Azure CLI / Resource Graph runner |
 | **Entra ID** | Vendored Microsoft Graph (EntraID) MCP server over stdio |
 | **Data** | PostgreSQL (prod) / SQLite (local) · Azure Files for state |
