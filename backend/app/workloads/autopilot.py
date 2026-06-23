@@ -115,7 +115,76 @@ def _rg_grouping(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return groups
 
 
-# --------------------------------------------------------------- classification heuristics
+def _sub_grouping(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic template: one workload per subscription."""
+    by_sub: dict[str, list[dict]] = {}
+    for r in resources:
+        by_sub.setdefault(r.get("subscription_id", "") or "unknown", []).append(r)
+    groups: list[dict[str, Any]] = []
+    for sub, items in by_sub.items():
+        groups.append({
+            "name": f"Subscription {sub[:8]}" if sub != "unknown" else "Ungrouped",
+            "description": f"All resources in subscription {sub}.",
+            "reasoning": "Grouped by subscription boundary (template).",
+            "confidence": 0.5, "members": items,
+            "workload_type": _classify_type(items), "environment": _classify_env("", items),
+            "criticality": "", "data_classification": "",
+        })
+    groups.sort(key=lambda g: -len(g["members"]))
+    return groups
+
+
+def _tag_grouping(resources: list[dict[str, Any]], *, tag_key: str = "") -> list[dict[str, Any]]:
+    """Deterministic template: group by a tag value. When ``tag_key`` is empty, the most common
+    grouping-signal tag key present across the estate is used."""
+    from app.core.ai_prompts import get_list
+
+    signal_keys = {k.lower() for k in get_list("workload_discovery_tag_signals")}
+
+    def _tag_of(r: dict[str, Any]) -> tuple[str, str]:
+        tags = r.get("tags") or {}
+        if not isinstance(tags, dict):
+            return "", ""
+        if tag_key:
+            for k, v in tags.items():
+                if k.lower() == tag_key.lower():
+                    return k, str(v)
+            return "", ""
+        # Auto: pick the first signal-list tag the resource carries.
+        for k, v in tags.items():
+            if k.lower() in signal_keys:
+                return k, str(v)
+        return "", ""
+
+    by_val: dict[str, list[dict]] = {}
+    untagged: list[dict] = []
+    used_key = tag_key
+    for r in resources:
+        k, v = _tag_of(r)
+        if not v:
+            untagged.append(r)
+            continue
+        used_key = used_key or k
+        by_val.setdefault(v, []).append(r)
+    groups: list[dict[str, Any]] = []
+    for val, items in by_val.items():
+        groups.append({
+            "name": val,
+            "description": f"Resources tagged {used_key}={val}.",
+            "reasoning": f"Grouped by tag '{used_key}' (template).",
+            "confidence": 0.6, "members": items,
+            "workload_type": _classify_type(items), "environment": _classify_env(val, items),
+            "criticality": "", "data_classification": "",
+        })
+    if untagged:
+        groups.append({
+            "name": "Untagged", "description": f"Resources with no '{used_key or 'grouping'}' tag.",
+            "reasoning": "Resources lacking the grouping tag (template).", "confidence": 0.3,
+            "members": untagged, "workload_type": _classify_type(untagged),
+            "environment": "unknown", "criticality": "", "data_classification": "",
+        })
+    groups.sort(key=lambda g: -len(g["members"]))
+    return groups
 _TYPE_HINTS: list[tuple[str, tuple[str, ...]]] = [
     ("ai_ml", ("cognitiveservices", "machinelearningservices", "search/searchservices")),
     ("data_pipeline", ("datafactory", "synapse", "databricks", "streamanalytics", "eventhub", "kusto")),
@@ -395,9 +464,14 @@ def _candidate(group: dict[str, Any], signals: dict[str, Any] | None = None) -> 
 
 
 async def discover_workloads(
-    connection: dict | None, scope_kind: str, scope_id: str, scope_name: str
+    connection: dict | None, scope_kind: str, scope_id: str, scope_name: str,
+    *, strategy: str = "ai", mode: str = "full", tag_key: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
-    """Stream discovery progress, then yield candidate workloads under the scope."""
+    """Stream discovery progress, then yield candidate workloads under the scope.
+
+    ``strategy``: ``ai`` (LLM grouping, default) | ``resource_group`` | ``subscription`` | ``tag``
+    (deterministic templates — fast, no LLM). ``mode``: ``full`` (every resource) | ``delta``
+    (skip resources already in a saved workload — incremental reconciliation)."""
     if connection is None:
         yield {"type": "error", "message": "No Azure connection selected."}
         return
@@ -435,6 +509,25 @@ async def discover_workloads(
     if truncated:
         yield _status("enumerating", f"Reached the {_MAX_RESOURCES}-resource limit; analyzing the first {_MAX_RESOURCES}.", truncated=True)
 
+    # 2b. Delta mode: skip resources already organized into a saved workload — incremental
+    # reconciliation, so re-running only proposes the NEW/orphaned resources.
+    if mode == "delta":
+        from app.workloads.registry import list_workloads
+
+        owned: set[str] = set()
+        for wl in list_workloads():
+            for n in wl.get("nodes", []) or []:
+                if n.get("kind") == "resource" and n.get("id"):
+                    owned.add(n["id"].lower())
+        if owned:
+            before = len(resources)
+            resources = [r for r in resources if (r.get("id", "") or "").lower() not in owned]
+            skipped = before - len(resources)
+            yield _status("enumerating", f"Delta mode: skipped {skipped} resource(s) already in a workload; {len(resources)} unorganized remain.", skipped=skipped, delta=True)
+            if not resources:
+                yield {"type": "done", "candidates": [], "meta": {"resource_count": 0, "ungrouped": 0, "organized_pct": 100, "used_ai": False, "truncated": truncated, "delta": True}}
+                return
+
     # 3. Gather dependency/topology/provenance signals (best-effort) to strengthen grouping.
     yield _status("analyzing", "Examining tags, naming, deployment markers, private-endpoint links and topology…")
     try:
@@ -443,18 +536,30 @@ async def discover_workloads(
         logger.warning("Signal gathering failed; grouping on names+tags only", exc_info=True)
         signals = {"network": {}, "private_endpoints": [], "provenance": {}}
 
-    # 4. Group with AI (map-reducing large estates), honoring prior user corrections.
-    memory_hint = grouping_memory.prompt_hint(tenant_id, connection_id)
-    batches = (len(resources) + _AI_BATCH - 1) // _AI_BATCH
-    grp_msg = "Identifying distinct workloads with AI…" if batches <= 1 else f"Identifying workloads with AI across {batches} batches…"
-    yield _status("grouping", grp_msg)
-    groups, used_ai = await _ai_group(resources, signals, memory_hint)
-    yield _status(
-        "grouping",
-        f"Identified {len(groups)} candidate workload(s) "
-        f"{'using AI analysis' if used_ai else 'by resource-group boundaries'}.",
-        used_ai=used_ai,
-    )
+    # 4. Group — either an AI pass (map-reducing large estates) or a deterministic template.
+    if strategy in ("resource_group", "subscription", "tag"):
+        tmpl = {"resource_group": "resource group", "subscription": "subscription", "tag": f"tag '{tag_key or 'auto'}'"}[strategy]
+        yield _status("grouping", f"Grouping by {tmpl} (template — no AI)…")
+        if strategy == "resource_group":
+            groups = _rg_grouping(resources)
+        elif strategy == "subscription":
+            groups = _sub_grouping(resources)
+        else:
+            groups = _tag_grouping(resources, tag_key=tag_key)
+        used_ai = False
+        yield _status("grouping", f"Identified {len(groups)} candidate workload(s) by {tmpl}.", used_ai=False)
+    else:
+        memory_hint = grouping_memory.prompt_hint(tenant_id, connection_id)
+        batches = (len(resources) + _AI_BATCH - 1) // _AI_BATCH
+        grp_msg = "Identifying distinct workloads with AI…" if batches <= 1 else f"Identifying workloads with AI across {batches} batches…"
+        yield _status("grouping", grp_msg)
+        groups, used_ai = await _ai_group(resources, signals, memory_hint)
+        yield _status(
+            "grouping",
+            f"Identified {len(groups)} candidate workload(s) "
+            f"{'using AI analysis' if used_ai else 'by resource-group boundaries'}.",
+            used_ai=used_ai,
+        )
 
     # 5. Emit each candidate (with a brief per-candidate scan summary).
     grouped_ids: set[str] = set()

@@ -9,7 +9,7 @@ import { useNavigate } from "react-router-dom";import {
   type TeleIntelTransaction,
 } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
@@ -126,6 +126,7 @@ export function TelemetryIntelligencePanel() {
   const workloads = workloadsQ.data?.workloads ?? [];
 
   // Canvas handoff: "Analyze telemetry" stores the workload to pre-select.
+  useWorkloadDeepLink(setScopeKind, setWorkloadId);
   useEffect(() => {
     let raw: string | null = null;
     try { raw = sessionStorage.getItem("azsup.teleintelHandoff"); } catch { return; }

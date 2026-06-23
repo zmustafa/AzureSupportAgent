@@ -30,6 +30,7 @@ import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState"
 import { PageIntro } from "./PageIntro";
 import { TAGINTEL_NAV, type TagIntelTab } from "./navConfig";
 import { formatError } from "../utils/format";
+import { TagRevisionsPanel } from "./ownership/OwnerImportTags";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 
 const CAT_COLORS: Record<string, string> = {
@@ -1672,6 +1673,9 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
         </div>
         <div className="mt-1 text-[11px] text-blue-600">{rbacQ.data?.principle}</div>
       </div>
+
+      {/* Tag change history — every applied change keeps a recovery copy and can be reverted. */}
+      <TagRevisionsPanel mode="tagintel" />
 
       {/* Change-set library — grouped, searchable, editable (cloud-ops playbook shelf) */}
       <ChangeSetLibrary

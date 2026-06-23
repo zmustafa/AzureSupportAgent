@@ -21,7 +21,9 @@ import { usePersistedState } from "../utils/persistedState";
 import { OWNERSHIP_NAV, type OwnershipTab } from "./navConfig";
 import { type ScopeKind } from "./ScopePicker";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { AzureIcon } from "./AzureIcon";
+import { OwnerExportButtons, OwnerImportModal, OwnerTagApplyModal, TagRevisionsPanel } from "./ownership/OwnerImportTags";
 import { TrendChart } from "./TrendChart";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -51,12 +53,31 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
 };
 
 export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
+  const qc = useQueryClient();
   const [scope, setScope] = usePersistedState<OwnershipScope>("azsup.ownership.scope", {
     kind: "tenant", workloadId: "", subId: "", subName: "",
   });
+  // The connection (Azure-tenant) picker scopes the Azure SCANS — coverage/suggestions/the
+  // subjects overview and the subscription tree — to the chosen tenant. The owner/assignment
+  // directory is shared across connections (Option A), so Directory + My Estate ignore it.
+  const [connectionId, setConnectionId] = usePersistedState("azsup.ownership.connectionId", "");
   // Tabs that respect the section scope show the scope bar; owner-centric tabs (Directory,
   // My Estate) are a tenant-wide directory, so they don't.
   const scopeAware = tab === "assignments" || tab === "coverage" || tab === "suggestions" || tab === "attestation";
+  // Deep link: /ownership/<tab>?workload_id=… (e.g. from the workload detail page) opens this
+  // section already scoped to that workload.
+  useEffect(() => {
+    const wid = new URLSearchParams(window.location.search).get("workload_id");
+    if (wid) setScope({ kind: "workload", workloadId: wid, subId: "", subName: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Switching connection: a previously picked subscription/workload may not belong to the new
+  // connection, so reset to Tenant and refetch every scope-aware query.
+  const onConnectionChange = (id: string) => {
+    setConnectionId(id);
+    setScope({ kind: "tenant", workloadId: "", subId: "", subName: "" });
+    qc.invalidateQueries({ queryKey: ["ownership"] });
+  };
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="border-b bg-white px-6 py-4">
@@ -65,7 +86,12 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
             <span className="text-xl">🪪</span>
             <h1 className="text-lg font-semibold text-gray-900">Ownership</h1>
           </div>
-          {scopeAware && <OwnershipScopeBar scope={scope} onChange={setScope} />}
+          {scopeAware && (
+            <div className="flex items-center gap-2">
+              <ConnectionScopePicker value={connectionId} onChange={onConnectionChange} align="right" />
+              <OwnershipScopeBar scope={scope} onChange={setScope} connectionId={connectionId} />
+            </div>
+          )}
         </div>
         <p className="mt-1 text-sm text-gray-500">
           Assign accountable owners and teams to subscriptions, resource groups, resources,
@@ -89,9 +115,9 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto bg-gray-50 p-6">
         {tab === "directory" && <DirectoryTab />}
-        {tab === "assignments" && <AssignmentsTab scope={scope} />}
-        {tab === "coverage" && <CoverageTab scope={scope} onScopeChange={setScope} />}
-        {tab === "suggestions" && <SuggestionsTab scope={scope} />}
+        {tab === "assignments" && <AssignmentsTab scope={scope} connectionId={connectionId} />}
+        {tab === "coverage" && <CoverageTab scope={scope} onScopeChange={setScope} connectionId={connectionId} />}
+        {tab === "suggestions" && <SuggestionsTab scope={scope} connectionId={connectionId} />}
         {tab === "estate" && <EstateTab />}
         {tab === "attestation" && <AttestationTab scope={scope} />}
       </div>
@@ -101,7 +127,7 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
 
 // Section-wide scope selector (Tenant / Subscription / Workload), consistent with the
 // Proactive Support modules. Tenant = the whole directory (no filter).
-function OwnershipScopeBar({ scope, onChange }: { scope: OwnershipScope; onChange: (s: OwnershipScope) => void }) {
+function OwnershipScopeBar({ scope, onChange, connectionId }: { scope: OwnershipScope; onChange: (s: OwnershipScope) => void; connectionId: string }) {
   const workloadsQ = useQuery({ queryKey: ["workloads", "list"], queryFn: api.workloads });
   const workloads = workloadsQ.data?.workloads ?? [];
   return (
@@ -142,6 +168,7 @@ function OwnershipScopeBar({ scope, onChange }: { scope: OwnershipScope; onChang
         <SubscriptionScopePicker
           value={scope.subId}
           valueName={scope.subName}
+          connectionId={connectionId}
           onPick={(id, name) => onChange({ ...scope, subId: id, subName: name })}
         />
       )}
@@ -156,6 +183,9 @@ function DirectoryTab() {
   const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<Owner | null>(null);
   const [msg, setMsg] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [tagApply, setTagApply] = useState(false);
+  const [showRevisions, setShowRevisions] = useState(false);
 
   const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners });
   const trashQ = useQuery({ queryKey: ["ownership", "owners", "trash"], queryFn: api.ownersTrash, enabled: showTrash });
@@ -183,9 +213,18 @@ function DirectoryTab() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-gray-500">{owners.length} owner{owners.length === 1 ? "" : "s"}</div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <OwnerExportButtons />
+          <button onClick={() => setImporting(true)} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">📥 Import</button>
+          <button onClick={() => setTagApply(true)} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">🏷️ Apply as tags</button>
+          <button
+            onClick={() => setShowRevisions((v) => !v)}
+            className={`rounded-lg border px-3 py-1.5 text-sm ${showRevisions ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+          >
+            ↩ Revisions
+          </button>
           <button
             onClick={() => setShowTrash((v) => !v)}
             className={`rounded-lg border px-3 py-1.5 text-sm ${showTrash ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "bg-white text-gray-600 hover:bg-gray-50"}`}
@@ -197,6 +236,10 @@ function DirectoryTab() {
           </button>
         </div>
       </div>
+
+      {importing && <OwnerImportModal onClose={() => setImporting(false)} onImported={invalidate} />}
+      {tagApply && <OwnerTagApplyModal onClose={() => setTagApply(false)} onApplied={() => qc.invalidateQueries({ queryKey: ["tag-revisions", "ownership"] })} />}
+      {showRevisions && <div className="mb-4"><TagRevisionsPanel mode="ownership" /></div>}
 
       {msg && <div className="mb-3 rounded-lg border bg-white px-3 py-2 text-sm text-gray-600">{msg}</div>}
 
@@ -449,11 +492,11 @@ function PeoplePicker({ onPicked }: { onPicked: () => void }) {
 }
 
 // ============================================================ Assignments
-function AssignmentsTab({ scope }: { scope: OwnershipScope }) {
+function AssignmentsTab({ scope, connectionId }: { scope: OwnershipScope; connectionId: string }) {
   const qc = useQueryClient();
   const [assigning, setAssigning] = useState<OwnershipSubject | null>(null);
-  const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}`;
-  const subjectsQ = useQuery({ queryKey: ["ownership", "subjects", scopeKey], queryFn: () => api.ownershipSubjects(scope) });
+  const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}:${connectionId}`;
+  const subjectsQ = useQuery({ queryKey: ["ownership", "subjects", scopeKey], queryFn: () => api.ownershipSubjects(scope, connectionId) });
 
   const subjects = subjectsQ.data?.subjects ?? [];
   const owned = subjectsQ.data?.owned ?? 0;
@@ -654,7 +697,7 @@ function Donut({ pct }: { pct: number | null }) {
   );
 }
 
-function CoverageTab({ scope, onScopeChange }: { scope: OwnershipScope; onScopeChange: (s: OwnershipScope) => void }) {
+function CoverageTab({ scope, onScopeChange, connectionId }: { scope: OwnershipScope; onScopeChange: (s: OwnershipScope) => void; connectionId: string }) {
   const qc = useQueryClient();
   const [loadedKey, setLoadedKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -666,33 +709,33 @@ function CoverageTab({ scope, onScopeChange }: { scope: OwnershipScope; onScopeC
   const covKind: ScopeKind = scope.kind === "subscription" ? "subscription" : "workload";
   const sid = scope.kind === "subscription" ? scope.subId : scope.workloadId;
   const scopeReady = scope.kind !== "tenant" && !!sid;
-  const scopeKey = `${covKind}:${sid}`;
+  const scopeKey = `${covKind}:${sid}:${connectionId}`;
   const loaded = scopeReady && loadedKey === scopeKey;
 
   const covQ = useQuery({
-    queryKey: ["ownership", "coverage", covKind, sid],
-    queryFn: () => api.ownershipCoverage(covKind, scope.workloadId, scope.subId),
+    queryKey: ["ownership", "coverage", covKind, sid, connectionId],
+    queryFn: () => api.ownershipCoverage(covKind, scope.workloadId, scope.subId, connectionId),
     enabled: loaded,
   });
   const trendQ = useQuery({
-    queryKey: ["ownership", "trend", covKind, sid],
-    queryFn: () => api.ownershipTrend(covKind, scope.workloadId, scope.subId),
+    queryKey: ["ownership", "trend", covKind, sid, connectionId],
+    queryFn: () => api.ownershipTrend(covKind, scope.workloadId, scope.subId, connectionId),
     enabled: loaded,
   });
 
   const load = async () => {
     setLoadedKey(scopeKey);
-    const snap = await api.ownershipCoverage(covKind, scope.workloadId, scope.subId);
-    qc.setQueryData(["ownership", "coverage", covKind, sid], snap);
+    const snap = await api.ownershipCoverage(covKind, scope.workloadId, scope.subId, connectionId);
+    qc.setQueryData(["ownership", "coverage", covKind, sid, connectionId], snap);
   };
   const refresh = async () => {
     setBusy(true);
     setErr("");
     try {
-      const snap = await api.refreshOwnershipCoverage(covKind, scope.workloadId, scope.subId);
+      const snap = await api.refreshOwnershipCoverage(covKind, scope.workloadId, scope.subId, connectionId);
       setLoadedKey(scopeKey);
-      qc.setQueryData(["ownership", "coverage", covKind, sid], snap);
-      qc.invalidateQueries({ queryKey: ["ownership", "trend", covKind, sid] });
+      qc.setQueryData(["ownership", "coverage", covKind, sid, connectionId], snap);
+      qc.invalidateQueries({ queryKey: ["ownership", "trend", covKind, sid, connectionId] });
     } catch (e) {
       setErr(formatError(e));
     } finally {
@@ -922,12 +965,12 @@ function EstateCard({ estate }: { estate: OwnerEstate }) {
 }
 
 // ============================================================ Suggestions (AI/heuristic)
-function SuggestionsTab({ scope }: { scope: OwnershipScope }) {
+function SuggestionsTab({ scope, connectionId }: { scope: OwnershipScope; connectionId: string }) {
   const qc = useQueryClient();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState("");
-  const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}`;
-  const suggQ = useQuery({ queryKey: ["ownership", "suggestions", scopeKey], queryFn: () => api.ownershipSuggestions(scope) });
+  const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}:${connectionId}`;
+  const suggQ = useQuery({ queryKey: ["ownership", "suggestions", scopeKey], queryFn: () => api.ownershipSuggestions(scope, connectionId) });
 
   const accept = useMutation({
     mutationFn: (s: OwnershipSuggestion) => api.acceptSuggestion(s),

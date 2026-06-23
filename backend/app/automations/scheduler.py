@@ -89,6 +89,18 @@ class Scheduler:
         if removed:
             logger.info("Housekeeping: purged %d stale sessions", removed)
 
+        # Optional nightly fleet profile refresh (off by default). Warms every workload's
+        # per-feature caches so the command center is fully populated each morning.
+        try:
+            from app.core.app_settings import load_settings
+
+            if load_settings().get("workload_nightly_refresh"):
+                from app.workloads.nightly import refresh_all
+
+                await refresh_all()
+        except Exception as exc:  # noqa: BLE001 - best-effort; never break housekeeping
+            logger.warning("Nightly workload refresh error: %s", exc)
+
     async def _backfill_next_runs(self) -> None:
         async with SessionLocal() as db:
             rows = (await db.execute(select(ScheduledTask).where(ScheduledTask.status == "on"))).scalars().all()

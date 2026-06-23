@@ -476,3 +476,55 @@ def test_expired_delegation_ignored():
     res = resolve.resolve_owner("t1", "subscription", SUB)
     assert res["owners"][0]["delegate"] is None
 
+
+# ------------------------------------------------------------------- connection scoping (Option A)
+def _principal(tenant="t1"):
+    from app.core.security import Principal
+    return Principal(subject="u", email="u@local", tenant_id=tenant, role="admin")
+
+
+def test_own_seam_keeps_owner_registry_on_app_tenant(monkeypatch):
+    """The connection picker NEVER repartitions the owner registry — owner_tenant is always
+    the app principal's tenant regardless of which connection is selected (Option A)."""
+    from app.api import ownership as api
+    import app.core.azure_connections as az
+
+    conn_a = {"id": "ca", "tenant_id": "azure-A"}
+    conn_b = {"id": "cb", "tenant_id": "azure-B"}
+    monkeypatch.setattr(az, "get_connection", lambda cid: {"ca": conn_a, "cb": conn_b}.get(cid))
+    monkeypatch.setattr(az, "get_default_connection", lambda: conn_a)
+
+    _conn, owner_tenant_a, cid_a = api._own(_principal("t1"), "ca")
+    _conn, owner_tenant_b, cid_b = api._own(_principal("t1"), "cb")
+    assert owner_tenant_a == "t1" and owner_tenant_b == "t1"   # registry shared across connections
+    assert cid_a == "ca" and cid_b == "cb"
+
+
+def test_scan_tenant_partitions_cache_by_connection_tenant():
+    """The coverage CACHE key is partitioned by the connection's Azure tenant so the same
+    subscription id under two connections can't collide; falls back to the app tenant when a
+    connection has no tenant_id."""
+    from app.api import ownership as api
+
+    assert api._scan_tenant("t1", {"tenant_id": "azure-A"}) == "t1::azure-A"
+    assert api._scan_tenant("t1", {"tenant_id": "azure-B"}) == "t1::azure-B"
+    assert api._scan_tenant("t1", {"tenant_id": ""}) == "t1"   # tenant-less (pasted-token) connection
+    assert api._scan_tenant("t1", None) == "t1"                # no connection configured
+
+
+def test_resolve_scope_inputs_honors_explicit_connection(monkeypatch):
+    """An explicit connection_id ALWAYS wins for subscription scope (the bug this fixes:
+    subscription scope used to silently use the default connection)."""
+    from app.api import ownership as api
+    import app.core.azure_connections as az
+
+    conn_a = {"id": "ca", "tenant_id": "azure-A"}
+    conn_b = {"id": "cb", "tenant_id": "azure-B"}
+    monkeypatch.setattr(az, "get_connection", lambda cid: {"ca": conn_a, "cb": conn_b}.get(cid))
+    monkeypatch.setattr(az, "get_default_connection", lambda: conn_a)
+
+    sid, workload, connection = api._resolve_scope_inputs("subscription", "", SUB, "cb")
+    assert sid == SUB and workload is None
+    assert connection["id"] == "cb"          # explicit override, not the default (ca)
+
+

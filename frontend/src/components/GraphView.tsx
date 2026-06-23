@@ -779,6 +779,19 @@ export function GraphPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlays, driftMode]);
 
+  // Deep link: /graph?workload_id=… (from the workload detail page) auto-focuses that
+  // workload's subgraph once the canvas + overview are ready. Runs once.
+  const wlDeepLinkDone = useRef(false);
+  useEffect(() => {
+    if (wlDeepLinkDone.current || !cyReady || !overviewQ.data) return;
+    const wid = new URLSearchParams(window.location.search).get("workload_id");
+    if (wid) {
+      wlDeepLinkDone.current = true;
+      void focus("workload", wid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cyReady, overviewQ.data]);
+
   // -------------------------------------------------- search
   const runSearch = useCallback(async (term: string) => {
     setSearchTerm(term);

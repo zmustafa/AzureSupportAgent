@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,31 @@ async def _audit(db: AsyncSession, principal: Principal, action: str, target: st
         action=action, target=target[:512], metadata_json=meta or {},
     ))
     await db.commit()
+
+
+def _own(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
+    """Resolve (connection, owner_tenant, cid) for an ownership request.
+
+    The connection picker scopes the AZURE SCANS (coverage / suggestions / subjects + the
+    subscription tree) to the chosen tenant; it never partitions the owner/assignment
+    REGISTRY — those stay keyed to the app principal's tenant so the directory of owners is
+    shared across connections (this is the single seam a future per-Azure-tenant ownership
+    model would change). ``cid`` is the effective connection id (explicit or resolved)."""
+    from app.core.azure_connections import resolve_connection
+
+    connection = resolve_connection(connection_id)
+    owner_tenant = principal.tenant_id
+    cid = connection_id or (connection or {}).get("id") or ""
+    return connection, owner_tenant, cid
+
+
+def _scan_tenant(owner_tenant: str, connection: dict[str, Any] | None) -> str:
+    """Cache/trend partition for an Azure SCAN: the connection's Azure tenant when known,
+    else the app tenant. This keeps the same subscription id under two different connections
+    from colliding in the coverage cache, without re-keying the owner registry."""
+    az = (connection or {}).get("tenant_id") or ""
+    base = owner_tenant or "default"
+    return f"{base}::{az}" if az else base
 
 
 # =============================================================== Pydantic payloads
@@ -413,9 +439,14 @@ async def subjects(
     scope_kind: str = Query(default="tenant"),
     workload_id: str = Query(default=""),
     subscription_id: str = Query(default=""),
+    connection_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Workloads + architectures with their resolved primary owner — the "what's owned"
-    overview that anchors the Assignments tab. Filterable by the section scope."""
+    overview that anchors the Assignments tab. Filterable by the section scope.
+
+    ``connection_id`` is accepted for parity with the other scope-aware endpoints (it scopes
+    the subscription tree the picker drives); subjects themselves come from the local
+    workload/architecture registries, so owner resolution stays on the app tenant."""
     ctx = resolve.build_context(principal.tenant_id)
     in_scope = _scope_predicate(principal.tenant_id, scope_kind, workload_id, subscription_id)
     out: list[dict[str, Any]] = []
@@ -454,9 +485,12 @@ async def subjects(
 _CACHE_TTL_S = 21600  # 6h
 
 
-def _resolve_scope_inputs(scope_kind: str, workload_id: str, scope_id: str):
-    """Return (scope_id, workload, connection) for the chosen scope."""
-    from app.core.azure_connections import connection_for_workload, get_default_connection
+def _resolve_scope_inputs(scope_kind: str, workload_id: str, scope_id: str, connection_id: str | None):
+    """Return (scope_id, workload, connection) for the chosen scope, honoring an explicit
+    connection_id (Azure-tenant picker). Uses the shared ``connection_for_scope`` resolver
+    (explicit id → workload's own connection → default) so a subscription reachable only via
+    a non-default connection no longer silently scans the default tenant."""
+    from app.core.azure_connections import connection_for_scope
 
     if scope_kind == "workload":
         from app.workloads.registry import get_workload
@@ -464,8 +498,8 @@ def _resolve_scope_inputs(scope_kind: str, workload_id: str, scope_id: str):
         workload = get_workload(workload_id)
         if workload is None:
             raise HTTPException(404, "Workload not found.")
-        return workload_id, workload, connection_for_workload(workload)
-    return scope_id, None, get_default_connection()
+        return workload_id, workload, connection_for_scope("workload", connection_id=connection_id, workload=workload)
+    return scope_id, None, connection_for_scope(scope_kind, connection_id=connection_id)
 
 
 @router.get("/coverage")
@@ -474,13 +508,21 @@ async def get_coverage(
     scope_kind: str = Query(default="workload"),
     workload_id: str = Query(default=""),
     scope_id: str = Query(default=""),
+    connection_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Read-cache-only: returns the last computed coverage snapshot, or a ``never_loaded``
     placeholder. Computing is done only by POST /refresh (no Azure scan on a page visit)."""
+    from app.core.azure_connections import connection_for_scope
+    from app.workloads.registry import get_workload
+
     sid = workload_id if scope_kind == "workload" else scope_id
     if not sid:
         return coverage.empty_snapshot(scope_kind, "", never_loaded=True)
-    snap = cache.read_snapshot(principal.tenant_id, scope_kind, sid)
+    _conn, owner_tenant, _cid = _own(principal, connection_id)
+    workload = get_workload(workload_id) if scope_kind == "workload" else None
+    scan_conn = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
+    scan_tenant = _scan_tenant(owner_tenant, scan_conn)
+    snap = cache.read_snapshot(scan_tenant, scope_kind, sid)
     if snap is None:
         return coverage.empty_snapshot(scope_kind, sid, never_loaded=True)
     return snap
@@ -492,25 +534,28 @@ async def refresh_coverage(
     scope_kind: str = Query(default="workload"),
     workload_id: str = Query(default=""),
     scope_id: str = Query(default=""),
+    connection_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Recompute coverage for the scope (read-only Azure scan), cache it, record a trend point."""
     import asyncio
 
     from app.core import coverage_trends
 
-    sid, workload, connection = _resolve_scope_inputs(scope_kind, workload_id, scope_id)
+    sid, workload, connection = _resolve_scope_inputs(scope_kind, workload_id, scope_id, connection_id)
     if not sid:
         raise HTTPException(400, "A workload_id or scope_id is required.")
-    lock = cache.get_lock(principal.tenant_id, scope_kind, sid)
+    _conn, owner_tenant, _cid = _own(principal, connection_id)
+    scan_tenant = _scan_tenant(owner_tenant, connection)
+    lock = cache.get_lock(scan_tenant, scope_kind, sid)
     async with lock:
         fresh = await asyncio.shield(coverage.collect_coverage(
             connection, scope_kind=scope_kind, scope_id=sid, workload=workload,
             tenant_id=principal.tenant_id,
         ))
-        cache.write_snapshot(principal.tenant_id, scope_kind, sid, fresh)
+        cache.write_snapshot(scan_tenant, scope_kind, sid, fresh)
         try:
             coverage_trends.record(
-                "ownership", principal.tenant_id, scope_kind, sid,
+                "ownership", scan_tenant, scope_kind, sid,
                 pct=fresh.get("coverage_pct"),
                 extra={"owned": fresh["kpis"]["owned"], "total": fresh["kpis"]["total"]},
             )
@@ -525,11 +570,18 @@ async def get_trend(
     scope_kind: str = Query(default="workload"),
     workload_id: str = Query(default=""),
     scope_id: str = Query(default=""),
+    connection_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     from app.core import coverage_trends
+    from app.core.azure_connections import connection_for_scope
+    from app.workloads.registry import get_workload
 
     sid = workload_id if scope_kind == "workload" else scope_id
-    return coverage_trends.trend("ownership", principal.tenant_id, scope_kind, sid)
+    _conn, owner_tenant, _cid = _own(principal, connection_id)
+    workload = get_workload(workload_id) if scope_kind == "workload" else None
+    scan_conn = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
+    scan_tenant = _scan_tenant(owner_tenant, scan_conn)
+    return coverage_trends.trend("ownership", scan_tenant, scope_kind, sid)
 
 
 # =============================================================== My Estate (owner cockpit)
@@ -591,6 +643,7 @@ async def list_suggestions(
     scope_kind: str = Query(default="tenant"),
     workload_id: str = Query(default=""),
     subscription_id: str = Query(default=""),
+    connection_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Heuristic owner suggestions for unowned subjects: owner TAGS on member resources
     (from cached inventory) + RBAC owners on the workload's subscriptions + orphan-tag
@@ -819,6 +872,260 @@ async def writeback_apply(body: TagWritebackIn, principal: Principal = Depends(w
     )
     if result["ok"]:
         await _audit(db, principal, "ownership.tag.writeback", body.resource_id, owner=owner)
+    return result
+
+
+# =============================================================== Owners export / import
+def _assignment_counts(tenant_id: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for a in registry.list_assignments(tenant_id):
+        counts[a.get("owner_id", "")] = counts.get(a.get("owner_id", ""), 0) + 1
+    return counts
+
+
+@router.get("/owners/export")
+async def export_owners(format: str = Query(default="csv"), principal: Principal = Depends(read_dep)):
+    """Download the owner directory as CSV or XLSX."""
+    from app.ownership import sheet
+
+    owners = registry.list_owners(principal.tenant_id)
+    counts = _assignment_counts(principal.tenant_id)
+    if format.lower() == "xlsx":
+        content = sheet.owners_to_xlsx(owners, counts)
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="owners.xlsx"'},
+        )
+    csv_text = sheet.owners_to_csv(owners, counts)
+    return Response(
+        content=csv_text, media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="owners.csv"'},
+    )
+
+
+@router.get("/owners/template")
+async def owners_template(_: Principal = Depends(read_dep)):
+    """A blank CSV import template with the recommended columns + an example row."""
+    from app.ownership import sheet
+
+    return Response(
+        content=sheet.blank_template_csv(), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="owners-template.csv"'},
+    )
+
+
+@router.post("/owners/import/preview")
+async def import_owners_preview(
+    file: UploadFile = File(...),
+    principal: Principal = Depends(read_dep),
+):
+    """Parse an uploaded CSV/Excel, AI-infer the column→field mapping, and return a preview
+    (the parsed columns, an AI-suggested mapping with confidence, and projected owner rows) so
+    the user can confirm BEFORE anything is written."""
+    from app.ownership import importer, sheet
+
+    raw = await file.read()
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 8 MB).")
+    try:
+        parsed = sheet.parse_sheet(file.filename or "upload.csv", raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    inferred = await importer.infer_mapping(parsed["columns"], parsed["rows"])
+    preview = importer.build_preview(parsed["rows"], inferred["mapping"])
+    return {
+        "columns": parsed["columns"],
+        "sheet": parsed["sheet"],
+        "row_count": parsed["row_count"],
+        "sample": parsed["rows"][:20],
+        "rows": parsed["rows"][:5000],
+        "mapping": inferred["mapping"],
+        "confidence": inferred["confidence"],
+        "explanation": inferred["explanation"],
+        "ai": inferred["ai"],
+        "target_fields": importer.TARGET_FIELDS,
+        "preview": preview,
+    }
+
+
+class ImportConfirmIn(BaseModel):
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    mapping: dict[str, str] = Field(default_factory=dict)
+    create_assignments: bool = True
+
+
+@router.post("/owners/import")
+async def import_owners_confirm(
+    body: ImportConfirmIn, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)
+):
+    """Confirm an import: project the rows through the (possibly user-edited) mapping and create
+    owners + assignments. Rows with no name are skipped."""
+    from app.ownership import importer
+
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="No rows to import.")
+    preview = importer.build_preview(body.rows, body.mapping, limit=10000)
+    actor = principal.display_name or principal.email or principal.subject
+    summary = importer.materialize_import(
+        principal.tenant_id, preview["rows"], actor=actor, create_assignments=body.create_assignments,
+    )
+    await _audit(db, principal, "ownership.import", "owners",
+                 created=summary["created"], updated=summary["updated"], assignments=summary["assignments"])
+    return summary
+
+
+# =============================================================== Owner → tag apply (+ revisions)
+async def _scope_resources(connection: dict[str, Any] | None, scope_kind: str, workload_id: str, subscription_id: str) -> tuple[list[dict[str, Any]], str]:
+    """Fetch in-scope resources WITH their current tags for the owner-tag plan."""
+    if connection is None:
+        return [], "No Azure connection configured."
+    if scope_kind == "workload" and workload_id:
+        from app.workloads.registry import get_workload
+        from app.azure.tag_ops import read_current_tags
+
+        wl = get_workload(workload_id)
+        if wl is None:
+            return [], "Workload not found."
+        rids = [n.get("id", "") for n in wl.get("nodes", []) if n.get("kind") == "resource" and n.get("id")]
+        if not rids:
+            return [], ""
+        tags_by_id, names, err = await read_current_tags(connection, rids)
+        if err and not tags_by_id:
+            return [], err
+        by_node = {n.get("id", "").lower(): n for n in wl.get("nodes", []) if n.get("kind") == "resource"}
+        out = []
+        for rid in rids:
+            node = by_node.get(rid.lower(), {})
+            out.append({
+                "id": rid, "name": names.get(rid.lower(), node.get("name", "")),
+                "tags": tags_by_id.get(rid.lower(), {}),
+                "resource_group": node.get("resource_group", ""),
+                "subscription_id": node.get("subscription_id", ""),
+                "resource_type": node.get("resource_type", ""),
+            })
+        return out, ""
+    # Subscription scope → Resource Graph for that subscription.
+    if scope_kind == "subscription" and subscription_id:
+        from app.exec.command_runner import run_kql_collect
+
+        sid = subscription_id.replace("'", "")
+        kql = (
+            f"resources | where subscriptionId =~ '{sid}' "
+            "| project id, name, type, tags, resourceGroup, subscriptionId"
+        )
+        res = await run_kql_collect(kql, connection, max_rows=5000)
+        if not res.ok:
+            return [], (res.error or "Resource Graph query failed.")[:300]
+        out = [{
+            "id": r.get("id", ""), "name": r.get("name", ""),
+            "tags": r.get("tags") or {}, "resource_group": r.get("resourceGroup", "") or r.get("resource_group", ""),
+            "subscription_id": r.get("subscriptionId", "") or r.get("subscription_id", ""),
+            "resource_type": r.get("type", ""),
+        } for r in res.rows if r.get("id")]
+        return out, ""
+    return [], "Choose a workload or subscription scope to apply owner tags."
+
+
+class TagApplyPreviewIn(BaseModel):
+    connection_id: str = ""
+    scope_kind: str = "workload"   # workload | subscription
+    workload_id: str = ""
+    subscription_id: str = ""
+    tag_key: str = "owner"
+    value_source: str = "display_name"   # display_name | email
+    overwrite: bool = False
+
+
+@router.post("/tag-apply/preview")
+async def tag_apply_preview(body: TagApplyPreviewIn, principal: Principal = Depends(read_dep)):
+    """Dry-run the owner→tag plan: per-resource before→after, conflicts and unowned counts. No
+    writes."""
+    from app.core.azure_connections import connection_for_scope
+    from app.ownership import tagging
+
+    conn = connection_for_scope(body.scope_kind, connection_id=body.connection_id or None)
+    resources, err = await _scope_resources(conn, body.scope_kind, body.workload_id, body.subscription_id)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    plan = tagging.build_tag_plan(
+        principal.tenant_id, resources,
+        tag_key=body.tag_key, value_source=body.value_source, overwrite=body.overwrite,
+    )
+    return plan
+
+
+class TagApplyIn(TagApplyPreviewIn):
+    approved: bool = False
+
+
+@router.post("/tag-apply")
+async def tag_apply(body: TagApplyIn, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    """Apply the owner→tag plan to Azure, capturing a revertible recovery revision first.
+    Requires explicit approval + ownership write-back enabled."""
+    if not body.approved:
+        raise HTTPException(status_code=400, detail="Explicit approval is required to apply tags.")
+    from app.core.azure_connections import connection_for_scope
+    from app.ownership import tagging
+
+    conn = connection_for_scope(body.scope_kind, connection_id=body.connection_id or None)
+    resources, err = await _scope_resources(conn, body.scope_kind, body.workload_id, body.subscription_id)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    plan = tagging.build_tag_plan(
+        principal.tenant_id, resources,
+        tag_key=body.tag_key, value_source=body.value_source, overwrite=body.overwrite,
+    )
+    actor = principal.display_name or principal.email or principal.subject
+    result = await tagging.apply_tag_plan(
+        principal.tenant_id, conn, plan, actor=actor,
+        scope=body.workload_id or body.subscription_id or "tenant",
+    )
+    if result.get("applied"):
+        await _audit(db, principal, "ownership.tag.apply", body.tag_key,
+                     applied=result.get("applied", 0), failed=result.get("failed", 0))
+    return result
+
+
+@router.get("/tag-revisions")
+async def list_owner_tag_revisions(connection_id: str | None = None, principal: Principal = Depends(read_dep)):
+    """Owner-tag-apply revisions (recovery copies) for the revisions/revert UI."""
+    from app.tagintel import revisions
+
+    return {"revisions": revisions.list_revisions(principal.tenant_id, connection_id or "", "ownership")}
+
+
+@router.get("/tag-revisions/{rev_id}")
+async def get_owner_tag_revision(rev_id: str, principal: Principal = Depends(read_dep)):
+    from app.tagintel import revisions
+
+    rev = revisions.get_revision(principal.tenant_id, rev_id)
+    if rev is None:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+    return {"revision": revisions._summary(rev), "diff": revisions.diff_rows(rev)}
+
+
+class OwnerRevertIn(BaseModel):
+    connection_id: str = ""
+    approved: bool = False
+
+
+@router.post("/tag-revisions/{rev_id}/revert")
+async def revert_owner_tag_revision(rev_id: str, body: OwnerRevertIn, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    """Revert an owner-tag-apply revision — restore the captured prior tags exactly."""
+    if not body.approved:
+        raise HTTPException(status_code=400, detail="Explicit approval is required to revert.")
+    from app.core.azure_connections import resolve_connection
+    from app.tagintel import revisions
+
+    rev = revisions.get_revision(principal.tenant_id, rev_id)
+    if rev is None:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+    conn = resolve_connection(body.connection_id or rev.get("connection_id") or None)
+    actor = principal.display_name or principal.email or principal.subject
+    result = await revisions.revert_revision(principal.tenant_id, rev_id, conn, actor=actor)
+    if result.get("reverted"):
+        await _audit(db, principal, "ownership.tag.revert", rev_id, reverted=result.get("reverted", 0))
     return result
 
 

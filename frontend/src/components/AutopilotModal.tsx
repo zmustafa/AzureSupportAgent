@@ -106,6 +106,11 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
   const [scopeName, setScopeName] = useState("");
   const [scopeOptions, setScopeOptions] = useState<TreeNode[]>([]);
   const [scopeLoading, setScopeLoading] = useState(false);
+  // Grouping STRATEGY (ai | resource_group | subscription | tag) and discovery MODE
+  // (full | delta — skip resources already in a saved workload).
+  const [strategy, setStrategy] = useState<"ai" | "resource_group" | "subscription" | "tag">("ai");
+  const [mode, setMode] = useState<"full" | "delta">("full");
+  const [tagKey, setTagKey] = useState("");
 
   const [stage, setStage] = useState<Stage>("setup");
   const [log, setLog] = useState<{ phase: string; message: string }[]>([]);
@@ -170,7 +175,7 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
     const controller = new AbortController();
     abortRef.current = controller;
     void streamAutopilot(
-      { connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, scope_name: scopeName },
+      { connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, scope_name: scopeName, strategy, mode, tag_key: tagKey },
       {
         onStatus: (d) => setLog((l) => [...l, { phase: d.phase, message: d.message }]),
         onCandidate: (d) => {
@@ -329,6 +334,38 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                   </select>
                 </div>
               </div>
+              {/* Grouping strategy + delta mode */}
+              <div>
+                <label className={label}>Grouping strategy</label>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ["ai", "✨ AI"], ["resource_group", "Resource group"], ["subscription", "Subscription"], ["tag", "By tag"],
+                  ] as const).map(([k, lbl]) => (
+                    <button
+                      key={k}
+                      onClick={() => setStrategy(k)}
+                      className={`rounded-lg border px-3 py-1.5 text-sm transition ${strategy === k ? "border-brand bg-brand/5 font-medium text-brand" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-gray-400">
+                  {strategy === "ai" ? "The AI groups resources into workloads using tags, naming, topology and provenance." : "A deterministic template — fast, predictable, no AI."}
+                </p>
+                {strategy === "tag" && (
+                  <input
+                    value={tagKey}
+                    onChange={(e) => setTagKey(e.target.value)}
+                    placeholder="Tag key (e.g. app, cost-center) — leave blank to auto-pick"
+                    className={`${input} mt-2`}
+                  />
+                )}
+              </div>
+              <label className="flex items-start gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={mode === "delta"} onChange={(e) => setMode(e.target.checked ? "delta" : "full")} className="mt-0.5" />
+                <span>Delta mode — only propose resources <b>not already</b> in a saved workload (incremental reconciliation).</span>
+              </label>
               {error && <div className="text-xs text-red-600">{error}</div>}
             </div>
           )}
@@ -378,6 +415,7 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                       </div>
                       <div className="flex gap-2 text-xs">
                         <button onClick={() => setSelected(new Set(visibleCandidates.map(({ i }) => i)))} className="text-brand hover:underline" title="Select all shown">All</button>
+                        <button onClick={() => setSelected(new Set(visibleCandidates.filter(({ c }) => (c.confidence ?? 0) >= 0.8).map(({ i }) => i)))} className="text-green-700 hover:underline" title="Select high-confidence candidates">High&nbsp;only</button>
                         <button onClick={() => setSelected(new Set())} className="text-gray-500 hover:underline">None</button>
                       </div>
                     </div>

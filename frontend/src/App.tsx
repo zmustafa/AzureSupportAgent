@@ -5,11 +5,10 @@ import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
 import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
 import { WelcomeModal } from "./components/WelcomeModal";
-import { UserMenu } from "./components/UserMenu";
 import { APP_VERSION } from "./version";
 
 export default function App() {
-  const { user, loading, logout, refresh } = useAuth();
+  const { user, loading, logout } = useAuth();
 
   if (loading) {
     return (
@@ -25,14 +24,6 @@ export default function App() {
 
   if (user.must_change_password) {
     return <ForcePasswordChange />;
-  }
-
-  // A "no access" user (the noaccess role, or no roles → zero permissions) can authenticate
-  // but reach nothing. Show a dedicated screen instead of the app shell — the backend also
-  // blocks every API path for them, so this is the friendly front door to that lockout.
-  const noAccess = user.role === "noaccess" || (user.permissions ?? []).length === 0;
-  if (noAccess) {
-    return <NoAccessScreen email={user.email} onLogout={() => void logout()} />;
   }
 
   return (
@@ -71,7 +62,16 @@ export default function App() {
               Settings
             </Link>
           )}
-          <UserMenu user={user} onLogout={() => void logout()} onRefresh={() => void refresh()} />
+          <span className="rounded bg-white/10 px-2 py-1">
+            {`${user.email} (${user.role})`}
+          </span>
+          <button
+            onClick={() => void logout()}
+            className="rounded px-2 py-1 hover:bg-white/10"
+            title="Sign out"
+          >
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -88,12 +88,14 @@ export default function App() {
           <Route path="/automations/:section" element={<ChatView />} />
           <Route path="/workloads" element={<ChatView />} />
           <Route path="/workloads/:id" element={<ChatView />} />
-          <Route path="/ownership" element={<ChatView />} />
-          <Route path="/ownership/:tab" element={<ChatView />} />
           <Route path="/mission-control" element={<ChatView />} />
           <Route path="/mission-control/:id" element={<ChatView />} />
           <Route path="/inventory" element={<ChatView />} />
           <Route path="/inventory/:tab" element={<ChatView />} />
+          <Route path="/ownership" element={<ChatView />} />
+          <Route path="/ownership/:tab" element={<ChatView />} />
+          <Route path="/graph" element={<ChatView />} />
+          <Route path="/graph/:focusId" element={<ChatView />} />
           <Route path="/tagintel" element={<ChatView />} />
           <Route path="/tagintel/:tab" element={<ChatView />} />
           <Route path="/change-explorer" element={<ChatView />} />
@@ -106,8 +108,6 @@ export default function App() {
           <Route path="/architectures/memory" element={<ChatView />} />
           <Route path="/architectures/:id" element={<ChatView />} />
           <Route path="/architectures/:id/memory" element={<ChatView />} />
-          <Route path="/graph" element={<ChatView />} />
-          <Route path="/graph/:focusId" element={<ChatView />} />
           <Route path="/policy" element={<ChatView />} />
           <Route path="/policy/:tab" element={<ChatView />} />
           <Route path="/identity" element={<ChatView />} />
@@ -123,48 +123,10 @@ export default function App() {
           <Route path="/notifications" element={<ChatView />} />
           <Route path="/monitor" element={<ChatView />} />
           <Route path="/stats" element={<ChatView />} />
+          <Route path="/proactive" element={<ChatView />} />
           <Route path="/admin" element={<ChatView />} />
           <Route path="/admin/:section" element={<ChatView />} />
         </Routes>
-      </div>
-    </div>
-  );
-}
-
-function NoAccessScreen({ email, onLogout }: { email: string; onLogout: () => void }) {
-  return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b bg-brand-dark px-4 py-3 text-white">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🤖</span>
-          <span className="font-semibold">Azure Support Agent</span>
-        </div>
-        <button
-          onClick={onLogout}
-          className="rounded px-2 py-1 text-sm hover:bg-white/10"
-          title="Sign out"
-        >
-          Sign out
-        </button>
-      </header>
-      <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-md rounded-2xl border bg-white p-8 text-center shadow-sm">
-          <div className="text-4xl">🔒</div>
-          <h1 className="mt-3 text-lg font-semibold text-slate-800">No access</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Your account <span className="font-medium text-slate-700">{email}</span> is signed in
-            but hasn’t been granted access to this application yet.
-          </p>
-          <p className="mt-2 text-sm text-slate-500">
-            Please contact an administrator to be assigned a role.
-          </p>
-          <button
-            onClick={onLogout}
-            className="mt-5 rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark/90"
-          >
-            Sign out
-          </button>
-        </div>
       </div>
     </div>
   );

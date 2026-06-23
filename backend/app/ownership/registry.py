@@ -58,6 +58,7 @@ OWNER_DEFAULTS: dict[str, Any] = {
     "kind": "person",            # person | team | service
     "display_name": "",
     "email": "",
+    "department": "",            # org/department (free text; populated by import)
     "source": "manual",          # manual | app_user | entra | oidc_group | rbac
     # Optional directory linkage. Any subset may be set depending on `source`.
     "link": {

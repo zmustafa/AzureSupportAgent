@@ -393,6 +393,9 @@ class AutopilotRequest(BaseModel):
     scope_kind: str = "subscription"  # subscription | mg
     scope_id: str = ""
     scope_name: str = ""
+    strategy: str = "ai"   # ai | resource_group | subscription | tag
+    mode: str = "full"     # full | delta (skip already-organized resources)
+    tag_key: str = ""      # for strategy=tag (empty = auto-pick a signal tag)
 
 
 @router.post("/autopilot/discover")
@@ -407,7 +410,8 @@ async def autopilot_discover_endpoint(
     async def _gen():
         try:
             async for ev in discover_workloads(
-                conn, payload.scope_kind, payload.scope_id, payload.scope_name
+                conn, payload.scope_kind, payload.scope_id, payload.scope_name,
+                strategy=payload.strategy, mode=payload.mode, tag_key=payload.tag_key,
             ):
                 ev_type = ev.pop("type")
                 yield {"event": ev_type, "data": json.dumps(ev)}
@@ -686,3 +690,92 @@ async def refresh_workload_endpoint(
             "scanned_resource_groups": len(rg_pairs),
         },
     }
+
+
+# =============================================================== Command center: profiles
+class ProfilesRequest(BaseModel):
+    # Empty ids = profile EVERY active workload (the fleet list). Otherwise just these.
+    ids: list[str] = Field(default_factory=list)
+
+
+def _profile_tenant(principal: Principal) -> str:
+    # Per-workload feature caches (amba/telemetry/backupdr/perf/ownership/radar) are written
+    # under principal.tenant_id or "default" — read the profile under the same key.
+    return principal.tenant_id or "default"
+
+
+@router.get("/{workload_id}/profile")
+async def workload_profile_endpoint(
+    workload_id: str, principal: Principal = Depends(get_principal)
+):
+    """The cache-only command-center rollup for ONE workload (composition + health signals +
+    risk + activity). Never scans Azure — a never-analyzed signal reports null."""
+    from app.core.app_settings import load_settings
+    from app.workloads import profile as wl_profile
+
+    wl = wl_registry.get_workload(workload_id)
+    if wl is None:
+        raise HTTPException(status_code=404, detail="Workload not found.")
+    settings = load_settings()
+    return {"profile": wl_profile.build_profile(wl, _profile_tenant(principal), settings)}
+
+
+@router.post("/profiles")
+async def workload_profiles_endpoint(
+    payload: ProfilesRequest, principal: Principal = Depends(get_principal)
+):
+    """Batch cache-only profiles for the fleet list — ONE request powers all the cards."""
+    from app.core.app_settings import load_settings
+    from app.workloads import profile as wl_profile
+
+    settings = load_settings()
+    if payload.ids:
+        wanted = set(payload.ids)
+        workloads = [w for w in wl_registry.list_workloads() if w["id"] in wanted]
+    else:
+        workloads = wl_registry.list_workloads()
+    profiles = wl_profile.build_profiles(workloads, _profile_tenant(principal), settings)
+    return {"profiles": profiles, "total": len(profiles)}
+
+
+@router.get("/health-weights")
+async def workload_health_weights_endpoint(_: Principal = Depends(get_principal)):
+    """The composite-score signal list + the (admin-tunable) weights currently in effect —
+    so the UI can explain the score and the Settings page can edit them."""
+    from app.core.app_settings import load_settings
+    from app.workloads import health as wl_health
+
+    settings = load_settings()
+    return {
+        "signals": list(wl_health.SIGNALS),
+        "weights": wl_health.resolve_weights(settings),
+        "bands": {"good": wl_health.SCORE_GOOD, "warn": wl_health.SCORE_WARN},
+        "nightly_refresh": bool(settings.get("workload_nightly_refresh")),
+    }
+
+
+@router.post("/{workload_id}/trend/record")
+async def workload_trend_record_endpoint(
+    workload_id: str, principal: Principal = Depends(get_principal)
+):
+    """Record a composite-score trend point for this workload (call after Analyze). No-op when
+    nothing has been analyzed yet."""
+    from app.core.app_settings import load_settings
+    from app.workloads import profile as wl_profile
+
+    wl = wl_registry.get_workload(workload_id)
+    if wl is None:
+        raise HTTPException(status_code=404, detail="Workload not found.")
+    score = wl_profile.record_trend(wl, _profile_tenant(principal), load_settings())
+    return {"recorded": score is not None, "score": score}
+
+
+@router.get("/{workload_id}/trend")
+async def workload_trend_endpoint(
+    workload_id: str, principal: Principal = Depends(get_principal)
+):
+    """The composite-score trend series for this workload (chart-ready)."""
+    from app.core import coverage_trends
+
+    return coverage_trends.trend("workload", _profile_tenant(principal), "workload", workload_id)
+

@@ -3173,6 +3173,16 @@ function ScoringTaxonomyCard() {
     delete next[cid];
     set({ architecture_category_colors: next });
   };
+  // Workload Health Score weights (the composite blend on the Workloads command center).
+  const WL_SIGNALS: { id: string; label: string }[] = [
+    { id: "monitoring", label: "Monitoring" }, { id: "telemetry", label: "Telemetry" },
+    { id: "backupdr", label: "Backup / DR" }, { id: "performance", label: "Performance" },
+    { id: "ownership", label: "Ownership" }, { id: "policy", label: "Policy" }, { id: "tags", label: "Tags" },
+  ];
+  const wlWeights = form.workload_health_weights ?? {};
+  const setWlWeight = (sig: string, v: number) =>
+    set({ workload_health_weights: { ...wlWeights, [sig]: Math.max(0, v || 0) } });
+  const wlMax = Math.max(0.1, ...WL_SIGNALS.map((s) => Number(wlWeights[s.id] ?? 1)));
   const maxWeight = Math.max(1, ...SEVERITY_ROWS.map((r) => Number(weights[r.id] ?? 0)));
   const good = form.assessment_score_good ?? 80;
   const warn = form.assessment_score_warn ?? 50;
@@ -3186,12 +3196,16 @@ function ScoringTaxonomyCard() {
         assessment_score_good: form.assessment_score_good,
         assessment_score_warn: form.assessment_score_warn,
         architecture_category_colors: form.architecture_category_colors,
+        workload_health_weights: form.workload_health_weights,
+        workload_nightly_refresh: form.workload_nightly_refresh,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
       qc.invalidateQueries({ queryKey: ["appSettings"] });
       qc.invalidateQueries({ queryKey: ["architectureCatalog"] });
       qc.invalidateQueries({ queryKey: ["assessmentCatalog"] });
+      qc.invalidateQueries({ queryKey: ["workloadProfiles"] });
+      qc.invalidateQueries({ queryKey: ["workloadHealthWeights"] });
     } catch (e) {
       setError(formatError(e));
     }
@@ -3285,6 +3299,42 @@ function ScoringTaxonomyCard() {
             &ldquo;At risk&rdquo; should be lower than &ldquo;Healthy&rdquo; — it will be clamped on save.
           </p>
         )}
+      </Card>
+
+      <Card title="Workload Health Score">
+        <p className="mb-3 text-xs text-gray-500">
+          The composite 0&ndash;100 health score on the Workloads command center is a weighted
+          blend of these per-signal coverage metrics. Only signals that have been analyzed count;
+          the weights below set their relative influence. Raise Backup/DR to make an unprotected
+          workload score lower.
+        </p>
+        <div className="space-y-3">
+          {WL_SIGNALS.map((s) => (
+            <div key={s.id} className="flex items-center gap-3">
+              <span className="w-28 text-sm font-medium text-gray-700">{s.label}</span>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={wlWeights[s.id] ?? 1}
+                onChange={(e) => setWlWeight(s.id, Number(e.target.value))}
+                className="w-20 rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+              />
+              <div className="hidden h-2 flex-1 overflow-hidden rounded-full bg-gray-100 sm:block">
+                <div className="h-full rounded-full bg-brand" style={{ width: `${(Number(wlWeights[s.id] ?? 1) / wlMax) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <label className="mt-3 flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={!!form.workload_nightly_refresh}
+            onChange={(e) => set({ workload_nightly_refresh: e.target.checked })}
+            className="mt-0.5"
+          />
+          <span>Nightly fleet refresh — warm every workload&rsquo;s analysis caches + record a score-trend point each night (off by default; analysis is on-demand otherwise).</span>
+        </label>
       </Card>
 
       <Card title="Architecture category colors">

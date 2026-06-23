@@ -145,24 +145,40 @@ connections.
 
 <table>
 <tr>
+<td width="50%"><img src="docs/assets/workloads-fleet.png" alt="Workloads fleet cockpit"><br/><sub><b>Workloads cockpit</b> — composite health scores, resource mix &amp; trend sparklines across your fleet.</sub></td>
+<td width="50%"><img src="docs/assets/workload-detail.png" alt="Workload command center"><br/><sub><b>Workload command center</b> — health, coverage, risk &amp; next-best-actions for a single workload.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/estate-graph.png" alt="Estate Graph knowledge graph"><br/><sub><b>Estate Graph</b> — a live, workload-aware knowledge graph with cost, retirement &amp; RBAC overlays.</sub></td>
+<td width="50%"><img src="docs/assets/proactive-support.png" alt="Proactive Support hub"><br/><sub><b>Proactive Support</b> — every posture &amp; forensic dashboard, grouped into one hub.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/mission-control.png" alt="Mission Control"><br/><sub><b>Mission Control</b> — run every analysis against a workload from one go/no-go cockpit.</sub></td>
+<td width="50%"><img src="docs/assets/tag-intelligence.png" alt="Tag Intelligence"><br/><sub><b>Tag Intelligence</b> — tag census, coverage &amp; casing drift with a natural-language console.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/change-explorer.png" alt="Change Explorer"><br/><sub><b>Change Explorer</b> — what changed, when, who did it, how risky, and what it impacts — in plain English.</sub></td>
 <td width="50%"><img src="docs/assets/architecture-designer.png" alt="Architectures designer"><br/><sub><b>Architectures designer</b> — design diagrams with AI rationale &amp; best-practice review.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/deep-investigation.png" alt="Deep investigation War Room"><br/><sub><b>War Room</b> — assemble a team of specialist agents to investigate in parallel.</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/assessment.png" alt="Well-Architected assessment"><br/><sub><b>Assessments</b> — pillar scores, controls, and framework mappings (NIST/ISO/CIS).</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/performance-profiler.png" alt="Performance Profiler heatmap"><br/><sub><b>Performance Profiler</b> — resource × AMBA-metric heatmap to find bottlenecks.</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/monitoring-coverage.png" alt="Monitoring coverage"><br/><sub><b>Monitoring coverage</b> — AMBA baseline-alert gaps with Bicep/Terraform fixes.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/telemetry-coverage.png" alt="Telemetry coverage"><br/><sub><b>Telemetry coverage</b> — diagnostic-settings &amp; log coverage with Bicep/Policy gap fixes.</sub></td>
-</tr>
-<tr>
 <td width="50%"><img src="docs/assets/monitor-dashboard.png" alt="Monitor 2.0 dashboard"><br/><sub><b>Monitor 2.0</b> — usage, token cost, provider mix, and activity at a glance.</sub></td>
-<td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
 </tr>
 <tr>
+<td width="50%"><img src="docs/assets/ai-providers.png" alt="AI provider settings"><br/><sub><b>AI providers</b> — bring your own model; each one stays disabled until configured.</sub></td>
 <td width="50%"><img src="docs/assets/backup-coverage.png" alt="Backup and DR coverage"><br/><sub><b>Backup &amp; DR coverage</b> — RTO/RPO protection posture with Bicep/runbook gap fixes.</sub></td>
+</tr>
+<tr>
 <td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
+<td width="50%"></td>
 </tr>
 </table>
 

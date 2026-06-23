@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api, type Workload, type WorkloadNode, type WorkloadNodeKind } from "../api";
+import { api, type Workload, type WorkloadNode, type WorkloadNodeKind, type WorkloadProfile } from "../api";
 import { formatError } from "../utils/format";
 import { ResourcePicker } from "./ResourcePicker";
-import { AutopilotModal, ClassBadges, TypeChips } from "./AutopilotModal";
+import { AutopilotModal, TypeChips } from "./AutopilotModal";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
+import { WorkloadCard } from "./workloads/WorkloadCard";
+import { FleetCockpit, matchesFleetFilter } from "./workloads/FleetCockpit";
+import { WorkloadTable, WorkloadBoard } from "./workloads/WorkloadTableBoard";
+import { ConstellationMap } from "./workloads/ConstellationMap";
 
 const input =
   "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
@@ -190,20 +194,26 @@ function WorkloadResourceTree({
 
 
 // Estate coverage: % of the Azure estate organized into workloads + orphaned-resource
-// triage. Loads on demand (the estate scan is heavy) per connection.
+// triage. Loads on demand (the estate scan is heavy) per connection — expanding the card
+// only reveals a Scan button; the scan runs when the user explicitly presses it.
 function EstateCoveragePanel() {
   const [open, setOpen] = useState(false);
   const [connId, setConnId] = useState("");
+  // Which connection the user has explicitly asked to scan. The scan never auto-runs on
+  // expand; it runs only after the Scan button is pressed (and re-arms when the connection
+  // changes so we never silently scan a different tenant).
+  const [scanConn, setScanConn] = useState("");
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections });
   const connections = connQ.data?.connections ?? [];
   const effConn = connId || connections.find((c) => c.is_default)?.id || connections[0]?.id || "";
+  const armed = !!scanConn && scanConn === effConn;
   const covQ = useQuery({
     queryKey: ["estate-coverage", effConn],
     queryFn: () => api.estateCoverage(effConn),
-    enabled: open && !!effConn,
+    enabled: armed && !!effConn,
     staleTime: 5 * 60 * 1000,
   });
-  const cov = covQ.data;
+  const cov = armed ? covQ.data : undefined;
   const pct = cov?.organized_pct ?? 0;
   const barColor = pct >= 80 ? "bg-green-500" : pct >= 50 ? "bg-amber-500" : "bg-red-500";
 
@@ -227,7 +237,7 @@ function EstateCoveragePanel() {
           {connections.length > 1 && (
             <select
               value={effConn}
-              onChange={(e) => setConnId(e.target.value)}
+              onChange={(e) => { setConnId(e.target.value); setScanConn(""); }}
               className="mb-3 rounded border px-2 py-1 text-xs text-gray-600"
             >
               {connections.map((c) => (
@@ -235,12 +245,43 @@ function EstateCoveragePanel() {
               ))}
             </select>
           )}
-          {covQ.isLoading ? (
+          {!armed ? (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-gray-500">
+                Scan your Azure estate to see how much is organized into workloads and triage
+                orphaned resources. This reads your resource graph and may take a moment.
+              </p>
+              <button
+                onClick={() => setScanConn(effConn)}
+                disabled={!effConn}
+                className="shrink-0 rounded-lg bg-brand-dark px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-dark/90 disabled:opacity-50"
+              >
+                Scan estate
+              </button>
+            </div>
+          ) : covQ.isLoading ? (
             <div className="text-sm text-gray-500">Scanning estate…</div>
           ) : covQ.isError ? (
-            <div className="text-sm text-red-600">{formatError(covQ.error)}</div>
+            <div className="space-y-2">
+              <div className="text-sm text-red-600">{formatError(covQ.error)}</div>
+              <button
+                onClick={() => covQ.refetch()}
+                className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+              >
+                Retry
+              </button>
+            </div>
           ) : cov ? (
             <div className="space-y-3">
+              <div className="flex justify-end">
+                <button
+                  onClick={() => covQ.refetch()}
+                  disabled={covQ.isFetching}
+                  className="rounded-lg border px-2.5 py-1 text-[11px] font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {covQ.isFetching ? "Rescanning…" : "↻ Rescan"}
+                </button>
+              </div>
               <div>
                 <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
                   <span><b className="text-gray-700">{cov.organized}</b> organized · <b className="text-gray-700">{cov.orphaned}</b> orphaned</span>
@@ -286,8 +327,44 @@ export function WorkloadsPanel() {
   const [msg, setMsg] = useState("");
   const [notice, setNotice] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  const [view, setView] = useState<"cards" | "table" | "board" | "map">(() =>
+    (localStorage.getItem("azsup.workloads.view") as "cards" | "table" | "board" | "map") || "cards");
+  const [fleetFilter, setFleetFilter] = useState<string>("");  // category/env filter from cockpit
+  // Saved fleet views: named {view mode + active filter} the user can recall in one click.
+  const [savedViews, setSavedViews] = useState<{ name: string; view: string; filter: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("azsup.workloads.savedViews") || "[]"); } catch { return []; }
+  });
+  const persistViews = (v: typeof savedViews) => {
+    setSavedViews(v);
+    localStorage.setItem("azsup.workloads.savedViews", JSON.stringify(v));
+  };
+  const saveCurrentView = () => {
+    const name = window.prompt("Name this view (layout + current filter):", fleetFilter ? `${view} · ${fleetFilter.replace(":", " ")}` : view);
+    if (!name) return;
+    persistViews([...savedViews.filter((s) => s.name !== name), { name, view, filter: fleetFilter }]);
+  };
+  const applyView = (s: { view: string; filter: string }) => {
+    setViewMode(s.view as "cards" | "table" | "board" | "map");
+    setFleetFilter(s.filter);
+  };
 
   const workloads = wlQ.data?.workloads ?? [];
+
+  // Cache-only command-center profiles for the whole fleet — ONE request powers every card,
+  // the cockpit strip and the table. Never scans Azure.
+  const profilesQ = useQuery({
+    queryKey: ["workloadProfiles"],
+    queryFn: () => api.workloadProfiles([]),
+    enabled: workloads.length > 0 && !showTrash,
+    staleTime: 60_000,
+  });
+  const profileById: Record<string, WorkloadProfile> = {};
+  for (const p of profilesQ.data?.profiles ?? []) profileById[p.id] = p;
+
+  const setViewMode = (v: "cards" | "table" | "board" | "map") => {
+    setView(v);
+    localStorage.setItem("azsup.workloads.view", v);
+  };
 
   const trashQ = useQuery({
     queryKey: ["workloadsTrash"],
@@ -453,6 +530,11 @@ export function WorkloadsPanel() {
         {/* Estate coverage: how much of the estate is organized into workloads + orphan triage. */}
         {!wlQ.isLoading && workloads.length > 0 && !showTrash && <EstateCoveragePanel />}
 
+        {/* Fleet cockpit: aggregate health/composition/triage over the cache-only profiles. */}
+        {!showTrash && workloads.length > 0 && (profilesQ.data?.profiles?.length ?? 0) > 0 && (
+          <FleetCockpit profiles={profilesQ.data!.profiles} onFilter={setFleetFilter} activeFilter={fleetFilter} />
+        )}
+
         {selected.size > 0 && (
           <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
             <span className="font-medium text-brand">{selected.size} selected</span>
@@ -463,91 +545,84 @@ export function WorkloadsPanel() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {workloads.map((w) => (
-            <div key={w.id} className="rounded-xl border bg-white p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-start gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(w.id)}
-                    onChange={() => toggleSelected(w.id)}
-                    title="Select for a fleet mission"
-                    className="mt-1 shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-semibold text-gray-800">{w.name}</span>
-                      {w.origin?.kind && (
-                        <span className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
-                          autopilot
-                        </span>
-                      )}
-                    </div>
-                    {(w.workload_type || w.environment || w.criticality) && (
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        <ClassBadges type={w.workload_type} environment={w.environment} criticality={w.criticality} />
-                      </div>
-                    )}
-                    <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{w.description}</p>
-                  </div>
-                </div>
-              </div>
-              {w.summary && (w.summary.types?.length ?? 0) > 0 ? (
-                <div className="mt-2"><TypeChips types={w.summary.types} max={6} /></div>
-              ) : (
-                <div className="mt-2 text-[11px] text-gray-500">{countByKind(w.nodes) || "No resources yet"}</div>
-              )}
-              <div className="mt-3 flex items-center gap-2">
+        {/* View toolbar: layout modes + active filter pill. */}
+        {!showTrash && workloads.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+              {(["cards", "table", "board", "map"] as const).map((v) => (
                 <button
-                  onClick={() => void refresh(w.id)}
-                  disabled={refreshing === w.id}
-                  title="Re-scan this workload's scope for added/removed resources"
-                  className="flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                  key={v}
+                  onClick={() => setViewMode(v)}
+                  className={`rounded-md px-2.5 py-1 capitalize ${view === v ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
                 >
-                  <span className={refreshing === w.id ? "inline-block animate-spin" : ""}>↻</span>
-                  {refreshing === w.id ? "Refreshing…" : "Refresh"}
+                  {v === "cards" ? "\u25a6 Cards" : v === "table" ? "\u25a4 Table" : v === "board" ? "\u25a5 Board" : "\u2735 Map"}
                 </button>
-                <button
-                  onClick={() => setEditing(w)}
-                  className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => navigate(`/mission-control/${w.id}`)}
-                  title="Open Workload Mission Control — run every analysis for this workload"
-                  className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10"
-                >
-                  🚀 Mission Control
-                </button>
-                <a
-                  href={`/assessments`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    sessionStorage.setItem("azsup.assessWorkload", w.id);
-                    navigate("/assessments");
-                  }}
-                  title="Run a Well-Architected assessment against this workload"
-                  className="rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10"
-                >
-                  ✓ Run assessment
-                </a>
-                <button
-                  onClick={() => void remove(w.id)}
-                  className="ml-auto rounded-lg border border-red-200 px-2.5 py-1 text-xs text-red-600 hover:bg-red-50"
-                >
-                  Delete
-                </button>
-              </div>
-              {w.last_refreshed && (
-                <div className="mt-1.5 text-[10px] text-gray-400">
-                  Last refreshed {new Date(w.last_refreshed).toLocaleString()}
-                </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
+            {fleetFilter && (
+              <button onClick={() => setFleetFilter("")} className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand">
+                Filter: {fleetFilter.replace(":", " · ")} ✕
+              </button>
+            )}
+            {/* Saved views: recall a named layout+filter; star the current one. */}
+            {savedViews.map((s) => (
+              <span key={s.name} className="inline-flex items-center rounded-full bg-gray-100 text-xs">
+                <button onClick={() => applyView(s)} className="py-1 pl-2.5 pr-1 font-medium text-gray-600 hover:text-brand" title="Apply saved view">★ {s.name}</button>
+                <button onClick={() => persistViews(savedViews.filter((x) => x.name !== s.name))} className="py-1 pr-2 pl-0.5 text-gray-400 hover:text-red-500" title="Remove">✕</button>
+              </span>
+            ))}
+            <button onClick={saveCurrentView} className="rounded-full border border-dashed px-2.5 py-1 text-xs text-gray-500 hover:border-brand hover:text-brand" title="Save the current layout + filter as a view">+ Save view</button>
+            <span className="ml-auto text-xs text-gray-400">
+              {workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter)).length} of {workloads.length}
+              {profilesQ.isFetching && " · refreshing profiles…"}
+            </span>
+          </div>
+        )}
+
+        {!showTrash && view === "cards" && (
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter)).map((w) => (
+              <WorkloadCard
+                key={w.id}
+                w={w}
+                profile={profileById[w.id]}
+                selected={selected.has(w.id)}
+                onToggleSelect={() => toggleSelected(w.id)}
+                onOpen={() => navigate(`/workloads/${w.id}`)}
+                onRefresh={() => void refresh(w.id)}
+                onEdit={() => setEditing(w)}
+                onDelete={() => void remove(w.id)}
+                onMission={() => navigate(`/mission-control/${w.id}`)}
+                onAssess={() => { sessionStorage.setItem("azsup.assessWorkload", w.id); navigate("/assessments"); }}
+                refreshing={refreshing === w.id}
+              />
+            ))}
+          </div>
+        )}
+
+        {!showTrash && view === "table" && (
+          <WorkloadTable
+            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            profileById={profileById}
+            onOpen={(id) => navigate(`/workloads/${id}`)}
+          />
+        )}
+
+        {!showTrash && view === "board" && (
+          <WorkloadBoard
+            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            profileById={profileById}
+            onOpen={(id) => navigate(`/workloads/${id}`)}
+          />
+        )}
+
+        {!showTrash && view === "map" && (
+          <ConstellationMap
+            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            profileById={profileById}
+            onOpen={(id) => navigate(`/workloads/${id}`)}
+          />
+        )}
 
         {workloads.length === 0 && !wlQ.isLoading && (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">

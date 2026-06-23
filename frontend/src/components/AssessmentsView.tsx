@@ -1272,10 +1272,11 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
 }
 
 // ---------------- Run flow ----------------
-function RunFlow({ onQueued }: { onQueued: () => void }) {
+function RunFlow({ onQueued, preselectWorkloadId = "" }: { onQueued: () => void; preselectWorkloadId?: string }) {
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const workloads = (wlQ.data?.workloads ?? []) as Workload[];
   const [selectedWl, setSelectedWl] = useState<string[]>(() => {
+    if (preselectWorkloadId) return [preselectWorkloadId];
     try { const pre = sessionStorage.getItem("azsup.assessWorkload"); if (pre) { sessionStorage.removeItem("azsup.assessWorkload"); return [pre]; } } catch { /* ignore */ }
     return [];
   });
@@ -1834,6 +1835,13 @@ export function AssessmentsPanel() {
   });
   const runs = (runsQ.data?.runs ?? []) as AssessmentRunSummary[];
   const [error, setError] = useState("");
+  // Deep link: /assessments?workload_id=… (from the workload detail page) filters the history
+  // to that workload and pre-selects it in the run flow. Cleared via the banner.
+  const [workloadFilter, setWorkloadFilter] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get("workload_id") || ""; } catch { return ""; }
+  });
+  const filteredRuns = workloadFilter ? runs.filter((r) => r.workload_id === workloadFilter) : runs;
+  const filterName = workloadFilter ? (runs.find((r) => r.workload_id === workloadFilter)?.workload_name || "this workload") : "";
 
   async function del(runId: string) {
     if (!window.confirm("Move this assessment run to the trash?")) return;
@@ -1864,8 +1872,14 @@ export function AssessmentsPanel() {
         </div>
         {tab === "run" && (
           <>
-            <RunFlow onQueued={() => qc.invalidateQueries({ queryKey: ["assessmentRuns"] })} />
-            <div><h2 className="mb-2 font-medium text-gray-800">History</h2><RunHistory runs={runs} onOpen={(rid) => navigate(`/assessments/${rid}`)} onDelete={del} onCancel={cancel} /></div>
+            {workloadFilter && (
+              <div className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
+                <span className="text-brand">Filtered to <b>{filterName}</b></span>
+                <button onClick={() => setWorkloadFilter("")} className="ml-auto rounded px-2 py-0.5 text-xs text-gray-500 hover:bg-white">Clear filter ✕</button>
+              </div>
+            )}
+            <RunFlow onQueued={() => qc.invalidateQueries({ queryKey: ["assessmentRuns"] })} preselectWorkloadId={workloadFilter} />
+            <div><h2 className="mb-2 font-medium text-gray-800">History{workloadFilter ? ` · ${filterName}` : ""}</h2><RunHistory runs={filteredRuns} onOpen={(rid) => navigate(`/assessments/${rid}`)} onDelete={del} onCancel={cancel} /></div>
           </>
         )}
         {tab === "portfolio" && <PortfolioView onOpen={(rid) => navigate(`/assessments/${rid}`)} />}

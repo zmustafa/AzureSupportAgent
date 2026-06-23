@@ -364,6 +364,49 @@ async def get_drift_diff(base: str, head: str, connection_id: str | None = None,
     return drift.diff(principal.tenant_id, connection_id or "", scope, base, head)
 
 
+# --------------------------------------------------------------------------- tag revisions (apply/revert)
+@router.get("/revisions")
+async def list_tag_revisions(connection_id: str | None = None, source: str = "",
+                             principal: Principal = Depends(require_admin)):
+    """Every revertible tag-change revision (tag-intelligence applies + ownership tag-applies),
+    newest first. The recovery copy of each is kept so a change can be reverted exactly."""
+    from app.tagintel import revisions
+
+    return {"revisions": revisions.list_revisions(principal.tenant_id, connection_id or "", source)}
+
+
+@router.get("/revisions/{rev_id}")
+async def get_tag_revision(rev_id: str, principal: Principal = Depends(require_admin)):
+    """Full revision incl. the per-resource before→after diff for visualization."""
+    from app.tagintel import revisions
+
+    rev = revisions.get_revision(principal.tenant_id, rev_id)
+    if rev is None:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+    return {"revision": revisions._summary(rev), "diff": revisions.diff_rows(rev)}
+
+
+class RevertReq(BaseModel):
+    connection_id: str = ""
+    approved: bool = False
+
+
+@router.post("/revisions/{rev_id}/revert")
+async def revert_tag_revision(rev_id: str, req: RevertReq, principal: Principal = Depends(_write)):
+    """Restore every resource in the revision to its captured prior tag set (ARM Replace).
+    Requires explicit approval + a writable connection. Records the inverse as a new revision."""
+    if not req.approved:
+        raise HTTPException(status_code=400, detail="Explicit approval is required to revert.")
+    from app.tagintel import revisions
+
+    rev = revisions.get_revision(principal.tenant_id, rev_id)
+    if rev is None:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+    conn = _resolve_write_connection(req.connection_id or rev.get("connection_id", ""), "")
+    actor = principal.display_name or principal.email or principal.subject
+    return await revisions.revert_revision(principal.tenant_id, rev_id, conn, actor=actor)
+
+
 # --------------------------------------------------------------------------- F8 policy
 
 
@@ -463,6 +506,48 @@ class ApplyReq(BaseModel):
     changeset_id: str = ""
 
 
+def _capture_tag_revision(tenant_id, connection, plan, result, actor, *, scope):
+    """Record a revertible recovery revision from an applied plan. The plan's per-resource
+    ``before`` is the recovery copy; only resources reported applied (or all targeted, when the
+    result has no per-id detail) are included. Best-effort — never breaks the apply path."""
+    if result.get("blocked"):
+        return None
+    try:
+        from app.tagintel import revisions
+
+        ok_ids: set[str] | None = None
+        res_list = result.get("results")
+        if isinstance(res_list, list) and res_list:
+            ok_ids = {(r.get("id") or "").lower() for r in res_list if r.get("ok")}
+        before: dict[str, dict[str, str]] = {}
+        after: dict[str, dict[str, str]] = {}
+        names: dict[str, str] = {}
+        for it in plan.get("items", []):
+            rid = (it.get("id") or "").lower()
+            if not rid:
+                continue
+            if ok_ids is not None and rid not in ok_ids:
+                continue
+            before[rid] = {str(k): str(v) for k, v in (it.get("before") or {}).items()}
+            after[rid] = {str(k): str(v) for k, v in (it.get("after") or {}).items()}
+            names[rid] = it.get("name", "")
+        if not before:
+            return None
+        ops = plan.get("operations") or ([plan["op"]] if plan.get("op") else [])
+        desc = f"Tag remediation: {len(before)} resource(s)"
+        kinds = ", ".join(sorted({o.get("type", "") for o in ops if o.get("type")}))
+        if kinds:
+            desc = f"Tag remediation ({kinds}): {len(before)} resource(s)"
+        return revisions.save_revision(
+            tenant_id, (connection or {}).get("id", ""),
+            source="tagintel", description=desc,
+            before=before, after=after, names=names, actor=actor, scope=scope,
+            applied=result.get("applied", len(before)), failed=result.get("failed", 0),
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.post("/remediate/apply")
 async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(_write)):
     """Apply a tag change-set to Azure (the actual write). Requires explicit approval and a
@@ -485,6 +570,9 @@ async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(_wr
     result = await remediation.apply_plan(plan, conn, actor=actor)
     remediation.save_plan(principal.tenant_id, plan, actor=actor, approved=True,
                           applied=not result.get("blocked"), result=result)
+    # Capture a revertible recovery revision (the plan's per-resource before is the recovery copy).
+    revision = _capture_tag_revision(principal.tenant_id, conn, plan, result, actor,
+                                     scope=req.workload_id or req.scope or "tenant")
     # Stamp the saved change-set's last-run audit trail when this apply came from one.
     if req.changeset_id and not result.get("blocked"):
         remediation.record_changeset_run(principal.tenant_id, req.changeset_id, {
@@ -492,7 +580,7 @@ async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(_wr
             "applied": result.get("applied", 0), "failed": result.get("failed", 0),
             "total": result.get("total", 0),
         })
-    return {"available": True, "count": plan["count"], "overwrites": plan["overwrites"], **result}
+    return {"available": True, "count": plan["count"], "overwrites": plan["overwrites"], "revision": revision, **result}
 
 
 @router.post("/remediate/apply/stream")
@@ -528,6 +616,8 @@ async def post_remediate_apply_stream(req: ApplyReq, principal: Principal = Depe
                     # Persist the audit trail BEFORE telling the client we're done.
                     remediation.save_plan(tenant_id, plan, actor=actor, approved=True,
                                           applied=not data.get("blocked"), result=data)
+                    revision = _capture_tag_revision(tenant_id, conn, plan, data, actor,
+                                                     scope=req.workload_id or req.scope or "tenant")
                     if changeset_id and not data.get("blocked"):
                         remediation.record_changeset_run(tenant_id, changeset_id, {
                             "scope": req.workload_id or req.scope or "tenant", "actor": actor,
@@ -535,7 +625,7 @@ async def post_remediate_apply_stream(req: ApplyReq, principal: Principal = Depe
                             "total": data.get("total", 0),
                         })
                     payload = {"available": True, "count": plan["count"],
-                               "overwrites": plan["overwrites"], **data}
+                               "overwrites": plan["overwrites"], "revision": revision, **data}
                     yield {"event": "done", "data": json.dumps(payload)}
                 else:
                     yield {"event": etype, "data": json.dumps(data)}

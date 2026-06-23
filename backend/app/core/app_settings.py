@@ -165,6 +165,24 @@ DEFAULTS: dict[str, Any] = {
     # (at risk), below warn is red (poor).
     "assessment_score_good": 80,
     "assessment_score_warn": 50,
+    # --- Workloads command center --------------------------------------------------
+    # Weights for the composite Workload Health Score (a 0-100 blend of the per-signal
+    # health metrics). Only signals that have been analyzed contribute; the score is the
+    # weighted average over present signals (re-normalized). Admin-tunable so an org can
+    # emphasise, e.g., backup/DR and security over performance. Keys must be known signals.
+    "workload_health_weights": {
+        "monitoring": 1.0,
+        "telemetry": 1.0,
+        "backupdr": 1.5,
+        "performance": 1.0,
+        "ownership": 1.0,
+        "policy": 1.0,
+        "tags": 0.5,
+    },
+    # Optional nightly background refresh of every workload's profile (warms all the
+    # per-workload caches overnight). OFF by default — profiles are computed on demand.
+    "workload_nightly_refresh": False,
+
     # --- Assessments: execution engine (admin-tunable) ----------------------------
     # Max controls evaluated concurrently per run (each may issue paged Resource Graph
     # queries). Bounds load + ARG throttling while keeping a 60+ control run fast.

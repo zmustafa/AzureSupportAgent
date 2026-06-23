@@ -124,6 +124,39 @@ async function httpBlob(path: string, init?: RequestInit): Promise<Blob> {
 /** Absolute API origin, e.g. for SSO redirects (full-page navigations). */
 export const apiBase = API_BASE;
 
+/** POST a multipart form (file upload). Lets the browser set the multipart boundary. */
+async function httpUpload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* non-JSON */
+    }
+    throw new HttpError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** Trigger a browser download of a Blob with a filename. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 // ---- Identity dashboard ---------------------------------------------------------
 export type IdentityFinding = {
   id: string;
@@ -1624,12 +1657,16 @@ export type OwnershipScope = {
   subName: string;
 };
 
-function ownScopeQs(scope?: OwnershipScope): string {
-  if (!scope || scope.kind === "tenant") return "";
-  const qs = new URLSearchParams({ scope_kind: scope.kind });
-  if (scope.kind === "workload" && scope.workloadId) qs.set("workload_id", scope.workloadId);
-  if (scope.kind === "subscription" && scope.subId) qs.set("subscription_id", scope.subId);
-  return `?${qs.toString()}`;
+function ownScopeQs(scope?: OwnershipScope, connectionId = ""): string {
+  const qs = new URLSearchParams();
+  if (scope && scope.kind !== "tenant") {
+    qs.set("scope_kind", scope.kind);
+    if (scope.kind === "workload" && scope.workloadId) qs.set("workload_id", scope.workloadId);
+    if (scope.kind === "subscription" && scope.subId) qs.set("subscription_id", scope.subId);
+  }
+  if (connectionId) qs.set("connection_id", connectionId);
+  const s = qs.toString();
+  return s ? `?${s}` : "";
 }
 
 export type OwnershipCoverageFinding = {
@@ -1686,6 +1723,130 @@ export type OwnershipSuggestion = {
   evidence: string[];
   signal: string;
 };
+
+// ---- Owner import / tag apply / tag revisions -----------------------------------
+export interface OwnerImportPreviewRow {
+  display_name: string;
+  email: string;
+  department: string;
+  kind: string;
+  role: string;
+  notes: string;
+  workload: string;
+  subscription: string;
+  resource_ids: string[];
+  valid: boolean;
+  has_subject: boolean;
+}
+
+export interface OwnerImportPreview {
+  columns: string[];
+  sheet: string;
+  row_count: number;
+  sample: Record<string, string>[];
+  rows: Record<string, string>[];
+  mapping: Record<string, string>;
+  confidence: number;
+  explanation: string;
+  ai: boolean;
+  target_fields: string[];
+  preview: {
+    rows: OwnerImportPreviewRow[];
+    total: number;
+    preview_count: number;
+    valid: number;
+    invalid: number;
+    with_subject: number;
+  };
+}
+
+export interface OwnerImportResult {
+  created: number;
+  updated: number;
+  assignments: number;
+  skipped: number;
+  unresolved_subjects: string[];
+}
+
+export interface OwnerTagApplyReq {
+  connection_id?: string;
+  scope_kind: "workload" | "subscription";
+  workload_id?: string;
+  subscription_id?: string;
+  tag_key: string;
+  value_source: "display_name" | "email";
+  overwrite: boolean;
+}
+
+export interface OwnerTagPlanItem {
+  id: string;
+  name: string;
+  resource_group: string;
+  subscription_id: string;
+  before: Record<string, string>;
+  after: Record<string, string>;
+  owner: string;
+  conflict: boolean;
+  current: string;
+  skipped: boolean;
+}
+
+export interface OwnerTagPlan {
+  tag_key: string;
+  value_source: string;
+  items: OwnerTagPlanItem[];
+  count: number;
+  applicable: number;
+  conflicts: number;
+  no_owner: number;
+}
+
+export interface OwnerTagApplyResult {
+  ok: boolean;
+  error?: string;
+  applied: number;
+  failed: number;
+  total: number;
+  revision: TagRevision | null;
+  results: { id: string; ok: boolean; error: string }[];
+}
+
+export interface TagRevision {
+  id: string;
+  created_at: string;
+  actor: string;
+  source: string;
+  description: string;
+  connection_id: string;
+  scope: string;
+  resource_count: number;
+  applied: number;
+  failed: number;
+  status: "applied" | "reverted";
+  reverted_at: string;
+  reverted_by: string;
+  reverts_id: string;
+}
+
+export interface TagRevisionDiffRow {
+  id: string;
+  name: string;
+  before: Record<string, string>;
+  after: Record<string, string>;
+  added: Record<string, string>;
+  removed: Record<string, string>;
+  changed: Record<string, { from: string; to: string }>;
+}
+
+export interface TagRevertResult {
+  ok: boolean;
+  error?: string;
+  reverted: number;
+  failed: number;
+  total: number;
+  results: { id: string; ok: boolean; error: string }[];
+  new_revision?: TagRevision;
+}
 
 export type AttestationItem = OwnershipAssignment & {
   owner?: { id: string; display_name: string; email: string; kind: string } | null;
@@ -2507,6 +2668,19 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
+  // Cache-only command-center profiles (instant; never scans Azure).
+  workloadProfile: (id: string) =>
+    http<{ profile: WorkloadProfile }>(`/workloads/${encodeURIComponent(id)}/profile`),
+  workloadProfiles: (ids: string[] = []) =>
+    http<{ profiles: WorkloadProfile[]; total: number }>("/workloads/profiles", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  workloadHealthWeights: () => http<WorkloadHealthWeights>("/workloads/health-weights"),
+  recordWorkloadTrend: (id: string) =>
+    http<{ recorded: boolean; score: number | null }>(`/workloads/${encodeURIComponent(id)}/trend/record`, { method: "POST", body: "{}" }),
+  workloadTrend: (id: string) =>
+    http<CoverageTrend>(`/workloads/${encodeURIComponent(id)}/trend`),
 
   // --- Architectures ---
   architectureCatalog: () => http<ArchitectureCatalog>("/architectures/catalog"),
@@ -2816,28 +2990,31 @@ export const api = {
   },
   resolveOwnerBatch: (subjects: { subject_kind: string; subject_id: string; tags?: any; subscription_id?: string; resource_group?: string }[]) =>
     http<{ results: ResolveResult[] }>("/ownership/resolve/batch", { method: "POST", body: JSON.stringify({ subjects }) }),
-  ownershipSubjects: (scope?: OwnershipScope) => http<{ subjects: OwnershipSubject[]; total: number; owned: number; unowned: number }>(`/ownership/subjects${ownScopeQs(scope)}`),
-  ownershipCoverage: (scopeKind: string, workloadId: string, scopeId: string) => {
+  ownershipSubjects: (scope?: OwnershipScope, connectionId = "") => http<{ subjects: OwnershipSubject[]; total: number; owned: number; unowned: number }>(`/ownership/subjects${ownScopeQs(scope, connectionId)}`),
+  ownershipCoverage: (scopeKind: string, workloadId: string, scopeId: string, connectionId = "") => {
     const qs = new URLSearchParams({ scope_kind: scopeKind });
     if (workloadId) qs.set("workload_id", workloadId);
     if (scopeId) qs.set("scope_id", scopeId);
+    if (connectionId) qs.set("connection_id", connectionId);
     return http<OwnershipCoverage>(`/ownership/coverage?${qs.toString()}`);
   },
-  refreshOwnershipCoverage: (scopeKind: string, workloadId: string, scopeId: string) => {
+  refreshOwnershipCoverage: (scopeKind: string, workloadId: string, scopeId: string, connectionId = "") => {
     const qs = new URLSearchParams({ scope_kind: scopeKind });
     if (workloadId) qs.set("workload_id", workloadId);
     if (scopeId) qs.set("scope_id", scopeId);
+    if (connectionId) qs.set("connection_id", connectionId);
     return http<OwnershipCoverage>(`/ownership/refresh?${qs.toString()}`, { method: "POST", body: "{}" });
   },
-  ownershipTrend: (scopeKind: string, workloadId: string, scopeId: string) => {
+  ownershipTrend: (scopeKind: string, workloadId: string, scopeId: string, connectionId = "") => {
     const qs = new URLSearchParams({ scope_kind: scopeKind });
     if (workloadId) qs.set("workload_id", workloadId);
     if (scopeId) qs.set("scope_id", scopeId);
+    if (connectionId) qs.set("connection_id", connectionId);
     return http<CoverageTrend>(`/ownership/trend?${qs.toString()}`);
   },
   ownershipEstate: (ownerId = "") =>
     http<OwnershipEstateResponse>(`/ownership/estate${ownerId ? `?owner_id=${encodeURIComponent(ownerId)}` : ""}`),
-  ownershipSuggestions: (scope?: OwnershipScope) => http<{ suggestions: OwnershipSuggestion[]; total: number; note: string }>(`/ownership/suggestions${ownScopeQs(scope)}`),
+  ownershipSuggestions: (scope?: OwnershipScope, connectionId = "") => http<{ suggestions: OwnershipSuggestion[]; total: number; note: string }>(`/ownership/suggestions${ownScopeQs(scope, connectionId)}`),
   acceptSuggestion: (s: OwnershipSuggestion) =>
     http<{ owner: Owner; assignment: OwnershipAssignment }>("/ownership/suggestions/accept", {
       method: "POST",
@@ -2859,6 +3036,48 @@ export const api = {
     http<{ ok: boolean; error: string; applied: Record<string, string> }>("/ownership/writeback/apply", {
       method: "POST",
       body: JSON.stringify({ resource_id: resourceId, owner, owner_email: ownerEmail, connection_id: connectionId || null }),
+    }),
+  // Owners export / AI import / owner→tag apply / revisions.
+  ownersExportUrl: (format: "csv" | "xlsx") => `${apiBase}/ownership/owners/export?format=${format}`,
+  ownersExport: (format: "csv" | "xlsx") => httpBlob(`/ownership/owners/export?format=${format}`),
+  ownersTemplate: () => httpBlob("/ownership/owners/template"),
+  ownersImportPreview: (file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return httpUpload<OwnerImportPreview>("/ownership/owners/import/preview", form);
+  },
+  ownersImportConfirm: (rows: Record<string, unknown>[], mapping: Record<string, string>, createAssignments: boolean) =>
+    http<OwnerImportResult>("/ownership/owners/import", {
+      method: "POST",
+      body: JSON.stringify({ rows, mapping, create_assignments: createAssignments }),
+    }),
+  ownerTagApplyPreview: (body: OwnerTagApplyReq) =>
+    http<OwnerTagPlan>("/ownership/tag-apply/preview", { method: "POST", body: JSON.stringify(body) }),
+  ownerTagApply: (body: OwnerTagApplyReq & { approved: boolean }) =>
+    http<OwnerTagApplyResult>("/ownership/tag-apply", { method: "POST", body: JSON.stringify(body) }),
+  ownerTagRevisions: (connectionId = "") =>
+    http<{ revisions: TagRevision[] }>(`/ownership/tag-revisions${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  ownerTagRevision: (id: string) =>
+    http<{ revision: TagRevision; diff: TagRevisionDiffRow[] }>(`/ownership/tag-revisions/${encodeURIComponent(id)}`),
+  revertOwnerTagRevision: (id: string, connectionId = "") =>
+    http<TagRevertResult>(`/ownership/tag-revisions/${encodeURIComponent(id)}/revert`, {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connectionId, approved: true }),
+    }),
+  // Tag-intelligence revisions (all tag changes — tagintel + ownership).
+  tagRevisions: (connectionId = "", source = "") => {
+    const qs = new URLSearchParams();
+    if (connectionId) qs.set("connection_id", connectionId);
+    if (source) qs.set("source", source);
+    const q = qs.toString();
+    return http<{ revisions: TagRevision[] }>(`/tagintel/revisions${q ? `?${q}` : ""}`);
+  },
+  tagRevision: (id: string) =>
+    http<{ revision: TagRevision; diff: TagRevisionDiffRow[] }>(`/tagintel/revisions/${encodeURIComponent(id)}`),
+  revertTagRevision: (id: string, connectionId = "") =>
+    http<TagRevertResult>(`/tagintel/revisions/${encodeURIComponent(id)}/revert`, {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connectionId, approved: true }),
     }),
   // RBAC / Access Review — server cache, per-scope refresh.
   rbacOverview: (connectionId?: string | null) =>
@@ -6840,6 +7059,8 @@ export interface AppSettings {
   assessment_severity_weights: Record<string, number>;
   assessment_score_good: number;
   assessment_score_warn: number;
+  workload_health_weights?: Record<string, number>;
+  workload_nightly_refresh?: boolean;
   architecture_category_colors: Record<string, string>;
   radar_cache_ttl_s?: number;
   radar_digest_lead_days?: number[];
@@ -6952,6 +7173,62 @@ export interface Workload {
 export interface WorkloadEvidence {
   kind: string; // provenance | network | scope | rbac
   detail: string;
+}
+
+// ---- Workload command-center profile (cache-only rollup) ------------------------
+export interface WorkloadProfileComposition {
+  total: number;
+  scope_counts: { mg?: number; subscription?: number; resource_group?: number; resource?: number };
+  by_category: { category: string; count: number }[];
+  by_type: { type: string; friendly: string; count: number }[];
+  by_location: { location: string; count: number }[];
+  by_subscription: { subscription_id: string; count: number }[];
+}
+
+export interface WorkloadProfileHealth {
+  monitoring: number | null;
+  telemetry: number | null;
+  backupdr: number | null;
+  performance: number | null;
+  ownership: number | null;
+  policy: number | null;
+  tags: number | null;
+  score: number | null;          // composite 0-100, null if nothing analyzed
+  band: "good" | "warn" | "poor" | "unknown";
+  contributing: string[];
+  missing: string[];
+  weights: Record<string, number>;
+  extras: Record<string, Record<string, number | null>>;
+}
+
+export interface WorkloadProfile {
+  id: string;
+  name: string;
+  connection_id: string;
+  classification: {
+    workload_type: string;
+    environment: string;
+    criticality: string;
+    data_classification: string;
+  };
+  composition: WorkloadProfileComposition;
+  health: WorkloadProfileHealth;
+  risk: {
+    retirements_90d: number | null;
+    retirements_total: number | null;
+    criticals: number | null;
+  };
+  activity: { last_refreshed: string; last_refreshed_age_s: number | null; updated_at: string };
+  freshness: Record<string, number | null>;
+  score_trend: { points: number[]; current: number | null; previous: number | null; delta: number | null; count: number };
+  analyzed: boolean;
+}
+
+export interface WorkloadHealthWeights {
+  signals: string[];
+  weights: Record<string, number>;
+  bands: { good: number; warn: number };
+  nightly_refresh: boolean;
 }
 
 export interface TypeCount {
@@ -7093,7 +7370,7 @@ export async function streamPrefetch(
 
 /** Stream AI Workload Autopilot discovery progress + candidates over SSE. */
 export async function streamAutopilot(
-  body: { connection_id: string; scope_kind: string; scope_id: string; scope_name: string },
+  body: { connection_id: string; scope_kind: string; scope_id: string; scope_name: string; strategy?: string; mode?: string; tag_key?: string },
   handlers: AutopilotHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

@@ -29,6 +29,7 @@ import {
   ADMIN_SECTION_IDS,
   ACCESS_SUB_IDS,
   AUTOMATIONS_NAV,
+  PROACTIVE_NAV,
   POLICY_TAB_IDS,
   INVENTORY_TAB_IDS,
   TAGINTEL_TAB_IDS,
@@ -100,6 +101,9 @@ const StatsPanel = lazy(() => import("./MonitorView").then((m) => ({ default: m.
 const WorkloadsPanel = lazy(() =>
   import("./WorkloadsView").then((m) => ({ default: m.WorkloadsPanel })),
 );
+const WorkloadDetailPanel = lazy(() =>
+  import("./workloads/WorkloadDetail").then((m) => ({ default: m.WorkloadDetailPanel })),
+);
 const OwnershipPanel = lazy(() =>
   import("./OwnershipView").then((m) => ({ default: m.OwnershipPanel })),
 );
@@ -120,6 +124,9 @@ const AssessmentsPanel = lazy(() =>
 );
 const ArchitecturesPanel = lazy(() =>
   import("./ArchitecturesView").then((m) => ({ default: m.ArchitecturesPanel })),
+);
+const ProactiveOverviewPanel = lazy(() =>
+  import("./ProactiveOverview").then((m) => ({ default: m.ProactiveOverviewPanel })),
 );
 const PolicyPanel = lazy(() =>
   import("./PolicyView").then((m) => ({ default: m.PolicyPanel })),
@@ -483,6 +490,12 @@ export default function ChatView() {
   const inStats = location.pathname.startsWith("/stats");
   // Azure Workloads section.
   const inWorkloads = location.pathname.startsWith("/workloads");
+  // A concrete /workloads/:id opens the workload command-center detail page; bare
+  // /workloads is the fleet list.
+  const workloadDetailId = (() => {
+    const seg = location.pathname.split("/");
+    return seg[1] === "workloads" && seg[2] ? seg[2] : "";
+  })();
   // Ownership section. Sub-tab lives in the URL (/ownership/:tab) so a refresh restores it.
   const inOwnership = location.pathname.startsWith("/ownership");
   const ownershipTab: OwnershipTab = (() => {
@@ -542,6 +555,9 @@ export default function ChatView() {
   const inPerformance = location.pathname.startsWith("/performance");
   // Estate Graph: central workload-aware knowledge graph (admin-only).
   const inGraph = location.pathname.startsWith("/graph");
+  // Proactive Support landing page (bare /proactive) — the grouped overview of all the
+  // posture/forensic/design dashboards (mirrors the Settings overview at bare /admin).
+  const inProactive = location.pathname.startsWith("/proactive");
   // Azure Policy sub-tab lives in the URL (/policy/:tab) so a refresh restores the same view.
   const policyTab: PolicyTab = (() => {
     const seg = location.pathname.split("/")[2] as PolicyTab | undefined;
@@ -622,12 +638,12 @@ export default function ChatView() {
   useEffect(() => {
     setAutomationsOpen(inAutomations && !inCustomAgents);
   }, [inAutomations, inCustomAgents]);
-  // NOTE: Architectures is a top-level item — NOT a Proactive Support child — so it must
-  // not appear in this condition. Including it caused Proactive Support to wrongly auto-
-  // expand whenever the user opened Architectures.
+  // Ownership, Architectures and Estate Graph now live UNDER Proactive Support, so opening
+  // any of them (or the /proactive landing) keeps the group expanded.
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
-    || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer;
+    || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
+    || inOwnership || inArchitectures || inGraph || inProactive;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2396,114 +2412,33 @@ export default function ChatView() {
           </div>
         )}
 
-        {/* Ownership: assign accountable owners/teams across the estate. All users. */}
-        {railCollapsed ? (
-          <Link
-            to="/ownership"
-            title="Ownership"
-            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-              inOwnership
-                ? "bg-gray-200 text-gray-900"
-                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-            }`}
-          >
-            <OwnershipIcon className="h-[18px] w-[18px]" />
-          </Link>
-        ) : (
-          <div className="mb-1 px-2">
-            <Link
-              to="/ownership"
-              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                inOwnership
-                  ? "bg-gray-200 font-medium text-gray-900"
-                  : "text-gray-700 hover:bg-gray-200/60"
-              }`}
-            >
-              <OwnershipIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-              <span>Ownership</span>
-            </Link>
-          </div>
-        )}
-
-        {/* Architectures: visual application architecture diagrams (manual or AI). All users. */}
-        {railCollapsed ? (
-          <Link
-            to="/architectures"
-            title="Architectures"
-            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-              inArchitectures
-                ? "bg-gray-200 text-gray-900"
-                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-            }`}
-          >
-            <ArchitectureIcon className="h-[18px] w-[18px]" />
-          </Link>
-        ) : (
-          <div className="mb-1 px-2">
-            <Link
-              to="/architectures"
-              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                inArchitectures
-                  ? "bg-gray-200 font-medium text-gray-900"
-                  : "text-gray-700 hover:bg-gray-200/60"
-              }`}
-            >
-              <ArchitectureIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-              <span>Architectures</span>
-            </Link>
-          </div>
-        )}
-
-        {/* Estate Graph: central workload-aware knowledge graph of the whole tenant. Admin-only. */}
-        {me?.role === "admin" && (railCollapsed ? (
-          <Link
-            to="/graph"
-            title="Estate Graph"
-            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
-              inGraph ? "bg-gray-200 text-gray-900" : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
-            }`}
-          >
-            <GraphIcon className="h-[18px] w-[18px]" />
-          </Link>
-        ) : (
-          <div className="mb-1 px-2">
-            <Link
-              to="/graph"
-              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
-                inGraph ? "bg-gray-200 font-medium text-gray-900" : "text-gray-700 hover:bg-gray-200/60"
-              }`}
-            >
-              <GraphIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
-              <span>Estate Graph</span>
-            </Link>
-          </div>
-        ))}
-
-        {/* Proactive Support: posture/forensic dashboards grouped under one expandable
-            menu (Monitoring/Telemetry/Backup-DR coverage, Evidence Locker, Retirement
-            Radar, Telemetry Intelligence, Performance Profiler). Admin-only. */}
+        {/* Proactive Support: design, posture, coverage, governance and forensic dashboards
+            grouped under one expandable menu with category subheadings (mirrors Settings).
+            Clicking the label opens the /proactive landing page. Ownership, Architectures and
+            Estate Graph now live in here too. Admin-only. */}
         {me?.role === "admin" && (() => {
-          const items = [
-            { to: "/assessments", label: "Assessments", Icon: AssessmentIcon, active: inAssessments },
-            { to: "/performance", label: "Performance Profiler", Icon: PerformanceIcon, active: inPerformance },
-            { to: "/coverage", label: "Monitoring Coverage", Icon: CoverageIcon, active: inCoverage },
-            { to: "/telemetry", label: "Telemetry Coverage", Icon: TelemetryIcon, active: inTelemetry },
-            { to: "/backupdr", label: "Backup & DR Coverage", Icon: BackupIcon, active: inBackupDr },
-            { to: "/radar", label: "Retirement Radar", Icon: RadarIcon, active: inRadar },
-            { to: "/reservations", label: "Reservations Monitor", Icon: ReservationIcon, active: inReservations },
-            { to: "/inventory", label: "Inventory", Icon: InventoryIcon, active: inInventory },
-            { to: "/tagintel", label: "Tag Intelligence", Icon: TagIcon, active: inTagIntel },
-            { to: "/change-explorer", label: "Change Explorer", Icon: ChangeIcon, active: inChangeExplorer },
-            { to: "/policy", label: "Azure Policy", Icon: PolicyIcon, active: inPolicy },
-            { to: "/identity", label: "Identity", Icon: IdentityIcon, active: inIdentity },
-            { to: "/rbac", label: "RBAC", Icon: RbacIcon, active: inRbac },
-            { to: "/telemetry-intel", label: "Telemetry Intelligence", Icon: TelemetryIntelIcon, active: inTeleIntel },
-            { to: "/evidence", label: "Evidence Locker", Icon: EvidenceIcon, active: inEvidence },
-          ];
-          const anyActive = items.some((i) => i.active);
+          const PROACTIVE_ICONS: Record<string, typeof ProactiveIcon> = {
+            architectures: ArchitectureIcon, ownership: OwnershipIcon, graph: GraphIcon,
+            assessments: AssessmentIcon, performance: PerformanceIcon,
+            coverage: CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
+            inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
+            policy: PolicyIcon, identity: IdentityIcon, rbac: RbacIcon,
+            radar: RadarIcon, reservations: ReservationIcon,
+            "telemetry-intel": TelemetryIntelIcon, evidence: EvidenceIcon,
+          };
+          const activeById: Record<string, boolean> = {
+            architectures: inArchitectures, ownership: inOwnership, graph: inGraph,
+            assessments: inAssessments, performance: inPerformance,
+            coverage: inCoverage, telemetry: inTelemetry, backupdr: inBackupDr,
+            inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
+            policy: inPolicy, identity: inIdentity, rbac: inRbac,
+            radar: inRadar, reservations: inReservations,
+            "telemetry-intel": inTeleIntel, evidence: inEvidence,
+          };
+          const anyActive = inAnyProactive;
           return railCollapsed ? (
             <Link
-              to="/coverage"
+              to="/proactive"
               title="Proactive Support"
               className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
                 anyActive
@@ -2516,15 +2451,15 @@ export default function ChatView() {
           ) : (
             <div className="mb-1 px-2">
               <div className="flex items-center">
-                <button
-                  onClick={() => setProactiveOpen((v) => !v)}
+                <Link
+                  to="/proactive"
                   className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
                     anyActive ? "bg-gray-200 font-medium text-gray-900" : "text-gray-700 hover:bg-gray-200/60"
                   }`}
                 >
                   <ProactiveIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
                   <span>Proactive Support</span>
-                </button>
+                </Link>
                 <button
                   onClick={() => setProactiveOpen((v) => !v)}
                   title={proactiveOpen ? "Collapse" : "Expand"}
@@ -2535,20 +2470,30 @@ export default function ChatView() {
               </div>
               {proactiveOpen && (
                 <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {items.map((it) => (
-                    <Link
-                      key={it.to}
-                      to={it.to}
-                      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
-                        it.active
-                          ? "bg-gray-200 font-medium text-gray-900"
-                          : "text-gray-600 hover:bg-gray-200/60"
-                      }`}
-                    >
-                      <it.Icon className="h-[15px] w-[15px] shrink-0 text-gray-500" />
-                      <span>{it.label}</span>
-                    </Link>
-                  ))}
+                  {PROACTIVE_NAV.map((n) => {
+                    const Icon = PROACTIVE_ICONS[n.id];
+                    const active = activeById[n.id];
+                    return (
+                      <div key={n.id}>
+                        {n.group && (
+                          <div className="px-2.5 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                            {n.group}
+                          </div>
+                        )}
+                        <Link
+                          to={n.to}
+                          className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition ${
+                            active
+                              ? "bg-gray-200 font-medium text-gray-900"
+                              : "text-gray-600 hover:bg-gray-200/60"
+                          }`}
+                        >
+                          {Icon && <Icon className="h-[15px] w-[15px] shrink-0 text-gray-500" />}
+                          <span>{n.label}</span>
+                        </Link>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2960,7 +2905,15 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Workloads">
             <Suspense fallback={<PanelLoading />}>
-              <WorkloadsPanel />
+              {workloadDetailId ? <WorkloadDetailPanel /> : <WorkloadsPanel />}
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inProactive ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Proactive Support">
+            <Suspense fallback={<PanelLoading />}>
+              <ProactiveOverviewPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>
