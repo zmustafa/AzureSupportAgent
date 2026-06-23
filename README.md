@@ -15,7 +15,6 @@ investigate, monitor, and remediate.
 [![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](frontend/package.json)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![GitHub stars](https://img.shields.io/github/stars/zmustafa/AzureSupportAgent?style=social)](https://github.com/zmustafa/AzureSupportAgent/stargazers)
 
 [Deploy](#-deploy-to-azure-one-click) · [Install guide](docs/INSTALLATION.md) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
 
