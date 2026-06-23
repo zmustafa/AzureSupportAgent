@@ -27,7 +27,7 @@ from app.auth.service import (
 )
 from app.auth.settings import DEFAULTS as AUTH_DEFAULTS
 from app.auth.settings import load_auth_settings, save_auth_settings
-from app.core.crypto import encrypt
+from app.core.crypto import decrypt, encrypt
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.models import AuditLog
@@ -571,6 +571,49 @@ async def update_idp(
     await db.commit()
     await _audit(db, principal, "access.idp_updated", p.id, {})
     return _idp_out(p)
+
+
+@router.post("/identity-providers/test")
+async def test_idp(
+    body: IdPBody,
+    idp_id: str | None = None,
+    _: Principal = Depends(_guard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Best-effort validation of an OIDC/SAML provider config WITHOUT saving. For OIDC it
+    fetches the discovery document + JWKS; for SAML it parses the signing certificate and
+    checks required fields. When ``idp_id`` is given, blank secret/certificate fields fall
+    back to the stored config so an Edit can be tested without re-entering them."""
+    from app.auth import oidc as oidc_mod, saml as saml_mod
+
+    cfg = {k: v for k, v in (body.config or {}).items() if not str(k).endswith("_set")}
+    # For an existing provider, fill blank secrets/cert from the stored (decrypted) config.
+    if idp_id:
+        p = await db.get(IdentityProvider, idp_id)
+        if p is not None:
+            stored = dict(p.config_json or {})
+            if not cfg.get("client_secret") and stored.get("client_secret"):
+                try:
+                    cfg["client_secret"] = decrypt(stored["client_secret"])
+                except Exception:  # noqa: BLE001
+                    pass
+            if not cfg.get("certificate") and stored.get("certificate"):
+                cfg["certificate"] = stored["certificate"]
+    try:
+        if body.type == "saml":
+            checks = saml_mod.test_config(cfg)
+        else:
+            checks = await oidc_mod.test_config(cfg)
+    except Exception as e:  # noqa: BLE001 - surface any unexpected error as a failed check
+        checks = [{"name": "Test run", "ok": False, "detail": str(e)[:200], "critical": True}]
+    critical_ok = all(c["ok"] for c in checks if c.get("critical", True))
+    passed = sum(1 for c in checks if c["ok"])
+    return {
+        "ok": critical_ok,
+        "checks": checks,
+        "summary": f"{passed}/{len(checks)} checks passed."
+        + ("" if critical_ok else " Some required checks failed."),
+    }
 
 
 @router.delete("/identity-providers/{idp_id}")

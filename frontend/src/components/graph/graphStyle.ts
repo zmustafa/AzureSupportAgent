@@ -91,6 +91,10 @@ export function lensColor(lens: Lens, node: GraphNode): string {
 }
 
 export function ownerOf(node: GraphNode): string {
+  // Prefer an explicitly resolved owner (stamped from the ownership registry); fall back to
+  // owner/team tags, then environment, so the lens still colours something useful offline.
+  const resolved = node.data?.owner;
+  if (resolved && typeof resolved === "string") return resolved;
   const tags = node.data?.tags;
   if (Array.isArray(tags)) {
     const owner = tags.find((t: string) => /owner|team/i.test(t));

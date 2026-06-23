@@ -32,6 +32,20 @@ _PASSWORD_CHANGE_ALLOWLIST = frozenset(
     }
 )
 
+# A "no access" principal (the noaccess role, or a user with no roles at all → zero
+# permissions) is blocked from EVERY API path except this minimal allowlist, so the frontend
+# can still resolve who they are (to show a "no access" screen) and let them sign out. This
+# enforces the lockout server-side — not just by hiding UI sections — so a noaccess user can't
+# reach any data by calling the API directly.
+_NO_ACCESS_ALLOWLIST = frozenset(
+    {
+        "/api/me",
+        "/api/auth/me",
+        "/api/auth/logout",
+        "/api/auth/config",
+    }
+)
+
 
 @dataclass
 class Principal:
@@ -97,6 +111,15 @@ async def get_principal(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Password change required before continuing.",
+        )
+    # Hard "no access" lockout: a principal with zero effective permissions (the noaccess
+    # role, or a user with no roles) is denied every endpoint except the self/logout
+    # allowlist. This makes the noaccess role a real server-side wall, so auto-provisioned
+    # SSO users can authenticate but reach nothing until an admin grants them a role.
+    if not principal.permissions and not principal.is_admin and request.url.path not in _NO_ACCESS_ALLOWLIST:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has no access. Contact an administrator to be granted a role.",
         )
     return principal
 

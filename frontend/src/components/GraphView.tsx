@@ -84,6 +84,9 @@ export function GraphPanel() {
 
   const [connectionId, setConnectionId] = usePersistedState<string>("azsup.graph.connection", "");
   const [lens, setLens] = usePersistedState<Lens>("azsup.graph.lens", "none");
+  // Mirror of `lens` for use inside stable useCallbacks (avoids stale closures + dep churn).
+  const lensRef = useRef(lens);
+  lensRef.current = lens;
   const [hidden, setHidden] = useState<Set<GraphNodeKind>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [ctx, setCtx] = useState<CtxMenu>(null);
@@ -245,6 +248,33 @@ export function GraphPanel() {
     }
   }, []);
 
+  const stampOwners = useCallback(async (nodes: GraphNode[]) => {
+    // Resolve the effective owner of each workload node from the ownership registry and stamp
+    // it into the node data so the Ownership lens colours by REAL assignments (not just tags).
+    const subjects = nodes
+      .filter((n) => n.kind === "workload" && n.data?.workload_id)
+      .map((n) => ({ subject_kind: "workload", subject_id: String(n.data?.workload_id || "") }))
+      .filter((s) => s.subject_id);
+    if (subjects.length === 0) return;
+    try {
+      const res = await api.resolveOwnerBatch(subjects);
+      const byId = new Map(res.results.map((r) => [r.subject_id, r]));
+      for (const n of nodes) {
+        if (n.kind !== "workload") continue;
+        const r = byId.get(String(n.data?.workload_id || ""));
+        if (!r || r.unowned || !r.owners.length) continue;
+        const primary = r.owners.find((o) => o.primary) ?? r.owners[0];
+        const label = primary.display_name || primary.email;
+        if (!label) continue;
+        const existing = nodeDataRef.current.get(n.id);
+        if (existing) existing.data = { ...existing.data, owner: label, owner_source: r.source };
+      }
+      if (lensRef.current === "ownership") applyLens("ownership");
+    } catch {
+      /* ownership is best-effort decoration; never block the graph */
+    }
+  }, [applyLens]);
+
   const loadGraph = useCallback((result: GraphResult, layout = "breadthfirst") => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -252,14 +282,28 @@ export function GraphPanel() {
     remember(result.nodes);
     cy.elements().remove();
     cy.add(toElements(result.nodes, result.edges, lens));
-    cy.resize();
-    runLayout(layout);
     applyHidden(hidden);
     applyLens(lens);
-    // Belt-and-suspenders re-fit after the container + layout settle (Vite-reloaded SPAs can
-    // report a 0-size container on the first paint, which leaves the canvas blank).
-    requestAnimationFrame(() => { try { cyRef.current?.resize(); cyRef.current?.fit(undefined, 50); } catch { /* ignore */ } });
+    void stampOwners(result.nodes);
     setStats({ nodes: result.nodes.length, edges: result.edges.length });
+    // Defer layout + fit until the container actually has a non-zero size. A fresh remount
+    // (navigate away → back to /graph) can report a 0×0 flex container for several frames; if
+    // fcose + fit run then, every node is positioned/framed against a zero box and the canvas
+    // paints BLANK even though the model has all its nodes (status still shows "N nodes"). Poll
+    // a handful of frames for a real size, then lay out + fit. The normal (already-sized) case
+    // runs immediately on the first attempt, so there's no regression on a fresh load.
+    const layoutWhenSized = (attempt = 0) => {
+      const c = cyRef.current;
+      const el = containerRef.current;
+      if (!c || !el) return;
+      if ((el.clientWidth < 2 || el.clientHeight < 2) && attempt < 40) {
+        requestAnimationFrame(() => layoutWhenSized(attempt + 1));
+        return;
+      }
+      try { c.resize(); } catch { /* ignore */ }
+      runLayout(layout);
+    };
+    layoutWhenSized();
   }, [remember, runLayout, applyHidden, applyLens, hidden, lens]);
 
   const mergeResult = useCallback((result: GraphResult, sourceId?: string): string[] => {
@@ -701,7 +745,17 @@ export function GraphPanel() {
   const loadedOverviewRef = useRef<unknown>(null);
   useEffect(() => {
     if (!overviewQ.data || focusScope) return;
-    if (loadedOverviewRef.current === overviewQ.data) return;
+    // The live cytoscape instance is recreated on every (re)mount — navigating away to another
+    // SPA route and back destroys the old `cy` and builds a fresh, EMPTY one. The
+    // `loadedOverviewRef` guard (which prevents a redundant reload on a focusScope toggle) would
+    // otherwise early-return on that remount because `overviewQ.data` is still the same cached
+    // object — leaving the new canvas blank even though the status line says "N nodes". So also
+    // reload whenever the current instance has no elements. `cyReady` is in the deps so this runs
+    // once the fresh instance exists.
+    const cy = cyRef.current;
+    const cyEmpty = !cy || cy.elements().length === 0;
+    if (loadedOverviewRef.current === overviewQ.data && !cyEmpty) return;
+    if (!cy) return; // wait for the cytoscape instance (cyReady will re-trigger us)
     loadedOverviewRef.current = overviewQ.data;
     loadGraph(overviewQ.data, layoutRef.current);
     snapshotRef.current("reset");
@@ -715,7 +769,7 @@ export function GraphPanel() {
       if (t && t.nonempty()) { setSelected(focusId); cy!.animate({ center: { eles: t }, zoom: 1.2 }, { duration: 350 }); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overviewQ.data, focusScope]);
+  }, [overviewQ.data, focusScope, cyReady]);
 
   // Re-focus when overlays/drift change while focused.
   useEffect(() => {

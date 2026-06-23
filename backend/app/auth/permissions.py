@@ -22,6 +22,8 @@ PERMISSIONS: dict[str, str] = {
     "assessments.run": "Run assessments; manage waivers, custom checks, and schedules",
     "evidence.read": "View the Evidence Locker (investigation snapshots) and diffs",
     "evidence.write": "Create, attach, share, and export evidence snapshots",
+    "ownership.read": "View ownership (owners, assignments, coverage, my estate)",
+    "ownership.write": "Assign / transfer ownership, manage owners and teams",
     "settings.read": "View application settings",
     "settings.write": "Change application settings (general, tuning, providers)",
     "users.manage": "Manage users, groups, roles, identity providers, sessions",
@@ -52,6 +54,8 @@ SYSTEM_ROLES: list[tuple[str, str, list[str]]] = [
             "assessments.run",
             "evidence.read",
             "evidence.write",
+            "ownership.read",
+            "ownership.write",
             "settings.read",
         ],
     ),
@@ -67,15 +71,26 @@ SYSTEM_ROLES: list[tuple[str, str, list[str]]] = [
             "tasks.read",
             "assessments.read",
             "evidence.read",
+            "ownership.read",
         ],
     ),
-    ("user", "Standard user — chat access only.", ["chat.use"]),
+    ("user", "Standard user — chat access only.", ["chat.use", "ownership.read"]),
+    (
+        "noaccess",
+        "No access — blocked from the entire application. Used as the safe default for "
+        "newly auto-provisioned SSO users until an admin grants them a real role.",
+        [],
+    ),
 ]
 
 SYSTEM_ROLE_NAMES = {name for name, _, _ in SYSTEM_ROLES}
 
+# A user whose ONLY role is this (or who has no roles at all) gets zero permissions and is
+# blocked from every API path except the minimal self/logout allowlist (see core.security).
+NO_ACCESS_ROLE = "noaccess"
+
 
 def role_rank(name: str) -> int:
     """Ordering used to pick a user's primary display role (highest wins)."""
-    order = {"user": 0, "auditor": 1, "operator": 2, "admin": 3}
+    order = {"noaccess": -1, "user": 0, "auditor": 1, "operator": 2, "admin": 3}
     return order.get(name, 0)

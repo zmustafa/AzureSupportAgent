@@ -1510,6 +1510,186 @@ export type GraphView = {
   updated_at: string;
 };
 
+// ---- Ownership ------------------------------------------------------------------
+export type OwnerLink = {
+  user_id?: string;
+  idp_id?: string;
+  external_id?: string;
+  entra_object_id?: string;
+  upn?: string;
+};
+
+export type Owner = {
+  id: string;
+  kind: "person" | "team" | "service";
+  display_name: string;
+  email: string;
+  source: "manual" | "app_user" | "entra" | "oidc_group" | "rbac";
+  link: OwnerLink;
+  members: string[];
+  group_ref: Record<string, any>;
+  delegate?: { owner_id?: string; until?: string; reason?: string };
+  notes: string;
+  tags: string[];
+  assignment_count?: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+};
+
+export type OwnershipAssignment = {
+  id: string;
+  owner_id: string;
+  subject_kind: "mg" | "subscription" | "resource_group" | "resource" | "workload" | "architecture";
+  subject_id: string;
+  subject_name: string;
+  subscription_id: string;
+  resource_group: string;
+  role: "technical" | "business" | "security" | "cost" | "operations" | "escalation";
+  primary: boolean;
+  source: "manual" | "tag" | "rbac" | "workload" | "ai";
+  confidence: number;
+  notes: string;
+  attested_at?: string;
+  owner?: { id: string; display_name: string; email: string; kind: string } | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+};
+
+export type DirectoryHit = {
+  source: "app_user" | "entra" | "oidc_group" | "rbac" | "manual";
+  kind: "person" | "team" | "service";
+  display_name: string;
+  email: string;
+  link: OwnerLink;
+  group_ref?: Record<string, any>;
+};
+
+export type DirectorySearch = {
+  query: string;
+  results: DirectoryHit[];
+  counts: { app_users: number; entra: number };
+  notes: Record<string, string>;
+};
+
+export type ResolvedOwnerView = {
+  owner_id: string;
+  display_name: string;
+  email: string;
+  kind: string;
+  role: string;
+  primary: boolean;
+  source: string;
+  confidence: number;
+  assignment_id: string;
+  attested_at: string;
+  delegate?: { owner_id: string; until?: string; reason?: string } | null;
+};
+
+export type ResolveResult = {
+  subject_kind: string;
+  subject_id: string;
+  owners: ResolvedOwnerView[];
+  source: "direct" | "tag" | "workload" | "inherited" | "none";
+  inherited_from: { kind: string; id: string; name: string } | null;
+  unowned: boolean;
+};
+
+export type OwnershipSubject = {
+  subject_kind: string;
+  subject_id: string;
+  subject_name: string;
+  owners: ResolvedOwnerView[];
+  source: string;
+  unowned: boolean;
+};
+
+// Section-wide scope for the Ownership module (Tenant / Subscription / Workload), mirroring
+// the scope selectors on the Proactive Support modules.
+export type OwnershipScope = {
+  kind: "tenant" | "subscription" | "workload";
+  workloadId: string;
+  subId: string;
+  subName: string;
+};
+
+function ownScopeQs(scope?: OwnershipScope): string {
+  if (!scope || scope.kind === "tenant") return "";
+  const qs = new URLSearchParams({ scope_kind: scope.kind });
+  if (scope.kind === "workload" && scope.workloadId) qs.set("workload_id", scope.workloadId);
+  if (scope.kind === "subscription" && scope.subId) qs.set("subscription_id", scope.subId);
+  return `?${qs.toString()}`;
+}
+
+export type OwnershipCoverageFinding = {
+  id: string;
+  severity: "error" | "warning" | "info";
+  title: string;
+  detail: string;
+  count: number;
+  resources: string[];
+};
+
+export type OwnershipCoverage = {
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  generated_at: string;
+  demo: boolean;
+  coverage_pct: number | null;
+  kpis: { total: number; owned: number; unowned: number; owners: number; orphan_owners: number; prod_unowned: number };
+  by_source: Record<string, number>;
+  by_owner: { owner_id: string; label: string; email: string; count: number; via: Record<string, number> }[];
+  unowned: { id: string; name: string; type: string; resource_group: string; subscription_id: string; owner: string; owner_source: string }[];
+  orphans: { id: string; name: string; tag_owner: string }[];
+  findings: OwnershipCoverageFinding[];
+  error?: string;
+  never_loaded?: boolean;
+};
+
+export type OwnerEstate = {
+  owner: { id: string; display_name: string; email: string; kind: string; source: string; link: OwnerLink };
+  total: number;
+  by_kind: Record<string, number>;
+  by_role: Record<string, number>;
+  assignments: OwnershipAssignment[];
+  linked: boolean;
+};
+
+export type OwnershipEstateResponse = {
+  scope: "me" | "owner";
+  principal?: { email: string; display_name: string };
+  estates: OwnerEstate[];
+  total_subjects?: number;
+  matched_owners?: number;
+};
+
+export type OwnershipSuggestion = {
+  id: string;
+  subject_kind: string;
+  subject_id: string;
+  subject_name: string;
+  candidate: { kind: string; display_name: string; email: string; source: string; link: OwnerLink };
+  role: string;
+  confidence: number;
+  evidence: string[];
+  signal: string;
+};
+
+export type AttestationItem = OwnershipAssignment & {
+  owner?: { id: string; display_name: string; email: string; kind: string } | null;
+  attestation_status: "never" | "stale" | "fresh";
+  days_since: number | null;
+};
+
+export type LeaverRisk = {
+  owner: { id: string; display_name: string; email: string };
+  reason: string;
+  orphaned_subjects: number;
+  assignments: OwnershipAssignment[];
+};
+
 export const api = {
   me: () => http<Me>("/me"),
   activeLlm: () => http<ActiveLlm>("/llm/active"),
@@ -2137,6 +2317,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  acTestIdp: (body: AcIdpBody, id?: string) =>
+    http<IdpTestResult>(`/admin/access/identity-providers/test${id ? `?idp_id=${encodeURIComponent(id)}` : ""}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   acDeleteIdp: (id: string) =>
     http<{ ok: boolean }>(`/admin/access/identity-providers/${id}`, { method: "DELETE" }),
   acSessions: (includeExpired = false) =>
@@ -2559,6 +2744,105 @@ export const api = {
     }),
   reservationsDigestPreview: (demo = false, connectionId = "") =>
     http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  // Ownership — owners/teams directory, assignments, people-picker, resolver.
+  ownershipOwners: () => http<{ owners: Owner[]; total: number }>("/ownership/owners"),
+  ownershipOwner: (id: string) => http<Owner & { assignments: OwnershipAssignment[] }>(`/ownership/owners/${encodeURIComponent(id)}`),
+  upsertOwner: (body: Partial<Owner>) =>
+    http<Owner>("/ownership/owners", { method: "POST", body: JSON.stringify(body) }),
+  ownerFromDirectory: (hit: DirectoryHit) =>
+    http<Owner>("/ownership/owners/from-directory", {
+      method: "POST",
+      body: JSON.stringify({
+        source: hit.source, kind: hit.kind, display_name: hit.display_name,
+        email: hit.email, link: hit.link, group_ref: hit.group_ref || {},
+      }),
+    }),
+  deleteOwner: (id: string) => http<{ ok: boolean }>(`/ownership/owners/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  restoreOwner: (id: string) => http<Owner>(`/ownership/owners/${encodeURIComponent(id)}/restore`, { method: "POST", body: "{}" }),
+  purgeOwner: (id: string) => http<{ ok: boolean }>(`/ownership/owners/${encodeURIComponent(id)}/purge`, { method: "DELETE" }),
+  ownersTrash: () => http<{ owners: Owner[] }>("/ownership/owners/trash"),
+  emptyOwnersTrash: () => http<{ purged: number }>("/ownership/owners/trash/empty", { method: "POST", body: "{}" }),
+  ownershipAssignments: (params: { subject_kind?: string; subject_id?: string; owner_id?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.subject_kind) qs.set("subject_kind", params.subject_kind);
+    if (params.subject_id) qs.set("subject_id", params.subject_id);
+    if (params.owner_id) qs.set("owner_id", params.owner_id);
+    const q = qs.toString();
+    return http<{ assignments: OwnershipAssignment[]; total: number }>(`/ownership/assignments${q ? `?${q}` : ""}`);
+  },
+  upsertAssignment: (body: Partial<OwnershipAssignment>) =>
+    http<OwnershipAssignment>("/ownership/assignments", { method: "POST", body: JSON.stringify(body) }),
+  bulkAssign: (owner_id: string, role: string, primary: boolean, subjects: Partial<OwnershipAssignment>[]) =>
+    http<{ created: OwnershipAssignment[]; count: number }>("/ownership/assignments/bulk", {
+      method: "POST",
+      body: JSON.stringify({ owner_id, role, primary, subjects }),
+    }),
+  transferOwnership: (from_owner_id: string, to_owner_id: string) =>
+    http<{ moved: number }>("/ownership/assignments/transfer", {
+      method: "POST",
+      body: JSON.stringify({ from_owner_id, to_owner_id }),
+    }),
+  deleteAssignment: (id: string) => http<{ ok: boolean }>(`/ownership/assignments/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  restoreAssignment: (id: string) => http<OwnershipAssignment>(`/ownership/assignments/${encodeURIComponent(id)}/restore`, { method: "POST", body: "{}" }),
+  assignmentsTrash: () => http<{ assignments: OwnershipAssignment[] }>("/ownership/assignments/trash"),
+  emptyAssignmentsTrash: () => http<{ purged: number }>("/ownership/assignments/trash/empty", { method: "POST", body: "{}" }),
+  directorySearch: (q: string, connectionId = "", includeEntra = true) => {
+    const qs = new URLSearchParams({ q, include_entra: includeEntra ? "true" : "false" });
+    if (connectionId) qs.set("connection_id", connectionId);
+    return http<DirectorySearch>(`/ownership/directory/search?${qs.toString()}`);
+  },
+  resolveOwner: (subject_kind: string, subject_id: string, subscription_id = "", resource_group = "") => {
+    const qs = new URLSearchParams({ subject_kind, subject_id });
+    if (subscription_id) qs.set("subscription_id", subscription_id);
+    if (resource_group) qs.set("resource_group", resource_group);
+    return http<ResolveResult>(`/ownership/resolve?${qs.toString()}`);
+  },
+  resolveOwnerBatch: (subjects: { subject_kind: string; subject_id: string; tags?: any; subscription_id?: string; resource_group?: string }[]) =>
+    http<{ results: ResolveResult[] }>("/ownership/resolve/batch", { method: "POST", body: JSON.stringify({ subjects }) }),
+  ownershipSubjects: (scope?: OwnershipScope) => http<{ subjects: OwnershipSubject[]; total: number; owned: number; unowned: number }>(`/ownership/subjects${ownScopeQs(scope)}`),
+  ownershipCoverage: (scopeKind: string, workloadId: string, scopeId: string) => {
+    const qs = new URLSearchParams({ scope_kind: scopeKind });
+    if (workloadId) qs.set("workload_id", workloadId);
+    if (scopeId) qs.set("scope_id", scopeId);
+    return http<OwnershipCoverage>(`/ownership/coverage?${qs.toString()}`);
+  },
+  refreshOwnershipCoverage: (scopeKind: string, workloadId: string, scopeId: string) => {
+    const qs = new URLSearchParams({ scope_kind: scopeKind });
+    if (workloadId) qs.set("workload_id", workloadId);
+    if (scopeId) qs.set("scope_id", scopeId);
+    return http<OwnershipCoverage>(`/ownership/refresh?${qs.toString()}`, { method: "POST", body: "{}" });
+  },
+  ownershipTrend: (scopeKind: string, workloadId: string, scopeId: string) => {
+    const qs = new URLSearchParams({ scope_kind: scopeKind });
+    if (workloadId) qs.set("workload_id", workloadId);
+    if (scopeId) qs.set("scope_id", scopeId);
+    return http<CoverageTrend>(`/ownership/trend?${qs.toString()}`);
+  },
+  ownershipEstate: (ownerId = "") =>
+    http<OwnershipEstateResponse>(`/ownership/estate${ownerId ? `?owner_id=${encodeURIComponent(ownerId)}` : ""}`),
+  ownershipSuggestions: (scope?: OwnershipScope) => http<{ suggestions: OwnershipSuggestion[]; total: number; note: string }>(`/ownership/suggestions${ownScopeQs(scope)}`),
+  acceptSuggestion: (s: OwnershipSuggestion) =>
+    http<{ owner: Owner; assignment: OwnershipAssignment }>("/ownership/suggestions/accept", {
+      method: "POST",
+      body: JSON.stringify({
+        subject_kind: s.subject_kind, subject_id: s.subject_id, subject_name: s.subject_name,
+        candidate: s.candidate, role: s.role, primary: true,
+      }),
+    }),
+  ownershipAttestation: (scope?: OwnershipScope) => http<{ items: AttestationItem[]; summary: { total: number; never: number; stale: number; fresh: number; stale_days: number } }>(`/ownership/attestation${ownScopeQs(scope)}`),
+  attestAssignment: (id: string) => http<OwnershipAssignment>(`/ownership/assignments/${encodeURIComponent(id)}/attest`, { method: "POST", body: "{}" }),
+  ownershipLeavers: () => http<{ at_risk: LeaverRisk[]; count: number }>("/ownership/leavers"),
+  ownershipWritebackStatus: () => http<{ enabled: boolean }>("/ownership/writeback/status"),
+  ownershipWritebackIac: (resourceId: string, owner = "", ownerEmail = "") =>
+    http<{ bicep: string; policy: string }>("/ownership/writeback/iac", {
+      method: "POST",
+      body: JSON.stringify({ resource_id: resourceId, owner, owner_email: ownerEmail }),
+    }),
+  ownershipWritebackApply: (resourceId: string, owner = "", ownerEmail = "", connectionId = "") =>
+    http<{ ok: boolean; error: string; applied: Record<string, string> }>("/ownership/writeback/apply", {
+      method: "POST",
+      body: JSON.stringify({ resource_id: resourceId, owner, owner_email: ownerEmail, connection_id: connectionId || null }),
+    }),
   // RBAC / Access Review — server cache, per-scope refresh.
   rbacOverview: (connectionId?: string | null) =>
     http<RbacOverview>(`/rbac/overview${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
@@ -5688,6 +5972,19 @@ export interface AcIdpBody {
   enabled: boolean;
   button_label?: string;
   config: Record<string, unknown>;
+}
+
+export interface IdpTestCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+  critical: boolean;
+}
+
+export interface IdpTestResult {
+  ok: boolean;
+  checks: IdpTestCheck[];
+  summary: string;
 }
 
 export interface AcSession {

@@ -1263,6 +1263,13 @@ async def stream_message(
 
         register_rbac_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
 
+    # Ownership tools: answer "who owns X" / "what does <owner> own" / "find unowned" from the
+    # local ownership registries (read-only, no Azure calls during the turn).
+    if turn_connector_toolset is not None:
+        from app.ownership.agent_tool import register_ownership_tools
+
+        register_ownership_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
+
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
     if turn_agent is not None:

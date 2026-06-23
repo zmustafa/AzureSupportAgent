@@ -74,6 +74,55 @@ def _pem(cert: str) -> str:
     return f"-----BEGIN CERTIFICATE-----\n{lines}\n-----END CERTIFICATE-----\n"
 
 
+def test_config(idp_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Best-effort validation of a SAML provider config. Checks required fields are present,
+    the signing certificate parses (and isn't expired), and the SSO URL is well-formed. No
+    live SSO round-trip is attempted (that needs a real user)."""
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str, critical: bool = True) -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail, "critical": critical})
+
+    entity_id = (idp_cfg.get("entity_id") or "").strip()
+    sso_url = (idp_cfg.get("sso_url") or "").strip()
+    cert = (idp_cfg.get("certificate") or "").strip()
+
+    add("IdP Entity ID set", bool(entity_id), entity_id or "The IdP Entity ID (issuer) is required.")
+    add("IdP SSO URL set", bool(sso_url), sso_url or "The IdP SSO URL is required.")
+    if sso_url:
+        ok_url = sso_url.lower().startswith(("https://", "http://"))
+        add("SSO URL is a valid URL", ok_url,
+            "SSO URL should be an https:// endpoint." if not ok_url else sso_url, critical=False)
+
+    add("Signing certificate provided", bool(cert), "Paste the IdP's signing certificate (PEM or base64 DER).")
+    if cert:
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.primitives import hashes
+
+            certificate = x509.load_pem_x509_certificate(_pem(cert).encode("utf-8"))
+            add("Certificate parses", True, "Signing certificate loaded successfully.")
+            try:
+                from datetime import datetime, timezone
+                not_after = getattr(certificate, "not_valid_after_utc", None) or certificate.not_valid_after.replace(tzinfo=timezone.utc)
+                not_before = getattr(certificate, "not_valid_before_utc", None) or certificate.not_valid_before.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                in_window = not_before <= now <= not_after
+                add("Certificate within validity period", in_window,
+                    f"Valid {not_before.date()} → {not_after.date()}." if in_window
+                    else f"Out of window: {not_before.date()} → {not_after.date()}.", critical=False)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                fp = certificate.fingerprint(hashes.SHA256()).hex()
+                add("Certificate fingerprint (SHA-256)", True, ":".join(fp[i:i+2] for i in range(0, 12, 2)) + "…", critical=False)
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception as e:  # noqa: BLE001
+            add("Certificate parses", False, f"Could not parse the certificate: {str(e)[:160]}")
+    return checks
+
+
 def sp_entity_id(public_base_url: str) -> str:
     # The auth router is mounted under the global ``/api`` prefix, so every SAML route
     # (metadata + ACS) lives under ``/api/auth/saml/...``. The SP EntityID + ACS URL are

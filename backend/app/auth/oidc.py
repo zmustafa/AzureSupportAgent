@@ -72,6 +72,58 @@ def decode_state(token: str) -> dict[str, Any] | None:
     return data
 
 
+async def test_config(idp_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Best-effort validation of an OIDC provider config. Returns a list of checks
+    ``{name, ok, detail, critical}`` — no login is performed (that needs a real user), so
+    this validates the *discovery* surface: required fields, the well-known document, the
+    advertised endpoints, and that the JWKS exposes signing keys."""
+    checks: list[dict[str, Any]] = []
+
+    def add(name: str, ok: bool, detail: str, critical: bool = True) -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail, "critical": critical})
+
+    issuer = (idp_cfg.get("issuer") or "").strip()
+    discovery_url = (idp_cfg.get("discovery_url") or "").strip()
+    client_id = (idp_cfg.get("client_id") or "").strip()
+
+    add("Issuer / Discovery URL set", bool(issuer or discovery_url),
+        "Provide an Issuer URL (or an explicit Discovery URL)." if not (issuer or discovery_url)
+        else (discovery_url or (issuer.rstrip("/") + "/.well-known/openid-configuration")))
+    add("Client ID set", bool(client_id),
+        "Client ID is required." if not client_id else client_id)
+    if not (issuer or discovery_url):
+        return checks
+
+    doc: dict[str, Any] | None = None
+    try:
+        doc = await discover(issuer, discovery_url or None)
+        add("Discovery document reachable", True, "Fetched the OpenID configuration.")
+    except httpx.HTTPStatusError as e:
+        add("Discovery document reachable", False, f"HTTP {e.response.status_code} fetching the discovery URL.")
+    except Exception as e:  # noqa: BLE001
+        add("Discovery document reachable", False, f"Could not fetch discovery document: {str(e)[:160]}")
+
+    if doc:
+        for ep in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+            add(f"{ep} present", bool(doc.get(ep)), doc.get(ep) or f"Missing {ep} in the discovery document.")
+        doc_issuer = (doc.get("issuer") or "").strip()
+        if issuer and doc_issuer:
+            add("Issuer matches discovery", doc_issuer.rstrip("/") == issuer.rstrip("/"),
+                f"Configured '{issuer}' vs discovery '{doc_issuer}'.", critical=False)
+        jwks_uri = doc.get("jwks_uri")
+        if jwks_uri:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.get(jwks_uri)
+                    r.raise_for_status()
+                    keys = (r.json() or {}).get("keys") or []
+                add("JWKS exposes signing keys", len(keys) > 0,
+                    f"{len(keys)} signing key(s) published." if keys else "No keys at jwks_uri.")
+            except Exception as e:  # noqa: BLE001
+                add("JWKS exposes signing keys", False, f"Could not fetch JWKS: {str(e)[:160]}")
+    return checks
+
+
 async def build_authorize_url(idp_cfg: dict[str, Any], redirect_uri: str) -> tuple[str, str]:
     """Return (authorize_url, encrypted_state_cookie)."""
     doc = await discover(idp_cfg.get("issuer", ""), idp_cfg.get("discovery_url"))

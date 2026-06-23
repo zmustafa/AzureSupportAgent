@@ -9,6 +9,7 @@ import {
   type AcRole,
   type AcUser,
   type AuthPolicies,
+  type IdpTestResult,
 } from "../api";
 import { apiBase } from "../api";
 import {
@@ -688,13 +689,13 @@ function GroupForm({
 }
 
 // ================================================================= Identity Providers
-const OIDC_FIELDS: { key: string; label: string; secret?: boolean; placeholder?: string }[] = [
+const OIDC_FIELDS: { key: string; label: string; secret?: boolean; placeholder?: string; default?: string }[] = [
   { key: "issuer", label: "Issuer URL", placeholder: "https://login.microsoftonline.com/<tenant>/v2.0" },
   { key: "discovery_url", label: "Discovery URL (optional)", placeholder: "Defaults to <issuer>/.well-known/openid-configuration" },
   { key: "client_id", label: "Client ID" },
   { key: "client_secret", label: "Client secret", secret: true },
-  { key: "scopes", label: "Scopes", placeholder: "openid email profile" },
-  { key: "group_claim", label: "Group claim", placeholder: "groups" },
+  { key: "scopes", label: "Scopes", placeholder: "openid email profile", default: "openid email profile" },
+  { key: "group_claim", label: "Group claim", placeholder: "groups", default: "groups" },
 ];
 const SAML_FIELDS: { key: string; label: string; placeholder?: string }[] = [
   { key: "entity_id", label: "IdP Entity ID (Issuer)" },
@@ -750,6 +751,7 @@ function IdentityProvidersCard() {
                 </span>
               </div>
               <div className="text-xs text-slate-500">Button: {p.button_label || p.name}</div>
+              <IdpPreview idp={p} />
             </div>
             <div className="flex gap-1">
               <Btn variant="ghost" onClick={() => { setEditing(p); setCreating(null); setErr(null); }}>Edit</Btn>
@@ -768,6 +770,173 @@ function IdentityProvidersCard() {
         ))}
       </div>
     </Card>
+  );
+}
+
+// Compact read-only preview of an IdP's key config, shown under each provider in the list
+// (issuer + client id + claims for OIDC; entity id + SSO URL for SAML). Secrets are masked
+// server-side (config[client_secret]="" + client_secret_set=true), so nothing sensitive leaks.
+function IdpPreview({ idp }: { idp: AcIdp }) {
+  const cfg = (idp.config ?? {}) as Record<string, unknown>;
+  const s = (k: string) => {
+    const v = cfg[k];
+    return typeof v === "string" ? v.trim() : "";
+  };
+  const rows: { label: string; value: string; mono?: boolean }[] = [];
+  if (idp.type === "saml") {
+    if (s("entity_id")) rows.push({ label: "Entity ID", value: s("entity_id"), mono: true });
+    if (s("sso_url")) rows.push({ label: "SSO URL", value: s("sso_url"), mono: true });
+    rows.push({ label: "Certificate", value: cfg["certificate_set"] ? "configured" : (s("certificate") ? "set" : "not set") });
+    const attrs = [s("email_attr") && `email=${s("email_attr")}`, s("group_attr") && `groups=${s("group_attr")}`].filter(Boolean).join(", ");
+    if (attrs) rows.push({ label: "Attributes", value: attrs });
+  } else {
+    if (s("issuer")) rows.push({ label: "Issuer", value: s("issuer"), mono: true });
+    if (s("client_id")) rows.push({ label: "Client ID", value: s("client_id"), mono: true });
+    rows.push({ label: "Client secret", value: cfg["client_secret_set"] ? "configured" : "not set" });
+    if (s("scopes")) rows.push({ label: "Scopes", value: s("scopes"), mono: true });
+    if (s("group_claim")) rows.push({ label: "Group claim", value: s("group_claim"), mono: true });
+  }
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
+      {rows.map((r) => (
+        <span key={r.label} className="inline-flex max-w-full items-baseline gap-1">
+          <span className="text-slate-400">{r.label}:</span>
+          <span className={`truncate ${r.mono ? "font-mono" : ""} text-slate-600`} title={r.value}>{r.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Small copy-to-clipboard button used in the SSO setup guide.
+function CopyBtn({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* clipboard blocked */ }
+      }}
+      className="shrink-0 rounded border border-slate-300 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+      title="Copy"
+    >
+      {copied ? "✓ Copied" : "Copy"}
+    </button>
+  );
+}
+
+// Collapsible, step-by-step guide for registering an app in Microsoft Entra ID (and the
+// equivalent SAML steps). Shows the EXACT Redirect URI/ACS URL for this provider so the user
+// can paste it straight into the Entra "Authentication → Add a platform → Web" screen.
+function SsoSetupGuide({ type, redirectUri, metadataUrl, hasId }: { type: string; redirectUri: string; metadataUrl: string; hasId: boolean }) {
+  const [open, setOpen] = useState(false);
+  const isSaml = type === "saml";
+  return (
+    <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-indigo-800"
+      >
+        <span className="flex items-center gap-2">
+          <span>📘</span> Setup Guide — register this app in Microsoft Entra ID
+        </span>
+        <span className="text-indigo-400">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-indigo-100 px-4 py-3 text-xs text-slate-600">
+          {!hasId && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-700">
+              Tip: <b>Create the provider first</b> (button below), then re-open this guide — the
+              Redirect URI will then contain the real provider ID to paste into Entra.
+            </div>
+          )}
+
+          <Step n={1} title="Open App registrations">
+            In the <a className="text-indigo-600 underline" href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noreferrer">Microsoft Entra admin center</a> →
+            <b> Identity → Applications → App registrations</b> → <b>New registration</b>.
+          </Step>
+
+          <Step n={2} title="Register the application">
+            Give it a name (e.g. <span className="font-mono">AzSupAgent SignIn</span>). For
+            <b> Supported account types</b> choose <i>“Accounts in this organizational directory only”</i>
+            (single tenant) unless you need multi-tenant. Leave the Redirect URI blank here — you add it
+            in the next step. Click <b>Register</b>.
+          </Step>
+
+          {isSaml ? (
+            <Step n={3} title="Set up SAML SSO">
+              In the app → <b>Single sign-on</b> (or expose the SAML endpoints), set the
+              <b> Reply (ACS) URL</b> and <b>Identifier (Entity ID)</b> to the values below, and enable
+              <b> “Sign assertions”</b>. Then download the IdP <b>signing certificate</b> + note the
+              <b> Login URL</b> / <b>Entra Identifier</b> to paste into this form.
+              <CopyRow label="ACS (Reply) URL" value={redirectUri} />
+              <CopyRow label="SP Metadata" value={metadataUrl} />
+            </Step>
+          ) : (
+            <Step n={3} title="Add the Web redirect URI">
+              In the app → <b>Manage → Authentication</b> → <b>Add a platform (or Add Redirect URI)</b> → <b>Web </b> 
+              (not “Single-page application” — this app uses a confidential client with a secret).
+              Paste this exact <b>Redirect URI</b> and click <b>Configure</b>:
+              <CopyRow label="Redirect URI" value={redirectUri} />
+            </Step>
+          )}
+
+          {!isSaml && (
+            <>
+              <Step n={4} title="Create a client secret">
+                App → <b>Certificates &amp; secrets</b> → <b>Client secrets</b> → <b>New client secret</b>.
+                Copy the secret’s <b>Value</b> immediately (you can’t see it again) and paste it into the
+                <b> Client secret</b> field in this form.
+              </Step>
+              <Step n={5} title="Copy the IDs">
+                App → <b>Overview</b>. Copy <b>Application (client) ID</b> → paste into <b>Client ID</b> here.
+                Copy <b>Directory (tenant) ID</b> → use it in the <b>Issuer URL</b>:
+                <CopyRow label="Issuer URL" value="https://login.microsoftonline.com/<tenant-id>/v2.0" />
+                (replace <span className="font-mono">&lt;tenant-id&gt;</span> with your Directory ID).
+              </Step>
+              <Step n={6} title="(Optional) Group claims">
+                To map directory groups to roles, App → <b>Token configuration</b> → <b>Add groups claim</b>,
+                then set this form’s <b>Group claim</b> to <span className="font-mono">groups</span>.
+              </Step>
+            </>
+          )}
+
+          <Step n={isSaml ? 4 : 7} title="Finish here">
+            Fill the fields above ({isSaml ? "Entity ID, SSO URL, certificate" : "Issuer URL, Client ID, Client secret, Scopes"}),
+            tick <b>Enabled</b>, and click <b>{hasId ? "Save provider" : "Create provider"}</b>. A sign-in
+            button then appears on the login page.
+          </Step>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2.5">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-[11px] font-semibold text-white">{n}</span>
+      <div className="min-w-0">
+        <div className="font-semibold text-slate-700">{title}</div>
+        <div className="mt-0.5 leading-relaxed">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mt-1.5 flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1">
+      <span className="shrink-0 text-[11px] font-medium text-slate-400">{label}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-700" title={value}>{value}</span>
+      <CopyBtn value={value} />
+    </div>
   );
 }
 
@@ -790,6 +959,14 @@ function IdpForm({
   const initialCfg = (idp?.config ?? {}) as Record<string, unknown>;
   const [cfg, setCfg] = useState<Record<string, string>>(() => {
     const out: Record<string, string> = {};
+    // For a NEW provider, pre-fill sensible defaults (e.g. OIDC scopes + group claim) so
+    // they're real saved values, not just greyed-out placeholder hints.
+    if (!idp) {
+      (type === "saml" ? SAML_FIELDS : OIDC_FIELDS).forEach((f) => {
+        const def = (f as { default?: string }).default;
+        if (def) out[f.key] = def;
+      });
+    }
     Object.entries(initialCfg).forEach(([k, v]) => {
       if (typeof v === "string") out[k] = v;
     });
@@ -797,8 +974,17 @@ function IdpForm({
   });
   const fields = type === "saml" ? SAML_FIELDS : OIDC_FIELDS;
   const setF = (k: string, v: string) => setCfg((c) => ({ ...c, [k]: v }));
-  const redirectUri = `${apiBase}/auth/${type === "saml" ? "saml" : "oidc"}/${idp?.id ?? "<id>"}/${type === "saml" ? "acs" : "callback"}`;
-  const metadataUrl = `${apiBase}/auth/saml/${idp?.id ?? "<id>"}/metadata`;
+  // The redirect/ACS/metadata URLs the admin pastes into the IdP must be ABSOLUTE. On a
+  // same-origin prod build apiBase is just "/api" (relative), so resolve it against the page
+  // origin — which equals the backend's PUBLIC_BASE_URL, the value the backend actually sends
+  // as redirect_uri. In dev apiBase is already absolute (http://localhost:8000/api) and is
+  // returned unchanged.
+  const absApiBase = (() => {
+    try { return new URL(apiBase, window.location.origin).href.replace(/\/$/, ""); }
+    catch { return apiBase; }
+  })();
+  const redirectUri = `${absApiBase}/auth/${type === "saml" ? "saml" : "oidc"}/${idp?.id ?? "<id>"}/${type === "saml" ? "acs" : "callback"}`;
+  const metadataUrl = `${absApiBase}/auth/saml/${idp?.id ?? "<id>"}/metadata`;
 
   const save = useMutation({
     mutationFn: () =>
@@ -807,6 +993,14 @@ function IdpForm({
         : api.acCreateIdp({ name, type, enabled, button_label: buttonLabel, config: cfg }),
     onSuccess: onSaved,
     onError: (e) => onError(errMsg(e)),
+  });
+
+  // Best-effort connection test (OIDC discovery+JWKS / SAML cert parse). Does NOT save.
+  const [testResult, setTestResult] = useState<IdpTestResult | null>(null);
+  const test = useMutation({
+    mutationFn: () => api.acTestIdp({ name, type, enabled, button_label: buttonLabel, config: cfg }, idp?.id),
+    onSuccess: (r) => setTestResult(r),
+    onError: (e) => setTestResult({ ok: false, summary: errMsg(e), checks: [] }),
   });
 
   return (
@@ -825,12 +1019,19 @@ function IdpForm({
           return (
             <Field key={f.key} label={f.label}>
               {f.key === "certificate" ? (
-                <textarea className={`${inputCls} h-24 font-mono text-xs`} value={cfg[f.key] ?? ""} onChange={(e) => setF(f.key, e.target.value)} placeholder={f.placeholder} />
+                <textarea className={`${inputCls} h-24 font-mono text-xs`} value={cfg[f.key] ?? ""} onChange={(e) => setF(f.key, e.target.value)} placeholder={f.placeholder} autoComplete="off" />
               ) : (
                 <input
                   type={isSecret ? "password" : "text"}
-                  // Block autofill from clobbering a saved secret (blank = keep on save).
-                  {...(isSecret ? { name: `idp-${f.key}`, autoComplete: "off", "data-1p-ignore": true, "data-lpignore": "true", "data-form-type": "other" } : {})}
+                  // Block the browser's username/password autofill from clobbering these
+                  // fields (Client ID was getting "admin", the secret a saved password). A
+                  // non-credential field name + autoComplete="new-password" is the most
+                  // reliable combo in Chrome; the data-* attrs silence 1Password/LastPass.
+                  name={`idp-${type}-${f.key}`}
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-form-type="other"
                   className={inputCls}
                   value={cfg[f.key] ?? ""}
                   onChange={(e) => setF(f.key, e.target.value)}
@@ -853,16 +1054,49 @@ function IdpForm({
         )}
         {!idp && <div className="mt-1 text-amber-600">Save first to get the real provider ID in these URLs.</div>}
       </div>
+      <SsoSetupGuide type={type} redirectUri={redirectUri} metadataUrl={metadataUrl} hasId={!!idp} />
       <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enabled (shows a sign-in button on the login page)
       </label>
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <Btn variant="primary" disabled={!name || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : idp ? "Save provider" : "Create provider"}
         </Btn>
+        <Btn variant="default" disabled={test.isPending} onClick={() => { setTestResult(null); test.mutate(); }}>
+          {test.isPending ? "Testing…" : "🔌 Test connection"}
+        </Btn>
         <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
       </div>
+
+      {testResult && (
+        <div className={`mt-3 rounded-lg border p-3 text-xs ${testResult.ok ? "border-emerald-200 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+          <div className="mb-2 flex items-center justify-between">
+            <span className={`font-semibold ${testResult.ok ? "text-emerald-700" : "text-amber-700"}`}>
+              {testResult.ok ? "✓ Configuration looks valid" : "⚠ Configuration needs attention"} — {testResult.summary}
+            </span>
+            <button type="button" onClick={() => setTestResult(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+          </div>
+          <ul className="space-y-1">
+            {testResult.checks.map((c, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <span className={c.ok ? "text-emerald-600" : c.critical ? "text-rose-600" : "text-amber-500"}>
+                  {c.ok ? "✓" : c.critical ? "✗" : "⚠"}
+                </span>
+                <span className="min-w-0">
+                  <span className="font-medium text-slate-700">{c.name}</span>
+                  {c.detail && <span className="ml-1 break-all text-slate-500">— {c.detail}</span>}
+                  {!c.ok && !c.critical && <span className="ml-1 text-slate-400">(optional)</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 text-[11px] text-slate-400">
+            Best-effort check — a full sign-in still requires a real user to complete the
+            {type === "saml" ? " SAML" : " OAuth"} round-trip.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

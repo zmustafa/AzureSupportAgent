@@ -149,6 +149,10 @@ DEFAULTS: dict[str, Any] = {
     # Master switch. When False, the Run button is hidden and the exec endpoint 403s.
     # ON by default — an admin can opt out to hide the Run button entirely.
     "command_execution_enabled": True,
+    # Ownership: gate the read-only chat tools (who_owns/what_owns/find_unowned) and the
+    # owner-tag write-back (Azure write — defence in depth alongside command_execution_enabled).
+    "ownership_tools_enabled": True,
+    "ownership_tag_writeback_enabled": False,
     # Which CLI binaries may be executed. Only these are ever allowed (az / azd / kubectl).
     "command_allowlist": ["az", "azd", "kubectl"],
     # Wall-clock seconds before a running command is killed.
@@ -321,7 +325,8 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
             seen.append(b)
     current["command_allowlist"] = seen or ["az"]
     current["command_execution_enabled"] = bool(current.get("command_execution_enabled", True))
-    # Built-in utility tools: coerce flags + clamp timeout + normalize string lists.
+    current["ownership_tools_enabled"] = bool(current.get("ownership_tools_enabled", True))
+    current["ownership_tag_writeback_enabled"] = bool(current.get("ownership_tag_writeback_enabled", False))    # Built-in utility tools: coerce flags + clamp timeout + normalize string lists.
     current["builtin_tools_enabled"] = bool(current.get("builtin_tools_enabled", True))
     current["network_tool_timeout_seconds"] = max(
         1, min(30, int(current.get("network_tool_timeout_seconds", 10)))

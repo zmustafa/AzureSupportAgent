@@ -35,6 +35,7 @@ from app.api import (
     missions,
     netcheck,
     notifications,
+    ownership,
     playbooks,
     policy,
     perfprofile,
@@ -454,6 +455,7 @@ api.include_router(perfprofile.router)
 api.include_router(missions.router)
 api.include_router(rbac.router)
 api.include_router(reservations.router)
+api.include_router(ownership.router)
 api.include_router(vms.router)
 
 

@@ -84,13 +84,11 @@ def _synth_tracking_id(*parts: str) -> str:
 
 # --------------------------------------------------------------------- owner mapping
 def _owner_from_tags(tags: dict[str, Any] | None) -> str:
-    if not isinstance(tags, dict):
-        return ""
-    for k in ("owner", "owner_email", "Owner", "OwnerEmail", "team", "Team", "contact"):
-        v = tags.get(k)
-        if v:
-            return str(v)
-    return ""
+    # Delegates to the canonical ownership helper so the tag-owner heuristic lives in ONE
+    # place (app.ownership.resolve) and stays consistent across Radar, Inventory, etc.
+    from app.ownership.resolve import owner_from_tags
+
+    return owner_from_tags(tags)
 
 
 def _workload_index() -> dict[str, dict[str, str]]:
@@ -116,14 +114,48 @@ def _workload_index() -> dict[str, dict[str, str]]:
     return out
 
 
-def resolve_owners(impacted: list[dict[str, Any]], wl_index: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
-    """Annotate each impacted resource with workload + owner (tag → workload), flagging
-    unowned ones explicitly."""
+def resolve_owners(
+    impacted: list[dict[str, Any]],
+    wl_index: dict[str, dict[str, str]],
+    *,
+    tenant_id: str = "",
+    own_ctx: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Annotate each impacted resource with workload + owner, flagging unowned ones.
+
+    When ``tenant_id`` is provided, the canonical ownership engine
+    (``app.ownership.resolve``) is consulted FIRST so an explicit assignment made in the
+    ``/ownership`` UI (direct / inherited-from-RG-or-sub / workload) is reflected here. It
+    falls back to the legacy tag→workload-tag heuristic when no explicit owner exists (and
+    that legacy path is the only one used when ``tenant_id`` is empty, preserving the pure
+    behavior the unit tests rely on)."""
+    ctx = own_ctx
+    if tenant_id and ctx is None:
+        try:
+            from app.ownership import resolve as own_resolve
+
+            ctx = own_resolve.build_context(tenant_id)
+        except Exception:  # noqa: BLE001
+            ctx = None
     out: list[dict[str, Any]] = []
     for r in impacted:
         rid = str(r.get("id", "")).lower()
         wl = wl_index.get(rid, {})
-        owner = _owner_from_tags(r.get("tags")) or wl.get("owner", "")
+        owner = ""
+        owner_source = ""
+        if tenant_id and ctx is not None:
+            from app.ownership import resolve as own_resolve
+
+            res = own_resolve.resolve_owner(
+                tenant_id, "resource", r.get("id", ""), tags=r.get("tags"), ctx=ctx
+            )
+            if not res["unowned"] and res["owners"]:
+                primary = next((o for o in res["owners"] if o["primary"]), res["owners"][0])
+                owner = primary.get("display_name") or primary.get("email") or ""
+                owner_source = res["source"]
+        if not owner:
+            owner = _owner_from_tags(r.get("tags")) or wl.get("owner", "")
+            owner_source = "tag" if _owner_from_tags(r.get("tags")) else ("workload" if wl.get("owner") else "")
         out.append(
             {
                 "id": r.get("id", ""),
@@ -135,7 +167,7 @@ def resolve_owners(impacted: list[dict[str, Any]], wl_index: dict[str, dict[str,
                 "workload_id": wl.get("workload_id", ""),
                 "workload_name": wl.get("workload_name", ""),
                 "owner": owner,
-                "owner_source": "tag" if _owner_from_tags(r.get("tags")) else ("workload" if wl.get("owner") else ""),
+                "owner_source": owner_source,
                 "unowned": not owner,
             }
         )
@@ -168,12 +200,22 @@ def merge_events(
     *,
     wl_index: dict[str, dict[str, str]] | None = None,
     today: date | None = None,
+    tenant_id: str = "",
 ) -> list[dict[str, Any]]:
     """Dedupe raw events by tracking ID, classify, compute days-until, resolve owners, and
     roll up a dominant owner / unowned flag. ``raw_events`` come from any source
     (service_health / advisor / azure_updates / aoai); same trackingId rows are merged and
-    their impacted-resource lists unioned."""
+    their impacted-resource lists unioned. ``tenant_id`` (when set) lets ``resolve_owners``
+    consult explicit ownership assignments."""
     wl_index = wl_index or {}
+    own_ctx = None
+    if tenant_id:
+        try:
+            from app.ownership import resolve as own_resolve
+
+            own_ctx = own_resolve.build_context(tenant_id)
+        except Exception:  # noqa: BLE001
+            own_ctx = None
     by_tid: dict[str, dict[str, Any]] = {}
 
     for ev in raw_events:
@@ -220,7 +262,7 @@ def merge_events(
 
     out: list[dict[str, Any]] = []
     for ev in by_tid.values():
-        impacted = resolve_owners(list(ev.pop("_impacted").values()), wl_index)
+        impacted = resolve_owners(list(ev.pop("_impacted").values()), wl_index, tenant_id=tenant_id, own_ctx=own_ctx)
         owners = [r["owner"] for r in impacted if r["owner"]]
         dominant = max(set(owners), key=owners.count) if owners else ""
         unowned = any(r["unowned"] for r in impacted) or (not impacted)
@@ -474,6 +516,7 @@ async def collect_radar(
     scope_kind: str,
     scope_id: str,
     workload: dict[str, Any] | None,
+    tenant_id: str = "",
 ) -> dict[str, Any]:
     from app.assessments.runner import _resolve_scope
 
@@ -525,7 +568,7 @@ async def collect_radar(
         notes.append(f"AOAI deployments: {str(exc)[:160]}")
 
     wl_index = _workload_index()
-    events = merge_events(raw, wl_index=wl_index)
+    events = merge_events(raw, wl_index=wl_index, tenant_id=tenant_id)
     model_items = build_model_items(deployments)
     snap = compute_radar(events, model_items)
     snap.update(

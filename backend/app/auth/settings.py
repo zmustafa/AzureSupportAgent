@@ -34,8 +34,10 @@ DEFAULTS: dict[str, Any] = {
     "session_absolute_minutes": 10080,  # 7d
     # SSO: auto-provision users on first successful login.
     "sso_auto_provision": True,
-    # Default role granted to JIT-provisioned SSO users with no group mapping.
-    "sso_default_role": "user",
+    # Default role granted to JIT-provisioned SSO users with no group mapping. Defaults to
+    # "noaccess" (zero permissions) so auto-provisioning a user NEVER implicitly grants access
+    # — an admin must deliberately assign a real role. Set to "user" for the old behavior.
+    "sso_default_role": "noaccess",
 }
 
 

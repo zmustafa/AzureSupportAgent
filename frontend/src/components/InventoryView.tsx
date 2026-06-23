@@ -13,6 +13,7 @@ import { AzureIcon, friendlyLocation, friendlyResourceType } from "./AzureIcon";
 import { INVENTORY_NAV, type InventoryTab } from "./navConfig";
 import { LocationMode, LocationFilterToolbar } from "./InventoryLocationMap";
 import { DnsDebugModal } from "./DnsDebugModal";
+import { formatError } from "../utils/format";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const FLAG_META: Record<string, { label: string; tone: string }> = {
@@ -1267,6 +1268,10 @@ function DetailDrawer({
                 )}
               </Field>
 
+              <Field label="Owner">
+                <OwnerField resourceId={r.id} connectionId={connectionId} />
+              </Field>
+
               <Field label={`Tags${tags.length ? ` (${tags.length})` : ""}`}>
                 {tags.length === 0 ? <span className="text-[12px] text-gray-400">No tags.</span> : (
                   <div className="space-y-0.5">
@@ -1290,6 +1295,62 @@ function DetailDrawer({
       {dnsDebug && (
         <DnsDebugModal architectureId="" preset={{ fqdn: r.name }} onClose={() => setDnsDebug(false)} />
       )}
+    </div>
+  );
+}
+
+// Resolved owner of a resource + a gated "write owner tag back to Azure" action. Reuses the
+// ownership resolver (direct / tag / workload / inherited) and the gated tag-writeback API.
+function OwnerField({ resourceId, connectionId }: { resourceId: string; connectionId: string }) {
+  const qc = useQueryClient();
+  const [msg, setMsg] = useState("");
+  const ownerQ = useQuery({
+    queryKey: ["ownerResolve", resourceId],
+    queryFn: () => api.resolveOwner("resource", resourceId),
+    staleTime: 60_000,
+  });
+  const wbQ = useQuery({ queryKey: ["ownerWritebackStatus"], queryFn: api.ownershipWritebackStatus, staleTime: 300_000 });
+
+  const apply = useMutation({
+    mutationFn: () => api.ownershipWritebackApply(resourceId, "", "", connectionId),
+    onSuccess: (r) => {
+      setMsg(r.ok ? `✓ Wrote owner tag: ${Object.entries(r.applied).map(([k, v]) => `${k}=${v}`).join(", ")}` : r.error);
+      if (r.ok) qc.invalidateQueries({ queryKey: ["inventory"] });
+    },
+    onError: (e) => setMsg(formatError(e)),
+  });
+
+  const d = ownerQ.data;
+  if (ownerQ.isLoading) return <span className="text-[12px] text-gray-400">Resolving…</span>;
+  if (!d || d.unowned) {
+    return (
+      <div className="space-y-1">
+        <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[12px] text-rose-700">Unowned</span>
+        <div className="text-[11px] text-gray-400">Assign an owner in the Ownership section.</div>
+      </div>
+    );
+  }
+  const primary = d.owners.find((o) => o.primary) ?? d.owners[0];
+  const SRC: Record<string, string> = { direct: "Direct", tag: "Tag", workload: "Workload", inherited: "Inherited" };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-medium text-gray-800">{primary?.display_name}</span>
+        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{SRC[d.source] ?? d.source}</span>
+        {d.inherited_from && <span className="text-[11px] text-gray-400">via {d.inherited_from.kind} {d.inherited_from.name}</span>}
+      </div>
+      {wbQ.data?.enabled ? (
+        <button
+          onClick={() => { if (confirm(`Write owner tag "${primary?.display_name}" onto this resource in Azure?`)) apply.mutate(); }}
+          disabled={apply.isPending}
+          className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+        >
+          {apply.isPending ? "Writing…" : "🏷 Write owner tag to Azure"}
+        </button>
+      ) : (
+        <div className="text-[11px] text-gray-400">Tag write-back disabled (enable in Settings).</div>
+      )}
+      {msg && <div className="text-[11px] text-gray-600">{msg}</div>}
     </div>
   );
 }

@@ -34,6 +34,7 @@ import {
   TAGINTEL_TAB_IDS,
   CHANGEEXPLORER_TAB_IDS,
   RBAC_TAB_IDS,
+  OWNERSHIP_TAB_IDS,
   IDENTITY_TAB_IDS,
   type AdminSection,
   type AutomationsSection,
@@ -42,6 +43,7 @@ import {
   type TagIntelTab,
   type ChangeExplorerTab,
   type RbacTab,
+  type OwnershipTab,
   type IdentityTab,
 } from "./navConfig";
 import { formatDuration, formatTimestamp } from "../utils/format";
@@ -95,6 +97,9 @@ const MonitorPanel = lazy(() => import("./MonitorView").then((m) => ({ default: 
 const StatsPanel = lazy(() => import("./MonitorView").then((m) => ({ default: m.StatsPanel })));
 const WorkloadsPanel = lazy(() =>
   import("./WorkloadsView").then((m) => ({ default: m.WorkloadsPanel })),
+);
+const OwnershipPanel = lazy(() =>
+  import("./OwnershipView").then((m) => ({ default: m.OwnershipPanel })),
 );
 const MissionControlPanel = lazy(() =>
   import("./MissionControlView").then((m) => ({ default: m.MissionControlPanel })),
@@ -474,6 +479,12 @@ export default function ChatView() {
   const inStats = location.pathname.startsWith("/stats");
   // Azure Workloads section.
   const inWorkloads = location.pathname.startsWith("/workloads");
+  // Ownership section. Sub-tab lives in the URL (/ownership/:tab) so a refresh restores it.
+  const inOwnership = location.pathname.startsWith("/ownership");
+  const ownershipTab: OwnershipTab = (() => {
+    const seg = location.pathname.split("/")[2] as OwnershipTab | undefined;
+    return seg && OWNERSHIP_TAB_IDS.has(seg) ? seg : "directory";
+  })();
   const inMissionControl = location.pathname.startsWith("/mission-control");
   const inInventory = location.pathname.startsWith("/inventory");
   // Inventory sub-tab lives in the URL (/inventory/:tab) so a refresh restores the same view.
@@ -2379,6 +2390,35 @@ export default function ChatView() {
           </div>
         )}
 
+        {/* Ownership: assign accountable owners/teams across the estate. All users. */}
+        {railCollapsed ? (
+          <Link
+            to="/ownership"
+            title="Ownership"
+            className={`mx-2 mb-1 flex items-center justify-center rounded-lg p-2 transition ${
+              inOwnership
+                ? "bg-gray-200 text-gray-900"
+                : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
+            }`}
+          >
+            <span className="text-[17px] leading-none">🪪</span>
+          </Link>
+        ) : (
+          <div className="mb-1 px-2">
+            <Link
+              to="/ownership"
+              className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
+                inOwnership
+                  ? "bg-gray-200 font-medium text-gray-900"
+                  : "text-gray-700 hover:bg-gray-200/60"
+              }`}
+            >
+              <span className="w-[18px] shrink-0 text-center text-[16px] leading-none text-gray-500">🪪</span>
+              <span>Ownership</span>
+            </Link>
+          </div>
+        )}
+
         {/* Architectures: visual application architecture diagrams (manual or AI). All users. */}
         {railCollapsed ? (
           <Link
@@ -2915,6 +2955,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Workloads">
             <Suspense fallback={<PanelLoading />}>
               <WorkloadsPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inOwnership ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Ownership">
+            <Suspense fallback={<PanelLoading />}>
+              <OwnershipPanel tab={ownershipTab} />
             </Suspense>
           </PanelErrorBoundary>
         </main>

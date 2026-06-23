@@ -277,6 +277,28 @@ export const RBAC_NAV: { id: RbacTab; label: string }[] = [
 
 export const RBAC_TAB_IDS = new Set<RbacTab>(RBAC_NAV.map((n) => n.id));
 
+// ---- Ownership ------------------------------------------------------------------
+// The /ownership section's sub-tabs (URL-driven: /ownership/:tab). "directory" is the
+// default (bare /ownership). User-level (not admin-only).
+export type OwnershipTab =
+  | "directory"
+  | "assignments"
+  | "coverage"
+  | "suggestions"
+  | "estate"
+  | "attestation";
+
+export const OWNERSHIP_NAV: { id: OwnershipTab; label: string }[] = [
+  { id: "directory", label: "👥 Owners & Teams" },
+  { id: "assignments", label: "🔗 Assignments" },
+  { id: "coverage", label: "🎯 Coverage" },
+  { id: "suggestions", label: "💡 Suggestions" },
+  { id: "estate", label: "🗺️ My Estate" },
+  { id: "attestation", label: "✅ Attestation" },
+];
+
+export const OWNERSHIP_TAB_IDS = new Set<OwnershipTab>(OWNERSHIP_NAV.map((n) => n.id));
+
 // ---- Identity -------------------------------------------------------------------
 // Sub-tabs of the Identity screen, driven by the /identity/:tab URL so a refresh (or a
 // shared link) restores the same view. "overview" is the default (bare /identity).

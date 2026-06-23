@@ -169,6 +169,12 @@ async def _purge_all(tenant_id: str, db: AsyncSession) -> dict[str, Any]:
         return zava_demo.purge_demo()
     step("zava_workloads", _purge_zava)
 
+    # Demo ownership (owners + assignments).
+    def _purge_ownership() -> int:
+        from app.ownership import demo as own_demo
+        return own_demo.purge_demo(tenant_id)
+    step("ownership", _purge_ownership)
+
     return {"removed": removed, "errors": errors}
 
 
@@ -226,6 +232,8 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     step("dns_debug", lambda: dns_demo.seed_demo(tenant_id=tenant_id))
     step("network_reachability", lambda: nc_demo.seed_demo(tenant_id=tenant_id))
     step("connectors", lambda: conn_demo.seed_demo())
+    from app.ownership import demo as own_demo
+    step("ownership", lambda: own_demo.seed_demo(tenant_id))
     return {"seeded": seeded, "errors": errors}
 
 
