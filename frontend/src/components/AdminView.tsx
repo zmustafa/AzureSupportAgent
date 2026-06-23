@@ -144,7 +144,7 @@ const PROVIDERS: {
 // mirroring the Settings sidebar clusters.
 const PROVIDER_GROUPS: { label: string; ids: string[] }[] = [
   { label: "Microsoft / OpenAI", ids: ["openai", "openai_eu", "azure_openai", "azure_foundry", "github", "github_copilot", "chatgpt"] },
-  { label: "Other providers", ids: ["claude", "claude_oauth", "gemini", "grok", "mistral", "openrouter"] },
+  { label: "Other providers", ids: ["claude_oauth", "claude", "gemini", "grok", "mistral", "openrouter"] },
   { label: "Local", ids: ["ollama", "lmstudio"] },
 ];
 
@@ -1481,7 +1481,7 @@ const PROVIDER_DISPLAY: Record<string, string> = {
   azure_openai: "Azure OpenAI",
   azure_foundry: "Azure Foundry",
   claude: "Claude",
-  claude_oauth: "Claude (Pro/Max)",
+  claude_oauth: "Claude OAuth",
   gemini: "Google Gemini",
   grok: "Grok",
   mistral: "Mistral",

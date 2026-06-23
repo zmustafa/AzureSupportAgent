@@ -5069,7 +5069,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   azure_openai: "Azure OpenAI",
   azure_foundry: "Azure Foundry",
   claude: "Claude",
-  claude_oauth: "Claude (Pro/Max)",
+  claude_oauth: "Claude OAuth",
   gemini: "Google Gemini",
   grok: "Grok",
   mistral: "Mistral",

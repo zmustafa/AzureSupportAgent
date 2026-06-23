@@ -15,7 +15,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   github_copilot: "GitHub Copilot",
   chatgpt: "ChatGPT OAuth",
   claude: "Claude API",
-  claude_oauth: "Claude (Pro/Max)",
+  claude_oauth: "Claude OAuth",
   gemini: "Google Gemini",
   grok: "Grok (xAI)",
   mistral: "Mistral",
