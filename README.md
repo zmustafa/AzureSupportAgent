@@ -37,10 +37,10 @@ looming retirements, while scheduled autonomous agents push findings to Teams, J
 ServiceNow before they bite.
 
 - 🧠 **Agentic, not just a chatbot** — a War Room of specialist agents investigates in parallel against your real Azure data.
-- 🛡️ **Proactive, not just reactive** — a Proactive Support suite (Assessments · Identity · Monitoring, Telemetry & Backup/DR coverage · Retirement Radar · Telemetry Intelligence · Performance Profiler) surfaces risks before you ask, and scheduled autonomous agents notify you via connectors.
+- 🛡️ **Proactive, not just reactive** — a Proactive Support hub (Assessments · Identity · Monitoring, Telemetry & Backup/DR coverage · Retirement Radar · Telemetry Intelligence · Performance Profiler · Ownership · Tag Intelligence · Change Explorer · Estate Graph) surfaces risks before you ask, and scheduled autonomous agents notify you via connectors.
 - 🏠 **Runs in your tenant** — one-click deploy to Azure Container Apps; your data never leaves your subscription.
 - 🔒 **Safe by default** — Azure access is **read-only**, writes are **approval-gated + audited**, and AI providers stay **disabled until you configure them**.
-- 🧰 **A whole workbench** — chat, investigations, architectures, inventory, assessments, policy, monitoring, automations, and more.
+- 🧰 **A whole workbench** — chat, investigations, architectures, a workloads cockpit, inventory, assessments, policy, monitoring, ownership, tagging, change forensics, an estate knowledge graph, and automations.
 
 > Built for cloud architects, SREs, platform teams, and Azure support engineers.
 
@@ -82,6 +82,25 @@ validate them against your live Azure data — then converge on a conclusion.
 <tr>
 <td width="50%" valign="top">
 
+### 📦 Workloads cockpit
+Discover and group resources into workloads, then work a fleet **cockpit** with composite
+**health scores**, a resource **taxonomy**, table/board views, and rich visualizations
+(donut, radar, sparkline, treemap). Drill into a per-workload **command center**, or let
+**Autopilot** AI-discover and propose workloads for you.
+
+</td>
+<td width="50%" valign="top">
+
+### 🚀 Mission Control
+Run **every** analysis against a workload from one cockpit — architecture, assessment,
+coverage, identity and more — and read a single go/no-go posture with the highest-risk
+items surfaced first.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
 ### 🗺️ Architectures + Architecture Memory
 AI reverse-engineers live resources into interactive diagrams with best-practice review,
 network boundaries, and cost hints. Save revisions, build collections, and keep persistent
@@ -90,13 +109,40 @@ network boundaries, and cost hints. Save revisions, build collections, and keep 
 </td>
 <td width="50%" valign="top">
 
-### 📦 Workloads & inventory
-Discover and group resources into workloads, browse a sortable inventory grid and world
-map, see cost/refresh metadata, and search your estate in natural language.
+### 🕸️ Estate Graph
+A live, **workload-aware knowledge graph** of your tenant with cost, retirement and RBAC
+overlays — pan, zoom, search, and deep-link straight into the workload, architecture or
+assessment behind any node.
 
 </td>
 </tr>
 <tr>
+<td width="50%" valign="top">
+
+### 🪪 Ownership
+A federated **owner directory** scoped by tenant, subscription or workload. **Export**
+owners, **import** any CSV/Excel with AI column-inference and a preview, then **apply as
+Azure tags** with snapshots and **safe revert**.
+
+</td>
+<td width="50%" valign="top">
+
+### 🏷️ Tag Intelligence
+A tag **census** with coverage, casing-drift detection and a natural-language → Azure
+Resource Graph console. Propose, **apply and revert** tag changes with full **revision
+history**.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🛰️ Change Explorer
+See **what changed, when, and who did it** across your estate — each change AI-categorized
+and **risk-scored**, with plain-English insights that float the highest-risk changes to the
+top for review.
+
+</td>
 <td width="50%" valign="top">
 
 ### ✅ Assessments & governance
@@ -105,6 +151,8 @@ Performance pillars — with custom controls, framework mappings (NIST, ISO, CIS
 finding lifecycle, and ticketing. Plus Policy compliance, baselines, and AI advisors.
 
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### 📈 Monitoring & resilience
@@ -113,8 +161,6 @@ baseline-alert coverage with one-click Bicep/Terraform gap remediation; **Perfor
 Profiler**, **Backup/DR coverage**, **Retirement Radar**, and telemetry intelligence.
 
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 
 ### 🤖 Automations & workflows
@@ -123,12 +169,23 @@ Playbooks, and route results through in-app Notifications and external connector
 (Jira, ServiceNow).
 
 </td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🛡️ Proactive Support hub
+One categorized landing page that unifies every posture & forensic dashboard — coverage,
+assessments, identity, ownership, tagging, change forensics and the estate graph — so
+nothing about your estate is more than a click away.
+
+</td>
 <td width="50%" valign="top">
 
 ### 🔌 Bring your own AI
 11+ providers — OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, GitHub
-Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), Ollama, LM Studio — switchable
-at runtime with live model catalogs. **Disabled until you set them up.**
+Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), **Claude OAuth (Pro/Max, incl.
+Opus 4.8)**, Ollama, LM Studio — switchable at runtime with live model catalogs.
+**Disabled until you set them up.**
 
 </td>
 </tr>
