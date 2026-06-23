@@ -84,6 +84,17 @@ export function WorkloadIcon({ className }: { className?: string }) {
   );
 }
 
+export function OwnershipIcon({ className }: { className?: string }) {
+  // A person inside a shield/badge — "accountable owner". Line style to match the nav set.
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M10 2.2l6 2v4.3c0 3.6-2.4 6.6-6 7.8-3.6-1.2-6-4.2-6-7.8V4.2l6-2z" strokeLinejoin="round" />
+      <circle cx="10" cy="8" r="2" />
+      <path d="M6.7 13.4a3.4 3.4 0 0 1 6.6 0" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function ChangeIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">

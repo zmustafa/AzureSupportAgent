@@ -56,6 +56,7 @@ import {
   SettingsIcon,
   InventoryIcon,
   WorkloadIcon,
+  OwnershipIcon,
   TagIcon,
   ChangeIcon,
   DashboardIcon,
@@ -2403,7 +2404,7 @@ export default function ChatView() {
                 : "text-gray-500 hover:bg-gray-200/60 hover:text-gray-700"
             }`}
           >
-            <span className="text-[17px] leading-none">🪪</span>
+            <OwnershipIcon className="h-[18px] w-[18px]" />
           </Link>
         ) : (
           <div className="mb-1 px-2">
@@ -2415,7 +2416,7 @@ export default function ChatView() {
                   : "text-gray-700 hover:bg-gray-200/60"
               }`}
             >
-              <span className="w-[18px] shrink-0 text-center text-[16px] leading-none text-gray-500">🪪</span>
+              <OwnershipIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
               <span>Ownership</span>
             </Link>
           </div>

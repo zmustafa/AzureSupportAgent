@@ -63,11 +63,11 @@ export const ACCESS_SUB_IDS = new Set<string>(ACCESS_NAV.map((n) => n.id));
 // security & access, then observability.
 export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?: string; desc?: string }[] = [
   // Core configuration
-  { id: "settings", label: "General", icon: "⚙️", group: "Configuration", desc: "Core application behavior, safety toggles, and runtime tuning." },
-  { id: "providers", label: "AI Providers", icon: "🧠", desc: "Configure OpenAI, Azure OpenAI, GitHub Copilot, Claude and other model providers." },
+  { id: "providers", label: "AI Providers", icon: "🧠", group: "Configuration", desc: "Configure OpenAI, Azure OpenAI, GitHub Copilot, Claude and other model providers." },
   { id: "tenants", label: "Azure Tenants", icon: "🏢", desc: "Manage Azure tenant connections and service-principal / token credentials." },
   { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️", desc: "Onboard troubleshooting sandbox VMs for in-guest diagnostics (vm_exec)." },
   { id: "connectors", label: "Connectors", icon: "🔌", desc: "Wire up Teams, Slack, email, Jira, ServiceNow and Grafana integrations." },
+  { id: "settings", label: "General", icon: "⚙️", desc: "Core application behavior, safety toggles, and runtime tuning." },
   // Security & access
   { id: "access", label: "Access Control", icon: "🔐", group: "Security & access", desc: "Manage users, roles, groups and single sign-on (OIDC / SAML) providers." },
   { id: "policies", label: "Security Policy", icon: "🔒", desc: "Password rules, lockout, session lifetimes and SSO auto-provisioning defaults." },
