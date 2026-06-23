@@ -16,12 +16,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 from app.telemetry import cache, change_requests, demo
 from app.telemetry.collector import _empty_snapshot, collect_coverage, list_workspaces
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
+
+# Viewing coverage + running scans requires coverage.read; curating the reference set, the
+# approved workspaces, and approving/deleting change requests requires coverage.manage. The
+# `require_admin` alias is the read tier; manage endpoints opt into `_manage`. Admins pass
+# either way.
+require_admin = require_permission("coverage.read")
+_manage = require_permission("coverage.manage")
 log = logging.getLogger("app.api.telemetry")
 
 
@@ -350,7 +357,7 @@ class ReferenceUpdate(BaseModel):
 @router.put("/reference")
 async def put_reference(
     payload: ReferenceUpdate,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     from app.telemetry.reference import save_reference
@@ -381,7 +388,7 @@ class RestoreRequest(BaseModel):
 
 
 @router.post("/reference/restore")
-async def restore_reference(payload: RestoreRequest, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def restore_reference(payload: RestoreRequest, principal: Principal = Depends(_manage)) -> dict[str, Any]:
     from app.telemetry.reference import restore_revision
 
     doc = restore_revision(payload.revision_id, actor=principal.subject)
@@ -391,7 +398,7 @@ async def restore_reference(payload: RestoreRequest, principal: Principal = Depe
 
 
 @router.post("/reference/reset")
-async def reset_reference(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def reset_reference(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     from app.telemetry.reference import reset_to_builtin
 
     return {"ok": True, "reference": reset_to_builtin(actor=principal.subject)}
@@ -405,7 +412,7 @@ class ApprovedWorkspaces(BaseModel):
 @router.put("/approved-workspaces")
 async def set_approved_workspaces(
     payload: ApprovedWorkspaces,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     from app.core.app_settings import save_settings
@@ -625,7 +632,7 @@ class ApprovalRequest(BaseModel):
 @router.post("/approval")
 async def send_to_approval(
     payload: ApprovalRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     from app.telemetry.iac import generate_iac
@@ -685,7 +692,7 @@ class DecisionRequest(BaseModel):
 async def decide_approval(
     request_id: str,
     payload: DecisionRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     req = change_requests.decide_request(
@@ -707,13 +714,13 @@ async def decide_approval(
 
 
 @router.delete("/approvals/{request_id}")
-async def delete_approval(request_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def delete_approval(request_id: str, principal: Principal = Depends(_manage)) -> dict[str, Any]:
     ok = change_requests.delete_request(principal.tenant_id, request_id)
     return {"ok": ok}
 
 
 # ----------------------------------------------------------------------- demo seed
 @router.post("/demo/seed")
-async def seed_demo_endpoint(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def seed_demo_endpoint(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     snap = demo.seed_demo(tenant_id=principal.tenant_id)
     return {"ok": True, "workload_id": demo.DEMO_WORKLOAD_ID, "coverage_pct": snap.get("coverage_pct")}

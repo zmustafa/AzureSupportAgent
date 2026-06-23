@@ -99,3 +99,49 @@ def test_noaccess_user_blocked_server_side(tmp_path):
         await engine.dispose()
 
     _run(run())
+
+
+def test_active_role_downscopes_permissions(tmp_path):
+    """A user assigned both admin + auditor, acting as 'auditor', gets only auditor perms."""
+    import sqlalchemy as sa
+
+    from app.auth.service import seed_system_roles, set_user_roles
+    from app.core.security import get_principal
+    from app.models.auth import Role, Session as AuthSession, User
+
+    sid = "sess-act-1"
+
+    async def run():
+        engine, Session = await _auth_engine(tmp_path)
+        async with Session() as db:
+            await seed_system_roles(db)
+            admin = (await db.execute(sa.select(Role).where(Role.name == "admin"))).scalars().first()
+            auditor = (await db.execute(sa.select(Role).where(Role.name == "auditor"))).scalars().first()
+            db.add(User(id="u1", email="multi@corp.com", username="multi", display_name="Multi",
+                        status="active", auth_source="local", tenant_id="default"))
+            now = datetime.now(timezone.utc)
+            db.add(AuthSession(id=sid, user_id="u1", created_at=now, last_seen_at=now,
+                               expires_at=now + timedelta(days=1)))
+            await db.commit()
+            await set_user_roles(db, "u1", [admin.id, auditor.id])
+            await db.commit()
+
+        async with Session() as db:
+            # No active role → union (admin wins, is_admin true).
+            p = await get_principal(_req("/api/me"), azsupagent_session=sid, db=db)
+            assert p.is_admin is True
+            assert set(p.assigned_roles) == {"admin", "auditor"}
+
+            # Switch the session to act as 'auditor'.
+            s = await db.get(AuthSession, sid)
+            s.active_role = "auditor"
+            await db.commit()
+
+            p2 = await get_principal(_req("/api/me"), azsupagent_session=sid, db=db)
+            assert p2.role == "auditor"
+            assert p2.is_admin is False                      # downscoped — no admin powers
+            assert "users.manage" not in p2.permissions
+            assert "audit.read" in p2.permissions            # has auditor's perms
+        await engine.dispose()
+
+    _run(run())

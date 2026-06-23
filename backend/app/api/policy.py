@@ -19,13 +19,20 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.azure_connections import resolve_connection
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.policy import advisors, baselines, collector
 from app.policy import registry as policy_registry
 from app.workloads.registry import get_workload
 from app.assessments import catalog
 
 router = APIRouter(prefix="/policy", tags=["policy"])
+
+# Viewing policy + running analysis requires policy.read; persisting drafts/links/snapshots,
+# saving IaC source, and deletes require policy.write. The `require_admin` alias is the read
+# tier (so existing call sites stay correct); write endpoints opt into `_write`. Admins pass
+# either way. See app.auth.permissions for the catalog.
+require_admin = require_permission("policy.read")
+_write = require_permission("policy.write")
 logger = logging.getLogger("app.api.policy")
 
 
@@ -286,7 +293,7 @@ async def get_one_coverage_run(run_id: str, principal: Principal = Depends(requi
 
 
 @router.delete("/coverage-runs/{run_id}")
-async def delete_one_coverage_run(run_id: str, principal: Principal = Depends(require_admin)):
+async def delete_one_coverage_run(run_id: str, principal: Principal = Depends(_write)):
     if not policy_registry.delete_coverage_run(principal.tenant_id, run_id):
         raise HTTPException(status_code=404, detail="Coverage analysis not found.")
     return {"ok": True}
@@ -598,7 +605,7 @@ async def get_simulations(workload_id: str | None = None, principal: Principal =
 
 
 @router.post("/simulations")
-async def post_simulation(req: SaveSimulationReq, principal: Principal = Depends(require_admin)):
+async def post_simulation(req: SaveSimulationReq, principal: Principal = Depends(_write)):
     """Persist a completed simulation so it can be reopened later. Read-only — this only
     records the simulation result; nothing is applied to Azure."""
     if not req.result:
@@ -625,7 +632,7 @@ async def get_one_simulation(sim_id: str, principal: Principal = Depends(require
 
 
 @router.delete("/simulations/{sim_id}")
-async def delete_one_simulation(sim_id: str, principal: Principal = Depends(require_admin)):
+async def delete_one_simulation(sim_id: str, principal: Principal = Depends(_write)):
     if not policy_registry.delete_simulation(principal.tenant_id, sim_id):
         raise HTTPException(status_code=404, detail="Simulation not found.")
     return {"ok": True}
@@ -647,7 +654,7 @@ class EnforcementLinkReq(BaseModel):
 
 
 @router.post("/enforcement-link")
-async def post_enforcement_link(req: EnforcementLinkReq, principal: Principal = Depends(require_admin)):
+async def post_enforcement_link(req: EnforcementLinkReq, principal: Principal = Depends(_write)):
     """Record that an assessment finding has a planned Azure Policy guardrail. Powers the
     '✅ Guardrail planned' badge in the assessment report and reverse links in Policy."""
     if not req.check_id:
@@ -702,7 +709,7 @@ async def get_iac_source(principal: Principal = Depends(require_admin)):
 
 
 @router.put("/iac-source")
-async def put_iac_source(req: IacSourceReq, principal: Principal = Depends(require_admin)):
+async def put_iac_source(req: IacSourceReq, principal: Principal = Depends(_write)):
     return policy_registry.set_iac_source(principal.tenant_id, req.content, req.format, _actor(principal))
 
 
@@ -753,7 +760,7 @@ class SnapshotReq(BaseModel):
 
 
 @router.post("/snapshot")
-async def post_snapshot(req: SnapshotReq, principal: Principal = Depends(require_admin)):
+async def post_snapshot(req: SnapshotReq, principal: Principal = Depends(_write)):
     conn = _conn(req.connection_id)
     inv = await collector.collect_inventory(conn)
     compliance: dict[str, Any] = {"available": False, "by_assignment": {}}
@@ -783,14 +790,14 @@ class DraftReq(BaseModel):
 
 
 @router.put("/drafts")
-async def put_draft(req: DraftReq, principal: Principal = Depends(require_admin)):
+async def put_draft(req: DraftReq, principal: Principal = Depends(_write)):
     payload = req.model_dump()
     payload["tenant_id"] = principal.tenant_id
     return policy_registry.save_draft(payload, _actor(principal))
 
 
 @router.delete("/drafts/{draft_id}")
-async def delete_draft(draft_id: str, _: Principal = Depends(require_admin)):
+async def delete_draft(draft_id: str, _: Principal = Depends(_write)):
     if not policy_registry.delete_draft(draft_id):
         raise HTTPException(status_code=404, detail="Draft not found.")
     return {"ok": True}

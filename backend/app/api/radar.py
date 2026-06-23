@@ -22,11 +22,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 from app.radar import cache, demo, state
 
 router = APIRouter(prefix="/radar", tags=["radar"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("radar.read")
 log = logging.getLogger("app.api.radar")
 
 

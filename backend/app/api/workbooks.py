@@ -13,12 +13,19 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, get_principal
+from app.core.security import Principal, require_permission
 from app.models import WorkbookRun
 from app.workbooks import registry as wb_registry
 from app.workbooks.executor import preview_workbook, run_workbook
 
 router = APIRouter(prefix="/workbooks", tags=["workbooks"])
+
+# Viewing/exporting workbooks requires workbooks.read; creating, editing, importing,
+# AI-designing, and running them requires workbooks.write. The `get_principal` alias is the
+# read tier (so existing call sites stay correct); write endpoints opt into `_write`.
+# Admins always pass via require_permission.
+get_principal = require_permission("workbooks.read")
+_write = require_permission("workbooks.write")
 logger = logging.getLogger("app.api.workbooks")
 
 
@@ -89,7 +96,7 @@ async def list_workbooks_endpoint(principal: Principal = Depends(get_principal))
 
 @router.put("")
 async def upsert_workbook_endpoint(
-    payload: WorkbookUpsert, principal: Principal = Depends(get_principal)
+    payload: WorkbookUpsert, principal: Principal = Depends(_write)
 ):
     if payload.runtime not in wb_registry.RUNTIMES:
         raise HTTPException(status_code=400, detail=f"Invalid runtime '{payload.runtime}'.")
@@ -104,7 +111,7 @@ async def upsert_workbook_endpoint(
 
 @router.delete("/{workbook_id}")
 async def delete_workbook_endpoint(
-    workbook_id: str, _: Principal = Depends(get_principal)
+    workbook_id: str, _: Principal = Depends(_write)
 ):
     if not wb_registry.delete_workbook(workbook_id):
         raise HTTPException(status_code=404, detail="Workbook not found.")
@@ -129,7 +136,7 @@ async def export_workbook_endpoint(workbook_id: str, _: Principal = Depends(get_
 
 @router.post("/import")
 async def import_workbook_endpoint(
-    payload: WorkbookImportRequest, principal: Principal = Depends(get_principal)
+    payload: WorkbookImportRequest, principal: Principal = Depends(_write)
 ):
     """Create a workbook from an exported bundle (name de-duplicated on collision)."""
     from app.automations.portability import ImportError_, import_workbook
@@ -159,7 +166,7 @@ class WbEnhanceRequest(BaseModel):
 
 
 @router.post("/draft/interview")
-async def workbook_interview_endpoint(payload: WbInterviewRequest, _: Principal = Depends(get_principal)):
+async def workbook_interview_endpoint(payload: WbInterviewRequest, _: Principal = Depends(_write)):
     """Next batch of clarifying questions for designing a new workbook."""
     from app.workbooks.designer import next_questions
 
@@ -167,7 +174,7 @@ async def workbook_interview_endpoint(payload: WbInterviewRequest, _: Principal 
 
 
 @router.post("/draft/generate")
-async def workbook_generate_endpoint(payload: WbGenerateRequest, _: Principal = Depends(get_principal)):
+async def workbook_generate_endpoint(payload: WbGenerateRequest, _: Principal = Depends(_write)):
     """Generate a complete workbook draft from the interview, grounded on connections."""
     from app.core.azure_connections import list_connections
     from app.workbooks.designer import generate_workbook
@@ -180,7 +187,7 @@ async def workbook_generate_endpoint(payload: WbGenerateRequest, _: Principal = 
 
 @router.post("/{workbook_id}/enhance/interview")
 async def workbook_enhance_interview_endpoint(
-    workbook_id: str, payload: WbEnhanceRequest, _: Principal = Depends(get_principal)
+    workbook_id: str, payload: WbEnhanceRequest, _: Principal = Depends(_write)
 ):
     from app.workbooks.designer import enhance_questions
 
@@ -192,7 +199,7 @@ async def workbook_enhance_interview_endpoint(
 
 @router.post("/{workbook_id}/enhance/generate")
 async def workbook_enhance_generate_endpoint(
-    workbook_id: str, payload: WbEnhanceRequest, _: Principal = Depends(get_principal)
+    workbook_id: str, payload: WbEnhanceRequest, _: Principal = Depends(_write)
 ):
     from app.core.azure_connections import list_connections
     from app.workbooks.designer import enhance_workbook
@@ -218,7 +225,7 @@ async def workbook_enhance_generate_endpoint(
 async def run_workbook_endpoint(
     workbook_id: str,
     payload: WorkbookRunRequest,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(_write),
 ):
     try:
         run = await run_workbook(
@@ -238,7 +245,7 @@ async def run_workbook_endpoint(
 @router.post("/preview")
 async def preview_workbook_endpoint(
     payload: WorkbookPreviewRequest,
-    _: Principal = Depends(get_principal),
+    _: Principal = Depends(_write),
 ):
     """Execute an unsaved workbook draft and return its result without persisting it."""
     if payload.workbook.runtime not in wb_registry.RUNTIMES:

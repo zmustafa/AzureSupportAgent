@@ -5,10 +5,11 @@ import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
 import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
 import { WelcomeModal } from "./components/WelcomeModal";
+import { UserMenu } from "./components/UserMenu";
 import { APP_VERSION } from "./version";
 
 export default function App() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, refresh } = useAuth();
 
   if (loading) {
     return (
@@ -70,16 +71,7 @@ export default function App() {
               Settings
             </Link>
           )}
-          <span className="rounded bg-white/10 px-2 py-1">
-            {`${user.email} (${user.role})`}
-          </span>
-          <button
-            onClick={() => void logout()}
-            className="rounded px-2 py-1 hover:bg-white/10"
-            title="Sign out"
-          >
-            Sign out
-          </button>
+          <UserMenu user={user} onLogout={() => void logout()} onRefresh={() => void refresh()} />
         </div>
       </header>
 

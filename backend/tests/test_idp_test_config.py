@@ -99,3 +99,18 @@ async def test_oidc_test_config_discovery(monkeypatch):
     assert _check(checks, "authorization_endpoint present")["ok"] is True
     assert _check(checks, "JWKS exposes signing keys")["ok"] is True
     assert all(c["ok"] for c in checks if c["critical"])
+
+
+async def test_oidc_authorize_url_prompt(monkeypatch):
+    async def fake_discover(issuer, discovery_url):
+        return {"authorization_endpoint": "https://idp.example/authorize"}
+
+    monkeypatch.setattr(oidc, "discover", fake_discover)
+
+    # Default (no login_prompt) → no prompt param → IdP does silent SSO.
+    url, _ = await oidc.build_authorize_url({"client_id": "c1"}, "https://app/cb")
+    assert "prompt=" not in url
+
+    # "Select account upon sign in" → prompt=select_account.
+    url2, _ = await oidc.build_authorize_url({"client_id": "c1", "login_prompt": "select_account"}, "https://app/cb")
+    assert "prompt=select_account" in url2

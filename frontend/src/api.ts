@@ -51,6 +51,12 @@ export interface Me {
   display_name?: string;
   auth_source?: string;
   must_change_password?: boolean;
+  assigned_roles?: string[];
+  active_role?: string;
+  default_role?: string;
+  first_name?: string;
+  last_name?: string;
+  language?: string;
 }
 
 export interface AuthConfig {
@@ -77,6 +83,9 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
+    // API responses are dynamic and must never come from the browser HTTP cache
+    // (e.g. a stale /me after switching roles). React Query handles app-level caching.
+    cache: "no-store",
     ...init,
   });
   if (!res.ok) {
@@ -96,6 +105,7 @@ async function httpBlob(path: string, init?: RequestInit): Promise<Blob> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
+    cache: "no-store",
     ...init,
   });
   if (!res.ok) {
@@ -2264,6 +2274,13 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => http<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
+  setActiveRole: (role: string) =>
+    http<{ ok: boolean; active_role: string }>("/auth/active-role", {
+      method: "POST",
+      body: JSON.stringify({ role }),
+    }),
+  updateProfile: (body: { first_name?: string; last_name?: string; language?: string; default_role?: string }) =>
+    http<{ ok: boolean }>("/auth/profile", { method: "PATCH", body: JSON.stringify(body) }),
   changePassword: (newPassword: string, currentPassword?: string) =>
     http<{ ok: boolean }>("/auth/change-password", {
       method: "POST",
@@ -2291,7 +2308,7 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  acPermissions: () => http<{ key: string; label: string }[]>("/admin/access/permissions"),
+  acPermissions: () => http<{ key: string; label: string; group?: string }[]>("/admin/access/permissions"),
   acRoles: () => http<AcRole[]>("/admin/access/roles"),
   acCreateRole: (body: AcRoleBody) =>
     http<AcRole>("/admin/access/roles", { method: "POST", body: JSON.stringify(body) }),

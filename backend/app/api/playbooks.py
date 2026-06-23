@@ -10,12 +10,19 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, get_principal
+from app.core.security import Principal, require_permission
 from app.models import PlaybookRun
 from app.playbooks import registry as pb_registry
 from app.playbooks.runner import run_playbook
 
 router = APIRouter(prefix="/playbooks", tags=["playbooks"])
+
+# Viewing/exporting playbooks requires playbooks.read; creating, editing, importing,
+# AI-designing, and running them requires playbooks.write. The `get_principal` alias is the
+# read tier (so existing call sites stay correct); write endpoints opt into `_write`.
+# Admins always pass via require_permission.
+get_principal = require_permission("playbooks.read")
+_write = require_permission("playbooks.write")
 logger = logging.getLogger("app.api.playbooks")
 
 
@@ -68,7 +75,7 @@ async def list_playbooks_endpoint(principal: Principal = Depends(get_principal))
 
 @router.put("")
 async def upsert_playbook_endpoint(
-    payload: PlaybookUpsert, principal: Principal = Depends(get_principal)
+    payload: PlaybookUpsert, principal: Principal = Depends(_write)
 ):
     data = payload.model_dump()
     # When updating an existing playbook, verify the caller owns it before letting
@@ -88,7 +95,7 @@ async def upsert_playbook_endpoint(
 
 @router.delete("/{playbook_id}")
 async def delete_playbook_endpoint(
-    playbook_id: str, principal: Principal = Depends(get_principal)
+    playbook_id: str, principal: Principal = Depends(_write)
 ):
     _tenant_playbook_or_404(playbook_id, principal)
     if not pb_registry.delete_playbook(playbook_id):
@@ -115,7 +122,7 @@ async def export_playbook_endpoint(playbook_id: str, principal: Principal = Depe
 
 @router.post("/import")
 async def import_playbook_endpoint(
-    payload: PlaybookImportRequest, principal: Principal = Depends(get_principal)
+    payload: PlaybookImportRequest, principal: Principal = Depends(_write)
 ):
     """Create a playbook from a bundle: imports referenced workbooks (de-duped by
     content), remaps step references, then creates the playbook.
@@ -158,7 +165,7 @@ class PbGenerateRequest(BaseModel):
 
 
 @router.post("/draft/interview")
-async def playbook_interview_endpoint(payload: PbInterviewRequest, _: Principal = Depends(get_principal)):
+async def playbook_interview_endpoint(payload: PbInterviewRequest, _: Principal = Depends(_write)):
     """Next batch of clarifying questions for designing a new playbook."""
     from app.playbooks.designer import next_questions
 
@@ -168,7 +175,7 @@ async def playbook_interview_endpoint(payload: PbInterviewRequest, _: Principal 
 
 
 @router.post("/draft/generate")
-async def playbook_generate_endpoint(payload: PbGenerateRequest, _: Principal = Depends(get_principal)):
+async def playbook_generate_endpoint(payload: PbGenerateRequest, _: Principal = Depends(_write)):
     """Generate a complete playbook draft, grounded on the existing workbook catalog."""
     from app.playbooks.designer import generate_playbook
 
@@ -190,7 +197,7 @@ def pb_registry_workbooks() -> list[dict[str, Any]]:
 
 @router.post("/{playbook_id}/run")
 async def run_playbook_endpoint(
-    playbook_id: str, principal: Principal = Depends(get_principal)
+    playbook_id: str, principal: Principal = Depends(_write)
 ):
     _tenant_playbook_or_404(playbook_id, principal)
     try:

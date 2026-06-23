@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.azure_connections import resolve_connection
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.inventory import cache as inv_cache
 from app.inventory import cost as inv_cost
 from app.inventory import service as inv_service
@@ -37,6 +37,13 @@ from app.tagintel import (
 )
 
 router = APIRouter(prefix="/tagintel", tags=["tagintel"])
+
+# Viewing tag intelligence + generating previews/scripts requires tagintel.read; persisting
+# catalog entries, changesets, snapshots and APPLYING tag remediation to Azure requires
+# tagintel.write. The `require_admin` alias is the read tier; mutating endpoints opt into
+# `_write`. Admins pass either way. See app.auth.permissions for the catalog.
+require_admin = require_permission("tagintel.read")
+_write = require_permission("tagintel.write")
 logger = logging.getLogger("app.api.tagintel")
 
 # Resource types exempt from required-tag enforcement by default (shared/platform telemetry
@@ -214,7 +221,7 @@ async def get_catalog(principal: Principal = Depends(require_admin)):
 
 
 @router.post("/catalog")
-async def post_catalog(entry: CatalogEntry, principal: Principal = Depends(require_admin)):
+async def post_catalog(entry: CatalogEntry, principal: Principal = Depends(_write)):
     try:
         saved = catalog.upsert(principal.tenant_id, entry.model_dump())
     except ValueError as exc:
@@ -223,7 +230,7 @@ async def post_catalog(entry: CatalogEntry, principal: Principal = Depends(requi
 
 
 @router.delete("/catalog/{entry_id}")
-async def delete_catalog(entry_id: str, principal: Principal = Depends(require_admin)):
+async def delete_catalog(entry_id: str, principal: Principal = Depends(_write)):
     return {"deleted": catalog.delete(principal.tenant_id, entry_id)}
 
 
@@ -235,7 +242,7 @@ class SeedReq(BaseModel):
 
 
 @router.post("/catalog/seed")
-async def post_catalog_seed(req: SeedReq, principal: Principal = Depends(require_admin)):
+async def post_catalog_seed(req: SeedReq, principal: Principal = Depends(_write)):
     """Create draft catalog entries from the most-used discovered keys (F2)."""
     loaded = await _load(principal.tenant_id, req.connection_id or "", req.scope, False, req.workload_id)
     if not loaded:
@@ -334,7 +341,7 @@ async def post_cmdb_reconcile(req: CmdbReq, principal: Principal = Depends(requi
 
 @router.post("/drift/snapshot")
 async def post_drift_snapshot(connection_id: str | None = None, scope: str = "", workload_id: str = "",
-                              principal: Principal = Depends(require_admin)):
+                              principal: Principal = Depends(_write)):
     loaded = await _load(principal.tenant_id, connection_id or "", scope, False, workload_id)
     if not loaded:
         return _not_loaded()
@@ -457,7 +464,7 @@ class ApplyReq(BaseModel):
 
 
 @router.post("/remediate/apply")
-async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(require_admin)):
+async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(_write)):
     """Apply a tag change-set to Azure (the actual write). Requires explicit approval and a
     writable connection; the command runner enforces connection read-only + admin command-exec
     governance. Returns per-resource results. Nothing runs without ``approved=True``."""
@@ -489,7 +496,7 @@ async def post_remediate_apply(req: ApplyReq, principal: Principal = Depends(req
 
 
 @router.post("/remediate/apply/stream")
-async def post_remediate_apply_stream(req: ApplyReq, principal: Principal = Depends(require_admin)):
+async def post_remediate_apply_stream(req: ApplyReq, principal: Principal = Depends(_write)):
     """Apply a tag change-set to Azure over SSE, emitting a live per-resource status feed:
     ``start`` → (``item_start`` → ``item_done``)* → ``done``. Same governance, approval and
     audit-trail rules as :func:`post_remediate_apply` — the plan + result are persisted (and the
@@ -562,7 +569,7 @@ async def get_changesets(principal: Principal = Depends(require_admin)):
 
 
 @router.post("/changesets")
-async def post_changeset(cs: ChangeSetReq, principal: Principal = Depends(require_admin)):
+async def post_changeset(cs: ChangeSetReq, principal: Principal = Depends(_write)):
     """Create or update a named change-set so it can be re-loaded for preview/dry-run/apply."""
     try:
         saved = remediation.save_changeset(principal.tenant_id, cs.model_dump(), actor=principal.subject)
@@ -572,12 +579,12 @@ async def post_changeset(cs: ChangeSetReq, principal: Principal = Depends(requir
 
 
 @router.delete("/changesets/{cs_id}")
-async def delete_changeset(cs_id: str, principal: Principal = Depends(require_admin)):
+async def delete_changeset(cs_id: str, principal: Principal = Depends(_write)):
     return {"deleted": remediation.delete_changeset(principal.tenant_id, cs_id)}
 
 
 @router.post("/changesets/{cs_id}/duplicate")
-async def post_duplicate_changeset(cs_id: str, principal: Principal = Depends(require_admin)):
+async def post_duplicate_changeset(cs_id: str, principal: Principal = Depends(_write)):
     dup = remediation.duplicate_changeset(principal.tenant_id, cs_id, actor=principal.subject)
     if dup is None:
         raise HTTPException(status_code=404, detail="Change-set not found.")
@@ -589,7 +596,7 @@ class MoveReq(BaseModel):
 
 
 @router.post("/changesets/{cs_id}/move")
-async def post_move_changeset(cs_id: str, req: MoveReq, principal: Principal = Depends(require_admin)):
+async def post_move_changeset(cs_id: str, req: MoveReq, principal: Principal = Depends(_write)):
     moved = remediation.move_changeset(principal.tenant_id, cs_id, req.group_id)
     if moved is None:
         raise HTTPException(status_code=404, detail="Change-set or group not found.")
@@ -612,7 +619,7 @@ class ImportReq(BaseModel):
 
 
 @router.post("/changesets/import")
-async def import_changesets(req: ImportReq, principal: Principal = Depends(require_admin)):
+async def import_changesets(req: ImportReq, principal: Principal = Depends(_write)):
     """Import a change-set bundle produced by the export endpoint. Adds change-sets as new
     records (never overwrites); referenced groups are matched by name or created."""
     try:
@@ -636,7 +643,7 @@ async def get_changeset_groups(principal: Principal = Depends(require_admin)):
 
 
 @router.post("/changeset-groups")
-async def post_changeset_group(group: GroupReq, principal: Principal = Depends(require_admin)):
+async def post_changeset_group(group: GroupReq, principal: Principal = Depends(_write)):
     try:
         saved = remediation.save_group(principal.tenant_id, group.model_dump(), actor=principal.subject)
     except ValueError as exc:
@@ -645,7 +652,7 @@ async def post_changeset_group(group: GroupReq, principal: Principal = Depends(r
 
 
 @router.delete("/changeset-groups/{group_id}")
-async def delete_changeset_group(group_id: str, principal: Principal = Depends(require_admin)):
+async def delete_changeset_group(group_id: str, principal: Principal = Depends(_write)):
     return {"deleted": remediation.delete_group(principal.tenant_id, group_id)}
 
 

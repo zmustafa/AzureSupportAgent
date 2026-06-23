@@ -29,7 +29,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import SESSION_COOKIE, Principal, get_principal
 from app.models import AuditLog
-from app.models.auth import IdentityProvider, User
+from app.models.auth import IdentityProvider, Session, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -113,7 +113,8 @@ async def auth_config(db: AsyncSession = Depends(get_db)):
 
 # ---------------------------------------------------------------------------- me
 @router.get("/me")
-async def me(principal: Principal = Depends(get_principal)):
+async def me(principal: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, principal.subject)
     return {
         "subject": principal.subject,
         "email": principal.email,
@@ -123,7 +124,83 @@ async def me(principal: Principal = Depends(get_principal)):
         "display_name": principal.display_name,
         "auth_source": principal.auth_source,
         "must_change_password": principal.must_change_password,
+        # Role-switching + profile.
+        "assigned_roles": list(principal.assigned_roles),
+        "active_role": principal.active_role or principal.role,
+        "default_role": (user.default_role or "") if user else "",
+        "first_name": (user.first_name or "") if user else "",
+        "last_name": (user.last_name or "") if user else "",
+        "language": (user.language or "en") if user else "en",
     }
+
+
+class ActiveRoleBody(BaseModel):
+    role: str = ""
+
+
+@router.post("/active-role")
+async def set_active_role(
+    body: ActiveRoleBody,
+    principal: Principal = Depends(get_principal),
+    azsupagent_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Act as a different role for THIS session. The role must be one the user already holds
+    (a safe downscope); an empty role resets to the default/union. Reload the SPA after this
+    so permission-gated UI re-renders."""
+    if settings.dev_auth or not azsupagent_session:
+        raise HTTPException(status_code=400, detail="Active-role switching requires a real session.")
+    want = (body.role or "").strip()
+    if want and want not in principal.assigned_roles:
+        raise HTTPException(status_code=403, detail="You can only act as a role assigned to you.")
+    sess = await db.get(Session, azsupagent_session)
+    if sess is None:
+        raise HTTPException(status_code=401, detail="Session not found.")
+    sess.active_role = want or None
+    await db.commit()
+    await _audit(db, principal.email or principal.subject, "auth.active_role_set", {"role": want or "(default)"})
+    return {"ok": True, "active_role": want}
+
+
+class ProfileBody(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    language: str | None = None
+    default_role: str | None = None
+
+
+@router.patch("/profile")
+async def update_profile(
+    body: ProfileBody,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the signed-in user's own profile (name, language, default role). Email is
+    immutable. ``default_role`` must be a role the user holds."""
+    user = await db.get(User, principal.subject)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if body.first_name is not None:
+        user.first_name = body.first_name.strip()[:128]
+    if body.last_name is not None:
+        user.last_name = body.last_name.strip()[:128]
+    if body.language is not None:
+        user.language = body.language.strip()[:16]
+    # Recompose the canonical display name from first/last when either was provided.
+    if body.first_name is not None or body.last_name is not None:
+        full = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+        if full:
+            user.display_name = full
+    if body.default_role is not None:
+        want = body.default_role.strip()
+        if want and want not in principal.assigned_roles:
+            raise HTTPException(status_code=403, detail="Default role must be one assigned to you.")
+        user.default_role = want or None
+    user.updated_at = _aware_now()
+    await db.commit()
+    await _audit(db, principal.email or principal.subject, "auth.profile_update", {})
+    return {"ok": True}
+
 
 
 # ------------------------------------------------------------------------- login

@@ -14,13 +14,20 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.azure_connections import resolve_connection
-from app.core.security import Principal, get_principal
+from app.core.security import Principal, require_permission
 from app.workloads import discovery
 from app.workloads import registry as wl_registry
 from app.workloads.autopilot import discover_workloads
 from app.workloads.cache import discovery_cache
 
 router = APIRouter(prefix="/workloads", tags=["workloads"])
+
+# Viewing workloads + running discovery/search analysis requires workloads.read; creating,
+# editing, deleting, restoring, purging and saving discovered workloads requires
+# workloads.write. The `get_principal` alias is the read tier (so existing call sites stay
+# correct); write endpoints opt into `_write`. Admins always pass via require_permission.
+get_principal = require_permission("workloads.read")
+_write = require_permission("workloads.write")
 logger = logging.getLogger("app.api.workloads")
 
 
@@ -60,7 +67,7 @@ async def list_workloads_endpoint(_: Principal = Depends(get_principal)):
 
 @router.put("")
 async def upsert_workload_endpoint(
-    payload: WorkloadUpsert, principal: Principal = Depends(get_principal)
+    payload: WorkloadUpsert, principal: Principal = Depends(_write)
 ):
     data = payload.model_dump()
     if not payload.id:
@@ -80,14 +87,14 @@ async def list_trashed_workloads_endpoint(_: Principal = Depends(get_principal))
 
 
 @router.post("/trash/empty")
-async def empty_workload_trash_endpoint(_: Principal = Depends(get_principal)):
+async def empty_workload_trash_endpoint(_: Principal = Depends(_write)):
     """Permanently delete every workload in the Trash."""
     deleted = wl_registry.empty_trash()
     return {"ok": True, "deleted": deleted}
 
 
 @router.delete("/{workload_id}")
-async def delete_workload_endpoint(workload_id: str, _: Principal = Depends(get_principal)):
+async def delete_workload_endpoint(workload_id: str, _: Principal = Depends(_write)):
     """Soft-delete a workload: move it to the Trash (restorable until purged)."""
     if not wl_registry.delete_workload(workload_id):
         raise HTTPException(status_code=404, detail="Workload not found.")
@@ -95,7 +102,7 @@ async def delete_workload_endpoint(workload_id: str, _: Principal = Depends(get_
 
 
 @router.post("/{workload_id}/restore")
-async def restore_workload_endpoint(workload_id: str, _: Principal = Depends(get_principal)):
+async def restore_workload_endpoint(workload_id: str, _: Principal = Depends(_write)):
     """Restore a trashed workload back into the active list."""
     wl = wl_registry.restore_workload(workload_id)
     if wl is None:
@@ -104,7 +111,7 @@ async def restore_workload_endpoint(workload_id: str, _: Principal = Depends(get
 
 
 @router.delete("/{workload_id}/purge")
-async def purge_workload_endpoint(workload_id: str, _: Principal = Depends(get_principal)):
+async def purge_workload_endpoint(workload_id: str, _: Principal = Depends(_write)):
     """Permanently delete a single trashed workload."""
     if not wl_registry.purge_workload(workload_id):
         raise HTTPException(status_code=404, detail="Workload not in trash.")
@@ -451,7 +458,7 @@ class AutopilotSaveRequest(BaseModel):
 
 @router.post("/autopilot/save")
 async def autopilot_save_endpoint(
-    payload: AutopilotSaveRequest, principal: Principal = Depends(get_principal)
+    payload: AutopilotSaveRequest, principal: Principal = Depends(_write)
 ):
     """Persist selected Autopilot candidates as Azure Workloads. Records the user's
     grouping corrections into memory and (optionally) launches a Mission Control sweep +

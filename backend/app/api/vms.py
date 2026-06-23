@@ -24,11 +24,15 @@ from app.core.sandbox_vms import (
     update_status,
     upsert_vm,
 )
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.exec.ssh_runner import detect_environment, run_ssh_capture
 from app.models import AuditLog, VmRun
 
 router = APIRouter(prefix="/admin/sandbox-vms", tags=["sandbox-vms"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("sandbox.exec")
 logger = logging.getLogger("app.api.vms")
 
 

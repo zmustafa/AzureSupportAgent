@@ -12,7 +12,7 @@ from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import ALL_PERMISSIONS
-from app.auth.service import effective, primary_role, resolve_session
+from app.auth.service import effective_scoped, resolve_session
 from app.core.config import get_settings
 from app.core.db import get_db
 
@@ -43,6 +43,10 @@ _NO_ACCESS_ALLOWLIST = frozenset(
         "/api/auth/me",
         "/api/auth/logout",
         "/api/auth/config",
+        # Let a user who downscoped to a low/no-permission role switch back, and edit their
+        # own profile, without being trapped by the no-access lockout.
+        "/api/auth/active-role",
+        "/api/auth/profile",
     }
 )
 
@@ -57,6 +61,10 @@ class Principal:
     display_name: str = ""
     auth_source: str = "local"
     must_change_password: bool = False
+    # Every role the user holds (direct + via groups) — the "Active Role" picker options.
+    assigned_roles: tuple[str, ...] = ()
+    # The role the session is currently acting as (== role); "" when no explicit pick.
+    active_role: str = ""
 
     @property
     def is_admin(self) -> bool:
@@ -93,16 +101,18 @@ async def get_principal(
     if resolved is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     _sess, user = resolved
-    perms, role_names = await effective(db, user)
+    perms, role_names, eff_role = await effective_scoped(db, user, _sess.active_role)
     principal = Principal(
         subject=user.id,
         email=user.email,
         tenant_id=user.tenant_id,
-        role=primary_role(role_names),
+        role=eff_role,
         permissions=frozenset(perms),
         display_name=user.display_name or user.username,
         auth_source=user.auth_source,
         must_change_password=user.must_change_password,
+        assigned_roles=tuple(sorted(role_names)),
+        active_role=(_sess.active_role or "").strip(),
     )
     # Enforce a forced password change server-side: until the user sets a new password,
     # block every endpoint except the change-password / identity / logout allowlist. This

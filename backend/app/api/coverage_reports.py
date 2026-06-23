@@ -11,9 +11,13 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 
 router = APIRouter(prefix="/coverage-reports", tags=["coverage-reports"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("coverage.read")
 
 
 @router.get("/estate/pdf")

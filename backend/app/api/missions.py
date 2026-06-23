@@ -14,11 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.missions import orchestrator, systems
 from app.models import AuditLog
 
 router = APIRouter(prefix="/missions", tags=["missions"])
+
+# Viewing missions requires missions.read; launching/cancelling/deleting requires
+# missions.run. The `require_admin` alias maps to the read tier so existing GET call sites
+# stay correct; mutating endpoints below opt into `_run`. Admins always pass either way.
+require_admin = require_permission("missions.read")
+_run = require_permission("missions.run")
 log = logging.getLogger("app.api.missions")
 
 
@@ -79,7 +85,7 @@ async def list_systems(_: Principal = Depends(require_admin)):
 @router.post("/run")
 async def run_mission(
     payload: MissionRunRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_run),
     db: AsyncSession = Depends(get_db),
 ):
     """Launch a mission for one workload; returns the mission immediately (status running)."""
@@ -103,7 +109,7 @@ async def run_mission(
 @router.post("/fleet")
 async def run_fleet(
     payload: MissionFleetRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_run),
     db: AsyncSession = Depends(get_db),
 ):
     """Launch missions for several workloads at once (fleet sweep)."""
@@ -167,7 +173,7 @@ async def stream_mission(mission_id: str, principal: Principal = Depends(require
 
 
 @router.post("/{mission_id}/cancel")
-async def cancel_mission(mission_id: str, principal: Principal = Depends(require_admin)):
+async def cancel_mission(mission_id: str, principal: Principal = Depends(_run)):
     ok = orchestrator.manager.cancel(mission_id, principal.tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Mission not running.")
@@ -177,7 +183,7 @@ async def cancel_mission(mission_id: str, principal: Principal = Depends(require
 @router.delete("/{mission_id}")
 async def delete_mission(
     mission_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_run),
     db: AsyncSession = Depends(get_db),
 ):
     ok = await orchestrator.delete_mission(mission_id, principal.tenant_id)

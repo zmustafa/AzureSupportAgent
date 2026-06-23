@@ -15,9 +15,13 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.changeexplorer import demo, export as export_mod, runs as runs_store, service
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 
 router = APIRouter(prefix="/changeexplorer", tags=["changeexplorer"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("changeexplorer.read")
 log = logging.getLogger("app.api.changeexplorer")
 
 

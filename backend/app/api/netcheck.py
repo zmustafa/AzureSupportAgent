@@ -13,10 +13,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.netcheck import demo, store
 
 router = APIRouter(prefix="/netcheck", tags=["netcheck"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("netdiag.run")
 log = logging.getLogger("app.api.netcheck")
 
 

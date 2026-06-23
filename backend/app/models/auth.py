@@ -30,6 +30,14 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     username: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(256), default="")
+    # Optional structured name + locale preference (edited in the profile dialog). display_name
+    # stays the canonical label; first/last are conveniences split out for the form.
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # The user's preferred DEFAULT role — the active role a fresh session starts with. When
+    # empty, the highest-ranked assigned role is used. Must always be one of the user's roles.
+    default_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Null for SSO-only accounts that never set a local password.
     password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # active | disabled | invited
@@ -110,6 +118,10 @@ class Session(Base):
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Session-scoped "act as" role. When set (and still one of the user's assigned roles), the
+    # principal's effective permissions are DOWNSCOPED to just this role for the session. Empty
+    # = the union of all assigned roles (normal behavior). Never grants a role the user lacks.
+    active_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class IdentityProvider(Base):

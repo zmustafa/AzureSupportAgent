@@ -19,10 +19,17 @@ from sse_starlette.sse import EventSourceResponse
 from app.architectures import catalog
 from app.architectures import registry as arch_registry
 from app.core.azure_connections import resolve_connection
-from app.core.security import Principal, get_principal
+from app.core.security import Principal, require_permission
 from app.workloads.registry import get_workload
 
 router = APIRouter(prefix="/architectures", tags=["architectures"])
+
+# Viewing architectures requires architectures.read; AI-generating, editing, organizing
+# (collections), deleting/restoring/purging, and editing memory requires
+# architectures.write. The `get_principal` alias is the read tier (so existing call sites
+# stay correct); write endpoints opt into `_write`. Admins always pass via require_permission.
+get_principal = require_permission("architectures.read")
+_write = require_permission("architectures.write")
 logger = logging.getLogger("app.api.architectures")
 
 
@@ -126,7 +133,7 @@ class GenerateJobsRequest(BaseModel):
 
 @router.post("/jobs")
 async def create_generation_jobs_endpoint(
-    payload: GenerateJobsRequest, principal: Principal = Depends(get_principal)
+    payload: GenerateJobsRequest, principal: Principal = Depends(_write)
 ):
     """Queue one background AI reverse-engineering job per selected workload. Returns the
     job records immediately; poll GET /architectures/jobs for live progress."""
@@ -160,7 +167,7 @@ async def list_generation_jobs_endpoint(principal: Principal = Depends(get_princ
 
 
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_generation_job_endpoint(job_id: str, principal: Principal = Depends(get_principal)):
+async def cancel_generation_job_endpoint(job_id: str, principal: Principal = Depends(_write)):
     from app.architectures.jobs import manager
 
     if not manager.cancel(job_id, principal.tenant_id):
@@ -169,7 +176,7 @@ async def cancel_generation_job_endpoint(job_id: str, principal: Principal = Dep
 
 
 @router.delete("/jobs/{job_id}")
-async def dismiss_generation_job_endpoint(job_id: str, principal: Principal = Depends(get_principal)):
+async def dismiss_generation_job_endpoint(job_id: str, principal: Principal = Depends(_write)):
     from app.architectures.jobs import manager
 
     if not manager.dismiss(job_id, principal.tenant_id):
@@ -202,7 +209,7 @@ async def list_collections_endpoint(principal: Principal = Depends(get_principal
 
 @router.put("/collections")
 async def upsert_collection_endpoint(
-    payload: CollectionUpsert, principal: Principal = Depends(get_principal)
+    payload: CollectionUpsert, principal: Principal = Depends(_write)
 ):
     from app.architectures import collections as coll_registry
 
@@ -218,7 +225,7 @@ async def upsert_collection_endpoint(
 
 @router.post("/collections/reorder")
 async def reorder_collections_endpoint(
-    payload: ReorderRequest, _: Principal = Depends(get_principal)
+    payload: ReorderRequest, _: Principal = Depends(_write)
 ):
     from app.architectures import collections as coll_registry
 
@@ -228,7 +235,7 @@ async def reorder_collections_endpoint(
 
 @router.delete("/collections/{collection_id}")
 async def delete_collection_endpoint(
-    collection_id: str, principal: Principal = Depends(get_principal)
+    collection_id: str, principal: Principal = Depends(_write)
 ):
     from app.architectures import collections as coll_registry
 
@@ -255,7 +262,7 @@ async def list_trashed_architectures_endpoint(principal: Principal = Depends(get
 
 
 @router.post("/trash/empty")
-async def empty_architecture_trash_endpoint(principal: Principal = Depends(get_principal)):
+async def empty_architecture_trash_endpoint(principal: Principal = Depends(_write)):
     """Permanently delete every architecture in the Trash (tenant-scoped)."""
     deleted = arch_registry.empty_architecture_trash(principal.tenant_id)
     return {"ok": True, "deleted": deleted}
@@ -311,7 +318,7 @@ async def get_architecture_endpoint(architecture_id: str, principal: Principal =
 
 @router.put("")
 async def upsert_architecture_endpoint(
-    payload: ArchitectureUpsert, principal: Principal = Depends(get_principal)
+    payload: ArchitectureUpsert, principal: Principal = Depends(_write)
 ):
     data = payload.model_dump()
     data["tenant_id"] = principal.tenant_id
@@ -322,7 +329,7 @@ async def upsert_architecture_endpoint(
 
 
 @router.delete("/{architecture_id}")
-async def delete_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+async def delete_architecture_endpoint(architecture_id: str, principal: Principal = Depends(_write)):
     """Soft-delete: move the architecture to the Trash (restorable until purged)."""
     _tenant_arch_or_404(architecture_id, principal)
     if not arch_registry.delete_architecture(architecture_id, actor=_actor(principal)):
@@ -331,7 +338,7 @@ async def delete_architecture_endpoint(architecture_id: str, principal: Principa
 
 
 @router.post("/{architecture_id}/restore")
-async def restore_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+async def restore_architecture_endpoint(architecture_id: str, principal: Principal = Depends(_write)):
     """Restore a trashed architecture back into the active list."""
     _tenant_arch_or_404(architecture_id, principal, include_deleted=True)
     arch = arch_registry.restore_architecture(architecture_id, actor=_actor(principal))
@@ -341,7 +348,7 @@ async def restore_architecture_endpoint(architecture_id: str, principal: Princip
 
 
 @router.delete("/{architecture_id}/purge")
-async def purge_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+async def purge_architecture_endpoint(architecture_id: str, principal: Principal = Depends(_write)):
     """Permanently delete a single trashed architecture (hard delete)."""
     arch = _tenant_arch_or_404(architecture_id, principal, include_deleted=True)
     if not arch.get("deleted_at"):
@@ -363,7 +370,7 @@ class CategoryUpdate(BaseModel):
 
 @router.post("/{architecture_id}/state")
 async def set_architecture_state_endpoint(
-    architecture_id: str, payload: StateUpdate, principal: Principal = Depends(get_principal)
+    architecture_id: str, payload: StateUpdate, principal: Principal = Depends(_write)
 ):
     _tenant_arch_or_404(architecture_id, principal)
     try:
@@ -377,7 +384,7 @@ async def set_architecture_state_endpoint(
 
 @router.post("/{architecture_id}/category")
 async def set_architecture_category_endpoint(
-    architecture_id: str, payload: CategoryUpdate, principal: Principal = Depends(get_principal)
+    architecture_id: str, payload: CategoryUpdate, principal: Principal = Depends(_write)
 ):
     _tenant_arch_or_404(architecture_id, principal)
     saved = arch_registry.set_category(architecture_id, payload.category_id, _actor(principal))
@@ -392,7 +399,7 @@ class WorkloadUpdate(BaseModel):
 
 @router.post("/{architecture_id}/workload")
 async def set_architecture_workload_endpoint(
-    architecture_id: str, payload: WorkloadUpdate, principal: Principal = Depends(get_principal)
+    architecture_id: str, payload: WorkloadUpdate, principal: Principal = Depends(_write)
 ):
     """Link (or unlink) the architecture to a workload. An empty workload_id unlinks it;
     the diagram is never modified — only the association changes."""
@@ -419,7 +426,7 @@ class RebuildRequest(BaseModel):
 
 @router.post("/{architecture_id}/rebuild")
 async def rebuild_architecture_endpoint(
-    architecture_id: str, payload: RebuildRequest, principal: Principal = Depends(get_principal)
+    architecture_id: str, payload: RebuildRequest, principal: Principal = Depends(_write)
 ):
     """Queue a background job that re-reverse-engineers this architecture from the current
     Azure state of a workload, overwriting its diagram in place (id/name/state preserved).
@@ -515,7 +522,7 @@ async def get_memory_endpoint(architecture_id: str, principal: Principal = Depen
 
 @router.put("/{architecture_id}/memory")
 async def upsert_memory_endpoint(
-    architecture_id: str, payload: MemoryUpsert, principal: Principal = Depends(get_principal)
+    architecture_id: str, payload: MemoryUpsert, principal: Principal = Depends(_write)
 ):
     """Create or update the architecture's memory (sections / title / enabled flag)."""
     from app.architectures import memory as mem
@@ -537,7 +544,7 @@ async def upsert_memory_endpoint(
 
 
 @router.delete("/{architecture_id}/memory")
-async def delete_memory_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
+async def delete_memory_endpoint(architecture_id: str, principal: Principal = Depends(_write)):
     from app.architectures import memory as mem
 
     _tenant_arch_or_404(architecture_id, principal)

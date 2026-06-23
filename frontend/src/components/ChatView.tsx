@@ -46,6 +46,7 @@ import {
   type OwnershipTab,
   type IdentityTab,
 } from "./navConfig";
+import { useAuth } from "./AuthContext";
 import { formatDuration, formatTimestamp } from "../utils/format";
 import {
   ComposeIcon,
@@ -829,8 +830,10 @@ export default function ChatView() {
   // Only enabled agents are surfaced in the sidebar quick-launch menu and the composer
   // agent picker (disabled agents are kept but hidden).
   const enabledAgents = customAgents.filter((a) => a.enabled !== false);
-  // Identity — used to gate the Admin Dashboard link in the sidebar footer.
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 300_000 });
+  // Identity — used to gate the Admin Dashboard link in the sidebar footer. Read from the
+  // shared AuthContext (single source of truth) so an active-role switch re-renders the menu
+  // immediately, with no manual page refresh.
+  const { user: me } = useAuth();
   // Progress-feed verbosity, configured in the dashboard (compact/normal/detailed).
   const { data: appSettings } = useQuery({
     queryKey: ["appSettings"],

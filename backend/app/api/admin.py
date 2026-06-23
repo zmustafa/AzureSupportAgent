@@ -38,7 +38,7 @@ from app.core.llm_config import (
     save_config,
     set_provider_enabled,
 )
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.mcp.client import build_mcp_client
 from app.models import (
     Approval,
@@ -54,6 +54,11 @@ from app.models import (
 from app.schemas import ApprovalDecision, ApprovalOut, ToolCallOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). Admin config remains admin-only because only the admin
+# role carries settings.write. See app.auth.permissions for the catalog.
+require_admin = require_permission("settings.write")
 settings = get_settings()
 
 
@@ -579,8 +584,8 @@ async def _diagnose_provider(provider: str):
     missing: list[str] = []
     if not eff_model:
         missing.append("model")
-    # Key requirements vary per provider.
-    needs_key = provider not in ("ollama", "lmstudio", "chatgpt", "github_copilot")
+    # Key requirements vary per provider. OAuth/local providers carry no api_key.
+    needs_key = provider not in ("ollama", "lmstudio", "chatgpt", "github_copilot", "claude_oauth")
     if needs_key and not eff_key:
         missing.append("api_key")
     if provider in ("openai_eu", "azure_openai", "github", "ollama", "chatgpt", "claude",
@@ -856,7 +861,7 @@ async def _diagnose_models(provider: str, free_only: bool | None):
     resolved = get_active(provider, None)
     eff_base = (resolved.get("base_url") or "").strip()
     eff_key = (resolved.get("api_key") or "").strip()
-    needs_key = provider not in ("ollama", "lmstudio", "chatgpt", "github_copilot")
+    needs_key = provider not in ("ollama", "lmstudio", "chatgpt", "github_copilot", "claude_oauth")
     key_part = ""
     if eff_key and needs_key:
         masked = (eff_key[:4] + "…" + eff_key[-2:]) if len(eff_key) > 8 else "set"

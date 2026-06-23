@@ -17,10 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.backupdr import cache, change_requests, demo
 from app.backupdr.collector import _empty_snapshot, collect_coverage
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 
 router = APIRouter(prefix="/backupdr", tags=["backupdr"])
+
+# Viewing coverage + running scans requires coverage.read; curating the reference set and
+# approving/deleting change requests requires coverage.manage. The `require_admin` alias is
+# the read tier; manage endpoints opt into `_manage`. Admins pass either way.
+require_admin = require_permission("coverage.read")
+_manage = require_permission("coverage.manage")
 log = logging.getLogger("app.api.backupdr")
 
 
@@ -309,7 +315,7 @@ class ReferenceUpdate(BaseModel):
 
 @router.put("/reference")
 async def put_reference(
-    payload: ReferenceUpdate, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    payload: ReferenceUpdate, principal: Principal = Depends(_manage), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     from app.backupdr.reference import save_reference
 
@@ -336,7 +342,7 @@ class RestoreRequest(BaseModel):
 
 
 @router.post("/reference/restore")
-async def restore_reference(payload: RestoreRequest, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def restore_reference(payload: RestoreRequest, principal: Principal = Depends(_manage)) -> dict[str, Any]:
     from app.backupdr.reference import restore_revision
 
     doc = restore_revision(payload.revision_id, actor=principal.subject)
@@ -346,7 +352,7 @@ async def restore_reference(payload: RestoreRequest, principal: Principal = Depe
 
 
 @router.post("/reference/reset")
-async def reset_reference(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def reset_reference(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     from app.backupdr.reference import reset_to_builtin
 
     return {"ok": True, "reference": reset_to_builtin(actor=principal.subject)}
@@ -506,7 +512,7 @@ class ApprovalRequest(BaseModel):
 
 @router.post("/approval")
 async def send_to_approval(
-    payload: ApprovalRequest, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    payload: ApprovalRequest, principal: Principal = Depends(_manage), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     from app.backupdr.iac import generate_iac
 
@@ -547,7 +553,7 @@ class DecisionRequest(BaseModel):
 
 @router.post("/approvals/{request_id}/decide")
 async def decide_approval(
-    request_id: str, payload: DecisionRequest, principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    request_id: str, payload: DecisionRequest, principal: Principal = Depends(_manage), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     req = change_requests.decide_request(
         principal.tenant_id, request_id, decision=payload.decision, actor=principal.subject, reason=payload.reason
@@ -565,14 +571,14 @@ async def decide_approval(
 
 
 @router.delete("/approvals/{request_id}")
-async def delete_approval(request_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def delete_approval(request_id: str, principal: Principal = Depends(_manage)) -> dict[str, Any]:
     ok = change_requests.delete_request(principal.tenant_id, request_id)
     return {"ok": ok}
 
 
 # ----------------------------------------------------------------------- demo seed
 @router.post("/demo/seed")
-async def seed_demo_endpoint(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def seed_demo_endpoint(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     _ttl, stale, sla, _cap = _settings()
     snap = demo.seed_demo(sla_hours=sla, stale_drill_days=stale, tenant_id=principal.tenant_id)
     return {"ok": True, "workload_id": demo.DEMO_WORKLOAD_ID, "pct_protected": snap.get("scorecard", {}).get("pct_protected")}

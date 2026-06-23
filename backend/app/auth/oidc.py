@@ -141,6 +141,13 @@ async def build_authorize_url(idp_cfg: dict[str, Any], redirect_uri: str) -> tup
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
+    # Optional OIDC `prompt`. Without it, the IdP silently reuses an existing browser session
+    # (Entra SSO) and never shows an account picker — so a shared machine always signs in the
+    # already-authenticated user. Set "select_account" (the form's "Select account upon sign in"
+    # toggle) to always show the chooser; "login" forces re-auth. Empty = default silent SSO.
+    prompt = (idp_cfg.get("login_prompt") or "").strip()
+    if prompt:
+        params["prompt"] = prompt
     authorize_url = doc["authorization_endpoint"] + "?" + urlencode(params)
     cookie = encode_state({"state": state, "verifier": verifier, "nonce": nonce})
     return authorize_url, cookie

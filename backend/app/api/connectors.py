@@ -21,10 +21,14 @@ from app.connectors.registry import (
     upsert_connector,
 )
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 
 router = APIRouter(prefix="/admin/connectors", tags=["connectors"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("connectors.manage")
 
 
 class ConnectorUpsert(BaseModel):

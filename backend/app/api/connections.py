@@ -24,10 +24,14 @@ from app.core.azure_connections import (
     upsert_connection,
 )
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 
 router = APIRouter(prefix="/admin/connections", tags=["connections"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("connections.manage")
 
 
 class ConnectionUpsert(BaseModel):

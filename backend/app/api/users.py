@@ -15,7 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import hash_password
-from app.auth.permissions import PERMISSIONS, SYSTEM_ROLE_NAMES
+from app.auth.permissions import PERMISSION_GROUPS, PERMISSIONS, SYSTEM_ROLE_NAMES
 from app.auth.service import (
     effective,
     revoke_all_for_user,
@@ -314,7 +314,11 @@ async def _ensure_not_last_admin(db: AsyncSession, user: User, new_role_ids: lis
 # =============================================================================== roles
 @router.get("/permissions")
 async def list_permissions(_: Principal = Depends(_guard)):
-    return [{"key": k, "label": v} for k, v in PERMISSIONS.items()]
+    return [
+        {"key": key, "label": label, "group": group}
+        for group, items in PERMISSION_GROUPS
+        for key, label in items
+    ]
 
 
 class RoleBody(BaseModel):

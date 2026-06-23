@@ -21,12 +21,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 from app.rbac import cache, compose, demo, export, job, pivots, schema, store
 from app.rbac import scopes as scope_filters
 
 router = APIRouter(prefix="/rbac", tags=["rbac"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("rbac.read")
 log = logging.getLogger("app.api.rbac")
 
 # Master-row tab filters (one grid, many lenses — see RbacView).

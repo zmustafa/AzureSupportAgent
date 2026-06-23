@@ -107,6 +107,37 @@ def primary_role(role_names: list[str]) -> str:
     return max(role_names, key=role_rank)
 
 
+async def effective_scoped(
+    db: AsyncSession, user: User, active_role: str | None
+) -> tuple[set[str], list[str], str]:
+    """Like :func:`effective` but honoring a session's ``active_role`` downscope.
+
+    Returns ``(permissions, all_assigned_role_names, effective_role)``:
+    * ``all_assigned_role_names`` — every role the user has (direct + via groups); these are
+      the options the "Active Role" picker offers.
+    * If ``active_role`` is one of those, permissions are restricted to JUST that role and the
+      effective role is it (acting-as / least-privilege). It can never grant a role the user
+      doesn't hold, so this is always a safe downscope.
+    * Otherwise permissions are the union and the effective role is the highest-ranked (or the
+      user's ``default_role`` when that is a held role).
+    """
+    perms_all, names = await effective(db, user)
+    if not names:
+        return set(), [], "noaccess"
+
+    want = (active_role or "").strip()
+    if want and want in names:
+        role = (
+            await db.execute(select(Role).where(Role.name == want))
+        ).scalars().first()
+        return set(role.permissions_json or []) if role else set(), names, want
+
+    # No (valid) active role → prefer the user's default_role if they actually hold it.
+    default = (user.default_role or "").strip()
+    eff = default if default in names else primary_role(names)
+    return perms_all, names, eff
+
+
 # --------------------------------------------------------------------- sessions
 async def create_session(
     db: AsyncSession, user: User, ip: str | None, user_agent: str | None

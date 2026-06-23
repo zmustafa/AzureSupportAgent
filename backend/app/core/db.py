@@ -93,6 +93,15 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
     "usage": {
         "provider": "VARCHAR(64)",
     },
+    "users": {
+        "first_name": "VARCHAR(128)",
+        "last_name": "VARCHAR(128)",
+        "language": "VARCHAR(16)",
+        "default_role": "VARCHAR(64)",
+    },
+    "sessions": {
+        "active_role": "VARCHAR(64)",
+    },
 }
 
 

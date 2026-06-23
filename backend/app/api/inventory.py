@@ -15,13 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.azure_connections import resolve_connection
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.inventory import ai, cache, cost, service, snapshots
 from app.inventory import optimization as optimization_mod
 from app.models import AssessmentRun
 from app.policy import collector as policy_collector
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("inventory.read")
 logger = logging.getLogger("app.api.inventory")
 
 # Small in-process cache of the (slow) policy inventory per tenant+connection, so the

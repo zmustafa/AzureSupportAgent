@@ -17,10 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.amba import cache, change_requests, demo
 from app.amba.collector import _empty_snapshot, collect_coverage
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 
 router = APIRouter(prefix="/amba", tags=["amba"])
+
+# Viewing coverage + running scans requires coverage.read; curating the reference set and
+# approving/deleting change requests requires coverage.manage. The `require_admin` alias is
+# the read tier; manage endpoints opt into `_manage`. Admins pass either way.
+require_admin = require_permission("coverage.read")
+_manage = require_permission("coverage.manage")
 log = logging.getLogger("app.api.amba")
 
 
@@ -315,7 +321,7 @@ class ReferenceUpdate(BaseModel):
 @router.put("/reference")
 async def put_reference(
     payload: ReferenceUpdate,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     from app.amba.reference import save_reference
@@ -347,7 +353,7 @@ class RestoreRequest(BaseModel):
 
 @router.post("/reference/restore")
 async def restore_reference(
-    payload: RestoreRequest, principal: Principal = Depends(require_admin)
+    payload: RestoreRequest, principal: Principal = Depends(_manage)
 ) -> dict[str, Any]:
     from app.amba.reference import restore_revision
 
@@ -358,7 +364,7 @@ async def restore_reference(
 
 
 @router.post("/reference/reset")
-async def reset_reference(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def reset_reference(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     from app.amba.reference import reset_to_builtin
 
     return {"ok": True, "reference": reset_to_builtin(actor=principal.subject)}
@@ -554,7 +560,7 @@ class ApprovalRequest(BaseModel):
 @router.post("/approval")
 async def send_to_approval(
     payload: ApprovalRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Record the generated IaC for a set of gaps as a PENDING change request. Never applies."""
@@ -611,7 +617,7 @@ class DecisionRequest(BaseModel):
 async def decide_approval(
     request_id: str,
     payload: DecisionRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     req = change_requests.decide_request(
@@ -633,14 +639,14 @@ async def decide_approval(
 
 
 @router.delete("/approvals/{request_id}")
-async def delete_approval(request_id: str, principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def delete_approval(request_id: str, principal: Principal = Depends(_manage)) -> dict[str, Any]:
     ok = change_requests.delete_request(principal.tenant_id, request_id)
     return {"ok": ok}
 
 
 # ----------------------------------------------------------------------- demo seed
 @router.post("/demo/seed")
-async def seed_demo_endpoint(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+async def seed_demo_endpoint(principal: Principal = Depends(_manage)) -> dict[str, Any]:
     """(Re)seed the dummy demo workload + coverage snapshot for review."""
     _ttl, misconfig_gap, tol = _settings()
     snap = demo.seed_demo(

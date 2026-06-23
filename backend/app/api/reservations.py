@@ -18,11 +18,15 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.models import AuditLog
 from app.reservations import cache, demo
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("reservations.read")
 log = logging.getLogger("app.api.reservations")
 
 _LIVE_SCOPE = "tenant"

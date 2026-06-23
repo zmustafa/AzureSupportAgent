@@ -21,12 +21,16 @@ from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_permission
 from app.identity import cache
 from app.identity.collector import collect_identity
 from app.models import AuditLog
 
 router = APIRouter(prefix="/identity", tags=["identity"])
+
+# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
+# pass through require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("identity.read")
 log = logging.getLogger("app.api.identity")
 
 # Group names a caller may carry over from the last-good snapshot on a partial failure.

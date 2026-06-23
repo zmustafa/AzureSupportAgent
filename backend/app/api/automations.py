@@ -20,10 +20,19 @@ from app.automations import agents as agents_registry
 from app.automations.schedule import compute_next_run, human_schedule
 from app.connectors.registry import all_tool_names
 from app.core.db import get_db
-from app.core.security import Principal, require_admin
+from app.core.security import Principal, require_admin, require_permission
 from app.models import AuditLog, ScheduledTask, TaskRun
 
 router = APIRouter(prefix="/admin/automations", tags=["automations"])
+
+# Fine-grained capabilities for sub-agents and scheduled tasks (admins always pass via
+# require_permission). Viewing/exporting needs *.read; authoring needs *.write; running a
+# task on demand needs tasks.run. See app.auth.permissions for the catalog.
+_agents_read = require_permission("agents.read")
+_agents_write = require_permission("agents.write")
+_tasks_read = require_permission("tasks.read")
+_tasks_write = require_permission("tasks.write")
+_tasks_run = require_permission("tasks.run")
 logger = logging.getLogger("app.api.automations")
 
 # Strong refs to fire-and-forget manual-trigger tasks so they aren't GC'd mid-run
@@ -70,7 +79,7 @@ class AgentUpsert(BaseModel):
 
 
 @router.get("/agents")
-async def list_agents_endpoint(_: Principal = Depends(require_admin)):
+async def list_agents_endpoint(_: Principal = Depends(_agents_read)):
     from app.automations.agents import CATEGORIES
 
     return {"agents": agents_registry.list_agents(), "tools": all_tool_names(), "categories": CATEGORIES}
@@ -79,7 +88,7 @@ async def list_agents_endpoint(_: Principal = Depends(require_admin)):
 @router.put("/agents")
 async def upsert_agent_endpoint(
     payload: AgentUpsert,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_agents_write),
     db: AsyncSession = Depends(get_db),
 ):
     data = payload.model_dump(exclude_none=True)
@@ -102,7 +111,7 @@ async def upsert_agent_endpoint(
 @router.delete("/agents/{agent_id}")
 async def delete_agent_endpoint(
     agent_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_agents_write),
     db: AsyncSession = Depends(get_db),
 ):
     if not agents_registry.delete_agent(agent_id):
@@ -142,7 +151,7 @@ def _agent_export_dict(agent: dict[str, Any]) -> dict[str, Any]:
 @router.get("/agents/{agent_id}/export")
 async def export_agent_endpoint(
     agent_id: str,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_read),
 ):
     """Export a single custom agent's config as a portable JSON object."""
     agent = agents_registry.get_agent(agent_id)
@@ -163,7 +172,7 @@ class BulkExportRequest(BaseModel):
 @router.post("/agents/export")
 async def export_agents_endpoint(
     payload: BulkExportRequest,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_read),
 ):
     """Export multiple (or all) custom agents' configs as a portable JSON bundle."""
     all_agents = agents_registry.list_agents()
@@ -214,7 +223,7 @@ def _coerce_imported_agents(data: Any) -> list[dict[str, Any]]:
 @router.post("/agents/import")
 async def import_agents_endpoint(
     payload: ImportRequest,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_agents_write),
     db: AsyncSession = Depends(get_db),
 ):
     """Import custom agents from a previously exported JSON config (single or bulk).
@@ -302,7 +311,7 @@ class InterviewRequest(BaseModel):
 @router.post("/agents/draft/interview")
 async def agent_interview_endpoint(
     payload: InterviewRequest,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_write),
 ):
     """Dynamic interview step: the model asks the next batch of clarifying questions
     (or signals done) based on the goal and answers gathered so far."""
@@ -320,7 +329,7 @@ class GenerateRequest(BaseModel):
 @router.post("/agents/draft/generate")
 async def agent_generate_endpoint(
     payload: GenerateRequest,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_write),
 ):
     """Generate a complete agent draft (name, instructions, tools, run mode, model)
     grounded in the real connector-tool catalog and Azure connections."""
@@ -357,7 +366,7 @@ class EnhanceInterviewRequest(BaseModel):
 async def agent_enhance_interview_endpoint(
     agent_id: str,
     payload: EnhanceInterviewRequest,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_write),
 ):
     """Assess an EXISTING agent and ask the next batch of clarifying questions whose
     answers will be used to substantially enhance it."""
@@ -378,7 +387,7 @@ class EnhanceGenerateRequest(BaseModel):
 async def agent_enhance_generate_endpoint(
     agent_id: str,
     payload: EnhanceGenerateRequest,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(_agents_write),
 ):
     """Produce an enhanced draft of an existing agent. Returns the draft plus the
     CURRENT values so the client can show a before/after review before saving."""
@@ -480,7 +489,7 @@ def _task_dict(t: ScheduledTask) -> dict[str, Any]:
 
 @router.get("/tasks")
 async def list_tasks_endpoint(
-    principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(_tasks_read), db: AsyncSession = Depends(get_db)
 ):
     rows = (
         await db.execute(
@@ -508,7 +517,7 @@ async def list_tasks_endpoint(
 @router.put("/tasks")
 async def upsert_task_endpoint(
     payload: TaskUpsert,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_write),
     db: AsyncSession = Depends(get_db),
 ):
     now_fields = payload.model_dump(exclude_none=True)
@@ -560,7 +569,7 @@ async def upsert_task_endpoint(
 @router.post("/tasks/{task_id}/toggle")
 async def toggle_task_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_write),
     db: AsyncSession = Depends(get_db),
 ):
     task = await db.get(ScheduledTask, task_id)
@@ -582,7 +591,7 @@ async def toggle_task_endpoint(
 @router.delete("/tasks/{task_id}")
 async def delete_task_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_write),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete: archive the schedule but preserve its run history."""
@@ -606,7 +615,7 @@ async def delete_task_endpoint(
 
 @router.get("/tasks/archived")
 async def list_archived_tasks_endpoint(
-    principal: Principal = Depends(require_admin), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(_tasks_read), db: AsyncSession = Depends(get_db)
 ):
     """Deleted schedules whose run history is preserved."""
     rows = (
@@ -641,7 +650,7 @@ async def list_archived_tasks_endpoint(
 @router.post("/tasks/{task_id}/restore")
 async def restore_task_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_write),
     db: AsyncSession = Depends(get_db),
 ):
     """Un-delete an archived schedule (resumes paused)."""
@@ -667,7 +676,7 @@ async def restore_task_endpoint(
 @router.delete("/tasks/{task_id}/purge")
 async def purge_task_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_write),
     db: AsyncSession = Depends(get_db),
 ):
     """Permanently remove an archived schedule AND its run history."""
@@ -700,7 +709,7 @@ async def purge_task_endpoint(
 @router.post("/tasks/{task_id}/run")
 async def run_task_now_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_run),
     db: AsyncSession = Depends(get_db),
 ):
     task = await db.get(ScheduledTask, task_id)
@@ -714,7 +723,7 @@ async def run_task_now_endpoint(
 @router.get("/tasks/{task_id}/runs")
 async def task_runs_endpoint(
     task_id: str,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(_tasks_read),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (

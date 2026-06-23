@@ -11,10 +11,14 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, get_principal, require_admin
+from app.core.security import Principal, get_principal, require_permission
 from app.models import Notification, NotificationDelivery, NotificationRule
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+# Existing `require_admin` call sites (rule management) now enforce notifications.manage
+# (admins always pass via require_permission). See app.auth.permissions for the catalog.
+require_admin = require_permission("notifications.manage")
 logger = logging.getLogger("app.api.notifications")
 
 

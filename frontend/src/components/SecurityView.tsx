@@ -12,6 +12,7 @@ import {
   type IdpTestResult,
 } from "../api";
 import { apiBase } from "../api";
+import { roleLabel } from "../utils/roleLabel";
 import {
   ACCESS_NAV,
   ACCESS_SUB_IDS,
@@ -158,7 +159,7 @@ function UsersCard() {
                   <div className="flex flex-wrap gap-1">
                     {u.role_names.length === 0 && <span className="text-xs text-slate-400">—</span>}
                     {u.role_names.map((n) => (
-                      <span key={n} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{n}</span>
+                      <span key={n} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{roleLabel(n)}</span>
                     ))}
                   </div>
                 </td>
@@ -255,7 +256,7 @@ function RoleGroupPickers({
                   : "border-slate-300 text-slate-600"
               }`}
             >
-              {r.name}
+              {roleLabel(r.name)}
             </button>
           ))}
         </div>
@@ -479,7 +480,7 @@ function RolesCard() {
             <div className="flex items-start justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-slate-800">{r.name}</span>
+                  <span className="font-medium text-slate-800">{roleLabel(r.name)}</span>
                   {r.is_system && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">system</span>}
                 </div>
                 <div className="text-xs text-slate-500">{r.description}</div>
@@ -520,7 +521,7 @@ function RoleForm({
   onError,
 }: {
   role: AcRole | null;
-  permissions: { key: string; label: string }[];
+  permissions: { key: string; label: string; group?: string }[];
   onClose: () => void;
   onSaved: () => void;
   onError: (m: string) => void;
@@ -529,6 +530,23 @@ function RoleForm({
   const [description, setDescription] = useState(role?.description ?? "");
   const [selected, setSelected] = useState<string[]>(role?.permissions ?? []);
   const toggle = (k: string) => setSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
+  // Group the catalog into ordered sections (mirrors the product nav) so the editor is
+  // readable as the permission set grows. Permissions without a group fall under "Other".
+  const groups = useMemo(() => {
+    const order: string[] = [];
+    const byGroup = new Map<string, { key: string; label: string }[]>();
+    for (const p of permissions) {
+      const g = p.group || "Other";
+      if (!byGroup.has(g)) {
+        byGroup.set(g, []);
+        order.push(g);
+      }
+      byGroup.get(g)!.push(p);
+    }
+    return order.map((g) => ({ group: g, items: byGroup.get(g)! }));
+  }, [permissions]);
+  const setGroup = (keys: string[], on: boolean) =>
+    setSelected((s) => (on ? Array.from(new Set([...s, ...keys])) : s.filter((x) => !keys.includes(x))));
   const save = useMutation({
     mutationFn: () =>
       role
@@ -546,16 +564,37 @@ function RoleForm({
       </div>
       <div className="mt-3">
         <span className="mb-1 block text-sm font-medium text-slate-700">Permissions</span>
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-          {permissions.map((p) => (
-            <label key={p.key} className="flex items-start gap-2 rounded border bg-white px-2 py-1.5 text-sm">
-              <input type="checkbox" checked={selected.includes(p.key)} onChange={() => toggle(p.key)} className="mt-0.5" />
-              <span>
-                <span className="font-medium text-slate-700">{p.label}</span>
-                <span className="block font-mono text-xs text-slate-400">{p.key}</span>
-              </span>
-            </label>
-          ))}
+        <div className="space-y-3">
+          {groups.map(({ group, items }) => {
+            const keys = items.map((p) => p.key);
+            const allOn = keys.every((k) => selected.includes(k));
+            const someOn = keys.some((k) => selected.includes(k));
+            return (
+              <div key={group} className="rounded border bg-white">
+                <div className="flex items-center justify-between border-b bg-slate-50 px-3 py-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{group}</span>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-brand-dark hover:underline"
+                    onClick={() => setGroup(keys, !allOn)}
+                  >
+                    {allOn ? "Clear" : someOn ? "Select all" : "Select all"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-2">
+                  {items.map((p) => (
+                    <label key={p.key} className="flex items-start gap-2 rounded border bg-white px-2 py-1.5 text-sm">
+                      <input type="checkbox" checked={selected.includes(p.key)} onChange={() => toggle(p.key)} className="mt-0.5" />
+                      <span>
+                        <span className="font-medium text-slate-700">{p.label}</span>
+                        <span className="block font-mono text-xs text-slate-400">{p.key}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
       <div className="mt-4 flex gap-2">
@@ -673,7 +712,7 @@ function GroupForm({
                 roleIds.includes(r.id) ? "border-brand-dark bg-brand-dark/10 text-brand-dark" : "border-slate-300 text-slate-600"
               }`}
             >
-              {r.name}
+              {roleLabel(r.name)}
             </button>
           ))}
         </div>
@@ -1046,6 +1085,23 @@ function IdpForm({
           );
         })}
       </div>
+      {type !== "saml" && (
+        <label className="mt-3 flex items-start gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={(cfg.login_prompt ?? "") === "select_account"}
+            onChange={(e) => setF("login_prompt", e.target.checked ? "select_account" : "")}
+          />
+          <span>
+            Select account upon sign in
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Always show the account picker (OIDC <span className="font-mono">prompt=select_account</span>)
+              instead of silently reusing an existing IdP session — useful on shared machines.
+            </span>
+          </span>
+        </label>
+      )}
       <div className="mt-3 rounded border border-slate-200 bg-white p-3 text-xs text-slate-500">
         <div className="font-medium text-slate-600">Configure at your IdP:</div>
         {type === "saml" ? (
@@ -1313,7 +1369,7 @@ function PoliciesCard() {
         <Field label="Default role for new SSO users">
           <select className={inputCls} value={values.sso_default_role} onChange={(e) => set("sso_default_role", e.target.value as never)}>
             {(roles.data ?? []).map((r) => (
-              <option key={r.id} value={r.name}>{r.name}</option>
+              <option key={r.id} value={r.name}>{roleLabel(r.name)}</option>
             ))}
           </select>
         </Field>
