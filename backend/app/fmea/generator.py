@@ -191,7 +191,11 @@ async def _stream_completion(
     # present, so a half-streamed value isn't reported until it's whole).
     name_re = re.compile(r'"name"\s*:\s*"((?:[^"\\]|\\.)*)"')
     row_re = re.compile(r'"failure_mode"\s*:\s*"')
-    async for ev in provider.stream(messages, None, max_tokens=16000):
+    # Generous output cap: multi-table FMEA JSON is large, and reasoning models spend part of
+    # the budget on hidden reasoning tokens — too small a cap truncates the JSON mid-string
+    # (the live "could not draft" failure). parse_completion also repairs truncation, but a
+    # bigger cap means fewer rows are ever lost.
+    async for ev in provider.stream(messages, None, max_tokens=32000):
         if ev.type == "token":
             text += ev.text
             if progress is not None:
@@ -218,8 +222,14 @@ async def _stream_completion(
 def parse_completion(text: str) -> dict[str, Any] | None:
     """Parse an FMEA model completion into ``{"tables": [...], "confidence": float}``.
 
-    Tries a tolerant JSON parse of the outermost ``{...}`` span (stripping any prose preamble
-    or code fence the model added)."""
+    Robust against the two ways large multi-table FMEA JSON breaks in practice:
+    (1) a prose preamble / ```json fence (stripped), and (2) **truncation** — reasoning
+    models routinely hit the output-token cap mid-string, so the raw text is a valid JSON
+    *prefix* that abruptly ends. We try a strict tolerant parse first, then repair a
+    truncated object by closing its open brackets at the last complete element, then finally
+    salvage individual complete table/row objects. A partial FMEA is far better than the
+    "could not draft" dead-end the user hit on the live site.
+    """
     t = (text or "").strip()
     if "```" in t:
         m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
@@ -229,14 +239,116 @@ def parse_completion(text: str) -> dict[str, Any] | None:
         m = re.search(r"(\{.*\})", t, re.DOTALL)
         if m:
             t = m.group(1)
+
     parsed = loads_tolerant(t)
     if isinstance(parsed, dict) and isinstance(parsed.get("tables"), list):
         return {"tables": parsed["tables"], "confidence": _coerce_conf(parsed.get("confidence"))}
+
+    # ---- repair a TRUNCATED completion (cut the string back to its last complete element
+    # and close the open brackets) then re-parse. ----
+    repaired = _repair_truncated_json(t)
+    if repaired:
+        parsed = loads_tolerant(repaired)
+        if isinstance(parsed, dict) and isinstance(parsed.get("tables"), list) and parsed["tables"]:
+            logger.info("FMEA JSON was truncated; repaired to %d table(s).", len(parsed["tables"]))
+            return {"tables": parsed["tables"], "confidence": _coerce_conf(parsed.get("confidence"))}
+
+    # ---- last resort: salvage complete table objects one-by-one from the raw text. ----
+    salvaged = _salvage_tables(t)
+    if salvaged:
+        logger.info("FMEA JSON did not parse strictly; salvaged %d table(s) by scanning.", len(salvaged))
+        return {"tables": salvaged, "confidence": None}
+
     logger.warning(
         "FMEA JSON completion did not parse (raw len=%d): head=%r tail=%r",
         len(text or ""), (text or "")[:200], (text or "")[-200:],
     )
     return None
+
+
+def _repair_truncated_json(t: str) -> str | None:
+    """Best-effort repair of a truncated JSON object: walk the text tracking string state and
+    the open-bracket stack, find the last position where a container ('}' or ']') closed, cut
+    there, and append the closing brackets for whatever was still open at that point. Turns a
+    valid-prefix-but-cut-off completion back into parseable JSON (keeping all complete rows)."""
+    start = t.find("{")
+    if start < 0:
+        return None
+    s = t[start:]
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    last_idx = -1
+    last_stack: list[str] | None = None
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_idx = i
+            last_stack = list(stack)
+    if last_idx < 0 or last_stack is None:
+        return None
+    head = s[: last_idx + 1]
+    closers = "".join("}" if c == "{" else "]" for c in reversed(last_stack))
+    return head + closers
+
+
+def _salvage_tables(t: str) -> list[dict[str, Any]]:
+    """Scan the text for complete top-level table objects (each carrying a ``rows`` array) and
+    parse each independently, tolerating a truncated final one. Used only when both the strict
+    parse and the truncation-repair fail."""
+    out: list[dict[str, Any]] = []
+    # Find each table by its ``"name"`` key, then capture the balanced {...} object around it.
+    for m in re.finditer(r'\{\s*"name"\s*:', t):
+        obj = _balanced_object(t, m.start())
+        if not obj:
+            continue
+        parsed = loads_tolerant(obj)
+        if isinstance(parsed, dict) and isinstance(parsed.get("rows"), list):
+            out.append(parsed)
+    return out
+
+
+def _balanced_object(t: str, start: int) -> str | None:
+    """Return the balanced ``{...}`` substring beginning at ``start`` (which must be a '{'),
+    honouring string/escape state, or None if it never closes (truncated)."""
+    if start >= len(t) or t[start] != "{":
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(t)):
+        ch = t[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return t[start : i + 1]
+    return None
+
 
 
 def _coerce_conf(value: Any) -> float | None:

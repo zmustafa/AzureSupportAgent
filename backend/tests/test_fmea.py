@@ -210,6 +210,44 @@ def test_no_banned_words_in_prompt():
         assert word not in fgen.SYSTEM_PROMPT
 
 
+def test_parse_completion_repairs_truncated_json():
+    """A truncated multi-table completion (the live 'could not draft' failure) must still
+    yield the complete tables/rows, not None."""
+    # Two complete tables + a third table truncated mid-row (no closing brackets), wrapped in
+    # a ```json fence like the live model emits.
+    truncated = (
+        '```json\n{\n  "tables": [\n'
+        '    {"name": "Ingress", "scope_ref": "rg-edge", "rows": ['
+        '{"item": "Front Door", "function": "ingress", "failure_mode": "Origin down",'
+        ' "effects": "Outage", "causes": "probe fail", "control_prevention": "multi-origin",'
+        ' "control_detection": "alert", "recommended_actions": "add origin",'
+        ' "owner": "\u27e6TODO: Owner\u27e7", "date_due": "\u27e6TODO\u27e7",'
+        ' "severity": 9, "occurrence": 3, "detection": 4}]},\n'
+        '    {"name": "Data", "scope_ref": "rg-data", "rows": ['
+        '{"item": "Cosmos", "function": "store", "failure_mode": "Throttling",'
+        ' "effects": "Errors", "causes": "RU exhaustion", "control_prevention": "autoscale",'
+        ' "control_detection": "metric", "recommended_actions": "raise RU",'
+        ' "owner": "\u27e6TODO\u27e7", "date_due": "\u27e6TODO\u27e7",'
+        ' "severity": 8, "occurrence": 5, "detection": 4}]},\n'
+        '    {"name": "Identity", "scope_ref": "rg-kv", "rows": [{"item": "Key Vault",'
+        ' "function": "secrets", "failure_mode": "Secret exfil via shared key access permitted (per the architecture mem'
+    )
+    result = fgen.parse_completion(truncated)
+    assert result is not None, "truncated FMEA JSON must be repaired, not dropped"
+    names = [t["name"] for t in result["tables"]]
+    assert "Ingress" in names and "Data" in names
+    # The complete tables survive; the truncated 3rd table is dropped or has no rows.
+    ingress = next(t for t in result["tables"] if t["name"] == "Ingress")
+    assert ingress["rows"][0]["severity"] == 9
+
+
+def test_parse_completion_strict_path_still_works():
+    clean = '{"tables": [{"name": "T", "scope_ref": "", "rows": [{"item": "x", "severity": 5, "occurrence": 5, "detection": 5}]}], "confidence": 0.7}'
+    result = fgen.parse_completion(clean)
+    assert result is not None and result["tables"][0]["name"] == "T"
+    assert result["confidence"] == 0.7
+
+
 # ----------------------------------------------------------------- Excel export
 def test_build_fmea_xlsx_is_valid_workbook():
     from io import BytesIO
