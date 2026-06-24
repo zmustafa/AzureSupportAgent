@@ -2798,6 +2798,8 @@ export const api = {
     http<{ items: KnowMeTrashEntry[] }>("/architectures/know-me/trash"),
   emptyKnowMeTrash: () =>
     http<{ purged: number }>("/architectures/know-me/trash/empty", { method: "POST", body: "{}" }),
+  purgeKnowMeOrphan: (architectureId: string) =>
+    http<{ ok: boolean; purged_documents: number }>(`/architectures/know-me/orphans/${architectureId}`, { method: "DELETE" }),
   createKnowMe: (architectureId: string, title = "") =>
     http<KnowMeResponse>(`/architectures/${architectureId}/know-me`, {
       method: "POST",

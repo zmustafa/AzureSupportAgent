@@ -1341,6 +1341,13 @@ export function KnowMeIndex() {
     await api.deleteKnowMe(id);
     await qc.invalidateQueries({ queryKey: ["knowMeIndex"] });
   }
+  // Permanently remove an ORPHANED group — the architecture is gone, so there's nothing to
+  // restore; purge its leftover Memory + any Know-Me docs in one go.
+  async function purgeOrphan(architectureId: string) {
+    if (!window.confirm("Permanently remove this orphaned Know-Me and its leftover Memory? The source architecture no longer exists, so this can't be undone.")) return;
+    await api.purgeKnowMeOrphan(architectureId);
+    await qc.invalidateQueries({ queryKey: ["knowMeIndex"] });
+  }
 
   const totalDocs = documents.length;
 
@@ -1435,14 +1442,24 @@ export function KnowMeIndex() {
                       </span>
                       <span className="block truncate text-[11px] text-gray-400">{g.architecture_name}</span>
                     </span>
-                    <button
-                      onClick={() => void createNew(g.architecture_id)}
-                      disabled={creating === g.architecture_id}
-                      title="Create a new (empty draft) Know-Me for this workload"
-                      className="shrink-0 rounded-lg border border-brand/30 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10 disabled:opacity-50"
-                    >
-                      {creating === g.architecture_id ? "Creating…" : "+ New"}
-                    </button>
+                    {g.architecture_exists ? (
+                      <button
+                        onClick={() => void createNew(g.architecture_id)}
+                        disabled={creating === g.architecture_id}
+                        title="Create a new (empty draft) Know-Me for this workload"
+                        className="shrink-0 rounded-lg border border-brand/30 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10 disabled:opacity-50"
+                      >
+                        {creating === g.architecture_id ? "Creating…" : "+ New"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void purgeOrphan(g.architecture_id)}
+                        title="Permanently remove this orphaned Know-Me and its leftover Memory (the architecture no longer exists)"
+                        className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                      >
+                        🗑️ Remove
+                      </button>
+                    )}
                   </div>
                   {g.docs.length === 0 ? (
                     <div className="px-4 py-3 text-[12px] text-gray-400">No Know-Me yet — click <b>+ New</b> to start one, or use ✨ Build from workload.</div>

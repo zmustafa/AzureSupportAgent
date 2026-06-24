@@ -399,6 +399,49 @@ async def empty_know_me_trash_endpoint(principal: Principal = Depends(_write)):
     return {"purged": kreg.empty_trash(principal.tenant_id)}
 
 
+@router.delete("/know-me/orphans/{architecture_id}")
+async def purge_know_me_orphan_endpoint(architecture_id: str, principal: Principal = Depends(_write)):
+    """Permanently remove an ORPHANED Know-Me group — its leftover Architecture Memory plus
+    any Know-Me documents — for an architecture that no longer exists. These surface on the
+    index as "(deleted architecture) · orphaned" and can't be cleaned via the normal
+    architecture-scoped delete (that 404s once the architecture is gone). Tenant-checked.
+
+    Refuses if the architecture still EXISTS for this tenant (use the normal delete instead),
+    so this can only ever clean up true orphans."""
+    from app.architectures import memory as mem
+    from app.architectures import memory_revisions
+    from app.knowme import registry as kreg
+
+    arch = arch_registry.get_architecture(architecture_id, include_deleted=True)
+    if arch is not None and (arch.get("tenant_id") or "") in ("", principal.tenant_id):
+        raise HTTPException(
+            status_code=400,
+            detail="That architecture still exists — delete its Know-Me documents and Memory the normal way.",
+        )
+
+    purged_docs = 0
+    found = False
+    # Purge any Know-Me documents (active or trashed) for this orphaned architecture, tenant-scoped.
+    for d in kreg.list_know_me(principal.tenant_id, include_deleted=True, architecture_id=architecture_id):
+        found = True
+        if kreg.purge(d["id"]):
+            purged_docs += 1
+
+    # Delete the leftover Memory (+ its revisions) if it belongs to this tenant.
+    memory = mem.get_memory(architecture_id)
+    if memory is not None and (memory.get("tenant_id") or "") in ("", principal.tenant_id):
+        found = True
+        mem.delete_memory(architecture_id)
+        try:
+            memory_revisions.delete_for(architecture_id)
+        except Exception:  # noqa: BLE001 — best-effort revision cleanup
+            pass
+
+    if not found:
+        raise HTTPException(status_code=404, detail="No orphaned Know-Me data found for that architecture.")
+    return {"ok": True, "purged_documents": purged_docs}
+
+
 
 @router.get("/{architecture_id}")
 async def get_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
