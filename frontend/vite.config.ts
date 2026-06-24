@@ -57,6 +57,20 @@ export default defineConfig({
         // here would defeat that and produce multi-MB single chunks.
         manualChunks(id: string) {
           if (!id.includes("node_modules")) return undefined;
+          // React runtime CORE must all live in ONE chunk — react, react-dom,
+          // react/jsx-runtime, react-is, scheduler, use-sync-external-store. If any
+          // (esp. `scheduler`, a react-dom dependency) leaks into another vendor chunk,
+          // Rollup can emit a circular chunk init where a React-consuming chunk
+          // (e.g. vendor-xyflow) evaluates before React's exports are ready → the
+          // production-only "Cannot read properties of undefined (reading 'useState')"
+          // white-screen crash. Checked FIRST so nothing else can claim these paths.
+          if (
+            id.includes("/node_modules/react/") ||
+            id.includes("/node_modules/react-dom/") ||
+            id.includes("/node_modules/react-is/") ||
+            id.includes("/node_modules/scheduler/") ||
+            id.includes("/node_modules/use-sync-external-store/")
+          ) return "vendor-react";
           if (id.includes("/react-router") || id.includes("/@remix-run/")) return "vendor-router";
           if (id.includes("/@tanstack/")) return "vendor-query";
           if (id.includes("/@xyflow/")) return "vendor-xyflow";
@@ -65,7 +79,6 @@ export default defineConfig({
           if (id.includes("/jszip")) return "vendor-jszip";
           if (id.includes("/react-grid-layout") || id.includes("/react-draggable") || id.includes("/react-resizable")) return "vendor-grid";
           if (id.includes("/topojson") || id.includes("/world-atlas")) return "vendor-geo";
-          if (id.includes("/react-dom/") || (id.includes("/react/") && !id.includes("react-grid-layout"))) return "vendor-react";
           return undefined;
         },
       },
