@@ -5,14 +5,17 @@ selected systems, streams live progress to SSE subscribers, and persists a ``Mis
 row incrementally so partial progress + history survive a crash. Mirrors the
 ``architectures.jobs`` manager pattern (in-memory live state; DB is the durable record).
 
-Concurrency: the architecture system runs first (so Memory has a diagram to document),
-then the remaining systems run concurrently under a small semaphore so the slow Azure
-Resource Graph / metrics scans overlap without hammering Azure all at once.
+Concurrency: every system is scheduled at once and runs under a small semaphore (so ≥3 are
+in flight from the start). Systems declare ``depends_on`` (Memory → Architecture) and a
+dependent simply waits for its prerequisites to finish first. Heavy-LLM systems share a
+smaller AI semaphore and retry on provider rate-limits (HTTP 429) with exponential backoff,
+so a fan-out of AI work overlaps without tripping the model's per-minute quota.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -23,9 +26,15 @@ from app.missions import systems as sysreg
 
 logger = logging.getLogger("app.missions.orchestrator")
 
-_MAX_SYSTEM_CONCURRENCY = 3
+_MAX_SYSTEM_CONCURRENCY = 4   # systems running at once (≥3 so the board fills fast)
+_AI_CONCURRENCY = 2           # of those, at most this many heavy-LLM systems at once (429 guard)
+_AI_MAX_RETRIES = 3           # retry a rate-limited (429) AI system this many times
+_AI_BACKOFF_BASE = 4.0        # seconds; exponential backoff base for 429 retries
 _RETAIN_SECONDS = 1800  # keep finished missions in memory briefly for live SSE replay
 _TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
+
+# Substrings that mark an exception as a provider rate-limit (HTTP 429) we should back off on.
+_THROTTLE_MARKERS = ("429", "rate limit", "rate_limit", "too many requests", "toomanyrequests", "throttl")
 
 
 def _iso(ts: float) -> str:
@@ -297,74 +306,99 @@ class _Manager:
         except Exception:  # noqa: BLE001
             logger.warning("Mission row create failed for %s", mission.id, exc_info=True)
 
-    async def _exec_system(self, mission: _Mission, ctx: sysreg.MissionContext, key: str, sem: asyncio.Semaphore) -> None:
+    async def _exec_system(self, mission: _Mission, ctx: sysreg.MissionContext, key: str, sem: asyncio.Semaphore, ai_sem: asyncio.Semaphore) -> None:
         sd = sysreg.get_system(key)
         if sd is None:
             return
         entry = mission.systems[key]
-        async with sem:
-            if mission.cancel_requested:
-                entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
-                self._emit(mission, "system", entry)
-                return
-            entry["status"] = "running"
-            entry["started_at"] = _now().isoformat()
-            self._emit(mission, "system", entry)
-            self._log(mission, f"{sd.label}: started", key)
-
-            # Freshness skip (unless forced).
-            if not mission.force:
-                try:
-                    st = await sd.last_state(ctx)
-                except Exception:  # noqa: BLE001
-                    st = None
-                age = (st or {}).get("age_seconds")
-                if st and age is not None and age < sysreg.FRESH_SECONDS:
-                    entry.update(
-                        {
-                            "status": "skipped",
-                            "headline": st.get("headline", "fresh"),
-                            "detail": "Fresh — skipped (force to re-run)",
-                            "score": st.get("score"),
-                            "attention": bool(st.get("attention")),
-                            "link": st.get("link", ""),
-                            "ended_at": _now().isoformat(),
-                        }
-                    )
+        ai_heavy = bool(getattr(sd, "ai_heavy", False))
+        # Heavy-LLM systems take the AI throttle FIRST (before a general slot) so a system
+        # that's waiting its turn for the LLM doesn't sit on one of the few general slots —
+        # that keeps non-AI systems flowing and ≥_MAX_SYSTEM_CONCURRENCY work in flight.
+        if ai_heavy:
+            await ai_sem.acquire()
+        try:
+            async with sem:
+                if mission.cancel_requested:
+                    entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
                     self._emit(mission, "system", entry)
-                    self._log(mission, f"{sd.label}: skipped (fresh)", key)
-                    await self._persist(mission)
                     return
-
-            async def _progress(msg: str) -> None:
-                self._log(mission, f"{sd.label}: {msg}", key)
-
-            try:
-                res = await sd.run(ctx, force=mission.force, progress=_progress)
-            except asyncio.CancelledError:
-                entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
+                entry["status"] = "running"
+                entry["started_at"] = _now().isoformat()
                 self._emit(mission, "system", entry)
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Mission system %s failed", key)
-                res = sysreg.SystemResult(status="error", headline=str(exc)[:140], error=str(exc)[:300], attention=True)
+                self._log(mission, f"{sd.label}: started", key)
 
-            entry.update(
-                {
-                    "status": res.status,
-                    "headline": res.headline,
-                    "detail": res.detail,
-                    "score": res.score,
-                    "attention": res.attention,
-                    "link": res.link,
-                    "result_ref": res.result_ref,
-                    "error": res.error,
-                    "ended_at": _now().isoformat(),
-                }
-            )
-            self._emit(mission, "system", entry)
-            self._log(mission, f"{sd.label}: {res.status} — {res.headline}", key)
-            await self._persist(mission)
+                # Freshness skip (unless forced).
+                if not mission.force:
+                    try:
+                        st = await sd.last_state(ctx)
+                    except Exception:  # noqa: BLE001
+                        st = None
+                    age = (st or {}).get("age_seconds")
+                    if st and age is not None and age < sysreg.FRESH_SECONDS:
+                        entry.update(
+                            {
+                                "status": "skipped",
+                                "headline": st.get("headline", "fresh"),
+                                "detail": "Fresh — skipped (force to re-run)",
+                                "score": st.get("score"),
+                                "attention": bool(st.get("attention")),
+                                "link": st.get("link", ""),
+                                "ended_at": _now().isoformat(),
+                            }
+                        )
+                        self._emit(mission, "system", entry)
+                        self._log(mission, f"{sd.label}: skipped (fresh)", key)
+                        await self._persist(mission)
+                        return
+
+                async def _progress(msg: str) -> None:
+                    self._log(mission, f"{sd.label}: {msg}", key)
+
+                # Run with a bounded retry on provider rate-limits (429). A heavy fan-out of
+                # AI systems can trip the LLM's per-minute quota; we back off and retry rather
+                # than fail the whole system on a transient throttle.
+                res: sysreg.SystemResult | None = None
+                for attempt in range(_AI_MAX_RETRIES + 1):
+                    try:
+                        res = await sd.run(ctx, force=mission.force, progress=_progress)
+                        break
+                    except asyncio.CancelledError:
+                        entry.update({"status": "skipped", "headline": "Cancelled", "ended_at": _now().isoformat()})
+                        self._emit(mission, "system", entry)
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        msg = str(exc).lower()
+                        throttled = any(m in msg for m in _THROTTLE_MARKERS)
+                        if throttled and attempt < _AI_MAX_RETRIES:
+                            delay = _AI_BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 1.5)
+                            self._log(mission, f"{sd.label}: rate-limited (429) — backing off {delay:.0f}s (retry {attempt + 1}/{_AI_MAX_RETRIES})", key)
+                            await asyncio.sleep(delay)
+                            continue
+                        logger.exception("Mission system %s failed", key)
+                        head = "Rate-limited (429) — try again later" if throttled else str(exc)[:140]
+                        res = sysreg.SystemResult(status="error", headline=head, error=str(exc)[:300], attention=True)
+                        break
+
+                entry.update(
+                    {
+                        "status": res.status,
+                        "headline": res.headline,
+                        "detail": res.detail,
+                        "score": res.score,
+                        "attention": res.attention,
+                        "link": res.link,
+                        "result_ref": res.result_ref,
+                        "error": res.error,
+                        "ended_at": _now().isoformat(),
+                    }
+                )
+                self._emit(mission, "system", entry)
+                self._log(mission, f"{sd.label}: {res.status} — {res.headline}", key)
+                await self._persist(mission)
+        finally:
+            if ai_heavy:
+                ai_sem.release()
 
     def _rollup(self, mission: _Mission) -> None:
         systems = [mission.systems[k] for k in mission.system_keys]
@@ -415,16 +449,29 @@ class _Manager:
             )
 
             sem = asyncio.Semaphore(_MAX_SYSTEM_CONCURRENCY)
+            ai_sem = asyncio.Semaphore(_AI_CONCURRENCY)
             keys = list(mission.system_keys)
 
-            # Architecture first (Memory documents the diagram it produces), then the rest
-            # concurrently.
-            if "architecture" in keys:
-                keys.remove("architecture")
-                await self._exec_system(mission, ctx, "architecture", sem)
-                self._checkpoint(mission)
+            # Dependency-aware parallel scheduling. Every system is launched at once and runs
+            # under the shared semaphore (so ≥3 are in flight from the start instead of idling
+            # while the slow Architecture AI call blocks everything). A system that declares
+            # `depends_on` (e.g. Memory → Architecture) simply waits for those systems to finish
+            # first — but only for dependencies that are part of THIS mission, so a subset that
+            # excludes the dependency still runs.
+            done_events: dict[str, asyncio.Event] = {k: asyncio.Event() for k in keys}
 
-            await asyncio.gather(*(self._exec_system(mission, ctx, k, sem) for k in keys))
+            async def _scheduled(key: str) -> None:
+                sd = sysreg.get_system(key)
+                for dep in (sd.depends_on if sd else ()):
+                    ev = done_events.get(dep)
+                    if ev is not None:
+                        await ev.wait()
+                try:
+                    await self._exec_system(mission, ctx, key, sem, ai_sem)
+                finally:
+                    done_events[key].set()
+
+            await asyncio.gather(*(_scheduled(k) for k in keys))
 
             self._rollup(mission)
             mission.ended_at = time.time()
@@ -442,10 +489,6 @@ class _Manager:
         finally:
             await self._persist(mission)
             self._emit(mission, "done", mission.public())
-
-    def _checkpoint(self, mission: _Mission) -> None:
-        if mission.cancel_requested:
-            raise asyncio.CancelledError()
 
     def _prune(self) -> None:
         now = time.time()
@@ -563,6 +606,35 @@ async def delete_mission(mission_id: str, tenant_id: str) -> bool:
         row.deleted_at = _now()
         await db.commit()
     return True
+
+
+async def delete_missions_for_workload(tenant_id: str, workload_id: str) -> int:
+    """Permanently remove a workload's entire Mission Control (every mission run for it).
+
+    There is no trash for missions, so this hard-deletes the rows. Any live in-memory mission
+    for the workload is cancelled and dropped first so a streaming board can't resurrect it.
+    Returns the number of mission rows deleted."""
+    from sqlalchemy import delete
+
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    # Drop/cancel any live missions for this workload from the in-memory manager.
+    for mid, m in list(manager._missions.items()):
+        if m.tenant_id == tenant_id and m.workload_id == workload_id:
+            if m.status not in _TERMINAL and m.task is not None:
+                m.cancel_requested = True
+                m.task.cancel()
+            manager._missions.pop(mid, None)
+
+    async with SessionLocal() as db:
+        result = await db.execute(
+            delete(MissionRun).where(
+                MissionRun.tenant_id == tenant_id, MissionRun.workload_id == workload_id
+            )
+        )
+        await db.commit()
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def _row_public(row: Any) -> dict[str, Any]:

@@ -58,19 +58,16 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"workloads": {}}
+    from app.core import jsonstore
+
+    data = jsonstore.read_json(_PATH, {"workloads": {}})
+    return data if isinstance(data, dict) else {"workloads": {}}
 
 
 def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    from app.core import jsonstore
+
+    jsonstore.write_json(_PATH, data)
 
 
 def list_workloads(include_deleted: bool = False) -> list[dict[str, Any]]:

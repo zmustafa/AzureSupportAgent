@@ -448,9 +448,19 @@ async def list_activity_log_events(
     params: dict[str, str] | None = {"api-version": "2015-04-01", "$filter": flt}
     headers = {"Authorization": f"Bearer {token}"}
     events: list[dict[str, Any]] = []
+    # Page ceiling is derived from the requested max_events (the API returns ~event-dense
+    # pages; cap pages so a huge window can't loop unbounded, while still letting a large
+    # max_events read deeper). Tunable via the AZURE_ACTIVITY_LOG_MAX_PAGES env/setting.
+    try:
+        from app.core.config import get_settings
+
+        max_pages = max(1, int(get_settings().azure_activity_log_max_pages))
+    except Exception:  # noqa: BLE001
+        max_pages = 50
+    truncated = False
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            for _ in range(50):  # hard page ceiling (safety) — max_events normally stops sooner
+            for _page in range(max_pages):  # safety ceiling — max_events normally stops sooner
                 resp = await client.get(url, headers=headers, params=params)
                 if resp.status_code != 200:
                     try:
@@ -468,7 +478,14 @@ async def list_activity_log_events(
                 if not next_link:
                     break
                 url, params = next_link, None
-        return events, None
+                if _page == max_pages - 1:
+                    truncated = True
+        note = (
+            f"Activity Log truncated at the {max_pages}-page ceiling "
+            f"({len(events)} events); narrow the window for full fidelity."
+            if truncated else None
+        )
+        return events, note
     except httpx.HTTPError as e:  # noqa: BLE001
         return events, f"ARM request error: {e}"
 

@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 
 from app.agent.factory import build_provider
 from app.architectures.memory import SECTION_CATALOG
-from app.core.utils import safe_json_parse
+from app.core.utils import loads_tolerant
 
 logger = logging.getLogger("app.architectures.memory_designer")
 
@@ -203,7 +203,7 @@ async def generate_memory(
         m = re.search(r"(\{.*\})", t, re.DOTALL)
         if m:
             t = m.group(1)
-    parsed = safe_json_parse(t, default=None)
+    parsed = loads_tolerant(t, default=None)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("sections"), dict):
         logger.warning(
             "Memory JSON completion did not parse (raw len=%d): head=%r tail=%r",

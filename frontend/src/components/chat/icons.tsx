@@ -260,6 +260,26 @@ export function EvidenceIcon({ className }: { className?: string }) {
   );
 }
 
+export function KnowMeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M5 3.5h7l3 3V16a.5.5 0 0 1-.5.5h-9A.5.5 0 0 1 5 16V4a.5.5 0 0 1 .5-.5z" strokeLinejoin="round" />
+      <path d="M11.5 3.5V7h3.5" strokeLinejoin="round" />
+      <path d="M7.5 11h5M7.5 13.5h3.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function FmeaIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="3" y="3.5" width="14" height="13" rx="1.5" />
+      <path d="M3 7.5h14M8 7.5v9M13 7.5v9" strokeLinecap="round" />
+      <path d="M4.6 10.4l1 1 1.6-1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function RadarIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">

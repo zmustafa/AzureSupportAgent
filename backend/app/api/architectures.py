@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -310,6 +311,95 @@ async def list_memories_endpoint(principal: Principal = Depends(get_principal)):
     return {"memories": out}
 
 
+@router.get("/know-me")
+async def list_know_me_endpoint(principal: Principal = Depends(get_principal)):
+    """Index for the standalone Know-Me page. Returns every Know-Me DOCUMENT (a workload can
+    have many — drafts + published), plus the set of architectures that have a Memory (so the
+    UI can offer 'create a new Know-Me'), plus the trash count. Tenant-scoped."""
+    from app.architectures import memory as mem
+    from app.knowme import registry as kreg
+
+    archs = {a["id"]: a for a in arch_registry.list_architectures(principal.tenant_id)}
+    memories = {m.get("architecture_id", "") for m in mem.list_memories(principal.tenant_id)}
+
+    def _doc(km_doc: dict[str, Any]) -> dict[str, Any]:
+        aid = km_doc.get("architecture_id", "")
+        arch = archs.get(aid)
+        sections = km_doc.get("sections", []) or []
+        todos = km_doc.get("todos", []) or []
+        return {
+            "id": km_doc.get("id"),
+            "architecture_id": aid,
+            "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
+            "architecture_exists": arch is not None,
+            "workload_id": km_doc.get("workload_id", "") or (arch or {}).get("workload_id", ""),
+            "workload_name": (arch or {}).get("workload_name", "") or km_doc.get("workload_name", ""),
+            "title": km_doc.get("title", ""),
+            "description": km_doc.get("description", ""),
+            "status": km_doc.get("status", "draft"),
+            "is_reference": bool(km_doc.get("is_reference", False)),
+            "source": km_doc.get("source", ""),
+            "section_count": len(sections),
+            "filled_count": sum(1 for s in sections if str(s.get("content") or "").strip()),
+            "open_todos": sum(1 for t in todos if t.get("status") != "done"),
+            "updated_at": km_doc.get("updated_at", ""),
+            "updated_by": km_doc.get("updated_by", ""),
+            "deleted_at": km_doc.get("deleted_at", ""),
+        }
+
+    all_docs = kreg.list_know_me(principal.tenant_id)
+    documents = [_doc(d) for d in all_docs]
+    by_arch: dict[str, int] = {}
+    for d in documents:
+        by_arch[d["architecture_id"]] = by_arch.get(d["architecture_id"], 0) + 1
+    # Architectures the user can build a (new) Know-Me from: those with a Memory.
+    buildable: list[dict[str, Any]] = []
+    for aid in memories:
+        arch = archs.get(aid)
+        buildable.append({
+            "architecture_id": aid,
+            "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
+            "architecture_exists": arch is not None,
+            "workload_id": (arch or {}).get("workload_id", ""),
+            "workload_name": (arch or {}).get("workload_name", ""),
+            "know_me_count": by_arch.get(aid, 0),
+        })
+    buildable.sort(key=lambda r: (r["workload_name"].lower() or r["architecture_name"].lower()))
+    documents.sort(key=lambda r: r["updated_at"], reverse=True)
+    trash_count = len(kreg.list_know_me(principal.tenant_id, only_deleted=True))
+    return {"documents": documents, "buildable": buildable, "trash_count": trash_count}
+
+
+@router.get("/know-me/trash")
+async def list_know_me_trash_endpoint(principal: Principal = Depends(get_principal)):
+    """List soft-deleted Know-Me documents (the Trash)."""
+    from app.knowme import registry as kreg
+
+    archs = {a["id"]: a for a in arch_registry.list_architectures(principal.tenant_id, include_deleted=True)}
+    out: list[dict[str, Any]] = []
+    for d in kreg.list_know_me(principal.tenant_id, only_deleted=True):
+        arch = archs.get(d.get("architecture_id", ""))
+        out.append({
+            "id": d.get("id"),
+            "architecture_id": d.get("architecture_id", ""),
+            "workload_name": (arch or {}).get("workload_name", "") or d.get("workload_name", ""),
+            "title": d.get("title", ""),
+            "status": d.get("status", "draft"),
+            "deleted_at": d.get("deleted_at", ""),
+            "deleted_by": d.get("deleted_by", ""),
+            "updated_at": d.get("updated_at", ""),
+        })
+    return {"items": out}
+
+
+@router.post("/know-me/trash/empty")
+async def empty_know_me_trash_endpoint(principal: Principal = Depends(_write)):
+    from app.knowme import registry as kreg
+
+    return {"purged": kreg.empty_trash(principal.tenant_id)}
+
+
+
 @router.get("/{architecture_id}")
 async def get_architecture_endpoint(architecture_id: str, principal: Principal = Depends(get_principal)):
     arch = _tenant_arch_or_404(architecture_id, principal)
@@ -481,6 +571,56 @@ class MemoryGenerateRequest(BaseModel):
 
 class MemorySectionGenerateRequest(BaseModel):
     extra_context: str = ""
+
+
+class KnowMeSectionIn(BaseModel):
+    key: str
+    label: str = ""
+    content: str = ""
+
+
+class KnowMeTodoIn(BaseModel):
+    id: str
+    field_key: str = ""
+    label: str = ""
+    section_key: str = ""
+    status: str = "open"
+    value: str = ""
+    assignee: str = ""
+    note: str = ""
+    choices: list[str] | None = None
+    allow_custom: bool = True
+    choice_source: str = ""
+    multi: bool = False
+
+
+class KnowMeUpsert(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    sections: list[KnowMeSectionIn] | None = None
+    todos: list[KnowMeTodoIn] | None = None
+    status: str | None = None
+
+
+class KnowMeGenerateRequest(BaseModel):
+    # Optional human-provided grounding folded into the Know-Me draft.
+    extra_context: str = ""
+
+
+class KnowMeSectionGenerateRequest(BaseModel):
+    extra_context: str = ""
+
+
+def _know_me_response(architecture_id: str, arch: dict[str, Any], km_doc: dict[str, Any]) -> dict[str, Any]:
+    from app.knowme import sections as km
+
+    wl_name = arch.get("workload_name", "") or km_doc.get("workload_name", "")
+    return {
+        "id": km_doc.get("id"),
+        "know_me": km_doc,
+        "markdown": km.render_markdown(km_doc, wl_name),
+        "architecture": _arch_meta(architecture_id, arch),
+    }
 
 
 def _arch_meta(architecture_id: str, arch: dict[str, Any]) -> dict[str, Any]:
@@ -796,6 +936,768 @@ async def generate_memory_section_endpoint(
         reason=f"Regenerated section: {mem.section_label(section_key)}",
     )
     return _memory_response(architecture_id, arch, memory)
+
+
+# ============================================================ Workload Know-Me
+# A Know-Me is a support-facing reference transformed from an architecture's Memory. Each is
+# keyed by its OWN id (a workload can have many — drafts + a published reference) and links
+# back to its source architecture / workload.
+def _km_or_404(km_id: str, principal: Principal, *, allow_deleted: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fetch a Know-Me by id + its source architecture, tenant-checked. Raises 404 otherwise.
+    Returns (km_doc, arch). ``arch`` may be {} if the architecture was deleted."""
+    from app.knowme import registry as kreg
+
+    km_doc = kreg.get_know_me(km_id)
+    if km_doc is None or (km_doc.get("tenant_id") or "") not in ("", principal.tenant_id):
+        raise HTTPException(status_code=404, detail="Know-Me not found.")
+    if km_doc.get("deleted_at") and not allow_deleted:
+        raise HTTPException(status_code=404, detail="This Know-Me is in the Trash.")
+    arch = arch_registry.get_architecture(km_doc.get("architecture_id", ""), include_deleted=True) or {}
+    return km_doc, arch
+
+
+@router.post("/{architecture_id}/know-me")
+async def create_know_me_endpoint(
+    architecture_id: str, payload: KnowMeUpsert, principal: Principal = Depends(_write)
+):
+    """Create a NEW (empty draft) Know-Me document for an architecture."""
+    from app.knowme import registry as kreg
+
+    arch = _tenant_arch_or_404(architecture_id, principal)
+    km_doc = kreg.create_know_me(
+        architecture_id=architecture_id,
+        workload_id=arch.get("workload_id", ""),
+        workload_name=arch.get("workload_name", ""),
+        connection_id=arch.get("connection_id", ""),
+        title=payload.title or "",
+        tenant_id=principal.tenant_id,
+        actor=_actor(principal),
+    )
+    return _know_me_response(architecture_id, arch, km_doc)
+
+
+@router.get("/know-me/{km_id}")
+async def get_know_me_endpoint(km_id: str, principal: Principal = Depends(get_principal)):
+    """Return one Know-Me document by id + rendered markdown. Includes ``memory_updated_at``
+    so the UI can flag a Know-Me as stale when its source Memory changed after generation."""
+    from app.architectures import memory as mem
+
+    km_doc, arch = _km_or_404(km_id, principal, allow_deleted=True)
+    memory = mem.get_memory(km_doc.get("architecture_id", ""))
+    return {
+        **_know_me_response(km_doc.get("architecture_id", ""), arch, km_doc),
+        "has_memory": memory is not None,
+        "memory_updated_at": (memory or {}).get("updated_at", ""),
+    }
+
+
+@router.put("/know-me/{km_id}")
+async def upsert_know_me_endpoint(km_id: str, payload: KnowMeUpsert, principal: Principal = Depends(_write)):
+    """Save a Know-Me (sections / todos / title / description / status) — snapshots a revision."""
+    from app.knowme import registry as kreg
+
+    km_doc, arch = _km_or_404(km_id, principal)
+    sections = [s.model_dump() for s in payload.sections] if payload.sections is not None else None
+    todos = [t.model_dump() for t in payload.todos] if payload.todos is not None else None
+    saved = kreg.update_know_me(
+        km_id,
+        title=payload.title,
+        description=payload.description,
+        sections=sections,
+        todos=todos,
+        status=payload.status,
+        source="edited",
+        tenant_id=principal.tenant_id,
+        actor=_actor(principal),
+    )
+    return _know_me_response(km_doc.get("architecture_id", ""), arch, saved)
+
+
+@router.post("/know-me/{km_id}/reference")
+async def set_know_me_reference_endpoint(
+    km_id: str, payload: dict[str, Any] | None = Body(default=None), principal: Principal = Depends(_write)
+):
+    """Mark (or unmark) this Know-Me as the canonical reference for its workload. Only one
+    document per workload can be the reference."""
+    from app.knowme import registry as kreg
+
+    km_doc, arch = _km_or_404(km_id, principal)
+    is_ref = True if payload is None else bool(payload.get("is_reference", True))
+    saved = kreg.set_reference(km_id, is_reference=is_ref, actor=_actor(principal))
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Know-Me not found.")
+    return _know_me_response(km_doc.get("architecture_id", ""), arch, saved)
+
+
+@router.delete("/know-me/{km_id}")
+async def delete_know_me_endpoint(km_id: str, principal: Principal = Depends(_write)):
+    """Move a Know-Me to the Trash (soft-delete)."""
+    from app.knowme import registry as kreg
+
+    _km_or_404(km_id, principal, allow_deleted=True)
+    kreg.soft_delete(km_id, _actor(principal))
+    return {"ok": True}
+
+
+@router.post("/know-me/{km_id}/restore")
+async def restore_know_me_endpoint(km_id: str, principal: Principal = Depends(_write)):
+    """Restore a Know-Me from the Trash."""
+    from app.knowme import registry as kreg
+
+    _km_or_404(km_id, principal, allow_deleted=True)
+    restored = kreg.restore(km_id)
+    if restored is None:
+        raise HTTPException(status_code=404, detail="Nothing to restore.")
+    return {"ok": True, "know_me": restored}
+
+
+@router.delete("/know-me/{km_id}/purge")
+async def purge_know_me_endpoint(km_id: str, principal: Principal = Depends(_write)):
+    """Permanently delete a Know-Me (and its revisions + assets)."""
+    from app.knowme import registry as kreg
+
+    _km_or_404(km_id, principal, allow_deleted=True)
+    kreg.purge(km_id)
+    return {"ok": True}
+
+
+@router.get("/know-me/{km_id}/revisions")
+async def list_know_me_revisions_endpoint(km_id: str, principal: Principal = Depends(get_principal)):
+    from app.knowme import revisions
+
+    _km_or_404(km_id, principal, allow_deleted=True)
+    return {"revisions": revisions.list_revisions(km_id)}
+
+
+@router.get("/know-me/{km_id}/revisions/{revision_id}")
+async def get_know_me_revision_endpoint(
+    km_id: str, revision_id: str, principal: Principal = Depends(get_principal)
+):
+    from app.knowme import revisions
+    from app.knowme import sections as km
+
+    km_doc, arch = _km_or_404(km_id, principal, allow_deleted=True)
+    rev = revisions.get_revision(km_id, revision_id)
+    if rev is None:
+        raise HTTPException(status_code=404, detail="Revision not found.")
+    clean = {k: v for k, v in rev.items() if k != "sig"}
+    markdown = km.render_markdown(clean, arch.get("workload_name", "") or km_doc.get("workload_name", ""))
+    return {"revision": clean, "markdown": markdown}
+
+
+@router.post("/know-me/{km_id}/revisions/{revision_id}/restore")
+async def restore_know_me_revision_endpoint(
+    km_id: str, revision_id: str, principal: Principal = Depends(_write)
+):
+    from app.knowme import registry as kreg
+
+    km_doc, arch = _km_or_404(km_id, principal)
+    restored = kreg.restore_revision(km_id, revision_id, _actor(principal))
+    if restored is None:
+        raise HTTPException(status_code=404, detail="Know-Me or revision not found.")
+    return _know_me_response(km_doc.get("architecture_id", ""), arch, restored)
+
+
+@router.get("/know-me/{km_id}/export")
+async def export_know_me_endpoint(
+    km_id: str, format: str = "md", principal: Principal = Depends(get_principal)
+):
+    """Export the Know-Me as Markdown (format=md) or a branded PDF (format=pdf)."""
+    from fastapi.responses import Response
+
+    from app.knowme import sections as km
+
+    km_doc, arch = _km_or_404(km_id, principal, allow_deleted=True)
+    wl_name = arch.get("workload_name", "") or km_doc.get("workload_name", "")
+    markdown = km.render_markdown(km_doc, wl_name, cover=True)
+    base = re.sub(r"[^a-z0-9]+", "-", (km_doc.get("title") or wl_name or "know-me").lower()).strip("-") or "know-me"
+    if format == "pdf":
+        from app.connectors import chat_pdf
+        from app.knowme import assets as kassets
+
+        # Inline embedded image assets as data-URIs (no live API during PDF render).
+        markdown = kassets.inline_asset_data_uris(km_id, markdown)
+        title = km_doc.get("title") or (f"Know-Me — {wl_name}" if wl_name else "Workload Know-Me")
+        pdf = await asyncio.to_thread(
+            chat_pdf.build_chat_pdf, title, [{"role": "assistant", "content": markdown}]
+        )
+        return Response(
+            content=pdf, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{base}-know-me.pdf"'},
+        )
+    return Response(
+        content=markdown, media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{base}-know-me.md"'},
+    )
+
+
+@router.get("/know-me/{km_id}/mermaid")
+async def know_me_mermaid_endpoint(km_id: str, principal: Principal = Depends(get_principal)):
+    """Generate a Mermaid flowchart from the source architecture's diagram, for embedding."""
+    from app.knowme import assets as kassets
+
+    _km_doc, arch = _km_or_404(km_id, principal, allow_deleted=True)
+    mermaid = kassets.architecture_to_mermaid(arch)
+    if not mermaid:
+        raise HTTPException(status_code=404, detail="This architecture has no diagram to convert.")
+    return {"mermaid": mermaid}
+
+
+@router.get("/know-me/{km_id}/assets")
+async def list_know_me_assets_endpoint(km_id: str, principal: Principal = Depends(get_principal)):
+    km_doc, _arch = _km_or_404(km_id, principal, allow_deleted=True)
+    return {"assets": km_doc.get("assets", [])}
+
+
+@router.post("/know-me/{km_id}/assets")
+async def upload_know_me_asset_endpoint(
+    km_id: str, file: UploadFile = File(...), principal: Principal = Depends(_write)
+):
+    """Upload/paste an image into the Know-Me; returns the asset record + a Markdown snippet."""
+    from app.knowme import assets as kassets
+    from app.knowme import registry as kreg
+
+    _km_or_404(km_id, principal)
+    data = await file.read()
+    try:
+        asset = kassets.save_asset(km_id, data=data, content_type=file.content_type or "", filename=file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    kreg.add_asset(km_id, {k: asset[k] for k in ("id", "filename", "content_type", "size")})
+    return {"asset": asset}
+
+
+@router.get("/know-me/{km_id}/assets/{asset_id}")
+async def get_know_me_asset_endpoint(km_id: str, asset_id: str, principal: Principal = Depends(get_principal)):
+    from fastapi.responses import Response
+
+    from app.knowme import assets as kassets
+
+    _km_or_404(km_id, principal, allow_deleted=True)
+    got = kassets.read_asset(km_id, asset_id)
+    if got is None:
+        raise HTTPException(status_code=404, detail="Asset not found.")
+    data, ct = got
+    return Response(content=data, media_type=ct, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.delete("/know-me/{km_id}/assets/{asset_id}")
+async def delete_know_me_asset_endpoint(km_id: str, asset_id: str, principal: Principal = Depends(_write)):
+    from app.knowme import assets as kassets
+    from app.knowme import registry as kreg
+
+    _km_or_404(km_id, principal)
+    kassets.delete_asset(km_id, asset_id)
+    kreg.remove_asset(km_id, asset_id)
+    return {"ok": True}
+
+
+@router.post("/know-me/{km_id}/fields/{field_id}/suggest")
+async def suggest_know_me_field_endpoint(
+    km_id: str, field_id: str, principal: Principal = Depends(_write)
+):
+    """AI-infer a short list of realistic answer OPTIONS for one human-completion field
+    (P3, on-demand). Returns ``{choices: [...]}`` and caches them onto the field so the UI can
+    offer a dropdown. Best-effort — returns the field's existing choices on any failure."""
+    from app.knowme import context as kctx
+    from app.knowme import generator as kgen
+    from app.knowme import registry as kreg
+    from app.knowme import sections as km
+
+    km_doc, arch = _km_or_404(km_id, principal)
+    todos = list(km_doc.get("todos") or [])
+    todo = next((t for t in todos if str(t.get("id")) == field_id), None)
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Field not found.")
+
+    workload_id = arch.get("workload_id") or km_doc.get("workload_id") or ""
+    connection_id = arch.get("connection_id") or km_doc.get("connection_id") or ""
+    wl = get_workload(workload_id) if workload_id else None
+    wl_name = arch.get("workload_name", "") or km_doc.get("workload_name", "")
+    section_label = km.section_label(str(todo.get("section_key") or ""))
+    facts = km.scope_facts(wl, arch)
+    known = await kctx.gather_known_facts(wl, arch, principal.tenant_id, connection_id, facts)
+    evidence = await kctx.gather_evidence(km_doc.get("architecture_id", ""), workload_id, principal.tenant_id, connection_id)
+
+    options = await kgen.suggest_field_choices(
+        label=str(todo.get("label") or ""),
+        field_key=str(todo.get("field_key") or ""),
+        section_label=section_label,
+        workload_name=wl_name,
+        known_block=known.get("block", ""),
+        evidence_block=evidence.get("block", ""),
+    )
+    if not options:
+        return {"choices": todo.get("choices") or [], "choice_source": todo.get("choice_source") or ""}
+
+    # Merge AI options after any existing choices (preserve order, dedup) + persist.
+    merged: list[str] = []
+    for v in [*(todo.get("choices") or []), *options]:
+        s = str(v).strip()
+        if s and s not in merged:
+            merged.append(s)
+    merged = merged[:12]
+    for t in todos:
+        if str(t.get("id")) == field_id:
+            t["choices"] = merged
+            t["allow_custom"] = True
+            if not t.get("choice_source"):
+                t["choice_source"] = "ai"
+    kreg.update_know_me(
+        km_id, todos=todos, source="edited",
+        tenant_id=principal.tenant_id, actor=_actor(principal), reason="Suggested field options",
+    )
+    return {"choices": merged, "choice_source": "ai"}
+
+
+async def _stream_generate_know_me(
+    *, architecture_id: str, arch: dict[str, Any], principal: Principal, extra_context: str,
+    target_km_id: str | None,
+):
+    """Shared SSE generator: transform an architecture's Memory into a Know-Me. When
+    ``target_km_id`` is set it regenerates that document; otherwise it creates a new one.
+    Yields SSE event dicts; the final ``done`` carries the full know-me response."""
+    from app.architectures import memory as mem
+    from app.knowme import context as kctx
+    from app.knowme import generator as kgen
+    from app.knowme import registry as kreg
+    from app.knowme import sections as km
+
+    workload_id = arch.get("workload_id") or ""
+    connection_id = arch.get("connection_id") or ""
+    tenant_id = principal.tenant_id
+
+    memory = mem.get_memory(architecture_id)
+    if memory is None or not any(str(s.get("content") or "").strip() for s in memory.get("sections", []) or []):
+        yield {"event": "error", "data": json.dumps({"message": "No architecture memory to transform. Generate the Memory first."})}
+        return
+
+    wl = get_workload(workload_id) if workload_id else None
+    wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
+    yield {"event": "status", "data": json.dumps({"phase": "scope", "message": "🔎 Resolving the workload's Azure scope & known values…"})}
+    facts = km.scope_facts(wl, arch)
+    known = await kctx.gather_known_facts(wl, arch, tenant_id, connection_id, facts)
+    yield {"event": "status", "data": json.dumps({"phase": "evidence", "message": "📊 Pulling posture evidence (assessments, coverage, profiler)…"})}
+    evidence = await kctx.gather_evidence(architecture_id, workload_id, tenant_id, connection_id)
+
+    yield {"event": "status", "data": json.dumps({"phase": "ai", "message": "Transforming the architecture memory into a Know-Me…"})}
+    queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+    async def _progress(phase: str, message: str) -> None:
+        await queue.put({"phase": phase, "message": message})
+
+    gen_task = asyncio.create_task(
+        kgen.generate_know_me(
+            workload_name=wl_name, memory=memory, facts=facts, progress=_progress,
+            extra_context=extra_context, known_block=known.get("block", ""),
+            evidence_block=evidence.get("block", ""),
+        )
+    )
+    while not gen_task.done() or not queue.empty():
+        try:
+            ev = await asyncio.wait_for(queue.get(), timeout=0.25)
+        except asyncio.TimeoutError:
+            continue
+        yield {"event": "status", "data": json.dumps(ev)}
+    result = await gen_task
+    if result is None:
+        yield {"event": "error", "data": json.dumps({"message": "The AI could not draft the Know-Me. Try again."})}
+        return
+
+    yield {"event": "status", "data": json.dumps({"phase": "save", "message": "💾 Validating sections & saving…"})}
+    existing = kreg.get_know_me(target_km_id) if target_km_id else None
+    sections = kreg.merge_ai_sections((existing or {}).get("sections"), result["sections"])
+    todos, autofilled = _finalize_know_me_todos(sections, existing, known)
+    if autofilled:
+        yield {"event": "status", "data": json.dumps({"phase": "autofill", "message": f"✅ Auto-filled {autofilled} field(s) from platform data."})}
+    ai_meta = {
+        "confidence": result.get("confidence"),
+        "passes": result.get("passes"),
+        "autofilled": autofilled,
+        "evidence_used": _evidence_summary(evidence),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_by": _actor(principal),
+    }
+    if target_km_id and existing is not None:
+        km_doc = kreg.update_know_me(
+            target_km_id, workload_id=workload_id, workload_name=wl_name, connection_id=connection_id,
+            sections=sections, todos=todos, source="hybrid", ai=ai_meta,
+            tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI",
+        )
+    else:
+        km_doc = kreg.create_know_me(
+            architecture_id=architecture_id, workload_id=workload_id, workload_name=wl_name,
+            connection_id=connection_id, tenant_id=tenant_id, actor=_actor(principal),
+        )
+        km_doc = kreg.update_know_me(
+            km_doc["id"], workload_id=workload_id, workload_name=wl_name, connection_id=connection_id,
+            sections=sections, todos=todos, source="ai", ai=ai_meta,
+            tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI",
+        )
+    yield {"event": "done", "data": json.dumps(_know_me_response(architecture_id, arch, km_doc))}
+
+
+@router.post("/{architecture_id}/know-me/generate/stream")
+async def generate_know_me_stream_endpoint(
+    architecture_id: str,
+    payload: KnowMeGenerateRequest = Body(default_factory=KnowMeGenerateRequest),
+    principal: Principal = Depends(_write),
+):
+    """Create a NEW Know-Me for an architecture by transforming its Memory. SSE → done."""
+    arch = _tenant_arch_or_404(architecture_id, principal)
+    extra_context = payload.extra_context or ""
+
+    async def _gen():
+        try:
+            async for ev in _stream_generate_know_me(
+                architecture_id=architecture_id, arch=arch, principal=principal,
+                extra_context=extra_context, target_km_id=None,
+            ):
+                yield ev
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Know-Me generation failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
+
+
+@router.post("/know-me/{km_id}/generate/stream")
+async def regenerate_know_me_stream_endpoint(
+    km_id: str,
+    payload: KnowMeGenerateRequest = Body(default_factory=KnowMeGenerateRequest),
+    principal: Principal = Depends(_write),
+):
+    """Regenerate an EXISTING Know-Me document from its architecture's Memory. SSE → done."""
+    km_doc, arch = _km_or_404(km_id, principal)
+    if not arch:
+        raise HTTPException(status_code=400, detail="The source architecture no longer exists.")
+    extra_context = payload.extra_context or ""
+
+    async def _gen():
+        try:
+            async for ev in _stream_generate_know_me(
+                architecture_id=km_doc.get("architecture_id", ""), arch=arch, principal=principal,
+                extra_context=extra_context, target_km_id=km_id,
+            ):
+                yield ev
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Know-Me regeneration failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
+
+
+def _finalize_know_me_todos(
+    sections: list[dict[str, Any]], existing: dict[str, Any] | None, known: dict[str, Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Parse typed todos, carry forward prior filled values (by id), then auto-fill from
+    platform-known facts. Returns (todos, autofilled_count)."""
+    from app.knowme import context as kctx
+    from app.knowme import sections as km
+
+    todos = km.parse_todos(sections)
+    prior = {t["id"]: t for t in (existing or {}).get("todos", []) if t.get("id")}
+    for t in todos:
+        p = prior.get(t["id"])
+        if p and p.get("value"):
+            t["value"] = p["value"]
+            t["status"] = p.get("status", "open")
+            t["source"] = p.get("source", t.get("source", "human"))
+    autofilled = kctx.autofill_todos(todos, known)
+    return todos, autofilled
+
+
+def _evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    """A compact record of what posture evidence fed the generation (for the 'how built' panel)."""
+    cov = evidence.get("coverage") or {}
+    return {
+        "assessment": bool(evidence.get("assessment")),
+        "assessment_findings": len((evidence.get("assessment") or {}).get("findings", [])),
+        "coverage": sorted(cov.keys()),
+        "performance": bool(evidence.get("performance")),
+        "idle_resources": len(evidence.get("idle") or []),
+    }
+
+
+@router.post("/know-me/{km_id}/sections/{section_key}/generate/stream")
+async def generate_know_me_section_stream_endpoint(
+    km_id: str,
+    section_key: str,
+    payload: KnowMeSectionGenerateRequest = Body(default_factory=KnowMeSectionGenerateRequest),
+    principal: Principal = Depends(_write),
+):
+    """Regenerate ONE Know-Me section with AI (A5), streaming detailed status. SSE:
+    status… (phase=scope|evidence|ai|save) → done{know_me_response}."""
+    km_doc, arch = _km_or_404(km_id, principal)
+    tenant_id = principal.tenant_id
+    architecture_id = km_doc.get("architecture_id", "")
+    workload_id = arch.get("workload_id") or ""
+    connection_id = arch.get("connection_id") or ""
+
+    async def _gen():
+        try:
+            from app.architectures import memory as mem
+            from app.knowme import context as kctx
+            from app.knowme import generator as kgen
+            from app.knowme import registry as kreg
+            from app.knowme import sections as km
+
+            if section_key not in km.SECTION_KEYS:
+                yield {"event": "error", "data": json.dumps({"message": "Unknown section."})}
+                return
+            cur = kreg.get_know_me(km_id)
+            if cur is None or cur.get("deleted_at"):
+                yield {"event": "error", "data": json.dumps({"message": "No Know-Me to edit."})}
+                return
+            memory = mem.get_memory(architecture_id)
+            if memory is None:
+                yield {"event": "error", "data": json.dumps({"message": "No architecture memory to ground the section on."})}
+                return
+
+            label = km.section_label(section_key)
+            wl = get_workload(workload_id) if workload_id else None
+            wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
+            yield {"event": "status", "data": json.dumps({"phase": "scope", "message": f"🔎 Resolving scope & known values for “{label}”…"})}
+            facts = km.scope_facts(wl, arch)
+            known = await kctx.gather_known_facts(wl, arch, tenant_id, connection_id, facts)
+            yield {"event": "status", "data": json.dumps({"phase": "evidence", "message": "📊 Pulling posture evidence (assessments, coverage, profiler)…"})}
+            evidence = await kctx.gather_evidence(architecture_id, workload_id, tenant_id, connection_id)
+
+            queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+            async def _progress(phase: str, message: str) -> None:
+                await queue.put({"phase": phase, "message": message})
+
+            gen_task = asyncio.create_task(
+                kgen.generate_section(
+                    section_key=section_key, workload_name=wl_name, memory=memory, facts=facts,
+                    current_sections=cur.get("sections"), extra_context=payload.extra_context or "",
+                    known_block=known.get("block", ""), evidence_block=evidence.get("block", ""),
+                    progress=_progress,
+                )
+            )
+            while not gen_task.done() or not queue.empty():
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+                yield {"event": "status", "data": json.dumps(ev)}
+            content = await gen_task
+            if content is None:
+                yield {"event": "error", "data": json.dumps({"message": "The AI could not draft this section. Try again."})}
+                return
+
+            yield {"event": "status", "data": json.dumps({"phase": "save", "message": "💾 Saving the section…"})}
+            sections = [dict(s) for s in (cur.get("sections") or [])]
+            matched = False
+            for s in sections:
+                if str(s.get("key")) == section_key:
+                    s["content"] = content
+                    matched = True
+            if not matched:
+                sections.append({"key": section_key, "label": label, "content": content})
+            todos, _ = _finalize_know_me_todos(sections, cur, known)
+            saved = kreg.update_know_me(
+                km_id, workload_id=workload_id, workload_name=wl_name, connection_id=connection_id,
+                sections=sections, todos=todos, source="hybrid",
+                tenant_id=tenant_id, actor=_actor(principal),
+                reason=f"Regenerated section: {label}",
+            )
+            yield {"event": "done", "data": json.dumps(_know_me_response(architecture_id, arch, saved))}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Know-Me section regeneration failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
+
+
+class KnowMeFromWorkloadRequest(BaseModel):
+    workload_id: str
+    connection_id: str | None = None
+    # Optionally target a specific existing architecture; otherwise the newest one linked to
+    # the workload is used, and if none exists an architecture is reverse-engineered.
+    architecture_id: str | None = None
+    extra_context: str = ""
+
+
+@router.post("/know-me/from-workload/stream")
+async def know_me_from_workload_stream_endpoint(
+    payload: KnowMeFromWorkloadRequest, principal: Principal = Depends(_write)
+):
+    """One-click pipeline from an Azure workload: ensure the workload has an architecture
+    (reverse-engineering one with AI if needed), ensure that architecture has a Memory
+    (drafting it with AI if needed), then transform the Memory into a Know-Me.
+    SSE: status… (phase=architecture|memory|knowme|save) → done{know_me_response}."""
+    workload_id = payload.workload_id or ""
+    explicit_arch_id = payload.architecture_id or ""
+    extra_context = payload.extra_context or ""
+    tenant_id = principal.tenant_id
+
+    async def _gen():
+        try:
+            from app.architectures import memory as mem
+            from app.architectures.designer import generate_architecture
+            from app.architectures.memory_designer import generate_memory
+            from app.architectures.reverse import dump_resources
+            from app.knowme import generator as kgen
+            from app.knowme import registry as kreg
+            from app.knowme import sections as km
+
+            wl = get_workload(workload_id) if workload_id else None
+            if wl is None:
+                yield {"event": "error", "data": json.dumps({"message": "Workload not found."})}
+                return
+            wl_name = wl.get("name", "") or "workload"
+            conn_id = payload.connection_id or wl.get("connection_id") or ""
+
+            # 1) Resolve the architecture: explicit > newest linked to the workload > build new.
+            yield {"event": "status", "data": json.dumps({"phase": "architecture", "message": f"🏗️ Resolving an architecture for '{wl_name}'…"})}
+            arch: dict[str, Any] | None = None
+            if explicit_arch_id:
+                arch = arch_registry.get_architecture(explicit_arch_id)
+                if arch is not None and (arch.get("tenant_id") or "") not in ("", tenant_id):
+                    arch = None
+            if arch is None:
+                linked = [a for a in arch_registry.list_architectures(tenant_id) if (a.get("workload_id") or "") == workload_id]
+                arch = linked[0] if linked else None
+            if arch is None:
+                yield {"event": "status", "data": json.dumps({"phase": "architecture", "message": "🔎 No architecture yet — querying Azure Resource Graph for resources…"})}
+                conn = resolve_connection(conn_id or None)
+                dump = await dump_resources(wl, conn)
+                if dump["error"]:
+                    yield {"event": "error", "data": json.dumps({"message": dump["error"]})}
+                    return
+                resources = dump["resources"] or []
+                if not resources:
+                    yield {"event": "error", "data": json.dumps({"message": "No resources found in this workload's scope — cannot reverse-engineer an architecture."})}
+                    return
+                yield {"event": "status", "data": json.dumps({"phase": "architecture", "message": f"🤖 Reverse-engineering an architecture from {len(resources)} resource(s)…"})}
+                ares = await generate_architecture(wl_name, resources)
+                if ares is None:
+                    yield {"event": "error", "data": json.dumps({"message": "The AI could not infer an architecture from this workload. Try again."})}
+                    return
+                arch = arch_registry.upsert_architecture(
+                    {
+                        "name": ares["name"] or f"{wl_name} architecture",
+                        "description": ares["description"],
+                        "workload_id": workload_id,
+                        "workload_name": wl_name,
+                        "connection_id": conn_id,
+                        "tenant_id": tenant_id,
+                        "source": "ai",
+                        "nodes": ares["nodes"], "edges": ares["edges"], "groups": ares["groups"],
+                        "ai": {
+                            "rationale": ares["rationale"], "confidence": ares["confidence"],
+                            "resource_count": len(resources), "generated_by": _actor(principal),
+                        },
+                        "created_by": _actor(principal),
+                    },
+                    actor=_actor(principal), reason="Generated by AI (Know-Me pipeline)",
+                )
+            architecture_id = arch["id"]
+            workload_name = arch.get("workload_name", "") or wl_name
+
+            # 2) Ensure the architecture has a Memory (draft it with AI if missing/empty).
+            memory = mem.get_memory(architecture_id)
+            has_memory = memory is not None and any(
+                str(s.get("content") or "").strip() for s in memory.get("sections", []) or []
+            )
+            if not has_memory:
+                yield {"event": "status", "data": json.dumps({"phase": "memory", "message": "🧠 Drafting the architecture Memory with AI…"})}
+                weakness_signals = await _gather_weakness_signals(architecture_id, workload_id, tenant_id, conn_id)
+                conn = resolve_connection(conn_id or None)
+                dump = await dump_resources(wl, conn)
+                resources = dump.get("resources") or []
+                mqueue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+                async def _mprog(_phase: str, message: str) -> None:
+                    await mqueue.put({"phase": "memory", "message": message})
+
+                mtask = asyncio.create_task(
+                    generate_memory(arch, resources, weakness_signals, workload_name, progress=_mprog, extra_context=extra_context)
+                )
+                while not mtask.done() or not mqueue.empty():
+                    try:
+                        ev = await asyncio.wait_for(mqueue.get(), timeout=0.25)
+                    except asyncio.TimeoutError:
+                        continue
+                    yield {"event": "status", "data": json.dumps(ev)}
+                mres = await mtask
+                if mres is None:
+                    yield {"event": "error", "data": json.dumps({"message": "The AI could not draft the architecture Memory. Try again."})}
+                    return
+                existing_mem = mem.get_memory(architecture_id)
+                msections = mem.merge_ai_sections((existing_mem or {}).get("sections"), mres["sections"])
+                memory = mem.upsert_memory(
+                    architecture_id, workload_id=workload_id, sections=msections,
+                    source="ai" if existing_mem is None else "hybrid",
+                    ai={
+                        "confidence": mres.get("confidence"),
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "generated_by": _actor(principal), "resource_count": len(resources),
+                    },
+                    tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI (Know-Me pipeline)",
+                )
+
+            # 3) Transform the Memory into a Know-Me.
+            from app.knowme import context as kctx
+
+            yield {"event": "status", "data": json.dumps({"phase": "knowme", "message": "📄 Transforming the Memory into a Know-Me…"})}
+            facts = km.scope_facts(wl, arch)
+            yield {"event": "status", "data": json.dumps({"phase": "knowme", "message": "🔎 Resolving platform-known values & posture evidence…"})}
+            known = await kctx.gather_known_facts(wl, arch, tenant_id, conn_id, facts)
+            evidence = await kctx.gather_evidence(architecture_id, workload_id, tenant_id, conn_id)
+            kqueue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+
+            async def _kprog(_phase: str, message: str) -> None:
+                await kqueue.put({"phase": "knowme", "message": message})
+
+            ktask = asyncio.create_task(
+                kgen.generate_know_me(
+                    workload_name=workload_name, memory=memory, facts=facts, progress=_kprog,
+                    extra_context=extra_context, known_block=known.get("block", ""),
+                    evidence_block=evidence.get("block", ""),
+                )
+            )
+            while not ktask.done() or not kqueue.empty():
+                try:
+                    ev = await asyncio.wait_for(kqueue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+                yield {"event": "status", "data": json.dumps(ev)}
+            kres = await ktask
+            if kres is None:
+                yield {"event": "error", "data": json.dumps({"message": "The AI could not draft the Know-Me. Try again."})}
+                return
+
+            yield {"event": "status", "data": json.dumps({"phase": "save", "message": "💾 Validating sections & saving…"})}
+            sections = kreg.merge_ai_sections(None, kres["sections"])
+            todos, autofilled = _finalize_know_me_todos(sections, None, known)
+            if autofilled:
+                yield {"event": "status", "data": json.dumps({"phase": "autofill", "message": f"✅ Auto-filled {autofilled} field(s) from platform data."})}
+            new_km = kreg.create_know_me(
+                architecture_id=architecture_id, workload_id=workload_id, workload_name=workload_name,
+                connection_id=conn_id, tenant_id=tenant_id, actor=_actor(principal),
+            )
+            km_doc = kreg.update_know_me(
+                new_km["id"], workload_id=workload_id, workload_name=workload_name, connection_id=conn_id,
+                sections=sections, todos=todos, source="ai",
+                ai={
+                    "confidence": kres.get("confidence"),
+                    "passes": kres.get("passes"),
+                    "autofilled": autofilled,
+                    "evidence_used": _evidence_summary(evidence),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "generated_by": _actor(principal),
+                },
+                tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI (from workload)",
+            )
+            yield {"event": "done", "data": json.dumps(_know_me_response(architecture_id, arch, km_doc))}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Know-Me from-workload pipeline failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
 
 
 # ------------------------------------------------------------- clone + revision history

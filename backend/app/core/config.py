@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     # Agent safety
     agent_write_policy: str = "gated"  # gated | read_only
 
+    # Azure Activity Log pagination ceiling (Change Explorer / change collectors). The REST
+    # reader pages through `nextLink` up to this many pages as a safety bound; raise it to
+    # read deeper on very large tenants (at the cost of slower scans), lower it to cap latency.
+    azure_activity_log_max_pages: int = 50
+
     # Secrets at rest: Fernet key for encrypting Azure connection credentials. Leave
     # empty for local dev (a key is generated under backend/.data/secret.key). In
     # production, mount a stable key from Key Vault / a secret store.

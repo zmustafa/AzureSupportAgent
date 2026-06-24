@@ -306,6 +306,12 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
   const genStartRef = useRef<number>(0);
   const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const genAbort = useRef<AbortController | null>(null);
+  // Auto-scroll the live progress list to the newest step as it streams in.
+  const genStepsRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const el = genStepsRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [genSteps.length]);
   // Per-section AI regenerate (which section key is currently regenerating).
   const [regenKey, setRegenKey] = useState<string>("");
   // Import grounding notes (folded into the AI draft as authoritative context).
@@ -677,6 +683,13 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
           className="min-w-[12rem] flex-1 rounded-md border border-transparent px-2 py-1 text-sm text-gray-800 hover:border-gray-200 focus:border-brand focus:outline-none"
         />
         <button
+          onClick={() => navigate("/knowme")}
+          title="Open Workload Know-Me (support-facing references transformed from memories)"
+          className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+        >
+          📄 Know-Me
+        </button>
+        <button
           onClick={() => void generate()}
           disabled={genState === "running"}
           title="Draft the memory from the architecture + live resources + known weaknesses"
@@ -763,7 +776,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
             </button>
           </div>
           {genSteps.length > 0 && (
-            <ol className="mt-1.5 max-h-44 space-y-0.5 overflow-y-auto border-t border-brand/10 pt-1.5">
+            <ol ref={genStepsRef} className="mt-1.5 max-h-44 space-y-0.5 overflow-y-auto border-t border-brand/10 pt-1.5">
               {genSteps.map((s, i) => {
                 const isLast = i === genSteps.length - 1;
                 return (
@@ -959,7 +972,7 @@ export function MemoryEditor({ architectureId }: { architectureId: string }) {
                 ))}
               </div>
             ) : (
-              <div className="prose prose-sm max-w-none rounded-xl border border-gray-200 bg-white p-5 prose-headings:font-semibold prose-h1:text-xl prose-h2:mt-4 prose-h2:text-base prose-h2:text-gray-800">
+              <div className="prose prose-sm max-w-none rounded-xl border border-gray-200 bg-white p-5 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-1 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-gray-900 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-gray-800">
                 <Markdown>
                   {previewRev ? (previewQ.data?.markdown ?? "Loading…") : markdown}
                 </Markdown>

@@ -24,6 +24,31 @@ def safe_json_parse(value: Any, default: Any = None) -> Any:
         return default
 
 
+def loads_tolerant(text: str, default: Any = None) -> Any:
+    """Parse an LLM JSON completion, tolerating the quirks large markdown payloads
+    introduce. Long Markdown values (tables, multi-line content, special tokens) often
+    contain raw newlines/tabs inside string values, which strict ``json.loads`` rejects.
+    Tries strict first, then permits control characters (``strict=False``), then strips
+    trailing commas as a last resort. Returns ``default`` if nothing parses."""
+    if not isinstance(text, str) or not text.strip():
+        return default
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    try:
+        return json.loads(text, strict=False)  # allow raw control chars inside strings
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    import re
+
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)  # drop trailing commas
+    try:
+        return json.loads(repaired, strict=False)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return default
+
+
 def format_error(exc: BaseException, max_len: int = 500) -> str:
     """Render an exception as a clean, bounded message for logs/UI.
 

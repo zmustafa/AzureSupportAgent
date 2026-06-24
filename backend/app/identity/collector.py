@@ -391,9 +391,8 @@ async def _collect_keyvault_expiry(
         if not vname:
             return [], 0
         wid, wname = _map_by_arm_id(vid, index)
-        v_out: list[dict[str, Any]] = []
-        v_errors = 0
-        for obj_kind, sub in (("certificate", "certificate"), ("secret", "secret")):
+
+        async def _probe(obj_kind: str, sub: str) -> tuple[list[dict[str, Any]], int]:
             async with sem:
                 res = await run_az_json_capture(
                     [
@@ -405,18 +404,18 @@ async def _collect_keyvault_expiry(
                     session_config_dir=config_dir,
                 )
             if not res.ok:
-                v_errors += 1
-                continue
+                return [], 1
             try:
                 items = json.loads(res.stdout) if res.stdout.strip() else []
             except (ValueError, TypeError):
                 items = []
+            p_out: list[dict[str, Any]] = []
             for it in items if isinstance(items, list) else []:
                 expires = it.get("expires")
                 days = _days_until(expires)
                 if days is None:
                     continue
-                v_out.append(
+                p_out.append(
                     _finding(
                         id=f"kv:{vid}:{obj_kind}:{it.get('name')}",
                         kind=KIND_KV_EXPIRY,
@@ -436,6 +435,17 @@ async def _collect_keyvault_expiry(
                         remediation="Renew/rotate the Key Vault object before it expires; update consumers.",
                     )
                 )
+            return p_out, 0
+
+        # Probe certificates + secrets for this vault concurrently (each still bounded by the
+        # shared semaphore), halving the per-vault wall-clock vs the old sequential scan.
+        v_out: list[dict[str, Any]] = []
+        v_errors = 0
+        for p_out, p_err in await asyncio.gather(
+            _probe("certificate", "certificate"), _probe("secret", "secret")
+        ):
+            v_out.extend(p_out)
+            v_errors += p_err
         return v_out, v_errors
 
     try:

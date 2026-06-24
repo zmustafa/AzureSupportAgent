@@ -34,6 +34,21 @@ def test_headline_extractors():
     assert "4 item" in h4 and a4 is True
 
 
+def test_fmea_system_registered_and_headline():
+    # The FMEA system is in the catalog with its full name and depends on memory.
+    assert "fmea" in sysreg.all_system_keys()
+    fmea = sysreg.get_system("fmea")
+    assert fmea is not None
+    assert fmea.label == "Failure Mode and Effects Analysis"
+    assert "memory" in fmea.depends_on
+    # Headline extractor: critical risks flag attention; an empty doc does not.
+    head, att = sysreg._fmea_headline({"counts": {"critical": 2, "high": 1}, "total_rows": 8, "top_rpn": 560})
+    assert "8 risks" in head and "2 critical" in head and "top RPN 560" in head and att is True
+    head0, att0 = sysreg._fmea_headline({"counts": {"critical": 0, "high": 0}, "total_rows": 0, "top_rpn": 0})
+    assert att0 is False and "No failure modes" in head0
+
+
+
 # --------------------------------------------------------------------- helpers
 def _fake_system(key, *, status="done", attention=False, headline="ok", last=None):
     async def run(ctx, *, force, progress=None):
@@ -167,6 +182,30 @@ def test_reap_orphaned_missions(tmp_path, monkeypatch):
     assert orphan.status == "failed" and orphan.error and orphan.ended_at is not None
     assert queued.status == "failed"
     assert done.status == "succeeded"  # terminal rows are untouched
+
+
+def test_delete_missions_for_workload(tmp_path, monkeypatch):
+    """Deleting a workload's Mission Control hard-removes all of its mission runs (no trash)
+    and leaves other workloads' and tenants' runs untouched."""
+    Session = _patch_env(monkeypatch, tmp_path, [_fake_system("monitoring")])
+
+    async def seed_and_delete():
+        async with Session() as db:
+            db.add(MissionRun(id="w1-a", tenant_id="t1", workload_id="w1", status="succeeded"))
+            db.add(MissionRun(id="w1-b", tenant_id="t1", workload_id="w1", status="failed"))
+            db.add(MissionRun(id="w2-a", tenant_id="t1", workload_id="w2", status="succeeded"))
+            db.add(MissionRun(id="w1-other-tenant", tenant_id="t2", workload_id="w1", status="succeeded"))
+            await db.commit()
+        deleted = await orch.delete_missions_for_workload("t1", "w1")
+        remaining = await orch.list_missions("t1", None, 50)
+        async with Session() as db:
+            other = await db.get(MissionRun, "w1-other-tenant")
+        return deleted, remaining, other
+
+    deleted, remaining, other = asyncio.run(seed_and_delete())
+    assert deleted == 2  # both t1/w1 rows, hard-deleted
+    assert {m["id"] for m in remaining} == {"w2-a"}  # w1 gone, w2 kept
+    assert other is not None  # cross-tenant isolation
 
 
 def test_stream_falls_back_to_db_when_not_live(tmp_path, monkeypatch):

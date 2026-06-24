@@ -145,6 +145,48 @@ function fmtTime(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// Compact "time since" label, e.g. "45s ago", "12m ago", "3h 20m ago", "2d 4h ago".
+function fmtAgo(iso: string): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h${m % 60 ? ` ${m % 60}m` : ""} ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d${h % 24 ? ` ${h % 24}h` : ""} ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
+// Parse an ISO-8601 duration token (P1D, P7D, PT4H, PT15M, …) to milliseconds.
+function parseIsoDurationMs(d: string): number | null {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(d || "");
+  if (!m) return null;
+  const [, days, hours, mins, secs] = m;
+  if (!days && !hours && !mins && !secs) return null;
+  return ((+(days || 0)) * 86400 + (+(hours || 0)) * 3600 + (+(mins || 0)) * 60 + (+(secs || 0))) * 1000;
+}
+
+// Render the profiled time range. Prefers the explicit requested start/end; otherwise derives a
+// concrete window ending at the run time from the ISO-8601 duration (e.g. P1D -> run_at-24h → run_at).
+function windowCell(r: PerfRunSummary): React.ReactNode {
+  if (r.requested_start && r.requested_end) {
+    return <span className="whitespace-nowrap">{fmtTime(r.requested_start)} → {fmtTime(r.requested_end)}</span>;
+  }
+  const ms = parseIsoDurationMs(r.window);
+  const end = r.run_at ? new Date(r.run_at).getTime() : NaN;
+  if (ms && !isNaN(end)) {
+    const start = new Date(end - ms).toISOString();
+    return <span className="whitespace-nowrap" title={r.window}>{fmtTime(start)} → {fmtTime(r.run_at)}</span>;
+  }
+  return r.window;
+}
+
 function scoreTone(score: number): string {
   if (score >= 80) return "text-green-600";
   if (score >= 50) return "text-amber-600";
@@ -687,7 +729,7 @@ export function PerformancePanel() {
           testId="perf-history"
           prependRow={runningHere && runningEntry ? (
             <tr className="border-t bg-amber-50/50" data-testid="perf-running-row">
-              <td className="px-3 py-2 text-gray-700">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</td>
+              <td className="px-3 py-2 text-gray-700"><div className="leading-tight"><div className="whitespace-nowrap">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</div><div className="text-[11px] text-gray-400">{fmtAgo(new Date(runningEntry.startedAt).toISOString())}</div></div></td>
               <td className="px-3 py-2 text-gray-500">{runningEntry.windowLabel}</td>
               <td className="px-3 py-2">
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -710,8 +752,8 @@ export function PerformancePanel() {
           onEmptyTrash={() => void emptyTrash()}
           emptyingTrash={busy === "empty-trash"}
           columns={[
-            { header: "Run time", className: "text-gray-700", render: (r) => <>{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</> },
-            { header: "Window", className: "text-gray-500", render: (r) => (r.requested_start && r.requested_end ? "custom range" : r.window) },
+            { header: "Run time", className: "text-gray-700", render: (r) => <div className="leading-tight"><div className="whitespace-nowrap">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</div><div className="text-[11px] text-gray-400">{fmtAgo(r.run_at)}</div></div> },
+            { header: "Window", className: "text-gray-500", render: (r) => windowCell(r) },
             { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
             { header: "Breach / Approach / Healthy", render: (r) => <><span className="text-red-600">{r.breaching}</span> / <span className="text-amber-600">{r.approaching}</span> / <span className="text-green-600">{r.healthy}</span></> },
             { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name} (${r.top_bottleneck.pct_of_threshold}%)` : "—") },
@@ -727,7 +769,7 @@ export function PerformancePanel() {
           ]}
           trashColumns={[
             { header: "Run time", className: "text-gray-700", render: (r) => <>{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</> },
-            { header: "Window", className: "text-gray-500", render: (r) => (r.requested_start && r.requested_end ? "custom range" : r.window) },
+            { header: "Window", className: "text-gray-500", render: (r) => windowCell(r) },
             { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
             { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name}` : "—") },
             { header: "Deleted", className: "text-gray-400", render: (r) => (r.deleted_at ? fmtTime(r.deleted_at) : "—") },

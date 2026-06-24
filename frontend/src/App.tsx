@@ -108,6 +108,10 @@ export default function App() {
           <Route path="/architectures/memory" element={<ChatView />} />
           <Route path="/architectures/:id" element={<ChatView />} />
           <Route path="/architectures/:id/memory" element={<ChatView />} />
+          <Route path="/knowme" element={<ChatView />} />
+          <Route path="/knowme/:id" element={<ChatView />} />
+          <Route path="/fmea" element={<ChatView />} />
+          <Route path="/fmea/:id" element={<ChatView />} />
           <Route path="/policy" element={<ChatView />} />
           <Route path="/policy/:tab" element={<ChatView />} />
           <Route path="/identity" element={<ChatView />} />

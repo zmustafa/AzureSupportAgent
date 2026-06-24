@@ -76,6 +76,8 @@ import {
   TelemetryIcon,
   BackupIcon,
   EvidenceIcon,
+  KnowMeIcon,
+  FmeaIcon,
   RadarIcon,
   ReservationIcon,
   TelemetryIntelIcon,
@@ -90,6 +92,7 @@ import {
   Spinner,
 } from "./chat/icons";
 import { PanelErrorBoundary } from "./chat/PanelErrorBoundary";
+import { MermaidDiagram as SharedMermaidDiagram, useMermaidRender } from "./MermaidDiagram";
 
 // Heavy, admin-only panels — lazy-loaded (code-split) so the initial chat bundle stays
 // small. They only download when the user first opens Settings/Automations/Monitor.
@@ -125,6 +128,12 @@ const AssessmentsPanel = lazy(() =>
 );
 const ArchitecturesPanel = lazy(() =>
   import("./ArchitecturesView").then((m) => ({ default: m.ArchitecturesPanel })),
+);
+const KnowMePanel = lazy(() =>
+  import("./WorkloadKnowMeView").then((m) => ({ default: m.KnowMePanel })),
+);
+const FmeaPanel = lazy(() =>
+  import("./FmeaView").then((m) => ({ default: m.FmeaPanel })),
 );
 const ProactiveOverviewPanel = lazy(() =>
   import("./ProactiveOverview").then((m) => ({ default: m.ProactiveOverviewPanel })),
@@ -512,6 +521,10 @@ export default function ChatView() {
   })();
   const inAssessments = location.pathname.startsWith("/assessments");
   const inArchitectures = location.pathname.startsWith("/architectures");
+  // Workload Know-Me — top-level feature transformed from architecture memory (admin-only).
+  const inKnowMe = location.pathname.startsWith("/knowme");
+  // FMEA — AI-generated failure-mode risk tables from architecture memory (admin-only).
+  const inFmea = location.pathname.startsWith("/fmea");
   const inPolicy = location.pathname.startsWith("/policy");
   // Tag Intelligence. Sub-tab lives in the URL (/tagintel/:tab) so a refresh restores the view.
   const inTagIntel = location.pathname.startsWith("/tagintel");
@@ -644,7 +657,7 @@ export default function ChatView() {
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
     || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
-    || inOwnership || inArchitectures || inGraph || inProactive;
+    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -816,7 +829,11 @@ export default function ChatView() {
   const { data: serverActive } = useQuery({
     queryKey: ["activeTurns"],
     queryFn: api.activeTurns,
-    refetchInterval: 4000,
+    // Adaptive polling: while any turn is running, poll fast (4s) so live "Working…"
+    // spinners stay snappy across tabs; when nothing is active, back off to 15s to cut
+    // idle load on the server (B1ms Postgres) and the client. Never polls in the
+    // background (hidden tab) — visibility return triggers a fresh fetch anyway.
+    refetchInterval: (q) => ((q.state.data?.active?.length ?? 0) > 0 ? 4000 : 15000),
     refetchIntervalInBackground: false,
     staleTime: 2000,
   });
@@ -1950,25 +1967,6 @@ export default function ChatView() {
     }
   }
 
-  // Download the current chat transcript as a Markdown file.
-  function exportChat() {
-    if (!displayMessages.length) return;
-    const lines = displayMessages.map((m) => {
-      const who = m.role === "user" ? "You" : "Assistant";
-      return `## ${who}\n\n${m.content}\n`;
-    });
-    const title = chats.find((c) => c.id === activeId)?.title ?? "chat";
-    const blob = new Blob([`# ${title}\n\n${lines.join("\n")}`], {
-      type: "text/markdown",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   // While viewing a streaming chat, ensure the optimistic user message is shown
   // even right after navigating back (before the server reload completes). Match by
   // id OR by trailing role+content so the server-persisted copy (which has a
@@ -2419,7 +2417,7 @@ export default function ChatView() {
             Estate Graph now live in here too. Admin-only. */}
         {me?.role === "admin" && (() => {
           const PROACTIVE_ICONS: Record<string, typeof ProactiveIcon> = {
-            architectures: ArchitectureIcon, ownership: OwnershipIcon, graph: GraphIcon,
+            architectures: ArchitectureIcon, knowme: KnowMeIcon, fmea: FmeaIcon, ownership: OwnershipIcon, graph: GraphIcon,
             assessments: AssessmentIcon, performance: PerformanceIcon,
             coverage: CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
             inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
@@ -2428,7 +2426,7 @@ export default function ChatView() {
             "telemetry-intel": TelemetryIntelIcon, evidence: EvidenceIcon,
           };
           const activeById: Record<string, boolean> = {
-            architectures: inArchitectures, ownership: inOwnership, graph: inGraph,
+            architectures: inArchitectures, knowme: inKnowMe, fmea: inFmea, ownership: inOwnership, graph: inGraph,
             assessments: inAssessments, performance: inPerformance,
             coverage: inCoverage, telemetry: inTelemetry, backupdr: inBackupDr,
             inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
@@ -2966,6 +2964,22 @@ export default function ChatView() {
             </Suspense>
           </PanelErrorBoundary>
         </main>
+      ) : inKnowMe ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Know-Me">
+            <Suspense fallback={<PanelLoading />}>
+              <KnowMePanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inFmea ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="FMEA">
+            <Suspense fallback={<PanelLoading />}>
+              <FmeaPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
       ) : inPolicy ? (
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Policy">
@@ -3072,25 +3086,6 @@ export default function ChatView() {
         </main>
       ) : (
       <main className="flex min-w-0 flex-1 flex-col">
-        {activeId && displayMessages.length > 0 && (
-          <div className="flex items-center gap-2 border-b bg-white px-6 py-1.5">
-            <button
-              onClick={() => void regenerate()}
-              disabled={streaming}
-              title="Regenerate the last response"
-              className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
-            >
-              ↻ Regenerate
-            </button>
-            <button
-              onClick={exportChat}
-              title="Export chat as Markdown"
-              className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-            >
-              ⬇ Export
-            </button>
-          </div>
-        )}
         <div ref={scrollContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-6 py-4">
           <div
             className={`mx-auto space-y-4 ${
@@ -5937,224 +5932,7 @@ function looksLikeKql(text: string, lang: string, allowlist: string[]): boolean 
  * Mermaid is loaded lazily (only when a diagram is actually shown) so it doesn't bloat
  * the initial bundle. On a parse error it falls back to showing the raw source plus the
  * error, and offers a "View source / Copy" affordance for any diagram. */
-const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) {
-  const { svg, error } = useMermaidRender(code);
-  const [showSource, setShowSource] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-
-  // A single layout for every state (diagram / source / error / loading) so the
-  // toolbar is ALWAYS present — the user can never get stranded in a button-less
-  // source/error view after navigating back to the chat.
-  const failed = !!error && !svg;
-  // When rendering fails we force the source view; otherwise honour the toggle.
-  const sourceShown = failed || showSource;
-
-  // Close the fullscreen overlay with Escape.
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setFullscreen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
-
-  // Toolbar buttons: Code (source) · Preview (diagram) · Full screen.
-  const tabBtn = (active: boolean) =>
-    `inline-flex h-7 w-7 items-center justify-center rounded-md border text-gray-600 transition ${
-      active
-        ? "border-gray-300 bg-white text-gray-900 shadow-sm"
-        : "border-transparent hover:border-gray-200 hover:bg-white/70"
-    }`;
-
-  return (
-    <div
-      className={`my-2 overflow-hidden rounded-lg border bg-white ${
-        failed ? "border-amber-300" : "border-gray-200"
-      }`}
-    >
-      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-1.5">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
-          <svg className="h-3.5 w-3.5 text-gray-500" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
-            <rect x="3" y="3" width="6" height="5" rx="1" />
-            <rect x="11" y="12" width="6" height="5" rx="1" />
-            <path d="M6 8v3a1 1 0 001 1h7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Mermaid
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setShowSource(true)}
-            disabled={failed}
-            title="Code"
-            className={tabBtn(sourceShown)}
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M8 6l-4 4 4 4M12 6l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setShowSource(false)}
-            disabled={failed}
-            title="Preview"
-            className={tabBtn(!sourceShown)}
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M6 4.5l9 5.5-9 5.5z" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setFullscreen(true)}
-            disabled={failed || !svg}
-            title="Full screen"
-            className={tabBtn(false)}
-          >
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M8 3H3v5M12 3h5v5M8 17H3v-5M12 17h5v-5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      {failed ? (
-        <>
-          <div className="border-b border-amber-200 px-3 py-1.5 text-[11px] text-amber-700">
-            Couldn&rsquo;t render Mermaid diagram — showing source
-          </div>
-          <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[12px] leading-snug text-amber-900">
-            {code}
-          </pre>
-        </>
-      ) : sourceShown ? (
-        <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[12px] leading-snug text-gray-700">
-          {code}
-        </pre>
-      ) : svg ? (
-        <div
-          className="mermaid-diagram flex justify-center overflow-x-auto px-3 py-4 [&_svg]:h-auto [&_svg]:max-w-full"
-          // svg comes from useMermaidRender which (1) renders via Mermaid's
-          // securityLevel:"strict" parser and (2) runs the result through
-          // DOMPurify's SVG profile as a defense-in-depth second layer.
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      ) : (
-        <div className="flex items-center gap-2 px-3 py-6 text-xs text-gray-400">
-          <Spinner className="h-3.5 w-3.5 text-gray-400" />
-          Rendering diagram…
-        </div>
-      )}
-
-      {fullscreen && svg && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col bg-black/60 backdrop-blur-sm"
-          onClick={() => setFullscreen(false)}
-        >
-          <div className="flex items-center justify-between px-4 py-2 text-white">
-            <span className="text-sm font-medium">Mermaid</span>
-            <button
-              onClick={() => setFullscreen(false)}
-              title="Close (Esc)"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-white/80 transition hover:bg-white/20 hover:text-white"
-            >
-              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <path d="M5 5l10 10M15 5L5 15" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-          <div
-            className="mermaid-diagram m-4 mt-0 flex flex-1 items-center justify-center overflow-auto rounded-lg bg-white p-6 [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full"
-            onClick={(e) => e.stopPropagation()}
-            // svg already sanitized by Mermaid (strict) + DOMPurify (SVG profile)
-            // in useMermaidRender; safe to inject.
-            dangerouslySetInnerHTML={{ __html: svg }}
-          />
-        </div>
-      )}
-    </div>
-  );
-});
-
-/** Renders Mermaid `code` to an SVG string, returning `{ svg, error }`. Mermaid is
- * imported lazily on first use. Used by both the inline diagram and the editor's live
- * preview so they stay visually identical. */
-function useMermaidRender(code: string): { svg: string; error: string } {
-  const [svg, setSvg] = useState("");
-  const [error, setError] = useState("");
-  // Keep the latest successfully-rendered source so we can suppress redundant
-  // re-renders (e.g. identical code after a parent re-render) without flicker.
-  const lastRenderedRef = useRef<string>("");
-
-  useEffect(() => {
-    const trimmed = code.trim();
-    if (!trimmed) {
-      setSvg("");
-      setError("");
-      lastRenderedRef.current = "";
-      return;
-    }
-    // Same source already rendered — nothing to do (avoids a needless clear/redraw).
-    if (trimmed === lastRenderedRef.current && svg) return;
-
-    let cancelled = false;
-    // Debounce so streaming (which appends a token at a time) coalesces into one
-    // render once the source settles, instead of re-parsing on every keystroke/token.
-    const timer = window.setTimeout(() => {
-      // A fresh id per render attempt avoids "diagram id already exists" failures when
-      // the component remounts (e.g. navigating away from a chat and back).
-      const renderId = `mmd-${Math.random().toString(36).slice(2)}`;
-      // IMPORTANT: do NOT clear the current svg here. Keeping the last good diagram
-      // visible until the new one is ready is what removes the render flicker — the
-      // spinner only shows on the very first render (when svg is still empty).
-      (async () => {
-        try {
-          const mermaid = (await import("mermaid")).default;
-          mermaid.initialize({
-            startOnLoad: false,
-            securityLevel: "strict", // sanitize labels/links — never inject raw HTML
-            theme: "neutral",
-            fontFamily: "inherit",
-            // Render node/edge labels as native SVG <text> (not HTML <foreignObject>).
-            // We sanitize the output with DOMPurify's SVG profile below, which strips
-            // <foreignObject>'s XHTML content — that would leave the shapes but BLANK out
-            // every label. SVG <text> labels survive the SVG-profile sanitize intact.
-            htmlLabels: false,
-            flowchart: { htmlLabels: false },
-          });
-          // `render` validates + produces SVG without touching the DOM tree we control.
-          const { svg: out } = await mermaid.render(renderId, trimmed);
-          // Defense-in-depth: even though Mermaid is configured with
-          // securityLevel:"strict", we run the output through DOMPurify (SVG
-          // profile) before injecting it as innerHTML. If a future Mermaid CVE
-          // ever lets an attacker-crafted diagram smuggle a JS handler past
-          // Mermaid's sanitizer, DOMPurify still strips it.
-          const DOMPurify = (await import("dompurify")).default;
-          const safeSvg = DOMPurify.sanitize(out, { USE_PROFILES: { svg: true, svgFilters: true } });
-          if (!cancelled) {
-            setSvg(safeSvg);
-            setError("");
-            lastRenderedRef.current = trimmed;
-          }
-        } catch (e) {
-          // Only surface an error if we have nothing good to show; while streaming, a
-          // transiently-incomplete diagram shouldn't replace the last valid render.
-          if (!cancelled) setError((e as Error)?.message ?? "Failed to render diagram.");
-        } finally {
-          // mermaid can leave an orphan measurement node in <body> if a render was
-          // interrupted mid-flight; clean it up so repeated mounts stay reliable.
-          document.getElementById(renderId)?.remove();
-          document.getElementById(`d${renderId}`)?.remove();
-        }
-      })();
-    }, 120);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
-
-  return { svg, error };
-}
+const MermaidDiagram = SharedMermaidDiagram;
 
 /** Right-side drawer to edit a Mermaid diagram's source with a live preview that
  * re-renders as the user types (debounced). The chat's persisted diagram is unchanged;

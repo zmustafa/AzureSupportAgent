@@ -105,6 +105,29 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+# Composite indexes that match the actual `WHERE … ORDER BY … LIMIT` shapes of the hot list
+# endpoints (history tables filtered by a parent id / tenant and ordered by time). They are
+# created idempotently with `CREATE INDEX IF NOT EXISTS` on BOTH SQLite and Postgres so an
+# existing deployed DB gets them without a bespoke Alembic migration. Single-column indexes
+# already declared on the models (tenant_id, *_id, …) are not repeated here.
+#   (index_name, table, "col_a, col_b")
+_RUNTIME_INDEXES: list[tuple[str, str, str]] = [
+    ("ix_messages_chat_created", "messages", "chat_id, created_at"),
+    ("ix_audit_tenant_created", "audit_log", "tenant_id, created_at"),
+    ("ix_usage_tenant_created", "usage", "tenant_id, created_at"),
+    ("ix_taskruns_task_started", "task_runs", "task_id, started_at"),
+    ("ix_taskruns_tenant_started", "task_runs", "tenant_id, started_at"),
+    ("ix_workbookruns_wb_started", "workbook_runs", "workbook_id, started_at"),
+    ("ix_playbookruns_pb_started", "playbook_runs", "playbook_id, started_at"),
+    ("ix_missionruns_wl_started", "mission_runs", "workload_id, started_at"),
+    ("ix_assessmentruns_wl", "assessment_runs", "workload_id, tenant_id"),
+    # Notifications: the unread-count poll filters deliveries by (tenant, channel) and the
+    # notification list joins+filters by (tenant, read). These back both hot paths.
+    ("ix_notif_tenant_read", "notifications", "tenant_id, read"),
+    ("ix_notifdeliv_tenant_channel", "notification_deliveries", "tenant_id, channel"),
+]
+
+
 async def ensure_schema() -> None:
     """Create any missing tables and add late-added columns (idempotent).
 
@@ -142,3 +165,14 @@ async def ensure_schema() -> None:
                     await conn.exec_driver_sql(
                         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {_pg_type(coltype)}"
                     )
+
+        # Composite indexes for the hot list endpoints. `CREATE INDEX IF NOT EXISTS` is
+        # supported by both SQLite and Postgres and is a no-op when the index already
+        # exists, so this is safe to run on every boot for either backend.
+        for ix_name, table, cols in _RUNTIME_INDEXES:
+            try:
+                await conn.exec_driver_sql(
+                    f"CREATE INDEX IF NOT EXISTS {ix_name} ON {table} ({cols})"
+                )
+            except Exception:  # noqa: BLE001 - a missing optional table must not block boot
+                pass

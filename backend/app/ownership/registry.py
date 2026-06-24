@@ -117,19 +117,16 @@ def _now() -> str:
 
 
 def _read(path: Path, root_key: str) -> dict[str, Any]:
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {root_key: {}}
+    from app.core import jsonstore
+
+    data = jsonstore.read_json(path, {root_key: {}})
+    return data if isinstance(data, dict) else {root_key: {}}
 
 
 def _write(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    from app.core import jsonstore
+
+    jsonstore.write_json(path, data)
 
 
 def _merge(defaults: dict[str, Any], record: dict[str, Any], rec_id: str) -> dict[str, Any]:

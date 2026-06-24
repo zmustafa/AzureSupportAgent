@@ -51,3 +51,10 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Fast default run: the heavier / lower-frequency suites are auto-tagged ``slow`` in
+# tests/conftest.py and excluded by default so `pytest` builds & runs fast. Run the full
+# suite with `pytest -m ""` (or just the heavy ones with `pytest -m slow`).
+addopts = "-m 'not slow'"
+markers = [
+    "slow: heavier or lower-frequency suite, excluded from the fast default run",
+]

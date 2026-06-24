@@ -2791,6 +2791,68 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
+  // --- Workload Know-Me (multiple per workload; keyed by km_id; draft/published + Trash) ---
+  knowMeIndex: () =>
+    http<KnowMeIndex>("/architectures/know-me"),
+  knowMeTrash: () =>
+    http<{ items: KnowMeTrashEntry[] }>("/architectures/know-me/trash"),
+  emptyKnowMeTrash: () =>
+    http<{ purged: number }>("/architectures/know-me/trash/empty", { method: "POST", body: "{}" }),
+  createKnowMe: (architectureId: string, title = "") =>
+    http<KnowMeResponse>(`/architectures/${architectureId}/know-me`, {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+  knowMe: (kmId: string) =>
+    http<KnowMeResponse>(`/architectures/know-me/${kmId}`),
+  saveKnowMe: (kmId: string, body: { title?: string; description?: string; sections?: KnowMeSection[]; todos?: KnowMeTodo[]; status?: string }) =>
+    http<KnowMeResponse>(`/architectures/know-me/${kmId}`, { method: "PUT", body: JSON.stringify(body) }),
+  setKnowMeReference: (kmId: string, isReference = true) =>
+    http<KnowMeResponse>(`/architectures/know-me/${kmId}/reference`, { method: "POST", body: JSON.stringify({ is_reference: isReference }) }),
+  suggestKnowMeField: (kmId: string, fieldId: string) =>
+    http<{ choices: string[]; choice_source?: string }>(`/architectures/know-me/${kmId}/fields/${encodeURIComponent(fieldId)}/suggest`, { method: "POST", body: "{}" }),
+  deleteKnowMe: (kmId: string) =>
+    http<{ ok: boolean }>(`/architectures/know-me/${kmId}`, { method: "DELETE" }),
+  restoreKnowMe: (kmId: string) =>
+    http<{ ok: boolean; know_me: KnowMe }>(`/architectures/know-me/${kmId}/restore`, { method: "POST", body: "{}" }),
+  purgeKnowMe: (kmId: string) =>
+    http<{ ok: boolean }>(`/architectures/know-me/${kmId}/purge`, { method: "DELETE" }),
+  knowMeRevisions: (kmId: string) =>
+    http<{ revisions: KnowMeRevision[] }>(`/architectures/know-me/${kmId}/revisions`),
+  knowMeRevision: (kmId: string, revisionId: string) =>
+    http<{ revision: KnowMeRevisionContent; markdown: string }>(`/architectures/know-me/${kmId}/revisions/${revisionId}`),
+  restoreKnowMeRevision: (kmId: string, revisionId: string) =>
+    http<KnowMeResponse>(`/architectures/know-me/${kmId}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" }),
+  knowMeExportUrl: (kmId: string, format: "md" | "pdf") =>
+    `${API_BASE}/architectures/know-me/${kmId}/export?format=${format}`,
+  knowMeMermaid: (kmId: string) =>
+    http<{ mermaid: string }>(`/architectures/know-me/${kmId}/mermaid`),
+  knowMeAssets: (kmId: string) =>
+    http<{ assets: KnowMeAsset[] }>(`/architectures/know-me/${kmId}/assets`),
+  knowMeAssetUrl: (kmId: string, assetId: string) =>
+    `${API_BASE}/architectures/know-me/${kmId}/assets/${assetId}`,
+  uploadKnowMeAsset: async (kmId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/architectures/know-me/${kmId}/assets`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const b = await res.json();
+        if (b?.detail) detail = b.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as { asset: KnowMeAsset & { ref: string; markdown: string } };
+  },
+  deleteKnowMeAsset: (kmId: string, assetId: string) =>
+    http<{ ok: boolean }>(`/architectures/know-me/${kmId}/assets/${assetId}`, { method: "DELETE" }),
   architectureCollections: () =>
     http<{ collections: ArchitectureCollection[] }>("/architectures/collections"),
   upsertArchitectureCollection: (body: Partial<ArchitectureCollection>) =>
@@ -3539,6 +3601,8 @@ export const api = {
     http<{ ok: boolean }>(`/missions/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
   deleteMission: (id: string) =>
     http<{ ok: boolean }>(`/missions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteWorkloadMissions: (workloadId: string) =>
+    http<{ ok: boolean; deleted: number }>(`/missions/workload/${encodeURIComponent(workloadId)}`, { method: "DELETE" }),
   radarRunbook: (body: { event: RadarEvent; architecture_id?: string }) =>
     http<{ ok: boolean; runbook: string; used_ai: boolean }>("/radar/runbook", {
       method: "POST",
@@ -7858,6 +7922,412 @@ export interface MemoryRevisionContent extends MemoryRevision {
   ai?: ArchitectureMemory["ai"];
 }
 
+// ----- Workload Know-Me -----
+export interface KnowMeSection {
+  key: string;
+  label: string;
+  content: string;
+}
+export interface KnowMeTodo {
+  id: string;
+  field_key: string;
+  label: string;
+  section_key: string;
+  status: "open" | "done";
+  value: string;
+  type: "email" | "person" | "group" | "duration" | "datetime" | "number" | "url" | "text";
+  required: boolean;
+  group: string;
+  suggestions: string[];
+  source: "human" | "auto" | "suggested";
+  confidence?: number | null;
+  assignee?: string;
+  note?: string;
+  // Choice set: candidate values offered as a dropdown / segmented control. ``allow_custom``
+  // decides picker (free text allowed) vs strict select. ``choice_source`` is provenance.
+  choices?: string[];
+  allow_custom?: boolean;
+  choice_source?: "" | "platform" | "rule" | "ai";
+  multi?: boolean;
+}
+export interface KnowMeAsset {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+export interface KnowMe {
+  id: string;
+  architecture_id: string;
+  workload_id: string;
+  workload_name: string;
+  title: string;
+  description?: string;
+  sections: KnowMeSection[];
+  todos: KnowMeTodo[];
+  assets?: KnowMeAsset[];
+  status: "draft" | "in_review" | "published" | "archived";
+  is_reference?: boolean;
+  source: "ai" | "edited" | "hybrid";
+  confidence?: number | null;
+  ai?: {
+    confidence?: number | null;
+    passes?: number;
+    autofilled?: number;
+    evidence_used?: {
+      assessment?: boolean;
+      assessment_findings?: number;
+      coverage?: string[];
+      performance?: boolean;
+      idle_resources?: number;
+    };
+    generated_at?: string;
+    generated_by?: string;
+  };
+  updated_at?: string;
+  updated_by?: string;
+}
+export interface KnowMeResponse {
+  id?: string;
+  know_me: KnowMe | null;
+  markdown: string;
+  has_memory?: boolean;
+  memory_updated_at?: string;
+  architecture: ArchitectureMemoryResponse["architecture"];
+}
+export interface KnowMeRevision {
+  id: string;
+  created_at: string;
+  by: string;
+  reason: string;
+  title: string;
+  status: string;
+  source: string;
+  section_count: number;
+  filled_count: number;
+  open_todos: number;
+}
+export interface KnowMeRevisionContent extends KnowMeRevision {
+  sections: KnowMeSection[];
+  todos: KnowMeTodo[];
+}
+/** One Know-Me document in the standalone index (a workload may have many). */
+export interface KnowMeDocument {
+  id: string;
+  architecture_id: string;
+  architecture_name: string;
+  architecture_exists: boolean;
+  workload_id: string;
+  workload_name: string;
+  title: string;
+  description?: string;
+  status: "draft" | "in_review" | "published" | "archived";
+  is_reference?: boolean;
+  source: "" | "ai" | "edited" | "hybrid";
+  section_count: number;
+  filled_count: number;
+  open_todos: number;
+  updated_at: string;
+  updated_by: string;
+  deleted_at?: string;
+}
+/** An architecture (with a Memory) the user can build a new Know-Me from. */
+export interface KnowMeBuildable {
+  architecture_id: string;
+  architecture_name: string;
+  architecture_exists: boolean;
+  workload_id: string;
+  workload_name: string;
+  know_me_count: number;
+}
+export interface KnowMeIndex {
+  documents: KnowMeDocument[];
+  buildable: KnowMeBuildable[];
+  trash_count: number;
+}
+/** A soft-deleted Know-Me in the Trash. */
+export interface KnowMeTrashEntry {
+  id: string;
+  architecture_id: string;
+  workload_name: string;
+  title: string;
+  status: string;
+  deleted_at: string;
+  deleted_by: string;
+  updated_at: string;
+}
+
+/** Stream the AI Know-Me generation for an architecture (SSE: status… → done). */
+export async function streamGenerateKnowMe(
+  architectureId: string,
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (r: KnowMeResponse) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+  extraContext = "",
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/architectures/${architectureId}/know-me/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ extra_context: extraContext }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as KnowMeResponse);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Failed.");
+    }
+  }
+}
+
+/** Regenerate an EXISTING Know-Me document from its architecture's Memory (SSE → done).
+ *  Keyed by km_id. */
+export async function streamRegenerateKnowMe(
+  kmId: string,
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (r: KnowMeResponse) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+  extraContext = "",
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/architectures/know-me/${kmId}/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ extra_context: extraContext }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as KnowMeResponse);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Failed.");
+    }
+  }
+}
+
+/** Regenerate ONE Know-Me section with AI, streaming detailed status. SSE: status…
+ *  (phase=scope|evidence|ai|save) → done{KnowMeResponse}. Keyed by km_id. */
+export async function streamRegenerateKnowMeSection(
+  kmId: string,
+  sectionKey: string,
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (r: KnowMeResponse) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+  extraContext = "",
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/architectures/know-me/${kmId}/sections/${encodeURIComponent(sectionKey)}/generate/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ extra_context: extraContext }),
+      signal,
+    },
+  );
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as KnowMeResponse);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Failed.");
+    }
+  }
+}
+
+/** One-click pipeline: from an Azure workload, ensure an architecture + its Memory exist
+ *  (building them with AI if missing), then transform the Memory into a Know-Me.
+ *  SSE: status… (phase=architecture|memory|knowme|save) → done{KnowMeResponse}. */
+export async function streamBuildKnowMeFromWorkload(
+  body: { workload_id: string; connection_id?: string | null; architecture_id?: string | null; extra_context?: string },
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (r: KnowMeResponse) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/architectures/know-me/from-workload/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as KnowMeResponse);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Failed.");
+    }
+  }
+}
+
 /** Stream the AI memory generation for an architecture (SSE: status… → done). */
 export async function streamGenerateMemory(
   architectureId: string,
@@ -8448,6 +8918,289 @@ export interface WorkbookTile {
 }
 
 // --- Playbooks ---
+
+// ============================================================================
+// FMEA — Failure Mode and Effects Analysis (multiple per workload; keyed by
+// fmea_id; draft/published + Trash). Each document holds multiple tables of
+// scored rows; the Risk Priority Number (RPN) is always derived server-side.
+// ============================================================================
+export type FmeaRiskBand = "critical" | "high" | "medium" | "low" | "none";
+
+export interface FmeaRow {
+  id: string;
+  item: string;
+  function: string;
+  failure_mode: string;
+  effects: string;
+  causes: string;
+  control_prevention: string;
+  control_detection: string;
+  recommended_actions: string;
+  owner: string;
+  date_due: string;
+  action_results: string;
+  date_completed: string;
+  severity: number;
+  occurrence: number;
+  detection: number;
+  severity_post: number;
+  occurrence_post: number;
+  detection_post: number;
+  // Derived server-side (read-only).
+  rpn: number | null;
+  rpn_post: number | null;
+  risk_band: FmeaRiskBand;
+  risk_band_post: FmeaRiskBand;
+}
+
+export interface FmeaTable {
+  id: string;
+  name: string;
+  scope_ref: string;
+  rows: FmeaRow[];
+}
+
+export interface FmeaDoc {
+  id: string;
+  architecture_id: string;
+  workload_id: string;
+  workload_name: string;
+  title: string;
+  scope_note: string;
+  tables: FmeaTable[];
+  status: "draft" | "in_review" | "published" | "archived";
+  source: "" | "ai" | "edited" | "hybrid";
+  ai?: {
+    confidence?: number | null;
+    passes?: number;
+    generated_at?: string;
+    generated_by?: string;
+  };
+  updated_at?: string;
+  updated_by?: string;
+  deleted_at?: string;
+}
+
+export interface FmeaSummary {
+  counts: Record<FmeaRiskBand, number>;
+  total_rows: number;
+  scored_rows: number;
+  top_rpn: number;
+  mitigated_rows: number;
+  open_actions: number;
+}
+
+export interface FmeaResponse {
+  id?: string;
+  fmea: FmeaDoc;
+  summary: FmeaSummary;
+  has_memory?: boolean;
+  memory_updated_at?: string;
+  architecture: {
+    id: string;
+    name: string;
+    workload_id: string;
+    workload_name: string;
+    updated_at: string;
+  };
+}
+
+export interface FmeaDocumentSummary {
+  id: string;
+  architecture_id: string;
+  architecture_name: string;
+  architecture_exists: boolean;
+  workload_id: string;
+  workload_name: string;
+  title: string;
+  status: "draft" | "in_review" | "published" | "archived";
+  source: "" | "ai" | "edited" | "hybrid";
+  table_count: number;
+  row_count: number;
+  top_rpn: number;
+  counts: Record<FmeaRiskBand, number>;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface FmeaBuildable {
+  architecture_id: string;
+  architecture_name: string;
+  architecture_exists: boolean;
+  workload_id: string;
+  workload_name: string;
+  fmea_count: number;
+}
+
+export interface FmeaIndex {
+  documents: FmeaDocumentSummary[];
+  buildable: FmeaBuildable[];
+  trash_count: number;
+}
+
+export interface FmeaTrashEntry {
+  id: string;
+  architecture_id: string;
+  workload_name: string;
+  title: string;
+  status: string;
+  deleted_at: string;
+  deleted_by: string;
+  updated_at: string;
+}
+
+export interface FmeaRevision {
+  id: string;
+  created_at: string;
+  by: string;
+  reason: string;
+  title: string;
+  status: string;
+  source: string;
+  table_count: number;
+  row_count: number;
+}
+
+export type FmeaSavePayload = {
+  title?: string;
+  scope_note?: string;
+  tables?: FmeaTable[];
+  status?: string;
+};
+
+export const fmea = {
+  index: () => http<FmeaIndex>("/fmea"),
+  trash: () => http<{ items: FmeaTrashEntry[] }>("/fmea/trash"),
+  emptyTrash: () => http<{ purged: number }>("/fmea/trash/empty", { method: "POST", body: "{}" }),
+  create: (architectureId: string, title = "") =>
+    http<FmeaResponse>("/fmea", { method: "POST", body: JSON.stringify({ architecture_id: architectureId, title }) }),
+  get: (fmeaId: string) => http<FmeaResponse>(`/fmea/${fmeaId}`),
+  save: (fmeaId: string, body: FmeaSavePayload) =>
+    http<FmeaResponse>(`/fmea/${fmeaId}`, { method: "PUT", body: JSON.stringify(body) }),
+  remove: (fmeaId: string) => http<{ ok: boolean }>(`/fmea/${fmeaId}`, { method: "DELETE" }),
+  restore: (fmeaId: string) => http<{ ok: boolean; fmea: FmeaDoc }>(`/fmea/${fmeaId}/restore`, { method: "POST", body: "{}" }),
+  purge: (fmeaId: string) => http<{ ok: boolean }>(`/fmea/${fmeaId}/purge`, { method: "DELETE" }),
+  revisions: (fmeaId: string) => http<{ revisions: FmeaRevision[] }>(`/fmea/${fmeaId}/revisions`),
+  restoreRevision: (fmeaId: string, revisionId: string) =>
+    http<FmeaResponse>(`/fmea/${fmeaId}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" }),
+  exportUrl: (fmeaId: string) => `${API_BASE}/fmea/${fmeaId}/export?format=csv`,
+  exportXlsxUrl: (fmeaId: string) => `${API_BASE}/fmea/${fmeaId}/export?format=xlsx`,
+};
+
+/** Generic SSE reader for the FMEA generation endpoints (status… → done | error). */
+async function _consumeFmeaStream(
+  res: Response,
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (r: FmeaResponse) => void;
+    onError?: (msg: string) => void;
+  },
+): Promise<void> {
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as FmeaResponse);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Failed.");
+    }
+  }
+}
+
+type FmeaStreamHandlers = {
+  onStatus?: (s: { phase: string; message: string }) => void;
+  onDone?: (r: FmeaResponse) => void;
+  onError?: (msg: string) => void;
+};
+
+/** Create a NEW FMEA for an architecture by transforming its Memory (SSE → done). */
+export async function streamGenerateFmea(
+  architectureId: string,
+  handlers: FmeaStreamHandlers,
+  signal?: AbortSignal,
+  extraContext = "",
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/fmea/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ architecture_id: architectureId, extra_context: extraContext }),
+    signal,
+  });
+  await _consumeFmeaStream(res, handlers);
+}
+
+/** Regenerate an EXISTING FMEA document from its architecture's Memory (SSE → done). */
+export async function streamRegenerateFmea(
+  fmeaId: string,
+  handlers: FmeaStreamHandlers,
+  signal?: AbortSignal,
+  extraContext = "",
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/fmea/${fmeaId}/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ extra_context: extraContext }),
+    signal,
+  });
+  await _consumeFmeaStream(res, handlers);
+}
+
+/** Regenerate the rows of ONE table from the architecture's Memory (SSE → done). */
+export async function streamRegenerateFmeaTable(
+  fmeaId: string,
+  tableId: string,
+  handlers: FmeaStreamHandlers,
+  signal?: AbortSignal,
+  focus = "",
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/fmea/${fmeaId}/tables/${tableId}/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ focus }),
+    signal,
+  });
+  await _consumeFmeaStream(res, handlers);
+}
 export interface PlaybookStep {
   id: string;
   name: string;

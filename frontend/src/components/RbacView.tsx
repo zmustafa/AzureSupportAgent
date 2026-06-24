@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useNavigate } from "react-router-dom";
 import {
   api,
@@ -343,9 +344,25 @@ function AccessGrid({ tab }: { tab: string }) {
         workload_id: filter?.workload_id,
         connection_id: connectionId,
       }),
+    // Keep the current grid visible while a new tab/search/filter loads, instead of
+    // flashing an empty table on every keystroke/tab switch (the rows come from a
+    // server-side computed cache, so refetches are common as filters change).
+    placeholderData: (prev) => prev,
   });
   const rows = q.data?.rows ?? [];
   const total = q.data?.total ?? 0;
+  // Virtualize the grid body: only the visible window of rows is in the DOM, so a 500-row
+  // result stays at ~20 live <tr> instead of 500 (× 7 cells), keeping scroll/INP smooth.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirt = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 44,   // ~1.5-line row; measured precisely after mount
+    overscan: 12,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
   const exportFilter = {
     scope_id: filter?.scope_id,
     subscription_ids: filter?.subscription_ids,
@@ -385,7 +402,7 @@ function AccessGrid({ tab }: { tab: string }) {
           <a href={api.rbacExportUrl("json", tab, exportFilter)} className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ JSON</a>
           <a href={api.rbacWorkbookUrl(exportFilter)} className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {q.isLoading ? (
             <div className="p-6 text-sm text-gray-500">Loading…</div>
           ) : rows.length === 0 ? (
@@ -394,7 +411,7 @@ function AccessGrid({ tab }: { tab: string }) {
             </div>
           ) : (
             <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-0 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
+              <thead className="sticky top-0 z-10 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
                 <tr>
                   <th className="px-3 py-2">Principal</th>
                   <th className="px-3 py-2">Type</th>
@@ -406,13 +423,16 @@ function AccessGrid({ tab }: { tab: string }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => {
+                {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+                {vItems.map((vi) => {
+                  const r = rows[vi.index];
+                  const i = vi.index;
                   const who = (r.effectivePrincipalName || r.principalDisplayName || r.effectivePrincipalId || "—") as string;
                   const upn = (r.effectivePrincipalUserPrincipalName || r.principalUserPrincipalName || "") as string;
                   const scope = scopeCell(r);
                   const path = (r.accessPath as string) || "";
                   return (
-                    <tr key={i} className="border-b last:border-0 hover:bg-gray-50">
+                    <tr key={i} ref={rowVirt.measureElement} data-index={i} className="border-b last:border-0 hover:bg-gray-50">
                       <td className="px-3 py-1.5">
                         <div className="font-medium text-gray-800">{who}</div>
                         {upn && <div className="text-[11px] text-gray-400">{upn}</div>}
@@ -436,6 +456,7 @@ function AccessGrid({ tab }: { tab: string }) {
                     </tr>
                   );
                 })}
+                {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
               </tbody>
             </table>
           )}

@@ -28,6 +28,7 @@ from app.api import (
     coverage_reports,
     dnsdebug,
     evidence,
+    fmea,
     graph,
     identity,
     inventory,
@@ -193,12 +194,30 @@ async def _startup() -> None:
     from app.architectures.memory import prune_orphans
     from app.architectures.registry import all_architecture_ids
 
-    try:
-        pruned = prune_orphans(all_architecture_ids())
-        if pruned:
-            logging.getLogger("app.main").info("Pruned %d orphaned architecture memor(ies)", pruned)
-    except Exception:  # noqa: BLE001
-        logging.getLogger("app.main").warning("Orphaned memory prune failed", exc_info=True)
+    # Guard: an EMPTY architecture set must never drive a prune — it would wipe every
+    # memory/Know-Me. An empty set means the registry isn't loaded (e.g. a test harness
+    # pointed the architecture store at a temp/empty path while sharing the lifespan), not
+    # that every architecture was genuinely deleted.
+    valid_arch_ids = set(all_architecture_ids())
+    if not valid_arch_ids:
+        logging.getLogger("app.main").info("Skipping orphan prune — architecture registry is empty.")
+    else:
+        try:
+            pruned = prune_orphans(valid_arch_ids)
+            if pruned:
+                logging.getLogger("app.main").info("Pruned %d orphaned architecture memor(ies)", pruned)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("app.main").warning("Orphaned memory prune failed", exc_info=True)
+
+        # Same cascade for Workload Know-Me documents (derived from architecture memory).
+        try:
+            from app.knowme.registry import prune_orphans as prune_know_me
+
+            kpruned = prune_know_me(valid_arch_ids)
+            if kpruned:
+                logging.getLogger("app.main").info("Pruned %d orphaned Know-Me document(s)", kpruned)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("app.main").warning("Orphaned Know-Me prune failed", exc_info=True)
 
     # Start the automations scheduler (recurring tasks).
     from app.automations.scheduler import scheduler
@@ -436,6 +455,7 @@ api.include_router(notifications.router)
 api.include_router(workloads.router)
 api.include_router(assessments.router)
 api.include_router(architectures.router)
+api.include_router(fmea.router)
 api.include_router(policy.router)
 api.include_router(inventory.router)
 api.include_router(tagintel.router)
@@ -522,16 +542,31 @@ app.include_router(api)
 # routes are simply not registered.
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 if _STATIC_DIR.is_dir():
-    # Hashed build assets (JS/CSS) + any files under /assets.
+    # Hashed build assets (JS/CSS) + any files under /assets. Vite emits content-hashed
+    # filenames (index-<hash>.js), so these are safe to cache for a year as immutable —
+    # a new deploy changes the hash, so clients never serve stale code. This removes the
+    # per-asset revalidation (304) round-trip for non-service-worker clients.
+    class _ImmutableStatic(StaticFiles):
+        def is_not_modified(self, response_headers, request_headers) -> bool:  # type: ignore[override]
+            response_headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return super().is_not_modified(response_headers, request_headers)
+
+        async def get_response(self, path, scope):  # type: ignore[override]
+            resp = await super().get_response(path, scope)
+            resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+            return resp
+
     _assets_dir = _STATIC_DIR / "assets"
     if _assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+        app.mount("/assets", _ImmutableStatic(directory=str(_assets_dir)), name="assets")
 
     _index_file = _STATIC_DIR / "index.html"
 
     @app.get("/", include_in_schema=False)
     async def _spa_root() -> FileResponse:
-        return FileResponse(str(_index_file))
+        # index.html must NOT be cached — it references the hashed bundles, so a deploy
+        # must be picked up immediately (otherwise clients pin to an old asset graph).
+        return FileResponse(str(_index_file), headers={"Cache-Control": "no-cache"})
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(full_path: str) -> FileResponse:
@@ -540,5 +575,5 @@ if _STATIC_DIR.is_dir():
         candidate = (_STATIC_DIR / full_path).resolve()
         if candidate.is_file() and str(candidate).startswith(str(_STATIC_DIR)):
             return FileResponse(str(candidate))
-        return FileResponse(str(_index_file))
+        return FileResponse(str(_index_file), headers={"Cache-Control": "no-cache"})
 

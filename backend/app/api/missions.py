@@ -191,3 +191,19 @@ async def delete_mission(
         raise HTTPException(status_code=404, detail="Mission not found.")
     await _audit(db, principal, "mission.delete", mission_id)
     return {"ok": True}
+
+
+@router.delete("/workload/{workload_id}")
+async def delete_workload_missions(
+    workload_id: str,
+    principal: Principal = Depends(_run),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a workload's entire Mission Control (all of its mission runs). No trash —
+    this is permanent. Returns the number of runs removed."""
+    deleted = await orchestrator.delete_missions_for_workload(principal.tenant_id, workload_id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="No mission control to delete for this workload.")
+    await _audit(db, principal, "mission.delete_workload", workload_id, deleted=deleted)
+    return {"ok": True, "deleted": deleted}
+

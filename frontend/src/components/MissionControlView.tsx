@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   streamMission,
@@ -134,6 +134,12 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
   const navigate = useNavigate();
   const [systems, setSystems] = useState<MissionSystem[]>([]);
   const [log, setLog] = useState<MissionLog[]>([]);
+  // Auto-scroll the mission log to the bottom as new lines stream in.
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log.length]);
   const [active, setActive] = useState<Mission | null>(null);
   const [running, setRunning] = useState(false);
   const [force, setForce] = useState(false);
@@ -372,7 +378,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
         <div className="hidden w-80 shrink-0 space-y-4 lg:block">
           <div className="rounded-xl border bg-white">
             <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Mission log</div>
-            <div className="max-h-64 overflow-auto p-2 font-mono text-[11px] text-gray-600">
+            <div ref={logRef} className="max-h-64 overflow-auto p-2 font-mono text-[11px] text-gray-600">
               {log.length === 0 ? (
                 <div className="px-1 py-2 text-gray-400">No activity yet. Launch a sweep.</div>
               ) : (
@@ -440,10 +446,12 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
 // Shows each workload's last-mission readiness so it doubles as a fleet overview.
 function MissionLanding() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const missionsQ = useQuery({ queryKey: ["missions", "all"], queryFn: () => api.listMissions(undefined, 200) });
   const workloads = wlQ.data?.workloads ?? [];
   const [launchingId, setLaunchingId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
   const [err, setErr] = useState("");
 
   // Latest mission per workload (listMissions is newest-first).
@@ -467,6 +475,25 @@ function MissionLanding() {
       setLaunchingId("");
     }
   }
+
+  // Delete a workload's entire Mission Control (all its mission runs). No trash — permanent.
+  async function remove(id: string, name: string) {
+    if (deletingId) return;
+    if (!window.confirm(`Delete the Mission Control for “${name}”? This permanently removes all of its mission runs and history. This can't be undone.`)) return;
+    setErr(""); setDeletingId(id);
+    try {
+      await api.deleteWorkloadMissions(id);
+      await qc.invalidateQueries({ queryKey: ["missions", "all"] });
+    } catch (e) {
+      setErr(formatError(e));
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  // Split workloads into those that already have a Mission Control vs. those that don't yet.
+  const withMC = workloads.filter((w) => latestByWorkload.has(w.id));
+  const withoutMC = workloads.filter((w) => !latestByWorkload.has(w.id));
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -493,54 +520,119 @@ function MissionLanding() {
             first.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {workloads.map((w) => {
-              const mi = latestByWorkload.get(w.id);
-              const meta = mi ? READINESS_META[mi.readiness] ?? READINESS_META.unknown : null;
-              const count = w.summary?.total_resources ?? w.nodes?.length ?? 0;
-              const launching = launchingId === w.id;
-              return (
-                <div
-                  key={w.id}
-                  className="flex flex-col gap-2 rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow"
-                >
-                  <button onClick={() => navigate(`/mission-control/${w.id}`)} className="flex flex-col gap-2 text-left">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="truncate font-semibold text-gray-800">{w.name}</span>
-                      {meta && (
-                        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium" style={{ color: meta.ring }}>
-                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: meta.ring }} />
-                          {meta.label}
-                        </span>
-                      )}
-                    </div>
-                    <p className="line-clamp-2 text-xs text-gray-500">{w.description || "—"}</p>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-gray-400">
-                      <span>{count} resource{count === 1 ? "" : "s"}</span>
-                      <span>
-                        {mi && mi.started_at ? `last mission ${new Date(mi.started_at).toLocaleDateString()}` : "no missions yet"}
-                      </span>
-                    </div>
-                  </button>
-                  <div className="mt-1 flex items-center gap-2">
-                    <button
-                      onClick={() => void launch(w.id)}
-                      disabled={!!launchingId}
-                      className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand/90 disabled:opacity-50"
-                      title="Run every analysis for this workload now"
-                    >
-                      {launching ? "Launching…" : "🚀 Run sweep"}
-                    </button>
-                    <button
-                      onClick={() => navigate(`/mission-control/${w.id}`)}
-                      className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-                    >
-                      Open →
-                    </button>
-                  </div>
+          <div className="space-y-8">
+            {/* Workloads that already have a Mission Control. */}
+            <section>
+              <div className="mb-3 flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-gray-700">Mission Controls</h2>
+                <span className="text-xs text-gray-400">{withMC.length} workload{withMC.length === 1 ? "" : "s"}</span>
+              </div>
+              {withMC.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-6 text-center text-xs text-gray-400">
+                  No Mission Controls yet. Create one for a workload below.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {withMC.map((w) => {
+                    const mi = latestByWorkload.get(w.id);
+                    const meta = mi ? READINESS_META[mi.readiness] ?? READINESS_META.unknown : null;
+                    const count = w.summary?.total_resources ?? w.nodes?.length ?? 0;
+                    const launching = launchingId === w.id;
+                    const deleting = deletingId === w.id;
+                    return (
+                      <div
+                        key={w.id}
+                        className="flex flex-col gap-2 rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow"
+                      >
+                        <button onClick={() => navigate(`/mission-control/${w.id}`)} className="flex flex-col gap-2 text-left">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="truncate font-semibold text-gray-800">{w.name}</span>
+                            {meta && (
+                              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium" style={{ color: meta.ring }}>
+                                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: meta.ring }} />
+                                {meta.label}
+                              </span>
+                            )}
+                          </div>
+                          <p className="line-clamp-2 text-xs text-gray-500">{w.description || "—"}</p>
+                          <div className="mt-1 flex items-center justify-between text-[11px] text-gray-400">
+                            <span>{count} resource{count === 1 ? "" : "s"}</span>
+                            <span>
+                              {mi && mi.started_at ? `last mission ${new Date(mi.started_at).toLocaleDateString()}` : "no missions yet"}
+                            </span>
+                          </div>
+                        </button>
+                        <div className="mt-1 flex items-center gap-2">
+                          <button
+                            onClick={() => void launch(w.id)}
+                            disabled={!!launchingId || deleting}
+                            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand/90 disabled:opacity-50"
+                            title="Run every analysis for this workload now"
+                          >
+                            {launching ? "Launching…" : "🚀 Run sweep"}
+                          </button>
+                          <button
+                            onClick={() => navigate(`/mission-control/${w.id}`)}
+                            className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                          >
+                            Open →
+                          </button>
+                          <button
+                            onClick={() => void remove(w.id, w.name)}
+                            disabled={!!deletingId || launching}
+                            className="ml-auto rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                            title="Delete this workload's Mission Control (all mission runs) — permanent, no trash"
+                          >
+                            {deleting ? "Deleting…" : "🗑 Delete"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              )}
+            </section>
+
+            {/* Workloads without a Mission Control yet — create one. */}
+            {withoutMC.length > 0 && (
+              <section>
+                <div className="mb-3 flex items-baseline gap-2">
+                  <h2 className="text-sm font-semibold text-gray-700">No Mission Control yet</h2>
+                  <span className="text-xs text-gray-400">{withoutMC.length} workload{withoutMC.length === 1 ? "" : "s"}</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {withoutMC.map((w) => {
+                    const count = w.summary?.total_resources ?? w.nodes?.length ?? 0;
+                    const launching = launchingId === w.id;
+                    return (
+                      <div
+                        key={w.id}
+                        className="flex flex-col gap-2 rounded-xl border border-dashed bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow"
+                      >
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="truncate font-semibold text-gray-800">{w.name}</span>
+                            <span className="shrink-0 text-[11px] text-gray-400">not set up</span>
+                          </div>
+                          <p className="line-clamp-2 text-xs text-gray-500">{w.description || "—"}</p>
+                          <div className="mt-1 text-[11px] text-gray-400">{count} resource{count === 1 ? "" : "s"}</div>
+                        </div>
+                        <div className="mt-1">
+                          <button
+                            onClick={() => void launch(w.id)}
+                            disabled={!!launchingId}
+                            className="w-full rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand/90 disabled:opacity-50"
+                            title="Create a Mission Control for this workload by running its first sweep"
+                          >
+                            {launching ? "Creating…" : "＋ Create Mission Control"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>

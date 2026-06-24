@@ -141,19 +141,22 @@ export function TimeRangePicker({ start, end, label, onApply, disabled }: Props)
   }, [open]);
 
   // Keep the popover within the viewport regardless of where the trigger sits (left or right of
-  // a toolbar). Measure at its natural position, then shift horizontally to clear either edge.
+  // a toolbar). The popover's width is fixed, so recover its NATURAL edges by subtracting the
+  // currently-applied shift (instead of imperatively clearing the transform, which races with
+  // React's re-render and would leave the popover overflowing after a tab switch).
   useLayoutEffect(() => {
-    if (!open) { setShiftX(0); return; }
+    if (!open) { if (shiftX !== 0) setShiftX(0); return; }
     const el = popRef.current;
     if (!el) return;
-    el.style.transform = "";
     const rect = el.getBoundingClientRect();
     const margin = 8;
+    const naturalLeft = rect.left - shiftX;
+    const naturalRight = rect.right - shiftX;
     let dx = 0;
-    if (rect.right > window.innerWidth - margin) dx = (window.innerWidth - margin) - rect.right;
-    if (rect.left + dx < margin) dx = margin - rect.left;
-    setShiftX(dx);
-  }, [open, tab]);
+    if (naturalRight > window.innerWidth - margin) dx = (window.innerWidth - margin) - naturalRight;
+    if (naturalLeft + dx < margin) dx = margin - naturalLeft;
+    if (dx !== shiftX) setShiftX(dx);
+  }, [open, tab, shiftX]);
 
   const apply = (s: Date, e: Date, lbl: string) => { onApply(toLocalInput(s), toLocalInput(e), lbl); setOpen(false); };
 

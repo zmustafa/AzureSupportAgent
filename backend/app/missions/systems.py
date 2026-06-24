@@ -70,6 +70,15 @@ class SystemDef:
     # When True the system is informational (architecture/memory) and never marks the
     # mission "needs attention" on its own.
     informational: bool = False
+    # Other system keys this one must run AFTER (when both are in the same mission). The
+    # orchestrator schedules everything in parallel but holds a dependent back until its
+    # dependencies finish. Memory documents the diagram Architecture produces, so it waits.
+    depends_on: tuple[str, ...] = ()
+    # True for systems whose work is a heavy LLM call (architecture/memory drafting,
+    # assessment narrative, tag/AI analysis). The orchestrator caps how many of these run
+    # at once (separate from the overall concurrency) so a fan-out doesn't trip provider
+    # rate limits (HTTP 429 / "too many requests").
+    ai_heavy: bool = False
 
 
 # --------------------------------------------------------------------------- helpers
@@ -383,7 +392,15 @@ async def _state_memory(ctx: MissionContext) -> dict[str, Any] | None:
     m = mem.get_memory(arch["id"])
     if not m:
         return None
-    n = len([k for k, v in (m.get("sections") or {}).items() if v])
+    # `sections` is normally a {key: text} dict, but tolerate a list (older/raw shape) so a
+    # malformed record can't crash the freshness probe.
+    sections = m.get("sections")
+    if isinstance(sections, dict):
+        n = len([k for k, v in sections.items() if v])
+    elif isinstance(sections, list):
+        n = len([s for s in sections if s])
+    else:
+        n = 0
     return {
         "status": "done",
         "headline": f"{n} sections documented",
@@ -481,6 +498,121 @@ async def _state_assessment(ctx: MissionContext) -> dict[str, Any] | None:
         "age_seconds": (_now() - ran.replace(tzinfo=ran.tzinfo or timezone.utc)).total_seconds() if ran else None,
         "link": f"/assessments/{row.id}",
     }
+
+
+# --------------------------------------------------------------------------- FMEA
+def _latest_fmea_for_workload(tenant_id: str, workload_id: str) -> dict[str, Any] | None:
+    """The most-recently-updated (non-deleted) FMEA document for a workload, or None."""
+    from app.fmea import registry as freg
+
+    docs = freg.list_fmea(tenant_id, workload_id=workload_id)
+    return docs[0] if docs else None
+
+
+def _fmea_headline(summary: dict[str, Any]) -> tuple[str, bool]:
+    """A board headline + attention flag from an FMEA risk summary."""
+    crit = int(summary.get("counts", {}).get("critical", 0))
+    high = int(summary.get("counts", {}).get("high", 0))
+    rows = int(summary.get("total_rows", 0))
+    top = int(summary.get("top_rpn", 0))
+    attention = crit > 0 or high > 0
+    if rows == 0:
+        return "No failure modes yet", False
+    parts = [f"{rows} risk{'s' if rows != 1 else ''}"]
+    if crit:
+        parts.append(f"{crit} critical")
+    elif high:
+        parts.append(f"{high} high")
+    if top:
+        parts.append(f"top RPN {top}")
+    return " · ".join(parts), attention
+
+
+async def _run_fmea(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
+    from app.architectures import memory as mem
+    from app.fmea import compute as fcompute
+    from app.fmea import generator as fgen
+    from app.fmea import registry as freg
+    from app.knowme import context as kctx
+    from app.knowme import sections as km
+
+    arch = _latest_arch_for_workload(ctx.tenant_id, ctx.workload_id)
+    if arch is None:
+        return SystemResult(status="skipped", headline="No architecture yet", detail="Run Architecture first")
+    memory = mem.get_memory(arch["id"])
+    if memory is None or not any(str(s.get("content") or "").strip() for s in memory.get("sections", []) or []):
+        return SystemResult(status="skipped", headline="No memory yet", detail="Run Memory first", link=f"/architectures/{arch['id']}/memory")
+
+    if progress:
+        await progress("Gathering scope & posture evidence…")
+    facts = km.scope_facts(ctx.workload, arch)
+    try:
+        evidence = await kctx.gather_evidence(arch["id"], ctx.workload_id, ctx.tenant_id, ctx.connection_id)
+    except Exception:  # noqa: BLE001
+        evidence = {"block": ""}
+    if progress:
+        await progress("Enumerating failure modes & scoring risk…")
+    result = await fgen.generate_fmea(
+        workload_name=ctx.workload.get("name", ""),
+        memory=memory,
+        facts=facts,
+        evidence_block=evidence.get("block", ""),
+    )
+    if result is None or not result.get("tables"):
+        return SystemResult(status="fail", headline="AI could not draft the FMEA", attention=True, link="/fmea")
+
+    ai_meta = {
+        "confidence": result.get("confidence"),
+        "passes": result.get("passes"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_by": ctx.actor,
+    }
+    existing = _latest_fmea_for_workload(ctx.tenant_id, ctx.workload_id)
+    if existing:
+        doc = freg.update_fmea(
+            existing["id"], workload_id=ctx.workload_id, workload_name=ctx.workload.get("name", ""),
+            connection_id=ctx.connection_id, tables=result["tables"], source="hybrid", ai=ai_meta,
+            tenant_id=ctx.tenant_id, actor=ctx.actor, reason="Mission Control",
+        )
+    else:
+        created = freg.create_fmea(
+            architecture_id=arch["id"], workload_id=ctx.workload_id, workload_name=ctx.workload.get("name", ""),
+            connection_id=ctx.connection_id, tenant_id=ctx.tenant_id, actor=ctx.actor,
+        )
+        doc = freg.update_fmea(
+            created["id"], workload_id=ctx.workload_id, workload_name=ctx.workload.get("name", ""),
+            connection_id=ctx.connection_id, tables=result["tables"], source="ai", ai=ai_meta,
+            tenant_id=ctx.tenant_id, actor=ctx.actor, reason="Mission Control",
+        )
+    summary = fcompute.summarize(doc or {})
+    head, attention = _fmea_headline(summary)
+    return SystemResult(
+        status="done",
+        headline=head,
+        score=int(summary.get("top_rpn", 0)) or None,
+        attention=attention,
+        link=f"/fmea/{doc['id']}",
+        result_ref={"kind": "fmea", "id": doc["id"]},
+    )
+
+
+async def _state_fmea(ctx: MissionContext) -> dict[str, Any] | None:
+    from app.fmea import compute as fcompute
+
+    doc = _latest_fmea_for_workload(ctx.tenant_id, ctx.workload_id)
+    if not doc:
+        return None
+    summary = fcompute.summarize(doc)
+    head, attention = _fmea_headline(summary)
+    return {
+        "status": "done",
+        "headline": head,
+        "score": int(summary.get("top_rpn", 0)) or None,
+        "attention": attention,
+        "age_seconds": _age_seconds({"generated_at": doc.get("updated_at") or doc.get("created_at")}),
+        "link": f"/fmea/{doc['id']}",
+    }
+
 
 
 # --------------------------------------------------------------------------- performance
@@ -813,19 +945,20 @@ async def _state_identity(ctx: MissionContext) -> dict[str, Any] | None:
 
 # --------------------------------------------------------------------------- registry
 SYSTEMS: list[SystemDef] = [
-    SystemDef(key="architecture", label="Architecture", icon="🗺️", run=_run_architecture, last_state=_state_architecture, informational=True),
-    SystemDef(key="memory", label="Memory", icon="🧠", run=_run_memory, last_state=_state_memory, informational=True),
-    SystemDef(key="assessment", label="Assessment", icon="✓", run=_run_assessment, last_state=_state_assessment),
-    _coverage_system(key="monitoring", label="Monitoring", icon="📈", module="app.api.amba", cache_module="app.amba.cache", headline=_h_amba, link_path="/coverage?workload_id={wid}", recorder=_rec_amba),
-    _coverage_system(key="telemetry", label="Telemetry", icon="📡", module="app.api.telemetry", cache_module="app.telemetry.cache", headline=_h_telemetry, link_path="/telemetry?workload_id={wid}", recorder=_rec_telemetry),
-    _coverage_system(key="backupdr", label="Backup & DR", icon="💾", module="app.api.backupdr", cache_module="app.backupdr.cache", headline=_h_backupdr, link_path="/backupdr?workload_id={wid}", recorder=_rec_backupdr),
-    SystemDef(key="performance", label="Performance", icon="⚡", run=_run_performance, last_state=_state_performance),
-    _coverage_system(key="radar", label="Retirement Radar", icon="📡", module="app.api.radar", cache_module="app.radar.cache", headline=_h_radar, link_path="/radar?workload_id={wid}"),
-    SystemDef(key="tagintel", label="Tag Intelligence", icon="🏷️", run=_run_tagintel, last_state=_state_tagintel),
-    SystemDef(key="changeexplorer", label="Change Explorer", icon="🕵️", run=_run_changeexplorer, last_state=_state_changeexplorer),
-    SystemDef(key="inventory", label="Inventory", icon="🗂️", run=_run_inventory, last_state=_state_inventory, informational=True),
-    SystemDef(key="rbac", label="RBAC", icon="🔐", run=_run_rbac, last_state=_state_rbac, informational=True),
-    SystemDef(key="identity", label="Identity", icon="🪪", run=_run_identity, last_state=_state_identity),
+    SystemDef(key="architecture", label="AI Architecture", icon="🗺️", run=_run_architecture, last_state=_state_architecture, informational=True, ai_heavy=True),
+    SystemDef(key="memory", label="AI Memory", icon="🧠", run=_run_memory, last_state=_state_memory, informational=True, ai_heavy=True, depends_on=("architecture",)),
+    SystemDef(key="assessment", label="Azure Well-Architected Assessments (WARA, WASA)", icon="✓", run=_run_assessment, last_state=_state_assessment, ai_heavy=True),
+    _coverage_system(key="monitoring", label="Monitoring Coverage Scanning (AMBA)", icon="📈", module="app.api.amba", cache_module="app.amba.cache", headline=_h_amba, link_path="/coverage?workload_id={wid}", recorder=_rec_amba),
+    _coverage_system(key="telemetry", label="Telemetry Coverage Scanning", icon="📡", module="app.api.telemetry", cache_module="app.telemetry.cache", headline=_h_telemetry, link_path="/telemetry?workload_id={wid}", recorder=_rec_telemetry),
+    _coverage_system(key="backupdr", label="Backup & DR Coverage Scanning", icon="💾", module="app.api.backupdr", cache_module="app.backupdr.cache", headline=_h_backupdr, link_path="/backupdr?workload_id={wid}", recorder=_rec_backupdr),
+    SystemDef(key="performance", label="Performance Profiling", icon="⚡", run=_run_performance, last_state=_state_performance),
+    SystemDef(key="fmea", label="Failure Mode and Effects Analysis", icon="🧪", run=_run_fmea, last_state=_state_fmea, ai_heavy=True, depends_on=("memory",)),
+    _coverage_system(key="radar", label="Retirement Radar Scanning", icon="📡", module="app.api.radar", cache_module="app.radar.cache", headline=_h_radar, link_path="/radar?workload_id={wid}"),
+    SystemDef(key="tagintel", label="Tag Intelligence", icon="🏷️", run=_run_tagintel, last_state=_state_tagintel, ai_heavy=True),
+    SystemDef(key="changeexplorer", label="Change Explorer", icon="🕵️", run=_run_changeexplorer, last_state=_state_changeexplorer, ai_heavy=True),
+    SystemDef(key="inventory", label="Inventory Scanning", icon="🗂️", run=_run_inventory, last_state=_state_inventory, informational=True),
+    SystemDef(key="rbac", label="RBAC Access Review", icon="🔐", run=_run_rbac, last_state=_state_rbac, informational=True),
+    SystemDef(key="identity", label="Identity Findings", icon="🪪", run=_run_identity, last_state=_state_identity),
 ]
 
 _BY_KEY: dict[str, SystemDef] = {s.key: s for s in SYSTEMS}

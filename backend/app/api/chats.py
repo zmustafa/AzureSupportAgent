@@ -103,6 +103,10 @@ async def list_chats(
             Chat.archived.is_(False),
         )
         .order_by(Chat.pinned.desc(), activity.desc())
+        # Cap the recents list: ordered newest-first, so the most recent 500 are what the
+        # sidebar ever shows. Bounds memory/payload for power users with huge histories
+        # (older chats remain searchable/openable by id; they're just not all listed).
+        .limit(500)
     )
     return list(result.scalars().all())
 

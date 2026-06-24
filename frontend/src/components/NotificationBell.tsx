@@ -19,6 +19,10 @@ export function NotificationBell({ collapsed }: { collapsed?: boolean }) {
     queryKey: ["notificationsUnread"],
     queryFn: api.notificationsUnread,
     refetchInterval: 60_000,
+    // Don't poll the unread COUNT while the tab is hidden — the visibility handler below
+    // forces a fresh fetch the instant the tab is shown again, so the badge is still
+    // up to date on return without paying for background polling.
+    refetchIntervalInBackground: false,
     staleTime: 30_000,
   });
   const listQ = useQuery({

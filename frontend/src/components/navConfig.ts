@@ -109,11 +109,13 @@ export type ProactiveItem = { id: string; to: string; label: string; icon: strin
 export const PROACTIVE_NAV: ProactiveItem[] = [
   // Design & ownership — how the estate is shaped, who owns it, how it connects.
   { id: "architectures", to: "/architectures", label: "Architectures", icon: "📐", group: "Design & ownership", desc: "Visual application architecture diagrams — hand-drawn or AI-reverse-engineered from a workload." },
+  { id: "knowme", to: "/knowme", label: "Know-Me", icon: "📄", desc: "Support-facing workload references transformed from Architecture Memory — triage runbook, known issues, thresholds and a human-completion checklist." },
   { id: "ownership", to: "/ownership", label: "Ownership", icon: "🪪", desc: "Assign accountable owners and teams across subscriptions, workloads and resources." },
   { id: "graph", to: "/graph", label: "Estate Graph", icon: "🕸️", desc: "A workload-aware knowledge graph of the whole tenant with cost, retirement and RBAC overlays." },
   // Assessment & performance — how healthy and well-architected the estate is.
   { id: "assessments", to: "/assessments", label: "Assessments", icon: "✅", group: "Assessment & performance", desc: "Well-Architected and CIS assessments with scored findings, waivers and PDF reports." },
   { id: "performance", to: "/performance", label: "Performance Profiler", icon: "🚀", desc: "Profile workloads against the monitoring baseline and rank bottlenecks on a heatmap." },
+  { id: "fmea", to: "/fmea", label: "FMEA", icon: "🧪", desc: "Failure Mode and Effects Analysis — AI-generated, scored risk tables (Severity × Occurrence × Detection → RPN) built from an architecture's Memory." },
   // Coverage — is the estate monitored, logged and protected.
   { id: "coverage", to: "/coverage", label: "Monitoring Coverage", icon: "📡", group: "Coverage", desc: "Measure Azure Monitor baseline alert coverage and close gaps with generated IaC." },
   { id: "telemetry", to: "/telemetry", label: "Telemetry Coverage", icon: "📊", desc: "Measure diagnostic-settings coverage per resource type against the recommended baseline." },

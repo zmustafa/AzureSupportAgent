@@ -304,14 +304,12 @@ ALLOWED_COMMAND_BINARIES = ["az", "azd", "kubectl"]
 
 
 def load_settings() -> dict[str, Any]:
+    from app.core import jsonstore
+
     data = dict(DEFAULTS)
-    if _PATH.exists():
-        try:
-            saved = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(saved, dict):
-                data.update({k: v for k, v in saved.items() if k in DEFAULTS})
-        except (json.JSONDecodeError, OSError):
-            pass
+    saved = jsonstore.read_json(_PATH, {})
+    if isinstance(saved, dict):
+        data.update({k: v for k, v in saved.items() if k in DEFAULTS})
     return data
 
 
@@ -471,8 +469,9 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         current["autopilot_autosave_confidence"] = 0.0
     current["autopilot_auto_assess"] = bool(current.get("autopilot_auto_assess", False))
     current["autopilot_auto_architecture"] = bool(current.get("autopilot_auto_architecture", False))
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    from app.core import jsonstore
+
+    jsonstore.write_json(_PATH, current)
     return current
 
 
