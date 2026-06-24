@@ -11,6 +11,7 @@ The deterministic demo path (:mod:`app.rbac.demo`) is what's exercised locally; 
 against a real connection with broad reader + Graph permissions."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,6 +25,12 @@ log = logging.getLogger("app.rbac.collectors")
 _ARM = "https://management.azure.com"
 _GRAPH = "https://graph.microsoft.com/v1.0"
 _RA_API = "2022-04-01"  # Authorization roleAssignments / roleDefinitions
+
+# Bounded concurrency for per-principal Graph fan-out (group expansion, SP owners). A directory
+# scan can touch hundreds of groups / service principals; issuing one Graph call per id strictly
+# sequentially made a refresh take tens of seconds. We fan them out across a small worker pool —
+# fast, while staying well under Graph throttling limits.
+_GRAPH_FANOUT = 8
 
 
 @dataclass
@@ -228,13 +235,21 @@ async def collect_entra_roles(token: str, tenant_id: str) -> tuple[list[dict[str
 
 
 async def collect_group_expansion(token: str, group_ids: list[str]) -> tuple[dict[str, Any], CollectorStatus]:
-    """Transitive membership for each group id -> {id: {name, members:[principal dict]}}."""
+    """Transitive membership for each group id -> {id: {name, members:[principal dict]}}.
+
+    The per-group Graph calls run concurrently (bounded) since a tenant can have many groups."""
     st = CollectorStatus("GroupExpansion")
     graph: dict[str, Any] = {}
     errors = 0
-    for gid in group_ids:
-        members, err, code = await _get_all(token, f"{_GRAPH}/groups/{gid}/transitiveMembers")
-        if err:
+    sem = asyncio.Semaphore(_GRAPH_FANOUT)
+
+    async def _one(gid: str) -> tuple[str, list[dict[str, Any]] | None]:
+        async with sem:
+            members, err, _code = await _get_all(token, f"{_GRAPH}/groups/{gid}/transitiveMembers")
+        return gid, (None if err else members)
+
+    for gid, members in await asyncio.gather(*[_one(g) for g in group_ids]):
+        if members is None:
             errors += 1
             continue
         graph[gid] = {
@@ -258,13 +273,21 @@ async def collect_group_expansion(token: str, group_ids: list[str]) -> tuple[dic
 
 
 async def collect_sp_owners(token: str, sp_ids: list[str], tenant_id: str) -> tuple[list[dict[str, Any]], CollectorStatus]:
-    """Owner rows for the service principals seen in assignments (owners can control credentials)."""
+    """Owner rows for the service principals seen in assignments (owners can control credentials).
+
+    The per-SP Graph owner calls run concurrently (bounded); SP counts can be in the hundreds."""
     st = CollectorStatus("ServicePrincipalOwners")
     rows: list[dict[str, Any]] = []
     errors = 0
-    for spid in sp_ids:
-        owners, err, code = await _get_all(token, f"{_GRAPH}/servicePrincipals/{spid}/owners")
-        if err:
+    sem = asyncio.Semaphore(_GRAPH_FANOUT)
+
+    async def _one(spid: str) -> tuple[str, list[dict[str, Any]] | None]:
+        async with sem:
+            owners, err, _code = await _get_all(token, f"{_GRAPH}/servicePrincipals/{spid}/owners")
+        return spid, (None if err else owners)
+
+    for spid, owners in await asyncio.gather(*[_one(s) for s in sp_ids]):
+        if owners is None:
             errors += 1
             continue
         for o in owners:

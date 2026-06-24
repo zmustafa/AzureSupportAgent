@@ -368,6 +368,23 @@ async def collect(connection: dict[str, Any] | None, scope: str = "") -> dict[st
             if len(rows) >= _INVENTORY_MAX_ROWS:
                 truncated_subs.append(s["name"] or s["id"])
             resources.extend(_normalize(r, wl_scopes) for r in rows)
+
+            # Resource GROUPS are taggable containers too, but they live in the `resourcecontainers`
+            # table (NOT `resources`), so a plain resources query never sees them — meaning the tag
+            # census / apply / revert silently skipped RG-level tags. Pull them in so tag operations
+            # cover resource groups alongside their resources. (managedBy/sku/etc. don't apply to an
+            # RG and normalize to empty.)
+            rg_rows, rg_err = await _arg(
+                "resourcecontainers "
+                "| where type =~ 'microsoft.resources/subscriptions/resourcegroups' "
+                f"| where subscriptionId =~ '{_esc(s['id'])}' "
+                "| project id, name, type, location, resourceGroup=name, subscriptionId, tags",
+                connection, session_dir,
+            )
+            if rg_err:
+                errors.append(f"{s['name'][:24]} (resource groups): {rg_err[:200]}")
+            else:
+                resources.extend(_normalize(r, wl_scopes) for r in rg_rows)
     finally:
         close_sp_session(session_dir)
 

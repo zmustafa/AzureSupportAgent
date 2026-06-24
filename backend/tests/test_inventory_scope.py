@@ -179,6 +179,10 @@ def _stub_collect_partial(monkeypatch):
     async def fake_arg(kql, _conn, _dir):
         m = re.search(r"subscriptionId =~ '([^']+)'", kql)
         sub = m.group(1) if m else ""
+        # Resource-GROUP container query returns no extra rows here (the resource query carries
+        # the workload-attribution assertions).
+        if "resourcecontainers" in kql:
+            return [], ""
         # Each sub returns one resource attributed to BOTH workloads that include it.
         wls = [{"id": "span2", "name": "span2"}]
         if sub == "s1":
@@ -247,6 +251,10 @@ def _stub_collect(monkeypatch):
     async def fake_arg(kql, _conn, _dir):
         m = re.search(r"subscriptionId =~ '([^']+)'", kql)
         sub = m.group(1) if m else ""
+        # The resource-GROUP container query doesn't count toward the per-sub `queried` list or
+        # the resource totals these scope tests assert on.
+        if "resourcecontainers" in kql:
+            return [], ""
         queried.append(sub)
         return [{
             "id": f"/subscriptions/{sub}/providers/x/r1",
@@ -294,3 +302,47 @@ async def test_collect_invalid_scope_surfaces_error_and_queries_nothing(_stub_co
     assert _stub_collect == []
     assert out["resources"] == []
     assert any("isn't visible" in e for e in out["errors"])
+
+
+async def test_collect_includes_resource_groups(monkeypatch):
+    """Resource GROUPS (resourcecontainers) are enumerated alongside resources so tag
+    operations cover RG-level tags — not just the resources inside them."""
+    async def fake_open(_conn):
+        return ("session-dir", None)
+
+    async def fake_subs(_conn, _dir):
+        return [{"id": "s1", "name": "Sub One"}]
+
+    async def fake_wl_scopes(_conn):
+        return []
+
+    async def fake_arg(kql, _conn, _dir):
+        if "resourcecontainers" in kql:
+            # An RG carrying a tag.
+            return [{
+                "id": "/subscriptions/s1/resourceGroups/rg1",
+                "name": "rg1",
+                "type": "microsoft.resources/subscriptions/resourcegroups",
+                "subscriptionId": "s1", "resourceGroup": "rg1",
+                "tags": {"Owner": "team-a"},
+            }], ""
+        return [{
+            "id": "/subscriptions/s1/resourceGroups/rg1/providers/x/r1",
+            "name": "r1", "type": "Microsoft.Compute/virtualMachines",
+            "subscriptionId": "s1", "resourceGroup": "rg1", "tags": {},
+        }], ""
+
+    monkeypatch.setattr(service, "open_sp_session", fake_open)
+    monkeypatch.setattr(service, "close_sp_session", lambda _d: None)
+    monkeypatch.setattr(service, "_subscriptions", fake_subs)
+    monkeypatch.setattr(service, "_workload_scopes", fake_wl_scopes)
+    monkeypatch.setattr(service, "_arg", fake_arg)
+
+    out = await service.collect(None, scope="sub:s1")
+    by_id = {r["id"]: r for r in out["resources"]}
+    # Both the resource AND its resource group are present.
+    assert "/subscriptions/s1/resourceGroups/rg1" in by_id
+    rg = by_id["/subscriptions/s1/resourceGroups/rg1"]
+    assert rg["type"] == "microsoft.resources/subscriptions/resourcegroups"
+    assert rg["tags"] == {"Owner": "team-a"}
+    assert out["summary"]["total_resources"] == 2

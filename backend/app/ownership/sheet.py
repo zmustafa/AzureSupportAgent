@@ -94,19 +94,42 @@ def blank_template_csv() -> str:
 
 
 # ------------------------------------------------------------------- import parsing
-def parse_sheet(filename: str, content: bytes) -> dict[str, Any]:
-    """Parse an uploaded CSV or XLSX into ``{columns, rows, sheet, row_count}``.
+def list_sheet_names(filename: str, content: bytes) -> list[str]:
+    """Return the sheet/tab names of an uploaded workbook (CSV → single synthetic sheet).
 
-    Rows are dicts keyed by the header column names (first row). Values are strings. Raises
-    ValueError on an empty/garbage file."""
+    Cheap: opens the workbook just to read the names, without iterating rows. Used so the UI can
+    let the user pick a sheet BEFORE the (more expensive) parse + AI column-mapping runs."""
+    name = (filename or "").lower()
+    is_xlsx = name.endswith(".xlsx") or name.endswith(".xlsm") or (
+        not name.endswith((".csv", ".tsv", ".txt")) and content[:2] == b"PK"
+    )
+    if not is_xlsx:
+        return ["csv"]
+    from openpyxl import load_workbook
+
+    try:
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Could not read the Excel file: {exc}") from exc
+    names = list(wb.sheetnames)
+    wb.close()
+    return names or ["Sheet1"]
+
+
+def parse_sheet(filename: str, content: bytes, sheet: str | None = None) -> dict[str, Any]:
+    """Parse an uploaded CSV or XLSX into ``{columns, rows, sheet, row_count, sheet_names}``.
+
+    Rows are dicts keyed by the header column names (first row). Values are strings. For an XLSX,
+    ``sheet`` selects a named tab (default: the active/first sheet). Raises ValueError on an
+    empty/garbage file or an unknown sheet name."""
     name = (filename or "").lower()
     if name.endswith(".xlsx") or name.endswith(".xlsm"):
-        return _parse_xlsx(content)
+        return _parse_xlsx(content, sheet)
     if name.endswith(".csv") or name.endswith(".tsv") or name.endswith(".txt"):
         return _parse_csv(content, tab=name.endswith(".tsv"))
     # Sniff: try xlsx (zip magic 'PK'), else csv.
     if content[:2] == b"PK":
-        return _parse_xlsx(content)
+        return _parse_xlsx(content, sheet)
     return _parse_csv(content)
 
 
@@ -141,17 +164,24 @@ def _parse_csv(content: bytes, *, tab: bool = False) -> dict[str, Any]:
         row = {headers[i]: (raw[i].strip() if i < len(raw) else "") for i in range(len(headers))}
         if any(v for v in row.values()):
             rows.append(row)
-    return {"columns": headers, "rows": rows, "sheet": "csv", "row_count": len(rows)}
+    return {"columns": headers, "rows": rows, "sheet": "csv", "row_count": len(rows),
+            "sheet_names": ["csv"]}
 
 
-def _parse_xlsx(content: bytes) -> dict[str, Any]:
+def _parse_xlsx(content: bytes, sheet: str | None = None) -> dict[str, Any]:
     from openpyxl import load_workbook
 
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"Could not read the Excel file: {exc}") from exc
-    ws = wb.active
+    sheet_names = list(wb.sheetnames)
+    if sheet:
+        if sheet not in sheet_names:
+            raise ValueError(f"Sheet '{sheet}' not found in the workbook.")
+        ws = wb[sheet]
+    else:
+        ws = wb.active
     if ws is None:
         raise ValueError("The workbook has no sheets.")
     it = ws.iter_rows(values_only=True)
@@ -169,7 +199,8 @@ def _parse_xlsx(content: bytes) -> dict[str, Any]:
             continue
         row = {headers[i]: ("" if (i >= len(r) or r[i] is None) else str(r[i]).strip()) for i in range(len(headers))}
         rows.append(row)
-    return {"columns": headers, "rows": rows, "sheet": ws.title, "row_count": len(rows)}
+    return {"columns": headers, "rows": rows, "sheet": ws.title, "row_count": len(rows),
+            "sheet_names": sheet_names}
 
 
 def _clean_header(h: str, idx: int) -> str:

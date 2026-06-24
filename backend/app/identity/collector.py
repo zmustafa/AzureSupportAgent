@@ -22,6 +22,9 @@ from typing import Any
 
 log = logging.getLogger("app.identity.collector")
 
+# Bounded concurrency for per-Key-Vault data-plane probes (cert + secret expiry).
+_KV_FANOUT = 8
+
 # Finding kinds (stable identifiers used by the frontend + ticket text).
 KIND_SECRET = "secret_expiry"
 KIND_CERT = "cert_expiry"
@@ -377,14 +380,21 @@ async def _collect_keyvault_expiry(
     out: list[dict[str, Any]] = []
     errors = 0
     config_dir, _ = await open_sp_session(connection)
-    try:
-        for v in vaults:
-            vname = v.get("name")
-            vid = v.get("id")
-            if not vname:
-                continue
-            wid, wname = _map_by_arm_id(vid, index)
-            for obj_kind, sub in (("certificate", "certificate"), ("secret", "secret")):
+    # Probe each vault's certificate + secret expiry concurrently (bounded). A tenant can have
+    # dozens of vaults and each previously did 2 sequential CLI calls, so a scan serialized into
+    # tens of seconds. gather preserves vault order; per-vault failures are still counted.
+    sem = asyncio.Semaphore(_KV_FANOUT)
+
+    async def _scan_vault(v: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+        vname = v.get("name")
+        vid = v.get("id")
+        if not vname:
+            return [], 0
+        wid, wname = _map_by_arm_id(vid, index)
+        v_out: list[dict[str, Any]] = []
+        v_errors = 0
+        for obj_kind, sub in (("certificate", "certificate"), ("secret", "secret")):
+            async with sem:
                 res = await run_az_json_capture(
                     [
                         "keyvault", sub, "list", "--vault-name", vname,
@@ -394,38 +404,44 @@ async def _collect_keyvault_expiry(
                     label=f"az keyvault {sub} list",
                     session_config_dir=config_dir,
                 )
-                if not res.ok:
-                    errors += 1
+            if not res.ok:
+                v_errors += 1
+                continue
+            try:
+                items = json.loads(res.stdout) if res.stdout.strip() else []
+            except (ValueError, TypeError):
+                items = []
+            for it in items if isinstance(items, list) else []:
+                expires = it.get("expires")
+                days = _days_until(expires)
+                if days is None:
                     continue
-                try:
-                    items = json.loads(res.stdout) if res.stdout.strip() else []
-                except (ValueError, TypeError):
-                    items = []
-                for it in items if isinstance(items, list) else []:
-                    expires = it.get("expires")
-                    days = _days_until(expires)
-                    if days is None:
-                        continue
-                    out.append(
-                        _finding(
-                            id=f"kv:{vid}:{obj_kind}:{it.get('name')}",
-                            kind=KIND_KV_EXPIRY,
-                            title=f"Key Vault {obj_kind} “{it.get('name')}” in {vname}",
-                            detail=(
-                                f"{obj_kind.capitalize()} "
-                                + ("expired" if days < 0 else "expires")
-                                + (f" {abs(days)} day(s) ago." if days < 0 else f" in {days} day(s).")
-                            ),
-                            severity=_severity_for_days(days),
-                            subject=f"{vname}/{it.get('name')}",
-                            subject_id=vid or "",
-                            expires_at=expires,
-                            days_left=days,
-                            workload_id=wid,
-                            workload_name=wname,
-                            remediation="Renew/rotate the Key Vault object before it expires; update consumers.",
-                        )
+                v_out.append(
+                    _finding(
+                        id=f"kv:{vid}:{obj_kind}:{it.get('name')}",
+                        kind=KIND_KV_EXPIRY,
+                        title=f"Key Vault {obj_kind} “{it.get('name')}” in {vname}",
+                        detail=(
+                            f"{obj_kind.capitalize()} "
+                            + ("expired" if days < 0 else "expires")
+                            + (f" {abs(days)} day(s) ago." if days < 0 else f" in {days} day(s).")
+                        ),
+                        severity=_severity_for_days(days),
+                        subject=f"{vname}/{it.get('name')}",
+                        subject_id=vid or "",
+                        expires_at=expires,
+                        days_left=days,
+                        workload_id=wid,
+                        workload_name=wname,
+                        remediation="Renew/rotate the Key Vault object before it expires; update consumers.",
                     )
+                )
+        return v_out, v_errors
+
+    try:
+        for v_out, v_errors in await asyncio.gather(*[_scan_vault(v) for v in vaults]):
+            out.extend(v_out)
+            errors += v_errors
     finally:
         close_sp_session(config_dir)
 

@@ -5,9 +5,8 @@ Pushes the resolved owner of a resource back into Azure as an ``owner`` (and opt
 accountability signal the app tracks.
 
 Safety:
-* WRITE is gated by the ``ownership_tag_writeback_enabled`` admin setting (default **off**),
-  by the ``ownership.write`` permission on the route, AND by the global
-  ``command_execution_enabled`` kill-switch — defence in depth. A write is **never**
+* WRITE requires the ``ownership.write`` permission on the route and an explicit per-action
+  confirmation in the UI (a write warning, mirroring Tag Intelligence). A write is **never**
   performed implicitly; only the explicit "Apply owner tag" action calls :func:`apply_owner_tag`.
 * The merge-PATCH preserves existing tags (ARM ``PATCH …/tags`` with operation ``Merge``),
   so writing the owner tag never clobbers other tags.
@@ -25,13 +24,6 @@ _EMAIL_TAG_KEY = "owner-email"
 _TAGS_API = "2021-04-01"
 
 
-def writeback_enabled() -> bool:
-    from app.core.app_settings import load_settings
-
-    s = load_settings()
-    return bool(s.get("ownership_tag_writeback_enabled", False)) and bool(s.get("command_execution_enabled", True))
-
-
 async def apply_owner_tag(
     connection: dict[str, Any] | None,
     *,
@@ -40,9 +32,7 @@ async def apply_owner_tag(
     owner_email: str = "",
 ) -> dict[str, Any]:
     """Merge-write the ``owner`` tag onto a resource via ARM REST. Returns
-    ``{ok, error, applied}``. Fail-closed when the feature is disabled or no ARM token."""
-    if not writeback_enabled():
-        return {"ok": False, "error": "Owner-tag write-back is disabled. Enable it in Settings (ownership_tag_writeback_enabled) first.", "applied": {}}
+    ``{ok, error, applied}``. Fail-closed when no resource/owner/ARM token."""
     if not resource_id:
         return {"ok": False, "error": "resource_id is required.", "applied": {}}
     if not owner:
@@ -50,7 +40,8 @@ async def apply_owner_tag(
     if connection is None:
         return {"ok": False, "error": "No Azure connection configured.", "applied": {}}
 
-    from app.azure.arm import arm_rest, get_arm_token
+    from app.azure.arm import arm_rest
+    from app.azure.credentials import get_arm_token
 
     token, err = await get_arm_token(connection)
     if not token:

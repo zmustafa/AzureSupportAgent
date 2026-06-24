@@ -24,6 +24,7 @@ import {
 } from "../api";
 import { PROBLEM_TREE, PROBLEM_CATALOG, type ProblemNode } from "../problemTree";
 import { CopyButton } from "./CopyButton";
+import { SendToTicketMenu } from "./SendToTicketMenu";
 import {
   ADMIN_NAV,
   ADMIN_SECTION_IDS,
@@ -3225,6 +3226,7 @@ export default function ChatView() {
                         label="Copy"
                         className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-700"
                       />
+                      <SendToTicketMenu chatId={activeId} />
                     </div>
                   )}
                 </div>

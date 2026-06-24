@@ -30,6 +30,7 @@ from app.tagintel import (
     coverage as coverage_mod,
     drift,
     finops,
+    generate as generate_mod,
     policygen,
     rbac_advice,
     remediation,
@@ -151,6 +152,35 @@ async def get_census(connection_id: str | None = None, scope: str = "", workload
             "census": cen}
 
 
+@router.get("/census/drill")
+async def get_census_drill(
+    key: str,
+    value: str | None = None,
+    subscription_id: str | None = None,
+    resource_type: str | None = None,
+    fold_casing: int = 1,
+    connection_id: str | None = None,
+    scope: str = "",
+    workload_id: str = "",
+    principal: Principal = Depends(require_admin),
+):
+    """Lazy Power-BI-style drill into the tag census (key → value → subscription → type →
+    resource). Reads the SAME cached resource payload the census uses (no Azure call), returning
+    only the children of the addressed node. Cache-only: a miss returns ``not_loaded``."""
+    if not key:
+        raise HTTPException(status_code=400, detail="A tag key is required.")
+    loaded = await _load(principal.tenant_id, connection_id or "", scope, False, workload_id)
+    if not loaded:
+        return _not_loaded()
+    resources, truncated = _capped(loaded["payload"])
+    result = analysis.drill_key(
+        resources, key,
+        value=value, subscription_id=subscription_id, resource_type=resource_type,
+        sub_names=_sub_names(loaded["payload"]), fold_casing=bool(fold_casing),
+    )
+    return {"available": True, "estate_truncated": truncated, **result}
+
+
 class AskReq(BaseModel):
     question: str
     connection_id: str = ""
@@ -176,6 +206,33 @@ async def post_ask(req: AskReq, principal: Principal = Depends(require_admin)):
         if ai is not None:
             return {"available": True, **ai}
     return {"available": True, **det}
+
+
+class GenerateReq(BaseModel):
+    question: str
+    connection_id: str = ""
+    scope: str = ""
+    workload_id: str = ""
+
+
+@router.post("/generate")
+async def post_generate(req: GenerateReq, principal: Principal = Depends(require_admin)):
+    """AI Tag Generator: turn a plain-English tagging instruction into a grounded change-set
+    (read-only — never writes). The proposal is handed off to the Remediate builder, where the
+    audited preview/approve/apply/rollback flow runs."""
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="question is required.")
+    loaded = await _load(principal.tenant_id, req.connection_id or "", req.scope, False, req.workload_id)
+    if not loaded:
+        return {"available": False, "answer": "Load the tag census first (press Refresh on the Census tab)."}
+    resources, _ = _capped(loaded["payload"])
+    cen = analysis.census(resources, _sub_names(loaded["payload"]))
+    proposal = await generate_mod.propose(req.question, cen, resources)
+    if proposal is None:
+        return {"available": True, "summary": "", "operations": [], "notes": [
+            "The AI tag generator is unavailable or could not turn that instruction into tag "
+            "operations. Try rephrasing, e.g. 'add environment=prod to everything missing it'."]}
+    return {"available": True, **proposal}
 
 
 # --------------------------------------------------------------------------- F2 hygiene + F3 grouping

@@ -17,10 +17,12 @@ import {
 import {
   api, streamChangeExplorerAnalyze,
   type ChangeAnalysisRun, type ChangeEvent, type ChangeProgress, type ChangeRunSummary, type ChangeAnalyzeBody,
+  type ChangeAskResponse,
 } from "../api";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { ScopePicker, type ScopeKind } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { PageIntro } from "./PageIntro";
 import { CHANGEEXPLORER_NAV, type ChangeExplorerTab } from "./navConfig";
 import { formatError } from "../utils/format";
@@ -92,6 +94,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const [connId, setConnId] = usePersistedState<string>("azsup.changeexp.connId", "");
   const [start, setStart] = usePersistedState<string>("azsup.changeexp.start", defaultStart());
   const [end, setEnd] = usePersistedState<string>("azsup.changeexp.end", defaultEnd());
+  const [rangeLabel, setRangeLabel] = usePersistedState<string>("azsup.changeexp.rangeLabel", "Last 24 hours");
   const [shownRun, setShownRun] = useState<ChangeAnalysisRun | null>(null);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<ChangeEvent | null>(null);
@@ -101,6 +104,11 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   // Result-side filters.
   const [fRisk, setFRisk] = useState(""); const [fCat, setFCat] = useState("");
   const [fActor, setFActor] = useState(""); const [fType, setFType] = useState(""); const [search, setSearch] = useState("");
+  // NL "Ask AI" change search — composes with the manual filters across the list tabs.
+  const [aiQ, setAiQ] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiRes, setAiRes] = useState<ChangeAskResponse | null>(null);
+  const [aiMatchIds, setAiMatchIds] = useState<Set<string> | null>(null);
 
   const workloadsQ = useQuery({ queryKey: ["changeExplorerWorkloads"], queryFn: api.changeExplorerWorkloads });
   const workloads = workloadsQ.data?.workloads ?? [];
@@ -183,12 +191,6 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
     setTimeout(() => void runsQ.refetch(), 1500);
   }
 
-  function quickRange(hours: number) {
-    const now = new Date();
-    setEnd(toLocalInput(now));
-    setStart(toLocalInput(new Date(now.getTime() - hours * 3600_000)));
-  }
-
   // When a background run for this scope completes, refresh the history grid.
   useEffect(() => { if (bgResult) void runsQ.refetch(); /* eslint-disable-next-line */ }, [bgResult]);
 
@@ -197,8 +199,34 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const filtered = useMemo(() => events.filter((e) =>
     (!fRisk || e.riskLabel === fRisk) && (!fCat || e.category === fCat) &&
     (!fActor || e.actor === fActor) && (!fType || e.resourceType === fType) &&
+    (!aiMatchIds || aiMatchIds.has(e.changeId)) &&
     (!search || `${e.resourceName} ${e.plainEnglishSummary} ${e.operation}`.toLowerCase().includes(search.toLowerCase()))
-  ), [events, fRisk, fCat, fActor, fType, search]);
+  ), [events, fRisk, fCat, fActor, fType, search, aiMatchIds]);
+
+  // Clear any AI result when the displayed run changes (its ids won't match a different run).
+  useEffect(() => { setAiRes(null); setAiMatchIds(null); /* eslint-disable-next-line */ }, [run?.runId]);
+
+  async function askAi(question: string) {
+    if (!question.trim() || !run) return;
+    setAiBusy(true); setAiQ(question);
+    try {
+      const r = await api.changeExplorerAsk({ question, run_id: run.runId });
+      setAiRes(r);
+      setAiMatchIds(r.in_window === false ? new Set() : new Set(r.matched_ids ?? []));
+    } catch (e) { setErr(formatError(e)); } finally { setAiBusy(false); }
+  }
+  function clearAi() { setAiRes(null); setAiMatchIds(null); setAiQ(""); }
+  // Re-scan the suggested (out-of-window) range, then re-run the same question.
+  function rescanSuggested() {
+    const w = aiRes?.suggested_window;
+    if (!w) return;
+    setStart(toLocalInput(new Date(w.start_iso)));
+    setEnd(toLocalInput(new Date(w.end_iso)));
+    setRangeLabel(w.label || `${new Date(w.start_iso).toLocaleDateString()} → ${new Date(w.end_iso).toLocaleDateString()}`);
+    clearAi();
+    setTimeout(() => analyze(false), 0);
+  }
+
 
   const navItem = CHANGEEXPLORER_NAV.find((n) => n.id === tab) ?? CHANGEEXPLORER_NAV[0];
 
@@ -230,16 +258,14 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
               connectionId={connId}
             />
           </div>
-          <label className="text-xs text-gray-500">Start
-            <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" />
-          </label>
-          <label className="text-xs text-gray-500">End
-            <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="mt-0.5 block rounded border px-2 py-1 text-sm" />
-          </label>
-          <div className="flex items-center gap-1">
-            {[["1h", 1], ["4h", 4], ["24h", 24], ["7d", 168]].map(([l, h]) => (
-              <button key={l as string} onClick={() => quickRange(h as number)} className="rounded border px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">{l}</button>
-            ))}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-gray-500">Time range</span>
+            <TimeRangePicker
+              start={start}
+              end={end}
+              label={rangeLabel}
+              onApply={(s, e, lbl) => { setStart(s); setEnd(e); setRangeLabel(lbl); }}
+            />
           </div>
           <label className="text-xs text-gray-500">Scope
             <select value={scopeMode} onChange={(e) => { setScopeMode(e.target.value); setConfirmTenant(false); }} className="mt-0.5 block rounded border px-2 py-1 text-sm">
@@ -320,6 +346,53 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
             )}
             {/* Result filters (shared across tabs that list changes) */}
             {["timeline", "changes", "diff"].includes(tab) && (
+              <>
+              {/* ✨ Ask AI — natural-language change search ("show me all VMs modified yesterday").
+                  Composes with the manual filters below by narrowing to the matched change ids. */}
+              <div className="mb-3 rounded-xl border bg-gradient-to-br from-violet-50 to-white p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">✨</span>
+                  <span className="text-sm font-medium text-gray-800">Ask AI</span>
+                  <span className="text-[11px] text-gray-400">natural-language change search — type a window too (e.g. “yesterday”, “last 7 days”)</span>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={aiQ} onChange={(e) => setAiQ(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && aiQ.trim()) void askAi(aiQ); }}
+                    placeholder="e.g. show me all VMs modified yesterday"
+                    className="flex-1 rounded-lg border px-3 py-2 text-sm"
+                  />
+                  <button onClick={() => aiQ.trim() && askAi(aiQ)} disabled={aiBusy} className="rounded-lg bg-violet-600 px-4 py-2 text-sm text-white disabled:opacity-50">{aiBusy ? "…" : "Ask"}</button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {["VMs changed yesterday", "RBAC changes last 7 days", "Critical changes today", "Deletions this week"].map((s) => (
+                    <button key={s} onClick={() => void askAi(s)} className="rounded-full border bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">{s}</button>
+                  ))}
+                </div>
+                {aiBusy && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-violet-700">
+                    <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-violet-500" />
+                    Thinking… interpreting your question.
+                  </div>
+                )}
+                {aiRes && !aiBusy && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    {aiRes.in_window === false ? (
+                      <>
+                        <span className="rounded bg-amber-100 px-2 py-0.5 font-medium text-amber-700">⚠ {aiRes.suggested_window?.label ?? "that window"} isn’t in the loaded run</span>
+                        <button onClick={rescanSuggested} className="rounded-lg bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700">↻ Analyze {fmtWindow(aiRes.suggested_window)}</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-700">{aiRes.match_count ?? 0} match{(aiRes.match_count ?? 0) === 1 ? "" : "es"}</span>
+                        {aiRes.spec?.time_window && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-700">📅 {aiRes.spec.time_window.label}</span>}
+                        {aiRes.explanation && <span className="text-gray-500">{aiRes.explanation}</span>}
+                      </>
+                    )}
+                    <button onClick={clearAi} className="rounded border px-2 py-0.5 text-gray-500 hover:bg-white">✕ clear</button>
+                  </div>
+                )}
+              </div>
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Filter label="Risk" value={fRisk} setValue={setFRisk} options={run.facets.risks} />
                 <Filter label="Category" value={fCat} setValue={setFCat} options={run.facets.categories} />
@@ -328,6 +401,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="rounded border px-2 py-1 text-sm" />
                 <span className="text-[11px] text-gray-400">{filtered.length} / {events.length}</span>
               </div>
+              </>
             )}
 
             {tab === "summary" && <SummaryTab run={run} />}
@@ -970,3 +1044,9 @@ function toLocalInput(d: Date): string {
 function toIso(local: string): string { return local ? new Date(local).toISOString() : ""; }
 function defaultEnd(): string { return toLocalInput(new Date()); }
 function defaultStart(): string { return toLocalInput(new Date(Date.now() - 24 * 3600_000)); }
+// Compact "Jun 22 → Jun 23" label for an out-of-window re-scan button.
+function fmtWindow(w?: { start_iso: string; end_iso: string; label: string } | null): string {
+  if (!w) return "";
+  const o: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  return `${new Date(w.start_iso).toLocaleDateString(undefined, o)} → ${new Date(w.end_iso).toLocaleDateString(undefined, o)}`;
+}

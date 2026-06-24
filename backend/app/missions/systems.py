@@ -14,6 +14,7 @@ Adding a system = appending one :class:`SystemDef` to :data:`SYSTEMS`.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -709,8 +710,16 @@ async def _run_rbac(ctx: MissionContext, *, force: bool, progress=None) -> Syste
         return SystemResult(status="skipped", headline="No subscriptions in scope", detail=scope.get("error", ""), link=link)
     if progress:
         await progress(f"Scanning access across {len(subs)} subscription(s)…")
-    for sid in subs:
-        await orchestrator.refresh_scope(ctx.tenant_id, ctx.connection, f"/subscriptions/{sid}", display_name=sid, progress=_p)
+    # Refresh each subscription's RBAC scope concurrently (bounded). The slow part is the
+    # per-scope Azure collection; the cache write (`write_scope`) is synchronous so the shared
+    # index read-modify-write stays atomic within the event loop (no interleave mid-write).
+    sem = asyncio.Semaphore(6)
+
+    async def _refresh_one(sid: str) -> None:
+        async with sem:
+            await orchestrator.refresh_scope(ctx.tenant_id, ctx.connection, f"/subscriptions/{sid}", display_name=sid, progress=_p)
+
+    await asyncio.gather(*[_refresh_one(s) for s in subs])
     if progress:
         await progress("Resolving directory roles, groups & owners…")
     await orchestrator.refresh_directory(ctx.tenant_id, ctx.connection, progress=_p)

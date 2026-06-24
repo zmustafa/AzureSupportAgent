@@ -411,12 +411,41 @@ async def test_attest_and_status():
 
 
 # ------------------------------------------------------------------- tag write-back
-async def test_writeback_disabled_by_default(monkeypatch):
+async def test_writeback_not_gated_by_setting(monkeypatch):
     from app.ownership import writeback
 
-    # Default setting is off → fail-closed, never calls Azure.
+    # Write-back is always allowed now (no ownership_tag_writeback_enabled gate): the call
+    # proceeds past any feature flag and fails only for a real reason — here, the ARM token
+    # can't be acquired in the test connection — NOT a "disabled" message.
     res = await writeback.apply_owner_tag({"id": "c"}, resource_id=RID, owner="John")
-    assert res["ok"] is False and "disabled" in res["error"].lower()
+    assert res["ok"] is False
+    assert "disabled" not in res["error"].lower()
+    assert not hasattr(writeback, "writeback_enabled")
+
+
+async def test_writeback_executes_real_imports(monkeypatch):
+    """Exercise the REAL apply_owner_tag body so its module imports actually run. Regression guard:
+    it imports get_arm_token from app.azure.credentials (was wrongly app.azure.arm — an ImportError
+    that only fired at call time, previously masked by the now-removed feature gate)."""
+    from app.ownership import writeback
+
+    seen = {}
+
+    async def _fake_token(conn):
+        return "tok-xyz", ""
+
+    async def _fake_rest(token, method, url, body=None):
+        seen["method"], seen["url"], seen["body"] = method, url, body
+        return "{}", None
+
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
+    monkeypatch.setattr("app.azure.arm.arm_rest", _fake_rest)
+
+    res = await writeback.apply_owner_tag({"id": "c"}, resource_id=RID, owner="Platform Team", owner_email="team@x.com")
+    assert res["ok"] is True and res["error"] == ""
+    assert seen["method"] == "PATCH" and "/providers/Microsoft.Resources/tags" in seen["url"]
+    assert seen["body"]["properties"]["tags"]["owner"] == "Platform Team"
+    assert seen["body"]["properties"]["tags"]["owner-email"] == "team@x.com"
 
 
 def test_writeback_bicep_and_policy():

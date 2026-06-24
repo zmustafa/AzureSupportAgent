@@ -99,6 +99,51 @@ def test_parse_sniff_xlsx_by_magic_without_extension():
     assert out["sheet"] == "Owners"
 
 
+def _multi_sheet_xlsx() -> bytes:
+    import io as _io
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.active.title = "People"
+    wb.active.append(["Name", "Email"])
+    wb.active.append(["Jane", "jane@x.com"])
+    teams = wb.create_sheet("Teams")
+    teams.append(["Team", "Lead"])
+    teams.append(["Payments", "Bob"])
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_list_sheet_names_csv_is_single():
+    assert sheet.list_sheet_names("owners.csv", b"a,b\n1,2\n") == ["csv"]
+
+
+def test_list_sheet_names_multi():
+    names = sheet.list_sheet_names("book.xlsx", _multi_sheet_xlsx())
+    assert names == ["People", "Teams"]
+
+
+def test_parse_sheet_selects_named_sheet():
+    xlsx = _multi_sheet_xlsx()
+    people = sheet.parse_sheet("book.xlsx", xlsx, "People")
+    assert people["sheet"] == "People" and people["columns"] == ["Name", "Email"]
+    assert people["sheet_names"] == ["People", "Teams"]
+    teams = sheet.parse_sheet("book.xlsx", xlsx, "Teams")
+    assert teams["sheet"] == "Teams" and teams["rows"][0]["Lead"] == "Bob"
+
+
+def test_parse_sheet_unknown_sheet_raises():
+    with pytest.raises(ValueError):
+        sheet.parse_sheet("book.xlsx", _multi_sheet_xlsx(), "Nope")
+
+
+def test_parse_sheet_default_is_first_sheet():
+    out = sheet.parse_sheet("book.xlsx", _multi_sheet_xlsx())  # no sheet -> active/first
+    assert out["sheet"] == "People"
+
+
 # ============================================================ CSV export injection defense
 def test_csv_export_neutralizes_formula_injection():
     owners = [{"id": "1", "display_name": "=cmd|' /c calc'!A0", "email": "x@x.com"}]
@@ -255,6 +300,8 @@ def test_build_tag_plan_skips_unowned(monkeypatch):
     monkeypatch.setattr(own_resolve, "resolve_owner", lambda *a, **k: {"unowned": True, "owners": []})
     plan = tagging.build_tag_plan("t1", [_res("/r/1")], tag_key="owner")
     assert plan["applicable"] == 0 and plan["no_owner"] == 1
+    # The unowned resource is still shown (so the user sees the full picture), marked skipped.
+    assert plan["items"][0]["status"] == "no_owner" and plan["items"][0]["skipped"] is True
 
 
 def test_build_tag_plan_already_correct_is_noop(monkeypatch):
@@ -263,7 +310,9 @@ def test_build_tag_plan_already_correct_is_noop(monkeypatch):
     monkeypatch.setattr(own_resolve, "resolve_owner", lambda *a, **k: {
         "unowned": False, "owners": [{"display_name": "Jane", "primary": True}]})
     plan = tagging.build_tag_plan("t1", [_res("/r/1", {"owner": "Jane"})], tag_key="owner")
-    assert plan["count"] == 0  # value already matches → nothing staged
+    # Value already matches → nothing to apply, but the resource is still shown as 'ok'.
+    assert plan["applicable"] == 0 and plan["already_ok"] == 1
+    assert plan["items"][0]["status"] == "ok" and plan["items"][0]["skipped"] is True
 
 
 def test_build_tag_plan_conflict_not_overwritten(monkeypatch):
@@ -303,6 +352,27 @@ def test_build_tag_plan_preserves_existing_tags(monkeypatch):
     plan = tagging.build_tag_plan("t1", [_res("/r/1", {"env": "prod"})], tag_key="owner")
     after = plan["items"][0]["after"]
     assert after["env"] == "prod" and after["owner"] == "Jane"
+
+
+def test_build_tag_plan_custom_value_applies_to_all(monkeypatch):
+    """A custom value is stamped on EVERY resource with no owner lookup (even unowned ones)."""
+    from app.ownership import resolve as own_resolve
+    # resolve_owner should never be called for custom; make it blow up if it is.
+    monkeypatch.setattr(own_resolve, "resolve_owner",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("owner lookup ran")))
+    plan = tagging.build_tag_plan(
+        "t1", [_res("/r/1"), _res("/r/2", {"team": "x"})],
+        tag_key="team", value_source="custom", custom_value="platform", overwrite=True,
+    )
+    assert plan["applicable"] == 2
+    assert all(it["after"]["team"] == "platform" for it in plan["items"])
+    assert plan["no_owner"] == 0
+
+
+def test_build_tag_plan_custom_blank_value_is_noop(monkeypatch):
+    plan = tagging.build_tag_plan("t1", [_res("/r/1")], tag_key="team",
+                                  value_source="custom", custom_value="   ")
+    assert plan["applicable"] == 0
 
 
 # ============================================================ revisions: save / diff / revert
@@ -382,3 +452,81 @@ def test_revision_revert_partial_failure_counts(monkeypatch):
     monkeypatch.setattr("app.azure.tag_ops.set_resource_tags", fake_set)
     out = _run(revisions.revert_revision("t1", rev["id"], {"id": "c1"}, actor="t"))
     assert out["reverted"] == 1 and out["failed"] == 1 and out["ok"] is False
+
+
+# ---------------------------------------------------------- tag_ops real write path (import guard)
+def test_set_resource_tags_executes_real_imports(monkeypatch):
+    """Exercise the REAL ``set_resource_tags`` body (not a mock) so its module imports actually run.
+
+    Regression guard: ``set_resource_tags`` imports ``get_arm_token`` from ``app.azure.credentials``
+    and ``arm_rest`` from ``app.azure.arm``. A wrong import module/name (the live bug: it imported
+    ``get_arm_token`` from ``app.azure.arm``) raises ImportError ONLY at call time — which broke
+    every tag revert and the ownership owner-tag apply, yet passed all mocked tests. We mock the two
+    underlying functions at their SOURCE modules so the import lines execute against the real names."""
+    from app.azure import tag_ops
+
+    calls = {}
+
+    async def _fake_token(conn):
+        return "tok-123", ""
+
+    async def _fake_rest(token, method, url, body=None):
+        calls["token"], calls["method"], calls["url"], calls["body"] = token, method, url, body
+        return "{}", None
+
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
+    monkeypatch.setattr("app.azure.arm.arm_rest", _fake_rest)
+
+    ok, err = _run(tag_ops.set_resource_tags({"id": "c1"}, "/subscriptions/s/x", {"CostCenter": "A1"}, operation="Replace"))
+    assert ok is True and err == ""
+    # The real body was built with the Replace operation and our tag.
+    assert calls["method"] == "PATCH" and calls["body"]["operation"] == "Replace"
+    assert calls["body"]["properties"]["tags"] == {"CostCenter": "A1"}
+    assert "/providers/Microsoft.Resources/tags/default" in calls["url"]
+
+
+def test_set_resource_tags_merge_default(monkeypatch):
+    """Default operation is Merge (preserve other tags)."""
+    from app.azure import tag_ops
+    seen = {}
+
+    async def _fake_token(conn):
+        return "tok", ""
+
+    async def _fake_rest(token, method, url, body=None):
+        seen["op"] = body["operation"]
+        return "{}", None
+
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
+    monkeypatch.setattr("app.azure.arm.arm_rest", _fake_rest)
+    ok, _err = _run(tag_ops.set_resource_tags({"id": "c1"}, "/x", {"k": "v"}))
+    assert ok is True and seen["op"] == "Merge"
+
+
+def test_read_current_tags_snapshots_resource_group(monkeypatch):
+    """The snapshot must include RESOURCE GROUPS (they live in `resourcecontainers`, not `resources`).
+
+    Regression guard for: removing tags from a resource group rebased to a no-op (0 applied) because
+    the pre-apply snapshot queried only the `resources` table, so the RG came back with {} tags."""
+    from app.azure import tag_ops
+
+    rg_id = "/subscriptions/s/resourceGroups/rg-azsupagent"
+    seen = {}
+
+    async def _fake_token(conn):
+        return "tok", ""
+
+    async def _fake_query(token, kql, top=None):
+        seen["kql"] = kql
+        # Emulate ARG: the RG row only comes from the `resourcecontainers` union branch.
+        return [{"id": rg_id, "name": "rg-azsupagent", "tags": {"FF": "34", "x": "12"}}], ""
+
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", _fake_token)
+    monkeypatch.setattr("app.azure.arm.query_resource_graph", _fake_query)
+
+    tags, names, err = _run(tag_ops.read_current_tags({"id": "c1"}, [rg_id]))
+    assert err == ""
+    assert "resourcecontainers" in seen["kql"]
+    assert tags[rg_id.lower()] == {"FF": "34", "x": "12"}
+    assert names[rg_id.lower()] == "rg-azsupagent"
+

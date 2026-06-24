@@ -39,6 +39,7 @@ _RANK_SEV = {v: k for k, v in _SEV_RANK.items()}
 _FLAGGED_SAMPLE = 25  # max flagged resources stored per finding
 _SCAN_SAMPLE = 1000  # max in-scope resources captured for the report's Resources tab
 _METRIC_RESOURCE_CAP = 40  # max resources probed per metric-backed check (bounds az calls)
+_PER_RESOURCE_FANOUT = 8   # bounded concurrency for per-resource ARM GETs within one check
 
 
 def _real_remediation(template: str, resource: dict[str, Any]) -> str:
@@ -1343,12 +1344,22 @@ async def _execute_check(
                 return base
             required = {str(c) for c in (spec.get("categories") or [])}
             failed_res: list[dict[str, Any]] = []
-            for target in targets[:_METRIC_RESOURCE_CAP]:
+            # Probe each resource's diagnostic settings concurrently (bounded). The token is
+            # already acquired once above; gather preserves order so the flagged sample is stable,
+            # and any single ARM error still fails the whole check (same semantics as before).
+            capped = targets[:_METRIC_RESOURCE_CAP]
+            sem = asyncio.Semaphore(_PER_RESOURCE_FANOUT)
+
+            async def _probe_diag(target: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any], str]:
                 url = (
                     f"https://management.azure.com{target.get('id', '')}"
                     "/providers/microsoft.insights/diagnosticSettings?api-version=2021-05-01-preview"
                 )
-                ok, body, err = await _arm_get_token(token, url)
+                async with sem:
+                    ok, body, err = await _arm_get_token(token, url)
+                return target, ok, body, err
+
+            for target, ok, body, err in await asyncio.gather(*[_probe_diag(t) for t in capped]):
                 if not ok:
                     base["status"] = "error"
                     base["error"] = err[:300]
@@ -1385,9 +1396,18 @@ async def _execute_check(
                 base["status"] = "not_applicable"
                 return base
             failed_sites: list[dict[str, Any]] = []
-            for site in sites[:_METRIC_RESOURCE_CAP]:
+            # Probe each site's HTTP-log config concurrently (bounded); order preserved, and a
+            # single ARM error still fails the whole check (same semantics as before).
+            capped_sites = sites[:_METRIC_RESOURCE_CAP]
+            sem = asyncio.Semaphore(_PER_RESOURCE_FANOUT)
+
+            async def _probe_site(site: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any], str]:
                 url = f"https://management.azure.com{site.get('id', '')}/config/logs?api-version=2022-03-01"
-                ok, body, err = await _arm_get_token(token, url)
+                async with sem:
+                    ok, body, err = await _arm_get_token(token, url)
+                return site, ok, body, err
+
+            for site, ok, body, err in await asyncio.gather(*[_probe_site(s) for s in capped_sites]):
                 if not ok:
                     base["status"] = "error"
                     base["error"] = err[:300]

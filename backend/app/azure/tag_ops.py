@@ -27,7 +27,10 @@ async def read_current_tags(
 
     ``tags_by_id`` maps each (lower-cased) resource id to its current tag dict ({} when
     untagged or missing). Resources not found in the graph are simply absent. Reads in
-    batches via Resource Graph so a large selection stays within query limits."""
+    batches via the Resource Graph REST API (httpx) so a large selection stays within query
+    limits — and so it never pays the multi-second ``az`` CLI cold-start that a subprocess
+    path incurs (a slow snapshot here delayed every tag apply/revert and could push a revert
+    past a client/proxy connection timeout)."""
     out: dict[str, dict[str, str]] = {}
     names: dict[str, str] = {}
     ids = [r for r in {(rid or "").strip() for rid in resource_ids} if r]
@@ -36,21 +39,30 @@ async def read_current_tags(
     if connection is None:
         return out, names, "No Azure connection configured."
 
-    from app.exec.command_runner import run_kql_collect
+    from app.azure.arm import query_resource_graph
+    from app.azure.credentials import get_arm_token
+
+    token, terr = await get_arm_token(connection)
+    if not token:
+        return out, names, terr or "Could not acquire an ARM token."
 
     # Chunk the id list so the `in~ (...)` clause never gets unwieldy.
     CHUNK = 200
     for i in range(0, len(ids), CHUNK):
         chunk = ids[i : i + CHUNK]
         quoted = ", ".join("'" + rid.replace("'", "") + "'" for rid in chunk)
+        # Resource groups (and subscriptions) live in `resourcecontainers`, NOT `resources`, so a
+        # snapshot that queried only `resources` returned {} for an RG id — making a tag removal on
+        # a resource group rebase to a no-op (0 applied). Union both tables so RG-level tags are
+        # snapshotted (and thus applied/reverted) just like resource-level tags.
         kql = (
-            "resources | where id in~ (" + quoted + ") "
-            "| project id, name, tags"
+            "resources | where id in~ (" + quoted + ") | project id, name, tags "
+            "| union (resourcecontainers | where id in~ (" + quoted + ") | project id, name, tags)"
         )
-        res = await run_kql_collect(kql, connection, session_config_dir=session_config_dir, max_rows=CHUNK)
-        if not res.ok:
-            return out, names, (res.error or "Resource Graph query failed.")[:300]
-        for row in res.rows:
+        rows, qerr = await query_resource_graph(token, kql, top=CHUNK)
+        if qerr:
+            return out, names, qerr[:300]
+        for row in rows:
             rid = (row.get("id") or "").lower()
             if not rid:
                 continue
@@ -76,7 +88,8 @@ async def set_resource_tags(
         return False, "No Azure connection configured."
     op = "Replace" if str(operation).lower() == "replace" else "Merge"
 
-    from app.azure.arm import arm_rest, get_arm_token
+    from app.azure.arm import arm_rest
+    from app.azure.credentials import get_arm_token
 
     token, err = await get_arm_token(connection)
     if not token:

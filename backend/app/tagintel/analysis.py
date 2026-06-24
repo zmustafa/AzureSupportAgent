@@ -183,6 +183,108 @@ def census(resources: list[dict[str, Any]], sub_names: dict[str, str] | None = N
     }
 
 
+# --------------------------------------------------------------------------- census drill (Power-BI-style lazy expand)
+
+
+def drill_key(
+    resources: list[dict[str, Any]],
+    key: str,
+    *,
+    value: str | None = None,
+    subscription_id: str | None = None,
+    resource_type: str | None = None,
+    sub_names: dict[str, str] | None = None,
+    fold_casing: bool = True,
+    cap: int = 200,
+) -> dict[str, Any]:
+    """Return the CHILDREN of one node in the tag-key drill hierarchy (Power-BI-style expand).
+
+    Hierarchy (option B): key → value → subscription → resource type → resource. Each call
+    returns exactly one level deeper than the addressed node:
+
+    * ``key`` only                                  → level ``"value"``        (every distinct value)
+    * + ``value``                                   → level ``"subscription"`` (subs carrying key=value)
+    * + ``subscription_id``                         → level ``"type"``         (resource types in that sub)
+    * + ``resource_type``                           → level ``"resource"``     (leaf resources)
+
+    Pure + deterministic over the cached resource list — no Azure call. ``fold_casing`` rolls
+    casing/separator variants of the KEY together (so ``Environment`` and ``environment`` drill
+    as one), matching the census's normalized view. Each level is capped at ``cap`` rows with a
+    ``truncated`` flag so the UI can show "+N more"."""
+    sub_names = sub_names or {}
+    nk = norm_key(key)
+
+    def key_matches(tag_key: str) -> bool:
+        return norm_key(tag_key) == nk if fold_casing else tag_key == key
+
+    def tag_value_for(r: dict[str, Any]) -> str | None:
+        """The value this resource carries for the (possibly casing-folded) key, or None."""
+        tags = r.get("tags") or {}
+        if not isinstance(tags, dict):
+            return None
+        for tk, tv in tags.items():
+            if key_matches(tk):
+                return "" if tv is None else str(tv)
+        return None
+
+    # ---- level: value (children of the key) ----------------------------------------------
+    if value is None:
+        by_value: dict[str, dict[str, Any]] = {}
+        for r in resources:
+            v = tag_value_for(r)
+            if v is None:
+                continue
+            slot = by_value.setdefault(v, {"value": v, "count": 0, "_subs": set(), "_types": set()})
+            slot["count"] += 1
+            slot["_subs"].add(r.get("subscription_id") or "")
+            slot["_types"].add((r.get("type") or "").lower())
+        rows = [
+            {"value": s["value"], "count": s["count"],
+             "subscription_count": len(s["_subs"]), "distinct_types": len(s["_types"])}
+            for s in by_value.values()
+        ]
+        rows.sort(key=lambda x: (-x["count"], x["value"]))
+        return {"level": "value", "key": key, "rows": rows[:cap], "total": len(rows), "truncated": len(rows) > cap}
+
+    # ---- level: subscription (children of key=value) -------------------------------------
+    in_value = [r for r in resources if tag_value_for(r) == value]
+    if subscription_id is None:
+        by_sub: dict[str, dict[str, Any]] = {}
+        for r in in_value:
+            sid = r.get("subscription_id") or ""
+            slot = by_sub.setdefault(sid, {"subscription_id": sid, "name": sub_names.get(sid, sid) or "(unknown)", "count": 0, "_types": set()})
+            slot["count"] += 1
+            slot["_types"].add((r.get("type") or "").lower())
+        rows = [
+            {"subscription_id": s["subscription_id"], "name": s["name"], "count": s["count"], "distinct_types": len(s["_types"])}
+            for s in by_sub.values()
+        ]
+        rows.sort(key=lambda x: (-x["count"], x["name"]))
+        return {"level": "subscription", "key": key, "value": value, "rows": rows[:cap], "total": len(rows), "truncated": len(rows) > cap}
+
+    # ---- level: resource type (children of key=value within a subscription) --------------
+    in_sub = [r for r in in_value if (r.get("subscription_id") or "") == subscription_id]
+    if resource_type is None:
+        by_type: dict[str, int] = defaultdict(int)
+        for r in in_sub:
+            by_type[(r.get("type") or "").lower()] += 1
+        rows = [{"type": t, "count": c} for t, c in by_type.items()]
+        rows.sort(key=lambda x: (-x["count"], x["type"]))
+        return {"level": "type", "key": key, "value": value, "subscription_id": subscription_id,
+                "rows": rows[:cap], "total": len(rows), "truncated": len(rows) > cap}
+
+    # ---- level: resource (leaf) ----------------------------------------------------------
+    rtype_lc = (resource_type or "").lower()
+    leaves = [
+        {"id": r.get("id", ""), "name": r.get("name", ""), "resource_group": r.get("resource_group", ""),
+         "subscription_id": r.get("subscription_id", ""), "location": r.get("location", "")}
+        for r in in_sub if (r.get("type") or "").lower() == rtype_lc
+    ]
+    leaves.sort(key=lambda x: (x["resource_group"], x["name"]))
+    return {"level": "resource", "key": key, "value": value, "subscription_id": subscription_id,
+            "resource_type": resource_type, "rows": leaves[:cap], "total": len(leaves), "truncated": len(leaves) > cap}
+
+
 # --------------------------------------------------------------------------- hygiene (F2)
 
 

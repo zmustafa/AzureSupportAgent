@@ -10,7 +10,7 @@
  * Policy (F8) · Remediate (F9+F11). Read-only everywhere except Remediate, which only ever
  * produces a plan + scripts (never writes to Azure).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -22,6 +22,7 @@ import {
   type TagValueCluster, type TagCoverageResponse, type TagCostResponse, type TagBillingMapResponse,
   type TagDriftDiff, type TagPolicyDefinition, type TagRemediationOp, type TagRemediationPlan,
   type TagChangeSet, type TagChangeSetGroup, type TagChangeSetBundle, type TagChangeSetImportResult,
+  type TagGeneratedOp,
   streamTagintelRemediateApply, type TagApplyStart, type TagApplyResult,
 } from "../api";
 import { ScopePicker, type ScopeKind } from "./ScopePicker";
@@ -31,6 +32,8 @@ import { PageIntro } from "./PageIntro";
 import { TAGINTEL_NAV, type TagIntelTab } from "./navConfig";
 import { formatError } from "../utils/format";
 import { TagRevisionsPanel } from "./ownership/OwnerImportTags";
+import { ChangeSetFlow } from "./tagintel/ChangeSetFlow";
+import { TagKeyDrillGrid } from "./tagintel/TagKeyDrillGrid";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 
 const CAT_COLORS: Record<string, string> = {
@@ -278,7 +281,20 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="relative min-h-0 flex-1">
+        {/* While a background refresh runs, veil the tab BODY only (the tabs/header above stay
+            interactive) so the data underneath can't be misread as final. The veil sits on this
+            NON-scrolling wrapper (a sibling of the scroll area) so it stays pinned to the visible
+            viewport even when the user has scrolled down — e.g. to the Remediate apply controls. */}
+        {scanning && enabled && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-start justify-center bg-white/60 backdrop-blur-[1px]">
+            <div className="mt-24 flex items-center gap-2 rounded-full border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 shadow-sm">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+              Refreshing…
+            </div>
+          </div>
+        )}
+        <div className="h-full overflow-auto">
         <div className="px-5 pt-3">
           <PageIntro title={navItem.label.replace(/^\S+\s/, "")} blurb={navItem.description} storageKey={`tagintel-${tab}`} />
         </div>
@@ -302,9 +318,11 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
             {tab === "coverage" && <CoverageTab sel={sel} scopeKey={scopeKey} />}
             {tab === "cost" && <CostTab sel={sel} scopeKey={scopeKey} />}
             {tab === "drift" && <DriftTab sel={sel} scopeKey={scopeKey} />}
-            {tab === "remediate" && <RemediateTab sel={sel} loaded={loaded} onRefreshScope={refresh} scanning={scanning} />}
+            {tab === "generate" && <GenerateTab sel={sel} loaded={loaded} />}
+            {tab === "remediate" && <RemediateTab sel={sel} loaded={loaded} census={censusQ.data?.census} onRefreshScope={refresh} scanning={scanning} />}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
@@ -323,7 +341,8 @@ function Kpi({ label, value, sub, tone }: { label: string; value: React.ReactNod
 
 // ============================================================ CENSUS (F1 + F10)
 function CensusTab({ census, sel, truncated, cap }: { census?: TagCensus; sel: TagScopeSel; truncated?: boolean; cap?: number }) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Bridge: the drill grid's "use as filter" pushes a question into the Ask console.
+  const askPrefill = useRef<((text: string) => void) | null>(null);
   if (!census) return null;
   const keys = census.keys;
   const treemap = census.scope_coverage.by_subscription.map((s, i) => ({ name: s.name, size: s.total, coverage: s.coverage_pct, fill: PALETTE[i % PALETTE.length] }));
@@ -345,61 +364,16 @@ function CensusTab({ census, sel, truncated, cap }: { census?: TagCensus; sel: T
       </div>
 
       {/* AI ask console (F10) */}
-      <AskConsole sel={sel} />
+      <AskConsole sel={sel} registerPrefill={(fn) => { askPrefill.current = fn; }} />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Key explorer (F1) */}
-        <div className="lg:col-span-2 rounded-xl border bg-white">
-          <div className="border-b px-4 py-2 text-sm font-medium text-gray-700">Tag keys ({keys.length})</div>
-          <div className="max-h-[460px] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-50 text-left text-[11px] uppercase text-gray-400">
-                <tr><th className="px-4 py-2">Key</th><th className="px-2">Category</th><th className="px-2 text-right">Resources</th><th className="px-2 text-right">Values</th><th className="px-2">Coverage</th></tr>
-              </thead>
-              <tbody>
-                {keys.map((k) => (
-                  <tr key={k.key} className={`cursor-pointer border-t hover:bg-gray-50 ${selectedKey === k.key ? "bg-brand/5" : ""}`} onClick={() => setSelectedKey(k.key === selectedKey ? null : k.key)}>
-                    <td className="px-4 py-1.5">
-                      <span className="font-medium text-gray-800">{k.key}</span>
-                      {k.casing_variants.length > 0 && <span className="ml-1 rounded bg-red-100 px-1 text-[10px] text-red-600" title={`Casing variants: ${k.casing_variants.join(", ")}`}>±{k.casing_variants.length}</span>}
-                      {k.high_cardinality && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">high-card</span>}
-                    </td>
-                    <td className="px-2"><span className="rounded px-1.5 py-0.5 text-[10px] font-medium text-white" style={{ background: CAT_COLORS[k.category] }}>{k.category}</span></td>
-                    <td className="px-2 text-right tabular-nums">{k.count.toLocaleString()}</td>
-                    <td className="px-2 text-right tabular-nums">{k.distinct_values}</td>
-                    <td className="px-2">
-                      <div className="flex items-center gap-1">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-100"><div className="h-full rounded-full bg-brand" style={{ width: `${k.coverage_pct}%` }} /></div>
-                        <span className="text-[11px] text-gray-500">{k.coverage_pct}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {/* Key explorer (F1) — Power-BI-style expandable drill: key → value → sub → type → resource */}
+        <div className="lg:col-span-2">
+          <TagKeyDrillGrid keys={keys} sel={sel} onUseFilter={(text) => askPrefill.current?.(text)} />
         </div>
 
-        {/* Value distribution for the selected key + coverage treemap */}
+        {/* Coverage treemap */}
         <div className="space-y-4">
-          <div className="rounded-xl border bg-white p-4">
-            <div className="text-sm font-medium text-gray-700">{selectedKey ? `Values · ${selectedKey}` : "Pick a key for its values"}</div>
-            {selectedKey && (() => {
-              const k = keys.find((x) => x.key === selectedKey);
-              if (!k) return null;
-              return (
-                <div className="mt-2 space-y-1">
-                  {k.top_values.map((v) => (
-                    <div key={v.value} className="flex items-center gap-2 text-xs">
-                      <div className="h-2 rounded bg-brand/70" style={{ width: `${Math.max(8, (v.count / k.count) * 120)}px` }} />
-                      <span className="truncate text-gray-700">{v.value || "(empty)"}</span>
-                      <span className="ml-auto tabular-nums text-gray-400">{v.count}</span>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
-          </div>
           <div className="rounded-xl border bg-white p-4">
             <div className="mb-1 text-sm font-medium text-gray-700">Coverage by subscription</div>
             <ResponsiveContainer width="100%" height={170}>
@@ -426,10 +400,12 @@ function CoverageCell(props: any) {
   );
 }
 
-function AskConsole({ sel }: { sel: TagScopeSel }) {
+function AskConsole({ sel, registerPrefill }: { sel: TagScopeSel; registerPrefill?: (fn: (text: string) => void) => void }) {
   const [q, setQ] = useState("");
   const [res, setRes] = useState<Awaited<ReturnType<typeof api.tagintelAsk>> | null>(null);
   const [busy, setBusy] = useState(false);
+  // Let a parent (the drill grid's "use as filter") push a question into the box + focus it.
+  useEffect(() => { registerPrefill?.((text: string) => { setQ(text); }); }, [registerPrefill]);
   async function ask(question: string) {
     setBusy(true); setQ(question);
     try { setRes(await api.tagintelAsk({ question, ...sel })); } catch (e) { setRes({ kind: "error", answer: formatError(e) }); } finally { setBusy(false); }
@@ -453,7 +429,15 @@ function AskConsole({ sel }: { sel: TagScopeSel }) {
       <div className="mt-2 flex flex-wrap gap-1">
         {suggestions.map((s) => <button key={s} onClick={() => void ask(s)} className="rounded-full border bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">{s}</button>)}
       </div>
-      {res && (
+      {/* While a new ask is in flight, hide the previous result so a stale grid isn't shown as
+          if it answered the new question. */}
+      {busy && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border bg-white p-3 text-sm text-violet-700">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-violet-500" />
+          Thinking… translating your question to a Resource Graph query.
+        </div>
+      )}
+      {res && !busy && (
         <div className="mt-3 rounded-lg border bg-white p-3">
           <p className="text-sm text-gray-800">{res.answer}</p>
           {Array.isArray(res.data) && res.data.length > 0 && (
@@ -866,7 +850,7 @@ function CostTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
             <table className="w-full text-sm">
               <tbody>
                 {(d.unallocatable_resources ?? []).slice(0, 30).map((r) => (
-                  <tr key={r.id} className="border-t"><td className="px-4 py-1.5 text-gray-700">{r.name}</td><td className="px-2 text-[11px] text-gray-400">{r.type.split("/").pop()}</td><td className="px-4 py-1.5 text-right tabular-nums text-red-600">{fmtMoney(r.cost, cur)}</td></tr>
+                  <tr key={r.id} className="border-t"><td className="px-4 py-1.5 text-gray-700"><span className="inline-flex items-center gap-1.5">{r.name}{r.id && <a href={`https://portal.azure.com/#@/resource${r.id}/overview`} target="_blank" rel="noopener noreferrer" title="Open in Azure Portal" className="text-gray-300 transition hover:text-brand">↗</a>}</span></td><td className="px-2 text-[11px] text-gray-400">{r.type.split("/").pop()}</td><td className="px-4 py-1.5 text-right tabular-nums text-red-600">{fmtMoney(r.cost, cur)}</td></tr>
                 ))}
                 {(d.unallocatable_resources ?? []).length === 0 && <tr><td className="p-4 text-center text-xs text-gray-400">All cost is allocatable. ✨</td></tr>}
               </tbody>
@@ -1204,7 +1188,21 @@ interface ApplyRow { index: number; name: string; change: string; status: "pendi
 function opLabel(op: TagRemediationOp): string {
   if (op.type === "rename_key") return `rename ${op.key} → ${op.to_key}`;
   if (op.type === "normalize_value") return `${op.key}: ${op.from_value || "*"} → ${op.to_value}`;
+  if (op.type === "remove_key") return `remove ${op.key}`;
   return `${op.type === "set_tag" ? "set" : "add"} ${op.key}=${op.value}`;
+}
+
+// A single op is "complete" only when every field it NEEDS is filled. This is the SAME rule the
+// apply/preview path uses to keep an op (see `validOps` filters) — surfaced here so the editor can
+// VISIBLY flag an incomplete op instead of silently dropping it. Returns "" when complete, else a
+// short reason. (The classic trap this guards against: a "To key" left blank but looking filled
+// because its placeholder text happened to read like a real value.)
+function opIncompleteReason(op: TagRemediationOp): string {
+  if (!op.key?.trim()) return op.type === "rename_key" ? "From key is required" : "Key is required";
+  if (op.type === "rename_key" && !op.to_key?.trim()) return "To key is required";
+  if (op.type === "normalize_value" && !op.to_value?.trim()) return "To value is required";
+  if ((op.type === "add_tag" || op.type === "set_tag") && (op.value === undefined || op.value === "")) return "Value is required";
+  return "";
 }
 
 // ---- Change-set library (advanced) -------------------------------------------------
@@ -1218,7 +1216,7 @@ const GROUP_COLORS: Record<string, { dot: string; chip: string; ring: string }> 
   slate: { dot: "bg-slate-500", chip: "bg-slate-200 text-slate-700", ring: "border-slate-300" },
 };
 const GROUP_COLOR_KEYS = Object.keys(GROUP_COLORS);
-const OP_TYPE_LABEL: Record<string, string> = { add_tag: "add", set_tag: "set", rename_key: "rename", normalize_value: "normalize" };
+const OP_TYPE_LABEL: Record<string, string> = { add_tag: "add", set_tag: "set", rename_key: "rename", normalize_value: "normalize", remove_key: "remove" };
 
 function relTime(iso?: string | null): string {
   if (!iso) return "";
@@ -1489,7 +1487,7 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const validOps = ops.filter((o) => o.key && (o.type === "rename_key" ? o.to_key : o.type === "normalize_value" ? o.to_value : o.value !== undefined));
+  const validOps = ops.filter((o) => !opIncompleteReason(o));
   function patchOp(i: number, patch: Partial<TagRemediationOp>) { setOps(ops.map((o, idx) => (idx === i ? { ...o, ...patch } : o))); }
   function addLabel() { const l = labelInput.trim(); if (l && !labels.includes(l)) setLabels([...labels, l]); setLabelInput(""); }
 
@@ -1534,10 +1532,12 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
           </div>
 
           <div>
-            <div className="mb-1 flex items-center gap-2"><span className="text-xs font-medium text-gray-600">Operations</span><span className="text-[11px] text-gray-400">{validOps.length} valid</span></div>
+            <div className="mb-1 flex items-center gap-2"><span className="text-xs font-medium text-gray-600">Operations</span><span className="text-[11px] text-gray-400">{validOps.length} valid</span>{ops.length > validOps.length && <span className="text-[11px] font-medium text-amber-600">· {ops.length - validOps.length} incomplete (skipped)</span>}</div>
             <div className="space-y-2">
-              {ops.map((op, i) => (
-                <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2">
+              {ops.map((op, i) => {
+                const incomplete = opIncompleteReason(op);
+                return (
+                <div key={i} className={`flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2 ${incomplete ? "border-amber-300 bg-amber-50/40" : ""}`}>
                   <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
                   <label className="text-xs text-gray-500">Operation
                     <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded border px-2 py-1 text-sm">
@@ -1545,18 +1545,24 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
                       <option value="set_tag">Set tag (overwrite)</option>
                       <option value="rename_key">Rename key</option>
                       <option value="normalize_value">Normalize value</option>
+                      <option value="remove_key">Remove key (delete)</option>
                     </select>
                   </label>
-                  <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="Owner" /></label>
-                  {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="owner" /></label>}
-                  {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="team-a" /></label>}
-                  {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="Production" /></label></>}
+                  <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
+                  {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
+                  {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
+                  {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
                   <button onClick={() => setOps(ops.length > 1 ? ops.filter((_, idx) => idx !== i) : ops)} disabled={ops.length === 1} className="rounded border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30">✕</button>
+                  {incomplete && <span className="w-full text-[11px] font-medium text-amber-600">⚠ {incomplete} — this operation will be skipped.</span>}
                 </div>
-              ))}
+                );
+              })}
             </div>
             <button onClick={() => setOps([...ops, { ...EMPTY_OP }])} className="mt-2 rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
           </div>
+
+          {/* Live before→after transformation preview (symbolic — the drawer has no dry-run plan). */}
+          <ChangeSetFlow ops={ops} />
 
           {err && <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
           <div className="flex items-center gap-2">
@@ -1569,7 +1575,123 @@ function ChangeSetEditDrawer({ cs, groups, onClose, onSaved }: { cs: TagChangeSe
   );
 }
 
-function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScopeSel; loaded: boolean; onRefreshScope: () => void; scanning: boolean }) {
+// ============================================================ AI GENERATE
+function GenerateTab({ sel, loaded }: { sel: TagScopeSel; loaded: boolean }) {
+  const navigate = useNavigate();
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<Awaited<ReturnType<typeof api.tagintelGenerate>> | null>(null);
+  const [ops, setOps] = useState<TagGeneratedOp[]>([]);
+  const [err, setErr] = useState("");
+
+  const suggestions = [
+    "Add environment=prod to everything missing it",
+    "Set owner=platform-team on all storage accounts",
+    "Tag every resource with cost-center=eng if it has none",
+    "Normalize Environment values (PRD/Prod → Production)",
+  ];
+
+  async function generate(question: string) {
+    if (!question.trim()) return;
+    setBusy(true); setErr(""); setQ(question);
+    try {
+      const r = await api.tagintelGenerate({ question, ...sel });
+      setRes(r);
+      setOps((r.operations ?? []).map((o) => ({ ...o })));
+    } catch (e) { setErr(formatError(e)); setRes(null); setOps([]); } finally { setBusy(false); }
+  }
+
+  function removeOp(i: number) { setOps(ops.filter((_, idx) => idx !== i)); }
+
+  // Hand the reviewed proposal to the Remediate builder (same persisted-draft mechanism the
+  // Hygiene "Fix in Remediate" handoff uses), then navigate there. The resolved resource_ids
+  // ride along so the dry-run targets exactly what the AI proposed.
+  function sendToRemediate() {
+    if (!ops.length) return;
+    const clean: TagRemediationOp[] = ops.map(({ rationale: _r, match_count: _m, ...op }) => op);
+    stageChangeSetToBuilder("AI-generated tag set", res?.summary || q, clean);
+    navigate("/tagintel/remediate");
+  }
+
+  if (!loaded) return <NotLoaded />;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border bg-gradient-to-br from-violet-50 to-white p-4">
+        <div className="flex items-center gap-2">
+          <span className="text-base">✨</span>
+          <span className="text-sm font-medium text-gray-800">AI Tag Generator</span>
+          <span className="text-[11px] text-gray-400">plain English → a grounded change-set</span>
+        </div>
+        <div className="mt-2 flex gap-2">
+          <textarea
+            value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && q.trim()) void generate(q); }}
+            placeholder="e.g. Tag everything in this workload with environment=prod and add owner=platform-team to anything missing it"
+            rows={2}
+            className="flex-1 resize-y rounded-lg border px-3 py-2 text-sm"
+          />
+          <button onClick={() => q.trim() && generate(q)} disabled={busy} className="self-start rounded-lg bg-violet-600 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? "…" : "✨ Propose tags"}</button>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {suggestions.map((s) => <button key={s} onClick={() => void generate(s)} className="rounded-full border bg-white px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">{s}</button>)}
+        </div>
+        <p className="mt-2 text-[11px] text-gray-400">The AI proposes only — nothing is written. Review the operations below, then send them to Remediate to dry-run, approve and apply.</p>
+      </div>
+
+      {err && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+
+      {busy && (
+        <div className="flex items-center gap-2 rounded-lg border bg-white p-3 text-sm text-violet-700">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-violet-500" />
+          Thinking… turning your instruction into grounded tag operations.
+        </div>
+      )}
+
+      {res && !busy && (
+        <div className="rounded-xl border bg-white">
+          <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+            <span className="text-sm font-medium text-gray-700">Proposed change-set</span>
+            {ops.length > 0 && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700">{ops.length} operation(s)</span>}
+            {res.summary && <span className="text-[11px] text-gray-500">{res.summary}</span>}
+            <button onClick={sendToRemediate} disabled={!ops.length} className="ml-auto rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">Send to Remediate →</button>
+          </div>
+
+          {ops.length === 0 ? (
+            <div className="p-6 text-center text-sm text-gray-500">No applicable operations were proposed for this scope.</div>
+          ) : (
+            <ul className="divide-y">
+              {ops.map((op, i) => (
+                <li key={i} className="flex items-start gap-3 px-4 py-2.5">
+                  <span className="mt-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{OP_TYPE_LABEL[op.type] ?? op.type}</span>
+                      <span className="font-mono text-xs text-gray-800">{opLabel(op)}</span>
+                      {typeof op.match_count === "number" && (
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${op.match_count > 0 ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-400"}`}>{op.match_count} res</span>
+                      )}
+                    </div>
+                    {op.rationale && <div className="mt-0.5 text-[11px] text-gray-500">{op.rationale}</div>}
+                  </div>
+                  <button onClick={() => removeOp(i)} className="rounded border px-2 py-1 text-xs text-gray-400 hover:text-red-600" title="Drop this operation">✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {(res.notes ?? []).length > 0 && (
+            <div className="border-t bg-amber-50/50 px-4 py-2">
+              {(res.notes ?? []).map((n, i) => <div key={i} className="text-[11px] text-amber-700">⚠ {n}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: TagScopeSel; loaded: boolean; census?: TagCensus; onRefreshScope: () => void; scanning: boolean }) {
   const qc = useQueryClient();
   // The working change-set (a list of key:value operations) + its name — persisted so a
   // half-built set survives navigating away, and can be preloaded from a saved set.
@@ -1591,11 +1713,40 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
   const [applyItems, setApplyItems] = useState<ApplyRow[]>([]);
   const [applyCounts, setApplyCounts] = useState<{ applied: number; failed: number; total: number }>({ applied: 0, failed: 0, total: 0 });
   const [appliedStale, setAppliedStale] = useState(false);   // post-apply: cached scope is now out of date
-  const rbacQ = useQuery({ queryKey: ["tagintel", "rbac"], queryFn: api.tagintelRbacAdvice });
+  // Two-way hover link between an editor row and its transformation lane in the flow preview.
+  const [hoverOp, setHoverOp] = useState<number | null>(null);
   const setsQ = useQuery({ queryKey: ["tagintel", "changesets"], queryFn: api.tagintelChangesets });
 
-  const validOps = ops.filter((o) => o.key && (o.type === "rename_key" ? o.to_key : o.type === "normalize_value" ? o.to_value : o.value !== undefined));
+  const validOps = ops.filter((o) => !opIncompleteReason(o));
   const canRun = validOps.length > 0;
+
+  // Duplicate-key detection: how many ops share each (case-insensitive) key, so a row can flag
+  // that the same key is targeted by more than one operation (common right after "Load current
+  // tags", which brings every value of a key as its own row).
+  const keyOccurrences = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const o of ops) {
+      const k = (o.key || "").trim().toLowerCase();
+      if (k) m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [ops]);
+
+  // Census lookup: resources currently carrying a given key=value pair (case-insensitive key,
+  // exact value), from the loaded census. Powers the "how many resources have this" hint.
+  const censusCount = useMemo(() => {
+    const byKey = new Map<string, Map<string, number>>();
+    for (const k of census?.keys ?? []) {
+      const vm = new Map<string, number>();
+      for (const v of k.top_values ?? []) vm.set(v.value, v.count);
+      byKey.set((k.key || "").toLowerCase(), vm);
+    }
+    return (key?: string, value?: string): number | null => {
+      const vm = byKey.get((key || "").trim().toLowerCase());
+      if (!vm) return null;
+      return vm.get(value ?? "") ?? 0;
+    };
+  }, [census]);
 
   function patchOp(i: number, patch: Partial<TagRemediationOp>) {
     setOps(ops.map((o, idx) => (idx === i ? { ...o, ...patch } : o)));
@@ -1603,12 +1754,53 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
   function addOp() { setOps([...ops, { ...EMPTY_OP }]); }
   function removeOp(i: number) { if (ops.length > 1) setOps(ops.filter((_, idx) => idx !== i)); }
 
+  // Build a prefill from the current estate: ONE `set_tag` op per (key, value) pair seen in the
+  // census — bringing EVERYTHING, including duplicate keys with different values. The user then
+  // edits / removes / dedups before running. Azure system + hidden tags are skipped. NOTE: the
+  // census ships only each key's top values (server-cap), so very high-cardinality keys contribute
+  // their most common values, not literally all of them.
+  function buildPrefillOps(): TagRemediationOp[] {
+    const isSystemKey = (k: string) => {
+      const lk = k.toLowerCase();
+      return lk.startsWith("hidden-") || lk.startsWith("link") || lk === "hidden-title" || lk === "ms-resource-usage";
+    };
+    const out: TagRemediationOp[] = [];
+    for (const k of census?.keys ?? []) {
+      if (!k.key || isSystemKey(k.key)) continue;
+      const values = k.top_values?.length ? k.top_values : [{ value: "", count: 0 }];
+      for (const v of values) {
+        out.push({ type: "set_tag", key: k.key, value: v.value });
+      }
+    }
+    return out;
+  }
+  const prefillCount = buildPrefillOps().length;
+
+  function loadCurrentTags() {
+    const prefill = buildPrefillOps();
+    if (prefill.length === 0) return;
+    // Replace-guard: only warn when the editor already holds meaningful (non-empty) work.
+    const hasWork = ops.some((o) => o.key || o.value || o.to_key || o.from_value || o.to_value);
+    if (hasWork && !confirm(`Replace the current ${ops.length} operation(s) with ${prefill.length} tag pair(s) from the estate? You can then remove or edit any before running.`)) return;
+    setOps(prefill);
+    setPlan(null); setScripts(null);
+  }
+
   function loadSet(cs: TagChangeSet) {
     setCsName(cs.name); setCsDesc(cs.description || "");
     setOps(cs.operations.length ? cs.operations.map((o) => ({ ...o })) : [{ ...EMPTY_OP }]);
     setLoadedId(cs.id); setPlan(null); setScripts(null);
   }
   function newSet() { setCsName(""); setCsDesc(""); setOps([{ ...EMPTY_OP }]); setLoadedId(""); setPlan(null); setScripts(null); }
+
+  // A scope refresh re-reads the estate, so any half-built change-set (and its dry-run preview)
+  // is now against stale assumptions — clear the whole editor when a refresh STARTS so the user
+  // rebuilds against the fresh census rather than silently applying old ops.
+  const wasScanning = useRef(scanning);
+  useEffect(() => {
+    if (scanning && !wasScanning.current) newSet();
+    wasScanning.current = scanning;
+  }, [scanning]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveSet() {
     if (!csName.trim() || !canRun) return;
@@ -1650,6 +1842,9 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
           setApplyResult(r);
           if (!r.blocked && (r.applied ?? 0) > 0) setAppliedStale(true);
           void qc.invalidateQueries({ queryKey: ["tagintel"] });
+          // Immediately refresh the Tag change history so the new recovery revision appears
+          // the moment the apply finishes (the panel keys on ["tag-revisions", "tagintel"]).
+          void qc.invalidateQueries({ queryKey: ["tag-revisions", "tagintel"] });
         },
         onError: (msg) => setApplyResult({ blocked: true, reason: msg }),
       });
@@ -1663,17 +1858,6 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
 
   return (
     <div className="space-y-4">
-      {/* RBAC advisor (F11) */}
-      <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-        <div className="text-xs font-medium text-blue-800">🔐 Least-privilege roles for tag work</div>
-        <div className="mt-1 grid gap-1 sm:grid-cols-2">
-          {(rbacQ.data?.rows ?? []).map((r, i) => (
-            <div key={i} className="text-[11px] text-blue-700"><span className="font-medium">{r.role}</span> — {r.action}</div>
-          ))}
-        </div>
-        <div className="mt-1 text-[11px] text-blue-600">{rbacQ.data?.principle}</div>
-      </div>
-
       {/* Tag change history — every applied change keeps a recovery copy and can be reverted. */}
       <TagRevisionsPanel mode="tagintel" />
 
@@ -1698,8 +1882,14 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
         </div>
 
         <div className="space-y-2">
-          {ops.map((op, i) => (
-            <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2">
+          {ops.map((op, i) => {
+            const incomplete = opIncompleteReason(op);
+            const dupCount = op.key ? (keyOccurrences.get(op.key.trim().toLowerCase()) || 0) : 0;
+            const isDup = dupCount > 1;
+            // Resource count from the census for this exact key=value (set/add ops only).
+            const resCount = (op.type === "set_tag" || op.type === "add_tag") ? censusCount(op.key, op.value) : null;
+            return (
+            <div key={i} onMouseEnter={() => setHoverOp(i)} onMouseLeave={() => setHoverOp(null)} className={`flex flex-wrap items-end gap-2 rounded-lg border bg-gray-50/50 p-2 transition ${incomplete ? "border-amber-300 bg-amber-50/40" : isDup ? "border-orange-200" : ""} ${hoverOp === i ? "ring-2 ring-brand/30" : ""}`}>
               <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{i + 1}</span>
               <label className="text-xs text-gray-500">Operation
                 <select value={op.type} onChange={(e) => patchOp(i, { type: e.target.value as TagRemediationOp["type"] })} className="mt-0.5 block rounded border px-2 py-1 text-sm">
@@ -1707,20 +1897,35 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
                   <option value="set_tag">Set tag (overwrite)</option>
                   <option value="rename_key">Rename key</option>
                   <option value="normalize_value">Normalize value</option>
+                  <option value="remove_key">Remove key (delete)</option>
                 </select>
               </label>
-              <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="Owner" /></label>
-              {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="owner" /></label>}
-              {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="team-a" /></label>}
-              {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="Production" /></label></>}
-              <button onClick={() => removeOp(i)} disabled={ops.length === 1} className="rounded border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30" title="Remove pair">✕</button>
+              <label className="text-xs text-gray-500">{op.type === "rename_key" ? "From key" : "Key"}<input value={op.key || ""} onChange={(e) => patchOp(i, { key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Owner" /></label>
+              {op.type === "rename_key" && <label className="text-xs text-gray-500">To key<input value={op.to_key || ""} onChange={(e) => patchOp(i, { to_key: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. owner" /></label>}
+              {(op.type === "add_tag" || op.type === "set_tag") && <label className="text-xs text-gray-500">Value<input value={op.value || ""} onChange={(e) => patchOp(i, { value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. team-a" /></label>}
+              {op.type === "normalize_value" && <><label className="text-xs text-gray-500">From value<input value={op.from_value || ""} onChange={(e) => patchOp(i, { from_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. PRD" /></label><label className="text-xs text-gray-500">To value<input value={op.to_value || ""} onChange={(e) => patchOp(i, { to_value: e.target.value })} className="mt-0.5 block rounded border px-2 py-1 text-sm" placeholder="e.g. Production" /></label></>}
+              {/* Badges: duplicate-key + how many resources currently carry this key=value */}
+              <div className="flex items-center gap-1.5 self-center">
+                {isDup && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700" title={`This key appears in ${dupCount} operations`}>⧉ dup ×{dupCount}</span>}
+                {resCount !== null && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${resCount > 0 ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-400"}`} title={resCount > 0 ? `${resCount} resource(s) currently have ${op.key}=${op.value}` : `No resource currently has ${op.key}=${op.value}`}>{resCount} res</span>}
+              </div>
+              <button onClick={() => removeOp(i)} disabled={ops.length === 1} className="self-center rounded border px-2 py-1.5 text-xs text-gray-400 hover:text-red-600 disabled:opacity-30" title="Remove pair">✕</button>
+              {incomplete && <span className="w-full text-[11px] font-medium text-amber-600">⚠ {incomplete} — this operation will be skipped.</span>}
             </div>
-          ))}
+            );
+          })}
+        </div>
+
+        {/* Live before→after transformation preview (symbolic until a dry-run enriches it). */}
+        <div className="mt-2">
+          <ChangeSetFlow ops={ops} plan={plan} hoveredIndex={hoverOp} onHover={setHoverOp} />
         </div>
 
         <div className="mt-2 flex items-center gap-2">
           <button onClick={addOp} className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
+          <button onClick={loadCurrentTags} disabled={!loaded || prefillCount === 0} title={!loaded ? "Load a scope first" : `Prefill ${prefillCount} key=value pair(s) from the current estate (duplicates included — remove/dedup before running)`} className="rounded border px-2 py-1 text-xs text-brand hover:bg-brand/5 disabled:opacity-40">⤓ Load current tags{prefillCount > 0 ? ` (${prefillCount})` : ""}</button>
           <span className="text-[11px] text-gray-400">{validOps.length} valid operation(s)</span>
+          {ops.length > validOps.length && <span className="text-[11px] font-medium text-amber-600">· {ops.length - validOps.length} incomplete (skipped)</span>}
           <button onClick={preview} disabled={busy || !canRun} className="ml-auto rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "…" : "Preview (dry-run)"}</button>
         </div>
       </div>
@@ -1732,9 +1937,13 @@ function RemediateTab({ sel, loaded, onRefreshScope, scanning }: { sel: TagScope
             <span className="rounded bg-gray-100 px-2 py-0.5 text-xs">{plan.count} resources</span>
             {(plan.overwrites ?? 0) > 0 && <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">⚠ {plan.overwrites} overwrite value(s)</span>}
             <span className="text-[11px] text-gray-400">{plan.subscription_count} subscription(s)</span>
+            {!plan.count && <span className="rounded bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500" title="Every targeted resource already matches the desired tags, so there is nothing to generate or apply.">Nothing to apply — already up to date</span>}
             <label className="ml-auto flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={approved} onChange={(e) => { setApproved(e.target.checked); setConfirmRun(false); }} /> I approve applying these tag changes</label>
-            <button onClick={genScripts} disabled={!approved || !plan.count} className="rounded-lg border border-emerald-600 px-3 py-1.5 text-sm text-emerald-700 disabled:opacity-50">Generate scripts</button>
-            <button onClick={() => setConfirmRun(true)} disabled={!approved || !plan.count || applying} className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white disabled:opacity-50" title="Run the tag changes against Azure now">
+            {/* Generate scripts is read-only review text — it does NOT require the approval checkbox
+                (you generate scripts precisely to review BEFORE deciding to apply). Only a non-empty
+                plan is required. */}
+            <button onClick={genScripts} disabled={!plan.count} title={!plan.count ? "Nothing to script — the dry-run found 0 resources to change." : "Generate az CLI / PowerShell / rollback scripts to review or run manually"} className="rounded-lg border border-emerald-600 px-3 py-1.5 text-sm text-emerald-700 disabled:opacity-50">Generate scripts</button>
+            <button onClick={() => setConfirmRun(true)} disabled={!approved || !plan.count || applying} className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white disabled:opacity-50" title={!plan.count ? "Nothing to apply — the dry-run found 0 resources to change." : !approved ? "Check “I approve applying these tag changes” first." : "Run the tag changes against Azure now"}>
               {applying ? "Applying…" : "▶ Run on Azure"}
             </button>
           </div>

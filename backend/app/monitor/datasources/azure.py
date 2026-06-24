@@ -5,6 +5,7 @@ returns a normalized :class:`TableResult`. All are READ-ONLY.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.exec.command_runner import (
@@ -15,6 +16,9 @@ from app.exec.command_runner import (
 )
 
 from .base import Column, TableResult, parse_json_output, table_from_records
+
+# Bounded concurrency for multi-resource metric widgets (one Azure Monitor query per resource).
+_METRICS_FANOUT = 8
 
 
 def _render(text: str, params: dict[str, Any]) -> str:
@@ -145,10 +149,19 @@ async def resolve_azure_metrics(
     buckets: dict[str, dict[str, float]] = {}
     series_names: list[str] = []
     multi = len(resource_ids) > 1
-    for rid in resource_ids:
-        cap = await run_metrics_capture(
-            rid, metrics, conn, aggregation=request_aggs, interval=interval, timespan=timespan
-        )
+
+    # Fetch each resource's metrics concurrently (bounded). gather preserves order so series
+    # naming/ordering is identical to the old sequential path; a single failure still fails the
+    # whole widget (same semantics as before).
+    sem = asyncio.Semaphore(_METRICS_FANOUT)
+
+    async def _fetch(rid: str):
+        async with sem:
+            return rid, await run_metrics_capture(
+                rid, metrics, conn, aggregation=request_aggs, interval=interval, timespan=timespan
+            )
+
+    for rid, cap in await asyncio.gather(*[_fetch(r) for r in resource_ids]):
         if not cap.ok:
             return TableResult.from_error(cap.error or "Metrics query failed.")
         data, perr = parse_json_output(cap.stdout)

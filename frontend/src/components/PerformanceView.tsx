@@ -18,6 +18,7 @@ import { TrendChart } from "./TrendChart";
 import { AllResourcesTab } from "./AllResourcesTab";
 import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 
@@ -61,6 +62,14 @@ function useProfileRuns(): number {
     () => _runVersion,
   );
 }
+
+// datetime-local helpers for the time-range picker (default = last 24h).
+function _pad(n: number): string { return String(n).padStart(2, "0"); }
+function _toLocalInput(d: Date): string {
+  return `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}T${_pad(d.getHours())}:${_pad(d.getMinutes())}`;
+}
+function _perfDefaultEnd(): string { return _toLocalInput(new Date()); }
+function _perfDefaultStart(): string { return _toLocalInput(new Date(Date.now() - 24 * 3600_000)); }
 
 function startBackgroundProfile(opts: {
   scopeKey: string;
@@ -202,10 +211,9 @@ export function PerformancePanel() {
   const [subName, setSubName] = usePersistedState("azsup.performance.subName", "");
   const [connId, setConnId] = usePersistedState("azsup.performance.connId", "");
   useWorkloadDeepLink(setScopeKind, setWorkloadId);
-  const [windowSel, setWindowSel] = useState("P1D");
-  const [useRange, setUseRange] = useState(false);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [startTime, setStartTime] = useState(() => _perfDefaultStart());
+  const [endTime, setEndTime] = useState(() => _perfDefaultEnd());
+  const [rangeLabel, setRangeLabel] = useState("Last 1 day");
   const [drawer, setDrawer] = useState<PerfResourceRow | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -335,16 +343,6 @@ export function PerformancePanel() {
     }
   }, [runsVersion, scopeKey]);
 
-  const WINDOWS = [
-    { v: "PT1H", l: "Last 1 hour" },
-    { v: "PT6H", l: "Last 6 hours" },
-    { v: "PT12H", l: "Last 12 hours" },
-    { v: "P1D", l: "Last 1 day" },
-    { v: "P3D", l: "Last 3 days" },
-    { v: "P7D", l: "Last 7 days" },
-    { v: "P30D", l: "Last 30 days" },
-  ];
-
   // Distinct resource types + regions in the loaded run (for the filter controls).
   const hmAllTypes = useMemo(() => {
     const m = new Map<string, string>();
@@ -412,17 +410,15 @@ export function PerformancePanel() {
   function runProfile() {
     if (!enabled || runningHere) return;
     setMsg(null);
-    const windowLabel =
-      useRange && startTime && endTime ? "custom range" : WINDOWS.find((w) => w.v === windowSel)?.l ?? windowSel;
+    const windowLabel = rangeLabel || "custom range";
     const scopeLabel =
       scopeKind === "workload"
         ? workloads.find((w) => w.id === effWorkloadId)?.name ?? effWorkloadId
         : subName || subId;
     const body = {
       ...params,
-      ...(useRange && startTime && endTime
-        ? { start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString() }
-        : { window: windowSel }),
+      start_time: new Date(startTime).toISOString(),
+      end_time: new Date(endTime).toISOString(),
     };
     // Fire-and-forget: the run streams in the registry, survives scope switches/navigation,
     // and lands in the history grid on completion (the optimistic row shows meanwhile).
@@ -639,23 +635,15 @@ export function PerformancePanel() {
                 setSubName(name);
               }}
             />
-            {!useRange ? (
-              <select value={windowSel} onChange={(e) => setWindowSel(e.target.value)} className="rounded-md border px-2 py-1.5 text-sm" title="Metric window">
-                {WINDOWS.map((w) => <option key={w.v} value={w.v}>{w.l}</option>)}
-              </select>
-            ) : (
-              <div className="flex items-center gap-1">
-                <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="rounded-md border px-2 py-1 text-xs" />
-                <span className="text-xs text-gray-400">→</span>
-                <input type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="rounded-md border px-2 py-1 text-xs" />
-              </div>
-            )}
-            <label className="flex items-center gap-1 text-xs text-gray-600">
-              <input type="checkbox" checked={useRange} onChange={(e) => setUseRange(e.target.checked)} /> custom range
-            </label>
+            <TimeRangePicker
+              start={startTime}
+              end={endTime}
+              label={rangeLabel}
+              onApply={(s, e, lbl) => { setStartTime(s); setEndTime(e); setRangeLabel(lbl); }}
+            />
             <button
               onClick={runProfile}
-              disabled={runningHere || !enabled || (useRange && (!startTime || !endTime))}
+              disabled={runningHere || !enabled || !startTime || !endTime}
               className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
               data-testid="perf-run-button"
             >

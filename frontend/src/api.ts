@@ -42,6 +42,24 @@ export interface Message {
   images?: string[];
 }
 
+// A ticketing connector the chat can be sent to (ServiceNow / Jira / XSOAR).
+export interface TicketConnector {
+  id: string;
+  name: string;
+  type: string;
+  label: string;
+}
+// Result of creating a ticket from a chat.
+export interface TicketResult {
+  ok: boolean;
+  number?: string;
+  url?: string;
+  detail?: string;
+  connector_type?: string;
+  attached?: boolean;        // whether the chat PDF was attached to the ticket
+  attach_error?: string;     // non-fatal: ticket created but PDF attach failed
+}
+
 export interface Me {
   subject: string;
   email: string;
@@ -1740,6 +1758,8 @@ export interface OwnerImportPreviewRow {
 }
 
 export interface OwnerImportPreview {
+  needs_sheet?: boolean;        // true when a multi-sheet workbook needs a sheet chosen first
+  sheet_names?: string[];       // available sheet/tab names (single "csv" for CSV)
   columns: string[];
   sheet: string;
   row_count: number;
@@ -1774,7 +1794,8 @@ export interface OwnerTagApplyReq {
   workload_id?: string;
   subscription_id?: string;
   tag_key: string;
-  value_source: "display_name" | "email";
+  value_source: "display_name" | "email" | "custom";
+  custom_value?: string;
   overwrite: boolean;
 }
 
@@ -1789,6 +1810,7 @@ export interface OwnerTagPlanItem {
   conflict: boolean;
   current: string;
   skipped: boolean;
+  status: "apply" | "ok" | "conflict" | "no_owner";
 }
 
 export interface OwnerTagPlan {
@@ -1799,6 +1821,8 @@ export interface OwnerTagPlan {
   applicable: number;
   conflicts: number;
   no_owner: number;
+  already_ok?: number;
+  total_resources?: number;
 }
 
 export interface OwnerTagApplyResult {
@@ -1885,6 +1909,12 @@ export const api = {
   emptyTrash: () =>
     http<{ ok: boolean; deleted: number }>("/chats/trash/empty", { method: "POST", body: "{}" }),
   listMessages: (id: string) => http<Message[]>(`/chats/${id}/messages`),
+  ticketConnectors: () => http<{ connectors: TicketConnector[] }>("/chats/ticket-connectors"),
+  sendChatToTicket: (id: string, connectorId: string) =>
+    http<TicketResult>(`/chats/${id}/send-ticket`, {
+      method: "POST",
+      body: JSON.stringify({ connector_id: connectorId }),
+    }),
   breakoutChat: (id: string, upToMessageId?: string) =>
     http<Chat>(`/chats/${id}/breakout`, {
       method: "POST",
@@ -3041,9 +3071,10 @@ export const api = {
   ownersExportUrl: (format: "csv" | "xlsx") => `${apiBase}/ownership/owners/export?format=${format}`,
   ownersExport: (format: "csv" | "xlsx") => httpBlob(`/ownership/owners/export?format=${format}`),
   ownersTemplate: () => httpBlob("/ownership/owners/template"),
-  ownersImportPreview: (file: File) => {
+  ownersImportPreview: (file: File, sheetName?: string) => {
     const form = new FormData();
     form.append("file", file, file.name);
+    if (sheetName) form.append("sheet_name", sheetName);
     return httpUpload<OwnerImportPreview>("/ownership/owners/import/preview", form);
   },
   ownersImportConfirm: (rows: Record<string, unknown>[], mapping: Record<string, string>, createAssignments: boolean) =>
@@ -3926,8 +3957,18 @@ export const api = {
   // --- Tag Intelligence (F1-F12) ---
   tagintelCensus: (sel: TagScopeSel, force = false) =>
     http<TagCensusResponse>(`/tagintel/census?${tagQ(sel, { force: force ? "1" : "0" })}`),
+  tagintelCensusDrill: (sel: TagScopeSel, q: { key: string; value?: string; subscription_id?: string; resource_type?: string; fold_casing?: boolean }) =>
+    http<TagDrillResponse>(`/tagintel/census/drill?${tagQ(sel, {
+      key: q.key,
+      ...(q.value !== undefined ? { value: q.value } : {}),
+      ...(q.subscription_id !== undefined ? { subscription_id: q.subscription_id } : {}),
+      ...(q.resource_type !== undefined ? { resource_type: q.resource_type } : {}),
+      fold_casing: q.fold_casing === false ? "0" : "1",
+    })}`),
   tagintelAsk: (body: { question: string } & TagScopeSel, signal?: AbortSignal) =>
     http<TagAskResponse>("/tagintel/ask", { method: "POST", body: JSON.stringify(tagBody(body)), signal }),
+  tagintelGenerate: (body: { question: string } & TagScopeSel, signal?: AbortSignal) =>
+    http<TagGenerateResponse>("/tagintel/generate", { method: "POST", body: JSON.stringify(tagBody(body)), signal }),
   tagintelHygiene: (sel: TagScopeSel) =>
     http<TagHygieneResponse>(`/tagintel/hygiene?${tagQ(sel)}`),
   tagintelCatalog: () => http<{ entries: TagCatalogEntry[] }>("/tagintel/catalog"),
@@ -3997,6 +4038,8 @@ export const api = {
   changeExplorerRuns: (workloadId: string) =>
     http<{ runs: ChangeRunSummary[] }>(`/changeexplorer/runs?workload_id=${encodeURIComponent(workloadId)}`),
   changeExplorerRun: (runId: string) => http<ChangeAnalysisRun>(`/changeexplorer/runs/${encodeURIComponent(runId)}`),
+  changeExplorerAsk: (body: { question: string; run_id?: string; workload_id?: string }, signal?: AbortSignal) =>
+    http<ChangeAskResponse>("/changeexplorer/ask", { method: "POST", body: JSON.stringify(body), signal }),
   changeExplorerDeleteRun: (runId: string) =>
     http<{ deleted: boolean }>(`/changeexplorer/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
   changeExplorerTrash: (workloadId: string) =>
@@ -4064,6 +4107,37 @@ export interface TagCensusResponse {
   truncated?: boolean;
   estate_cap?: number;
   census?: TagCensus;
+}
+// Power-BI-style lazy drill: key → value → subscription → resource type → resource.
+export interface TagDrillRow {
+  // value level
+  value?: string;
+  subscription_count?: number;
+  distinct_types?: number;
+  // subscription level
+  subscription_id?: string;
+  name?: string;
+  // type level
+  type?: string;
+  // resource (leaf) level
+  id?: string;
+  resource_group?: string;
+  location?: string;
+  // common
+  count?: number;
+}
+export interface TagDrillResponse {
+  available: boolean;
+  never_loaded?: boolean;
+  level?: "value" | "subscription" | "type" | "resource";
+  key?: string;
+  value?: string;
+  subscription_id?: string;
+  resource_type?: string;
+  rows?: TagDrillRow[];
+  total?: number;
+  truncated?: boolean;
+  estate_truncated?: boolean;
 }
 export interface TagAskResponse {
   available?: boolean;
@@ -4245,13 +4319,26 @@ export interface TagPolicyLadderStep {
   risk: string;
 }
 export interface TagRemediationOp {
-  type: "add_tag" | "set_tag" | "rename_key" | "normalize_value";
+  type: "add_tag" | "set_tag" | "rename_key" | "normalize_value" | "remove_key";
   key?: string;
   value?: string;
   to_key?: string;
   from_value?: string;
   to_value?: string;
   resource_ids?: string[];
+}
+// AI Tag Generator: a proposed op carries the same shape plus the AI's rationale and how many
+// resources it resolved to (so the review UI can show grounding before handoff to Remediate).
+export interface TagGeneratedOp extends TagRemediationOp {
+  rationale?: string;
+  match_count?: number;
+}
+export interface TagGenerateResponse {
+  available: boolean;
+  summary?: string;
+  operations?: TagGeneratedOp[];
+  notes?: string[];
+  answer?: string;
 }
 export interface TagRemediationItem {
   id: string;
@@ -4491,6 +4578,33 @@ export interface ChangeRunSummary {
   informationalCount: number;
   demo: boolean;
   deleted_at?: string;
+}
+
+// NL change search ("Ask AI"): the parsed filter spec + which loaded events it matched. When
+// the requested time window isn't covered by the loaded run, `in_window` is false and
+// `suggested_window` carries the window to re-scan.
+export interface ChangeQuerySpec {
+  explanation?: string;
+  resource_types?: string[];
+  categories?: string[];
+  actors?: string[];
+  actor_types?: string[];
+  operations?: string[];
+  risk_min?: string;
+  name_contains?: string;
+  keyword?: string;
+  time_window?: { start_iso: string; end_iso: string; label: string } | null;
+}
+export interface ChangeAskResponse {
+  available: boolean;
+  answer?: string;
+  spec?: ChangeQuerySpec;
+  matched_ids?: string[];
+  match_count?: number;
+  in_window?: boolean;
+  suggested_window?: { start_iso: string; end_iso: string; label: string } | null;
+  run_id?: string;
+  explanation?: string;
 }
 
 

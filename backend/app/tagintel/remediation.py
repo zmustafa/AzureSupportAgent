@@ -13,6 +13,7 @@ to ``.data/tagintel_plans.json`` for the audit trail and rollback.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -24,7 +25,13 @@ _PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_plans.json"
 _CS_PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_changesets.json"
 
 # Supported change operations.
-OPS = ("add_tag", "set_tag", "rename_key", "normalize_value")
+OPS = ("add_tag", "set_tag", "rename_key", "normalize_value", "remove_key")
+
+# Bounded concurrency for the live apply path. Writing many resources one-at-a-time is slow, so we
+# fan the per-resource tag writes out across a small worker pool while still streaming a live
+# per-resource status feed. Kept modest so a large plan never spawns an unbounded number of
+# az-CLI subprocesses / ARM calls at once.
+_APPLY_CONCURRENCY = 8
 
 
 def _now() -> str:
@@ -53,6 +60,13 @@ def _apply_to_tags(tags: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
         frm, to = op.get("from_value"), op.get("to_value", "")
         if match and (frm is None or str(out[match]) == str(frm)):
             out[match] = to
+    elif typ == "remove_key":
+        # Delete the tag key entirely (case-insensitive match). The before→after diff then has the
+        # key in `before` but absent from `after`, so the apply path emits an atomic Replace of the
+        # remaining set (the only safe way to drop a key — see `_needs_replace`).
+        match = next((k for k in out if k.lower() == key.lower()), None)
+        if match:
+            out.pop(match)
     return out
 
 
@@ -116,53 +130,66 @@ def build_plan(resources: list[dict[str, Any]], op: dict[str, Any]) -> dict[str,
     return build_plan_ops(resources, [op], op.get("resource_ids"))
 
 
+def _needs_replace(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """True when the change removes or RE-CASES a key — cases that ``Merge`` cannot express.
+
+    Azure tag keys are CASE-INSENSITIVE, so a rename like ``costcenter`` → ``CostCenter`` looks
+    like "remove costcenter, add CostCenter" to a Merge+Delete pair — and the Delete then strips
+    the very key the Merge just wrote (they're the same key to Azure), wiping the tag. Worse,
+    ``Merge`` can't change a key's case at all. The only correct primitive for a removal or a
+    case-rename is a full ``Replace`` of the resource's complete desired tag set. A key present in
+    ``before`` but absent from ``after`` (case-sensitive check — so a re-cased key counts) means we
+    must Replace."""
+    return any(k not in after for k in before)
+
+
 def _ps_for_item(item: dict[str, Any]) -> list[str]:
-    """PowerShell tag commands derived from the resource's before->after diff (so any number of
-    operations collapse into the minimal Merge/Delete set)."""
+    """PowerShell tag commands derived from the resource's before->after diff. Add/update-only
+    changes use ``Merge`` (preserve tags we don't manage); removals or case-renames use a full
+    ``Replace`` of the desired set (the only operation that can drop or re-case a key)."""
     rid = item["id"]
-    before, after = item["before"], item["after"]
-    lines: list[str] = []
+    before, after = item.get("before") or {}, item.get("after") or {}
+    if after == before:
+        return []  # no-op for this resource
+    if _needs_replace(before, after):
+        if not after:
+            return [f"Update-AzTag -ResourceId '{rid}' -Tag @{{}} -Operation Replace"]
+        pairs = "; ".join(f"'{k}' = '{v}'" for k, v in after.items())
+        return [f"Update-AzTag -ResourceId '{rid}' -Tag @{{ {pairs} }} -Operation Replace"]
     merges = {k: v for k, v in after.items() if str(before.get(k)) != str(v)}
-    if merges:
-        pairs = "; ".join(f"'{k}' = '{v}'" for k, v in merges.items())
-        lines.append(f"Update-AzTag -ResourceId '{rid}' -Tag @{{ {pairs} }} -Operation Merge")
-    removed = [k for k in before if k not in after]
-    if removed:
-        pairs = "; ".join(f"'{k}' = ''" for k in removed)
-        lines.append(f"Update-AzTag -ResourceId '{rid}' -Tag @{{ {pairs} }} -Operation Delete")
-    return lines
+    pairs = "; ".join(f"'{k}' = '{v}'" for k, v in merges.items())
+    return [f"Update-AzTag -ResourceId '{rid}' -Tag @{{ {pairs} }} -Operation Merge"]
 
 
 def _cli_for_item(item: dict[str, Any]) -> list[str]:
+    """Azure CLI tag commands derived from the resource's before->after diff. Add/update-only
+    changes use ``Merge``; removals or case-renames use a full ``Replace`` of the desired set so a
+    case-insensitive Delete can never strip the key it just wrote."""
     rid = item["id"]
-    before, after = item["before"], item["after"]
-    lines: list[str] = []
+    before, after = item.get("before") or {}, item.get("after") or {}
+    if after == before:
+        return []  # no-op for this resource
+    if _needs_replace(before, after):
+        if not after:
+            # Every tag removed → clear them all in one call.
+            return [f"az tag delete --resource-id '{rid}' --yes"]
+        tags = " ".join(f"\"{k}={v}\"" for k, v in after.items())
+        return [f"az tag update --resource-id '{rid}' --operation Replace --tags {tags}"]
     merges = {k: v for k, v in after.items() if str(before.get(k)) != str(v)}
-    if merges:
-        tags = " ".join(f"\"{k}={v}\"" for k, v in merges.items())
-        lines.append(f"az tag update --resource-id '{rid}' --operation Merge --tags {tags}")
-    removed = [k for k in before if k not in after]
-    if removed:
-        tags = " ".join(f"\"{k}={before[k]}\"" for k in removed)
-        lines.append(f"az tag update --resource-id '{rid}' --operation Delete --tags {tags}")
-    return lines
+    tags = " ".join(f"\"{k}={v}\"" for k, v in merges.items())
+    return [f"az tag update --resource-id '{rid}' --operation Merge --tags {tags}"]
 
 
 def _rollback_for_item(item: dict[str, Any]) -> list[str]:
-    """Restore the resource's prior tag value(s)."""
+    """Restore the resource's prior tag set EXACTLY via a full ``Replace`` of ``before`` — the
+    same recovery the revision-revert path uses. Replace (not Merge/Delete) so a case-rename is
+    undone cleanly and no stale key survives."""
     rid = item["id"]
-    before = item["before"]
-    after = item["after"]
-    lines: list[str] = []
-    # Keys added by the change -> delete them.
-    for k in after:
-        if k not in before:
-            lines.append(f"Update-AzTag -ResourceId '{rid}' -Tag @{{ '{k}' = '' }} -Operation Delete")
-    # Keys whose value changed or that were removed -> restore old value.
-    for k, v in before.items():
-        if k not in after or str(after.get(k)) != str(v):
-            lines.append(f"Update-AzTag -ResourceId '{rid}' -Tag @{{ '{k}' = '{v}' }} -Operation Merge")
-    return lines
+    before = item.get("before") or {}
+    if not before:
+        return [f"Update-AzTag -ResourceId '{rid}' -Tag @{{}} -Operation Replace"]
+    pairs = "; ".join(f"'{k}' = '{v}'" for k, v in before.items())
+    return [f"Update-AzTag -ResourceId '{rid}' -Tag @{{ {pairs} }} -Operation Replace"]
 
 
 def _describe_item(item: dict[str, Any]) -> str:
@@ -185,13 +212,27 @@ def _blocked(total: int, reason: str) -> dict[str, Any]:
 
 
 async def apply_plan_stream(
-    plan: dict[str, Any], connection: dict[str, Any] | None, *, actor: str = ""
+    plan: dict[str, Any], connection: dict[str, Any] | None, *, actor: str = "",
+    concurrency: int = _APPLY_CONCURRENCY,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming variant of :func:`apply_plan`. Yields a live status event for every resource as
     its tag write runs — ``{"event": "start"}`` → (``item_start`` → ``item_done``)* →
     ``{"event": "done", ...}`` — where the final ``done`` event carries the exact same summary
     keys :func:`apply_plan` returns. Same governance: a read-only / missing connection short-
-    circuits to a single blocked ``done``. Never raises on a single-resource failure."""
+    circuits to a single blocked ``done``. Never raises on a single-resource failure.
+
+    Two guarantees this enforces:
+
+    * **Snapshot-before-write.** Before any change runs we read each target resource's CURRENT
+      tags fresh from Azure and rebase the plan on them (``before`` = the live snapshot, ``after``
+      = the operations folded onto that snapshot). This makes the recovery revision exact even if
+      the cached census drifted, and the writes idempotent. If the snapshot can't be captured we
+      refuse to write (no blind changes).
+    * **Multi-threaded apply.** The per-resource writes fan out across a bounded worker pool
+      (``concurrency``) instead of running strictly one-at-a-time, so a large plan applies far
+      faster. Per-resource status events still stream as each write completes, and the running
+      ``applied``/``failed`` tallies on every ``item_done`` stay monotonic."""
+    from app.azure.tag_ops import read_current_tags
     from app.exec.command_runner import run_command_capture
 
     items = plan.get("items", [])
@@ -209,33 +250,97 @@ async def apply_plan_stream(
                                  "(Settings → Azure Tenants) or pick a writable connection, then run again.")}
         return
 
-    yield {"event": "start", "total": total, "connection": connection.get("name", ""),
+    # SNAPSHOT — always read each resource's CURRENT tags fresh from Azure BEFORE writing, so the
+    # recovery revision restores the EXACT prior state even if the cached census has drifted since
+    # the last scan. A failed snapshot means we can't guarantee a clean revert, so we refuse to
+    # write at all rather than risk an unrevertible change.
+    rids = [it.get("id", "") for it in items if it.get("id")]
+    snapshot, _snap_names, snap_err = await read_current_tags(connection, rids)
+    if snap_err:
+        yield {"event": "done",
+               **_blocked(total, "Couldn't capture a snapshot of current tag values before applying "
+                                 f"({snap_err}). No changes were made.")}
+        return
+    # Rebase every item on the authoritative live tags.
+    ops = plan.get("operations") or ([plan["op"]] if plan.get("op") else [])
+    for it in items:
+        rid = (it.get("id") or "").lower()
+        live = dict(snapshot.get(rid, {}))
+        it["before"] = live
+        if ops:
+            it["after"] = _apply_ops(live, ops)
+
+    # Drop items the live snapshot turned into no-ops (the cached plan thought there was a change,
+    # but the resource's current tags already match the desired state — or the key it meant to
+    # rename no longer exists). Applying these would write nothing yet count as "applied", which is
+    # exactly the misleading "8 applied but my tag is gone" symptom. We skip them and report the
+    # count separately so the tallies are truthful.
+    applicable = [it for it in items if (it.get("before") or {}) != (it.get("after") or {})]
+    skipped = total - len(applicable)
+    work_total = len(applicable)
+    if work_total == 0:
+        yield {"event": "done", "applied": 0, "failed": 0, "total": 0, "skipped": skipped,
+               "results": [], "blocked": False, "reason": "",
+               "note": "Nothing to apply — every selected resource already matches the desired tags."}
+        return
+
+    yield {"event": "start", "total": work_total, "skipped": skipped,
+           "connection": connection.get("name", ""),
            "subscription_count": plan.get("subscription_count", 0)}
+
+    # Fan the writes out across a bounded worker pool. Each worker pushes its item_start /
+    # item_done events onto a queue that this generator drains, so status still streams live even
+    # though the writes run concurrently.
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+    out_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def _run_one(idx: int, it: dict[str, Any]) -> None:
+        async with sem:
+            await out_q.put({"event": "item_start", "index": idx, "total": work_total, "id": it.get("id", ""),
+                             "name": it.get("name", ""), "type": it.get("type", ""),
+                             "resource_group": it.get("resource_group", ""), "change": _describe_item(it)})
+            ok = True
+            err = ""
+            try:
+                for cmd in _cli_for_item(it):
+                    cap = await run_command_capture(cmd, connection, read_only=False, confirm=True)
+                    if not cap.ok:
+                        ok = False
+                        err = (cap.error or cap.stderr or "command failed").strip()[:300]
+                        break
+            except Exception as exc:  # noqa: BLE001 — never let one resource wedge the pool.
+                ok = False
+                err = str(exc)[:300]
+            await out_q.put({"event": "item_done", "index": idx, "total": work_total, "id": it.get("id", ""),
+                             "name": it.get("name", ""), "ok": ok, "error": err})
+
+    tasks = [asyncio.create_task(_run_one(i, it)) for i, it in enumerate(applicable, start=1)]
 
     results: list[dict[str, Any]] = []
     applied = failed = 0
-    for idx, it in enumerate(items, start=1):
-        yield {"event": "item_start", "index": idx, "total": total, "id": it.get("id", ""),
-               "name": it.get("name", ""), "type": it.get("type", ""),
-               "resource_group": it.get("resource_group", ""), "change": _describe_item(it)}
-        ok = True
-        err = ""
-        for cmd in _cli_for_item(it):
-            cap = await run_command_capture(cmd, connection, read_only=False, confirm=True)
-            if not cap.ok:
-                ok = False
-                err = (cap.error or cap.stderr or "command failed").strip()[:300]
-                break
-        results.append({"id": it.get("id", ""), "name": it.get("name", ""), "ok": ok, "error": err})
-        if ok:
-            applied += 1
-        else:
-            failed += 1
-        yield {"event": "item_done", "index": idx, "total": total, "id": it.get("id", ""),
-               "name": it.get("name", ""), "ok": ok, "error": err, "applied": applied, "failed": failed}
+    pending = work_total  # number of item_done events still expected
+    try:
+        while pending > 0:
+            ev = await out_q.get()
+            if ev.get("event") == "item_done":
+                if ev.get("ok"):
+                    applied += 1
+                else:
+                    failed += 1
+                results.append({"id": ev.get("id", ""), "name": ev.get("name", ""),
+                                "ok": ev.get("ok", False), "error": ev.get("error", "")})
+                pending -= 1
+                yield {**ev, "applied": applied, "failed": failed}
+            else:
+                yield ev
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-    yield {"event": "done", "applied": applied, "failed": failed, "total": total,
-           "results": results, "blocked": False, "reason": ""}
+    yield {"event": "done", "applied": applied, "failed": failed, "total": work_total,
+           "skipped": skipped, "results": results, "blocked": False, "reason": ""}
 
 
 async def apply_plan(plan: dict[str, Any], connection: dict[str, Any] | None, *,

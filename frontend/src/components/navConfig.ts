@@ -223,7 +223,7 @@ export const INVENTORY_TAB_IDS = new Set<InventoryTab>(INVENTORY_NAV.map((n) => 
 // Sub-tabs of the Tag Intelligence screen, driven by the /tagintel/:tab URL so a refresh
 // (or a shared link) restores the same view. "census" is the default (bare /tagintel). Each
 // tab carries a one-line description shown under the title (PageIntro-style).
-export type TagIntelTab = "census" | "hygiene" | "coverage" | "cost" | "drift" | "policy" | "remediate";
+export type TagIntelTab = "census" | "hygiene" | "coverage" | "cost" | "drift" | "policy" | "generate" | "remediate";
 
 export const TAGINTEL_NAV: { id: TagIntelTab; label: string; description: string }[] = [
   {
@@ -261,6 +261,12 @@ export const TAGINTEL_NAV: { id: TagIntelTab; label: string; description: string
     label: "🛡️ Policy",
     description:
       "Generate audit, append, inherit and deny tag policies (plus an initiative) from your real tag usage, following a safe staged rollout.",
+  },
+  {
+    id: "generate",
+    label: "✨ AI Generate",
+    description:
+      "Describe what you want tagged in plain English; the AI proposes a concrete, grounded change-set (every operation resolved to real resources) that you can review and send straight to Remediate.",
   },
   {
     id: "remediate",

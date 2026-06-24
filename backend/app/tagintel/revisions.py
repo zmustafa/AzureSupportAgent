@@ -12,6 +12,7 @@ single source of truth the UI lists, visualizes (before→after diff) and revert
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,10 @@ from typing import Any
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "tag_revisions.json"
 _MAX_PER_KEY = 100  # bounded history per tenant:connection
+
+# Bounded concurrency for the revert write fan-out (mirrors the apply path). Keeps a revert over
+# many resources fast (a few seconds) so it never blows past a client/proxy connection timeout.
+_REVERT_CONCURRENCY = 8
 
 
 def _now() -> str:
@@ -208,14 +213,31 @@ async def revert_revision(
     # Snapshot CURRENT state first so the revert is redo-able.
     cur_tags, cur_names, _err = await read_current_tags(connection, rids)
 
+    # Restore each resource's prior tag set via ARM Replace, fanned out across a bounded worker
+    # pool. A sequential revert acquired an ARM token + made an ARM round-trip PER resource, so a
+    # revision spanning many resources took tens of seconds and could blow past a client/proxy
+    # connection timeout — surfacing in the UI as "TypeError: Failed to fetch". Concurrency keeps
+    # the whole revert fast (a few seconds) regardless of resource count, while the per-resource
+    # results stay in their original order for a deterministic, redo-able inverse revision.
+    sem = asyncio.Semaphore(_REVERT_CONCURRENCY)
+
+    async def _revert_one(rid: str) -> tuple[str, bool, str]:
+        target = before.get(rid, {})  # the recovery copy = restore exactly this set
+        async with sem:
+            try:
+                ok, err = await set_resource_tags(connection, rid, target, operation="Replace")
+            except Exception as exc:  # noqa: BLE001 — report, never wedge the pool.
+                ok, err = False, str(exc)[:300]
+        return rid, ok, err
+
+    outcomes = await asyncio.gather(*[_revert_one(rid) for rid in rids])
+
     results: list[dict[str, Any]] = []
     reverted = 0
     failed = 0
     after_state: dict[str, dict[str, str]] = {}
-    for rid in rids:
-        target = before.get(rid, {})  # the recovery copy = restore exactly this set
-        ok, err = await set_resource_tags(connection, rid, target, operation="Replace")
-        after_state[rid] = target
+    for rid, ok, err in outcomes:
+        after_state[rid] = before.get(rid, {})
         if ok:
             reverted += 1
         else:

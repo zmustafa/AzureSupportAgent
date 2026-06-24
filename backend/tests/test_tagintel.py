@@ -68,6 +68,54 @@ def test_census_scope_coverage(estate):
     assert by_sub["sub2"]["coverage_pct"] == 100.0
 
 
+# --------------------------------------------------------------------------- census drill (Power-BI)
+def test_drill_key_to_values(estate):
+    # Environment carries Prod (vm1), PRD (vm2), Production (st1) — folded casing keeps the key
+    # together; the 3 distinct VALUES each appear once.
+    d = analysis.drill_key(estate, "environment", sub_names={"sub1": "Sub One", "sub2": "Sub Two"})
+    assert d["level"] == "value"
+    vals = {r["value"]: r for r in d["rows"]}
+    assert set(vals) == {"Prod", "PRD", "Production"}
+    assert vals["Prod"]["count"] == 1
+    # Production is on st1 (sub2); spans 1 sub, 1 type.
+    assert vals["Production"]["subscription_count"] == 1
+
+
+def test_drill_value_to_subscription(estate):
+    d = analysis.drill_key(estate, "Environment", value="Prod", sub_names={"sub1": "Sub One"})
+    assert d["level"] == "subscription"
+    assert len(d["rows"]) == 1
+    assert d["rows"][0]["subscription_id"] == "sub1" and d["rows"][0]["name"] == "Sub One"
+    assert d["rows"][0]["count"] == 1
+
+
+def test_drill_subscription_to_type_to_resource(estate):
+    # key=Environment value=Prod sub=sub1 → its resource types → the leaf resource.
+    types = analysis.drill_key(estate, "Environment", value="Prod", subscription_id="sub1")
+    assert types["level"] == "type"
+    assert types["rows"][0]["type"] == "microsoft.compute/virtualmachines"
+    leaves = analysis.drill_key(estate, "Environment", value="Prod", subscription_id="sub1",
+                                resource_type="microsoft.compute/virtualmachines")
+    assert leaves["level"] == "resource"
+    assert leaves["rows"][0]["name"] == "app-prod-vm1"
+
+
+def test_drill_fold_casing_off(estate):
+    # With folding OFF, "environment" (lowercase) matches NO resource (the estate uses
+    # "Environment"); folding ON would. Proves the toggle works.
+    folded = analysis.drill_key(estate, "environment", fold_casing=True)
+    unfolded = analysis.drill_key(estate, "environment", fold_casing=False)
+    assert len(folded["rows"]) == 3
+    assert len(unfolded["rows"]) == 0
+
+
+def test_drill_cap_truncates():
+    big = [{"id": f"/r/{i}", "name": f"r{i}", "type": "microsoft.storage/storageaccounts",
+            "subscription_id": "sub1", "resource_group": "rg", "tags": {"env": f"v{i}"}} for i in range(250)]
+    d = analysis.drill_key(big, "env", cap=200)
+    assert d["truncated"] is True and len(d["rows"]) == 200 and d["total"] == 250
+
+
 def test_classify_key():
     assert analysis.classify_key("BillingCode") == "billing"
     assert analysis.classify_key("Owner") == "ownership"
@@ -259,8 +307,8 @@ def test_remediation_add_tag(estate):
     scripts = remediation.generate_scripts(plan)
     assert "Update-AzTag" in scripts["powershell"]
     assert "az tag update" in scripts["azcli"]
-    # Rollback deletes the newly added key.
-    assert "Delete" in scripts["rollback"]
+    # Rollback restores the prior tag set exactly via Replace (here: back to no tags).
+    assert "Replace" in scripts["rollback"]
 
 
 def test_remediation_normalize_value(estate):
@@ -277,6 +325,27 @@ def test_remediation_rename_key(estate):
     plan = remediation.build_plan(estate, op)
     after = plan["items"][0]["after"]
     assert "CostCenter" in after and "costcenter" not in after
+
+
+def test_remediation_remove_key(estate):
+    # vm1 carries CostCenter/Environment/Owner. Removing Owner drops just that key (case-insensitive).
+    op = {"type": "remove_key", "key": "owner", "resource_ids": ["/s/sub1/vm1"]}
+    plan = remediation.build_plan(estate, op)
+    item = plan["items"][0]
+    assert "Owner" in item["before"] and "Owner" not in item["after"]
+    # Other keys are preserved.
+    assert item["after"].get("CostCenter") == "FIN-204"
+    # The diff (key gone) drives an atomic Replace — never a key-colliding Delete.
+    cli = remediation._cli_for_item(item)
+    assert any("--operation Replace" in c for c in cli)
+    assert not any("Delete" in c for c in cli)
+
+
+def test_remediation_remove_missing_key_is_noop(estate):
+    # Removing a key the resource doesn't have changes nothing → no plan item.
+    op = {"type": "remove_key", "key": "DoesNotExist", "resource_ids": ["/s/sub1/vm1"]}
+    plan = remediation.build_plan(estate, op)
+    assert plan["count"] == 0
 
 
 def test_remediation_invalid_op(estate):
@@ -556,7 +625,11 @@ def test_apply_runs_commands_on_writable_connection(estate, monkeypatch):
         calls.append({"cmd": cmd, "read_only": read_only, "confirm": confirm})
         return _FakeCap(ok=True)
 
+    async def _fake_snapshot(connection, resource_ids, **kwargs):
+        return {}, {}, ""
+
     monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _fake_snapshot)
     op = {"type": "add_tag", "key": "Owner", "value": "team-x",
           "resource_ids": ["/s/sub1/disk1", "/s/sub1/vm2"]}
     plan = remediation.build_plan(estate, op)
@@ -572,12 +645,37 @@ def test_apply_reports_per_resource_failure(estate, monkeypatch):
     async def _fake_run(cmd, connection, *, read_only, confirm):
         return _FakeCap(ok=False, error="Forbidden")
 
+    async def _fake_snapshot(connection, resource_ids, **kwargs):
+        return {}, {}, ""
+
     monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _fake_snapshot)
     op = {"type": "add_tag", "key": "Owner", "value": "x", "resource_ids": ["/s/sub1/disk1"]}
     plan = remediation.build_plan(estate, op)
     result = asyncio.run(remediation.apply_plan(plan, {"id": "c1", "read_only": False}))
     assert result["applied"] == 0 and result["failed"] == 1
     assert result["results"][0]["ok"] is False and "Forbidden" in result["results"][0]["error"]
+
+
+def test_apply_blocks_when_snapshot_fails(estate, monkeypatch):
+    """A failed pre-apply snapshot must abort the write entirely (no blind, unrevertible change)."""
+    ran = []
+
+    async def _fake_run(cmd, connection, *, read_only, confirm):
+        ran.append(cmd)
+        return _FakeCap(ok=True)
+
+    async def _fail_snapshot(connection, resource_ids, **kwargs):
+        return {}, {}, "Resource Graph query failed."
+
+    monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _fail_snapshot)
+    op = {"type": "add_tag", "key": "Owner", "value": "x", "resource_ids": ["/s/sub1/disk1"]}
+    plan = remediation.build_plan(estate, op)
+    result = asyncio.run(remediation.apply_plan(plan, {"id": "c1", "read_only": False}))
+    assert result["blocked"] is True and result["applied"] == 0
+    assert "snapshot" in result["reason"].lower()
+    assert ran == []  # nothing was written
 
 
 def _drain(agen):
@@ -591,7 +689,11 @@ def test_apply_plan_stream_emits_item_events(estate, monkeypatch):
     async def _fake_run(cmd, connection, *, read_only, confirm):
         return _FakeCap(ok=True)
 
+    async def _fake_snapshot(connection, resource_ids, **kwargs):
+        return {}, {}, ""
+
     monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _fake_snapshot)
     op = {"type": "add_tag", "key": "Owner", "value": "team-x",
           "resource_ids": ["/s/sub1/disk1", "/s/sub1/vm2"]}
     plan = remediation.build_plan(estate, op)
@@ -605,7 +707,9 @@ def test_apply_plan_stream_emits_item_events(estate, monkeypatch):
     # Each item_start carries a human-readable change description.
     first_item = next(e for e in events if e["event"] == "item_start")
     assert "add Owner=team-x" in first_item["change"]
-    # Running tallies climb and the final done matches the drained apply_plan summary.
+    # Running tallies are monotonic and the final done matches the drained apply_plan summary.
+    dones = [e for e in events if e["event"] == "item_done"]
+    assert [d["applied"] for d in dones] == sorted(d["applied"] for d in dones)
     done = events[-1]
     assert done["applied"] == plan["count"] and done["failed"] == 0 and done["blocked"] is False
 
@@ -616,6 +720,59 @@ def test_apply_plan_stream_blocked_is_single_done(estate):
     events = _drain(remediation.apply_plan_stream(plan, {"id": "c1", "read_only": True}))
     assert [e["event"] for e in events] == ["done"]
     assert events[0]["blocked"] is True and "read-only" in events[0]["reason"].lower()
+
+
+def test_case_rename_uses_replace_not_delete(estate, monkeypatch):
+    """A case-only rename (costcenter -> CostCenter) MUST apply as a single Replace of the full
+    desired tag set — never Merge+Delete, because Azure tag keys are case-insensitive and the
+    Delete would strip the key the Merge just wrote (the data-loss bug)."""
+    cmds: list[str] = []
+
+    async def _fake_run(cmd, connection, *, read_only, confirm):
+        cmds.append(cmd)
+        return _FakeCap(ok=True)
+
+    async def _fake_snapshot(connection, resource_ids, **kwargs):
+        # vm2 currently carries the lower-cased key, live.
+        return {"/s/sub1/vm2": {"costcenter": "FIN-204"}}, {"/s/sub1/vm2": "app-prod-vm2"}, ""
+
+    monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _fake_snapshot)
+    op = {"type": "rename_key", "key": "costcenter", "to_key": "CostCenter",
+          "resource_ids": ["/s/sub1/vm2"]}
+    plan = remediation.build_plan(estate, op)
+    result = asyncio.run(remediation.apply_plan(plan, {"id": "c1", "read_only": False}))
+    assert result["applied"] == 1 and result["failed"] == 0
+    # Exactly one command, a Replace carrying the NEW-cased key — and NOTHING that deletes the key.
+    assert len(cmds) == 1
+    assert "--operation Replace" in cmds[0]
+    assert "CostCenter=FIN-204" in cmds[0]
+    assert "Delete" not in cmds[0]
+    assert not any("Delete" in c for c in cmds)
+
+
+def test_apply_skips_noop_after_live_snapshot(estate, monkeypatch):
+    """If the cached plan wants a change but the LIVE snapshot shows the target key isn't there
+    (e.g. already removed), the item becomes a no-op: nothing is written and it's reported as
+    skipped — never as a phantom 'applied'."""
+    cmds: list[str] = []
+
+    async def _fake_run(cmd, connection, *, read_only, confirm):
+        cmds.append(cmd)
+        return _FakeCap(ok=True)
+
+    async def _empty_snapshot(connection, resource_ids, **kwargs):
+        return {}, {}, ""  # resource currently has NO tags
+
+    monkeypatch.setattr("app.exec.command_runner.run_command_capture", _fake_run)
+    monkeypatch.setattr("app.azure.tag_ops.read_current_tags", _empty_snapshot)
+    op = {"type": "rename_key", "key": "costcenter", "to_key": "CostCenter",
+          "resource_ids": ["/s/sub1/vm2"]}
+    plan = remediation.build_plan(estate, op)
+    result = asyncio.run(remediation.apply_plan(plan, {"id": "c1", "read_only": False}))
+    assert result["applied"] == 0 and result["failed"] == 0
+    assert result["skipped"] == 1 and result["total"] == 0
+    assert cmds == []  # nothing was written — the tag was NOT wiped
 
 
 def test_describe_item_summarizes_diff():

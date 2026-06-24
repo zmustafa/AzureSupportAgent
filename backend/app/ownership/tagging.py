@@ -14,9 +14,14 @@ Reuses the shared tag plumbing (:mod:`app.azure.tag_ops`) and resolver
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-VALUE_SOURCES = ("display_name", "email")
+VALUE_SOURCES = ("display_name", "email", "custom")
+
+# Bounded concurrency for the live owner-tag apply path — fan the per-resource ARM writes out
+# across a small worker pool instead of one-at-a-time, while keeping the count modest.
+_APPLY_CONCURRENCY = 8
 
 
 def _owner_value(owners: list[dict[str, Any]], value_source: str) -> str:
@@ -36,15 +41,25 @@ def build_tag_plan(
     tag_key: str,
     value_source: str = "display_name",
     overwrite: bool = False,
+    custom_value: str = "",
 ) -> dict[str, Any]:
     """Per-resource owner-tag plan. ``resources`` are inventory rows ({id,name,tags,...,
-    subscription_id, resource_group, resource_type, tags}). For each resource we resolve its
-    effective owner and, when found, stage the ``tag_key`` tag. Resources already carrying the
-    same value are skipped; existing different values are only changed when ``overwrite``.
+    subscription_id, resource_group, resource_type, tags}). EVERY resource is returned in
+    ``items`` with a ``status`` so the user always sees the full picture, even when nothing needs
+    to change:
+      * ``apply``       — will set/overwrite the tag,
+      * ``ok``          — already carries the desired value (skipped),
+      * ``conflict``    — has a different value and overwrite is off (skipped),
+      * ``no_owner``    — no resolvable owner / no value (skipped).
+
+    When ``value_source == "custom"`` the literal ``custom_value`` is staged on EVERY resource
+    (no owner resolution needed) — used to stamp a fixed value (e.g. a team/cost-center) fleet-wide.
     """
     from app.ownership import resolve as own_resolve
 
-    ctx = own_resolve.build_context(tenant_id)
+    is_custom = value_source == "custom"
+    custom = (custom_value or "").strip()
+    ctx = None if is_custom else own_resolve.build_context(tenant_id)
     key = (tag_key or "owner").strip()
     items: list[dict[str, Any]] = []
     no_owner = 0
@@ -53,36 +68,42 @@ def build_tag_plan(
         if not rid:
             continue
         tags = {str(k): str(v) for k, v in (r.get("tags") or {}).items()}
-        res = own_resolve.resolve_owner(
-            tenant_id, "resource", rid,
-            tags=r.get("tags"), subscription_id=r.get("subscription_id", ""),
-            resource_group=r.get("resource_group", ""), ctx=ctx,
-        )
-        if res.get("unowned"):
-            no_owner += 1
-            continue
-        value = _owner_value(res.get("owners", []), value_source)
-        if not value:
-            no_owner += 1
-            continue
+        base = {
+            "id": rid, "name": r.get("name", ""), "resource_group": r.get("resource_group", ""),
+            "subscription_id": r.get("subscription_id", ""),
+        }
+        # Resolve the value to stage.
+        if is_custom:
+            value = custom
+        else:
+            res = own_resolve.resolve_owner(
+                tenant_id, "resource", rid,
+                tags=r.get("tags"), subscription_id=r.get("subscription_id", ""),
+                resource_group=r.get("resource_group", ""), ctx=ctx,
+            )
+            value = "" if res.get("unowned") else _owner_value(res.get("owners", []), value_source)
         cur = tags.get(key)
+
+        if not value:
+            # No resolvable owner / empty value — show it, but it can't be applied.
+            no_owner += 1
+            items.append({**base, "before": tags, "after": tags, "owner": "", "current": cur or "",
+                          "conflict": False, "skipped": True, "status": "no_owner"})
+            continue
         if cur == value:
-            continue  # already correct
+            items.append({**base, "before": tags, "after": tags, "owner": value, "current": cur,
+                          "conflict": False, "skipped": True, "status": "ok"})
+            continue
         if cur is not None and not overwrite:
-            # Existing different value and overwrite disabled → record as a skipped conflict.
-            items.append({
-                "id": rid, "name": r.get("name", ""), "resource_group": r.get("resource_group", ""),
-                "subscription_id": r.get("subscription_id", ""), "before": tags, "after": tags,
-                "owner": value, "conflict": True, "current": cur, "skipped": True,
-            })
+            # Existing different value and overwrite disabled → a skipped conflict.
+            items.append({**base, "before": tags, "after": tags, "owner": value, "current": cur,
+                          "conflict": True, "skipped": True, "status": "conflict"})
             continue
         after = dict(tags)
         after[key] = value
-        items.append({
-            "id": rid, "name": r.get("name", ""), "resource_group": r.get("resource_group", ""),
-            "subscription_id": r.get("subscription_id", ""), "before": tags, "after": after,
-            "owner": value, "conflict": cur is not None, "current": cur or "", "skipped": False,
-        })
+        items.append({**base, "before": tags, "after": after, "owner": value, "current": cur or "",
+                      "conflict": cur is not None, "skipped": False, "status": "apply"})
+
     applicable = [it for it in items if not it.get("skipped")]
     return {
         "tag_key": key,
@@ -92,6 +113,8 @@ def build_tag_plan(
         "applicable": len(applicable),
         "conflicts": sum(1 for it in items if it.get("conflict")),
         "no_owner": no_owner,
+        "already_ok": sum(1 for it in items if it.get("status") == "ok"),
+        "total_resources": len(items),
     }
 
 
@@ -106,12 +129,8 @@ async def apply_tag_plan(
     """Apply the applicable items of an owner-tag plan, capturing a revertible revision first.
     Returns ``{ok, applied, failed, total, revision, results}``."""
     from app.azure.tag_ops import read_current_tags, set_resource_tags
-    from app.ownership.writeback import writeback_enabled
     from app.tagintel import revisions
 
-    if not writeback_enabled():
-        return {"ok": False, "error": "Owner-tag write-back is disabled. Enable it in Settings first.",
-                "applied": 0, "failed": 0, "total": 0, "revision": None, "results": []}
     if connection is None:
         return {"ok": False, "error": "No Azure connection configured.",
                 "applied": 0, "failed": 0, "total": 0, "revision": None, "results": []}
@@ -123,22 +142,38 @@ async def apply_tag_plan(
         return {"ok": True, "applied": 0, "failed": 0, "total": 0, "revision": None, "results": [],
                 "note": "Nothing to apply."}
 
-    # Recovery copy: the resources' CURRENT tags, read fresh from Azure.
+    # Recovery copy: the resources' CURRENT tags, read fresh from Azure. We ALWAYS snapshot before
+    # writing so the revision can restore the exact prior state — a failed read aborts the apply
+    # entirely rather than risk an unrevertible change.
     before, names, rerr = await read_current_tags(connection, rids)
-    if rerr and not before:
-        return {"ok": False, "error": rerr, "applied": 0, "failed": 0, "total": 0, "revision": None, "results": []}
+    if rerr:
+        return {"ok": False,
+                "error": f"Couldn't capture a snapshot of current tags before applying ({rerr}). "
+                         "No changes were made.",
+                "applied": 0, "failed": 0, "total": 0, "revision": None, "results": []}
+
+    # Apply across a bounded worker pool (multi-threaded) rather than strictly sequentially.
+    sem = asyncio.Semaphore(_APPLY_CONCURRENCY)
+
+    async def _apply_one(it: dict[str, Any]) -> tuple[dict[str, Any], bool, str]:
+        async with sem:
+            try:
+                ok, err = await set_resource_tags(connection, it["id"], {key: it["owner"]}, operation="Merge")
+            except Exception as exc:  # noqa: BLE001 — report, never wedge the pool.
+                ok, err = False, str(exc)[:300]
+            return it, ok, err
+
+    outcomes = await asyncio.gather(*[_apply_one(it) for it in targets])
 
     results: list[dict[str, Any]] = []
     after_state: dict[str, dict[str, str]] = {}
     applied = 0
     failed = 0
-    for it in targets:
+    for it, ok, err in outcomes:
         rid = it["id"]
-        value = it["owner"]
-        ok, err = await set_resource_tags(connection, rid, {key: value}, operation="Merge")
         # The after-state reflects the merge onto the freshly-read before (authoritative).
         base = dict(before.get(rid.lower(), {}))
-        base[key] = value
+        base[key] = it["owner"]
         after_state[rid.lower()] = base
         if ok:
             applied += 1

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -829,9 +829,9 @@ class TagWritebackIn(BaseModel):
 
 @router.get("/writeback/status")
 async def writeback_status(principal: Principal = Depends(read_dep)) -> dict[str, Any]:
-    from app.ownership import writeback
-
-    return {"enabled": writeback.writeback_enabled()}
+    # Owner-tag write-back is always available now (the per-action confirmation is the safety,
+    # mirroring Tag Intelligence). Kept for backward compatibility with existing callers.
+    return {"enabled": True}
 
 
 @router.post("/writeback/iac")
@@ -918,25 +918,42 @@ async def owners_template(_: Principal = Depends(read_dep)):
 @router.post("/owners/import/preview")
 async def import_owners_preview(
     file: UploadFile = File(...),
+    sheet_name: str = Form(""),
     principal: Principal = Depends(read_dep),
 ):
     """Parse an uploaded CSV/Excel, AI-infer the column→field mapping, and return a preview
     (the parsed columns, an AI-suggested mapping with confidence, and projected owner rows) so
-    the user can confirm BEFORE anything is written."""
+    the user can confirm BEFORE anything is written.
+
+    When the file is a multi-sheet workbook and no ``sheet_name`` is chosen, returns
+    ``{needs_sheet: True, sheet_names: [...]}`` WITHOUT running the AI inference, so the UI can
+    ask the user which sheet to analyze first."""
     from app.ownership import importer, sheet
 
     raw = await file.read()
     if len(raw) > 8 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 8 MB).")
+
+    # If a multi-sheet workbook arrives without a chosen sheet, ask the user to pick first
+    # (avoids running the AI mapping on the wrong/arbitrary sheet).
     try:
-        parsed = sheet.parse_sheet(file.filename or "upload.csv", raw)
+        sheet_names = sheet.list_sheet_names(file.filename or "upload.csv", raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if len(sheet_names) > 1 and not sheet_name.strip():
+        return {"needs_sheet": True, "sheet_names": sheet_names}
+
+    try:
+        parsed = sheet.parse_sheet(file.filename or "upload.csv", raw, sheet_name.strip() or None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     inferred = await importer.infer_mapping(parsed["columns"], parsed["rows"])
     preview = importer.build_preview(parsed["rows"], inferred["mapping"])
     return {
+        "needs_sheet": False,
         "columns": parsed["columns"],
         "sheet": parsed["sheet"],
+        "sheet_names": parsed.get("sheet_names", [parsed["sheet"]]),
         "row_count": parsed["row_count"],
         "sample": parsed["rows"][:20],
         "rows": parsed["rows"][:5000],
@@ -1033,7 +1050,8 @@ class TagApplyPreviewIn(BaseModel):
     workload_id: str = ""
     subscription_id: str = ""
     tag_key: str = "owner"
-    value_source: str = "display_name"   # display_name | email
+    value_source: str = "display_name"   # display_name | email | custom
+    custom_value: str = ""                # literal value when value_source == "custom"
     overwrite: bool = False
 
 
@@ -1051,6 +1069,7 @@ async def tag_apply_preview(body: TagApplyPreviewIn, principal: Principal = Depe
     plan = tagging.build_tag_plan(
         principal.tenant_id, resources,
         tag_key=body.tag_key, value_source=body.value_source, overwrite=body.overwrite,
+        custom_value=body.custom_value,
     )
     return plan
 
@@ -1065,6 +1084,8 @@ async def tag_apply(body: TagApplyIn, principal: Principal = Depends(write_dep),
     Requires explicit approval + ownership write-back enabled."""
     if not body.approved:
         raise HTTPException(status_code=400, detail="Explicit approval is required to apply tags.")
+    if body.value_source == "custom" and not body.custom_value.strip():
+        raise HTTPException(status_code=400, detail="A custom tag value is required.")
     from app.core.azure_connections import connection_for_scope
     from app.ownership import tagging
 
@@ -1075,6 +1096,7 @@ async def tag_apply(body: TagApplyIn, principal: Principal = Depends(write_dep),
     plan = tagging.build_tag_plan(
         principal.tenant_id, resources,
         tag_key=body.tag_key, value_source=body.value_source, overwrite=body.overwrite,
+        custom_value=body.custom_value,
     )
     actor = principal.display_name or principal.email or principal.subject
     result = await tagging.apply_tag_plan(

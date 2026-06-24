@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from app.changeexplorer import demo, export as export_mod, runs as runs_store, service
+from app.changeexplorer import demo, export as export_mod, nlquery, runs as runs_store, service
 from app.core.security import Principal, require_permission
 
 router = APIRouter(prefix="/changeexplorer", tags=["changeexplorer"])
@@ -155,6 +155,49 @@ async def get_run(run_id: str, principal: Principal = Depends(require_admin)):
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     return run
+
+
+class AskReq(BaseModel):
+    question: str
+    run_id: str = ""
+    workload_id: str = ""
+
+
+@router.post("/ask")
+async def ask(req: AskReq, principal: Principal = Depends(require_admin)):
+    """Natural-language change search. Parses a question like 'show me all VMs modified yesterday'
+    into a structured filter spec (time window resolved deterministically; the rest AI-grounded
+    against the run's facets), applies it to the loaded run's events, and returns the matches.
+
+    When the parsed time window falls OUTSIDE the loaded run's window, no events are returned and
+    a ``suggested_window`` is surfaced so the client can offer a one-click re-scan. Read-only."""
+    from datetime import datetime, timezone
+
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="question is required.")
+    run = runs_store.get_run(principal.tenant_id, req.run_id) if req.run_id else None
+    if run is None and req.workload_id:
+        hist = runs_store.list_runs(principal.tenant_id, req.workload_id)
+        if hist:
+            run = runs_store.get_run(principal.tenant_id, hist[0]["runId"])
+    if run is None:
+        return {"available": False, "answer": "Run a change analysis first, then ask about it."}
+
+    facets = run.get("facets", {}) or {}
+    spec = await nlquery.parse_query(req.question, now=datetime.now(timezone.utc), facets=facets)
+    window = spec.get("time_window")
+    in_window = nlquery.window_in_run(window, run.get("startTime", ""), run.get("endTime", ""))
+    matched = nlquery.apply_spec(run.get("events", []) or [], spec) if in_window else []
+    return {
+        "available": True,
+        "spec": spec,
+        "matched_ids": [e.get("changeId", "") for e in matched],
+        "match_count": len(matched),
+        "in_window": in_window,
+        "suggested_window": (window if not in_window else None),
+        "run_id": run.get("runId", ""),
+        "explanation": spec.get("explanation", ""),
+    }
 
 
 @router.delete("/runs/{run_id}")

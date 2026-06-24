@@ -1,13 +1,15 @@
 // Ownership: AI-based owner import, owner→tag apply, and the shared tag-revisions (recovery +
 // revert) UI. Mounted from the Ownership Directory tab and reused (TagRevisionsPanel) by Tag
 // Intelligence.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   downloadBlob,
   type OwnerImportPreview,
   type OwnerTagPlan,
+  type OwnerTagPlanItem,
+  type OwnerTagApplyResult,
   type TagRevisionDiffRow,
   type Workload,
 } from "../../api";
@@ -15,6 +17,32 @@ import { formatError } from "../../utils/format";
 
 const btn = "rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50";
 const btnPrimary = "rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-dark disabled:opacity-50";
+
+// Per-resource status badge for the owner→tag plan preview (every resource is shown).
+function statusBadge(status: OwnerTagPlanItem["status"], skipped: boolean) {
+  if (status === "apply") return <span className="text-green-600">apply</span>;
+  if (status === "ok") return <span className="text-emerald-600">already set</span>;
+  if (status === "conflict") return <span className="text-amber-600">conflict (skipped)</span>;
+  if (status === "no_owner") return <span className="text-gray-400">no owner (skipped)</span>;
+  return <span className="text-gray-400">{skipped ? "skipped" : "apply"}</span>;
+}
+
+// Azure Portal deep-link for a resource's ARM id (opens the resource overview blade).
+function PortalLink({ id }: { id: string }) {
+  if (!id) return null;
+  return (
+    <a
+      href={`https://portal.azure.com/#@/resource${id}/overview`}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title="Open in Azure Portal"
+      className="text-gray-300 transition hover:text-brand"
+    >
+      ↗
+    </a>
+  );
+}
 
 // ============================================================ Export buttons
 export function OwnerExportButtons() {
@@ -46,12 +74,26 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState<string>("");
+  // Multi-sheet workbook: the picked file + the sheet names to choose from before AI analysis.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const currentFile = useRef<File | null>(null);
 
-  const onFile = async (file: File) => {
+  const runPreview = async (file: File, sheetName?: string) => {
     setBusy(true);
     setErr("");
+    currentFile.current = file;
     try {
-      const p = await api.ownersImportPreview(file);
+      const p = await api.ownersImportPreview(file, sheetName);
+      if (p.needs_sheet && (p.sheet_names?.length ?? 0) > 1) {
+        // A multi-sheet workbook — ask which sheet to analyze before running the AI mapping.
+        setPendingFile(file);
+        setSheetNames(p.sheet_names ?? []);
+        setPreview(null);
+        return;
+      }
+      setSheetNames([]);
+      setPendingFile(null);
       setPreview(p);
       setMapping(p.mapping);
     } catch (e) {
@@ -60,6 +102,8 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
       setBusy(false);
     }
   };
+
+  const onFile = (file: File) => void runPreview(file);
 
   const confirm = async () => {
     if (!preview) return;
@@ -100,7 +144,7 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
           you can map owners to resources later.
         </p>
 
-        {!preview && (
+        {!preview && sheetNames.length === 0 && (
           <div className="mt-4 rounded-xl border-2 border-dashed p-8 text-center">
             <input
               type="file"
@@ -120,6 +164,31 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
           </div>
         )}
 
+        {/* Multi-sheet workbook: pick a sheet/tab before the AI column analysis runs. */}
+        {!preview && sheetNames.length > 0 && pendingFile && (
+          <div className="mt-4 rounded-xl border p-4">
+            <div className="text-sm font-medium text-gray-800">This workbook has multiple sheets</div>
+            <p className="mt-1 text-xs text-gray-500">Pick the sheet to analyze — the AI will infer the column mapping from it.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {sheetNames.map((s) => (
+                <button
+                  key={s}
+                  disabled={busy}
+                  onClick={() => void runPreview(pendingFile, s)}
+                  className="flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm text-gray-700 hover:border-brand hover:bg-brand/5 disabled:opacity-50"
+                >
+                  <span>📄</span>
+                  <span className="min-w-0 flex-1 truncate">{s}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              {busy && <span className="text-xs text-violet-600">Analyzing the selected sheet…</span>}
+              <button onClick={() => { setSheetNames([]); setPendingFile(null); }} className="ml-auto text-xs text-gray-500 underline hover:text-gray-700">Choose a different file</button>
+            </div>
+          </div>
+        )}
+
         {err && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
         {done && <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{done}</div>}
 
@@ -128,7 +197,20 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
             {/* AI mapping */}
             <div className="rounded-xl border p-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Column mapping</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Column mapping</span>
+                  {(preview.sheet_names?.length ?? 0) > 1 && pendingFile === null && (
+                    <select
+                      value={preview.sheet}
+                      disabled={busy}
+                      onChange={(e) => { const f = currentFile.current; if (f) void runPreview(f, e.target.value); }}
+                      className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600"
+                      title="Switch sheet (re-runs the AI mapping)"
+                    >
+                      {(preview.sheet_names ?? []).map((s) => <option key={s} value={s}>📄 {s}</option>)}
+                    </select>
+                  )}
+                </div>
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${preview.ai ? "bg-violet-100 text-violet-700" : "bg-gray-100 text-gray-500"}`}>
                   {preview.ai ? `AI · ${Math.round(preview.confidence * 100)}%` : "heuristic"}
                 </span>
@@ -197,7 +279,7 @@ export function OwnerImportModal({ onClose, onImported }: { onClose: () => void;
               <button className={btnPrimary} disabled={busy || !mapping.display_name} onClick={confirm}>
                 {busy ? "Importing…" : `Import ${pv?.valid ?? 0} owner(s)`}
               </button>
-              <button className={btn} onClick={() => { setPreview(null); setErr(""); }}>Choose a different file</button>
+              <button className={btn} onClick={() => { setPreview(null); setErr(""); setSheetNames([]); setPendingFile(null); }}>Choose a different file</button>
             </div>
             {preview.row_count > preview.rows.length && (
               <div className="text-[11px] text-amber-600">
@@ -226,36 +308,44 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
   const [workloadId, setWorkloadId] = useState("");
   const [subscriptionId, setSubscriptionId] = useState("");
   const [tagKey, setTagKey] = useState("owner");
-  const [valueSource, setValueSource] = useState<"display_name" | "email">("display_name");
+  const [valueSource, setValueSource] = useState<"display_name" | "email" | "custom">("display_name");
+  const [customValue, setCustomValue] = useState("");
   const [overwrite, setOverwrite] = useState(false);
   const [plan, setPlan] = useState<OwnerTagPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<string>("");
+  const [applyRes, setApplyRes] = useState<OwnerTagApplyResult | null>(null);   // per-resource apply outcomes
+  const [confirmApply, setConfirmApply] = useState(false);   // write-warning gate before the live write
 
   const req = () => ({
     scope_kind: scopeKind, workload_id: workloadId, subscription_id: subscriptionId,
-    tag_key: tagKey, value_source: valueSource, overwrite,
+    tag_key: tagKey, value_source: valueSource, custom_value: customValue, overwrite,
   });
 
   const doPreview = async () => {
-    setBusy(true); setErr(""); setResult("");
+    setBusy(true); setErr(""); setResult(""); setApplyRes(null);
     try {
       setPlan(await api.ownerTagApplyPreview(req()));
     } catch (e) { setErr(formatError(e)); } finally { setBusy(false); }
   };
   const doApply = async () => {
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setConfirmApply(false);
     try {
       const r = await api.ownerTagApply({ ...req(), approved: true });
       if (r.ok || r.applied) {
+        setApplyRes(r);
         setResult(`Applied to ${r.applied} resource(s)${r.failed ? `, ${r.failed} failed` : ""}. A recovery revision was saved — you can revert it.`);
         onApplied();
       } else {
+        setApplyRes(r);
         setErr(r.error || "Apply failed.");
       }
     } catch (e) { setErr(formatError(e)); } finally { setBusy(false); }
   };
+
+  // Map plan items by id so the apply-result table can show friendly names / target values.
+  const planById = new Map((plan?.items ?? []).map((it) => [it.id, it]));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -297,10 +387,22 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
           </label>
           <label className="text-xs">
             <span className="mb-1 block font-medium text-gray-600">Tag value</span>
-            <select value={valueSource} onChange={(e) => { setValueSource(e.target.value as "display_name" | "email"); setPlan(null); }} className="w-full rounded border px-2 py-1.5">
+            <select value={valueSource} onChange={(e) => { setValueSource(e.target.value as "display_name" | "email" | "custom"); setPlan(null); }} className="w-full rounded border px-2 py-1.5">
               <option value="display_name">Owner display name</option>
               <option value="email">Owner email</option>
+              <option value="custom">Custom value…</option>
             </select>
+            {valueSource === "custom" && (
+              <input
+                value={customValue}
+                onChange={(e) => { setCustomValue(e.target.value); setPlan(null); }}
+                placeholder="e.g. platform-team"
+                className="mt-1.5 w-full rounded border px-2 py-1.5"
+              />
+            )}
+            {valueSource === "custom" && (
+              <span className="mt-1 block text-[11px] text-gray-400">Applied to every resource in scope (no owner lookup).</span>
+            )}
           </label>
         </div>
         <label className="mt-2 flex items-center gap-2 text-xs text-gray-600">
@@ -311,10 +413,53 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
         {err && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
         {result && <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{result}</div>}
 
+        {applyRes && (
+          <div className="mt-3 rounded-xl border">
+            <div className="flex flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
+              <span className="text-emerald-600"><b>{applyRes.applied}</b> applied</span>
+              {applyRes.failed > 0 && <span className="text-red-600"><b>{applyRes.failed}</b> failed</span>}
+              <span className="text-gray-400">of {applyRes.total} targeted</span>
+              {applyRes.revision && <span className="text-gray-500">revision saved — revertible</span>}
+            </div>
+            <div className="max-h-56 overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-gray-50 text-left text-gray-400">
+                  <tr>
+                    <th className="px-2 py-1 font-medium">Resource</th>
+                    <th className="px-2 py-1 font-medium">{applyRes.revision ? (plan?.tag_key ?? "tag") : "tag"}</th>
+                    <th className="px-2 py-1 font-medium">Result</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {applyRes.results.map((r) => {
+                    const it = planById.get(r.id);
+                    const name = it?.name || r.id.split("/").pop() || r.id;
+                    return (
+                      <tr key={r.id}>
+                        <td className="px-2 py-1 text-gray-800" title={r.id}>
+                          <span className="inline-flex items-center gap-1.5">{name} <PortalLink id={r.id} /></span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-600">{it?.owner ?? ""}</td>
+                        <td className="px-2 py-1">
+                          {r.ok
+                            ? <span className="text-emerald-600">✓ applied</span>
+                            : <span className="text-red-600" title={r.error}>✕ {r.error || "failed"}</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {plan && !result && (
           <div className="mt-4 rounded-xl border">
             <div className="flex flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
               <span><b className="text-gray-700">{plan.applicable}</b> to apply</span>
+              <span className="text-gray-400">of {plan.total_resources ?? plan.items.length} resource(s)</span>
+              {(plan.already_ok ?? 0) > 0 && <span className="text-emerald-600">{plan.already_ok} already set</span>}
               {plan.conflicts > 0 && <span className="text-amber-600">{plan.conflicts} conflict(s){overwrite ? " (will overwrite)" : " (skipped)"}</span>}
               {plan.no_owner > 0 && <span className="text-gray-500">{plan.no_owner} unowned (skipped)</span>}
             </div>
@@ -324,11 +469,18 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
                   <tr><th className="px-2 py-1 font-medium">Resource</th><th className="px-2 py-1 font-medium">{plan.tag_key}</th><th className="px-2 py-1 font-medium">Status</th></tr>
                 </thead>
                 <tbody className="divide-y">
-                  {plan.items.slice(0, 100).map((it) => (
+                  {plan.items.slice(0, 200).map((it) => (
                     <tr key={it.id}>
-                      <td className="px-2 py-1 text-gray-800">{it.name}</td>
-                      <td className="px-2 py-1"><span className="text-gray-400 line-through">{it.current}</span> {it.skipped ? "" : <span className="text-green-700">{it.owner}</span>}</td>
-                      <td className="px-2 py-1">{it.skipped ? <span className="text-amber-600">skipped</span> : <span className="text-green-600">apply</span>}</td>
+                      <td className="px-2 py-1 text-gray-800" title={it.id}>
+                        <span className="inline-flex items-center gap-1.5">{it.name} <PortalLink id={it.id} /></span>
+                      </td>
+                      <td className="px-2 py-1">
+                        {it.current && <span className="text-gray-400 line-through">{it.current}</span>}{" "}
+                        {it.status === "apply" ? <span className="text-green-700">{it.owner}</span>
+                          : it.status === "ok" ? <span className="text-emerald-600">{it.owner}</span>
+                          : it.owner ? <span className="text-gray-500">{it.owner}</span> : null}
+                      </td>
+                      <td className="px-2 py-1">{statusBadge(it.status, it.skipped)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -337,21 +489,36 @@ export function OwnerTagApplyModal({ onClose, onApplied }: { onClose: () => void
           </div>
         )}
 
+        {confirmApply && plan && !result && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+            <span className="text-xs text-red-700">⚠ This writes the <b>{plan.tag_key}</b> tag to <b>{plan.applicable}</b> live Azure resource(s){overwrite ? " and overwrites existing values" : ""}. A recovery copy is saved first, so it can be reverted. Continue?</span>
+            <div className="ml-auto flex gap-2">
+              <button className={btn} onClick={() => setConfirmApply(false)}>Cancel</button>
+              <button className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700" onClick={doApply}>Yes, write to Azure</button>
+            </div>
+          </div>
+        )}
+
         {!result && (
           <div className="mt-4 flex items-center gap-2">
             {!plan ? (
-              <button className={btnPrimary} disabled={busy || (scopeKind === "workload" ? !workloadId : !subscriptionId)} onClick={doPreview}>
+              <button className={btnPrimary} disabled={busy || (scopeKind === "workload" ? !workloadId : !subscriptionId) || (valueSource === "custom" && !customValue.trim())} onClick={doPreview}>
                 {busy ? "Building plan…" : "Preview plan"}
               </button>
             ) : (
               <>
-                <button className={btnPrimary} disabled={busy || plan.applicable === 0} onClick={doApply}>
+                <button className={btnPrimary} disabled={busy || plan.applicable === 0 || confirmApply} onClick={() => setConfirmApply(true)}>
                   {busy ? "Applying…" : `Apply to ${plan.applicable} resource(s)`}
                 </button>
-                <button className={btn} onClick={() => setPlan(null)}>Edit</button>
+                <button className={btn} onClick={() => { setPlan(null); setConfirmApply(false); }}>Edit</button>
               </>
             )}
             <button className={btn} onClick={onClose}>Cancel</button>
+          </div>
+        )}
+        {result && (
+          <div className="mt-4 flex justify-end">
+            <button className={btnPrimary} onClick={onClose}>Done</button>
           </div>
         )}
       </div>
@@ -388,21 +555,28 @@ export function TagRevisionsPanel({ mode }: { mode: "ownership" | "tagintel" }) 
 
   return (
     <div className="rounded-xl border bg-white">
-      <div className="border-b px-4 py-2.5">
-        <div className="text-sm font-semibold text-gray-800">Tag change history</div>
-        <div className="text-xs text-gray-500">Every applied tag change keeps a recovery copy of the prior tags — expand to visualize, or revert to restore them exactly.</div>
+      <div className="flex items-center justify-between border-b px-4 py-1.5">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-gray-800">Tag change history</div>
+          <div className="text-[11px] text-gray-500">Every applied tag change keeps a recovery copy of the prior tags — expand to visualize, or revert to restore them exactly.</div>
+        </div>
+        {revs.length > 0 && (
+          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">{revs.length} change{revs.length === 1 ? "" : "s"}</span>
+        )}
       </div>
       {msg && <div className="border-b bg-brand/5 px-4 py-1.5 text-xs text-brand">{msg}</div>}
       {revs.length === 0 ? (
         <div className="p-6 text-center text-xs text-gray-400">No tag changes recorded yet.</div>
       ) : (
-        <ul className="divide-y">
+        // Cap the history height and scroll within — the list grows unbounded as changes accumulate,
+        // so it must never push the rest of the page down. ~5 rows visible before scrolling.
+        <ul className="max-h-[11rem] divide-y overflow-y-auto">
           {revs.map((r) => (
-            <li key={r.id} className="px-4 py-2.5">
+            <li key={r.id} className="px-4 py-1.5">
               <div className="flex items-center gap-2">
                 <button onClick={() => setOpenId(openId === r.id ? "" : r.id)} className="min-w-0 flex-1 text-left">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-gray-800">{r.description || "(tag change)"}</span>
+                    <span className="truncate text-xs font-medium text-gray-800">{r.description || "(tag change)"}</span>
                     {r.status === "reverted" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">reverted</span>}
                     {r.source.startsWith("revert") && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700">revert</span>}
                   </div>

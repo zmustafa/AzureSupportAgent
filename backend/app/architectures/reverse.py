@@ -261,6 +261,50 @@ async def dump_resources(
         ]
         by_id = {r["id"].lower(): r for r in resources if r["id"]}
 
+        # --- Resource GROUPS in scope (taggable containers) ---
+        # Resource groups live in the `resourcecontainers` table, NOT `Resources`, so the pass-1
+        # query above never returns them. Include the RGs this workload touches so tag operations
+        # (apply / remove / revert) cover RG-level tags alongside their resources. In scope:
+        #   * every RG in a whole-subscription member,
+        #   * explicit resource-group nodes (rg_pairs),
+        #   * the RGs that contain the workload's member resources (resource_rgs).
+        rg_targets = set(scope["rg_pairs"]) | set(scope["resource_rgs"])
+        sub_set = {s.lower() for s in scope["subs"]}
+        rg_pred_clauses: list[str] = []
+        if scope["subs"]:
+            joined_subs = ", ".join(f"'{_esc(s)}'" for s in sorted(scope["subs"]))
+            rg_pred_clauses.append(f"subscriptionId in~ ({joined_subs})")
+        for guid, rg in sorted({(g, r) for (g, r) in rg_targets if g.lower() not in sub_set}):
+            rg_pred_clauses.append(f"(subscriptionId =~ '{_esc(guid)}' and name =~ '{_esc(rg)}')")
+        if rg_pred_clauses:
+            rg_kql = (
+                "resourcecontainers "
+                "| where type =~ 'microsoft.resources/subscriptions/resourcegroups' "
+                f"| where {' or '.join(rg_pred_clauses)} "
+                "| project id, name, type, location, subscriptionId, tags | limit 1000"
+            )
+            rg_cap = await run_kql_capture(rg_kql, connection, output="json", session_config_dir=config_dir)
+            if rg_cap.ok:
+                rg_pair_set = {(g.lower(), r.lower()) for (g, r) in rg_targets}
+                for rr in _parse_rows(rg_cap.stdout):
+                    rsub = (rr.get("subscriptionId") or "").lower()
+                    rname = (rr.get("name") or "").lower()
+                    # Membership: whole-sub RG, or an explicitly-targeted (sub, rg) pair.
+                    if rsub not in sub_set and (rsub, rname) not in rg_pair_set:
+                        continue
+                    rid = rr.get("id", "")
+                    if not rid or rid.lower() in by_id:
+                        continue
+                    rg_entry = {
+                        "id": rid, "name": rr.get("name", ""), "type": rr.get("type", ""),
+                        "kind": None, "location": rr.get("location"),
+                        "resourceGroup": rr.get("name", ""), "subscriptionId": rr.get("subscriptionId"),
+                        "sku": None, "identity": None, "zones": None, "tags": rr.get("tags"),
+                        "properties": None,
+                    }
+                    resources.append(rg_entry)
+                    by_id[rid.lower()] = rg_entry
+
         # --- Pass 2: fetch trimmed properties in small id-chunks, within budget ---
         ids = [r["id"] for r in resources if r["id"]]
         used = sum(len(json.dumps(r, separators=(",", ":"))) for r in resources)
