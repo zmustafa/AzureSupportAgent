@@ -406,13 +406,17 @@ async def purge_know_me_orphan_endpoint(architecture_id: str, principal: Princip
     index as "(deleted architecture) · orphaned" and can't be cleaned via the normal
     architecture-scoped delete (that 404s once the architecture is gone). Tenant-checked.
 
-    Refuses if the architecture still EXISTS for this tenant (use the normal delete instead),
-    so this can only ever clean up true orphans."""
+    Refuses if the architecture still EXISTS (active, not trashed) for this tenant — use the
+    normal delete instead — so this can only ever clean up true orphans. A soft-deleted /
+    trashed architecture counts as orphaned here (the index lists only ACTIVE architectures,
+    so a trashed one already shows as "orphaned")."""
     from app.architectures import memory as mem
     from app.architectures import memory_revisions
     from app.knowme import registry as kreg
 
-    arch = arch_registry.get_architecture(architecture_id, include_deleted=True)
+    # Active-only lookup (NOT include_deleted): a trashed architecture is "orphaned" from the
+    # Know-Me index's perspective, so it's purgeable here. Only a live architecture is refused.
+    arch = arch_registry.get_architecture(architecture_id)
     if arch is not None and (arch.get("tenant_id") or "") in ("", principal.tenant_id):
         raise HTTPException(
             status_code=400,
