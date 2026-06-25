@@ -1885,6 +1885,128 @@ export type LeaverRisk = {
   assignments: OwnershipAssignment[];
 };
 
+// ---------------------------------------------------------------- Quota Monitor
+export type QuotaResult = {
+  subscription_id: string;
+  subscription_name: string;
+  region: string;
+  provider_namespace: string;
+  service_name: string;
+  quota_category: string;
+  quota_name: string;
+  sku_family: string;
+  current_usage: number | null;
+  limit: number | null;
+  remaining: number | null;
+  percent_used: number | null;
+  unit: string;
+  adjustable_status: string;
+  source_type: string;
+  collection_status: string;
+  risk_level: string;
+  recommendation: string;
+  last_checked_utc: string;
+  raw_provider_response: unknown;
+  error_message: string;
+  tenant_id?: string;
+  tenant_name?: string;
+};
+
+export type QuotaProviderReg = {
+  namespace: string;
+  state: string;
+  registered: boolean;
+  remediation: string;
+};
+
+export type QuotaRegion = {
+  name: string;
+  display_name: string;
+  regional_display_name: string;
+  geography: string;
+  geography_group: string;
+  physical_location: string;
+  category: string; // Recommended | Other
+  has_availability_zones: boolean;
+  paired_region: string;
+};
+
+export type QuotaSnapshot = {
+  source: string;
+  demo: boolean;
+  connection_configured: boolean;
+  never_loaded: boolean;
+  error: string;
+  status?: string;
+  generated_at: string;
+  subscription_id: string;
+  subscription_name: string;
+  regions_scanned: string[];
+  categories_scanned: string[];
+  thresholds: { watch: number; warning: number; critical: number };
+  counts: Record<string, number>;
+  by_provider: Record<string, { ok: number; error: number }>;
+  provider_registration: QuotaProviderReg[];
+  provider_errors: { provider: string; service: string; region: string; status: string; message: string }[];
+  throttling: { events: number; min_remaining_reads: number | null };
+  results: QuotaResult[];
+  ai_summary: string;
+  used_ai: boolean;
+  capacity_note: string;
+  // decoration
+  scope_id?: string;
+  ttl_s?: number;
+  age_seconds?: number | null;
+  stale_cache?: boolean;
+};
+
+export type QuotaCollectorMeta = {
+  name: string;
+  provider_namespace: string;
+  service_label: string;
+  categories: string[];
+  scope: string;
+  required_permissions: string[];
+  dynamic: boolean;
+  adjustable_default: string;
+  source_default: string;
+};
+
+export type QuotaMeta = {
+  collectors: QuotaCollectorMeta[];
+  categories: string[];
+  thresholds: { watch: number; warning: number; critical: number };
+  capacity_note: string;
+};
+
+export type QuotaRun = {
+  id: string;
+  subscription_id: string;
+  subscription_name: string;
+  status: string;
+  regions: string[];
+  categories: string[];
+  total_results: number;
+  critical_count: number;
+  warning_count: number;
+  watch_count: number;
+  counts: Record<string, number>;
+  provider_errors: { provider: string; region: string; status: string; message: string }[];
+  diff: { new_at_risk: string[]; recovered: string[] } | null;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+};
+
+export type QuotaScanParams = {
+  subscription_id: string;
+  connection_id?: string;
+  demo?: boolean;
+  regions?: string[];
+  categories?: string[];
+  include_unused?: boolean;
+};
+
 export const api = {
   me: () => http<Me>("/me"),
   activeLlm: () => http<ActiveLlm>("/llm/active"),
@@ -3029,6 +3151,40 @@ export const api = {
     }),
   reservationsDigestPreview: (demo = false, connectionId = "") =>
     http<ReservationsDigestPreview>(`/reservations/digest/preview?demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  // Quota Monitor — server cache; demo scope for synthetic data; manual scan only.
+  quotaMeta: () => http<QuotaMeta>("/quota/meta"),
+  quotaSubscriptions: (connectionId = "") =>
+    http<{ subscriptions: { id: string; name: string; state?: string; is_default?: boolean }[]; error: string }>(
+      `/quota/subscriptions${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  quotaRegions: (subscriptionId: string, connectionId = "") =>
+    http<{ regions: QuotaRegion[]; error: string }>(
+      `/quota/regions?subscription_id=${encodeURIComponent(subscriptionId)}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  quotaProviders: (subscriptionId: string, connectionId = "") =>
+    http<{ providers: QuotaProviderReg[]; error: string }>(
+      `/quota/providers?subscription_id=${encodeURIComponent(subscriptionId)}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  quotaOverview: (subscriptionId = "", connectionId = "", demo = false) =>
+    http<QuotaSnapshot>(
+      `/quota/overview?subscription_id=${encodeURIComponent(subscriptionId)}&demo=${demo ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  runQuotaScan: (p: QuotaScanParams) => {
+    const params = new URLSearchParams();
+    params.set("subscription_id", p.subscription_id);
+    params.set("demo", p.demo ? "true" : "false");
+    if (p.connection_id) params.set("connection_id", p.connection_id);
+    if (p.regions && p.regions.length) params.set("regions", p.regions.join(","));
+    if (p.categories && p.categories.length) params.set("categories", p.categories.join(","));
+    if (p.include_unused) params.set("include_unused", "true");
+    return http<QuotaSnapshot>(`/quota/scan?${params.toString()}`, { method: "POST", body: "{}" });
+  },
+  quotaRuns: (subscriptionId = "", limit = 30) =>
+    http<{ runs: QuotaRun[] }>(
+      `/quota/runs?subscription_id=${encodeURIComponent(subscriptionId)}&limit=${limit}`,
+    ),
+  quotaExportUrl: (subscriptionId = "", demo = false, format: "csv" | "json" = "csv") =>
+    `${API_BASE}/quota/export?subscription_id=${encodeURIComponent(subscriptionId)}&demo=${demo ? "true" : "false"}&format=${format}`,
   // Ownership — owners/teams directory, assignments, people-picker, resolver.
   ownershipOwners: () => http<{ owners: Owner[]; total: number }>("/ownership/owners"),
   ownershipOwner: (id: string) => http<Owner & { assignments: OwnershipAssignment[] }>(`/ownership/owners/${encodeURIComponent(id)}`),
@@ -3952,6 +4108,27 @@ export const api = {
     http<PolicyIacSource>("/policy/iac-source", { method: "PUT", body: JSON.stringify({ content, format }) }),
   policyDrift: (assignments: PolicyAssignment[]) =>
     http<PolicyDriftResult>("/policy/drift", { method: "POST", body: JSON.stringify({ assignments }) }),
+  // Exemption manager — plan (preview), apply (create/update), remove (delete), guardrails.
+  policyExemptionGuardrails: () =>
+    http<{ guardrails: PolicyExemptionGuardrails }>("/policy/exemption/guardrails"),
+  policyExemptionPlan: (action: "create" | "update", payload: PolicyExemptionPayload) =>
+    http<PolicyExemptionPlan>("/policy/exemption/plan", {
+      method: "POST",
+      body: JSON.stringify({ action, payload }),
+    }),
+  policyExemptionApply: (action: "create" | "update", payload: PolicyExemptionPayload, connectionId?: string | null) =>
+    http<{ ok: boolean; resource?: Record<string, unknown>; status?: number; plan: PolicyExemptionPlan }>(
+      "/policy/exemption/apply",
+      { method: "POST", body: JSON.stringify({ action, payload, connection_id: connectionId ?? null }) },
+    ),
+  policyExemptionRemove: (id: string, connectionId?: string | null) =>
+    http<{ ok: boolean; status?: number }>("/policy/exemption/remove", {
+      method: "POST",
+      body: JSON.stringify({ id, connection_id: connectionId ?? null }),
+    }),
+  // Excel export — POST sheets (flat tables and/or pivot trees with outline levels) → .xlsx blob.
+  policyExportXlsx: (filename: string, sheets: PolicyXlsxSheet[]) =>
+    httpBlob("/policy/export/xlsx", { method: "POST", body: JSON.stringify({ filename, sheets }) }),
   policySnapshots: () => http<{ snapshots: PolicySnapshot[] }>("/policy/snapshots"),
   policyTakeSnapshot: (connectionId?: string | null, withCompliance = true) =>
     http<{ snapshot: PolicySnapshot; drift_since_previous: PolicyDrift | null }>("/policy/snapshot", {
@@ -4979,6 +5156,17 @@ export interface PolicyAssignment {
   identity_principal_id: string;
   location: string;
   parameters: Record<string, unknown>;
+  // Governance/audit attribution (from properties.metadata). Optional for back-compat with older
+  // cached inventories; populated after a forced refresh. Powers the assignment register + pivots.
+  assigned_by?: string;
+  created_on?: string;
+  created_by?: string;
+  updated_on?: string;
+  updated_by?: string;
+  management_group_name?: string;
+  management_group_display?: string;
+  subscription_id?: string;
+  subscription_name?: string;
 }
 
 export interface PolicyExemption {
@@ -4993,6 +5181,55 @@ export interface PolicyExemption {
   policy_assignment_id: string;
   description: string;
   reference_ids: string[];
+  // Enriched by the collector (optional for back-compat with older cached inventories).
+  management_group_name?: string;
+  management_group_display?: string;
+  subscription_id?: string;
+  subscription_name?: string;
+  status?: string;        // expired | expiring_soon | active | never
+  days_left?: number | null;
+  assignment_name?: string;
+  assignment_is_initiative?: boolean;
+  created_on?: string;
+  created_by?: string;
+  updated_on?: string;
+  updated_by?: string;
+}
+
+export interface PolicyExemptionGuardrails {
+  require_justification: boolean;
+  max_expiry_days: number;
+  block_never_expires: boolean;
+}
+
+export interface PolicyXlsxSheet {
+  name: string;
+  columns: string[];
+  rows: (string | number)[][];
+  outline_levels?: number[];
+}
+
+export interface PolicyExemptionPayload {
+  id?: string;
+  name?: string;
+  scope?: string;
+  policy_assignment_id?: string;
+  category?: string;
+  display_name?: string;
+  description?: string;
+  expires_on?: string;
+  reference_ids?: string[];
+}
+
+export interface PolicyExemptionPlan {
+  action: string;
+  valid: boolean;
+  errors: string[];
+  arm: { method: string; path: string; api_version: string; body?: Record<string, unknown> };
+  cli: string;
+  name: string;
+  scope: string;
+  guardrails: PolicyExemptionGuardrails;
 }
 
 export interface PolicyScopeNode {
@@ -7246,6 +7483,10 @@ export interface AppSettings {
   radar_digest_lead_days?: number[];
   radar_azure_updates_feed_enabled?: boolean;
   radar_azure_updates_feed_url?: string;
+  // Policy exemption guardrails.
+  policy_exemption_require_justification?: boolean;
+  policy_exemption_max_expiry_days?: number;
+  policy_exemption_block_never_expires?: boolean;
 }
 
 export interface ChatgptStatus {
@@ -8057,6 +8298,80 @@ export interface KnowMeTrashEntry {
   deleted_at: string;
   deleted_by: string;
   updated_at: string;
+}
+
+/** Stream a Quota scan (SSE: status… → done). Mirrors the FMEA generation stream so the UI can
+ *  show a live activity-log popup. The final `done` event carries the decorated QuotaSnapshot. */
+export async function streamQuotaScan(
+  p: QuotaScanParams,
+  handlers: {
+    onStatus?: (s: { phase: string; message: string }) => void;
+    onDone?: (snap: QuotaSnapshot) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const params = new URLSearchParams();
+  params.set("subscription_id", p.subscription_id);
+  params.set("demo", p.demo ? "true" : "false");
+  if (p.connection_id) params.set("connection_id", p.connection_id);
+  if (p.regions && p.regions.length) params.set("regions", p.regions.join(","));
+  if (p.categories && p.categories.length) params.set("categories", p.categories.join(","));
+  if (p.include_unused) params.set("include_unused", "true");
+
+  const res = await fetch(`${API_BASE}/quota/scan/stream?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: "{}",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "done") handlers.onDone?.(parsed as unknown as QuotaSnapshot);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Scan failed.");
+    }
+  }
 }
 
 /** Stream the AI Know-Me generation for an architecture (SSE: status… → done). */

@@ -338,3 +338,37 @@ body {
   border-radius: 3px;
   background: rgba(99, 102, 241, 0.6);
 }
+
+/* ===================================================================== */
+/* Quota Monitor — dual-thumb usage-range slider in the filter toolbar.   */
+/* The track is pointer-events:none (so the highlighted band shows and    */
+/* both overlaid inputs coexist); only the thumbs capture pointer events. */
+/* ===================================================================== */
+.quota-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #4f46e5;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+.quota-range::-moz-range-thumb {
+  pointer-events: auto;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #4f46e5;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+.quota-range::-webkit-slider-runnable-track {
+  background: transparent;
+}
+.quota-range::-moz-range-track {
+  background: transparent;
+}

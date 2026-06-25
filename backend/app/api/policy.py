@@ -15,11 +15,15 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.azure_connections import resolve_connection
+from app.core.db import get_db
 from app.core.security import Principal, require_permission
+from app.models import AuditLog
 from app.policy import advisors, baselines, collector
 from app.policy import registry as policy_registry
 from app.workloads.registry import get_workload
@@ -801,3 +805,151 @@ async def delete_draft(draft_id: str, _: Principal = Depends(_write)):
     if not policy_registry.delete_draft(draft_id):
         raise HTTPException(status_code=404, detail="Draft not found.")
     return {"ok": True}
+
+
+# ============================================================ exemption manager (create/modify/remove)
+class ExemptionPayload(BaseModel):
+    # Used for plan/apply of create & update. ``id`` is set for update/remove.
+    id: str = ""
+    name: str = ""
+    scope: str = ""
+    policy_assignment_id: str = ""
+    category: str = "Waiver"  # Waiver | Mitigated
+    display_name: str = ""
+    description: str = ""
+    expires_on: str = ""
+    reference_ids: list[str] = Field(default_factory=list)
+
+
+class ExemptionWriteReq(BaseModel):
+    connection_id: str | None = None
+    action: str = "create"  # create | update
+    payload: ExemptionPayload
+
+
+@router.get("/exemption/guardrails")
+async def get_exemption_guardrails(_: Principal = Depends(require_admin)):
+    """The current exemption guardrails (justification required, max expiry window, never-expires
+    block) so the UI can validate inline and explain the rules."""
+    from app.policy import exemptions as ex
+
+    return {"guardrails": ex.load_guardrails()}
+
+
+@router.post("/exemption/plan")
+async def post_exemption_plan(req: ExemptionWriteReq, _: Principal = Depends(require_admin)):
+    """Preview an exemption create/update WITHOUT mutating Azure: returns the validation result,
+    the exact ARM PUT request, and the equivalent az CLI. Safe on any (even read-only) connection."""
+    from app.policy import exemptions as ex
+
+    action = req.action if req.action in ("create", "update") else "create"
+    return ex.plan(req.payload.model_dump(), action)
+
+
+@router.post("/exemption/apply")
+async def post_exemption_apply(
+    req: ExemptionWriteReq,
+    principal: Principal = Depends(_write),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update a policy exemption in Azure (ARM PUT). Requires policy.write AND a
+    write-enabled connection (read_only must be false, or auto_execute_writes true). Re-validates
+    guardrails server-side and writes an audit row."""
+    from app.policy import exemptions as ex
+
+    conn = _conn(req.connection_id)
+    if conn is None:
+        raise HTTPException(status_code=400, detail="No Azure connection configured.")
+    if conn.get("read_only", True) and not conn.get("auto_execute_writes", False):
+        raise HTTPException(
+            status_code=403,
+            detail="This connection is read-only. Enable writes on the connection to apply exemptions, or use the generated CLI.",
+        )
+    action = req.action if req.action in ("create", "update") else "create"
+    result = await ex.apply(conn, req.payload.model_dump(), action)
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id,
+        actor_id=principal.subject,
+        action=f"policy.exemption.{action}",
+        target=(result.get("plan", {}).get("arm", {}).get("path") or req.payload.scope)[:512],
+        metadata_json={
+            "ok": result.get("ok"),
+            "connection_id": req.connection_id,
+            "assignment_id": req.payload.policy_assignment_id,
+            "category": req.payload.category,
+            "expires_on": req.payload.expires_on,
+            "error": result.get("error", ""),
+        },
+    ))
+    await db.commit()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Exemption write failed."))
+    return result
+
+
+class ExemptionDeleteReq(BaseModel):
+    connection_id: str | None = None
+    id: str
+
+
+@router.post("/exemption/remove")
+async def post_exemption_remove(
+    req: ExemptionDeleteReq,
+    principal: Principal = Depends(_write),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a policy exemption from Azure (ARM DELETE). Same gating as apply."""
+    from app.policy import exemptions as ex
+
+    conn = _conn(req.connection_id)
+    if conn is None:
+        raise HTTPException(status_code=400, detail="No Azure connection configured.")
+    if conn.get("read_only", True) and not conn.get("auto_execute_writes", False):
+        raise HTTPException(
+            status_code=403,
+            detail="This connection is read-only. Enable writes on the connection to remove exemptions, or use the generated CLI.",
+        )
+    result = await ex.remove(conn, req.id)
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id,
+        actor_id=principal.subject,
+        action="policy.exemption.remove",
+        target=req.id[:512],
+        metadata_json={"ok": result.get("ok"), "connection_id": req.connection_id, "error": result.get("error", "")},
+    ))
+    await db.commit()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Exemption delete failed."))
+    return result
+
+
+# ============================================================ Excel export (tables + pivots)
+class XlsxSheet(BaseModel):
+    name: str
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    outline_levels: list[int] | None = None  # per-row Excel outline level (pivot hierarchy)
+
+
+class XlsxExportReq(BaseModel):
+    filename: str = "policy-export"
+    sheets: list[XlsxSheet] = Field(default_factory=list)
+
+
+@router.post("/export/xlsx")
+async def post_export_xlsx(req: XlsxExportReq, _: Principal = Depends(require_admin)):
+    """Build a multi-sheet .xlsx workbook from the posted sheets (flat tables and/or pivot trees
+    with native Excel outline grouping) and stream it back. The frontend composes the sheets from
+    whatever the user is viewing (register, pivot, exemptions), so one generic endpoint serves
+    every Policy screen."""
+    from app.policy.xlsx_export import build_workbook
+
+    sheets = [s.model_dump() for s in req.sheets]
+    data = build_workbook(sheets)
+    safe = "".join(c for c in (req.filename or "policy-export") if c.isalnum() or c in "-_") or "policy-export"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.xlsx"'},
+    )
+

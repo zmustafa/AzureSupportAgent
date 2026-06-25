@@ -106,6 +106,10 @@ class AppSettingsUpdate(BaseModel):
     assessment_score_good: int | None = None
     assessment_score_warn: int | None = None
     architecture_category_colors: dict[str, str] | None = None
+    # Policy exemption guardrails (enforced on create/extend).
+    policy_exemption_require_justification: bool | None = None
+    policy_exemption_max_expiry_days: int | None = None
+    policy_exemption_block_never_expires: bool | None = None
 
 
 @router.get("/settings")

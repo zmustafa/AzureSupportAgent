@@ -603,3 +603,36 @@ def is_arm_url(url: str) -> bool:
     it can be served by the connection's ARM token)."""
     u = (url or "").lower()
     return u.startswith("https://management.azure.com/") or u.startswith("http://management.azure.com/")
+
+
+async def arm_write(
+    token: str, method: str, path: str, *, body: dict[str, Any] | None = None,
+    api_version: str = "",
+) -> tuple[Any, str | None, int]:
+    """ARM REST mutation (PUT/PATCH/DELETE). Returns ``(json_or_none, error, status_code)``.
+
+    Accepts the success range 200/201/202 (LRO submit) and **204** (no-content, common for
+    DELETE). ``path`` is a management.azure.com-relative path; ``api_version`` is appended as a
+    query param when provided. Surfaces the ARM error body so the UI can show why a write failed.
+    Never raises."""
+    headers = {"Authorization": f"Bearer {token}"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    params = {"api-version": api_version} if api_version else None
+    try:
+        async with httpx.AsyncClient(timeout=60, base_url=_ARM) as client:
+            resp = await client.request(method.upper(), path, headers=headers, params=params, json=body)
+        if resp.status_code not in (200, 201, 202, 204):
+            try:
+                detail = resp.json().get("error", {}).get("message", resp.text)
+            except (ValueError, AttributeError):
+                detail = resp.text
+            return None, f"ARM {resp.status_code}: {str(detail)[:400]}", resp.status_code
+        if resp.status_code == 204 or not resp.content:
+            return {}, None, resp.status_code
+        try:
+            return resp.json(), None, resp.status_code
+        except (ValueError, AttributeError):
+            return {}, None, resp.status_code
+    except httpx.HTTPError as e:  # noqa: BLE001
+        return None, f"ARM request error: {e}", 0

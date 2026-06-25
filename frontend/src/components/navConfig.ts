@@ -131,6 +131,7 @@ export const PROACTIVE_NAV: ProactiveItem[] = [
   // Lifecycle & investigation — what's expiring, what's wrong, and the evidence trail.
   { id: "radar", to: "/radar", label: "Retirement Radar", icon: "🛰️", group: "Lifecycle & investigation", desc: "Track Azure retirements and breaking changes impacting your estate." },
   { id: "reservations", to: "/reservations", label: "Reservations Monitor", icon: "🎟️", desc: "Track reservation order expiry and surface a weekly renewal digest." },
+  { id: "quota", to: "/quota", label: "Quota Monitor", icon: "📊", desc: "Subscription/region quota usage, limits, headroom and risk — before deployments fail." },
   { id: "telemetry-intel", to: "/telemetry-intel", label: "Telemetry Intelligence", icon: "🔬", desc: "AI correlation and triage over Application Insights with KQL translation." },
   { id: "evidence", to: "/evidence", label: "Evidence Locker", icon: "🗄️", desc: "Investigation snapshots, diffs, sharing and export for audit trails." },
 ];
@@ -185,6 +186,13 @@ export const AUTOMATIONS_NAV: {
 export type PolicyTab =
   | "overview"
   | "inventory"
+  | "assignments"
+  | "byperson"
+  | "bysubscription"
+  | "timeline"
+  | "pivot"
+  | "governance"
+  | "exemptions"
   | "effective"
   | "advisors"
   | "rollout"
@@ -195,6 +203,13 @@ export type PolicyTab =
 export const POLICY_NAV: { id: PolicyTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "inventory", label: "Inventory" },
+  { id: "assignments", label: "📋 Assignments" },
+  { id: "byperson", label: "👤 By person" },
+  { id: "bysubscription", label: "🗂️ By subscription" },
+  { id: "timeline", label: "📈 Timeline" },
+  { id: "pivot", label: "🧮 Pivot builder" },
+  { id: "governance", label: "🛡️ Governance" },
+  { id: "exemptions", label: "🪪 Exemptions" },
   { id: "effective", label: "Effective policy" },
   { id: "advisors", label: "Advisors" },
   { id: "rollout", label: "🚦 Rollout Planner" },

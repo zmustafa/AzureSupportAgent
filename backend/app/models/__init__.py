@@ -425,6 +425,44 @@ class RbacScanRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class QuotaScanRun(Base):
+    """One completed quota scan over a subscription (optionally a subset of regions) — a
+    compact history point for trend charting.
+
+    The heavy per-quota rows live in the file cache (``quota_cache.json``); this table keeps
+    only the run metadata + risk roll-up so movement can be charted and a later run can diff
+    "what newly crossed into Warning/Critical". ``regions_json`` records the regions actually
+    scanned; ``counts_json`` holds the per-risk roll-up; ``provider_errors_json`` the
+    per-provider failures so a run's partial coverage is auditable."""
+
+    __tablename__ = "quota_scan_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    subscription_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    subscription_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    scope: Mapped[str] = mapped_column(String(512), default="")  # cache scope_id
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")  # manual only (no schedules)
+    status: Mapped[str] = mapped_column(String(16), default="succeeded")  # succeeded|partial|failed
+    regions_json: Mapped[list] = mapped_column(JSON, default=list)  # regions actually scanned
+    categories_json: Mapped[list] = mapped_column(JSON, default=list)  # categories scanned
+    total_results: Mapped[int] = mapped_column(Integer, default=0)
+    critical_count: Mapped[int] = mapped_column(Integer, default=0)
+    warning_count: Mapped[int] = mapped_column(Integer, default=0)
+    watch_count: Mapped[int] = mapped_column(Integer, default=0)
+    counts_json: Mapped[dict] = mapped_column(JSON, default=dict)  # full per-risk roll-up
+    provider_errors_json: Mapped[list] = mapped_column(JSON, default=list)  # per-provider failures
+    # The set of "{region}|{provider}|{quota}" keys at Warning+ so a later run diffs movement.
+    risk_keys_json: Mapped[list] = mapped_column(JSON, default=list)
+    diff_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # change vs previous run
+    demo: Mapped[bool] = mapped_column(default=False)
+    triggered_by: Mapped[str] = mapped_column(String(128), default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class Notification(Base):
     """A normalized event published to the notification engine (in-app + channels)."""
 

@@ -23,6 +23,15 @@ import {
 } from "../api";
 import { POLICY_NAV, type PolicyTab } from "./navConfig";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import {
+  AssignmentsRegister,
+  ByPersonPivot,
+  BySubscriptionPivot,
+  TimelinePivot,
+  PivotBuilder,
+  GovernanceInsights,
+} from "./PolicyAssignments";
+import { ExemptionsTab } from "./PolicyExemptions";
 
 function agoLabel(ts: number): string {
   if (!ts) return "";
@@ -88,6 +97,9 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
   });
   const [handoff, setHandoff] = useState<PolicyHandoff | null>(null);
   const [tagHandoff, setTagHandoff] = useState<PolicyTagHandoff | null>(null);
+  // When the user clicks "N exempt" on the Effective tab, jump to the Exemptions tab pre-filtered
+  // to that exact assignment. Carries the assignment id (precise) + name (for the banner).
+  const [exemptionFocus, setExemptionFocus] = useState<{ id: string; name: string } | null>(null);
 
   // Persist the scope choice (including an explicit clear) so a refresh restores exactly it.
   useEffect(() => {
@@ -294,7 +306,24 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
                 findings, in-progress simulation) instead of leaking it across scopes. */}
             {tab === "overview" && <Overview inv={inv} />}
             {tab === "inventory" && <Inventory inv={inv} />}
-            {tab === "effective" && <Effective key={scopeKey} inv={inv} />}
+            {tab === "assignments" && <AssignmentsRegister key={scopeKey} inv={inv} />}
+            {tab === "byperson" && <ByPersonPivot key={scopeKey} inv={inv} />}
+            {tab === "bysubscription" && <BySubscriptionPivot key={scopeKey} inv={inv} />}
+            {tab === "timeline" && <TimelinePivot key={scopeKey} inv={inv} />}
+            {tab === "pivot" && <PivotBuilder key={scopeKey} inv={inv} />}
+            {tab === "governance" && <GovernanceInsights key={scopeKey} inv={inv} />}
+            {tab === "exemptions" && (
+              <ExemptionsTab
+                key={scopeKey}
+                inv={inv}
+                connectionId={effectiveConn}
+                readOnly={connections.find((c) => c.id === effectiveConn)?.read_only ?? true}
+                focusAssignmentId={exemptionFocus?.id}
+                focusAssignmentName={exemptionFocus?.name}
+                onChanged={() => refresh()}
+              />
+            )}
+            {tab === "effective" && <Effective key={scopeKey} persistKey={scopeKey} inv={inv} onOpenExemptions={(id, name) => { setExemptionFocus({ id, name }); goTab("exemptions"); }} />}
             {tab === "advisors" && <Advisors key={scopeKey} inv={inv} connectionId={effectiveConn} />}
             {tab === "rollout" && <RolloutPlanner key={scopeKey} inv={inv} connectionId={effectiveConn} handoff={handoff} tagHandoff={tagHandoff} />}
             {tab === "ai" && <AiTools key={scopeKey} inv={inv} connectionId={effectiveConn} />}
@@ -568,14 +597,18 @@ function scopePortalUrl(scope: string): string {
   return `https://portal.azure.com/#@/resource${s}/overview`;
 }
 
-function Effective({ inv }: { inv: PolicyInventory }) {
-  const [scope, setScope] = useState("");
+function Effective({ inv, persistKey, onOpenExemptions }: { inv: PolicyInventory; persistKey?: string; onOpenExemptions?: (assignmentId: string, assignmentName: string) => void }) {
+  const storeKey = `azsup.policy.effective.scope.${persistKey || "default"}`;
+  const [scope, setScope] = useState(() => {
+    try { return localStorage.getItem(storeKey) || ""; } catch { return ""; }
+  });
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.policyEffective>> | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function resolve(s: string) {
     if (!s) return;
     setScope(s);
+    try { localStorage.setItem(storeKey, s); } catch { /* ignore */ }
     setBusy(true);
     try {
       setResult(await api.policyEffective(s, inv.assignments, inv.exemptions));
@@ -583,6 +616,12 @@ function Effective({ inv }: { inv: PolicyInventory }) {
       setBusy(false);
     }
   }
+
+  // Re-resolve the remembered scope on mount (e.g. after navigating away and back).
+  useEffect(() => {
+    if (scope) resolve(scope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -637,7 +676,11 @@ function Effective({ inv }: { inv: PolicyInventory }) {
                   <Td><Pill cls={effectTone(e.effect)}>{e.effect || "—"}</Pill></Td>
                   <Td className="text-gray-600">{e.is_inherited ? `↑ ${e.inherited_from}` : "this scope"}</Td>
                   <Td>{e.enforcement_mode === "Default" ? "Enforced" : "Dry-run"}</Td>
-                  <Td className="text-gray-500">{e.exemptions.length ? `${e.exemptions.length} exempt` : "—"}</Td>
+                  <Td className="text-gray-500">
+                    {e.exemptions.length
+                      ? <button onClick={() => onOpenExemptions?.(e.id, e.display_name)} className="font-medium text-brand hover:underline">{e.exemptions.length} exempt ↗</button>
+                      : "—"}
+                  </Td>
                 </tr>
               ))}
             </Table>

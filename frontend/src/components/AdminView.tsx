@@ -3198,6 +3198,9 @@ function ScoringTaxonomyCard() {
         architecture_category_colors: form.architecture_category_colors,
         workload_health_weights: form.workload_health_weights,
         workload_nightly_refresh: form.workload_nightly_refresh,
+        policy_exemption_require_justification: form.policy_exemption_require_justification,
+        policy_exemption_max_expiry_days: form.policy_exemption_max_expiry_days,
+        policy_exemption_block_never_expires: form.policy_exemption_block_never_expires,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -3729,6 +3732,37 @@ function AppSettingsCard() {
             step={10}
             suffix="sec"
             onChange={(v) => set({ request_timeout_seconds: v })}
+          />
+        </div>
+      </Card>
+
+      <Card title="Policy exemption guardrails">
+        <p className="mb-2 text-xs text-gray-500">
+          Enforced whenever someone creates or extends an Azure Policy exemption (Policy → Exemptions).
+          These keep exemptions a controlled, hygienic security exception rather than a permanent escape hatch.
+        </p>
+        <Toggle
+          label="Require a justification"
+          hint="A description (e.g. ticket #, owner, mitigation) is mandatory on every exemption create/extend."
+          checked={form.policy_exemption_require_justification ?? true}
+          onChange={(v) => set({ policy_exemption_require_justification: v })}
+        />
+        <Toggle
+          label="Block never-expiring exemptions"
+          hint="Forbid creating exemptions with no expiry date — every exemption must eventually lapse and be re-reviewed."
+          checked={form.policy_exemption_block_never_expires ?? true}
+          onChange={(v) => set({ policy_exemption_block_never_expires: v })}
+        />
+        <div className="mt-2">
+          <NumberField
+            label="Maximum expiry window"
+            hint="The furthest into the future an exemption may expire. Set to 0 to remove the cap (not recommended)."
+            value={form.policy_exemption_max_expiry_days ?? 180}
+            min={0}
+            max={3650}
+            step={30}
+            suffix="days"
+            onChange={(v) => set({ policy_exemption_max_expiry_days: v })}
           />
         </div>
       </Card>

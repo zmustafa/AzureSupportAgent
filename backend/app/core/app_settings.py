@@ -271,6 +271,12 @@ DEFAULTS: dict[str, Any] = {
     "rbac_max_rows": 5000,
     # Expose the read-only RBAC agent tools (who_can_access / privileged_access_review).
     "rbac_tools_enabled": True,
+    # --- Policy exemption manager (create/modify/remove policy exemptions) ----------
+    # Guardrails enforced server-side before any exemption write (create/extend) so exemptions
+    # stay a controlled, hygienic security exception rather than a permanent escape hatch.
+    "policy_exemption_require_justification": True,   # description mandatory on create/extend
+    "policy_exemption_max_expiry_days": 180,          # max days into the future an exemption may expire (0 = no cap)
+    "policy_exemption_block_never_expires": True,     # forbid creating exemptions with no expiry
     # --- Reservations Monitor (weekly expiry digest) -------------------------------
     # Server-side cache TTL (seconds) for reservation snapshots. Default 6h.
     "reservations_cache_ttl_s": 21600,
@@ -288,6 +294,18 @@ DEFAULTS: dict[str, Any] = {
     "reservations_digest_weekday": 0,
     "reservations_digest_time": "08:00",
     "reservations_digest_timezone": "America/New_York",
+    # --- Quota Monitor (proactive subscription/region quota posture) ---------------
+    # Server-side cache TTL (seconds) for quota snapshots. Default 6h.
+    "quota_cache_ttl_s": 21600,
+    # Risk band thresholds (percent of limit used). Configurable so an operator can retune.
+    "quota_threshold_watch": 70,
+    "quota_threshold_warning": 85,
+    "quota_threshold_critical": 95,
+    # Max concurrent collector runs per scan (subscription × region × provider).
+    "quota_scan_concurrency": 5,
+    # Hide usage-API rows at exactly 0 usage (full headroom). Keeps the snapshot focused on
+    # actionable quotas and avoids hundreds of zero-usage per-model AI / per-family compute rows.
+    "quota_hide_zero_usage": True,
     # Autopilot autonomy: candidates at/above this confidence (0..1) are pre-selected for
     # one-click save in the review step. 0 = off (user selects everything manually).
     "autopilot_autosave_confidence": 0.0,
@@ -442,6 +460,20 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["rbac_cache_ttl_s"] = max(0, min(604800, int(current.get("rbac_cache_ttl_s", 21600) or 21600)))
     current["rbac_max_rows"] = max(100, min(50000, int(current.get("rbac_max_rows", 5000) or 5000)))
     current["rbac_tools_enabled"] = bool(current.get("rbac_tools_enabled", True))
+    # Policy exemption guardrails.
+    current["policy_exemption_require_justification"] = bool(current.get("policy_exemption_require_justification", True))
+    current["policy_exemption_max_expiry_days"] = max(0, min(3650, int(current.get("policy_exemption_max_expiry_days", 180) or 0)))
+    current["policy_exemption_block_never_expires"] = bool(current.get("policy_exemption_block_never_expires", True))
+    # Quota Monitor: clamp cache TTL, ordered risk thresholds, and scan concurrency.
+    current["quota_cache_ttl_s"] = max(0, min(604800, int(current.get("quota_cache_ttl_s", 21600) or 21600)))
+    _qw = max(1, min(99, int(current.get("quota_threshold_watch", 70) or 70)))
+    _qwarn = max(_qw + 1, min(99, int(current.get("quota_threshold_warning", 85) or 85)))
+    _qcrit = max(_qwarn + 1, min(100, int(current.get("quota_threshold_critical", 95) or 95)))
+    current["quota_threshold_watch"] = _qw
+    current["quota_threshold_warning"] = _qwarn
+    current["quota_threshold_critical"] = _qcrit
+    current["quota_scan_concurrency"] = max(1, min(16, int(current.get("quota_scan_concurrency", 5) or 5)))
+    current["quota_hide_zero_usage"] = bool(current.get("quota_hide_zero_usage", True))
     # Reservations Monitor: clamp cache TTL + window; coerce digest flags/lists/schedule.
     current["reservations_cache_ttl_s"] = max(0, min(604800, int(current.get("reservations_cache_ttl_s", 21600) or 21600)))
     current["reservations_window_days"] = max(1, min(365, int(current.get("reservations_window_days", 60) or 60)))

@@ -171,6 +171,9 @@ const TelemetryIntelligencePanel = lazy(() =>
 const ReservationsMonitorPanel = lazy(() =>
   import("./ReservationsMonitorView").then((m) => ({ default: m.ReservationsMonitorPanel })),
 );
+const QuotaMonitorPanel = lazy(() =>
+  import("./QuotaView").then((m) => ({ default: m.QuotaMonitorPanel })),
+);
 const PerformancePanel = lazy(() =>
   import("./PerformanceView").then((m) => ({ default: m.PerformancePanel })),
 );
@@ -565,6 +568,8 @@ export default function ChatView() {
   const inTeleIntel = location.pathname.startsWith("/telemetry-intel");
   // Reservations Monitor (weekly expiry digest, admin-only).
   const inReservations = location.pathname.startsWith("/reservations");
+  // Quota Monitor (subscription/region quota posture).
+  const inQuota = location.pathname.startsWith("/quota");
   // Performance Profiler (profile against AMBA, admin-only).
   const inPerformance = location.pathname.startsWith("/performance");
   // Estate Graph: central workload-aware knowledge graph (admin-only).
@@ -657,7 +662,7 @@ export default function ChatView() {
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
     || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
-    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive;
+    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2423,6 +2428,7 @@ export default function ChatView() {
             inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
             policy: PolicyIcon, identity: IdentityIcon, rbac: RbacIcon,
             radar: RadarIcon, reservations: ReservationIcon,
+            quota: PerformanceIcon,
             "telemetry-intel": TelemetryIntelIcon, evidence: EvidenceIcon,
           };
           const activeById: Record<string, boolean> = {
@@ -2432,6 +2438,7 @@ export default function ChatView() {
             inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
             policy: inPolicy, identity: inIdentity, rbac: inRbac,
             radar: inRadar, reservations: inReservations,
+            quota: inQuota,
             "telemetry-intel": inTeleIntel, evidence: inEvidence,
           };
           const anyActive = inAnyProactive;
@@ -3057,6 +3064,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Reservations Monitor">
             <Suspense fallback={<PanelLoading />}>
               <ReservationsMonitorPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inQuota ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Quota Monitor">
+            <Suspense fallback={<PanelLoading />}>
+              <QuotaMonitorPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>

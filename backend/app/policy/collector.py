@@ -80,6 +80,47 @@ def scope_depth(scope_id: str) -> int:
     return {"tenant": 0, "managementGroup": 1, "subscription": 2, "resourceGroup": 3}.get(k, 2)
 
 
+def mg_name_of(scope_id: str) -> str:
+    """The management-group name (id slug) from a scope, or "" when the scope isn't an MG.
+
+    Azure MG "name" is the id slug, e.g. /providers/Microsoft.Management/managementGroups/<name>."""
+    if not scope_id:
+        return ""
+    if "/resourcegroups/" in scope_id.lower() or "/subscriptions/" in scope_id.lower():
+        return ""
+    m = _MG_RE.search(scope_id)
+    return m.group(1) if m else ""
+
+
+def sub_id_of(scope_id: str) -> str:
+    """The subscription GUID from a scope id, or "" when there isn't one."""
+    m = _SUB_RE.search(scope_id or "")
+    return m.group(1) if m else ""
+
+
+def _exemption_status(expires_on: str) -> tuple[str, int | None]:
+    """Classify an exemption by its expiry: returns (status, days_left).
+
+    status ∈ {expired, expiring_soon (≤30d), active, never} ; days_left is None for never/parse-fail."""
+    from datetime import datetime, timezone
+
+    s = (expires_on or "").strip()
+    if not s:
+        return "never", None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return "active", None
+    days = (dt - datetime.now(timezone.utc)).days
+    if days < 0:
+        return "expired", days
+    if days <= 30:
+        return "expiring_soon", days
+    return "active", days
+
+
 def _short_def_id(def_id: str) -> str:
     """Last segment (the definition/initiative name/guid) of a policy(set)definition id."""
     return (def_id or "").rstrip("/").split("/")[-1]
@@ -148,7 +189,12 @@ policyresources
     notScopes=properties.notScopes, parameters=properties.parameters,
     identityType=tostring(identity.type),
     identityPrincipalId=tostring(identity.principalId),
-    location=location
+    location=location,
+    assignedBy=tostring(properties.metadata['assignedBy']),
+    createdOn=tostring(properties.metadata['createdOn']),
+    createdBy=tostring(properties.metadata['createdBy']),
+    updatedOn=tostring(properties.metadata['updatedOn']),
+    updatedBy=tostring(properties.metadata['updatedBy'])
 | limit 2000
 """
 
@@ -160,7 +206,11 @@ policyresources
     expiresOn=tostring(properties.expiresOn),
     policyAssignmentId=tostring(properties.policyAssignmentId),
     description=tostring(properties.description),
-    refs=properties.policyDefinitionReferenceIds
+    refs=properties.policyDefinitionReferenceIds,
+    createdOn=tostring(properties.metadata['createdOn']),
+    createdBy=tostring(properties.metadata['createdBy']),
+    updatedOn=tostring(properties.metadata['updatedOn']),
+    updatedBy=tostring(properties.metadata['updatedBy'])
 | limit 1000
 """
 
@@ -170,6 +220,14 @@ resourcecontainers
 | where type =~ 'microsoft.resources/subscriptions'
 | project subscriptionId, name
 | limit 1000
+"""
+
+# Management-group id (name slug) → display name, so MG scopes show a friendly name.
+_MANAGEMENTGROUPS_KQL = """
+resourcecontainers
+| where type =~ 'microsoft.management/managementgroups'
+| project mgId=tostring(name), displayName=tostring(properties.displayName)
+| limit 2000
 """
 
 
@@ -199,6 +257,18 @@ def _norm_assignment(row: dict[str, Any], def_by_id: dict[str, dict[str, Any]]) 
         "identity_principal_id": row.get("identityPrincipalId") or "",
         "location": row.get("location") or "",
         "parameters": row.get("parameters") if isinstance(row.get("parameters"), dict) else {},
+        # Governance/audit attribution (from properties.metadata) — powers the assignment register
+        # and the pivot perspectives (assigned-by, timeline). May be empty for older assignments.
+        "assigned_by": (row.get("assignedBy") or "").strip(),
+        "created_on": (row.get("createdOn") or "").strip(),
+        "created_by": (row.get("createdBy") or "").strip(),
+        "updated_on": (row.get("updatedOn") or "").strip(),
+        "updated_by": (row.get("updatedBy") or "").strip(),
+        # Explicit scope columns (resolved to readable names in collect_inventory).
+        "management_group_name": mg_name_of(scope),
+        "management_group_display": "",
+        "subscription_id": sub_id_of(scope),
+        "subscription_name": "",
     }
 
 
@@ -219,6 +289,7 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
         asg_rows, e3 = await _arg(_ASSIGNMENTS_KQL, connection, session_dir)
         exm_rows, e4 = await _arg(_EXEMPTIONS_KQL, connection, session_dir)
         sub_rows, _e5 = await _arg(_SUBSCRIPTIONS_KQL, connection, session_dir)
+        mg_rows, _e6 = await _arg(_MANAGEMENTGROUPS_KQL, connection, session_dir)
         for e in (e1, e2, e3, e4):
             if e:
                 errors.append(e)
@@ -230,6 +301,12 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
         str(r.get("subscriptionId", "")).lower(): (r.get("name") or r.get("subscriptionId", ""))
         for r in sub_rows
         if r.get("subscriptionId")
+    }
+    # Management-group id (lowercase) → display name, for friendly MG scope labels.
+    mg_names = {
+        str(r.get("mgId", "")).lower(): (r.get("displayName") or r.get("mgId", ""))
+        for r in mg_rows
+        if r.get("mgId")
     }
 
     definitions = [
@@ -269,11 +346,28 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
     # Resolve subscription scopes to readable names (assignments).
     for a in assignments:
         a["scope_label"] = scope_label(a["scope"], sub_names)
+        sid = (a.get("subscription_id") or "").lower()
+        if sid:
+            a["subscription_name"] = sub_names.get(sid, "")
+        # Resolve MG id slug → "DisplayName (id)" when the display name is known.
+        mgid = (a.get("management_group_name") or "")
+        if mgid:
+            disp = mg_names.get(mgid.lower())
+            a["management_group_display"] = f"{disp} ({mgid})" if disp and disp != mgid else mgid
 
     exemptions = []
+    asg_by_id = {a["id"].lower(): a for a in assignments if a.get("id")}
     for r in exm_rows:
         refs = r.get("refs")
         ex_scope = scope_of(r.get("id", ""))
+        pa_id = r.get("policyAssignmentId") or ""
+        target = asg_by_id.get(pa_id.lower(), {})
+        mgid = mg_name_of(ex_scope)
+        mg_disp = ""
+        if mgid:
+            d = mg_names.get(mgid.lower())
+            mg_disp = f"{d} ({mgid})" if d and d != mgid else mgid
+        status, days_left = _exemption_status(r.get("expiresOn") or "")
         exemptions.append({
             "id": r.get("id", ""),
             "name": r.get("name", ""),
@@ -281,12 +375,33 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
             "scope": ex_scope,
             "scope_kind": scope_kind(ex_scope),
             "scope_label": scope_label(ex_scope, sub_names),
+            "management_group_name": mgid,
+            "management_group_display": mg_disp,
+            "subscription_id": sub_id_of(ex_scope),
+            "subscription_name": sub_names.get(sub_id_of(ex_scope).lower(), "") if sub_id_of(ex_scope) else "",
             "category": r.get("exemptionCategory") or "Waiver",
             "expires_on": r.get("expiresOn") or "",
-            "policy_assignment_id": r.get("policyAssignmentId") or "",
+            "status": status,
+            "days_left": days_left,
+            "policy_assignment_id": pa_id,
+            "assignment_name": target.get("display_name") or _short_def_id(pa_id),
+            "assignment_is_initiative": bool(target.get("is_initiative")),
             "description": r.get("description", ""),
             "reference_ids": [str(x) for x in refs] if isinstance(refs, list) else [],
+            "created_on": (r.get("createdOn") or "").strip(),
+            "created_by": (r.get("createdBy") or "").strip(),
+            "updated_on": (r.get("updatedOn") or "").strip(),
+            "updated_by": (r.get("updatedBy") or "").strip(),
         })
+
+    # Cross-link: how many exemptions target each assignment (so the register/Effective show counts).
+    exm_count_by_assignment: dict[str, int] = {}
+    for e in exemptions:
+        k = (e.get("policy_assignment_id") or "").lower()
+        if k:
+            exm_count_by_assignment[k] = exm_count_by_assignment.get(k, 0) + 1
+    for a in assignments:
+        a["exemption_count"] = exm_count_by_assignment.get((a.get("id") or "").lower(), 0)
 
     return {
         "definitions": definitions,
@@ -294,6 +409,7 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
         "assignments": assignments,
         "exemptions": exemptions,
         "subscription_names": sub_names,
+        "management_group_names": mg_names,
         "errors": errors,
         "counts": {
             "definitions": len(definitions),

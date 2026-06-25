@@ -51,6 +51,8 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("reservations.read", "View reservation expiry tracking"),
         ("perfprofile.read", "View the workload performance heatmap"),
         ("radar.read", "View the Retirement Radar"),
+        ("quota.read", "View the Quota Monitor (usage, limits, risk)"),
+        ("quota.run", "Run quota scans"),
     ]),
     ("Tagging", [
         ("tagintel.read", "View Tag Intelligence (census, hygiene, coverage, cost)"),

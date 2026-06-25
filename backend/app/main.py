@@ -40,6 +40,7 @@ from app.api import (
     playbooks,
     policy,
     perfprofile,
+    quota,
     radar,
     rbac,
     reservations,
@@ -475,6 +476,7 @@ api.include_router(perfprofile.router)
 api.include_router(missions.router)
 api.include_router(rbac.router)
 api.include_router(reservations.router)
+api.include_router(quota.router)
 api.include_router(ownership.router)
 api.include_router(vms.router)
 

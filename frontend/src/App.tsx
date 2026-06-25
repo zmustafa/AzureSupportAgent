@@ -122,6 +122,7 @@ export default function App() {
           <Route path="/evidence" element={<ChatView />} />
           <Route path="/radar" element={<ChatView />} />
           <Route path="/reservations" element={<ChatView />} />
+          <Route path="/quota" element={<ChatView />} />
           <Route path="/telemetry-intel" element={<ChatView />} />
           <Route path="/performance" element={<ChatView />} />
           <Route path="/notifications" element={<ChatView />} />
