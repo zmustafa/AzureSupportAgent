@@ -115,26 +115,117 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
         notes.append(rg_note)
     if al_note:
         notes.append(al_note)
-    change_limit = collectors.RG_CHANGE_LIMIT if len(rg_rows) >= collectors.RG_CHANGE_LIMIT else 0
+    change_limit = collectors.change_limit() if len(rg_rows) >= collectors.change_limit() else 0
 
-    # Build a correlation-id -> (actor, actorType) map from Activity Log and backfill RG rows.
-    by_corr: dict[str, tuple[str, str]] = {}
+    # ---- Actor attribution --------------------------------------------------------------
+    # The Resource Graph ``resourcechanges`` feed has no caller, so we backfill the actor onto
+    # those rows from the Activity Log entries. Primary match is correlation id; a secondary
+    # proximity match (resourceId + close timestamp) recovers rows whose correlation id is the
+    # zero-guid / missing. We copy the FULL identity envelope (object id, kind, ip, on-behalf-of),
+    # not just the caller string, so a forensic reviewer sees who + how + from where.
+    from app.changeexplorer import identity as identity_mod
+
+    _ID_KEYS = ("actor", "actorType", "actorKind", "actorObjectId", "actorIp",
+                "actorOnBehalfOf", "actorAppId", "isPlatformActor")
+
+    def _copy_identity(dst: dict[str, Any], src: dict[str, Any]) -> None:
+        for k in _ID_KEYS:
+            if src.get(k) not in (None, ""):
+                dst[k] = src[k]
+
+    by_corr: dict[str, dict[str, Any]] = {}
     for r in al_rows:
-        cid = r.get("correlationId", "")
-        if cid and r.get("actor"):
-            by_corr.setdefault(cid, (r["actor"], r.get("actorType", "Unknown")))
-    for r in rg_rows:
-        if not r.get("actor"):
-            hit = by_corr.get(r.get("correlationId", ""))
-            if hit:
-                r["actor"], r["actorType"] = hit
+        cid = (r.get("correlationId", "") or "").strip()
+        if cid and cid != identity_mod._ZERO_GUID and r.get("actor"):
+            by_corr.setdefault(cid, r)
 
-    return rg_rows + al_rows, notes, change_limit
+    # Secondary index for proximity matching: resourceId(lower) -> list[(epoch, al_row)].
+    by_res: dict[str, list[tuple[float, dict[str, Any]]]] = {}
+    for r in al_rows:
+        rid = (r.get("resourceId", "") or "").lower()
+        if rid and r.get("actor"):
+            by_res.setdefault(rid, []).append((_epoch(r.get("eventTime", "")), r))
+
+    proximity_hits = 0
+    for r in rg_rows:
+        if r.get("actor"):
+            continue
+        hit = by_corr.get((r.get("correlationId", "") or "").strip())
+        if hit:
+            _copy_identity(r, hit)
+            continue
+        # Proximity fallback: a UNIQUE Activity Log event on the same resource within ±5 min.
+        rid = (r.get("resourceId", "") or "").lower()
+        cands = by_res.get(rid)
+        if cands:
+            t = _epoch(r.get("eventTime", ""))
+            near = [al for (ts, al) in cands if abs(ts - t) <= 300]
+            if len(near) == 1:
+                _copy_identity(r, near[0])
+                proximity_hits += 1
+
+    # Any change still without an actor is an Azure-internal / cascade write with no recorded
+    # caller — classify it as the platform (NOT a suspicious "unknown actor") for honesty.
+    for r in rg_rows + al_rows:
+        if not r.get("actor"):
+            kind, _ = identity_mod.classify_actor("", None, r.get("correlationId", ""))
+            r["actorKind"] = kind
+            r["actorType"] = kind
+
+    if proximity_hits:
+        notes.append(f"Attributed {proximity_hits} change(s) to an actor by time-proximity match "
+                     "(no correlation id was recorded on the change).")
+
+    raw_rows = rg_rows + al_rows
+
+    # ---- Resolve object-ids -> friendly names via Microsoft Graph (best-effort) ----------
+    if connection is not None and _identity_resolution_enabled():
+        oids = [r.get("actorObjectId", "") for r in raw_rows if r.get("actorObjectId")]
+        # A bare GUID caller with no oid claim is itself the object id.
+        oids += [r.get("actor", "") for r in raw_rows
+                 if identity_mod.is_guid(r.get("actor", "")) and not r.get("actorObjectId")]
+        app_ids = [r.get("actorAppId", "") for r in raw_rows if r.get("actorAppId")]
+        if oids or app_ids:
+            resolved, rnote = await identity_mod.resolve_display_names(oids, app_ids, connection)
+            if rnote:
+                notes.append(rnote)
+            for r in raw_rows:
+                key = r.get("actorObjectId", "") or (r.get("actor", "") if identity_mod.is_guid(r.get("actor", "")) else "")
+                rec = resolved.get(key) or resolved.get(r.get("actorAppId", ""))
+                if rec and rec.get("display"):
+                    r["actorDisplay"] = rec["display"]
+                    r["actorResolved"] = True
+                    if rec.get("kind"):
+                        r["actorKind"] = rec["kind"]
+
+    return raw_rows, notes, change_limit
+
+
+def _epoch(iso: str) -> float:
+    """Parse an ISO timestamp to epoch seconds (0.0 on failure) for proximity matching."""
+    if not iso:
+        return 0.0
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _identity_resolution_enabled() -> bool:
+    """Whether to resolve actor object-ids to names via Graph (app setting, default on)."""
+    try:
+        from app.core.app_settings import load_settings
+
+        return bool(load_settings().get("changeexplorer_resolve_identities", True))
+    except Exception:  # noqa: BLE001
+        return True
 
 
 async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
                          start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
-                         force_demo: bool = False) -> Any:
+                         force_demo: bool = False, run_ai: bool = True) -> Any:
     """The change-analysis pipeline as an async generator that yields progress dicts while it
     works (``{"phase","message",...}``) and finally yields the completed run
     (``{"phase":"done","run":<run dict>}``). Used by the SSE endpoint; ``analyze`` drains it."""
@@ -186,9 +277,14 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
 
     events, truncated = scale.cap_events(events)
 
-    # AI enrichment — resolve Unknowns + sharpen the narrative + risk for the highest-impact changes.
-    ai_result: dict[int, dict[str, Any]] = {}
-    if events and not is_demo:
+    # AI enrichment — resolve Unknowns + sharpen the narrative + risk for the highest-impact
+    # changes. The AI pass is the slowest phase, so it's OPTIONAL: when ``run_ai`` is false the
+    # run completes with deterministic-only results and ``aiAnalyzed=False``; the user can run the
+    # AI pass later (the "Run AI analysis" button or opening a change record), which re-enriches
+    # the persisted run via ``ai_enrich_run``.
+    ai_analyzed = False
+    if run_ai and events and not is_demo:
+        ai_result: dict[int, dict[str, Any]] = {}
         async for ev in ai_enrich.enrich_stream(events):
             if "result" in ev:
                 ai_result = ev["result"]
@@ -199,6 +295,9 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
                 if 0 <= idx < len(events):
                     _apply_ai(events[idx], ai, production=production)
             notes.append(f"AI analyzed {len(ai_result)} change(s) to infer category, impact and risk.")
+        ai_analyzed = True
+    elif is_demo:
+        ai_analyzed = True  # demo data is pre-narrated; treat as already analyzed
 
     yield {"phase": "insights", "message": "Building insights & summary…"}
 
@@ -207,6 +306,8 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
     insights = insights_mod.build_insights(run_id, events)
     facets = insights_mod.facets(events)
     summary = _plain_summary(workload_name, start_iso, end_iso, head, events)
+    # Persist the production flag so a later AI re-enrich re-scores consistently.
+    scope_info = {**scope_info, "production": production}
 
     run = ChangeAnalysisRun(
         runId=run_id, tenantId=tenant_id, workloadId=workload_id, workloadName=workload_name,
@@ -216,6 +317,7 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
         mediumCount=head["medium"], lowCount=head["low"], informationalCount=head["informational"],
         summary=summary, demo=is_demo, truncated=truncated, notes=notes, scopeInfo=scope_info,
         facets=facets, events=events, insights=insights, changeLimit=change_limit,
+        aiAnalyzed=ai_analyzed,
     )
     out = asdict(run)
     out["headline"] = head
@@ -226,17 +328,69 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
 
 async def analyze(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
                   start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
-                  force_demo: bool = False) -> dict[str, Any]:
+                  force_demo: bool = False, run_ai: bool = True) -> dict[str, Any]:
     """Run the full pipeline and return a serialized ChangeAnalysisRun (dict). Drains the stream."""
     final: dict[str, Any] = {}
     async for ev in analyze_stream(
         tenant_id=tenant_id, workload=workload, connection=connection,
         start_iso=start_iso, end_iso=end_iso, scope_mode=scope_mode,
-        requested_by=requested_by, force_demo=force_demo,
+        requested_by=requested_by, force_demo=force_demo, run_ai=run_ai,
     ):
         if ev.get("phase") == "done":
             final = ev["run"]
     return final
+
+
+async def ai_enrich_run(run: dict[str, Any]) -> Any:
+    """Run the AI enrichment pass over an ALREADY-PERSISTED run that was analyzed without AI.
+
+    Async generator mirroring ``analyze_stream``: yields progress dicts, then a final
+    ``{"phase":"done","run":<updated run dict>}``. The run's events are AI-sharpened in place and
+    all derived views (headline / insights / facets / summary / actors / resources) are rebuilt so
+    every tab reflects the enriched data. ``aiAnalyzed`` is set True. Idempotent-ish: re-running
+    simply re-enriches. Demo runs and empty runs short-circuit (already 'analyzed')."""
+    events = run.get("events", []) or []
+    if run.get("demo") or not events:
+        run["aiAnalyzed"] = True
+        yield {"phase": "done", "run": run}
+        return
+
+    production = bool((run.get("scopeInfo") or {}).get("production", _is_production({})))
+
+    yield {"phase": "ai", "message": "AI analyzing changes…", "total": len(events)}
+    ai_result: dict[int, dict[str, Any]] = {}
+    async for ev in ai_enrich.enrich_stream(events):
+        if "result" in ev:
+            ai_result = ev["result"]
+        else:
+            yield ev
+    for idx, ai in ai_result.items():
+        if 0 <= idx < len(events):
+            _apply_ai(events[idx], ai, production=production)
+
+    yield {"phase": "insights", "message": "Rebuilding insights & summary…"}
+    events.sort(key=lambda e: e.get("eventTime", ""))
+    head = insights_mod.summarize(events)
+    run["events"] = events
+    run["insights"] = insights_mod.build_insights(run.get("runId", ""), events)
+    run["facets"] = insights_mod.facets(events)
+    run["summary"] = _plain_summary(run.get("workloadName", ""), run.get("startTime", ""),
+                                    run.get("endTime", ""), head, events)
+    run["totalChanges"] = head["total"]
+    run["criticalCount"] = head["critical"]
+    run["highCount"] = head["high"]
+    run["mediumCount"] = head["medium"]
+    run["lowCount"] = head["low"]
+    run["informationalCount"] = head["informational"]
+    run["headline"] = head
+    run["resources"] = insights_mod.by_resource(events)
+    run["actors"] = insights_mod.by_actor(events)
+    run["aiAnalyzed"] = True
+    notes = list(run.get("notes", []) or [])
+    if ai_result and not any("AI analyzed" in n for n in notes):
+        notes.append(f"AI analyzed {len(ai_result)} change(s) to infer category, impact and risk.")
+    run["notes"] = notes
+    yield {"phase": "done", "run": run}
 
 
 def _plain_summary(workload_name: str, start: str, end: str, head: dict[str, Any], events: list[dict[str, Any]]) -> str:

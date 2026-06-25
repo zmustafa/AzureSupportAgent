@@ -4724,6 +4724,13 @@ export interface ChangeEvent {
   blastRadius: string;
   whyRisk: string;
   details: ChangeEventDetail[];
+  // Identity attribution (resolved post-collect; empty on older cached runs).
+  actorDisplay?: string;
+  actorObjectId?: string;
+  actorKind?: string;
+  actorIp?: string;
+  actorOnBehalfOf?: string;
+  actorResolved?: boolean;
 }
 export interface ChangeInsight {
   insightId: string;
@@ -4757,6 +4764,11 @@ export interface ChangeActorRollup {
   resources: number;
   firstChange: string;
   lastChange: string;
+  // Identity attribution extensions.
+  actorId?: string;
+  actorResolved?: boolean;
+  ips?: string[];
+  onBehalfOf?: string[];
 }
 export interface ChangeHeadline {
   total: number;
@@ -4794,6 +4806,7 @@ export interface ChangeAnalysisRun {
   demo: boolean;
   truncated: boolean;
   changeLimit?: number;
+  aiAnalyzed?: boolean;
   notes: string[];
   scopeInfo: Record<string, unknown>;
   facets: { risks: string[]; categories: string[]; actors: string[]; resource_types: string[] };
@@ -5977,6 +5990,7 @@ export async function streamPerfRefresh(
 export interface ChangeAnalyzeBody {
   workload_id?: string; subscription_id?: string; subscription_name?: string;
   connection_id?: string; start_time: string; end_time: string; scope_mode: string;
+  run_ai?: boolean;
 }
 export interface ChangeProgress { phase: string; message: string; done?: number; total?: number }
 /** Live change analysis over SSE: start → progress* (collecting / classifying / AI analyzing) →
@@ -5992,10 +6006,38 @@ export async function streamChangeExplorerAnalyze(
   },
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/changeexplorer/analyze/stream`, {
+  return _streamChangeExplorerSse(`${API_BASE}/changeexplorer/analyze/stream`, JSON.stringify(body), handlers, signal);
+}
+
+/** Run the AI enrichment pass over an already-analyzed run (when the 'Perform AI analysis'
+ *  checkbox was off). Streams progress → done(updated run); the server persists before 'done'. */
+export async function streamChangeExplorerAiEnrich(
+  runId: string,
+  handlers: {
+    onProgress?: (d: ChangeProgress) => void;
+    onDone?: (run: ChangeAnalysisRun) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  return _streamChangeExplorerSse(`${API_BASE}/changeexplorer/runs/${encodeURIComponent(runId)}/ai-enrich/stream`, "{}", handlers, signal);
+}
+
+async function _streamChangeExplorerSse(
+  url: string,
+  bodyJson: string,
+  handlers: {
+    onStart?: (d: { workloadName: string; scopeMode: string }) => void;
+    onProgress?: (d: ChangeProgress) => void;
+    onDone?: (run: ChangeAnalysisRun) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: bodyJson,
     credentials: "include",
     signal,
   });
@@ -7487,6 +7529,9 @@ export interface AppSettings {
   policy_exemption_require_justification?: boolean;
   policy_exemption_max_expiry_days?: number;
   policy_exemption_block_never_expires?: boolean;
+  // Change Explorer.
+  changeexplorer_resolve_identities?: boolean;
+  changeexplorer_change_limit?: number;
 }
 
 export interface ChatgptStatus {

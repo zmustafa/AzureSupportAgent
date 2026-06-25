@@ -2459,6 +2459,7 @@ export default function ChatView() {
               <div className="flex items-center">
                 <Link
                   to="/proactive"
+                  onClick={(e) => { if (proactiveOpen) { e.preventDefault(); setProactiveOpen(false); } }}
                   className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
                     anyActive ? "bg-gray-200 font-medium text-gray-900" : "text-gray-700 hover:bg-gray-200/60"
                   }`}
@@ -2526,6 +2527,7 @@ export default function ChatView() {
               <div className="flex items-center">
                 <Link
                   to="/admin"
+                  onClick={(e) => { if (adminOpen) { e.preventDefault(); setAdminOpen(false); } }}
                   className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
                     inAdmin
                       ? "bg-gray-200 font-medium text-gray-900"

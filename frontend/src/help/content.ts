@@ -51,7 +51,13 @@ export const DESTINATIONS: Destination[] = [
   { label: "RBAC / Access Review", path: "/rbac", group: "Proactive Support", icon: "🛂", keywords: "roles access who can do what", adminOnly: true },
   { label: "Telemetry Intelligence", path: "/telemetry-intel", group: "Proactive Support", icon: "📈", keywords: "log analytics noise cost", adminOnly: true },
   { label: "Evidence Locker", path: "/evidence", group: "Proactive Support", icon: "🗄️", keywords: "snapshot forensic audit hash", adminOnly: true },
+  { label: "Change Explorer", path: "/change-explorer", group: "Proactive Support", icon: "🧭", keywords: "what changed who changed it forensic activity log resource graph actor timeline drift", adminOnly: true },
+  { label: "Quota Monitor", path: "/quota", group: "Proactive Support", icon: "📊", keywords: "limits usage capacity vcpu cores throttling region provider headroom", adminOnly: true },
+  { label: "Tag Intelligence", path: "/tagintel", group: "Proactive Support", icon: "🏷️", keywords: "tags census hygiene coverage cost allocation drift", adminOnly: true },
   { label: "Azure Policy", path: "/policy", group: "Proactive Support", icon: "📐", keywords: "compliance guardrail rollout", adminOnly: true },
+  { label: "Azure Policy · Exemptions", path: "/policy/exemptions", group: "Proactive Support", icon: "🪪", keywords: "policy exemption waiver mitigated exclude guardrail expiry", adminOnly: true },
+  { label: "Azure Policy · Timeline", path: "/policy/timeline", group: "Proactive Support", icon: "📈", keywords: "policy assignment history slicer when created", adminOnly: true },
+  { label: "Azure Policy · Effective policy", path: "/policy/effective", group: "Proactive Support", icon: "🔬", keywords: "effective resolver inheritance notscopes which policies apply", adminOnly: true },
   // Automations & monitor
   { label: "Automations", path: "/automations", group: "Automations", icon: "⚙️", keywords: "schedule sub agents workbooks playbooks" },
   { label: "Scheduled Tasks", path: "/automations/tasks", group: "Automations", icon: "⏰", keywords: "recurring cron schedule" },

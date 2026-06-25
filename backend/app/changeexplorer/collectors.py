@@ -38,11 +38,32 @@ _BACKOFF_CAP_SECONDS = 30.0       # never wait longer than this between attempts
 # through, then trim individual values to keep the persisted run + browser payload bounded.
 _CHANGE_CAPTURE_BYTES = 6_000_000   # ~6 MB capture cap for the change query
 
+# The Activity Log CLI (`az monitor activity-log list -o json`) can likewise exceed the default
+# 256 KB cap for a busy subscription / wide window — truncation breaks the JSON and (pre-fix)
+# dropped EVERY event with a misleading "query failed" note. Capture with the same large cap; on
+# the rare further overflow we salvage the complete objects received before the cut.
+_ACTIVITY_CAPTURE_BYTES = 6_000_000  # ~6 MB capture cap for the Activity Log CLI query
+
 # Max change rows the ARG ``resourcechanges`` query returns per scan (one ARG page). When a scan
 # hits this, the run is flagged so the UI can tell the user the result was capped at the limit.
-RG_CHANGE_LIMIT = 1000
+# This is the DEFAULT/fallback; the live value is admin-tunable via ``change_limit()``.
+RG_CHANGE_LIMIT = 5000
 _MAX_CHANGES_PER_RESOURCE = 40      # cap changed-property entries kept per resource row
 _MAX_VALUE_CHARS = 1500             # cap each before/after value's length
+
+
+def change_limit() -> int:
+    """The admin-tunable per-scan change limit (default ``RG_CHANGE_LIMIT``, clamped 100..50000).
+
+    Applied to BOTH sources: the ARG ``resourcechanges`` ``take`` and the Activity Log
+    ``--max-events`` / REST ``max_events``. Falls back to the default if settings can't be read."""
+    try:
+        from app.core.app_settings import load_settings
+
+        v = int(load_settings().get("changeexplorer_change_limit", RG_CHANGE_LIMIT) or RG_CHANGE_LIMIT)
+        return max(100, min(50000, v))
+    except Exception:  # noqa: BLE001
+        return RG_CHANGE_LIMIT
 
 # Substrings that mark an Azure throttling / rate-limit response (CLI + ARM + ARG variants).
 _THROTTLE_SIGNALS = (
@@ -162,6 +183,7 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
 
     if not predicate:
         return [], "No scope predicate for Resource Graph changes."
+    limit = change_limit()
     # Join resourcechanges to resources so we can scope by the workload predicate and enrich
     # each change with its resource type / group / subscription.
     kql = (
@@ -174,7 +196,7 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
         "| project rid=tolower(id), name, type, resourceGroup, subscriptionId, location) on $left.targetId == $right.rid "
         "| project ts, ct, targetId, name, type, resourceGroup, subscriptionId, location, "
         "changes=properties.changes, correlationId=tostring(properties.changeAttributes.correlationId) "
-        f"| order by ts desc | take {RG_CHANGE_LIMIT}"
+        f"| order by ts desc | take {limit}"
     )
     cap = await _capture_with_retry(
         lambda: run_kql_capture(kql, connection, output="json", max_bytes=_CHANGE_CAPTURE_BYTES),
@@ -207,27 +229,13 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
             "changes": changes, "raw": {k: v for k, v in r.items() if k != "changes"},
         })
     note = ""
-    if truncated or len(out) >= RG_CHANGE_LIMIT:
-        note = (f"Change history was capped at the {RG_CHANGE_LIMIT:,} most recent changes for this "
+    if truncated or len(out) >= limit:
+        note = (f"Change history was capped at the {limit:,} most recent changes for this "
                 "window. There may be more — narrow the time range or scope to see all changes.")
     return out, note
 
 
 # --------------------------------------------------------------------------- Activity Log
-
-
-def _actor_type(caller: str, claims: dict[str, Any] | None) -> str:
-    c = (caller or "").lower()
-    if not c:
-        return "Unknown"
-    if "@" in c:
-        return "User"
-    if claims and claims.get("idtyp") == "app":
-        return "ServicePrincipal"
-    # Heuristic: GUID caller without a UPN is typically an SPN/MI.
-    if len(c) >= 32 and "-" in c:
-        return "ServicePrincipal"
-    return "Unknown"
 
 
 def _activity_note(sub: str, raw_err: str) -> str:
@@ -266,6 +274,7 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
         return [], "No subscriptions for Activity Log."
     wanted = {r.lower() for r in (resource_ids or [])}
     subs = subscriptions[:25]
+    limit = change_limit()
 
     # Non-service-principal connections can't use the `az monitor activity-log list` CLI (no
     # ambient login for their tenant). Use the connection's ARM token over REST when available.
@@ -276,7 +285,7 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
 
         token, terr = await get_arm_token(connection)
         if token:
-            return await _collect_activity_log_rest(subs, start_iso, end_iso, token, wanted)
+            return await _collect_activity_log_rest(subs, start_iso, end_iso, token, wanted, limit)
         # No token: a pasted-token / managed-identity connection has no ambient `az` fallback, so
         # surface the auth error rather than silently returning zero. Pure local dev (ambient
         # `az login`, no managed identity) falls through to the CLI path below.
@@ -291,23 +300,43 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
 
         cmd = (
             f"az monitor activity-log list --subscription {sub} "
-            f"--start-time {start_iso} --end-time {end_iso} --max-events 1000 "
-            "--query \"[?operationName.value && (status.value=='Succeeded' || status.value=='Accepted')]\" -o json"
+            f"--start-time {start_iso} --end-time {end_iso} --max-events {limit} "
+            # Project ONLY the fields the normalizer/identity layer consumes. The full Activity Log
+            # event carries a huge ``properties`` blob (embedded ARM templates / response bodies)
+            # that can blow past the capture cap — projecting it out keeps each event tiny so a
+            # busy subscription / wide window fits without truncation.
+            "--query \"[?operationName.value && (status.value=='Succeeded' || status.value=='Accepted')]"
+            ".{operationName:operationName, status:status, caller:caller, claims:claims, "
+            "correlationId:correlationId, resourceId:resourceId, resourceType:resourceType, "
+            "resourceGroupName:resourceGroupName, eventTimestamp:eventTimestamp, "
+            "subscriptionId:subscriptionId}\" -o json"
         )
         async with sem:
             cap = await _capture_with_retry(
-                lambda: run_command_capture(cmd, connection, read_only=True),
+                lambda: run_command_capture(cmd, connection, read_only=True, max_bytes=_ACTIVITY_CAPTURE_BYTES),
                 label=f"activity-log {sub[:8]}")
+        note = ""
         if not cap.ok:
-            return [], _activity_note(sub, cap.error or cap.stderr)
+            # A truncation/timeout on a huge result still leaves complete objects in stdout — salvage
+            # them (best-effort) rather than dropping the whole subscription's changes. Only a genuine
+            # failure (auth/tenant/denied with no usable stdout) surfaces as a hard error note.
+            salvaged = _parse_rows(cap.stdout) if cap.stdout else []
+            if not salvaged:
+                return [], _activity_note(sub, cap.error or cap.stderr)
+            note = (f"Activity Log for subscription {sub[:8]}… returned more than "
+                    f"{_ACTIVITY_CAPTURE_BYTES // 1_000_000} MB and was truncated; showing the "
+                    f"{len(salvaged)} event(s) received. Narrow the time range for full fidelity.")
+            rows_iter = salvaged
+        else:
+            rows_iter = _parse_rows(cap.stdout)
         rows_out: list[dict[str, Any]] = []
-        for r in _parse_rows(cap.stdout):
+        for r in rows_iter:
             rid = (r.get("resourceId") or "").lower()
             if wanted and rid not in wanted and not any(rid.startswith(w) for w in wanted):
                 continue
             op = ((r.get("operationName") or {}) or {}).get("value", "") if isinstance(r.get("operationName"), dict) else r.get("operationName", "")
             rows_out.append(_activity_row(r, sub, op))
-        return rows_out, ""
+        return rows_out, note
 
     results = await asyncio.gather(*(_one(s) for s in subs))
     out: list[dict[str, Any]] = []
@@ -322,21 +351,28 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
 def _activity_row(r: dict[str, Any], sub: str, op: str) -> dict[str, Any]:
     """Project one raw Activity Log event (CLI or REST — identical shape) into the common raw
     change row the normalizer consumes."""
+    from app.changeexplorer.identity import extract_actor_meta
+
     caller = r.get("caller", "")
     claims = r.get("claims") or {}
+    corr = r.get("correlationId", "")
+    meta = extract_actor_meta(caller, claims, corr)
     return {
         "source": "ActivityLog", "resourceId": r.get("resourceId", ""),
         "resourceName": (r.get("resourceId", "") or "").rsplit("/", 1)[-1],
         "resourceType": (r.get("resourceType") or {}).get("value", "") if isinstance(r.get("resourceType"), dict) else r.get("resourceType", ""),
         "resourceGroup": r.get("resourceGroupName", ""), "subscriptionId": r.get("subscriptionId", sub),
         "location": "", "eventTime": r.get("eventTimestamp", ""), "operation": op, "changeType": "Update",
-        "actor": caller, "actorType": _actor_type(caller, claims),
-        "correlationId": r.get("correlationId", ""), "changes": [], "raw": r,
+        "actor": caller, "actorType": meta["kind"],
+        "actorObjectId": meta["object_id"], "actorKind": meta["kind"],
+        "actorIp": meta["ip"], "actorOnBehalfOf": meta["on_behalf_of"], "actorAppId": meta["app_id"],
+        "isPlatformActor": meta["is_platform"],
+        "correlationId": corr, "changes": [], "raw": r,
     }
 
 
 async def _collect_activity_log_rest(subs: list[str], start_iso: str, end_iso: str,
-                                     token: str, wanted: set[str]) -> tuple[list[dict[str, Any]], str]:
+                                     token: str, wanted: set[str], max_events: int = RG_CHANGE_LIMIT) -> tuple[list[dict[str, Any]], str]:
     """Activity Log via ARM REST (for pasted-token / managed-identity connections). Queries each
     subscription concurrently with the connection's token, applies the same status/operation +
     resource-id filtering the CLI ``--query`` does, and returns the same row shape."""
@@ -346,7 +382,7 @@ async def _collect_activity_log_rest(subs: list[str], start_iso: str, end_iso: s
 
     async def _one(sub: str) -> tuple[list[dict[str, Any]], str]:
         async with sem:
-            events, err = await list_activity_log_events(token, sub, start_iso, end_iso, max_events=1000)
+            events, err = await list_activity_log_events(token, sub, start_iso, end_iso, max_events=max_events)
         if err:
             return [], _activity_note(sub, err)
         rows_out: list[dict[str, Any]] = []

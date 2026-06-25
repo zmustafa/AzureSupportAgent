@@ -76,6 +76,7 @@ class AnalyzeReq(BaseModel):
     start_time: str = ""
     end_time: str = ""
     scope_mode: str = "workload"   # workload | workload_dependencies | tenant
+    run_ai: bool = True            # when False, skip the (slow) AI pass — run it later on demand
 
 
 def _resolve_scope(req: "AnalyzeReq"):
@@ -100,7 +101,7 @@ async def analyze(req: AnalyzeReq, principal: Principal = Depends(require_admin)
     run = await service.analyze(
         tenant_id=principal.tenant_id, workload=workload, connection=conn,
         start_iso=req.start_time, end_iso=req.end_time, scope_mode=scope_mode,
-        requested_by=actor, force_demo=force_demo,
+        requested_by=actor, force_demo=force_demo, run_ai=req.run_ai,
     )
     runs_store.save_run(principal.tenant_id, run_key, run)
     return run
@@ -124,7 +125,7 @@ async def analyze_stream(req: AnalyzeReq, principal: Principal = Depends(require
             async for ev in service.analyze_stream(
                 tenant_id=tenant_id, workload=workload, connection=conn,
                 start_iso=req.start_time, end_iso=req.end_time, scope_mode=scope_mode,
-                requested_by=actor, force_demo=force_demo,
+                requested_by=actor, force_demo=force_demo, run_ai=req.run_ai,
             ):
                 if ev.get("phase") == "done":
                     run = ev["run"]
@@ -155,6 +156,52 @@ async def get_run(run_id: str, principal: Principal = Depends(require_admin)):
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     return run
+
+
+@router.post("/runs/{run_id}/ai-enrich")
+async def ai_enrich_run(run_id: str, principal: Principal = Depends(require_admin)):
+    """Run the AI enrichment pass over an already-persisted run that was analyzed without AI
+    (the 'Perform AI analysis' checkbox was off). Re-sharpens narrative + risk, rebuilds every
+    derived view, persists the updated run, and returns it. Read-only w.r.t. Azure."""
+    run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    if run.get("aiAnalyzed"):
+        return run  # already enriched — no-op
+    final: dict[str, Any] = run
+    async for ev in service.ai_enrich_run(run):
+        if ev.get("phase") == "done":
+            final = ev["run"]
+    runs_store.update_run(principal.tenant_id, final)
+    return final
+
+
+@router.post("/runs/{run_id}/ai-enrich/stream")
+async def ai_enrich_run_stream(run_id: str, principal: Principal = Depends(require_admin)):
+    """Streaming variant of ``ai-enrich`` over SSE: ``progress*`` → ``done`` (the updated run).
+    The enriched run is persisted before ``done`` is emitted."""
+    run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    tenant_id = principal.tenant_id
+
+    async def _gen():
+        try:
+            if run.get("aiAnalyzed"):
+                yield {"event": "done", "data": json.dumps(run)}
+                return
+            async for ev in service.ai_enrich_run(run):
+                if ev.get("phase") == "done":
+                    updated = ev["run"]
+                    runs_store.update_run(tenant_id, updated)
+                    yield {"event": "done", "data": json.dumps(updated)}
+                else:
+                    yield {"event": "progress", "data": json.dumps(ev)}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("change AI enrichment stream failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
 
 
 class AskReq(BaseModel):

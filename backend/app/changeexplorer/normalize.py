@@ -71,5 +71,12 @@ def normalize(raw: dict[str, Any], *, run_id: str, tenant_id: str, workload_id: 
         "dependencyRole": "",
         "blastRadius": "",
         "whyRisk": "",
+        # Identity attribution — carried from the collector/backfill (filled later by resolve step).
+        "actorDisplay": raw.get("actorDisplay", ""),
+        "actorObjectId": raw.get("actorObjectId", ""),
+        "actorKind": raw.get("actorKind", "") or raw.get("actorType", "Unknown"),
+        "actorIp": raw.get("actorIp", ""),
+        "actorOnBehalfOf": raw.get("actorOnBehalfOf", ""),
+        "actorResolved": bool(raw.get("actorResolved", False)),
         "details": details,
     }

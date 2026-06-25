@@ -277,6 +277,15 @@ DEFAULTS: dict[str, Any] = {
     "policy_exemption_require_justification": True,   # description mandatory on create/extend
     "policy_exemption_max_expiry_days": 180,          # max days into the future an exemption may expire (0 = no cap)
     "policy_exemption_block_never_expires": True,     # forbid creating exemptions with no expiry
+    # --- Change Explorer (forensic change analysis) --------------------------------
+    # Resolve actor object-ids (service principals / managed identities / users) to friendly
+    # display names via Microsoft Graph. Requires the connection to have Graph access
+    # (Directory.Read.All). Fails open: when off or Graph is unavailable, object-ids show as-is.
+    "changeexplorer_resolve_identities": True,
+    # Max changes collected per scan from each source (Resource Graph resourcechanges + Activity
+    # Log). A bigger window/busy estate may have more; the run is flagged when capped. Higher =
+    # more complete but slower + heavier. Clamped 100..50000.
+    "changeexplorer_change_limit": 5000,
     # --- Reservations Monitor (weekly expiry digest) -------------------------------
     # Server-side cache TTL (seconds) for reservation snapshots. Default 6h.
     "reservations_cache_ttl_s": 21600,
@@ -464,6 +473,9 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["policy_exemption_require_justification"] = bool(current.get("policy_exemption_require_justification", True))
     current["policy_exemption_max_expiry_days"] = max(0, min(3650, int(current.get("policy_exemption_max_expiry_days", 180) or 0)))
     current["policy_exemption_block_never_expires"] = bool(current.get("policy_exemption_block_never_expires", True))
+    # Change Explorer: clamp the per-scan change limit (100..50000).
+    current["changeexplorer_resolve_identities"] = bool(current.get("changeexplorer_resolve_identities", True))
+    current["changeexplorer_change_limit"] = max(100, min(50000, int(current.get("changeexplorer_change_limit", 5000) or 5000)))
     # Quota Monitor: clamp cache TTL, ordered risk thresholds, and scan concurrency.
     current["quota_cache_ttl_s"] = max(0, min(604800, int(current.get("quota_cache_ttl_s", 21600) or 21600)))
     _qw = max(1, min(99, int(current.get("quota_threshold_watch", 70) or 70)))

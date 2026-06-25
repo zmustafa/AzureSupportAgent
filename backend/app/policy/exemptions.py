@@ -188,6 +188,41 @@ def plan(payload: dict[str, Any], action: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- execute
+def _scope_from_exemption_id(eid: str) -> str:
+    """Strip ``/providers/Microsoft.Authorization/policyExemptions/{name}`` off an exemption id
+    to recover the scope it lives under (subscription / RG / MG), for the RBAC hint."""
+    marker = "/providers/Microsoft.Authorization/policyExemptions/"
+    i = eid.find(marker)
+    return eid[:i] if i > 0 else ""
+
+
+def _authz_hint(err: str | None, status: int, scope: str) -> str | None:
+    """When ARM rejects the write with 403 (authorization), append actionable guidance.
+
+    The Apply/Remove buttons act as the *connection's service principal*, not the signed-in
+    user — so a 403 here almost always means that SP simply hasn't been granted rights to write
+    policy exemptions (which is why running the CLI under your own identity succeeds). We name
+    the SP object id (parsed from the ARM message) and give the exact role-assignment command."""
+    if not err or status != 403:
+        return err
+    m = re.search(r"object id '([0-9a-fA-F-]{36})'", err)
+    obj = m.group(1) if m else "<service-principal-object-id>"
+    role_scope = scope or "<scope>"
+    return (
+        f"{err}\n\nThis connection's service principal (object id {obj}) is not authorized to "
+        "write policy exemptions at this scope. The Apply button acts as the connection's "
+        "identity - not your signed-in user - which is why running the same command in your own "
+        "az CLI succeeded. Grant the service principal the built-in 'Resource Policy Contributor' "
+        "role (it includes Microsoft.Authorization/policyExemptions/write & /delete) at the target "
+        "scope, e.g.:\n\n"
+        f"az role assignment create --assignee-object-id {obj} "
+        "--assignee-principal-type ServicePrincipal "
+        '--role "Resource Policy Contributor" '
+        f'--scope "{role_scope}"\n\n'
+        "Then retry Apply. (Or keep using Copy CLI to run it under your own identity.)"
+    )
+
+
 async def apply(connection: dict[str, Any] | None, payload: dict[str, Any], action: str) -> dict[str, Any]:
     """Execute a create/update via ARM PUT. Returns {ok, resource?, error?, plan}.
 
@@ -210,7 +245,7 @@ async def apply(connection: dict[str, Any] | None, payload: dict[str, Any], acti
         token, "PUT", p["arm"]["path"], body=p["arm"]["body"], api_version=_API_VERSION,
     )
     if err:
-        return {"ok": False, "error": err, "status": status, "plan": p}
+        return {"ok": False, "error": _authz_hint(err, status, p.get("scope") or ""), "status": status, "plan": p}
     return {"ok": True, "resource": data, "status": status, "plan": p}
 
 
@@ -231,5 +266,5 @@ async def remove(connection: dict[str, Any] | None, exemption_id: str) -> dict[s
 
     _data, err, status = await arm_write(token, "DELETE", eid, api_version=_API_VERSION)
     if err:
-        return {"ok": False, "error": err, "status": status}
+        return {"ok": False, "error": _authz_hint(err, status, _scope_from_exemption_id(eid)), "status": status}
     return {"ok": True, "status": status}

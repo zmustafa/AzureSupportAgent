@@ -25,7 +25,7 @@ def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
     resources: set[str] = set()
     for e in events:
         by_label[e.get("riskLabel", "Informational")] = by_label.get(e.get("riskLabel", "Informational"), 0) + 1
-        actors[e.get("actor", "unknown")] += 1
+        actors[e.get("actorDisplay") or e.get("actor", "unknown")] += 1
         types[e.get("resourceType", "")] += 1
         cat_max[e.get("category", "Unknown")] = max(cat_max[e.get("category", "Unknown")], int(e.get("riskScore", 0)))
         if e.get("resourceId"):
@@ -87,8 +87,10 @@ def build_insights(run_id: str, events: list[dict[str, Any]]) -> list[dict[str, 
             "Medium", [e.get("changeId", "") for e in events if e.get("category") == c][:25],
         ))
 
-    # Unknown-actor changes (governance flag).
-    unknown = [e for e in events if e.get("actorType") == "Unknown"]
+    # Unknown-actor changes (governance flag) — only GENUINELY unknown callers, NOT Azure
+    # platform / automation writes (those have no human caller by design and would be false alarms
+    # on a forensic screen).
+    unknown = [e for e in events if e.get("actorType") == "Unknown" and e.get("actorKind") != "AzurePlatform"]
     if unknown:
         out.append(make_insight(
             run_id, "unknown_actor", f"{len(unknown)} change(s) by an unknown actor",
@@ -138,14 +140,22 @@ def by_resource(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def by_actor(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Actor rollup for the Actors tab."""
+    """Actor rollup for the Actors tab.
+
+    Grouping is keyed on a STABLE identity (object-id when known, else the caller string) so the
+    same principal isn't split across rows, while the row DISPLAYS the resolved friendly name when
+    available. Carries the refined kind, originating IP(s) and on-behalf-of user for forensics."""
     groups: dict[str, dict[str, Any]] = {}
     for e in events:
-        a = e.get("actor", "unknown")
-        g = groups.setdefault(a, {
-            "actor": a, "actorType": e.get("actorType", "Unknown"), "changes": 0,
-            "highestRiskScore": 0, "highestRiskLabel": "Informational",
-            "categories": set(), "resources": set(), "firstChange": "", "lastChange": "",
+        key = e.get("actorObjectId", "") or e.get("actor", "") or "unknown"
+        g = groups.setdefault(key, {
+            "actor": e.get("actorDisplay", "") or e.get("actor", "unknown"),
+            "actorId": e.get("actorObjectId", "") or (e.get("actor", "") if e.get("actor") != "unknown" else ""),
+            "actorType": e.get("actorKind", "") or e.get("actorType", "Unknown"),
+            "actorResolved": bool(e.get("actorResolved", False)),
+            "changes": 0, "highestRiskScore": 0, "highestRiskLabel": "Informational",
+            "categories": set(), "resources": set(), "ips": set(), "onBehalfOf": set(),
+            "firstChange": "", "lastChange": "",
         })
         g["changes"] += 1
         if int(e.get("riskScore", 0)) > g["highestRiskScore"]:
@@ -153,6 +163,14 @@ def by_actor(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             g["highestRiskLabel"] = e.get("riskLabel", "Informational")
         g["categories"].add(e.get("category", ""))
         g["resources"].add(e.get("resourceId", ""))
+        if e.get("actorIp"):
+            g["ips"].add(e["actorIp"])
+        if e.get("actorOnBehalfOf"):
+            g["onBehalfOf"].add(e["actorOnBehalfOf"])
+        # Prefer a resolved display name if any event for this actor carried one.
+        if e.get("actorResolved") and e.get("actorDisplay"):
+            g["actor"] = e["actorDisplay"]
+            g["actorResolved"] = True
         t = e.get("eventTime", "")
         if t and (not g["firstChange"] or t < g["firstChange"]):
             g["firstChange"] = t
@@ -160,5 +178,11 @@ def by_actor(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             g["lastChange"] = t
     out = []
     for g in groups.values():
-        out.append({**g, "categories": sorted(c for c in g["categories"] if c), "resources": len([r for r in g["resources"] if r])})
+        out.append({
+            **g,
+            "categories": sorted(c for c in g["categories"] if c),
+            "resources": len([r for r in g["resources"] if r]),
+            "ips": sorted(g["ips"]),
+            "onBehalfOf": sorted(g["onBehalfOf"]),
+        })
     return sorted(out, key=lambda g: -g["highestRiskScore"])

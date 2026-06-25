@@ -100,6 +100,9 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
   // When the user clicks "N exempt" on the Effective tab, jump to the Exemptions tab pre-filtered
   // to that exact assignment. Carries the assignment id (precise) + name (for the banner).
   const [exemptionFocus, setExemptionFocus] = useState<{ id: string; name: string } | null>(null);
+  // When the user clicks "Open" on an exemption row in the Inventory grid, jump to the Exemptions
+  // tab and auto-open that exemption's edit popup.
+  const [openExemptionId, setOpenExemptionId] = useState<string>("");
 
   // Persist the scope choice (including an explicit clear) so a refresh restores exactly it.
   useEffect(() => {
@@ -305,7 +308,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
                 fully resets their local working state (typed intent, chosen scope, queued
                 findings, in-progress simulation) instead of leaking it across scopes. */}
             {tab === "overview" && <Overview inv={inv} />}
-            {tab === "inventory" && <Inventory inv={inv} />}
+            {tab === "inventory" && <Inventory inv={inv} onOpenExemption={(id) => { setOpenExemptionId(id); goTab("exemptions"); }} />}
             {tab === "assignments" && <AssignmentsRegister key={scopeKey} inv={inv} />}
             {tab === "byperson" && <ByPersonPivot key={scopeKey} inv={inv} />}
             {tab === "bysubscription" && <BySubscriptionPivot key={scopeKey} inv={inv} />}
@@ -320,6 +323,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
                 readOnly={connections.find((c) => c.id === effectiveConn)?.read_only ?? true}
                 focusAssignmentId={exemptionFocus?.id}
                 focusAssignmentName={exemptionFocus?.name}
+                openExemptionId={openExemptionId}
                 onChanged={() => refresh()}
               />
             )}
@@ -483,7 +487,7 @@ function Overview({ inv }: { inv: PolicyInventory }) {
 }
 
 // =========================================================================== Inventory
-function Inventory({ inv }: { inv: PolicyInventory }) {
+function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemption?: (exemptionId: string) => void }) {
   const [sub, setSub] = useState<"assignments" | "definitions" | "initiatives" | "exemptions">("assignments");
   const [q, setQ] = useState("");
   const ql = q.toLowerCase();
@@ -565,7 +569,7 @@ function Inventory({ inv }: { inv: PolicyInventory }) {
           </Table>
         )}
         {sub === "exemptions" && (
-          <Table head={["Exemption", "Scope", "Category", "Expires"]}>
+          <Table head={["Exemption", "Scope", "Category", "Expires", "Open"]}>
             {inv.exemptions
               .filter((e) => !ql || `${e.display_name} ${e.scope_label}`.toLowerCase().includes(ql))
               .map((e) => (
@@ -574,6 +578,15 @@ function Inventory({ inv }: { inv: PolicyInventory }) {
                   <Td><ScopeIcon kind={e.scope_kind} /> {e.scope_label}</Td>
                   <Td className="text-gray-600">{e.category}</Td>
                   <Td className="text-gray-500">{e.expires_on ? new Date(e.expires_on).toLocaleDateString() : "Never"}</Td>
+                  <Td>
+                    <button
+                      onClick={() => onOpenExemption?.(e.id)}
+                      className="rounded border px-1.5 py-0.5 text-[11px] font-medium text-brand hover:bg-brand/5"
+                      title="Open this exemption in the Exemptions tab"
+                    >
+                      Open ↗
+                    </button>
+                  </Td>
                 </tr>
               ))}
           </Table>

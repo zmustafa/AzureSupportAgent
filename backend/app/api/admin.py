@@ -110,6 +110,9 @@ class AppSettingsUpdate(BaseModel):
     policy_exemption_require_justification: bool | None = None
     policy_exemption_max_expiry_days: int | None = None
     policy_exemption_block_never_expires: bool | None = None
+    # Change Explorer.
+    changeexplorer_resolve_identities: bool | None = None
+    changeexplorer_change_limit: int | None = None
 
 
 @router.get("/settings")

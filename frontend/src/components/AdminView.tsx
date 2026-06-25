@@ -1400,6 +1400,23 @@ function AzureCliFields({ tenantId }: { tenantId: string }) {
   );
 }
 
+function CmdBlock({ cmd }: { cmd: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-1 flex items-stretch gap-1">
+      <button
+        type="button"
+        onClick={() => { void navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+        title="Copy command"
+        className="shrink-0 rounded border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+      >
+        {copied ? "✓ Copied" : "⧉ Copy"}
+      </button>
+      <pre className="flex-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
+    </div>
+  );
+}
+
 function AzCliTokenFields({
   form,
   set,
@@ -1417,15 +1434,11 @@ function AzCliTokenFields({
         <ol className="list-decimal space-y-1 pl-4">
           <li>
             On your own computer, sign in to the tenant:
-            <pre className="mt-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">
-              az login --tenant &lt;TENANT_ID&gt;
-            </pre>
+            <CmdBlock cmd="az login --tenant <TENANT_ID>" />
           </li>
           <li>
             Get an ARM access token (valid ~1 hour):
-            <pre className="mt-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">
-              az account get-access-token --resource https://management.azure.com --output json
-            </pre>
+            <CmdBlock cmd="az account get-access-token --resource https://management.azure.com --output json" />
           </li>
           <li>Paste the entire JSON output below. We extract the token, expiry, tenant and subscription automatically.</li>
         </ol>
@@ -1452,9 +1465,7 @@ function AzCliTokenFields({
           (e.g. in RBAC Access Review) can’t be resolved from GUIDs without a Graph token. To enable name
           resolution, also paste a Graph token:
         </p>
-        <pre className="mb-2 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">
-          az account get-access-token --resource-type ms-graph --output json
-        </pre>
+        <div className="mb-2"><CmdBlock cmd="az account get-access-token --resource-type ms-graph --output json" /></div>
         <label className={label}>Paste Microsoft Graph token JSON (optional)</label>
         <textarea
           rows={3}
@@ -3201,6 +3212,8 @@ function ScoringTaxonomyCard() {
         policy_exemption_require_justification: form.policy_exemption_require_justification,
         policy_exemption_max_expiry_days: form.policy_exemption_max_expiry_days,
         policy_exemption_block_never_expires: form.policy_exemption_block_never_expires,
+        changeexplorer_resolve_identities: form.changeexplorer_resolve_identities,
+        changeexplorer_change_limit: form.changeexplorer_change_limit,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -3763,6 +3776,30 @@ function AppSettingsCard() {
             step={30}
             suffix="days"
             onChange={(v) => set({ policy_exemption_max_expiry_days: v })}
+          />
+        </div>
+      </Card>
+
+      <Card title="Change Explorer">
+        <p className="mb-2 text-xs text-gray-500">
+          Controls how the Workload Change Explorer attributes “who made the change”.
+        </p>
+        <Toggle
+          label="Resolve actor identities via Microsoft Graph"
+          hint="Turn raw object-ids (service principals / managed identities / users) into friendly display names. Requires the Azure connection to have directory read access (Directory.Read.All). When off — or when Graph is unavailable — object-ids are shown as-is."
+          checked={form.changeexplorer_resolve_identities ?? true}
+          onChange={(v) => set({ changeexplorer_resolve_identities: v })}
+        />
+        <div className="mt-2">
+          <NumberField
+            label="Max changes per scan"
+            hint="Upper bound on changes collected per scan from each source (Resource Graph + Activity Log). A bigger value is more complete on busy estates / wide windows, but slower and heavier. Default 5,000."
+            value={form.changeexplorer_change_limit ?? 5000}
+            min={100}
+            max={50000}
+            step={500}
+            suffix="changes"
+            onChange={(v) => set({ changeexplorer_change_limit: v })}
           />
         </div>
       </Card>

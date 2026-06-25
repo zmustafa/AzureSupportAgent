@@ -499,6 +499,7 @@ async def run_command_stream(
     *,
     read_only: bool,
     confirm: bool = False,
+    max_bytes: int = MAX_OUTPUT_BYTES,
 ) -> AsyncIterator[dict[str, Any]]:
     """Validate, optionally authenticate, then run a command and yield SSE-ready events.
 
@@ -555,7 +556,7 @@ async def run_command_stream(
         # argv[0] is the binary name; replace with the resolved absolute path.
         run_argv = [az_path, *val.argv[1:]]
         async for ev in _stream_process(
-            run_argv, env, timeout, label=command, destructive=val.destructive
+            run_argv, env, timeout, label=command, destructive=val.destructive, max_bytes=max_bytes
         ):
             yield ev
     finally:
@@ -784,7 +785,7 @@ async def run_command_capture(
 ) -> CaptureResult:
     """Run an allowlisted command and capture its full output (non-streaming)."""
     return await _capture(
-        run_command_stream(command, connection, read_only=read_only, confirm=confirm),
+        run_command_stream(command, connection, read_only=read_only, confirm=confirm, max_bytes=max_bytes),
         max_bytes=max_bytes,
     )
 

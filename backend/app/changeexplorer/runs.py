@@ -80,6 +80,26 @@ def get_run(tenant_id: str, run_id: str, *, include_deleted: bool = False) -> di
     return None
 
 
+def update_run(tenant_id: str, run: dict[str, Any]) -> bool:
+    """Replace an existing run (matched by ``runId``) in place, preserving its list position and
+    any soft-delete marker. Used to persist an AI re-enrichment of an already-stored run. Returns
+    True when the run was found and updated."""
+    rid = run.get("runId", "")
+    if not rid:
+        return False
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    for runs in bucket.values():
+        for i, r in enumerate(runs):
+            if r.get("runId") == rid:
+                if r.get("deleted_at") and "deleted_at" not in run:
+                    run["deleted_at"] = r["deleted_at"]
+                runs[i] = run
+                _write(data)
+                return True
+    return False
+
+
 def soft_delete(tenant_id: str, run_id: str) -> bool:
     data = _read()
     bucket = data.get(tenant_id or "default", {})

@@ -458,8 +458,14 @@ async def list_activity_log_events(
     except Exception:  # noqa: BLE001
         max_pages = 50
     truncated = False
+    # The Activity Log ``eventtypes/management/values`` REST API is notoriously slow for wide
+    # windows — a single page on a busy subscription over 30 days can take ~30s. A flat 30s
+    # client timeout therefore fails legitimate large queries with a bare "ARM request error".
+    # Use a generous read timeout (with a short connect timeout) so big windows complete, and
+    # treat a timeout as a soft, partial result rather than a hard failure.
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             for _page in range(max_pages):  # safety ceiling — max_events normally stops sooner
                 resp = await client.get(url, headers=headers, params=params)
                 if resp.status_code != 200:
@@ -486,6 +492,18 @@ async def list_activity_log_events(
             if truncated else None
         )
         return events, note
+    except httpx.TimeoutException:
+        # A timeout on this slow API for a wide window is expected — keep whatever pages we got
+        # and tell the user to narrow the range, instead of failing the whole subscription.
+        if events:
+            return events, (
+                f"Activity Log query was slow and timed out for this window — showing the "
+                f"{len(events)} event(s) collected so far. Narrow the time range for full coverage."
+            )
+        return events, (
+            "Activity Log query timed out — this window is too large for the subscription's "
+            "volume. Narrow the time range (e.g. last 24 hours / 7 days) and try again."
+        )
     except httpx.HTTPError as e:  # noqa: BLE001
         return events, f"ARM request error: {e}"
 

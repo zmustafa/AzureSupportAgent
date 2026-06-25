@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -362,13 +362,14 @@ function ExemptionPivot({ rows }: { rows: PolicyExemption[] }) {
 
 // ============================================================ main tab
 export function ExemptionsTab({
-  inv, connectionId, readOnly, focusAssignmentId, focusAssignmentName, onChanged,
+  inv, connectionId, readOnly, focusAssignmentId, focusAssignmentName, openExemptionId, onChanged,
 }: {
   inv: PolicyInventory;
   connectionId: string;
   readOnly: boolean;
   focusAssignmentId?: string;
   focusAssignmentName?: string;
+  openExemptionId?: string;
   onChanged: () => void;
 }) {
   const exemptions = inv.exemptions || [];
@@ -404,6 +405,19 @@ export function ExemptionsTab({
   const [confirmOp, setConfirmOp] = useState<{ kind: "remove"; ex: PolicyExemption } | null>(null);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const qc = useQueryClient();
+
+  // When opened from another tab's "Open" link (e.g. the Inventory exemptions grid), auto-open the
+  // edit modal for that exact exemption. Tracked so the same id re-opens after being closed.
+  const lastOpenedRef = useRef<string>("");
+  useEffect(() => {
+    if (!openExemptionId || openExemptionId === lastOpenedRef.current) return;
+    const target = exemptions.find((e) => e.id === openExemptionId);
+    if (target) {
+      lastOpenedRef.current = openExemptionId;
+      setView("table");
+      setEditing(target);
+    }
+  }, [openExemptionId, exemptions]);
 
   const buckets = useMemo(() => {
     const b = { total: exemptions.length, expired: 0, expiring_soon: 0, never: 0, unjustified: 0, active: 0 };
@@ -604,7 +618,7 @@ export function ExemptionsTab({
           This connection is <b>read-only</b>. You can preview changes and copy the generated CLI; enable writes on the connection (Settings → Connections) to apply directly.
         </div>
       )}
-      {msg && <div className={`rounded-md px-3 py-1.5 text-xs ${msg.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{msg.text}</div>}
+      {msg && <div className={`whitespace-pre-wrap rounded-md px-3 py-1.5 text-xs ${msg.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{msg.text}</div>}
       {focusBanner && focusId && (
         <div className="flex items-center justify-between gap-2 rounded-md border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs text-brand">
           <span>Showing exemptions for assignment: <b>{focusBanner}</b> — {rows.length} match.</span>
@@ -883,7 +897,7 @@ function ExemptionModal({
               </div>
             </div>
           )}
-          {err && <div className="rounded-md bg-red-50 px-3 py-1.5 text-xs text-red-700">{err}</div>}
+          {err && <div className="whitespace-pre-wrap rounded-md bg-red-50 px-3 py-1.5 text-xs text-red-700">{err}</div>}
         </div>
         <div className="flex items-center justify-between gap-2 border-t bg-gray-50 px-4 py-3">
           <span className="text-[11px] text-gray-400">{selectedAssignment ? `Waives: ${selectedAssignment.display_name}` : ""}</span>

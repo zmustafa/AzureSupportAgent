@@ -24,7 +24,7 @@ RISK_LABELS = ["Critical", "High", "Medium", "Low", "Informational"]
 
 SCOPE_MODES = ["workload", "workload_dependencies", "tenant"]
 
-ACTOR_TYPES = ["User", "ServicePrincipal", "ManagedIdentity", "AzurePolicy", "System", "Unknown"]
+ACTOR_TYPES = ["User", "ServicePrincipal", "ManagedIdentity", "AzurePolicy", "AzurePlatform", "System", "Unknown"]
 
 
 def label_for_score(score: int) -> str:
@@ -93,6 +93,13 @@ class ChangeEvent:
     blastRadius: str = ""
     whyRisk: str = ""
     details: list[dict[str, Any]] = field(default_factory=list)       # ChangeEventDetail[]
+    # Identity attribution (resolved post-collect; empty on older cached runs).
+    actorDisplay: str = ""        # human-friendly name (Graph) or "" when only an id is known
+    actorObjectId: str = ""       # directory object-id of the actor, when known
+    actorKind: str = ""           # refined kind: User|ServicePrincipal|ManagedIdentity|AzurePlatform|Unknown
+    actorIp: str = ""             # originating client IP (from the ipaddr claim)
+    actorOnBehalfOf: str = ""     # originating user when an app/SPN acted on their behalf
+    actorResolved: bool = False   # True when a friendly name was resolved from the directory
 
 
 @dataclass
@@ -129,6 +136,7 @@ class ChangeAnalysisRun:
     demo: bool = False
     truncated: bool = False
     changeLimit: int = 0      # per-scan source cap (e.g. 1000) when the change list was capped; 0 = not capped
+    aiAnalyzed: bool = False   # whether the AI enrichment pass has run for this run's events
     notes: list[str] = field(default_factory=list)
     scopeInfo: dict[str, Any] = field(default_factory=dict)
     facets: dict[str, Any] = field(default_factory=dict)
