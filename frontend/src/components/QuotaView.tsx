@@ -1,15 +1,19 @@
-import { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import {
   api,
-  streamQuotaScan,
   type QuotaSnapshot,
   type QuotaResult,
   type QuotaMeta,
   type QuotaRun,
+  type QuotaScanParams,
 } from "../api";
-import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { useDebounced, Skeleton } from "../utils/perf";
+import { getQuotaScan, startQuotaScan, cancelQuotaScan, clearQuotaScan, useQuotaScanVersion } from "../utils/quotaScan";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 
@@ -125,7 +129,6 @@ function UsageBar({ pctValue, risk }: { pctValue: number | null; risk: string })
 }
 
 export function QuotaMonitorPanel() {
-  const qc = useQueryClient();
   const [connId, setConnId] = usePersistedState<string>("azsup.quota.connId", "");
   const [subId, setSubId] = usePersistedState<string>("azsup.quota.subId", "");
   const [subName, setSubName] = usePersistedState<string>("azsup.quota.subName", "");
@@ -134,38 +137,59 @@ export function QuotaMonitorPanel() {
   // Include zero-usage rows (e.g. every VM SKU family with headroom) — like the portal Quotas blade.
   const [showUnused, setShowUnused] = usePersistedState<boolean>("azsup.quota.showUnused", true);
 
-  // Filters
-  const [fRegion, setFRegion] = useState("all");
-  const [fProvider, setFProvider] = useState("all");
-  const [fCategory, setFCategory] = useState("all");
-  const [fRisk, setFRisk] = useState("all");
-  const [fKind, setFKind] = useState("all"); // dynamic | static | throttling | manual
-  const [fFamilyOnly, setFFamilyOnly] = useState(false);
+  // QU3 — display filters are seeded FROM the URL so a shared link / refresh restores the view,
+  // and reflected back into the URL by an effect below. (Read once at mount.)
+  const [, setParams] = useSearchParams();
+  const p0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [fRegion, setFRegion] = useState(p0.get("region") || "all");
+  const [fProvider, setFProvider] = useState(p0.get("provider") || "all");
+  const [fCategory, setFCategory] = useState(p0.get("category") || "all");
+  const [fRisk, setFRisk] = useState(p0.get("risk") || "all");
+  const [fKind, setFKind] = useState(p0.get("kind") || "all"); // dynamic | static | throttling | manual
+  const [fFamilyOnly, setFFamilyOnly] = useState(p0.get("families") === "1");
   // Usage-range filter (percent of limit). [0,100] = no filter; rows with no usage% are kept
   // only when the range still covers the full 0–100 span.
-  const [usageMin, setUsageMin] = useState(0);
-  const [usageMax, setUsageMax] = useState(100);
-  const [query, setQuery] = useState("");
-  // Table sort. Default "" = the risk-then-usage ranking; clicking a header overrides it.
-  const [sortKey, setSortKey] = useState<SortKey>("");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [usageMin, setUsageMin] = useState(Number(p0.get("umin") ?? 0) || 0);
+  const [usageMax, setUsageMax] = useState(Number(p0.get("umax") ?? 100) || 100);
+  const [query, setQuery] = useState(p0.get("q") || "");
+  const dQuery = useDebounced(query, 150); // QP2 — debounce so each keystroke doesn't re-filter+sort+rerender all rows
+  // Table sort. Default "" = the risk-then-usage ranking; clicking a header overrides it. QU4 —
+  // persisted per browser so the chosen sort survives reloads.
+  const [sortKey, setSortKey] = usePersistedState<SortKey>("azsup.quota.sortKey", "");
+  const [sortDir, setSortDir] = usePersistedState<"asc" | "desc">("azsup.quota.sortDir", "desc");
   const [drawer, setDrawer] = useState<QuotaResult | null>(null);
   const [showRegions, setShowRegions] = useState(false);
   const [regionQuery, setRegionQuery] = useState("");
   const [showCats, setShowCats] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
-
-  // Live scan-progress popup (mirrors FMEA generation): activity log + elapsed timer.
-  const [scanning, setScanning] = useState(false);
-  const [scanStatus, setScanStatus] = useState("");
-  const [scanLog, setScanLog] = useState<{ t: string; phase: string; msg: string }[]>([]);
-  const [scanStart, setScanStart] = useState(0);
-  const [scanElapsed, setScanElapsed] = useState(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [toast, setToast] = useState(""); // QU8 — export confirmation
+  const [scanMinimized, setScanMinimized] = useState(false); // QP5 — minimise the progress popup
 
   const scopeKey = `sub:${subId || "none"}`;
+
+  // QP5 — scan state lives in a module-level registry so it survives navigation. The component
+  // re-renders on any registry change via useQuotaScanVersion().
+  useQuotaScanVersion();
+  const scan = getQuotaScan(scopeKey);
+  const scanning = !!scan?.scanning;
+  const [scanElapsed, setScanElapsed] = useState(0);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const consumedDoneRef = useRef(0); // one-shot guard so a completed scan fires its "loaded" effect once
+
+  // QU3 — reflect the active display filters back into the URL (shareable / back-button aware).
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    const setOrDel = (k: string, v: string, def: string) => { if (v && v !== def) next.set(k, v); else next.delete(k); };
+    setOrDel("region", fRegion, "all"); setOrDel("provider", fProvider, "all");
+    setOrDel("category", fCategory, "all"); setOrDel("risk", fRisk, "all"); setOrDel("kind", fKind, "all");
+    if (fFamilyOnly) next.set("families", "1"); else next.delete("families");
+    if (usageMin > 0) next.set("umin", String(usageMin)); else next.delete("umin");
+    if (usageMax < 100) next.set("umax", String(usageMax)); else next.delete("umax");
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fRegion, fProvider, fCategory, fRisk, fKind, fFamilyOnly, usageMin, usageMax, query]);
 
   // Nothing fetches on mount — the operator clicks "Load" to read the latest cached snapshot, or
   // "Run scan" to collect fresh. `loaded` gates the Azure-/server-hitting queries so opening the
@@ -176,12 +200,12 @@ export function QuotaMonitorPanel() {
     setLoaded(false);
   }, [scopeKey, connId]);
 
-  // Tick the elapsed-time counter while a scan is in flight.
+  // Tick the elapsed-time counter while a scan is in flight (driven by the registry's startedAt).
   useEffect(() => {
-    if (!scanning) return;
-    const id = setInterval(() => setScanElapsed(Math.floor((Date.now() - scanStart) / 1000)), 1000);
+    if (!scanning || !scan) return;
+    const id = setInterval(() => setScanElapsed(Math.floor((Date.now() - scan.startedAt) / 1000)), 1000);
     return () => clearInterval(id);
-  }, [scanning, scanStart]);
+  }, [scanning, scan]);
 
   // Auto-scroll the activity log to the newest entry — WITHOUT moving the page. We scroll the
   // log's own container (scrollTop) instead of scrollIntoView, which would scroll every ancestor
@@ -189,21 +213,16 @@ export function QuotaMonitorPanel() {
   useEffect(() => {
     const el = logEndRef.current?.parentElement;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [scanLog]);
+  }, [scan?.log.length]);
 
-  const pushLog = useCallback((phase: string, m: string) => {
-    const t = new Date().toLocaleTimeString([], { hour12: false });
-    setScanStatus(m);
-    setScanLog((prev) => [...prev.slice(-299), { t, phase, msg: m }]);
-  }, []);
-
-  const metaQ = useQuery<QuotaMeta>({ queryKey: ["quotaMeta"], queryFn: api.quotaMeta });
+  const metaQ = useQuery<QuotaMeta>({ queryKey: ["quotaMeta"], queryFn: api.quotaMeta, staleTime: 30 * 60 * 1000 });
   const regionsQ = useQuery({
     queryKey: ["quotaRegions", connId, subId],
     queryFn: () => api.quotaRegions(subId, connId),
     // Region list loads once the user opens the region picker or has loaded/scanned this scope —
     // not automatically on page load.
     enabled: !!subId && (loaded || showRegions),
+    staleTime: 10 * 60 * 1000,
   });
 
   // Overview only READS the cache (server-side). Gated behind an explicit Load so the page never
@@ -226,6 +245,7 @@ export function QuotaMonitorPanel() {
     queryKey: ["quotaRuns", subId],
     queryFn: () => api.quotaRuns(subId, 20),
     enabled: !!subId && loaded,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Load the latest cached snapshot for the current scope on demand (no scan).
@@ -234,54 +254,37 @@ export function QuotaMonitorPanel() {
     else setLoaded(true);
   }
 
-  // Streaming scan: shows a live progress popup (like FMEA), then lands the snapshot in cache.
-  async function runScan() {
+  // QP5 — kick the scan off in the module-level registry so it survives navigation. The popup is
+  // just a live view of that registry; closing/minimising it doesn't stop the scan.
+  function runScan() {
     if (scanning) return;
     setMsg(null);
-    setScanning(true);
-    setScanStatus("Starting…");
-    setScanLog([]);
-    setScanStart(Date.now());
-    setScanElapsed(0);
-    abortRef.current = new AbortController();
-    pushLog("start", "🚀 Starting quota scan…");
-    try {
-      await streamQuotaScan(
-        { subscription_id: subId, connection_id: connId, demo: false, regions: selRegions, categories: selCats, include_unused: showUnused },
-        {
-          onStatus: (s) => pushLog(s.phase, s.message),
-          onDone: (fresh) => {
-            qc.setQueryData(["quota", connId, scopeKey], fresh);
-            setLoaded(true);
-            qc.invalidateQueries({ queryKey: ["quotaRuns", subId] });
-            if (fresh.error) {
-              pushLog("error", `❌ ${fresh.error}`);
-              setMsg({ text: fresh.error, ok: false });
-            } else {
-              setMsg({ text: `Scanned ${fresh.regions_scanned.length} region(s).`, ok: true });
-            }
-            setScanning(false);
-          },
-          onError: (m) => {
-            pushLog("error", `❌ ${m}`);
-            setMsg({ text: m, ok: false });
-            setScanning(false);
-          },
-        },
-        abortRef.current.signal,
-      );
-    } catch (e) {
-      pushLog("error", `❌ ${formatError(e)}`);
-      setMsg({ text: formatError(e), ok: false });
-      setScanning(false);
-    }
+    setScanMinimized(false);
+    const params: QuotaScanParams = {
+      subscription_id: subId, connection_id: connId, demo: false,
+      regions: selRegions, categories: selCats, include_unused: showUnused,
+    };
+    startQuotaScan(scopeKey, params, ["quota", connId, scopeKey], {
+      subLabel: subName || subId,
+      regionLabel: selRegions.length ? `${selRegions.length} region(s)` : "all regions",
+    });
   }
 
   function cancelScan() {
-    abortRef.current?.abort();
-    pushLog("cancel", "⏹️ Cancelled.");
-    setScanning(false);
+    cancelQuotaScan(scopeKey);
   }
+
+  // QP5 — when a scan in the registry completes, mark the scope loaded + surface a result banner
+  // exactly once (even if the user navigated away and back during the scan).
+  useEffect(() => {
+    if (!scan || scan.scanning || !scan.finishedAt || scan.finishedAt === consumedDoneRef.current) return;
+    consumedDoneRef.current = scan.finishedAt;
+    setLoaded(true);
+    if (scan.error) setMsg({ text: scan.error, ok: false });
+    else setMsg({ text: `Scanned ${scan.regionsScanned} region(s).`, ok: true });
+    clearQuotaScan(scopeKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scan?.finishedAt, scan?.scanning]);
 
   const allRegions = regionsQ.data?.regions ?? [];
   const allCats = metaQ.data?.categories ?? [];
@@ -315,9 +318,12 @@ export function QuotaMonitorPanel() {
     return Array.from(set).sort();
   }, [results]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = results.filter((r) => {
+  // QP4 — the (heavy) filter pass is memoised separately from the (light) sort pass, so toggling
+  // sort direction or column doesn't re-run the whole filter over hundreds of rows. The search box
+  // feeds the DEBOUNCED query (QP2) so keystrokes don't thrash the filter.
+  const filteredUnsorted = useMemo(() => {
+    const q = dQuery.trim().toLowerCase();
+    return results.filter((r) => {
       if (fRegion !== "all" && (r.region || "(subscription)") !== fRegion) return false;
       if (fProvider !== "all" && r.provider_namespace !== fProvider) return false;
       if (fCategory !== "all" && r.quota_category !== fCategory) return false;
@@ -344,6 +350,10 @@ export function QuotaMonitorPanel() {
       }
       return true;
     });
+  }, [results, fRegion, fProvider, fCategory, fFamilyOnly, fRisk, fKind, dQuery, usageMin, usageMax]);
+
+  const filtered = useMemo(() => {
+    const rows = [...filteredUnsorted];
     rows.sort((a, b) => {
       if (sortKey) {
         const va = sortValue(a, sortKey);
@@ -362,13 +372,89 @@ export function QuotaMonitorPanel() {
       return (b.percent_used ?? -1) - (a.percent_used ?? -1);
     });
     return rows;
-  }, [results, fRegion, fProvider, fCategory, fFamilyOnly, fRisk, fKind, query, usageMin, usageMax, sortKey, sortDir]);
+  }, [filteredUnsorted, sortKey, sortDir]);
+
+  // QP1 — virtualize the results table so only the visible rows are in the DOM (the live estate
+  // reaches ~500-650 rows). A dedicated scroll container + spacer rows keep <table> semantics +
+  // the sticky header + column alignment.
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 49,
+    overscan: 16,
+  });
+  const vItems = rowVirtualizer.getVirtualItems();
+  const vPadTop = vItems.length ? vItems[0].start : 0;
+  const vPadBottom = vItems.length ? rowVirtualizer.getTotalSize() - vItems[vItems.length - 1].end : 0;
+  // Reset the table scroll to top whenever the filtered set changes shape materially.
+  useEffect(() => { tableScrollRef.current?.scrollTo({ top: 0 }); }, [dQuery, fRegion, fProvider, fCategory, fRisk, fKind, data?.generated_at]);
 
   const counts = data?.counts ?? {};
   const unregistered = (data?.provider_registration ?? []).filter((p) => !p.registered);
   const neverLoaded = !!data?.never_loaded;
   const notConfigured = data && !data.connection_configured;
   const canScan = !!subId;
+
+  // QU6 — active display filters as removable chips. (Scan-scope region/category pickers are
+  // separate; these are the post-load table filters.)
+  const activeFilters = useMemo(() => {
+    const chips: { key: string; label: string; clear: () => void }[] = [];
+    if (fRisk !== "all") chips.push({ key: "risk", label: `Risk: ${RISK_LABEL[fRisk] ?? fRisk}`, clear: () => setFRisk("all") });
+    if (fKind !== "all") chips.push({ key: "kind", label: `Kind: ${fKind}`, clear: () => setFKind("all") });
+    if (fRegion !== "all") chips.push({ key: "region", label: `Region: ${fRegion}`, clear: () => setFRegion("all") });
+    if (fProvider !== "all") chips.push({ key: "provider", label: `Provider: ${fProvider}`, clear: () => setFProvider("all") });
+    if (fCategory !== "all") chips.push({ key: "category", label: `Category: ${fCategory}`, clear: () => setFCategory("all") });
+    if (fFamilyOnly) chips.push({ key: "fam", label: "VM families", clear: () => setFFamilyOnly(false) });
+    if (usageMin > 0 || usageMax < 100) chips.push({ key: "usage", label: `Usage ${usageMin}–${usageMax}%`, clear: () => { setUsageMin(0); setUsageMax(100); } });
+    if (query.trim()) chips.push({ key: "q", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    return chips;
+  }, [fRisk, fKind, fRegion, fProvider, fCategory, fFamilyOnly, usageMin, usageMax, query]);
+  function clearFilters() {
+    setFRisk("all"); setFKind("all"); setFRegion("all"); setFProvider("all"); setFCategory("all");
+    setFFamilyOnly(false); setUsageMin(0); setUsageMax(100); setQuery("");
+  }
+
+  // QU7 — flag a stale cache (older than its server TTL) so the header can nudge a re-scan.
+  const cacheStale = !!(data && !neverLoaded && data.stale_cache);
+
+  // QU2 — at-risk trend from the scan-history runs (oldest→newest for the chart) + a since-last
+  // delta from the newest run's diff.
+  const runs = runsQ.data?.runs ?? [];
+  const trend = useMemo(() => {
+    return [...runs].reverse().map((r) => ({
+      at: r.started_at ? new Date(r.started_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "",
+      Critical: r.critical_count,
+      Warning: r.warning_count,
+      Watch: r.watch_count ?? 0,
+    }));
+  }, [runs]);
+  const lastDiff = runs[0]?.diff ?? null;
+
+  // QU8 — export the CURRENT filtered view to CSV client-side (the server export is the full
+  // snapshot). Mirrors the column set shown in the table.
+  function exportFiltered() {
+    const headers = ["quota_name", "service_name", "provider", "category", "sku_family", "region", "usage", "limit", "remaining", "percent_used", "unit", "adjustable", "source", "risk", "recommendation"];
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [headers.join(",")];
+    for (const r of filtered) {
+      lines.push([
+        esc(r.quota_name), esc(r.service_name), esc(r.provider_namespace), esc(r.quota_category),
+        esc(r.sku_family), esc(r.region), esc(r.current_usage ?? ""), esc(r.limit ?? ""), esc(r.remaining ?? ""),
+        esc(r.percent_used ?? ""), esc(r.unit), esc(r.adjustable_status), esc(r.source_type), esc(r.risk_level),
+        esc(r.recommendation),
+      ].join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `quota-${subName || subId}-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setToast(`Exported ${filtered.length.toLocaleString()} row${filtered.length === 1 ? "" : "s"} to CSV`);
+  }
+
+  // QU8 — auto-dismiss the export toast.
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2800); return () => clearTimeout(t); }, [toast]);
 
   function toggleRegion(name: string) {
     setSelRegions(selRegions.includes(name) ? selRegions.filter((r) => r !== name) : [...selRegions, name]);
@@ -380,7 +466,7 @@ export function QuotaMonitorPanel() {
   // descending (highest first), text columns ascending.
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
       setSortDir(["usage", "limit", "headroom", "risk"].includes(key) ? "desc" : "asc");
@@ -515,16 +601,27 @@ export function QuotaMonitorPanel() {
               {overviewQ.isFetching ? "Loading…" : loaded ? "↻ Reload" : "⬇ Load"}
             </button>
             <button
-              onClick={() => void runScan()}
+              onClick={() => runScan()}
               disabled={scanning || !canScan}
               className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
             >
               {scanning ? "Scanning…" : "↻ Run scan"}
             </button>
+            {/* QU7 — nudge a re-scan when the cached snapshot is older than its server TTL. */}
+            {cacheStale && !scanning && (
+              <button
+                onClick={() => runScan()}
+                title="This cached scan is older than its refresh interval — run a fresh scan."
+                className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+              >
+                ⚠ stale · rescan
+              </button>
+            )}
             {subId ? (
               <div className="flex items-center gap-1">
-                <a href={api.quotaExportUrl(subId, false, "csv")} className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">CSV</a>
-                <a href={api.quotaExportUrl(subId, false, "json")} className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">JSON</a>
+                <button onClick={exportFiltered} disabled={!data || filtered.length === 0} title="Export the current filtered view to CSV" className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">⬇ Export view</button>
+                <a href={api.quotaExportUrl(subId, false, "csv")} title="Full cached snapshot (server)" className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">CSV</a>
+                <a href={api.quotaExportUrl(subId, false, "json")} title="Full cached snapshot (server)" className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">JSON</a>
               </div>
             ) : null}
           </div>
@@ -547,7 +644,7 @@ export function QuotaMonitorPanel() {
             Select a subscription to begin, then click <b>Run scan</b>.
           </div>
         ) : !data && overviewQ.isFetching ? (
-          <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
+          <div className="space-y-3"><div className="grid grid-cols-3 gap-2 sm:grid-cols-6">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-14 animate-pulse rounded-lg bg-gray-100" />)}</div><Skeleton rows={10} /></div>
         ) : !data ? (
           <div className="rounded-lg border bg-white p-8 text-center text-sm text-gray-500">
             Nothing loaded yet. Click <b>Load</b> to fetch the latest cached scan for
@@ -559,7 +656,7 @@ export function QuotaMonitorPanel() {
             {selRegions.length ? ` ${selRegions.length} selected region(s)` : " all regions"}.
           </div>
         ) : overviewQ.isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
+          <Skeleton rows={12} />
         ) : (
           <>
             {/* KPI cards */}
@@ -629,13 +726,29 @@ export function QuotaMonitorPanel() {
                 placeholder="Search quota / SKU…"
                 className="min-w-[160px] flex-1 rounded-md border px-2 py-1 text-xs"
               />
-              <span className="text-[11px] text-gray-400">{filtered.length} of {results.length}</span>
+              <span className="text-[11px] text-gray-500">
+                showing <b className="text-gray-700">{filtered.length.toLocaleString()}</b> of {results.length.toLocaleString()}
+                {activeFilters.length > 0 ? " (filtered)" : ""}
+              </span>
             </div>
 
-            {/* Table */}
-            <div className="overflow-x-auto rounded-lg border bg-white">
+            {/* QU6 — active filter chips, each removable, with a clear-all. */}
+            {activeFilters.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {activeFilters.map((c) => (
+                  <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                    {c.label}
+                    <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+                  </span>
+                ))}
+                <button onClick={clearFilters} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+              </div>
+            )}
+
+            {/* Table (virtualized) */}
+            <div ref={tableScrollRef} className="max-h-[60vh] overflow-auto rounded-lg border bg-white">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
+                <thead className="sticky top-0 z-10 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500 shadow-sm">
                   <tr>
                     <Th k="quota" label="Quota" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <Th k="sku_family" label="SKU family" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -649,9 +762,14 @@ export function QuotaMonitorPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((r, i) => (
+                  {vPadTop > 0 && <tr style={{ height: vPadTop }}><td colSpan={9} className="p-0" /></tr>}
+                  {vItems.map((vi) => {
+                    const r = filtered[vi.index];
+                    return (
                     <tr
-                      key={`${r.region}|${r.provider_namespace}|${r.quota_name}|${r.sku_family}|${i}`}
+                      key={`${r.region}|${r.provider_namespace}|${r.quota_name}|${r.sku_family}|${vi.index}`}
+                      ref={rowVirtualizer.measureElement}
+                      data-index={vi.index}
                       onClick={() => setDrawer(r)}
                       className={`cursor-pointer border-t hover:bg-gray-50 ${RISK_ROW[r.risk_level] ?? ""}`}
                     >
@@ -678,7 +796,9 @@ export function QuotaMonitorPanel() {
                         </span>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
+                  {vPadBottom > 0 && <tr style={{ height: vPadBottom }}><td colSpan={9} className="p-0" /></tr>}
                   {filtered.length === 0 && (
                     <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-gray-400">No quota rows match the filters.</td></tr>
                   )}
@@ -686,39 +806,54 @@ export function QuotaMonitorPanel() {
               </table>
             </div>
 
-            {/* History strip */}
-            {(runsQ.data?.runs?.length ?? 0) > 1 && (
+            {/* History trend (QU2) */}
+            {trend.length > 1 && (
               <div className="mt-3 rounded-lg border bg-white p-3">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Scan history</div>
-                <div className="flex flex-wrap gap-2">
-                  {runsQ.data!.runs.map((run) => (
-                    <div key={run.id} className="rounded border px-2 py-1 text-[11px] text-gray-600" title={run.started_at ?? ""}>
-                      <span className="text-red-600">{run.critical_count}C</span>{" "}
-                      <span className="text-amber-600">{run.warning_count}W</span>{" "}
-                      <span className="text-gray-400">· {run.regions.length}rgn</span>
-                    </div>
-                  ))}
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">At-risk trend</span>
+                  {lastDiff && (lastDiff.new_at_risk.length > 0 || lastDiff.recovered.length > 0) && (
+                    <span className="text-[11px] text-gray-500">
+                      since last scan:{" "}
+                      {lastDiff.new_at_risk.length > 0 && <b className="text-red-600">+{lastDiff.new_at_risk.length} at risk</b>}
+                      {lastDiff.new_at_risk.length > 0 && lastDiff.recovered.length > 0 && " · "}
+                      {lastDiff.recovered.length > 0 && <b className="text-green-600">−{lastDiff.recovered.length} recovered</b>}
+                    </span>
+                  )}
+                  <span className="ml-auto text-[11px] text-gray-400">{trend.length} scans</span>
                 </div>
+                <ResponsiveContainer width="100%" height={140}>
+                  <AreaChart data={trend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="at" fontSize={10} tickLine={false} />
+                    <YAxis fontSize={10} allowDecimals={false} width={28} />
+                    <Tooltip contentStyle={{ fontSize: 11 }} />
+                    <Area type="monotone" dataKey="Critical" stackId="1" stroke="#dc2626" fill="#fecaca" />
+                    <Area type="monotone" dataKey="Warning" stackId="1" stroke="#d97706" fill="#fed7aa" />
+                    <Area type="monotone" dataKey="Watch" stackId="1" stroke="#ca8a04" fill="#fef08a" />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* Scan progress popup (live activity log, mirrors FMEA generation) */}
-      {scanning && (
+      {/* QP5 — scan progress popup (minimisable). The scan runs in a module-level registry, so
+          closing/minimising this overlay does NOT stop it; a header chip lets you reopen it. */}
+      {scanning && !scanMinimized && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-xl border bg-white shadow-2xl">
             <div className="flex items-center gap-2 border-b bg-violet-50/70 px-4 py-3">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-violet-900">Scanning quota…</div>
-                <div className="truncate text-xs text-violet-600">{scanStatus || "Working…"}</div>
+                <div className="truncate text-xs text-violet-600">{scan?.status || "Working…"}</div>
               </div>
               <span className="shrink-0 tabular-nums text-xs text-violet-500">{fmtElapsed(scanElapsed)}</span>
+              <button onClick={() => setScanMinimized(true)} title="Run in background" className="shrink-0 rounded border px-2 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50">— Minimise</button>
             </div>
             <div className="max-h-72 overflow-y-auto bg-white px-4 py-2 font-mono text-[11px] leading-relaxed text-gray-600">
-              {scanLog.map((l, i) => (
+              {(scan?.log ?? []).map((l, i) => (
                 <div key={i} className="flex gap-2">
                   <span className="shrink-0 text-gray-400">{l.t}</span>
                   <span className="min-w-0 flex-1 break-words">{l.msg}</span>
@@ -738,6 +873,24 @@ export function QuotaMonitorPanel() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* QP5 — minimised scan chip: the scan keeps running in the background; click to reopen. */}
+      {scanning && scanMinimized && (
+        <button
+          onClick={() => setScanMinimized(false)}
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full border border-violet-300 bg-white px-3 py-2 text-xs font-medium text-violet-700 shadow-lg hover:bg-violet-50"
+        >
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
+          Scanning… {fmtElapsed(scanElapsed)} <span className="text-violet-400">· open</span>
+        </button>
+      )}
+
+      {/* QU8 — export confirmation toast. */}
+      {toast && (
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900/90 px-4 py-2 text-sm font-medium text-white shadow-lg">
+          ✓ {toast}
         </div>
       )}
 
@@ -772,6 +925,11 @@ export function QuotaMonitorPanel() {
               <div className="mb-1 font-medium text-gray-800">Recommendation</div>
               {drawer.recommendation}
             </div>
+
+            {/* QU5 — actionable next steps. Read-only: the app never changes a quota; it links to
+                the portal Quotas blade and copies an inspect/increase command to run yourself. */}
+            <QuotaRowActions r={drawer} onToast={setToast} />
+
             {drawer.raw_provider_response != null && (
               <details className="mt-3">
                 <summary className="cursor-pointer text-xs font-medium text-gray-600">Raw provider response</summary>
@@ -783,6 +941,31 @@ export function QuotaMonitorPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// QU5 — per-row cleanup/escalation actions for a quota: open the portal Quotas blade, and copy a
+// read-only `az quota show` command (and a `--scope` you can adapt for an increase). The app never
+// mutates a quota itself.
+function QuotaRowActions({ r, onToast }: { r: QuotaResult; onToast: (m: string) => void }) {
+  const portalUrl = "https://portal.azure.com/#view/Microsoft_Azure_Capacity/QuotaMenuBlade/~/myQuotas";
+  const scope = r.region
+    ? `/subscriptions/${r.subscription_id}/providers/${r.provider_namespace}/locations/${r.region}`
+    : `/subscriptions/${r.subscription_id}`;
+  const cmd = `az quota show --resource-name "${r.quota_name}" --scope "${scope}"`;
+  const copy = (text: string, label: string) => { void navigator.clipboard?.writeText(text); onToast(label); };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100">
+        ↗ Request increase (Portal)
+      </a>
+      <button onClick={() => copy(cmd, "Copied az quota command")} title={cmd} className="rounded-lg border px-2.5 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
+        ⧉ Copy az quota show
+      </button>
+      <button onClick={() => copy(scope, "Copied quota scope")} title={scope} className="rounded-lg border px-2.5 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
+        ⧉ Copy scope
+      </button>
     </div>
   );
 }

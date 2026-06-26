@@ -165,7 +165,9 @@ async def live_resources_in_diagram_scope(
         f"(subscriptionId =~ '{_esc(s)}' and resourceGroup =~ '{_esc(rg)}')" for (s, rg) in sorted(pairs)
     ]
     predicate = " or ".join(clauses)
-    config_dir, _sess_err = await open_sp_session(connection)
+    config_dir, sess_err = await open_sp_session(connection)
+    if sess_err:
+        return {"resources": [], "error": sess_err}
     try:
         kql = (
             f"Resources | where {predicate} "
@@ -229,7 +231,13 @@ async def dump_resources(
     if not predicate:
         return {"resources": [], "count": 0, "predicate": "", "error": "Workload scope could not be resolved to a query."}
 
-    config_dir, _sess_err = await open_sp_session(connection)
+    config_dir, sess_err = await open_sp_session(connection)
+    # A service-principal login failure (e.g. expired/invalid secret) must fail fast with the real
+    # reason — otherwise the query below silently retries the same broken login and surfaces a
+    # vaguer error. Pasted-token / managed-identity connections return no session (sess_err is None)
+    # and authenticate per-query over REST instead.
+    if sess_err:
+        return {"resources": [], "count": 0, "predicate": predicate, "error": sess_err}
     try:
         # --- Pass 1: lightweight inventory (no properties) ---
         list_kql = (

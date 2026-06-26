@@ -179,6 +179,7 @@ class _Manager:
         from app.architectures.reverse import dump_resources
         from app.core.azure_connections import resolve_connection
         from app.workloads.registry import get_workload
+        from app.azure.credentials import get_arm_token
 
         try:
             async with self._semaphore():
@@ -193,6 +194,23 @@ class _Manager:
                     self._fail(job, "Workload not found.")
                     return
                 conn = resolve_connection(job.connection_id or wl.get("connection_id") or None)
+
+                # Pre-flight auth probe (mirrors the assessment runner). open_sp_session is a
+                # NO-OP for pasted-token connections, so an expired/invalid token would otherwise
+                # only surface deep in the Resource Graph phase as a lower-level error. Probe the
+                # connection's ARM token here and fail fast with ONE clear, actionable message so
+                # "Rebuild from workload" tells the user exactly what to fix. A None connection
+                # (pure local ambient `az`) is left to the query path.
+                if conn is not None:
+                    _tok, _terr = await get_arm_token(conn)
+                    if not _tok:
+                        cname = conn.get("name") or "the selected connection"
+                        self._fail(
+                            job,
+                            f"Can't authenticate to Azure with {cname}: {_terr} "
+                            "Refresh its token in Settings → Azure Tenants, then rebuild again.",
+                        )
+                        return
 
                 self._checkpoint(job)
                 self._set(job, "query", 35, "Querying Azure Resource Graph for resources + properties…")

@@ -44,7 +44,7 @@ def _concurrency() -> int:
     try:
         from app.core.app_settings import load_settings
 
-        return max(1, min(16, int(load_settings().get("quota_scan_concurrency", 5) or 5)))
+        return max(1, min(16, int(load_settings().get("quota_scan_concurrency", 8) or 8)))
     except Exception:  # noqa: BLE001
         return 5
 

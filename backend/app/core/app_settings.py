@@ -310,8 +310,10 @@ DEFAULTS: dict[str, Any] = {
     "quota_threshold_watch": 70,
     "quota_threshold_warning": 85,
     "quota_threshold_critical": 95,
-    # Max concurrent collector runs per scan (subscription × region × provider).
-    "quota_scan_concurrency": 5,
+    # Max concurrent collector runs per scan (subscription × region × provider). Raised from 5
+    # to 8 so multi-region scans (regions × collectors all share this one semaphore) parallelize
+    # more; arm_get already retries 429/5xx with backoff so the throttle risk stays bounded.
+    "quota_scan_concurrency": 8,
     # Hide usage-API rows at exactly 0 usage (full headroom). Keeps the snapshot focused on
     # actionable quotas and avoids hundreds of zero-usage per-model AI / per-family compute rows.
     "quota_hide_zero_usage": True,
@@ -484,7 +486,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["quota_threshold_watch"] = _qw
     current["quota_threshold_warning"] = _qwarn
     current["quota_threshold_critical"] = _qcrit
-    current["quota_scan_concurrency"] = max(1, min(16, int(current.get("quota_scan_concurrency", 5) or 5)))
+    current["quota_scan_concurrency"] = max(1, min(16, int(current.get("quota_scan_concurrency", 8) or 8)))
     current["quota_hide_zero_usage"] = bool(current.get("quota_hide_zero_usage", True))
     # Reservations Monitor: clamp cache TTL + window; coerce digest flags/lists/schedule.
     current["reservations_cache_ttl_s"] = max(0, min(604800, int(current.get("reservations_cache_ttl_s", 21600) or 21600)))
