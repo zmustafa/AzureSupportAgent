@@ -3,6 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import {
   api,
   streamAutopilot,
+  streamSurvey,
+  type CostEstimate,
+  type DiscoveryProfile,
+  type FacetCount,
+  type FilterPreview,
+  type SculptConfig,
+  type SurveyResult,
   type TreeNode,
   type TypeCount,
   type WorkloadCandidate,
@@ -94,7 +101,95 @@ export function TypeChips({ types, max = 8 }: { types: TypeCount[]; max?: number
   );
 }
 
-type Stage = "setup" | "running" | "review";
+type Stage = "setup" | "survey" | "running" | "review";
+
+// ---- Scope Sculptor presets: each maps to a coherent set of controls. ----
+type Granularity = "resource" | "resource_group" | "sample";
+type PresetId = "fast" | "balanced" | "thorough" | "custom";
+const PRESET_DEFAULTS: Record<Exclude<PresetId, "custom">, { granularity: Granularity; excludeNoise: boolean; excludeSystemRgs: boolean; confidenceFloor: number }> = {
+  fast: { granularity: "resource_group", excludeNoise: true, excludeSystemRgs: true, confidenceFloor: 0.55 },
+  balanced: { granularity: "resource", excludeNoise: true, excludeSystemRgs: true, confidenceFloor: 0 },
+  thorough: { granularity: "resource", excludeNoise: false, excludeSystemRgs: false, confidenceFloor: 0 },
+};
+const PRESET_BLURB: Record<Exclude<PresetId, "custom">, string> = {
+  fast: "Coarse resource-group pass on a de-noised estate — fewest AI calls, quickest.",
+  balanced: "Per-resource AI grouping with noise filtered out — the best accuracy/speed trade-off.",
+  thorough: "Every resource, nothing filtered — most exhaustive, most AI calls.",
+};
+
+function fmtSeconds(s: number): string {
+  if (s < 60) return `~${Math.round(s)}s`;
+  const m = Math.floor(s / 60);
+  const r = Math.round(s % 60);
+  return r ? `~${m}m ${r}s` : `~${m}m`;
+}
+
+function fmtTokens(t: number): string {
+  if (t >= 1000) return `~${(t / 1000).toFixed(t >= 10000 ? 0 : 1)}k tokens`;
+  return `~${t} tokens`;
+}
+
+// A horizontal bar of top facet counts (type / RG / region…) with relative-width bars.
+function FacetBars({ title, items, max = 6, onToggle, selected }: {
+  title: string;
+  items: FacetCount[];
+  max?: number;
+  onToggle?: (label: string) => void;
+  selected?: Set<string>;
+}) {
+  const shown = items.slice(0, max);
+  const top = shown.length ? Math.max(...shown.map((i) => i.count)) : 1;
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{title}</div>
+      <div className="space-y-1">
+        {shown.map((it) => {
+          const isSel = selected?.has(it.label);
+          return (
+            <button
+              key={it.label}
+              onClick={onToggle ? () => onToggle(it.label) : undefined}
+              disabled={!onToggle}
+              className={`group flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] ${onToggle ? "cursor-pointer hover:bg-gray-50" : "cursor-default"} ${isSel ? "ring-1 ring-brand/40" : ""}`}
+            >
+              <span className="w-32 shrink-0 truncate text-gray-600" title={it.label}>{it.label}</span>
+              <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
+                <span className={`absolute inset-y-0 left-0 rounded-full ${isSel ? "bg-brand" : "bg-brand/40"}`} style={{ width: `${Math.max(4, (it.count / top) * 100)}%` }} />
+              </span>
+              <span className="w-10 shrink-0 text-right font-semibold text-gray-700">{it.count}</span>
+            </button>
+          );
+        })}
+        {items.length > max && <div className="text-[10px] text-gray-400">+{items.length - max} more</div>}
+      </div>
+    </div>
+  );
+}
+
+// A multi-select chip row driven by facet counts.
+function ChipMultiSelect({ items, selected, onToggle, max = 12 }: {
+  items: FacetCount[];
+  selected: Set<string>;
+  onToggle: (label: string) => void;
+  max?: number;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {items.slice(0, max).map((it) => {
+        const on = selected.has(it.label);
+        return (
+          <button
+            key={it.label}
+            onClick={() => onToggle(it.label)}
+            className={`rounded-full border px-2 py-0.5 text-[11px] transition ${on ? "border-brand bg-brand/10 text-brand" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+          >
+            {it.label} <span className="opacity-60">{it.count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   // Always refetch the connection list when the modal opens — `azureConnections` carries a 5-min
@@ -114,6 +209,35 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
   const [strategy, setStrategy] = useState<"ai" | "resource_group" | "subscription" | "tag">("ai");
   const [mode, setMode] = useState<"full" | "delta">("full");
   const [tagKey, setTagKey] = useState("");
+
+  // ---- Scope Sculptor state ----
+  const [preset, setPreset] = useState<PresetId>("balanced");
+  const [granularity, setGranularity] = useState<Granularity>("resource");
+  const [excludeNoise, setExcludeNoise] = useState(true);
+  const [excludeSystemRgs, setExcludeSystemRgs] = useState(true);
+  const [rgGlobs, setRgGlobs] = useState("");                       // newline/comma globs
+  const [tagSeedKeys, setTagSeedKeys] = useState<Set<string>>(new Set());
+  const [excludeTypes, setExcludeTypes] = useState<Set<string>>(new Set());  // friendly labels
+  const [environments, setEnvironments] = useState<Set<string>>(new Set());
+  const [regions, setRegions] = useState<Set<string>>(new Set());
+  const [subsFilter, setSubsFilter] = useState<Set<string>>(new Set());
+  const [nameContains, setNameContains] = useState("");
+  const [confidenceFloor, setConfidenceFloor] = useState(0);       // 0..1
+  const [maxAiCalls, setMaxAiCalls] = useState(0);                 // 0 = unbounded
+  const [useNaming, setUseNaming] = useState(true);
+
+  const [survey, setSurvey] = useState<SurveyResult | null>(null);
+  const [estimate, setEstimate] = useState<CostEstimate | null>(null);
+  const [filterPreview, setFilterPreview] = useState<FilterPreview | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Saved discovery profiles for this connection.
+  const profilesQ = useQuery({
+    queryKey: ["autopilotProfiles", connectionId],
+    queryFn: () => api.autopilotProfiles(connectionId),
+    enabled: !!connectionId,
+  });
+  const profiles = profilesQ.data?.profiles ?? [];
 
   const [stage, setStage] = useState<Stage>("setup");
   const [log, setLog] = useState<{ phase: string; message: string }[]>([]);
@@ -164,6 +288,155 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log, candidates]);
 
+  // Map the user's friendly type-label exclusions back to ARM-type substrings is not needed —
+  // the backend matches friendly labels poorly, so we keep type filtering to the survey facets
+  // (which are friendly labels) by passing them through as-is; the backend exclude_types does a
+  // substring match on the lowercased ARM type, and friendly labels rarely collide. For the
+  // common case (excluding a noisy *category*) the noise toggle already covers it, so type
+  // exclusion here is a best-effort convenience.
+  const sculptConfig = useMemo<SculptConfig>(() => {
+    const globs = rgGlobs.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    return {
+      strategy,
+      mode,
+      tag_key: tagKey,
+      preset: preset === "custom" ? "" : preset,
+      granularity,
+      exclude_noise: excludeNoise,
+      exclude_system_rgs: excludeSystemRgs,
+      rg_globs: globs,
+      tag_seed_keys: [...tagSeedKeys],
+      exclude_types: [...excludeTypes],
+      environments: [...environments],
+      regions: [...regions],
+      subscriptions: [...subsFilter],
+      name_contains: nameContains,
+      confidence_floor: confidenceFloor,
+      max_ai_calls: maxAiCalls,
+      naming_hint: useNaming && survey?.facets.naming.pattern ? survey.facets.naming.pattern : "",
+    };
+  }, [strategy, mode, tagKey, preset, granularity, excludeNoise, excludeSystemRgs, rgGlobs, tagSeedKeys, excludeTypes, environments, regions, subsFilter, nameContains, confidenceFloor, maxAiCalls, useNaming, survey]);
+
+  // Apply a preset's controls (the user can still override any of them afterwards).
+  function applyPreset(p: PresetId) {
+    setPreset(p);
+    if (p === "custom") return;
+    const d = PRESET_DEFAULTS[p];
+    setGranularity(d.granularity);
+    setExcludeNoise(d.excludeNoise);
+    setExcludeSystemRgs(d.excludeSystemRgs);
+    setConfidenceFloor(d.confidenceFloor);
+  }
+
+  // Load a saved profile into the controls.
+  function loadProfile(p: DiscoveryProfile) {
+    const c = p.config;
+    setPreset((c.preset as PresetId) || "custom");
+    if (c.granularity) setGranularity(c.granularity as Granularity);
+    if (c.strategy) setStrategy(c.strategy as typeof strategy);
+    if (c.mode) setMode(c.mode as typeof mode);
+    if (typeof c.exclude_noise === "boolean") setExcludeNoise(c.exclude_noise);
+    if (typeof c.exclude_system_rgs === "boolean") setExcludeSystemRgs(c.exclude_system_rgs);
+    setRgGlobs((c.rg_globs ?? []).join("\n"));
+    setTagSeedKeys(new Set(c.tag_seed_keys ?? []));
+    setExcludeTypes(new Set(c.exclude_types ?? []));
+    setEnvironments(new Set(c.environments ?? []));
+    setRegions(new Set(c.regions ?? []));
+    setSubsFilter(new Set(c.subscriptions ?? []));
+    setNameContains(c.name_contains ?? "");
+    setConfidenceFloor(c.confidence_floor ?? 0);
+    setMaxAiCalls(c.max_ai_calls ?? 0);
+  }
+
+  // Live cost re-estimate against the cached survey whenever the controls change (debounced).
+  useEffect(() => {
+    if (stage !== "survey" || !connectionId || !scopeId) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      api
+        .autopilotEstimate({ connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, config: sculptConfig })
+        .then((r) => {
+          if (cancelled) return;
+          if ("needs_survey" in r) return; // survey expired; user can re-survey
+          setEstimate(r.estimate);
+          setFilterPreview(r.filter_preview);
+        })
+        .catch(() => {/* keep last estimate */});
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [sculptConfig, stage, connectionId, scopeId, scopeKind]);
+
+  function toggleIn(setter: React.Dispatch<React.SetStateAction<Set<string>>>, label: string) {
+    setter((s) => {
+      const n = new Set(s);
+      if (n.has(label)) n.delete(label);
+      else n.add(label);
+      return n;
+    });
+  }
+
+  // Pre-flight survey: enumerate + facet the estate (no AI), then show the sculpt stage.
+  function runSurvey() {
+    if (!connectionId || !scopeId) {
+      setError("Pick a connection and a scope.");
+      return;
+    }
+    setError("");
+    setStage("survey");
+    setSurvey(null);
+    setEstimate(null);
+    setFilterPreview(null);
+    setLog([]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    void streamSurvey(
+      { connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, scope_name: scopeName },
+      {
+        onStatus: (d) => setLog((l) => [...l, { phase: d.phase, message: d.message }]),
+        onSurvey: (d) => {
+          setSurvey(d);
+          setEstimate(d.estimate);
+          setFilterPreview(d.filter_preview);
+        },
+        onError: (m) => {
+          setError(m);
+          setStage("setup");
+        },
+      },
+      controller.signal,
+    );
+  }
+
+  async function saveProfile() {
+    const name = window.prompt("Name this discovery profile:", scopeName ? `${scopeName} — ${preset}` : preset);
+    if (!name) return;
+    try {
+      await api.saveAutopilotProfile({
+        connection_id: connectionId,
+        name,
+        config: sculptConfig,
+        scope_kind: scopeKind,
+        scope_id: scopeId,
+        scope_name: scopeName,
+      });
+      await profilesQ.refetch();
+    } catch (e) {
+      setError(formatError(e));
+    }
+  }
+
+  async function removeProfile(id: string) {
+    try {
+      await api.deleteAutopilotProfile(id, connectionId);
+      await profilesQ.refetch();
+    } catch (e) {
+      setError(formatError(e));
+    }
+  }
+
   function start() {
     if (!connectionId || !scopeId) {
       setError("Pick a connection and a scope.");
@@ -178,7 +451,7 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
     const controller = new AbortController();
     abortRef.current = controller;
     void streamAutopilot(
-      { connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, scope_name: scopeName, strategy, mode, tag_key: tagKey },
+      { connection_id: connectionId, scope_kind: scopeKind, scope_id: scopeId, scope_name: scopeName, ...sculptConfig },
       {
         onStatus: (d) => setLog((l) => [...l, { phase: d.phase, message: d.message }]),
         onCandidate: (d) => {
@@ -200,6 +473,13 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
       },
       controller.signal,
     );
+  }
+
+  // "Stop early" during a streaming run: keep the candidates discovered so far and jump to
+  // review without aborting what's already in hand (Tier 4 priority streaming pays off here).
+  function stopEarly() {
+    abortRef.current?.abort();
+    setStage("review");
   }
 
   function cancel() {
@@ -337,7 +617,45 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                   </select>
                 </div>
               </div>
-              {/* Grouping strategy + delta mode */}
+
+              {/* Saved discovery profiles */}
+              {profiles.length > 0 && (
+                <div>
+                  <label className={label}>Saved profiles</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {profiles.map((p) => (
+                      <span key={p.id} className="group inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-700 hover:border-brand/40">
+                        <button onClick={() => loadProfile(p)} title={`Load “${p.name}”`} className="hover:text-brand">
+                          💾 {p.name}
+                        </button>
+                        <button onClick={() => void removeProfile(p.id)} title="Delete profile" className="text-gray-300 hover:text-red-500">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Speed preset */}
+              <div>
+                <label className={label}>Preset</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["fast", "balanced", "thorough"] as const).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => applyPreset(p)}
+                      className={`rounded-lg border px-2 py-1.5 text-left text-xs transition ${preset === p ? "border-brand bg-brand/5" : "border-gray-200 hover:bg-gray-50"}`}
+                    >
+                      <div className={`font-semibold capitalize ${preset === p ? "text-brand" : "text-gray-700"}`}>
+                        {p === "fast" ? "⚡ Fast" : p === "balanced" ? "⚖️ Balanced" : "🔬 Thorough"}
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-tight text-gray-400">{PRESET_BLURB[p]}</div>
+                    </button>
+                  ))}
+                </div>
+                {preset === "custom" && <p className="mt-1 text-[11px] text-amber-600">Custom — you've overridden a preset's controls.</p>}
+              </div>
+
+
               <div>
                 <label className={label}>Grouping strategy</label>
                 <div className="flex flex-wrap gap-2">
@@ -373,8 +691,158 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
             </div>
           )}
 
+          {/* Survey / Sculpt — the pre-flight where the user shapes the input before any AI. */}
+          {stage === "survey" && (
+            <div className="space-y-4">
+              {!survey ? (
+                <div className="rounded-lg border bg-gray-50 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-medium text-gray-600">
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                    Surveying the estate (read-only, no AI)…
+                  </div>
+                  <div className="max-h-32 space-y-0.5 overflow-y-auto font-mono text-[11px] text-gray-500">
+                    {log.map((l, i) => (
+                      <div key={i}><span className="text-gray-400">›</span> {l.message}</div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Cost / time estimate banner */}
+                  <div className="rounded-xl border border-brand/30 bg-brand/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-gray-800">
+                        {estimate && estimate.ai_calls === 0
+                          ? "No AI calls needed — this configuration groups deterministically."
+                          : `${estimate?.ai_calls ?? "—"} AI call${estimate?.ai_calls === 1 ? "" : "s"} · ${estimate ? fmtSeconds(estimate.est_seconds) : "—"}`}
+                      </div>
+                      {estimate?.capped && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">budget-capped</span>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-gray-600">
+                      <span><b>{filterPreview?.kept ?? survey.facets.total}</b> of {survey.meta.resource_count} resources to group</span>
+                      {filterPreview && filterPreview.removed > 0 && <span>{filterPreview.removed} filtered out</span>}
+                      {estimate && estimate.tag_seeded > 0 && <span>{estimate.tag_seeded} tag-seeded (free)</span>}
+                      {estimate && estimate.ai_calls > 0 && <span>{fmtTokens(estimate.est_tokens)}</span>}
+                      {survey.meta.truncated && <span className="text-amber-600">5,000-resource cap reached</span>}
+                    </div>
+                    {/* Estate-reduction bar: kept vs filtered. */}
+                    {filterPreview && (
+                      <div className="mt-2 flex h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                        <div className="h-full bg-brand" style={{ width: `${Math.round(100 * (filterPreview.kept / Math.max(1, survey.meta.resource_count)))}%` }} title={`${filterPreview.kept} kept`} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Live estate facets */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <FacetBars title="Resource types" items={survey.facets.types} onToggle={(l) => { toggleIn(setExcludeTypes, l); setPreset("custom"); }} selected={excludeTypes} />
+                    <FacetBars title="Top resource groups" items={survey.facets.resource_groups} />
+                  </div>
+                  <p className="-mt-2 text-[10px] text-gray-400">Click a type to exclude it from grouping.</p>
+
+                  {/* Quick scoping chips from facets */}
+                  <div className="space-y-2">
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">Environment</div>
+                      <ChipMultiSelect items={survey.facets.environments} selected={environments} onToggle={(l) => { toggleIn(setEnvironments, l); setPreset("custom"); }} />
+                    </div>
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">Region</div>
+                      <ChipMultiSelect items={survey.facets.regions} selected={regions} onToggle={(l) => { toggleIn(setRegions, l); setPreset("custom"); }} />
+                    </div>
+                    {survey.facets.subscriptions.length > 1 && (
+                      <div>
+                        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">Subscription</div>
+                        <ChipMultiSelect items={survey.facets.subscriptions} selected={subsFilter} onToggle={(l) => { toggleIn(setSubsFilter, l); setPreset("custom"); }} max={8} />
+                      </div>
+                    )}
+                    <p className="text-[10px] text-gray-400">Empty = include all. Selecting any value scopes discovery to just those.</p>
+                  </div>
+
+                  {/* Tag-seed: deterministically pre-bucket by authoritative tags. */}
+                  {survey.facets.tag_keys.length > 0 && (
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">Tag-seed grouping (pre-bucket by tag — only the remainder needs AI)</div>
+                      <ChipMultiSelect items={survey.facets.tag_keys} selected={tagSeedKeys} onToggle={(l) => { toggleIn(setTagSeedKeys, l); setPreset("custom"); }} />
+                    </div>
+                  )}
+
+                  {/* Naming convention */}
+                  {survey.facets.naming.pattern && (
+                    <label className="flex items-start gap-2 rounded-lg border bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                      <input type="checkbox" checked={useNaming} onChange={(e) => setUseNaming(e.target.checked)} className="mt-0.5" />
+                      <span>
+                        Use the detected naming convention <code className="rounded bg-white px-1 text-[11px]">{survey.facets.naming.pattern}</code>{" "}
+                        <span className="text-gray-400">({Math.round(survey.facets.naming.confidence * 100)}% of names · e.g. {survey.facets.naming.examples.slice(0, 2).join(", ")})</span> as a grouping signal.
+                      </span>
+                    </label>
+                  )}
+
+                  {/* Granularity */}
+                  <div>
+                    <label className={label}>Grouping granularity</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        ["resource", "Resource", "Most precise · most AI"],
+                        ["resource_group", "Resource group", "Coarser · far fewer calls"],
+                        ["sample", "Name cluster", "Fewest calls · large estates"],
+                      ] as const).map(([k, lbl, hint]) => (
+                        <button
+                          key={k}
+                          onClick={() => { setGranularity(k); setPreset("custom"); }}
+                          className={`rounded-lg border px-2 py-1.5 text-left text-xs transition ${granularity === k ? "border-brand bg-brand/5" : "border-gray-200 hover:bg-gray-50"}`}
+                        >
+                          <div className={`font-semibold ${granularity === k ? "text-brand" : "text-gray-700"}`}>{lbl}</div>
+                          <div className="mt-0.5 text-[10px] leading-tight text-gray-400">{hint}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Advanced controls */}
+                  <div>
+                    <button onClick={() => setShowAdvanced((v) => !v)} className="text-xs font-medium text-brand hover:underline">
+                      {showAdvanced ? "▾ Hide advanced" : "▸ Advanced controls"}
+                    </button>
+                    {showAdvanced && (
+                      <div className="mt-2 space-y-3 rounded-lg border bg-gray-50 p-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="flex items-center gap-2 text-xs text-gray-700">
+                            <input type="checkbox" checked={excludeNoise} onChange={(e) => { setExcludeNoise(e.target.checked); setPreset("custom"); }} />
+                            Filter noise ({survey.facets.noise_count} children)
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-gray-700">
+                            <input type="checkbox" checked={excludeSystemRgs} onChange={(e) => { setExcludeSystemRgs(e.target.checked); setPreset("custom"); }} />
+                            Skip system RGs ({survey.facets.system_rg_count})
+                          </label>
+                        </div>
+                        <div>
+                          <label className={label}>Confidence floor — hide candidates below {Math.round(confidenceFloor * 100)}%</label>
+                          <input type="range" min={0} max={0.9} step={0.05} value={confidenceFloor} onChange={(e) => { setConfidenceFloor(Number(e.target.value)); setPreset("custom"); }} className="w-full" />
+                        </div>
+                        <div>
+                          <label className={label}>Max AI calls (budget cap — 0 = unbounded)</label>
+                          <input type="number" min={0} value={maxAiCalls} onChange={(e) => { setMaxAiCalls(Math.max(0, Number(e.target.value))); setPreset("custom"); }} className={`${input} w-32`} />
+                        </div>
+                        <div>
+                          <label className={label}>Name contains</label>
+                          <input value={nameContains} onChange={(e) => { setNameContains(e.target.value); setPreset("custom"); }} placeholder="Only resources whose name contains…" className={input} />
+                        </div>
+                        <div>
+                          <label className={label}>System resource-group globs (one per line)</label>
+                          <textarea value={rgGlobs} onChange={(e) => { setRgGlobs(e.target.value); setPreset("custom"); }} rows={2} placeholder="MC_*&#10;NetworkWatcherRG" className={`${input} font-mono text-[11px]`} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {error && <div className="text-xs text-red-600">{error}</div>}
+                </>
+              )}
+            </div>
+          )}
+
           {/* Running / Review */}
-          {stage !== "setup" && (
+          {(stage === "running" || stage === "review") && (
             <div className="space-y-4">
               {/* Progress log */}
               <div className="rounded-lg border bg-gray-50 p-3">
@@ -520,6 +988,11 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                   <p className="text-[11px] text-gray-400">
                     Scanned {String(meta.resource_count)} resources
                     {meta.subscriptions ? ` across ${String(meta.subscriptions)} subscription(s)` : ""}.
+                    {Number(meta.filtered) > 0 ? ` ${String(meta.filtered)} filtered out before grouping;` : ""}
+                    {Number(meta.considered) > 0 ? ` ${String(meta.considered)} considered.` : ""}
+                    {Number(meta.tag_seeded_workloads) > 0 ? ` ${String(meta.tag_seeded_workloads)} tag-seeded.` : ""}
+                    {Number(meta.reattached) > 0 ? ` ${String(meta.reattached)} child resource(s) re-attached.` : ""}
+                    {Number(meta.below_floor) > 0 ? ` ${String(meta.below_floor)} hidden below the confidence floor.` : ""}
                     {Number(meta.ungrouped) > 0 ? ` ${String(meta.ungrouped)} resource(s) didn't fit a workload.` : ""}
                     {meta.truncated ? " (5,000-resource limit reached — results may be partial.)" : ""}
                   </p>
@@ -548,13 +1021,33 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
           {stage === "setup" && (
             <>
               <button onClick={cancel} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={start} className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand/90">
-                Start discovery
+              <button onClick={runSurvey} disabled={!connectionId || !scopeId} className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+                Survey estate →
+              </button>
+            </>
+          )}
+          {stage === "survey" && (
+            <>
+              <button onClick={() => { abortRef.current?.abort(); setStage("setup"); }} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">← Back</button>
+              {survey && (
+                <button onClick={() => void saveProfile()} className="rounded-lg border border-brand/40 px-3.5 py-1.5 text-sm text-brand hover:bg-brand/5" title="Save these settings as a reusable profile">
+                  💾 Save profile
+                </button>
+              )}
+              <button onClick={start} disabled={!survey} className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+                {estimate && estimate.ai_calls === 0 ? "Group now (no AI)" : `Group with AI${estimate ? ` (${fmtSeconds(estimate.est_seconds)})` : ""}`}
               </button>
             </>
           )}
           {stage === "running" && (
-            <button onClick={cancel} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+            <>
+              <button onClick={cancel} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              {candidates.length > 0 && (
+                <button onClick={stopEarly} className="rounded-lg border border-brand/40 px-3.5 py-1.5 text-sm text-brand hover:bg-brand/5" title="Keep the candidates found so far and review now">
+                  Stop &amp; review {candidates.length}
+                </button>
+              )}
+            </>
           )}
           {stage === "review" && (
             <>

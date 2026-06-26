@@ -2819,6 +2819,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // Live re-estimate cost + filter preview for a sculpt config (against the cached survey).
+  autopilotEstimate: (body: { connection_id: string; scope_kind: string; scope_id: string; config: SculptConfig }) =>
+    http<AutopilotEstimateResult | { needs_survey: true }>("/workloads/autopilot/estimate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  // Saved discovery profiles.
+  autopilotProfiles: (connectionId: string) =>
+    http<{ profiles: DiscoveryProfile[] }>(`/workloads/autopilot/profiles?connection_id=${encodeURIComponent(connectionId)}`),
+  saveAutopilotProfile: (body: { connection_id: string; name: string; config: SculptConfig; scope_kind?: string; scope_id?: string; scope_name?: string; profile_id?: string }) =>
+    http<{ profile: DiscoveryProfile }>("/workloads/autopilot/profiles", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteAutopilotProfile: (profileId: string, connectionId: string) =>
+    http<{ ok: boolean }>(`/workloads/autopilot/profiles/${encodeURIComponent(profileId)}?connection_id=${encodeURIComponent(connectionId)}`, {
+      method: "DELETE",
+    }),
   estateCoverage: (connectionId: string) =>
     http<EstateCoverage>(`/workloads/estate-coverage?connection_id=${encodeURIComponent(connectionId)}`),
   refreshWorkload: (id: string) =>
@@ -7835,6 +7853,168 @@ export interface AutopilotHandlers {
   onError?: (msg: string) => void;
 }
 
+// === Scope Sculptor (Autopilot pre-flight) =================================
+export interface FacetCount {
+  label: string;
+  count: number;
+}
+
+export interface NamingConvention {
+  delimiter: string;
+  segments: number;
+  confidence: number;
+  pattern: string;
+  examples: string[];
+}
+
+export interface EstateFacets {
+  total: number;
+  types: FacetCount[];
+  resource_groups: FacetCount[];
+  regions: FacetCount[];
+  subscriptions: FacetCount[];
+  tag_keys: FacetCount[];
+  environments: FacetCount[];
+  distinct_resource_groups: number;
+  distinct_regions: number;
+  distinct_subscriptions: number;
+  noise_count: number;
+  system_rg_count: number;
+  naming: NamingConvention;
+}
+
+export interface CostEstimate {
+  ai_calls: number;
+  unit: string;
+  effective_resources: number;
+  tag_seeded: number;
+  est_seconds: number;
+  est_tokens: number;
+  capped: boolean;
+}
+
+export interface FilterPreview {
+  kept: number;
+  removed: number;
+  reasons: Record<string, number>;
+  tag_seeded?: number;
+}
+
+export interface SurveyResult {
+  facets: EstateFacets;
+  filter_preview: FilterPreview;
+  estimate: CostEstimate;
+  meta: { resource_count: number; truncated: boolean; subscriptions: number; scope_name?: string };
+}
+
+export interface AutopilotEstimateResult {
+  estimate: CostEstimate;
+  filter_preview: FilterPreview;
+  truncated: boolean;
+}
+
+/** The full set of sculpt controls sent to discover / estimate / saved in a profile. */
+export interface SculptConfig {
+  strategy?: string;
+  mode?: string;
+  tag_key?: string;
+  preset?: string;
+  granularity?: string;
+  exclude_noise?: boolean;
+  exclude_system_rgs?: boolean;
+  rg_globs?: string[];
+  tag_seed_keys?: string[];
+  include_types?: string[];
+  exclude_types?: string[];
+  environments?: string[];
+  regions?: string[];
+  subscriptions?: string[];
+  name_contains?: string;
+  confidence_floor?: number;
+  max_ai_calls?: number;
+  naming_hint?: string;
+}
+
+export interface DiscoveryProfile {
+  id: string;
+  name: string;
+  config: SculptConfig;
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  created_at: string;
+  updated_at: string;
+  created_by?: string;
+  updated_by?: string;
+}
+
+export interface SurveyHandlers {
+  onStatus?: (data: { phase: string; message: string; [k: string]: unknown }) => void;
+  onSurvey?: (data: SurveyResult) => void;
+  onError?: (msg: string) => void;
+}
+
+/** Stream the Autopilot pre-flight SURVEY (estate facets + default estimate, no AI). */
+export async function streamSurvey(
+  body: { connection_id: string; scope_kind: string; scope_id: string; scope_name: string },
+  handlers: SurveyHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/workloads/autopilot/survey`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    credentials: "include",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const b = await res.json();
+      if (b?.detail) detail = b.detail;
+    } catch {
+      /* ignore */
+    }
+    handlers.onError?.(detail);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try {
+      ({ value, done } = await reader.read());
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event === "status") handlers.onStatus?.(parsed as { phase: string; message: string });
+      else if (event === "survey") handlers.onSurvey?.(parsed as unknown as SurveyResult);
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Survey failed.");
+    }
+  }
+}
+
 export interface PrefetchProgress {
   phase: string;
   message: string;
@@ -7913,7 +8093,10 @@ export async function streamPrefetch(
 
 /** Stream AI Workload Autopilot discovery progress + candidates over SSE. */
 export async function streamAutopilot(
-  body: { connection_id: string; scope_kind: string; scope_id: string; scope_name: string; strategy?: string; mode?: string; tag_key?: string },
+  body: {
+    connection_id: string; scope_kind: string; scope_id: string; scope_name: string;
+    strategy?: string; mode?: string; tag_key?: string;
+  } & SculptConfig,
   handlers: AutopilotHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

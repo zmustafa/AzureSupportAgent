@@ -15,9 +15,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.azure_connections import resolve_connection
 from app.core.security import Principal, require_permission
-from app.workloads import discovery
+from app.workloads import discovery, discovery_profiles
 from app.workloads import registry as wl_registry
-from app.workloads.autopilot import discover_workloads
+from app.workloads.autopilot import compute_estimate, discover_workloads, survey_estate
 from app.workloads.cache import discovery_cache
 
 router = APIRouter(prefix="/workloads", tags=["workloads"])
@@ -396,6 +396,75 @@ class AutopilotRequest(BaseModel):
     strategy: str = "ai"   # ai | resource_group | subscription | tag
     mode: str = "full"     # full | delta (skip already-organized resources)
     tag_key: str = ""      # for strategy=tag (empty = auto-pick a signal tag)
+    # ---- Scope Sculptor controls (pre-flight input shaping) ----
+    preset: str = ""                          # fast | balanced | thorough (recorded)
+    granularity: str = "resource"             # resource | resource_group | sample
+    exclude_noise: bool = True                # drop low-signal children (re-attached after)
+    exclude_system_rgs: bool = True           # drop MC_*/NetworkWatcherRG/etc (re-attached)
+    rg_globs: list[str] = Field(default_factory=list)   # custom system-RG globs (empty=default)
+    tag_seed_keys: list[str] = Field(default_factory=list)  # deterministic pre-bucket tags
+    include_types: list[str] = Field(default_factory=list)
+    exclude_types: list[str] = Field(default_factory=list)
+    environments: list[str] = Field(default_factory=list)
+    regions: list[str] = Field(default_factory=list)
+    subscriptions: list[str] = Field(default_factory=list)
+    name_contains: str = ""
+    confidence_floor: float = 0.0             # hide candidates below this confidence
+    max_ai_calls: int = 0                     # budget cap (0 = unbounded)
+    naming_hint: str = ""                     # naming convention pattern for the prompt
+
+
+class SurveyRequest(BaseModel):
+    connection_id: str = ""
+    scope_kind: str = "subscription"
+    scope_id: str = ""
+    scope_name: str = ""
+
+
+@router.post("/autopilot/survey")
+async def autopilot_survey_endpoint(
+    payload: SurveyRequest, _: Principal = Depends(get_principal)
+):
+    """Pre-flight survey: stream the estate facet tallies + default cost estimate (no AI)."""
+    conn = resolve_connection(payload.connection_id or None)
+    if not conn:
+        raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
+
+    async def _gen():
+        try:
+            async for ev in survey_estate(
+                conn, payload.scope_kind, payload.scope_id, payload.scope_name
+            ):
+                ev_type = ev.pop("type")
+                yield {"event": ev_type, "data": json.dumps(ev)}
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Autopilot survey failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
+
+
+class EstimateRequest(BaseModel):
+    connection_id: str = ""
+    scope_kind: str = "subscription"
+    scope_id: str = ""
+    config: dict = Field(default_factory=dict)
+
+
+@router.post("/autopilot/estimate")
+async def autopilot_estimate_endpoint(
+    payload: EstimateRequest, _: Principal = Depends(get_principal)
+):
+    """Live re-estimate cost + filter preview for a sculpt config against the cached survey
+    (no Azure call). Returns ``{needs_survey: true}`` when the survey cache has expired."""
+    conn = resolve_connection(payload.connection_id or None)
+    tenant_id = conn.get("tenant_id", "") if conn else ""
+    result = compute_estimate(
+        tenant_id, payload.connection_id, payload.scope_kind, payload.scope_id, payload.config
+    )
+    if result is None:
+        return {"needs_survey": True}
+    return result
 
 
 @router.post("/autopilot/discover")
@@ -412,6 +481,14 @@ async def autopilot_discover_endpoint(
             async for ev in discover_workloads(
                 conn, payload.scope_kind, payload.scope_id, payload.scope_name,
                 strategy=payload.strategy, mode=payload.mode, tag_key=payload.tag_key,
+                preset=payload.preset, granularity=payload.granularity,
+                exclude_noise=payload.exclude_noise, exclude_system_rgs=payload.exclude_system_rgs,
+                rg_globs=payload.rg_globs, tag_seed_keys=payload.tag_seed_keys,
+                include_types=payload.include_types, exclude_types=payload.exclude_types,
+                environments=payload.environments, regions=payload.regions,
+                subscriptions=payload.subscriptions, name_contains=payload.name_contains,
+                confidence_floor=payload.confidence_floor, max_ai_calls=payload.max_ai_calls,
+                naming_hint=payload.naming_hint,
             ):
                 ev_type = ev.pop("type")
                 yield {"event": ev_type, "data": json.dumps(ev)}
@@ -420,6 +497,57 @@ async def autopilot_discover_endpoint(
             yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
 
     return EventSourceResponse(_gen())
+
+
+# ----------------------------------------------------------------- discovery profiles
+class ProfileSaveRequest(BaseModel):
+    connection_id: str = ""
+    name: str = ""
+    config: dict = Field(default_factory=dict)
+    scope_kind: str = ""
+    scope_id: str = ""
+    scope_name: str = ""
+    profile_id: str = ""
+
+
+@router.get("/autopilot/profiles")
+async def list_profiles_endpoint(
+    connection_id: str = "", _: Principal = Depends(get_principal)
+):
+    """Saved discovery profiles for a connection (newest first)."""
+    conn = resolve_connection(connection_id or None)
+    tenant_id = conn.get("tenant_id", "") if conn else ""
+    return {"profiles": discovery_profiles.list_profiles(tenant_id, connection_id)}
+
+
+@router.post("/autopilot/profiles")
+async def save_profile_endpoint(
+    payload: ProfileSaveRequest, principal: Principal = Depends(_write)
+):
+    """Create or update a discovery profile."""
+    conn = resolve_connection(payload.connection_id or None)
+    tenant_id = conn.get("tenant_id", "") if conn else ""
+    profile = discovery_profiles.save_profile(
+        tenant_id, payload.connection_id,
+        name=payload.name, config=payload.config,
+        scope_kind=payload.scope_kind, scope_id=payload.scope_id, scope_name=payload.scope_name,
+        profile_id=payload.profile_id, actor=principal.subject,
+    )
+    return {"profile": profile}
+
+
+@router.delete("/autopilot/profiles/{profile_id}")
+async def delete_profile_endpoint(
+    profile_id: str, connection_id: str = "", principal: Principal = Depends(_write)
+):
+    """Delete a discovery profile."""
+    conn = resolve_connection(connection_id or None)
+    tenant_id = conn.get("tenant_id", "") if conn else ""
+    ok = discovery_profiles.delete_profile(tenant_id, connection_id, profile_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    return {"ok": True}
+
 
 
 class CandidateSave(BaseModel):
