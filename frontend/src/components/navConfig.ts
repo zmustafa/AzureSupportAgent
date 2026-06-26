@@ -299,17 +299,22 @@ export const TAGINTEL_TAB_IDS = new Set<TagIntelTab>(TAGINTEL_NAV.map((n) => n.i
 // Sub-tabs of the Azure Workload Change Explorer, driven by the /change-explorer/:tab URL so a
 // refresh (or a shared link) restores the same view. "summary" is the default.
 export type ChangeExplorerTab =
-  | "summary" | "timeline" | "changes" | "risk" | "resources" | "actors" | "diff" | "impact" | "export";
+  | "summary" | "timeline" | "operations" | "narrative" | "changes" | "security" | "risk"
+  | "resources" | "actors" | "diff" | "impact" | "compare" | "export";
 
 export const CHANGEEXPLORER_NAV: { id: ChangeExplorerTab; label: string }[] = [
   { id: "summary", label: "📊 Summary" },
+  { id: "operations", label: "🧩 Operations" },
+  { id: "narrative", label: "📖 Narrative" },
   { id: "timeline", label: "🕑 Timeline" },
   { id: "changes", label: "📋 All Changes" },
+  { id: "security", label: "🛡️ Security" },
   { id: "risk", label: "⚠️ Risk Insights" },
   { id: "resources", label: "📦 Resources" },
   { id: "actors", label: "👤 Actors" },
   { id: "diff", label: "🔬 Technical Diff" },
   { id: "impact", label: "🔗 Dependency Impact" },
+  { id: "compare", label: "🔀 Compare" },
   { id: "export", label: "⬇️ Export / Reports" },
 ];
 

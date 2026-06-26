@@ -136,6 +136,69 @@ async def test_resolve_scope_multi_dedupes_overlap(monkeypatch):
     assert err == ""
 
 
+# --------------------------------------------------------------------------- IP7: parallel cost
+async def test_get_cost_aggregates_across_subscriptions_concurrently(tmp_path, monkeypatch):
+    """IP7 — get_cost fans the per-subscription queries out concurrently (bounded by a
+    semaphore) and aggregates every subscription's result without dropping any."""
+    monkeypatch.setattr(cost, "_CACHE_PATH", tmp_path / "cost.json")
+    monkeypatch.setattr(cost, "_mem", None)
+
+    seen: list[str] = []
+
+    async def fake_sub_cost(_conn, sub_id, _body):
+        seen.append(sub_id)
+        # Each subscription contributes one resource with a deterministic cost.
+        return ({f"/subscriptions/{sub_id}/r": float(int(sub_id[1:]))}, "USD", "")
+
+    monkeypatch.setattr(cost, "_subscription_cost", fake_sub_cost)
+    subs = [f"s{i}" for i in range(1, 11)]
+    payload = await cost.get_cost(None, subs, "t1", "c1", force=True)
+
+    assert payload["available"] is True
+    assert len(seen) == 10  # every subscription was queried
+    assert len(payload["by_resource"]) == 10  # none dropped
+    assert payload["total"] == round(sum(range(1, 11)), 2)
+    assert payload["errors"] == []
+
+
+async def test_get_cost_records_per_subscription_errors(tmp_path, monkeypatch):
+    """A subscription that errors is reported but doesn't abort the others (IP7 parallel)."""
+    monkeypatch.setattr(cost, "_CACHE_PATH", tmp_path / "cost.json")
+    monkeypatch.setattr(cost, "_mem", None)
+
+    async def fake_sub_cost(_conn, sub_id, _body):
+        if sub_id == "s2":
+            return ({}, "", "throttled")
+        return ({f"/subscriptions/{sub_id}/r": 5.0}, "USD", "")
+
+    monkeypatch.setattr(cost, "_subscription_cost", fake_sub_cost)
+    payload = await cost.get_cost(None, ["s1", "s2", "s3"], "t1", "c1", force=True)
+    assert payload["total"] == 10.0  # s1 + s3
+    assert any("s2" in e for e in payload["errors"])  # the failure is surfaced
+
+
+# --------------------------------------------------------------------------- IP6: response cap
+def test_cap_resources_passthrough_under_cap():
+    from app.api import inventory as inv_api
+
+    payload = {"resources": [{"id": i} for i in range(5)], "summary": {"total_resources": 5}}
+    out = inv_api._cap_resources(payload, top=0)
+    assert out["truncated_total"] is False
+    assert out["returned"] == 5
+    assert len(out["resources"]) == 5
+
+
+def test_cap_resources_honours_explicit_top():
+    from app.api import inventory as inv_api
+
+    payload = {"resources": [{"id": i} for i in range(50)]}
+    out = inv_api._cap_resources(payload, top=10)
+    assert out["truncated_total"] is True
+    assert out["returned"] == 10
+    assert out["total_resources_full"] == 50
+    assert len(out["resources"]) == 10
+
+
 async def test_resolve_scope_multi_partial_visibility_keeps_visible_only():
     # One valid sub + one not-visible sub → keep the valid one, no error (something resolved).
     ids, err = await service.resolve_scope_sub_ids(None, "sub:s1,sub:nope", ["s1", "s2"])

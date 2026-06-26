@@ -33,6 +33,25 @@ logger = logging.getLogger("app.api.inventory")
 _POLICY_CACHE: dict[str, dict[str, Any]] = {}
 _POLICY_TTL = 300.0
 
+# IP6 — payload safety valve. The /inventory response carries the whole estate in one payload
+# (the client does all faceting/filtering in memory). This always-on cap bounds the number of
+# resource rows serialised so a pathologically large tenant can never ship a multi-hundred-MB
+# JSON that would freeze the browser; the full set still lives in the server cache. Callers may
+# request a smaller page via ``top``. When capped, ``truncated_total`` + ``total_resources_full``
+# tell the UI to show a "narrow your scope" banner. Normal estates never hit this.
+_INVENTORY_RESPONSE_CAP = 100_000
+
+
+def _cap_resources(payload: dict[str, Any], top: int) -> dict[str, Any]:
+    """Bound the number of resource rows in the response (IP6). Facets/summary are computed over
+    the FULL estate server-side and are left intact, so only the row list is truncated."""
+    res = payload.get("resources") or []
+    total = len(res)
+    cap = top if (top and 0 < top < _INVENTORY_RESPONSE_CAP) else _INVENTORY_RESPONSE_CAP
+    if total > cap:
+        return {**payload, "resources": res[:cap], "returned": cap, "total_resources_full": total, "truncated_total": True}
+    return {**payload, "returned": total, "truncated_total": False}
+
 
 def _conn(connection_id: str | None) -> dict[str, Any] | None:
     return resolve_connection(connection_id)
@@ -73,6 +92,7 @@ async def get_inventory(
     connection_id: str | None = None,
     force: int = 0,
     scope: str = "",
+    top: int = 0,
     principal: Principal = Depends(require_admin),
 ):
     """Full resource inventory (resources + facets + summary), attributed to workloads.
@@ -80,7 +100,8 @@ async def get_inventory(
     Server-cached PERMANENTLY per tenant + connection + scope so the many Resource Graph
     queries run only once per scope until refreshed. ``scope`` restricts collection to a
     subscription (``sub:<id>``) or a management group's subscriptions (``mg:<id>``); ``""`` is
-    the whole tenant.
+    the whole tenant. ``top`` optionally caps the number of resource rows returned (IP6 safety
+    valve); facets/summary always reflect the full estate.
 
     A plain page visit (``force=0``) ONLY reads the cache — it never triggers a scan, even on a
     cache miss. A miss returns an empty ``never_loaded`` payload so the UI prompts the user to
@@ -90,14 +111,14 @@ async def get_inventory(
     if not force:
         hit = cache.get(tid, cid, scope=scope)
         if hit:
-            return {**hit["payload"], "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+            return {**_cap_resources(hit["payload"], top), "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
         # Cache miss on a page visit: do NOT scan. Return an empty 'not loaded yet' payload.
         return {**service.empty_payload(), "cached": False, "never_loaded": True, "fetched_at": "", "age_seconds": 0}
 
     conn = _conn(connection_id)
     payload = await service.collect(conn, scope=scope)
     fetched_at = cache.set_(tid, cid, payload, scope=scope)
-    return {**payload, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
+    return {**_cap_resources(payload, top), "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
 
 
 @router.get("/optimization")

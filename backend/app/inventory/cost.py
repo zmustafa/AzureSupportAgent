@@ -27,6 +27,12 @@ _mem: dict[str, Any] | None = None
 # (see ``_query_body``) rather than a static constant.
 _WINDOW_DAYS = 30
 _API_VERSION = "2023-11-01"
+# IP7 — query subscriptions with bounded concurrency instead of strictly sequential. Small
+# enough to stay under Cost Management's aggressive throttling (each call also retries 429s
+# with backoff), but parallel enough that wide tenants no longer load one-subscription-at-a-time.
+_COST_CONCURRENCY = 4
+# Hard cap on how many subscriptions we'll query for cost in one pass (each is a slow call).
+_COST_MAX_SUBSCRIPTIONS = 25
 
 
 def _window() -> tuple[datetime, datetime]:
@@ -199,10 +205,21 @@ async def get_cost(
 
     # The Cost Management query body is identical per subscription.
     body = _query_body()
-    for i, sub in enumerate(subscriptions[:25]):  # bound the number of (slow) cost queries
-        if i:
-            await asyncio.sleep(1.0)  # gentle spacing to avoid Cost Management throttling
-        costs, cur, err = await _subscription_cost(connection, sub, body)
+    targets = subscriptions[:_COST_MAX_SUBSCRIPTIONS]
+    # IP7 — fan the (slow, throttled) per-subscription cost queries out with bounded concurrency.
+    # A semaphore caps simultaneous calls and a small per-slot stagger avoids hitting the API in
+    # lockstep; the 429 retry/backoff lives inside ``_subscription_cost``.
+    sem = asyncio.Semaphore(_COST_CONCURRENCY)
+
+    async def _one(idx: int, sub: str) -> tuple[str, dict[str, float], str, str]:
+        async with sem:
+            if idx % _COST_CONCURRENCY:
+                await asyncio.sleep((idx % _COST_CONCURRENCY) * 0.25)
+            costs, cur, err = await _subscription_cost(connection, sub, body)
+            return sub, costs, cur, err
+
+    results = await asyncio.gather(*[_one(i, sub) for i, sub in enumerate(targets)])
+    for sub, costs, cur, err in results:
         if err:
             errors.append(f"{sub[:8]}…: {err}")
             continue

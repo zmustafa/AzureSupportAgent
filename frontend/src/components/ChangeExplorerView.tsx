@@ -11,14 +11,16 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
 } from "recharts";
 import {
   api, streamChangeExplorerAnalyze, streamChangeExplorerAiEnrich,
   type ChangeAnalysisRun, type ChangeEvent, type ChangeProgress, type ChangeRunSummary, type ChangeAnalyzeBody,
-  type ChangeAskResponse,
+  type ChangeAskResponse, type ChangeCompareResult,
 } from "../api";
+import { useNavigate } from "react-router-dom";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { ScopePicker, type ScopeKind } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
@@ -110,7 +112,9 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const [shownRun, setShownRun] = useState<ChangeAnalysisRun | null>(null);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<ChangeEvent | null>(null);
+  const [resourceFocus, setResourceFocus] = useState<string | null>(null);   // A3 per-resource drill-in
   const [confirmTenant, setConfirmTenant] = useState(false);   // tenant-wide scope yes/no gate
+  const navigate = useNavigate();
   useWorkloadDeepLink(setScopeKind, setWorkloadId);
 
   // Result-side filters.
@@ -256,20 +260,76 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   // so the drawer's AI narrative is populated — exactly the "open a record" trigger.
   function openRecord(e: ChangeEvent | null) {
     setSelected(e);
-    if (e) void runAiAnalysis();
+    if (e) {
+      void runAiAnalysis();
+      // Deep-link the open change (U6) so a shared URL re-opens it.
+      try { const u = new URL(window.location.href); u.searchParams.set("change", e.changeId); window.history.replaceState(null, "", u); } catch { /* ignore */ }
+    }
+  }
+  function clearChangeDeepLink() {
+    try { const u = new URL(window.location.href); u.searchParams.delete("change"); window.history.replaceState(null, "", u); } catch { /* ignore */ }
   }
 
   // Cancel an in-flight AI enrich if the displayed run changes.
   useEffect(() => { return () => aiAbortRef.current?.abort(); }, [shownRun?.runId]); // eslint-disable-line
 
+  // ---- Case file (D1): pinned change ids + per-change notes, persisted server-side ----------
+  const pinnedIds = useMemo(() => new Set(shownRun?.caseFile?.pinned ?? []), [shownRun?.caseFile?.pinned]);
+  async function persistCase(patch: { pinned?: string[]; notes?: Record<string, string>; case_summary?: string }) {
+    const r = shownRun;
+    if (!r) return;
+    try {
+      const res = await api.changeExplorerSetCase(r.runId, patch);
+      setShownRun((cur) => cur && cur.runId === r.runId ? { ...cur, caseFile: res.caseFile } : cur);
+    } catch (e) { setErr(formatError(e)); }
+  }
+  function togglePin(changeId: string) {
+    const cur = new Set(shownRun?.caseFile?.pinned ?? []);
+    if (cur.has(changeId)) cur.delete(changeId); else cur.add(changeId);
+    void persistCase({ pinned: [...cur] });
+  }
+  function saveNote(changeId: string, text: string) {
+    void persistCase({ notes: { [changeId]: text } });
+  }
+
+  // ---- Hand-off to Deep Investigation (D2): seed a War Room chat with this change ----------
+  function investigateChange(e: ChangeEvent) {
+    try {
+      const prompt = `Investigate this Azure change from the Change Explorer:\n`
+        + `Resource: ${e.resourceName} (${e.resourceType})\n`
+        + `Operation: ${e.operation}\nActor: ${e.actorDisplay || e.actor}\nWhen: ${e.eventTime}\n`
+        + `Risk: ${e.riskLabel} (${e.riskScore})\n${e.plainEnglishSummary}\n`
+        + (e.securityFlags?.length ? `Security flags: ${e.securityFlags.map((f) => f.label).join(", ")}\n` : "")
+        + `Resource id: ${e.resourceId}`;
+      sessionStorage.setItem("azsup.warRoomHandoff", JSON.stringify({ workloadId: effWorkloadId || undefined, prompt }));
+    } catch { /* ignore */ }
+    navigate("/chat");
+  }
+
   const run = shownRun;
   const events = run?.events ?? [];
-  const filtered = useMemo(() => events.filter((e) =>
-    (!fRisk || e.riskLabel === fRisk) && (!fCat || e.category === fCat) &&
-    (!fActor || e.actor === fActor) && (!fType || e.resourceType === fType) &&
-    (!aiMatchIds || aiMatchIds.has(e.changeId)) &&
-    (!search || `${e.resourceName} ${e.plainEnglishSummary} ${e.operation}`.toLowerCase().includes(search.toLowerCase()))
-  ), [events, fRisk, fCat, fActor, fType, search, aiMatchIds]);
+  const debouncedSearch = useDebounced(search, 150);
+  const filtered = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    return events.filter((e) =>
+      (!fRisk || e.riskLabel === fRisk) && (!fCat || e.category === fCat) &&
+      (!fActor || e.actor === fActor) && (!fType || e.resourceType === fType) &&
+      (!aiMatchIds || aiMatchIds.has(e.changeId)) &&
+      (!q || `${e.resourceName} ${e.plainEnglishSummary} ${e.operation}`.toLowerCase().includes(q)));
+  }, [events, fRisk, fCat, fActor, fType, debouncedSearch, aiMatchIds]);
+
+  // Open a deep-linked change (?change=<id>) once its run is loaded (U6).
+  useEffect(() => {
+    if (!run) return;
+    try {
+      const id = new URL(window.location.href).searchParams.get("change");
+      if (id && (!selected || selected.changeId !== id)) {
+        const e = run.events.find((x) => x.changeId === id);
+        if (e) setSelected(e);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.runId]);
 
   // STALE-RUN GUARD: a loaded cached run can cover a DIFFERENT window/scope than what the controls
   // currently say (e.g. a 2-day-old run while "Last 4 hours" is selected) — dangerously misleading
@@ -425,15 +485,20 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
         </div>
 
         {!run ? (
+          analyzing ? (
+            <div className="px-5 pb-10">
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-brand/20 bg-brand/5 px-3 py-2 text-sm text-brand">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" /> Analyzing changes… progress is shown above and continues even if you navigate away.
+              </div>
+              <Skeleton rows={10} />
+            </div>
+          ) : (
           <div className="m-6 rounded-xl border border-dashed bg-gray-50 p-10 text-center">
             <div className="text-3xl">🧭</div>
-            {analyzing
-              ? <p className="mt-2 text-sm font-medium text-gray-700">Analyzing changes… progress is shown above and continues even if you navigate away.</p>
-              : <>
-                  <p className="mt-2 text-sm font-medium text-gray-700">Pick a workload or subscription, a time range and scope, then click <b>Analyze Changes</b>.</p>
-                  <p className="mt-1 text-xs text-gray-500">Cached runs auto-load here; new analysis only runs when you click Analyze. Tip: the <b>Contoso Website Prod (demo)</b> workload has built-in sample data — no Azure connection needed.</p>
-                </>}
+            <p className="mt-2 text-sm font-medium text-gray-700">Pick a workload or subscription, a time range and scope, then click <b>Analyze Changes</b>.</p>
+            <p className="mt-1 text-xs text-gray-500">Cached runs auto-load here; new analysis only runs when you click Analyze. Tip: the <b>Contoso Website Prod (demo)</b> workload has built-in sample data — no Azure connection needed.</p>
           </div>
+          )
         ) : (
           <div className="px-5 pb-10">
             {/* STALE-RUN banner — the loaded run covers a different window/scope than the current
@@ -516,10 +581,11 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
               {/* ✨ Ask AI — natural-language change search ("show me all VMs modified yesterday").
                   Composes with the manual filters below by narrowing to the matched change ids. */}
               <div className="mb-3 rounded-xl border bg-gradient-to-br from-violet-50 to-white p-3">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-base">✨</span>
                   <span className="text-sm font-medium text-gray-800">Ask AI</span>
-                  <span className="text-[11px] text-gray-400">natural-language change search — type a window too (e.g. “yesterday”, “last 7 days”)</span>
+                  <span className="text-[11px] font-semibold text-violet-700">filters &amp; narrows the current results</span>
+                  <span className="text-[11px] text-gray-400">— natural-language search; type a window too (e.g. “yesterday”, “last 7 days”)</span>
                 </div>
                 <div className="mt-2 flex gap-2">
                   <input
@@ -566,24 +632,52 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                 <Filter label="Type" value={fType} setValue={setFType} options={run.facets.resource_types} fmt={shortType} />
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="rounded border px-2 py-1 text-sm" />
                 <span className="text-[11px] text-gray-400">{filtered.length} / {events.length}</span>
+                <PerspectiveBar
+                  current={{ fRisk, fCat, fActor, fType, search }}
+                  onApply={(p) => { setFRisk(p.fRisk); setFCat(p.fCat); setFActor(p.fActor); setFType(p.fType); setSearch(p.search); }}
+                />
               </div>
               </>
             )}
 
             {tab === "summary" && <SummaryTab run={run} />}
+            {tab === "operations" && <OperationsTab run={run} onSelect={openRecord} />}
+            {tab === "narrative" && <NarrativeTab run={run} onSelect={openRecord} />}
             {tab === "timeline" && <TimelineTab events={filtered} onSelect={openRecord} onNarrow={narrowToWindow} analyzing={analyzing} />}
-            {tab === "changes" && <AllChangesTab events={filtered} onSelect={openRecord} />}
+            {tab === "changes" && <AllChangesTab events={filtered} onSelect={openRecord} pinnedIds={pinnedIds} />}
+            {tab === "security" && <SecurityTab run={run} onSelect={openRecord} />}
             {tab === "risk" && <RiskTab run={run} onSelect={openRecord} />}
-            {tab === "resources" && <ResourcesTab run={run} onSelectResource={(rid) => openRecord(events.find((e) => e.resourceId === rid) ?? null)} />}
+            {tab === "resources" && <ResourcesTab run={run} onSelectResource={(rid) => setResourceFocus(rid)} />}
             {tab === "actors" && <ActorsTab run={run} />}
             {tab === "diff" && <DiffTab events={filtered} />}
             {tab === "impact" && <ImpactTab run={run} />}
+            {tab === "compare" && <CompareTab run={run} history={history} />}
             {tab === "export" && <ExportTab run={run} />}
           </div>
         )}
       </div>
 
-      {selected && <ChangeDrawer event={selected} aiPending={aiEnriching} onClose={() => setSelected(null)} />}
+      {resourceFocus && run && (
+        <ResourceHistoryDrawer
+          run={run}
+          resourceId={resourceFocus}
+          onClose={() => setResourceFocus(null)}
+          onSelect={(e) => { setResourceFocus(null); openRecord(e); }}
+        />
+      )}
+      {selected && (
+        <ChangeDrawer
+          event={selected}
+          runId={run?.runId}
+          aiPending={aiEnriching}
+          pinned={!!selected && pinnedIds.has(selected.changeId)}
+          note={(run?.caseFile?.notes || {})[selected.changeId] || ""}
+          onTogglePin={() => togglePin(selected.changeId)}
+          onSaveNote={(t) => saveNote(selected.changeId, t)}
+          onInvestigate={() => investigateChange(selected)}
+          onClose={() => { setSelected(null); clearChangeDeepLink(); }}
+        />
+      )}
     </div>
   );
 }
@@ -594,6 +688,38 @@ function Filter({ label, value, setValue, options, fmt }: { label: string; value
       <option value="">{label}: all</option>
       {options.map((o) => <option key={o} value={o}>{fmt ? fmt(o) : o}</option>)}
     </select>
+  );
+}
+
+// Saved perspectives (D3): persist named filter combos in localStorage so a reviewer can re-apply
+// a frequent view (e.g. "RBAC by John, high risk") with one click.
+type Perspective = { fRisk: string; fCat: string; fActor: string; fType: string; search: string };
+const _PERSP_KEY = "azsup.changeexp.perspectives.v1";
+function PerspectiveBar({ current, onApply }: { current: Perspective; onApply: (p: Perspective) => void }) {
+  const [saved, setSaved] = useState<{ name: string; p: Perspective }[]>(() => {
+    try { return JSON.parse(localStorage.getItem(_PERSP_KEY) || "[]"); } catch { return []; }
+  });
+  function persist(list: { name: string; p: Perspective }[]) {
+    setSaved(list);
+    try { localStorage.setItem(_PERSP_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+  }
+  function save() {
+    const hasFilter = current.fRisk || current.fCat || current.fActor || current.fType || current.search;
+    if (!hasFilter) return;
+    const name = window.prompt("Name this perspective (filter view):");
+    if (!name) return;
+    persist([...saved.filter((s) => s.name !== name), { name, p: current }]);
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <button onClick={save} title="Save the current filters as a named perspective" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">💾 Save view</button>
+      {saved.map((s) => (
+        <span key={s.name} className="inline-flex items-center gap-0.5 rounded-full border bg-white px-1.5 py-0.5 text-[11px]">
+          <button onClick={() => onApply(s.p)} className="text-gray-700 hover:text-brand">⭐ {s.name}</button>
+          <button onClick={() => persist(saved.filter((x) => x.name !== s.name))} className="text-gray-300 hover:text-red-600">✕</button>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1013,9 +1139,21 @@ function TimelineSlicer({
       <div className="relative h-10 w-full">
         <div className="flex h-full w-full items-end gap-px">
           {buckets.map((b, i) => {
+            const bucketMs = (maxTs - minTs) / buckets.length;
             const t = minTs + (i / buckets.length) * (maxTs - minTs);
-            const inRange = t >= lo - (maxTs - minTs) / buckets.length && t <= hi;
-            return <div key={i} className={`flex-1 rounded-t ${inRange ? "bg-brand/60" : "bg-gray-200"}`} style={{ height: `${(b / maxBar) * 100}%` }} />;
+            const tEnd = t + bucketMs;
+            const inRange = t >= lo - bucketMs && t <= hi;
+            const tip = `${fmt(t)} → ${fmt(tEnd)}\n${b} change${b === 1 ? "" : "s"}`;
+            // Full-height column so the whole bucket is hoverable (even empty ones), with the bar
+            // pinned to the bottom. The title shows the bucket's time range + change count.
+            return (
+              <div key={i} title={tip} className="group flex h-full flex-1 cursor-default items-end">
+                <div
+                  className={`w-full rounded-t ${inRange ? "bg-brand/60 group-hover:bg-brand" : "bg-gray-200 group-hover:bg-gray-300"}`}
+                  style={{ height: `${(b / maxBar) * 100}%`, minHeight: b > 0 ? "2px" : undefined }}
+                />
+              </div>
+            );
           })}
         </div>
         <div className="pointer-events-none absolute inset-y-0 rounded bg-brand/10" style={{ left: `${pct(lo)}%`, right: `${100 - pct(hi)}%` }} />
@@ -1035,35 +1173,299 @@ function TimelineSlicer({
 
 
 // --------------------------------------------------------------- All Changes
-function AllChangesTab({ events, onSelect }: { events: ChangeEvent[]; onSelect: (e: ChangeEvent) => void }) {
+function AllChangesTab({ events, onSelect, pinnedIds }: { events: ChangeEvent[]; onSelect: (e: ChangeEvent) => void; pinnedIds?: Set<string> }) {
   if (!events.length) return <Empty />;
+  const cols = "grid grid-cols-[120px_84px_90px_1fr_120px_110px_130px_150px_70px_70px] items-center gap-2";
+  return (
+    <div className="rounded-xl border bg-white">
+      <div className={`${cols} sticky top-0 z-10 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase text-gray-400`}>
+        <span>Time</span><span>Risk</span><span>Category</span><span>Resource</span><span>Type</span><span>RG</span><span>Operation</span><span>Actor</span><span>Source</span><span>Conf.</span>
+      </div>
+      <VirtualList items={events} estimateSize={38} render={(e) => (
+        <button onClick={() => onSelect(e)} className={`${cols} w-full cursor-pointer border-t px-3 py-1.5 text-left text-sm hover:bg-gray-50`}>
+          <span className="truncate text-[11px] tabular-nums text-gray-500">{fmtTime(e.eventTime)}</span>
+          <RiskChip label={e.riskLabel} score={e.riskScore} />
+          <span className="truncate text-[11px] text-gray-600">{e.category}</span>
+          <span className="truncate font-medium text-gray-800">
+            {pinnedIds?.has(e.changeId) && <span title="Pinned">📌 </span>}
+            {(e.securityFlags?.length ?? 0) > 0 && <span title={e.securityFlags!.map((f) => f.label).join(", ")}>🛡️ </span>}
+            {e.resourceName}
+          </span>
+          <span className="truncate text-[11px] text-gray-500">{shortType(e.resourceType)}</span>
+          <span className="truncate text-[11px] text-gray-500">{e.resourceGroup}</span>
+          <span className="truncate text-[11px] text-gray-500">{e.operation.split("/").slice(-2).join("/")}</span>
+          <span className="truncate text-[11px] text-gray-600">{e.actorDisplay || e.actor}</span>
+          <span className="truncate text-[11px] text-gray-400">{e.source}</span>
+          <span className="truncate text-[11px] text-gray-400">{e.confidence}</span>
+        </button>
+      )} />
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- Operations (A1)
+function OperationsTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e: ChangeEvent) => void }) {
+  const allOps = run.operations ?? [];
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q, 150);
+  const ops = useMemo(() => {
+    const s = dq.trim().toLowerCase();
+    if (!s) return allOps;
+    return allOps.filter((o) => `${o.actor} ${o.verb} ${o.categories.join(" ")} ${o.resourceNames.join(" ")} ${o.highestRiskLabel}`.toLowerCase().includes(s));
+  }, [allOps, dq]);
+  const eventsById = useMemo(() => { const m = new Map<string, ChangeEvent>(); for (const e of run.events) m.set(e.changeId, e); return m; }, [run.events]);
+  if (!allOps.length) return <StaleDerivedEmpty label="grouped operations" />;
+  function toggle(id: string) { setOpen((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="px-1 text-[11px] text-gray-400">{allOps.length} operation(s) — changes sharing a deployment / correlation id (or one actor in a short burst) are grouped into a single action.</p>
+        <TabSearch q={q} setQ={setQ} shown={ops.length} total={allOps.length} placeholder="Search operations…" />
+      </div>
+      {ops.map((op) => (
+        <div key={op.operationId} className="rounded-xl border bg-white">
+          <button onClick={() => toggle(op.operationId)} className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left hover:bg-gray-50">
+            <span className="text-gray-400">{open.has(op.operationId) ? "▾" : "▸"}</span>
+            <RiskChip label={op.highestRiskLabel} score={op.highestRiskScore} />
+            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">{op.verb}</span>
+            <span className="text-sm font-medium text-gray-800">{op.actor}</span>
+            <span className="text-[11px] text-gray-500">{op.changeCount} change{op.changeCount === 1 ? "" : "s"} · {op.resourceCount} resource{op.resourceCount === 1 ? "" : "s"}</span>
+            {op.securityFlagCount > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {op.securityFlagCount}</span>}
+            <span className="ml-auto text-[11px] tabular-nums text-gray-400">{fmtTime(op.startTime)}</span>
+          </button>
+          {open.has(op.operationId) && (
+            <div className="border-t px-3 py-2">
+              <div className="mb-1 text-[11px] text-gray-400">Categories: {op.categories.join(", ") || "—"}{op.resourceNames.length ? ` · Resources: ${op.resourceNames.join(", ")}` : ""}</div>
+              <div className="divide-y">
+                {op.changeIds.map((cid) => { const e = eventsById.get(cid); if (!e) return null; return (
+                  <button key={cid} onClick={() => onSelect(e)} className="flex w-full items-center gap-2 py-1 text-left text-[12px] hover:bg-gray-50">
+                    <RiskChip label={e.riskLabel} score={e.riskScore} />
+                    {(e.securityFlags?.length ?? 0) > 0 && <span title={e.securityFlags!.map((f) => f.label).join(", ")}>🛡️</span>}
+                    <span className="font-medium text-gray-700">{e.resourceName}</span>
+                    <span className="text-gray-400">{e.operation.split("/").slice(-2).join("/")}</span>
+                    <span className="ml-auto text-[10px] tabular-nums text-gray-400">{fmtTime(e.eventTime)}</span>
+                  </button>
+                ); })}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Empty state shown when a derived view is missing on an older cached run (U5) — offers re-analyze.
+function StaleDerivedEmpty({ label }: { label: string }) {
+  return (
+    <div className="rounded-xl border border-dashed bg-gray-50 p-8 text-center text-sm text-gray-500">
+      No {label} for this run. Older cached runs predate this view — click <b>Analyze Changes</b> (or Re-analyze) to populate it.
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- Narrative (A2)
+function NarrativeTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e: ChangeEvent) => void }) {
+  const allBeats = run.narrative ?? [];
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q, 150);
+  const beats = useMemo(() => {
+    const s = dq.trim().toLowerCase();
+    return s ? allBeats.filter((b) => `${b.text} ${b.actor} ${b.categories.join(" ")}`.toLowerCase().includes(s)) : allBeats;
+  }, [allBeats, dq]);
+  const eventsById = useMemo(() => { const m = new Map<string, ChangeEvent>(); for (const e of run.events) m.set(e.changeId, e); return m; }, [run.events]);
+  if (!allBeats.length) return <StaleDerivedEmpty label="narrative" />;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="px-1 text-[11px] text-gray-400">A chronological story of the window (oldest → newest). Click a beat to open its first change.</p>
+        <TabSearch q={q} setQ={setQ} shown={beats.length} total={allBeats.length} placeholder="Search narrative…" />
+      </div>
+      <div className="relative space-y-1 border-l-2 border-gray-100 pl-4">
+        {beats.map((b, i) => (
+          <button key={i} onClick={() => { const e = eventsById.get(b.changeIds[0]); if (e) onSelect(e); }}
+            className="block w-full rounded-lg border bg-white p-2 text-left hover:bg-gray-50">
+            <div className="absolute -left-[7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[b.riskLabel] }} />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs tabular-nums text-gray-400">{fmtTime(b.time)}</span>
+              <RiskChip label={b.riskLabel} score={b.riskScore} />
+              {b.securityFlagCount > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">🛡️ {b.securityFlagCount}</span>}
+            </div>
+            <div className="mt-0.5 text-[13px] text-gray-700">{b.text}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- Security (C)
+function SecurityTab({ run, onSelect }: { run: ChangeAnalysisRun; onSelect: (e: ChangeEvent) => void }) {
+  const sec = run.security;
+  const [secQ, setSecQ] = useState("");
+  const dsq = useDebounced(secQ, 150);
+  const flagged = useMemo(() => run.events.filter((e) => (e.securityFlags?.length ?? 0) > 0)
+    .sort((a, b) => b.riskScore - a.riskScore), [run.events]);
+  const flaggedShown = useMemo(() => {
+    const s = dsq.trim().toLowerCase();
+    return s ? flagged.filter((e) => `${e.resourceName} ${e.actorDisplay || e.actor} ${(e.securityFlags ?? []).map((f) => f.label).join(" ")}`.toLowerCase().includes(s)) : flagged;
+  }, [flagged, dsq]);
+  const suspicious = (run.insights ?? []).filter((i) => String(i.insightType).startsWith("suspicious_"));
+  if (!sec || (sec.flagged_changes === 0 && suspicious.length === 0)) {
+    return <div className="rounded-xl border border-dashed bg-gray-50 p-8 text-center text-sm text-gray-500">✅ No security-sensitive changes or suspicious patterns detected in this window.</div>;
+  }
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Kpi label="Flagged changes" value={sec.flagged_changes} tone="text-red-600" />
+        <Kpi label="Critical flags" value={sec.by_severity.critical ?? 0} tone="text-red-700" />
+        <Kpi label="High flags" value={sec.by_severity.high ?? 0} tone="text-orange-600" />
+        <Kpi label="Suspicious patterns" value={suspicious.length} tone="text-violet-700" />
+      </div>
+      {suspicious.length > 0 && (
+        <div className="rounded-xl border bg-white">
+          <div className="border-b px-4 py-2 text-sm font-medium text-gray-700">Suspicious patterns — review first</div>
+          <div className="divide-y">
+            {suspicious.map((i) => (
+              <div key={i.insightId} className="px-4 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <RiskChip label={i.severity} />
+                  <span className="text-sm font-medium text-gray-800">{i.title}</span>
+                </div>
+                <div className="mt-0.5 text-[12px] text-gray-600">{i.summary}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="rounded-xl border bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+          <span className="text-sm font-medium text-gray-700">Security-flagged changes ({flagged.length})</span>
+          <TabSearch q={secQ} setQ={setSecQ} shown={flaggedShown.length} total={flagged.length} placeholder="Search flagged…" />
+        </div>
+        <div className="divide-y">
+          {flaggedShown.map((e) => (
+            <button key={e.changeId} onClick={() => onSelect(e)} className="block w-full px-4 py-2 text-left hover:bg-gray-50">
+              <div className="flex flex-wrap items-center gap-2">
+                <RiskChip label={e.riskLabel} score={e.riskScore} />
+                <span className="text-sm font-medium text-gray-800">{e.resourceName}</span>
+                <span className="text-[11px] text-gray-400">{e.actorDisplay || e.actor}</span>
+                <span className="ml-auto text-[10px] tabular-nums text-gray-400">{fmtTime(e.eventTime)}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">{(e.securityFlags ?? []).map((f, idx) => <SecFlagChip key={idx} flag={f} />)}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- Compare (E2)
+function CompareTab({ run, history }: { run: ChangeAnalysisRun; history: ChangeRunSummary[] }) {
+  const others = useMemo(() => history.filter((h) => h.runId !== run.runId), [history, run.runId]);
+  // U7: default the baseline to the most recent OTHER run for this scope.
+  const [otherId, setOtherId] = useState("");
+  useEffect(() => { setOtherId((cur) => cur || others[0]?.runId || ""); }, [others]);
+  const [result, setResult] = useState<ChangeCompareResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  async function go() {
+    if (!otherId) return;
+    setBusy(true); setErr(""); setResult(null);
+    try { setResult(await api.changeExplorerCompare(otherId, run.runId)); }  // baseline = other (older), B = current
+    catch (e) { setErr(formatError(e)); } finally { setBusy(false); }
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
+        <span className="text-sm font-medium text-gray-700">Compare current run with a baseline:</span>
+        <select value={otherId} onChange={(e) => setOtherId(e.target.value)} className="rounded border px-2 py-1 text-sm">
+          <option value="">Select a baseline run…</option>
+          {others.map((h) => <option key={h.runId} value={h.runId}>{fmtTime(h.startTime)} → {fmtTime(h.endTime)} · {h.totalChanges} changes</option>)}
+        </select>
+        <button onClick={go} disabled={!otherId || busy} className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "Comparing…" : "Compare"}</button>
+      </div>
+      {err && <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700">{err}</div>}
+      {result && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Kpi label="Added resources" value={result.summary.added} tone="text-emerald-600" />
+            <Kpi label="Removed resources" value={result.summary.removed} tone="text-gray-600" />
+            <Kpi label="Changed in both" value={result.summary.changed} tone="text-amber-600" />
+            <Kpi label="Δ Total changes" value={`${result.summary.total_delta >= 0 ? "+" : ""}${result.summary.total_delta}`} tone={result.summary.total_delta >= 0 ? "text-red-600" : "text-emerald-600"} />
+          </div>
+          <CompareList title="🆕 Added (in current, not baseline)" rows={result.added.map((r) => ({ name: r.resourceName, type: r.resourceType, risk: r.highestRiskLabel, score: r.highestRiskScore }))} />
+          <CompareList title="➖ Removed (in baseline, not current)" rows={result.removed.map((r) => ({ name: r.resourceName, type: r.resourceType, risk: r.highestRiskLabel, score: r.highestRiskScore }))} />
+          {result.changed.length > 0 && (
+            <div className="overflow-auto rounded-xl border bg-white">
+              <div className="border-b px-4 py-2 text-sm font-medium text-gray-700">🔁 Changed in both — risk movement</div>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-left text-[11px] uppercase text-gray-400"><tr><th className="px-3 py-2">Resource</th><th className="px-2">Baseline</th><th className="px-2">Current</th><th className="px-2 text-right">Δ Risk</th></tr></thead>
+                <tbody>{result.changed.map((r) => (
+                  <tr key={r.resourceId} className="border-t">
+                    <td className="px-3 py-1.5 font-medium text-gray-800">{r.resourceName}</td>
+                    <td className="px-2"><RiskChip label={r.riskLabelA} score={r.riskA} /></td>
+                    <td className="px-2"><RiskChip label={r.riskLabelB} score={r.riskB} /></td>
+                    <td className={`px-2 text-right font-medium tabular-nums ${r.riskDelta > 0 ? "text-red-600" : r.riskDelta < 0 ? "text-emerald-600" : "text-gray-400"}`}>{r.riskDelta > 0 ? "+" : ""}{r.riskDelta}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CompareList({ title, rows }: { title: string; rows: { name: string; type: string; risk: string; score: number }[] }) {
   return (
     <div className="overflow-auto rounded-xl border bg-white">
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-gray-50 text-left text-[11px] uppercase text-gray-400">
-          <tr>
-            <th className="px-3 py-2">Time</th><th className="px-2">Risk</th><th className="px-2">Category</th>
-            <th className="px-2">Resource</th><th className="px-2">Type</th><th className="px-2">RG</th>
-            <th className="px-2">Operation</th><th className="px-2">Actor</th><th className="px-2">Source</th><th className="px-2">Conf.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((e) => (
-            <tr key={e.changeId} onClick={() => onSelect(e)} className="cursor-pointer border-t hover:bg-gray-50">
-              <td className="px-3 py-1.5 text-[11px] tabular-nums text-gray-500">{fmtTime(e.eventTime)}</td>
-              <td className="px-2"><RiskChip label={e.riskLabel} score={e.riskScore} /></td>
-              <td className="px-2 text-[11px] text-gray-600">{e.category}</td>
-              <td className="px-2 font-medium text-gray-800">{e.resourceName}</td>
-              <td className="px-2 text-[11px] text-gray-500">{shortType(e.resourceType)}</td>
-              <td className="px-2 text-[11px] text-gray-500">{e.resourceGroup}</td>
-              <td className="px-2 text-[11px] text-gray-500">{e.operation.split("/").slice(-2).join("/")}</td>
-              <td className="px-2 text-[11px] text-gray-600">{e.actorDisplay || e.actor} <span className="text-gray-300">({e.actorKind || e.actorType})</span></td>
-              <td className="px-2 text-[11px] text-gray-400">{e.source}</td>
-              <td className="px-2 text-[11px] text-gray-400">{e.confidence}</td>
-            </tr>
+      <div className="border-b px-4 py-2 text-sm font-medium text-gray-700">{title} <span className="text-[11px] text-gray-400">({rows.length})</span></div>
+      {rows.length === 0 ? <div className="px-4 py-3 text-xs text-gray-400">None.</div> : (
+        <table className="w-full text-sm"><tbody>
+          {rows.slice(0, 100).map((r, i) => (
+            <tr key={i} className="border-t"><td className="px-3 py-1.5 font-medium text-gray-800">{r.name}</td><td className="px-2 text-[11px] text-gray-500">{shortType(r.type)}</td><td className="px-2"><RiskChip label={r.risk} score={r.score} /></td></tr>
           ))}
-        </tbody>
-      </table>
+        </tbody></table>
+      )}
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- Per-resource drill-in (A3)
+function ResourceHistoryDrawer({ run, resourceId, onClose, onSelect }: {
+  run: ChangeAnalysisRun; resourceId: string; onClose: () => void; onSelect: (e: ChangeEvent) => void;
+}) {
+  const evs = useMemo(() => run.events.filter((e) => e.resourceId === resourceId)
+    .sort((a, b) => (a.eventTime < b.eventTime ? 1 : -1)), [run.events, resourceId]);
+  const name = evs[0]?.resourceName || resourceId;
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose}>
+      <div className="h-full w-full max-w-lg overflow-auto bg-white shadow-xl" onClick={(ev) => ev.stopPropagation()}>
+        <div className="sticky top-0 flex items-center gap-2 border-b bg-white px-4 py-3">
+          <span className="text-sm font-semibold text-gray-900">{name}</span>
+          <span className="text-[11px] text-gray-400">{evs.length} change(s)</span>
+          <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-700">✕</button>
+        </div>
+        <div className="p-3 text-xs text-gray-500">{shortType(evs[0]?.resourceType || "")} · {evs[0]?.resourceGroup}</div>
+        <div className="relative space-y-2 border-l-2 border-gray-100 px-4 pb-6 pl-6">
+          {evs.map((e) => (
+            <button key={e.changeId} onClick={() => onSelect(e)} className="block w-full rounded-lg border bg-white p-2 text-left hover:bg-gray-50">
+              <div className="absolute -left-[7px] mt-1 h-3 w-3 rounded-full" style={{ background: RISK_COLOR[e.riskLabel] }} />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] tabular-nums text-gray-400">{fmtTime(e.eventTime)}</span>
+                <RiskChip label={e.riskLabel} score={e.riskScore} />
+                <span className="text-[11px] text-gray-500">{e.operation.split("/").slice(-2).join("/")}</span>
+                <span className="text-[11px] text-gray-400">{e.actorDisplay || e.actor}</span>
+              </div>
+              <div className="mt-0.5 text-[12px] text-gray-600">{e.plainEnglishSummary}</div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1260,10 +1662,18 @@ function ActorsTab({ run }: { run: ChangeAnalysisRun }) {
 
 // --------------------------------------------------------------- Technical Diff
 function DiffTab({ events }: { events: ChangeEvent[] }) {
+  // P4: only changes with an actual before/after diff are worth this heavy view; cap with a
+  // "show more" so a 5,000-change run doesn't render thousands of diff tables.
+  const withDiff = useMemo(() => events.filter((e) => e.details.length > 0), [events]);
+  const [limit, setLimit] = useState(50);
+  useEffect(() => { setLimit(50); }, [events]);
   if (!events.length) return <Empty />;
+  if (!withDiff.length) return <div className="rounded-xl border border-dashed bg-gray-50 p-8 text-center text-sm text-gray-500">No before/after property diffs available for these changes (the source feed didn’t include them).</div>;
+  const shown = withDiff.slice(0, limit);
   return (
     <div className="space-y-3">
-      {events.map((e) => (
+      <p className="px-1 text-[11px] text-gray-400">{withDiff.length} change(s) with property diffs (of {events.length} total). Showing {shown.length}.</p>
+      {shown.map((e) => (
         <div key={e.changeId} className="rounded-xl border bg-white p-3">
           <div className="flex flex-wrap items-center gap-2">
             <RiskChip label={e.riskLabel} score={e.riskScore} />
@@ -1271,29 +1681,24 @@ function DiffTab({ events }: { events: ChangeEvent[] }) {
             <span className="text-[11px] text-gray-400">{e.operation}</span>
             <span className="ml-auto text-[11px] text-gray-400">corr: {e.correlationId || "—"}</span>
           </div>
-          {e.details.length ? (
-            <table className="mt-2 w-full text-[12px]">
-              <thead className="text-left text-[10px] uppercase text-gray-400"><tr><th className="py-1">Property</th><th>Before</th><th>After</th><th>Type</th></tr></thead>
-              <tbody>
-                {e.details.map((d) => (
-                  <tr key={d.detailId} className="border-t">
-                    <td className="py-1 font-mono text-[11px] text-gray-700">{d.propertyPath}</td>
-                    <td className="font-mono text-[11px] text-red-600">{String(d.beforeValue ?? "—")}</td>
-                    <td className="font-mono text-[11px] text-emerald-700">{String(d.afterValue ?? "—")}</td>
-                    <td className="text-[11px] text-gray-500">{d.changeType}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <div className="mt-1 text-[11px] text-gray-400">No before/after diff available from the source.</div>}
-          <details className="mt-2">
-            <summary className="cursor-pointer text-[11px] text-gray-500">Raw event JSON · resourceId · subscriptionId · caller</summary>
-            <div className="mt-1 text-[10px] text-gray-500">resourceId: {e.resourceId}</div>
-            <div className="text-[10px] text-gray-500">subscriptionId: {e.subscriptionId} · caller: {e.actor} · source: {e.source}</div>
-            <pre className="mt-1 max-h-48 overflow-auto rounded bg-gray-900 p-2 text-[10px] text-emerald-300">{JSON.stringify(e.rawEventJson, null, 2)}</pre>
-          </details>
+          <table className="mt-2 w-full text-[12px]">
+            <thead className="text-left text-[10px] uppercase text-gray-400"><tr><th className="py-1">Property</th><th>Before</th><th>After</th><th>Type</th></tr></thead>
+            <tbody>
+              {e.details.map((d) => (
+                <tr key={d.detailId} className="border-t">
+                  <td className="py-1 font-mono text-[11px] text-gray-700">{d.propertyPath}</td>
+                  <td className="font-mono text-[11px] text-red-600">{String(d.beforeValue ?? "—")}</td>
+                  <td className="font-mono text-[11px] text-emerald-700">{String(d.afterValue ?? "—")}</td>
+                  <td className="text-[11px] text-gray-500">{d.changeType}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ))}
+      {limit < withDiff.length && (
+        <button onClick={() => setLimit((n) => n + 50)} className="w-full rounded-xl border bg-white py-2 text-sm text-gray-600 hover:bg-gray-50">Show {Math.min(50, withDiff.length - limit)} more ({withDiff.length - limit} remaining)</button>
+      )}
     </div>
   );
 }
@@ -1357,6 +1762,14 @@ function ExportTab({ run }: { run: ChangeAnalysisRun }) {
   ];
   return (
     <div className="space-y-4">
+      <a href={api.changeExplorerReportPdfUrl(run.runId)} target="_blank" rel="noopener noreferrer"
+        className="flex items-center gap-3 rounded-xl border-2 border-brand bg-brand/5 p-3 hover:bg-brand/10">
+        <span className="text-2xl">🧾</span>
+        <div>
+          <div className="text-sm font-semibold text-brand">Download incident report (PDF)</div>
+          <div className="text-[11px] text-gray-500">Board-ready: window, security flags, suspicious patterns, operation timeline, top changes + case notes.</div>
+        </div>
+      </a>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {items.map(([fmt, label, desc]) => (
           <button key={fmt} onClick={() => ex(fmt)} className="rounded-xl border bg-white p-3 text-left hover:bg-gray-50">
@@ -1380,14 +1793,65 @@ function ExportTab({ run }: { run: ChangeAnalysisRun }) {
 }
 
 // --------------------------------------------------------------- Drawer
-function ChangeDrawer({ event: e, aiPending, onClose }: { event: ChangeEvent; aiPending?: boolean; onClose: () => void }) {
+function ChangeDrawer({ event: e, runId, aiPending, pinned, note, onTogglePin, onSaveNote, onInvestigate, onClose }: {
+  event: ChangeEvent; runId?: string; aiPending?: boolean; pinned?: boolean; note?: string;
+  onTogglePin?: () => void; onSaveNote?: (t: string) => void; onInvestigate?: () => void; onClose: () => void;
+}) {
+  const [noteDraft, setNoteDraft] = useState(note ?? "");
+  const [section, setSection] = useState<"summary" | "diff" | "raw">("summary");
+  const [raw, setRaw] = useState<Record<string, unknown> | null>(e.rawEventJson ?? null);
+  const [rawLoading, setRawLoading] = useState(false);
+  useEffect(() => { setNoteDraft(note ?? ""); setSection("summary"); setRaw(e.rawEventJson ?? null); }, [note, e.changeId, e.rawEventJson]);
+  // Lazy-load raw JSON only when the Raw tab is opened (P2) — the list payload omits it.
+  useEffect(() => {
+    if (section !== "raw" || raw || !runId || e._hasRaw === false) return;
+    let cancelled = false;
+    setRawLoading(true);
+    api.changeExplorerChangeRaw(runId, e.changeId)
+      .then((r) => { if (!cancelled) setRaw(r.rawEventJson ?? {}); })
+      .catch(() => { if (!cancelled) setRaw({}); })
+      .finally(() => { if (!cancelled) setRawLoading(false); });
+    return () => { cancelled = true; };
+  }, [section, raw, runId, e.changeId, e._hasRaw]);
+
+  function shareLink() {
+    try {
+      const u = new URL(window.location.href); u.searchParams.set("change", e.changeId);
+      void navigator.clipboard?.writeText(u.toString());
+    } catch { /* ignore */ }
+  }
+
+  const tabBtn = (id: typeof section, label: string) => (
+    <button onClick={() => setSection(id)} className={`rounded-t-lg px-3 py-1.5 text-xs ${section === id ? "border-b-2 border-brand font-medium text-brand" : "text-gray-500 hover:text-gray-700"}`}>{label}</button>
+  );
+
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose}>
       <div className="h-full w-full max-w-xl overflow-auto bg-white shadow-xl" onClick={(ev) => ev.stopPropagation()}>
-        <div className="sticky top-0 flex items-center gap-2 border-b bg-white px-4 py-3">
-          <RiskChip label={e.riskLabel} score={e.riskScore} />
-          <span className="text-sm font-semibold text-gray-900">{e.resourceName}</span>
-          <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-700">✕</button>
+        <div className="sticky top-0 z-10 border-b bg-white px-4 py-3">
+          <div className="flex items-center gap-2">
+            <RiskChip label={e.riskLabel} score={e.riskScore} />
+            <span className="truncate text-sm font-semibold text-gray-900">{e.resourceName}</span>
+            <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-700">✕</button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {onTogglePin && (
+              <button onClick={onTogglePin} title={pinned ? "Unpin from case file" : "Pin to case file"}
+                className={`rounded border px-1.5 py-0.5 text-[11px] ${pinned ? "border-amber-300 bg-amber-50 text-amber-700" : "text-gray-500 hover:bg-gray-50"}`}>
+                {pinned ? "📌 Pinned" : "📌 Pin"}
+              </button>
+            )}
+            {onInvestigate && (
+              <button onClick={onInvestigate} title="Open a Deep Investigation seeded with this change"
+                className="rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700 hover:bg-violet-100">🔎 Investigate</button>
+            )}
+            <button onClick={shareLink} title="Copy a shareable link to this change" className="rounded border px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">🔗 Copy link</button>
+          </div>
+          <div className="mt-2 flex gap-1 border-b">
+            {tabBtn("summary", "Summary")}
+            {(e.details.length > 0 || e.rollbackHint) && tabBtn("diff", "Diff & revert")}
+            {tabBtn("raw", "Raw")}
+          </div>
         </div>
         <div className="space-y-3 p-4 text-sm">
           {aiPending && (
@@ -1396,36 +1860,74 @@ function ChangeDrawer({ event: e, aiPending, onClose }: { event: ChangeEvent; ai
               <span>✨ Running AI analysis to enrich this change’s narrative & risk…</span>
             </div>
           )}
-          <Field label="What happened">{e.plainEnglishSummary}</Field>
-          <Field label="Possible impact">{e.possibleImpact}</Field>
-          <Field label="Why this risk score">{e.whyRisk}</Field>
-          <div className="flex flex-wrap gap-1">
-            {e.riskFactors.map((f, i) => <span key={i} className={`rounded px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>{f.label} {f.delta >= 0 ? "+" : ""}{f.delta}</span>)}
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-[12px]">
-            <KV k="Category" v={e.category} /><KV k="Confidence" v={e.confidence} />
-            <KV k="Operation" v={e.operation} /><KV k="Actor" v={`${e.actor} (${e.actorType})`} />
-            <KV k="Source" v={e.source} /><KV k="Time" v={fmtTime(e.eventTime)} />
-            <KV k="Resource group" v={e.resourceGroup} /><KV k="Subscription" v={e.subscriptionId} />
-            <KV k="Correlation ID" v={e.correlationId || "—"} /><KV k="Role" v={e.dependencyRole} />
-          </div>
-          {e.details.length > 0 && (
-            <Field label="Technical diff">
-              <table className="w-full text-[12px]">
-                <thead className="text-left text-[10px] uppercase text-gray-400"><tr><th>Property</th><th>Before</th><th>After</th></tr></thead>
-                <tbody>{e.details.map((d) => <tr key={d.detailId} className="border-t"><td className="py-1 font-mono text-[11px]">{d.propertyPath}</td><td className="font-mono text-[11px] text-red-600">{String(d.beforeValue ?? "—")}</td><td className="font-mono text-[11px] text-emerald-700">{String(d.afterValue ?? "—")}</td></tr>)}</tbody>
-              </table>
-            </Field>
+          {section === "summary" && <>
+            {e.securityFlags && e.securityFlags.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                <div className="mb-1 text-[11px] font-semibold uppercase text-red-700">🛡️ Security flags</div>
+                <div className="flex flex-wrap gap-1">{e.securityFlags.map((f, i) => <SecFlagChip key={i} flag={f} />)}</div>
+              </div>
+            )}
+            <Field label="What happened">{e.plainEnglishSummary}</Field>
+            <Field label="Possible impact">{e.possibleImpact}</Field>
+            <Field label="Why this risk score">{e.whyRisk}</Field>
+            <div className="flex flex-wrap gap-1">
+              {e.riskFactors.map((f, i) => <span key={i} className={`rounded px-1.5 py-0.5 text-[10px] ${f.delta >= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>{f.label} {f.delta >= 0 ? "+" : ""}{f.delta}</span>)}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[12px]">
+              <KV k="Category" v={e.category} /><KV k="Confidence" v={e.confidence} />
+              <KV k="Operation" v={e.operation} /><KV k="Actor" v={`${e.actorDisplay || e.actor} (${e.actorKind || e.actorType})`} />
+              <KV k="Source" v={e.source} /><KV k="Time" v={fmtTime(e.eventTime)} />
+              <KV k="Resource group" v={e.resourceGroup} /><KV k="Subscription" v={e.subscriptionId} />
+              <KV k="Correlation ID" v={e.correlationId || "—"} /><KV k="Role" v={e.dependencyRole} />
+              {e.actorIp && <KV k="Source IP" v={e.actorIp} />}
+              {e.actorOnBehalfOf && <KV k="On behalf of" v={e.actorOnBehalfOf} />}
+            </div>
+            <Field label="Blast radius (inferred)">{e.blastRadius}</Field>
+            {onSaveNote && (
+              <Field label="Investigator note">
+                <textarea value={noteDraft} onChange={(ev) => setNoteDraft(ev.target.value)} rows={2}
+                  placeholder="Add a note for the case file…" className="w-full rounded border px-2 py-1 text-xs" />
+                <button onClick={() => onSaveNote(noteDraft)} className="mt-1 rounded bg-gray-900 px-2 py-1 text-[11px] text-white hover:bg-gray-800">Save note</button>
+              </Field>
+            )}
+          </>}
+          {section === "diff" && <>
+            {e.details.length > 0 ? (
+              <Field label="Technical diff">
+                <table className="w-full text-[12px]">
+                  <thead className="text-left text-[10px] uppercase text-gray-400"><tr><th>Property</th><th>Before</th><th>After</th></tr></thead>
+                  <tbody>{e.details.map((d) => <tr key={d.detailId} className="border-t"><td className="py-1 font-mono text-[11px]">{d.propertyPath}</td><td className="font-mono text-[11px] text-red-600">{String(d.beforeValue ?? "—")}</td><td className="font-mono text-[11px] text-emerald-700">{String(d.afterValue ?? "—")}</td></tr>)}</tbody>
+                </table>
+              </Field>
+            ) : <div className="text-[11px] text-gray-400">No before/after diff from the source.</div>}
+            {e.rollbackHint && (
+              <Field label="Inspect / revert (read-only — copy & run yourself)">
+                <div className="relative">
+                  <pre className="overflow-x-auto rounded bg-gray-900 p-2 pr-16 text-[10px] leading-relaxed text-amber-200">{e.rollbackHint}</pre>
+                  <button onClick={() => void navigator.clipboard?.writeText(e.rollbackHint ?? "")}
+                    className="absolute right-1 top-1 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-200 hover:bg-gray-700">⧉ Copy</button>
+                </div>
+              </Field>
+            )}
+          </>}
+          {section === "raw" && (
+            rawLoading ? <Skeleton rows={6} />
+            : <pre className="max-h-[70vh] overflow-auto rounded bg-gray-900 p-2 text-[10px] text-emerald-300">{JSON.stringify(raw ?? {}, null, 2)}</pre>
           )}
-          <Field label="Blast radius (inferred)">{e.blastRadius}</Field>
-          <details>
-            <summary className="cursor-pointer text-[11px] text-gray-500">Raw event JSON</summary>
-            <pre className="mt-1 max-h-60 overflow-auto rounded bg-gray-900 p-2 text-[10px] text-emerald-300">{JSON.stringify(e.rawEventJson, null, 2)}</pre>
-          </details>
         </div>
       </div>
     </div>
   );
+}
+
+const SEC_SEV_STYLE: Record<string, string> = {
+  critical: "bg-red-100 text-red-700 border-red-300",
+  high: "bg-orange-100 text-orange-700 border-orange-300",
+  medium: "bg-amber-100 text-amber-700 border-amber-300",
+  low: "bg-blue-100 text-blue-700 border-blue-300",
+};
+function SecFlagChip({ flag }: { flag: { code: string; label: string; severity: string } }) {
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${SEC_SEV_STYLE[flag.severity] || "bg-gray-100 text-gray-600 border-gray-300"}`}>{flag.label}</span>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -1435,6 +1937,46 @@ function KV({ k, v }: { k: string; v: string }) {
   return <div className="truncate"><span className="text-gray-400">{k}:</span> <span className="text-gray-700">{v}</span></div>;
 }
 function Empty() { return <div className="rounded-xl border border-dashed bg-gray-50 p-8 text-center text-sm text-gray-500">No changes match.</div>; }
+
+// ---- Performance helpers (P1/P3) ------------------------------------------------------------
+// Virtualized vertical list: renders only the rows in view. ``estimateSize`` is the row height.
+function VirtualList<T>({ items, estimateSize = 40, max = "60vh", render }: {
+  items: T[]; estimateSize?: number; max?: string; render: (item: T, index: number) => React.ReactNode;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virt = useVirtualizer({
+    count: items.length, getScrollElement: () => parentRef.current,
+    estimateSize: () => estimateSize, overscan: 12,
+  });
+  return (
+    <div ref={parentRef} className="overflow-auto rounded-xl border bg-white" style={{ maxHeight: max }}>
+      <div style={{ height: virt.getTotalSize(), position: "relative" }}>
+        {virt.getVirtualItems().map((vi) => (
+          <div key={vi.key} ref={virt.measureElement} data-index={vi.index}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
+            {render(items[vi.index], vi.index)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+// Debounce a fast-changing value (search inputs) so list re-filtering doesn't run every keystroke.
+function useDebounced<T>(value: T, ms = 150): T {
+  const [v, setV] = useState(value);
+  useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
+  return v;
+}
+// Lightweight skeleton block while a tab renders / a run loads (U5).
+function Skeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="h-9 animate-pulse rounded-lg bg-gray-100" />
+      ))}
+    </div>
+  );
+}
 
 // helpers
 function rollup(events: ChangeEvent[], keyFn: (e: ChangeEvent) => string): { key: string; max: number }[] {

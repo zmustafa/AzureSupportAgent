@@ -8,9 +8,10 @@
 // P2 niceties: "use as filter" on any node (prefills the Ask console via onUseFilter), CSV export
 // of an expanded value's resource subtree, a casing-fold toggle, and reconciling counts shown at
 // every level.
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TagScopeSel, type TagCensusKey, type TagDrillRow } from "../../api";
+import { InlineSearch, useDebounced } from "../../utils/perf";
 
 const CAT_COLORS: Record<string, string> = {
   billing: "#2563eb", ownership: "#7c3aed", environment: "#0891b2", application: "#16a34a",
@@ -144,23 +145,42 @@ function DrillRow({
 }
 
 export function TagKeyDrillGrid({
-  keys, sel, onUseFilter,
+  keys, sel, onUseFilter, initialFilter = "", onFilterChange,
 }: {
   keys: TagCensusKey[];
   sel: TagScopeSel;
   onUseFilter?: (text: string) => void;
+  initialFilter?: string;
+  onFilterChange?: (value: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [foldCasing, setFoldCasing] = useState(true);
+  const [q, setQ] = useState(initialFilter);
+  const dq = useDebounced(q, 150);
+  // Keep the box in sync if the deep-link param changes (e.g. user follows another ?key= link).
+  useEffect(() => { setQ(initialFilter); }, [initialFilter]);
+  // Reflect the active filter back into the URL so the view is shareable/deep-linkable. Ref the
+  // callback so an inline parent function doesn't retrigger this effect every render.
+  const onFilterChangeRef = useRef(onFilterChange);
+  onFilterChangeRef.current = onFilterChange;
+  useEffect(() => { onFilterChangeRef.current?.(dq.trim()); }, [dq]);
   const toggle = (p: string) => setExpanded((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
+
+  // TU5 — filter the (potentially long) tag-key list by name/category.
+  const shownKeys = useMemo(() => {
+    const needle = dq.trim().toLowerCase();
+    if (!needle) return keys;
+    return keys.filter((k) => k.key.toLowerCase().includes(needle) || (k.category || "").toLowerCase().includes(needle) || k.casing_variants.some((v) => v.toLowerCase().includes(needle)));
+  }, [keys, dq]);
 
   // Each top-level KEY row expands into a synthetic "value-level" node whose children are the
   // distinct values of that key (drilled lazily).
   return (
     <div className="rounded-xl border bg-white">
-      <div className="flex items-center justify-between border-b px-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
         <span className="text-sm font-medium text-gray-700">Tag keys ({keys.length})</span>
         <div className="flex items-center gap-3">
+          <InlineSearch q={q} setQ={setQ} shown={shownKeys.length} total={keys.length} placeholder="Filter keys…" width="w-44" />
           <label className="flex items-center gap-1 text-[11px] text-gray-500" title="Roll casing/spelling variants of a key together (Environment + environment)">
             <input type="checkbox" checked={foldCasing} onChange={(e) => { setFoldCasing(e.target.checked); setExpanded(new Set()); }} /> fold casing
           </label>
@@ -173,7 +193,7 @@ export function TagKeyDrillGrid({
             <tr><th className="px-4 py-2">Key / value / sub / type / resource</th><th className="px-2">Detail</th><th className="px-2 text-right">Count</th><th className="px-2" /></tr>
           </thead>
           <tbody>
-            {keys.map((k) => {
+            {shownKeys.map((k) => {
               const path = `key\u0000${k.key}`;
               const open = expanded.has(path);
               return (
@@ -181,6 +201,7 @@ export function TagKeyDrillGrid({
                   onToggle={() => toggle(path)} expanded={expanded} toggle={toggle} onUseFilter={onUseFilter} />
               );
             })}
+            {shownKeys.length === 0 && <tr><td colSpan={4} className="px-4 py-4 text-center text-[11px] text-gray-400">No keys match “{dq}”.</td></tr>}
           </tbody>
         </table>
       </div>

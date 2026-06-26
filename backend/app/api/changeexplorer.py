@@ -11,10 +11,18 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from app.changeexplorer import demo, export as export_mod, nlquery, runs as runs_store, service
+from app.changeexplorer import (
+    compare as compare_mod,
+    demo,
+    export as export_mod,
+    nlquery,
+    runs as runs_store,
+    service,
+)
 from app.core.security import Principal, require_permission
 
 router = APIRouter(prefix="/changeexplorer", tags=["changeexplorer"])
@@ -23,6 +31,16 @@ router = APIRouter(prefix="/changeexplorer", tags=["changeexplorer"])
 # pass through require_permission). See app.auth.permissions for the catalog.
 require_admin = require_permission("changeexplorer.read")
 log = logging.getLogger("app.api.changeexplorer")
+
+
+def _light_run(run: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of a run with the heavy per-event ``rawEventJson`` stripped (P2), so
+    the streamed / fetched payload is small. The drawer lazy-loads raw JSON on demand. The stored
+    run (and exports) keep the full data."""
+    out = dict(run)
+    out["events"] = [{**e, "rawEventJson": None, "_hasRaw": bool(e.get("rawEventJson"))}
+                     for e in (run.get("events") or [])]
+    return out
 
 
 def _resolve(workload_id: str, connection_id: str | None):
@@ -104,7 +122,7 @@ async def analyze(req: AnalyzeReq, principal: Principal = Depends(require_admin)
         requested_by=actor, force_demo=force_demo, run_ai=req.run_ai,
     )
     runs_store.save_run(principal.tenant_id, run_key, run)
-    return run
+    return _light_run(run)
 
 
 @router.post("/analyze/stream")
@@ -130,7 +148,7 @@ async def analyze_stream(req: AnalyzeReq, principal: Principal = Depends(require
                 if ev.get("phase") == "done":
                     run = ev["run"]
                     runs_store.save_run(tenant_id, run_key, run)
-                    yield {"event": "done", "data": json.dumps(run)}
+                    yield {"event": "done", "data": json.dumps(_light_run(run))}
                 else:
                     yield {"event": "progress", "data": json.dumps(ev)}
         except Exception as exc:  # noqa: BLE001
@@ -151,11 +169,33 @@ async def list_trash(workload_id: str, principal: Principal = Depends(require_ad
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str, principal: Principal = Depends(require_admin)):
+async def get_run(run_id: str, light: bool = True, principal: Principal = Depends(require_admin)):
+    """Fetch a run. ``light=True`` (default) strips the heavy per-event ``rawEventJson`` blob from
+    the events so the initial payload is small + fast (P2); the raw JSON is fetched on demand via
+    ``/runs/{id}/changes/{changeId}/raw`` when a reviewer expands it. ``light=False`` returns the
+    full run (used by exports that embed raw data)."""
     run = runs_store.get_run(principal.tenant_id, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
-    return run
+    if not light:
+        return run
+    # Shallow-copy + strip rawEventJson from each event (keeps the stored run intact).
+    out = dict(run)
+    out["events"] = [{**e, "rawEventJson": None, "_hasRaw": bool(e.get("rawEventJson"))} for e in (run.get("events") or [])]
+    return out
+
+
+@router.get("/runs/{run_id}/changes/{change_id}/raw")
+async def get_change_raw(run_id: str, change_id: str, principal: Principal = Depends(require_admin)):
+    """Lazy-load the raw event JSON for a single change (P2) — only fetched when the drawer's
+    'Raw event JSON' section is expanded."""
+    run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    for e in run.get("events") or []:
+        if e.get("changeId") == change_id:
+            return {"rawEventJson": e.get("rawEventJson")}
+    raise HTTPException(status_code=404, detail="Change not found.")
 
 
 @router.post("/runs/{run_id}/ai-enrich")
@@ -167,13 +207,13 @@ async def ai_enrich_run(run_id: str, principal: Principal = Depends(require_admi
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     if run.get("aiAnalyzed"):
-        return run  # already enriched — no-op
+        return _light_run(run)  # already enriched — no-op
     final: dict[str, Any] = run
     async for ev in service.ai_enrich_run(run):
         if ev.get("phase") == "done":
             final = ev["run"]
     runs_store.update_run(principal.tenant_id, final)
-    return final
+    return _light_run(final)
 
 
 @router.post("/runs/{run_id}/ai-enrich/stream")
@@ -188,13 +228,13 @@ async def ai_enrich_run_stream(run_id: str, principal: Principal = Depends(requi
     async def _gen():
         try:
             if run.get("aiAnalyzed"):
-                yield {"event": "done", "data": json.dumps(run)}
+                yield {"event": "done", "data": json.dumps(_light_run(run))}
                 return
             async for ev in service.ai_enrich_run(run):
                 if ev.get("phase") == "done":
                     updated = ev["run"]
                     runs_store.update_run(tenant_id, updated)
-                    yield {"event": "done", "data": json.dumps(updated)}
+                    yield {"event": "done", "data": json.dumps(_light_run(updated))}
                 else:
                     yield {"event": "progress", "data": json.dumps(ev)}
         except Exception as exc:  # noqa: BLE001
@@ -287,3 +327,52 @@ async def export_run(run_id: str, format: str = "csv", principal: Principal = De
     if format == "queries":
         return {"queries": export_mod.validation_queries(run)}
     raise HTTPException(status_code=400, detail="Unknown export format.")
+
+
+@router.get("/runs/{run_id}/report.pdf")
+async def report_pdf(run_id: str, principal: Principal = Depends(require_admin)):
+    """Board-ready incident-report PDF for a run (E1)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from app.changeexplorer.pdf_report import build_change_report_pdf
+
+    run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    pdf = await run_in_threadpool(build_change_report_pdf, run)
+    name = (run.get("workloadName", "changes") or "changes").replace(" ", "_")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}_incident_report.pdf"'})
+
+
+@router.get("/runs/{run_id}/compare/{other_id}")
+async def compare_runs_endpoint(run_id: str, other_id: str, principal: Principal = Depends(require_admin)):
+    """Compare two runs (E2). ``run_id`` is the baseline (A), ``other_id`` the later run (B)."""
+    a = runs_store.get_run(principal.tenant_id, run_id)
+    b = runs_store.get_run(principal.tenant_id, other_id)
+    if a is None or b is None:
+        raise HTTPException(status_code=404, detail="One or both runs not found.")
+    return compare_mod.compare_runs(a, b)
+
+
+class CaseUpdate(BaseModel):
+    pinned: list[str] | None = None
+    notes: dict[str, str] | None = None
+    case_summary: str | None = None
+
+
+@router.post("/runs/{run_id}/case")
+async def set_case(run_id: str, req: CaseUpdate, principal: Principal = Depends(require_admin)):
+    """Persist the investigator case file for a run (D1): pinned change ids + per-change notes +
+    a case summary. Partial updates merge with what's stored."""
+    payload: dict[str, Any] = {}
+    if req.pinned is not None:
+        payload["pinned"] = req.pinned
+    if req.notes is not None:
+        payload["notes"] = req.notes
+    if req.case_summary is not None:
+        payload["caseSummary"] = req.case_summary
+    saved = runs_store.set_case(principal.tenant_id, run_id, payload)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return {"caseFile": saved}

@@ -4281,6 +4281,8 @@ export const api = {
   changeExplorerRuns: (workloadId: string) =>
     http<{ runs: ChangeRunSummary[] }>(`/changeexplorer/runs?workload_id=${encodeURIComponent(workloadId)}`),
   changeExplorerRun: (runId: string) => http<ChangeAnalysisRun>(`/changeexplorer/runs/${encodeURIComponent(runId)}`),
+  changeExplorerChangeRaw: (runId: string, changeId: string) =>
+    http<{ rawEventJson: Record<string, unknown> | null }>(`/changeexplorer/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(changeId)}/raw`),
   changeExplorerAsk: (body: { question: string; run_id?: string; workload_id?: string }, signal?: AbortSignal) =>
     http<ChangeAskResponse>("/changeexplorer/ask", { method: "POST", body: JSON.stringify(body), signal }),
   changeExplorerDeleteRun: (runId: string) =>
@@ -4294,6 +4296,11 @@ export const api = {
   changeExplorerExport: (runId: string, format: string) =>
     http<{ filename?: string; mime?: string; content?: string; queries?: Record<string, string> }>(
       `/changeexplorer/runs/${encodeURIComponent(runId)}/export?format=${encodeURIComponent(format)}`),
+  changeExplorerCompare: (runId: string, otherId: string) =>
+    http<ChangeCompareResult>(`/changeexplorer/runs/${encodeURIComponent(runId)}/compare/${encodeURIComponent(otherId)}`),
+  changeExplorerSetCase: (runId: string, body: { pinned?: string[]; notes?: Record<string, string>; case_summary?: string }) =>
+    http<{ caseFile: ChangeCaseFile }>(`/changeexplorer/runs/${encodeURIComponent(runId)}/case`, { method: "POST", body: JSON.stringify(body) }),
+  changeExplorerReportPdfUrl: (runId: string) => `${API_BASE}/changeexplorer/runs/${encodeURIComponent(runId)}/report.pdf`,
 };
 
 export interface TagScopeSel {
@@ -4718,7 +4725,8 @@ export interface ChangeEvent {
   plainEnglishSummary: string;
   possibleImpact: string;
   confidence: string;
-  rawEventJson: Record<string, unknown>;
+  rawEventJson: Record<string, unknown> | null;
+  _hasRaw?: boolean;
   riskFactors: ChangeRiskFactor[];
   dependencyRole: string;
   blastRadius: string;
@@ -4731,6 +4739,56 @@ export interface ChangeEvent {
   actorIp?: string;
   actorOnBehalfOf?: string;
   actorResolved?: boolean;
+  // Security intelligence (C1/C3).
+  securityFlags?: { code: string; label: string; severity: string }[];
+  securitySeverity?: string;
+  rollbackHint?: string;
+}
+export interface ChangeOperation {
+  operationId: string;
+  correlationId: string;
+  actor: string;
+  actorKind: string;
+  verb: string;
+  startTime: string;
+  endTime: string;
+  changeCount: number;
+  resourceCount: number;
+  categories: string[];
+  highestRiskScore: number;
+  highestRiskLabel: string;
+  securityFlagCount: number;
+  resourceNames: string[];
+  changeIds: string[];
+}
+export interface ChangeNarrativeBeat {
+  time: string;
+  actor: string;
+  riskLabel: string;
+  riskScore: number;
+  securityFlagCount: number;
+  text: string;
+  changeIds: string[];
+  categories: string[];
+}
+export interface ChangeSecuritySummary {
+  flagged_changes: number;
+  by_code: Record<string, number>;
+  by_severity: Record<string, number>;
+}
+export interface ChangeCaseFile {
+  pinned: string[];
+  notes: Record<string, string>;
+  caseSummary: string;
+  updatedAt?: string;
+}
+export interface ChangeCompareResult {
+  a: { total: number; critical: number; high: number; medium: number; low: number; window: string; runId: string };
+  b: { total: number; critical: number; high: number; medium: number; low: number; window: string; runId: string };
+  added: ChangeResourceRollup[];
+  removed: ChangeResourceRollup[];
+  changed: (ChangeResourceRollup & { changesA: number; changesB: number; riskA: number; riskB: number; riskLabelA: string; riskLabelB: string; riskDelta: number })[];
+  summary: { added: number; removed: number; changed: number; total_delta: number; critical_delta: number; high_delta: number };
 }
 export interface ChangeInsight {
   insightId: string;
@@ -4815,6 +4873,11 @@ export interface ChangeAnalysisRun {
   headline: ChangeHeadline;
   resources: ChangeResourceRollup[];
   actors: ChangeActorRollup[];
+  // Forensics extensions (empty on older cached runs).
+  operations?: ChangeOperation[];
+  narrative?: ChangeNarrativeBeat[];
+  security?: ChangeSecuritySummary;
+  caseFile?: ChangeCaseFile;
 }
 export interface ChangeRunSummary {
   runId: string;
@@ -5100,6 +5163,11 @@ export interface InventoryResponse {
   fetched_at: string;
   age_seconds: number;
   never_loaded?: boolean;
+  // IP6 — set when the server capped the resource rows (pathologically large estate). Facets/
+  // summary still reflect the full estate; total_resources_full is the true row count.
+  truncated_total?: boolean;
+  returned?: number;
+  total_resources_full?: number;
 }
 
 // The AI-parsed filter from a natural-language query.

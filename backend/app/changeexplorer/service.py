@@ -52,12 +52,23 @@ def _score_event(event: dict[str, Any], *, production: bool) -> None:
     event["possibleImpact"] = ex["possibleImpact"]
     event["whyRisk"] = ex["whyRisk"]
     event["confidence"] = ex["confidence"]
+    # Security flags (C1) + rollback hint (C3) — deterministic, recomputed when category changes.
+    from app.changeexplorer import security as security_mod
+
+    flags = security_mod.flag_event(event)
+    event["securityFlags"] = flags
+    event["securitySeverity"] = security_mod.highest_flag_severity(flags)
+    event["rollbackHint"] = security_mod.rollback_hint(event)
 
 
 def _enrich(event: dict[str, Any], *, production: bool) -> dict[str, Any]:
     """Classify (type + operation + property paths) -> dependency role -> risk -> explain."""
-    event["category"] = classify_mod.classify(
+    cat = classify_mod.classify(
         event.get("resourceType", ""), event.get("operation", ""), _detail_paths(event))
+    # Entra/non-ARM sources carry an explicit category hint; prefer it when the classifier is unsure.
+    if cat in ("", "Unknown") and event.get("categoryHint"):
+        cat = event["categoryHint"]
+    event["category"] = cat
     _score_event(event, production=production)
     return event
 
@@ -88,6 +99,52 @@ def _apply_ai(event: dict[str, Any], ai: dict[str, Any], *, production: bool) ->
     event["confidence"] = "AI-analyzed"
 
 
+def _attach_derived(out: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    """Attach all derived views to a run dict (so every tab + a later AI re-enrich are consistent):
+    headline, resources, actors, operations (A1), narrative (A2), security rollup (C1/C2)."""
+    from app.changeexplorer import operations as ops_mod
+    from app.changeexplorer import security as security_mod
+
+    out["headline"] = insights_mod.summarize(events)
+    out["resources"] = insights_mod.by_resource(events)
+    out["actors"] = insights_mod.by_actor(events)
+    operations = ops_mod.group_operations(events)
+    out["operations"] = operations
+    out["narrative"] = ops_mod.build_narrative(events, operations)
+    out["security"] = security_mod.summarize_security(events)
+
+
+def _suspicious_insights(run_id: str, tenant_id: str, workload_id: str,
+                         events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """C2 suspicious-pattern detections as ChangeInsight rows. Uses prior runs (when available) to
+    power 'first-time actor for a resource type'."""
+    from app.changeexplorer import runs as runs_store
+    from app.changeexplorer import security as security_mod
+    from app.changeexplorer.models import make_insight
+
+    prior: set[tuple[str, str]] = set()
+    try:
+        for summary in runs_store.list_runs(tenant_id, workload_id)[:5]:
+            prev = runs_store.get_run(tenant_id, summary.get("runId", ""))
+            if not prev or prev.get("runId") == run_id:
+                continue
+            for e in prev.get("events", []) or []:
+                actor = e.get("actorDisplay") or e.get("actor", "") or "unknown"
+                rt = str(e.get("resourceType", "")).lower()
+                if rt:
+                    prior.add((actor, rt))
+    except Exception:  # noqa: BLE001
+        prior = set()
+
+    out: list[dict[str, Any]] = []
+    for p in security_mod.suspicious_patterns(events, prior_actor_resource_types=prior or None):
+        out.append(make_insight(
+            run_id, f"suspicious_{p['patternType']}", p["title"], p["summary"],
+            p["severity"], p.get("relatedChangeIds", []),
+        ))
+    return out
+
+
 
 async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | None,
                        scope_info: dict[str, Any], start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], list[str], int]:
@@ -104,17 +161,22 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
     The two sources are queried CONCURRENTLY; each collector internally fans out across
     subscriptions with bounded parallelism (>= 5) and 429 backoff/retry."""
     notes: list[str] = []
-    (rg_rows, rg_note), (al_rows, al_note) = await asyncio.gather(
+    from app.changeexplorer import entra as entra_mod
+
+    (rg_rows, rg_note), (al_rows, al_note), (entra_rows, entra_note) = await asyncio.gather(
         collectors.collect_resource_graph_changes(
             scope_info.get("predicate", ""), start_iso, end_iso, connection),
         collectors.collect_activity_log(
             scope_info.get("subscriptions", []), start_iso, end_iso, connection,
             scope_info.get("resource_ids")),
+        entra_mod.collect_entra_audits(connection, start_iso, end_iso, max_events=collectors.change_limit()),
     )
     if rg_note:
         notes.append(rg_note)
     if al_note:
         notes.append(al_note)
+    if entra_note:
+        notes.append(entra_note)
     change_limit = collectors.change_limit() if len(rg_rows) >= collectors.change_limit() else 0
 
     # ---- Actor attribution --------------------------------------------------------------
@@ -176,7 +238,7 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
         notes.append(f"Attributed {proximity_hits} change(s) to an actor by time-proximity match "
                      "(no correlation id was recorded on the change).")
 
-    raw_rows = rg_rows + al_rows
+    raw_rows = rg_rows + al_rows + entra_rows
 
     # ---- Resolve object-ids -> friendly names via Microsoft Graph (best-effort) ----------
     if connection is not None and _identity_resolution_enabled():
@@ -304,6 +366,8 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
     events.sort(key=lambda e: e.get("eventTime", ""))
     head = insights_mod.summarize(events)
     insights = insights_mod.build_insights(run_id, events)
+    # Suspicious-pattern heuristics (C2) become additional insights.
+    insights += _suspicious_insights(run_id, tenant_id, workload_id, events)
     facets = insights_mod.facets(events)
     summary = _plain_summary(workload_name, start_iso, end_iso, head, events)
     # Persist the production flag so a later AI re-enrich re-scores consistently.
@@ -320,9 +384,7 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
         aiAnalyzed=ai_analyzed,
     )
     out = asdict(run)
-    out["headline"] = head
-    out["resources"] = insights_mod.by_resource(events)
-    out["actors"] = insights_mod.by_actor(events)
+    _attach_derived(out, events)
     yield {"phase": "done", "run": out}
 
 
@@ -373,6 +435,8 @@ async def ai_enrich_run(run: dict[str, Any]) -> Any:
     head = insights_mod.summarize(events)
     run["events"] = events
     run["insights"] = insights_mod.build_insights(run.get("runId", ""), events)
+    run["insights"] += _suspicious_insights(run.get("runId", ""), run.get("tenantId", ""),
+                                            run.get("workloadId", ""), events)
     run["facets"] = insights_mod.facets(events)
     run["summary"] = _plain_summary(run.get("workloadName", ""), run.get("startTime", ""),
                                     run.get("endTime", ""), head, events)
@@ -382,9 +446,7 @@ async def ai_enrich_run(run: dict[str, Any]) -> Any:
     run["mediumCount"] = head["medium"]
     run["lowCount"] = head["low"]
     run["informationalCount"] = head["informational"]
-    run["headline"] = head
-    run["resources"] = insights_mod.by_resource(events)
-    run["actors"] = insights_mod.by_actor(events)
+    _attach_derived(run, events)
     run["aiAnalyzed"] = True
     notes = list(run.get("notes", []) or [])
     if ai_result and not any("AI analyzed" in n for n in notes):

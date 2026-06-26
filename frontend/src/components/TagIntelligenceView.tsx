@@ -12,7 +12,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ResponsiveContainer, Treemap, RadialBarChart, RadialBar, PolarAngleAxis,
   BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, CartesianGrid, Cell,
@@ -35,6 +35,7 @@ import { TagRevisionsPanel } from "./ownership/OwnerImportTags";
 import { ChangeSetFlow } from "./tagintel/ChangeSetFlow";
 import { TagKeyDrillGrid } from "./tagintel/TagKeyDrillGrid";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
+import { VirtualList, useDebounced, Skeleton, InlineSearch } from "../utils/perf";
 
 const CAT_COLORS: Record<string, string> = {
   billing: "#2563eb", ownership: "#7c3aed", environment: "#0891b2", application: "#16a34a",
@@ -66,6 +67,30 @@ function stageChangeSetToBuilder(name: string, description: string, ops: TagReme
     localStorage.setItem(CS_PERSIST.desc, JSON.stringify(description));
     localStorage.setItem(CS_PERSIST.loadedId, JSON.stringify(""));   // a fresh, unsaved draft
   } catch { /* ignore unavailable storage */ }
+  try { window.dispatchEvent(new Event("tagintel-cart")); } catch { /* ignore */ }
+}
+
+// TU4 — Remediation cart: the staged change-set (built by Hygiene/Coverage/Generate "Fix"
+// hand-offs) is the cart. This hook tracks its operation count so a header chip can show it and
+// link straight to Remediate. It listens to the custom ``tagintel-cart`` event (+ storage events
+// from other tabs) so the count updates the moment something is staged.
+function useRemediationCart(): { count: number; name: string } {
+  const read = () => {
+    try {
+      const ops = JSON.parse(localStorage.getItem(CS_PERSIST.ops) || "[]");
+      const name = JSON.parse(localStorage.getItem(CS_PERSIST.name) || '""');
+      return { count: Array.isArray(ops) ? ops.length : 0, name: typeof name === "string" ? name : "" };
+    } catch { return { count: 0, name: "" }; }
+  };
+  const [state, setState] = useState(read);
+  useEffect(() => {
+    const sync = () => setState(read());
+    window.addEventListener("tagintel-cart", sync);
+    window.addEventListener("storage", sync);
+    const t = setInterval(sync, 2000);   // catch in-tab localStorage writes from the builder
+    return () => { window.removeEventListener("tagintel-cart", sync); window.removeEventListener("storage", sync); clearInterval(t); };
+  }, []);
+  return state;
 }
 
 // Build the tag operations that resolve a hygiene finding.
@@ -159,6 +184,8 @@ function LoadPrompt({ onLoad, onRefresh, scanning, scopeKind }: { onLoad: () => 
 // =====================================================================================
 export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const cart = useRemediationCart();
   const [scopeKind, setScopeKind] = usePersistedState<ScopeKind>("azsup.tagintel.scopeKind", "subscription");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.tagintel.workloadId", "");
   const [subId, setSubId] = usePersistedState("azsup.tagintel.subId", "");
@@ -194,6 +221,7 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
     queryKey: ["tagintel", "census", scopeKey],
     queryFn: () => api.tagintelCensus(sel, false),
     enabled: active,
+    staleTime: Infinity,
   });
   const loaded = !!censusQ.data?.available;
 
@@ -234,11 +262,22 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
             <h1 className="text-base font-semibold text-gray-900">Tag Intelligence</h1>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            {cart.count > 0 && tab !== "remediate" && (
+              <button
+                onClick={() => navigate("/tagintel/remediate")}
+                title={`${cart.count} staged tag operation(s)${cart.name ? ` — ${cart.name}` : ""}. Click to review in Remediate.`}
+                className="flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand/5 px-2.5 py-1 text-[11px] font-medium text-brand hover:bg-brand/10"
+              >🛒 {cart.count} queued fix{cart.count === 1 ? "" : "es"}</button>
+            )}
             {(loaded || scanning) && (
               <span className="flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] text-gray-600">
                 <span className={`inline-block h-1.5 w-1.5 rounded-full ${scanning ? "animate-pulse bg-amber-500" : "bg-emerald-500"}`} />
                 {scanning ? "Refreshing… (keeps running if you navigate away)" : `Cached ${fmtAge(fetchedAge)}`}
               </span>
+            )}
+            {/* TU8 stale nudge — when the cache is > 24h old, gently suggest a refresh. */}
+            {loaded && !scanning && (fetchedAge ?? 0) > 86400 && (
+              <button onClick={refresh} title="This cache is over a day old — refresh from Azure" className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100">⚠ stale · refresh</button>
             )}
             <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
@@ -308,7 +347,7 @@ export function TagIntelligencePanel({ tab = "census" }: { tab?: TagIntelTab }) 
         ) : !active ? (
           <LoadPrompt onLoad={loadCache} onRefresh={refresh} scanning={scanning} scopeKind={scopeKind} />
         ) : censusQ.isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-500">Loading from cache…</div>
+          <Skeleton rows={8} className="p-6" />
         ) : !loaded && tab !== "remediate" ? (
           <NotLoaded onLoad={refresh} onLoadCache={loadCache} busy={scanning} />
         ) : (
@@ -343,6 +382,9 @@ function Kpi({ label, value, sub, tone }: { label: string; value: React.ReactNod
 function CensusTab({ census, sel, truncated, cap }: { census?: TagCensus; sel: TagScopeSel; truncated?: boolean; cap?: number }) {
   // Bridge: the drill grid's "use as filter" pushes a question into the Ask console.
   const askPrefill = useRef<((text: string) => void) | null>(null);
+  // TU6 — a ?key=<name> query param deep-links straight to a tag key (prefills the drill filter).
+  const [params, setParams] = useSearchParams();
+  const deepKey = params.get("key") ?? "";
   if (!census) return null;
   const keys = census.keys;
   const treemap = census.scope_coverage.by_subscription.map((s, i) => ({ name: s.name, size: s.total, coverage: s.coverage_pct, fill: PALETTE[i % PALETTE.length] }));
@@ -356,12 +398,13 @@ function CensusTab({ census, sel, truncated, cap }: { census?: TagCensus; sel: T
       )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Kpi label="Resources" value={census.total_resources.toLocaleString()} />
-        <Kpi label="Tag coverage" value={`${census.tag_coverage_pct}%`} tone={census.tag_coverage_pct < 50 ? "text-red-600" : census.tag_coverage_pct < 80 ? "text-amber-600" : "text-emerald-600"} />
-        <Kpi label="Untagged" value={census.untagged_count.toLocaleString()} tone={census.untagged_count ? "text-amber-600" : "text-gray-900"} />
+        <Kpi label="Any-tag coverage" value={`${census.tag_coverage_pct}%`} sub="has ≥1 tag" tone={census.tag_coverage_pct < 50 ? "text-red-600" : census.tag_coverage_pct < 80 ? "text-amber-600" : "text-emerald-600"} />
+        <Kpi label="Untagged" value={census.untagged_count.toLocaleString()} sub="no tags at all" tone={census.untagged_count ? "text-amber-600" : "text-gray-900"} />
         <Kpi label="Distinct keys" value={census.distinct_keys} />
         <Kpi label="High-cardinality" value={census.flags.high_cardinality} sub="noisy keys" />
         <Kpi label="Single-sub keys" value={census.flags.single_subscription} sub="scoped to 1 sub" />
       </div>
+      <p className="-mt-2 px-1 text-[11px] text-gray-400">“Any-tag coverage” counts resources with at least one tag. For <b>required-tag</b> compliance (every governance tag present), see the <Link to="/tagintel/coverage" className="text-brand hover:underline">Coverage</Link> tab.</p>
 
       {/* AI ask console (F10) */}
       <AskConsole sel={sel} registerPrefill={(fn) => { askPrefill.current = fn; }} />
@@ -369,7 +412,7 @@ function CensusTab({ census, sel, truncated, cap }: { census?: TagCensus; sel: T
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Key explorer (F1) — Power-BI-style expandable drill: key → value → sub → type → resource */}
         <div className="lg:col-span-2">
-          <TagKeyDrillGrid keys={keys} sel={sel} onUseFilter={(text) => askPrefill.current?.(text)} />
+          <TagKeyDrillGrid keys={keys} sel={sel} initialFilter={deepKey} onFilterChange={(v) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set("key", v); else n.delete("key"); return n; }, { replace: true })} onUseFilter={(text) => askPrefill.current?.(text)} />
         </div>
 
         {/* Coverage treemap */}
@@ -464,35 +507,49 @@ function AskConsole({ sel, registerPrefill }: { sel: TagScopeSel; registerPrefil
 // copy/CSV. Falls back to a value list when the rows are primitives.
 function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?: string }) {
   const [showAll, setShowAll] = useState(false);
-  const rows = data.filter((d) => d != null);
-  if (rows.length === 0) return null;
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q, 150);
+  const rows = useMemo(() => data.filter((d) => d != null), [data]);
 
-  const primitive = typeof rows[0] !== "object";
-  const objs: Record<string, unknown>[] = primitive
-    ? rows.map((v) => ({ value: v }))
-    : (rows as Record<string, unknown>[]);
+  const objs: Record<string, unknown>[] = useMemo(() => {
+    if (rows.length === 0) return [];
+    const primitive = typeof rows[0] !== "object";
+    return primitive ? rows.map((v) => ({ value: v })) : (rows as Record<string, unknown>[]);
+  }, [rows]);
 
   // Column order: union of keys (first-seen), but push id-like + bulky columns to the end.
-  const cols: string[] = [];
-  for (const o of objs) for (const k of Object.keys(o)) if (!cols.includes(k)) cols.push(k);
-  const weight = (c: string) => (c === "id" || c === "resourceId" ? 3 : c === "subscription_id" || c === "subscriptionId" ? 2 : c.toLowerCase().includes("group") ? 1 : 0);
-  cols.sort((a, b) => weight(a) - weight(b));
+  const cols = useMemo(() => {
+    const c: string[] = [];
+    for (const o of objs) for (const k of Object.keys(o)) if (!c.includes(k)) c.push(k);
+    const weight = (x: string) => (x === "id" || x === "resourceId" ? 3 : x === "subscription_id" || x === "subscriptionId" ? 2 : x.toLowerCase().includes("group") ? 1 : 0);
+    c.sort((a, b) => weight(a) - weight(b));
+    return c;
+  }, [objs]);
 
-  const limit = showAll ? objs.length : 12;
-  const shown = objs.slice(0, limit);
-
-  function fmtHeader(c: string): string {
-    return c.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^\w/, (m) => m.toUpperCase());
-  }
-  function isNumCol(c: string): boolean { return objs.every((o) => o[c] == null || typeof o[c] === "number"); }
   function cell(v: unknown): string {
     if (v == null) return "—";
     if (typeof v === "object") return JSON.stringify(v);
     return String(v);
   }
+  // TU5 — free-text filter across every column.
+  const filtered = useMemo(() => {
+    const needle = dq.trim().toLowerCase();
+    if (!needle) return objs;
+    return objs.filter((o) => cols.some((c) => cell(o[c]).toLowerCase().includes(needle)));
+  }, [objs, cols, dq]);
+
+  if (rows.length === 0) return null;
+
+  const limit = showAll ? filtered.length : 12;
+  const shown = filtered.slice(0, limit);
+
+  function fmtHeader(c: string): string {
+    return c.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^\w/, (m) => m.toUpperCase());
+  }
+  function isNumCol(c: string): boolean { return objs.every((o) => o[c] == null || typeof o[c] === "number"); }
   function toCsv(): string {
     const head = cols.map((c) => `"${fmtHeader(c)}"`).join(",");
-    const body = objs.map((o) => cols.map((c) => `"${cell(o[c]).replace(/"/g, '""')}"`).join(","));
+    const body = filtered.map((o) => cols.map((c) => `"${cell(o[c]).replace(/"/g, '""')}"`).join(","));
     return [head, ...body].join("\n");
   }
   function download() {
@@ -504,38 +561,64 @@ function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?
   }
 
   const idCol = cols.find((c) => c === "id" || c === "resourceId");
+  // TP3 — when the user expands a large result, virtualize the rows (CSS-grid layout keeps the
+  // columns aligned with the header) so thousands of rows don't blow up the DOM.
+  const virtualize = showAll && shown.length > 60;
+  const gridTemplate = cols.map((c) => (c === "id" || c === "resourceId" ? "minmax(160px,2fr)" : "minmax(80px,1fr)")).join(" ");
+  const renderCell = (o: Record<string, unknown>, c: string) => (
+    c === "category"
+      ? <span className="rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[String(o[c])] || "#64748b" }}>{cell(o[c])}</span>
+      : cell(o[c])
+  );
 
   return (
     <div className="mt-2">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-[11px] font-medium text-gray-500">{objs.length} row{objs.length === 1 ? "" : "s"}</span>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <InlineSearch q={q} setQ={setQ} shown={filtered.length} total={objs.length} placeholder="Filter rows…" width="w-48" />
         <button onClick={() => { void navigator.clipboard.writeText(toCsv()); }} className="rounded border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">Copy CSV</button>
         <button onClick={download} className="rounded border px-2 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">⬇ CSV</button>
       </div>
-      <div className="max-h-64 overflow-auto rounded border">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-gray-50 text-left text-[10px] uppercase text-gray-400">
-            <tr>{cols.map((c) => <th key={c} className={`px-2 py-1.5 ${isNumCol(c) ? "text-right" : ""}`}>{fmtHeader(c)}</th>)}</tr>
-          </thead>
-          <tbody>
-            {shown.map((o, i) => (
-              <tr key={i} className="border-t hover:bg-gray-50" title={idCol ? cell(o[idCol]) : undefined}>
-                {cols.map((c) => {
-                  const isId = c === "id" || c === "resourceId";
-                  return (
-                    <td key={c} className={`px-2 py-1 ${isNumCol(c) ? "text-right tabular-nums text-gray-700" : "text-gray-600"} ${isId ? "max-w-[280px] truncate font-mono text-[10px] text-gray-400" : ""}`}>
-                      {c === "category" ? <span className="rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: CAT_COLORS[String(o[c])] || "#64748b" }}>{cell(o[c])}</span> : cell(o[c])}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {objs.length > 12 && (
+      {virtualize ? (
+        <div className="rounded border">
+          <div className="grid gap-x-2 border-b bg-gray-50 px-2 py-1.5 text-[10px] uppercase text-gray-400" style={{ gridTemplateColumns: gridTemplate }}>
+            {cols.map((c) => <div key={c} className={isNumCol(c) ? "text-right" : ""}>{fmtHeader(c)}</div>)}
+          </div>
+          <VirtualList items={shown} estimateSize={28} max="50vh" render={(o) => (
+            <div className="grid gap-x-2 border-t px-2 py-1 text-xs hover:bg-gray-50" style={{ gridTemplateColumns: gridTemplate }} title={idCol ? cell(o[idCol]) : undefined}>
+              {cols.map((c) => {
+                const isId = c === "id" || c === "resourceId";
+                return <div key={c} className={`${isNumCol(c) ? "text-right tabular-nums text-gray-700" : "text-gray-600"} ${isId ? "truncate font-mono text-[10px] text-gray-400" : "truncate"}`}>{renderCell(o, c)}</div>;
+              })}
+            </div>
+          )} />
+        </div>
+      ) : (
+        <div className="max-h-64 overflow-auto rounded border">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-gray-50 text-left text-[10px] uppercase text-gray-400">
+              <tr>{cols.map((c) => <th key={c} className={`px-2 py-1.5 ${isNumCol(c) ? "text-right" : ""}`}>{fmtHeader(c)}</th>)}</tr>
+            </thead>
+            <tbody>
+              {shown.map((o, i) => (
+                <tr key={i} className="border-t hover:bg-gray-50" title={idCol ? cell(o[idCol]) : undefined}>
+                  {cols.map((c) => {
+                    const isId = c === "id" || c === "resourceId";
+                    return (
+                      <td key={c} className={`px-2 py-1 ${isNumCol(c) ? "text-right tabular-nums text-gray-700" : "text-gray-600"} ${isId ? "max-w-[280px] truncate font-mono text-[10px] text-gray-400" : ""}`}>
+                        {renderCell(o, c)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              {shown.length === 0 && <tr><td colSpan={cols.length} className="px-2 py-4 text-center text-[11px] text-gray-400">No rows match “{dq}”.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {filtered.length > 12 && (
         <button onClick={() => setShowAll((v) => !v)} className="mt-1 text-[11px] text-brand hover:underline">
-          {showAll ? "Show less" : `Show all ${objs.length} rows`}
+          {showAll ? "Show less" : `Show all ${filtered.length} rows`}
         </button>
       )}
     </div>
@@ -546,9 +629,10 @@ function AskResultTable({ data, questionKind }: { data: unknown[]; questionKind?
 function HygieneTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const hygieneQ = useQuery({ queryKey: ["tagintel", "hygiene", scopeKey], queryFn: () => api.tagintelHygiene(sel) });
-  const catalogQ = useQuery({ queryKey: ["tagintel", "catalog"], queryFn: api.tagintelCatalog });
+  const hygieneQ = useQuery({ queryKey: ["tagintel", "hygiene", scopeKey], queryFn: () => api.tagintelHygiene(sel), staleTime: Infinity });
+  const catalogQ = useQuery({ queryKey: ["tagintel", "catalog"], queryFn: api.tagintelCatalog, staleTime: Infinity });
   const [seeding, setSeeding] = useState(false);
+  if (hygieneQ.isLoading) return <Skeleton rows={6} className="m-4" />;
   if (!hygieneQ.data?.available) return <NotLoaded />;
   const data = hygieneQ.data;
   const catalog = catalogQ.data?.entries ?? [];
@@ -705,9 +789,9 @@ function CoverageTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) 
   // coverage check only runs when the user presses Check / Enter, not on every keystroke.
   const [input, setInput] = useState("");
   const [applied, setApplied] = useState("");
-  const covQ = useQuery({ queryKey: ["tagintel", "coverage", scopeKey, applied], queryFn: () => api.tagintelCoverage(sel, applied || undefined) });
+  const covQ = useQuery({ queryKey: ["tagintel", "coverage", scopeKey, applied], queryFn: () => api.tagintelCoverage(sel, applied || undefined), staleTime: Infinity });
   const d: TagCoverageResponse | undefined = covQ.data;
-  if (covQ.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
+  if (covQ.isLoading) return <Skeleton rows={6} className="m-4" />;
   if (!d?.available) return <NotLoaded />;
   if (d.needs_required) {
     return (
@@ -750,9 +834,10 @@ function CoverageTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) 
           <div className="mt-6 text-[11px] uppercase text-gray-400">Required-tag coverage</div>
         </div>
         <Kpi label="Evaluated" value={(d.evaluated ?? 0).toLocaleString()} sub={`${d.exempt ?? 0} exempt`} />
-        <Kpi label="Compliant" value={(d.compliant ?? 0).toLocaleString()} tone="text-emerald-600" />
+        <Kpi label="Compliant" value={(d.compliant ?? 0).toLocaleString()} tone="text-emerald-600" sub="all required tags" />
         <Kpi label="Missing one tag" value={(d.missing_one_total ?? 0).toLocaleString()} tone="text-amber-600" sub="highest-ROI fixes" />
       </div>
+      <p className="-mt-2 px-1 text-[11px] text-gray-400">This measures <b>required-tag</b> compliance (every governance tag present). The Census tab’s “any-tag coverage” is a softer metric (≥1 tag), so the two percentages differ by design. <b>{d.evaluated ?? 0}</b> evaluated · <b>{d.exempt ?? 0}</b> exempt (shared/platform).</p>
 
       {/* Per-key coverage bars */}
       <div className="rounded-xl border bg-white p-4">
@@ -795,19 +880,43 @@ function CoverageTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) 
 
 // ============================================================ COST (F4 + F5)
 function CostTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
+  const qc = useQueryClient();
   const [dimension, setDimension] = useState("workload");
-  const costQ = useQuery({ queryKey: ["tagintel", "cost", scopeKey, dimension], queryFn: () => api.tagintelCost(sel, dimension) });
-  const billQ = useQuery({ queryKey: ["tagintel", "billing", scopeKey], queryFn: () => api.tagintelBillingMap(sel) });
+  const [loadingCost, setLoadingCost] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const costQ = useQuery({ queryKey: ["tagintel", "cost", scopeKey, dimension], queryFn: () => api.tagintelCost(sel, dimension), staleTime: Infinity });
+  const billQ = useQuery({ queryKey: ["tagintel", "billing", scopeKey], queryFn: () => api.tagintelBillingMap(sel), staleTime: Infinity });
   // Real tag keys found at this scope — read from the census cache the panel already populated,
   // so the "Cost by" dropdown lists the customer's ACTUAL tags (not a hard-coded guess).
-  const censusQ = useQuery({ queryKey: ["tagintel", "census", scopeKey], queryFn: () => api.tagintelCensus(sel, false) });
+  const censusQ = useQuery({ queryKey: ["tagintel", "census", scopeKey], queryFn: () => api.tagintelCensus(sel, false), staleTime: Infinity });
   const tagKeys = (censusQ.data?.census?.keys ?? []).map((k) => k.key);
   const d: TagCostResponse | undefined = costQ.data;
-  if (costQ.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
+  // TU2 — fetch cost from Azure here (one click) instead of bouncing the user to Inventory → Cost.
+  const loadCost = async () => {
+    setLoadErr(null); setLoadingCost(true);
+    try {
+      await api.inventoryCost(sel.connection_id ?? null, true);   // force a fresh Cost Management pull
+      await qc.invalidateQueries({ queryKey: ["tagintel", "cost", scopeKey] });
+      await qc.invalidateQueries({ queryKey: ["tagintel", "billing", scopeKey] });
+    } catch (e: any) {
+      setLoadErr(e?.message || "Cost load failed — Cost Management Reader may be required.");
+    } finally { setLoadingCost(false); }
+  };
+  if (costQ.isLoading) return <Skeleton rows={6} className="m-4" />;
   if (!d?.available) return <NotLoaded />;
   if (!d.cost_available) {
     return <div className="m-4 rounded-xl border border-dashed bg-gray-50 p-6 text-center text-sm text-gray-600">
-      No cost data cached for this scope. Load it once on <Link to="/inventory/cost" className="text-brand underline">Inventory → Cost</Link> (needs Cost Management Reader), then return here.
+      <div className="mx-auto max-w-md space-y-3">
+        <div className="text-2xl">💸</div>
+        <p>No cost data is cached for this scope yet. Pull the last 30 days of Azure spend to unlock cost-by-tag allocation.</p>
+        <button
+          onClick={loadCost}
+          disabled={loadingCost}
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-60"
+        >{loadingCost ? "Loading cost from Azure…" : "Load cost data"}</button>
+        <p className="text-[11px] text-gray-400">Requires <b>Cost Management Reader</b>. You can also load it on <Link to="/inventory/cost" className="text-brand underline">Inventory → Cost</Link>.</p>
+        {loadErr && <p className="text-xs text-red-600">{loadErr}</p>}
+      </div>
     </div>;
   }
   const cur = d.currency;
@@ -898,12 +1007,12 @@ function CostCell(props: any) {
 // ============================================================ DRIFT (F7)
 function DriftTab({ sel, scopeKey }: { sel: TagScopeSel; scopeKey: string }) {
   const qc = useQueryClient();
-  const snapsQ = useQuery({ queryKey: ["tagintel", "drift", scopeKey], queryFn: () => api.tagintelDrift(sel) });
+  const snapsQ = useQuery({ queryKey: ["tagintel", "drift", scopeKey], queryFn: () => api.tagintelDrift(sel), staleTime: Infinity });
   const snaps = snapsQ.data?.snapshots ?? [];
   const [base, setBase] = useState(""); const [head, setHead] = useState("");
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<"added" | "removed" | "values" | "resources" | null>(null);
-  const diffQ = useQuery({ queryKey: ["tagintel", "drift-diff", scopeKey, base, head], queryFn: () => api.tagintelDriftDiff(sel, base, head), enabled: !!base && !!head && base !== head });
+  const diffQ = useQuery({ queryKey: ["tagintel", "drift-diff", scopeKey, base, head], queryFn: () => api.tagintelDriftDiff(sel, base, head), enabled: !!base && !!head && base !== head, staleTime: Infinity });
   const diff: TagDriftDiff | undefined = diffQ.data;
 
   useEffect(() => {
@@ -1753,6 +1862,12 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
   }
   function addOp() { setOps([...ops, { ...EMPTY_OP }]); }
   function removeOp(i: number) { if (ops.length > 1) setOps(ops.filter((_, idx) => idx !== i)); }
+  // Clear the whole change-set in one click — resets to a single empty operation row (so the
+  // builder always has at least one editable pair). Used by the "Clear all" button.
+  function clearOps() {
+    if (ops.length > 1 && !confirm(`Remove all ${ops.length} operations from this change-set?`)) return;
+    setOps([{ ...EMPTY_OP }]);
+  }
 
   // Build a prefill from the current estate: ONE `set_tag` op per (key, value) pair seen in the
   // census — bringing EVERYTHING, including duplicate keys with different values. The user then
@@ -1924,6 +2039,7 @@ function RemediateTab({ sel, loaded, census, onRefreshScope, scanning }: { sel: 
         <div className="mt-2 flex items-center gap-2">
           <button onClick={addOp} className="rounded border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">+ Add key:value pair</button>
           <button onClick={loadCurrentTags} disabled={!loaded || prefillCount === 0} title={!loaded ? "Load a scope first" : `Prefill ${prefillCount} key=value pair(s) from the current estate (duplicates included — remove/dedup before running)`} className="rounded border px-2 py-1 text-xs text-brand hover:bg-brand/5 disabled:opacity-40">⤓ Load current tags{prefillCount > 0 ? ` (${prefillCount})` : ""}</button>
+          <button onClick={clearOps} disabled={ops.length === 1 && !ops[0].key && !ops[0].value} title="Remove every operation from this change-set" className="rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40">🗑 Clear all</button>
           <span className="text-[11px] text-gray-400">{validOps.length} valid operation(s)</span>
           {ops.length > validOps.length && <span className="text-[11px] font-medium text-amber-600">· {ops.length - validOps.length} incomplete (skipped)</span>}
           <button onClick={preview} disabled={busy || !canRun} className="ml-auto rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "…" : "Preview (dry-run)"}</button>

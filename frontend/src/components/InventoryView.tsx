@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
   type InventoryCost,
@@ -11,10 +12,15 @@ import {
 } from "../api";
 import { AzureIcon, friendlyLocation, friendlyResourceType } from "./AzureIcon";
 import { INVENTORY_NAV, type InventoryTab } from "./navConfig";
-import { LocationMode, LocationFilterToolbar } from "./InventoryLocationMap";
 import { DnsDebugModal } from "./DnsDebugModal";
 import { formatError } from "../utils/format";
+import { Skeleton } from "../utils/perf";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+
+// IP5 — the Location map pulls in topojson-client + the world-atlas 110m GeoJSON (heavy), so it
+// is code-split into its own chunk and only loaded when the Location tab is opened.
+const LocationMode = lazy(() => import("./InventoryLocationMap").then((m) => ({ default: m.LocationMode })));
+const LocationFilterToolbar = lazy(() => import("./InventoryLocationMap").then((m) => ({ default: m.LocationFilterToolbar })));
 
 const FLAG_META: Record<string, { label: string; tone: string }> = {
   untagged: { label: "Untagged", tone: "bg-gray-100 text-gray-600" },
@@ -118,7 +124,7 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
             </button>
           </div>
         ) : !inv && invQ.isLoading ? (
-          <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading inventory…</div>
+          <div className="space-y-3 p-6"><Skeleton rows={2} className="max-w-md" /><Skeleton rows={10} /></div>
         ) : inv ? (
           <InventoryBody key={effectiveConn} inv={inv} connectionId={effectiveConn} refreshing={busy} tab={tab} />
         ) : null}
@@ -193,6 +199,11 @@ function Header({
               ⚠ some subscriptions truncated at 1000
             </span>
           )}
+          {inv?.truncated_total && (
+            <span className="font-medium text-amber-700" title="The estate exceeds the response cap; narrow the scope (subscription / management group) for the full set.">
+              ⚠ showing first {(inv.returned ?? 0).toLocaleString()} of {(inv.total_resources_full ?? 0).toLocaleString()} — narrow the scope
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -243,35 +254,71 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   const qc = useQueryClient();
   const view = tab;
   const setView = (v: InventoryTab) => navigate(v === "grid" ? "/inventory" : `/inventory/${v}`);
-  const [scope, setScope] = useState<ScopeMode>("tenant");
-  const [typeSel, setTypeSel] = useState<Set<string>>(new Set());
-  const [locSel, setLocSel] = useState<Set<string>>(new Set());
-  const [subSel, setSubSel] = useState<Set<string>>(new Set());
-  const [rgSel, setRgSel] = useState<Set<string>>(new Set());
-  const [wlSel, setWlSel] = useState<Set<string>>(new Set());
-  const [flagSel, setFlagSel] = useState<Set<string>>(new Set());
+  const [, setParams] = useSearchParams();
+  // IU3 — initialise the facet filters from the URL so a shared link / refresh restores them.
+  const initList = (k: string) => { const v = new URLSearchParams(window.location.search).get(k); return v ? v.split(",").filter(Boolean) : []; };
+  const initStr = (k: string) => new URLSearchParams(window.location.search).get(k) || "";
+  const [scope, setScope] = useState<ScopeMode>(() => (initStr("scope") === "workloads" ? "workloads" : "tenant"));
+  const [typeSel, setTypeSel] = useState<Set<string>>(() => new Set(initList("type")));
+  const [locSel, setLocSel] = useState<Set<string>>(() => new Set(initList("loc")));
+  const [subSel, setSubSel] = useState<Set<string>>(() => new Set(initList("sub")));
+  const [rgSel, setRgSel] = useState<Set<string>>(() => new Set(initList("rg")));
+  const [wlSel, setWlSel] = useState<Set<string>>(() => new Set(initList("wl")));
+  const [flagSel, setFlagSel] = useState<Set<string>>(() => new Set(initList("flag")));
   const [tagKey, setTagKey] = useState("");
   const [tagValue, setTagValue] = useState("");
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => initStr("q"));
   const [skuContains, setSkuContains] = useState<string[]>([]);
   const [kqlIds, setKqlIds] = useState<Set<string> | null>(null);
   const [kqlText, setKqlText] = useState("");
   const [selected, setSelected] = useState<InventoryResource | null>(null);
-  // Grid display controls (Theme 1 + 6)
-  const [groupBy, setGroupBy] = useState<GroupKey>("none");
+  // Grid display controls (Theme 1 + 6). IU2 — persisted per browser via localStorage.
+  const [groupBy, setGroupBy] = useState<GroupKey>(() => (localStorage.getItem("azsup.inventory.groupBy") as GroupKey) || "none");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
-  const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_COLS));
+  const [density, setDensity] = useState<"comfortable" | "compact">(() => (localStorage.getItem("azsup.inventory.density") as "comfortable" | "compact") || "comfortable");
+  const [cols, setCols] = useState<Set<ColKey>>(() => {
+    try { const a = JSON.parse(localStorage.getItem("azsup.inventory.cols") || "null"); if (Array.isArray(a) && a.length) return new Set(a as ColKey[]); } catch { /* ignore */ }
+    return new Set(DEFAULT_COLS);
+  });
   const [picked, setPicked] = useState<Set<string>>(new Set()); // bulk selection (resource ids)
+  // IU8 — transient export confirmation toast.
+  const [toast, setToast] = useState("");
 
-  // Deep-link handoff: when opened from the Estate Graph ("Inventory →") with
-  // `?workload_id=`, pre-select that workload facet so the grid is scoped to it on arrival.
+  // IU2 — persist the grid display preferences whenever they change.
+  useEffect(() => { try { localStorage.setItem("azsup.inventory.groupBy", groupBy); } catch { /* ignore */ } }, [groupBy]);
+  useEffect(() => { try { localStorage.setItem("azsup.inventory.density", density); } catch { /* ignore */ } }, [density]);
+  useEffect(() => { try { localStorage.setItem("azsup.inventory.cols", JSON.stringify([...cols])); } catch { /* ignore */ } }, [cols]);
+
+  // IU8 — auto-dismiss the export confirmation toast.
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2800); return () => clearTimeout(t); }, [toast]);
+
+  function exportWithToast(rows: InventoryResource[]) {
+    exportCsv(rows, subName, costByRes);
+    setToast(`Exported ${rows.length.toLocaleString()} resource${rows.length === 1 ? "" : "s"} to CSV`);
+  }
+
+  // Deep-link handoff: when opened from the Estate Graph ("Inventory →") with `?workload_id=`,
+  // pre-select that workload facet so the grid is scoped to it on arrival.
   useEffect(() => {
     const wid = new URLSearchParams(window.location.search).get("workload_id");
     if (wid) { setScope("workloads"); setWlSel(new Set([wid])); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // IU3 — reflect the active facet selections back into the URL (shareable / back-button aware).
+  // State is initialised FROM the URL above, so the first write is idempotent (no clobber loop).
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    next.delete("workload_id");   // normalise the one-shot handoff param into ?wl=
+    const setOrDel = (k: string, vals: string[]) => { if (vals.length) next.set(k, vals.join(",")); else next.delete(k); };
+    setOrDel("type", [...typeSel]); setOrDel("loc", [...locSel]); setOrDel("sub", [...subSel]);
+    setOrDel("rg", [...rgSel]); setOrDel("wl", [...wlSel]); setOrDel("flag", [...flagSel]);
+    if (text.trim()) next.set("q", text.trim()); else next.delete("q");
+    if (scope === "workloads") next.set("scope", "workloads"); else next.delete("scope");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeSel, locSel, subSel, rgSel, wlSel, flagSel, text, scope]);
 
   // Cost overlay (Theme 4). Auto-restores the SERVER-cached cost on mount (cached_only never
   // runs the slow Azure query); "Load cost" / "Refresh cost" run the full/forced query. Shared
@@ -378,8 +425,10 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   // the selected ones are highlighted) while selecting a region narrows the rest of the UI.
   const mapResources = useMemo(() => inv.resources.filter((r) => matches(r, "loc")), [inv.resources, matches]);
 
-  // Cascading facet options: tally each dimension over resources passing every OTHER active
-  // filter (its own selection excluded).
+  // Cascading facet options (IP3): a SINGLE pass over the estate. The shared "other" filters
+  // (scope/tag/flag/text/SKU/KQL) are checked once per resource, then each facet dimension is
+  // tallied with only its OWN selection excluded via cheap precomputed booleans — replacing the
+  // previous design that called the full `matches()` predicate five times per resource.
   const dyn = useMemo(() => {
     const types = new Map<string, number>();
     const locs = new Map<string, number>();
@@ -387,18 +436,39 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
     const rgs = new Map<string, number>();
     const wls = new Map<string, number>();
     let unassigned = 0;
+    const t = text.trim().toLowerCase();
+    const hasType = typeSel.size, hasLoc = locSel.size, hasSub = subSel.size, hasRg = rgSel.size, hasWl = wlSel.size;
     for (const r of inv.resources) {
-      if (matches(r, "type")) types.set(r.type, (types.get(r.type) || 0) + 1);
-      if (matches(r, "loc") && r.location) locs.set(r.location, (locs.get(r.location) || 0) + 1);
-      if (matches(r, "sub")) subs.set(r.subscription_id, (subs.get(r.subscription_id) || 0) + 1);
-      if (matches(r, "rg") && r.resource_group) rgs.set(r.resource_group, (rgs.get(r.resource_group) || 0) + 1);
-      if (matches(r, "wl")) {
+      // Shared "other" filters — if a resource fails any of these it's out of every tally.
+      if (scope === "workloads" && r.workloads.length === 0 && !wlSel.has("__unassigned__")) continue;
+      if (tagKey) { if (!(tagKey in r.tags)) continue; if (tagValue && r.tags[tagKey] !== tagValue) continue; }
+      if (flagSel.size) {
+        if (flagSel.has("__cleanup__")) { if (!r.flags.some((f) => CLEANUP_FLAGS.includes(f))) continue; }
+        else if (!r.flags.some((f) => flagSel.has(f))) continue;
+      }
+      if (t && !r.name.toLowerCase().includes(t) && !r.id.toLowerCase().includes(t)) continue;
+      if (skuContains.length) {
+        const hay = `${r.sku} ${r.size} ${r.tier}`.toLowerCase();
+        if (!skuContains.some((s) => hay.includes(s.toLowerCase()))) continue;
+      }
+      if (kqlIds && !kqlIds.has(r.id.toLowerCase())) continue;
+      // Per-facet membership (the dimension's own selection is excluded when tallying it).
+      const passType = !hasType || typeSel.has(r.type);
+      const passLoc = !hasLoc || locSel.has(r.location);
+      const passSub = !hasSub || subSel.has(r.subscription_id);
+      const passRg = !hasRg || rgSel.has(r.resource_group);
+      const passWl = !hasWl || (wlSel.has("__unassigned__") && r.workloads.length === 0) || r.workloads.some((w) => wlSel.has(w.id));
+      if (passLoc && passSub && passRg && passWl) types.set(r.type, (types.get(r.type) || 0) + 1);
+      if (passType && passSub && passRg && passWl && r.location) locs.set(r.location, (locs.get(r.location) || 0) + 1);
+      if (passType && passLoc && passRg && passWl) subs.set(r.subscription_id, (subs.get(r.subscription_id) || 0) + 1);
+      if (passType && passLoc && passSub && passWl && r.resource_group) rgs.set(r.resource_group, (rgs.get(r.resource_group) || 0) + 1);
+      if (passType && passLoc && passSub && passRg) {
         if (r.workloads.length === 0) unassigned += 1;
         else for (const w of r.workloads) wls.set(w.id, (wls.get(w.id) || 0) + 1);
       }
     }
     return { types, locs, subs, rgs, wls, unassigned };
-  }, [inv.resources, matches]);
+  }, [inv.resources, scope, typeSel, locSel, subSel, rgSel, wlSel, flagSel, tagKey, tagValue, text, skuContains, kqlIds]);
 
   const typeRows = useMemo(() => valueRows(dyn.types, typeSel), [dyn.types, typeSel]);
   const locRows = useMemo(() => valueRows(dyn.locs, locSel), [dyn.locs, locSel]);
@@ -582,12 +652,12 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* View switcher */}
-        <div className="flex items-center gap-1 border-b bg-white px-4 pt-2">
+        <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap border-b bg-white px-4 pt-2">
           {INVENTORY_NAV.map(({ id: v, label }) => (
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`rounded-t-lg px-3 py-1.5 text-sm font-medium ${view === v ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"}`}
+              className={`shrink-0 rounded-t-lg px-3 py-1.5 text-sm font-medium ${view === v ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"}`}
             >
               {label}
             </button>
@@ -597,36 +667,40 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
         {/* Location filter toolbar — sits just below the tabs; drives the real inventory
             filters so the left facet menu + grid + every tab narrow to the selection. */}
         {view === "location" && (
-          <LocationFilterToolbar
-            resources={inv.resources}
-            selectedLocations={locSel}
-            onToggleLocation={(loc) => toggle(locSel, loc, setLocSel)}
-            onClearLocations={() => setLocSel(new Set())}
-            workloadName={wlNameMap}
-            selectedWorkloads={wlSel}
-            onToggleWorkload={(id) => toggle(wlSel, id, setWlSel)}
-          />
+          <Suspense fallback={null}>
+            <LocationFilterToolbar
+              resources={inv.resources}
+              selectedLocations={locSel}
+              onToggleLocation={(loc) => toggle(locSel, loc, setLocSel)}
+              onClearLocations={() => setLocSel(new Set())}
+              workloadName={wlNameMap}
+              selectedWorkloads={wlSel}
+              onToggleWorkload={(id) => toggle(wlSel, id, setWlSel)}
+            />
+          </Suspense>
         )}
 
         {view === "overview" ? (
           <OverviewMode inv={inv} connectionId={connectionId} />
         ) : view === "location" ? (
-          <LocationMode
-            resources={mapResources}
-            selectedLocations={locSel}
-            onToggleLocation={(loc) => toggle(locSel, loc, setLocSel)}
-            onClear={() => setLocSel(new Set())}
-            resourceGroups={rgRows}
-            selectedRGs={rgSel}
-            onToggleRG={(rg) => toggle(rgSel, rg, setRgSel)}
-            types={typeRows}
-            selectedTypes={typeSel}
-            onToggleType={(t) => toggle(typeSel, t, setTypeSel)}
-            subscriptions={subRows}
-            selectedSubs={subSel}
-            onToggleSub={(s) => toggle(subSel, s, setSubSel)}
-            subName={subName}
-          />
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Skeleton rows={6} className="w-2/3" /></div>}>
+            <LocationMode
+              resources={mapResources}
+              selectedLocations={locSel}
+              onToggleLocation={(loc) => toggle(locSel, loc, setLocSel)}
+              onClear={() => setLocSel(new Set())}
+              resourceGroups={rgRows}
+              selectedRGs={rgSel}
+              onToggleRG={(rg) => toggle(rgSel, rg, setRgSel)}
+              types={typeRows}
+              selectedTypes={typeSel}
+              onToggleType={(t) => toggle(typeSel, t, setTypeSel)}
+              subscriptions={subRows}
+              selectedSubs={subSel}
+              onToggleSub={(s) => toggle(subSel, s, setSubSel)}
+              subName={subName}
+            />
+          </Suspense>
         ) : view === "cost" ? (
           <CostMode
             cost={cost}
@@ -637,6 +711,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
             onClearFilters={clearAll}
             onLoadCost={loadCost}
             loading={costLoading}
+            invFetchedAt={inv.fetched_at}
           />
         ) : view === "changes" ? (
           <ChangesMode connectionId={connectionId} subName={subName} />
@@ -690,7 +765,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
                       {costLoading ? "💲 Loading…" : "💲 Load cost"}
                     </button>
                   )}
-                  <button onClick={() => exportCsv(sorted, subName, costByRes)} title="Export current view to CSV" className="rounded-md border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
+                  <button onClick={() => exportWithToast(sorted)} title="Export current view to CSV" className="rounded-md border border-gray-200 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50">
                     ⬇ Export
                   </button>
                 </div>
@@ -707,7 +782,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
               <BulkBar
                 count={picked.size}
                 onClear={() => setPicked(new Set())}
-                onExport={() => exportCsv(sorted.filter((r) => picked.has(r.id)), subName, costByRes)}
+                onExport={() => exportWithToast(sorted.filter((r) => picked.has(r.id)))}
               />
             )}
 
@@ -735,6 +810,12 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
 
       {selected && (
         <DetailDrawer resource={selected} subName={subName} connectionId={connectionId} cost={costByRes[selected.id.toLowerCase()]} costCurrency={cost?.currency || "USD"} costLoaded={!!cost?.available} onLoadCost={() => loadCost(false)} costLoading={costLoading} onClose={() => setSelected(null)} />
+      )}
+
+      {toast && (
+        <div className="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900/90 px-4 py-2 text-sm font-medium text-white shadow-lg">
+          ✓ {toast}
+        </div>
       )}
     </div>
   );
@@ -810,6 +891,15 @@ function NlSearchBar({
         >
           {busy ? "Searching…" : "Search"}
         </button>
+        {busy && (
+          <button
+            onClick={() => abortRef.current?.abort()}
+            title="Cancel the in-flight search"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+        )}
       </div>
       {note && <div className="mt-1 text-[11px] text-gray-500">💡 {note}</div>}
     </div>
@@ -934,39 +1024,61 @@ function Grid({
   onSelect: (r: InventoryResource) => void;
   refreshing: boolean;
 }) {
-  const [limit, setLimit] = useState(300);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  useEffect(() => { setLimit(300); }, [resources, groupBy]);
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const groupLabel = (r: InventoryResource): { key: string; label: string } => {
+  const groupLabel = useCallback((r: InventoryResource): { key: string; label: string } => {
     if (groupBy === "type") return { key: r.type, label: friendlyResourceType(r.type) };
     if (groupBy === "resource_group") return { key: r.resource_group, label: r.resource_group || "(none)" };
     if (groupBy === "subscription_id") return { key: r.subscription_id, label: subName[r.subscription_id] || r.subscription_id };
     if (groupBy === "location") return { key: r.location, label: r.location ? friendlyLocation(r.location) : "(none)" };
     if (groupBy === "workload") return { key: r.workloads[0]?.id || "__none__", label: r.workloads[0]?.name ? `🧩 ${r.workloads[0].name}` : "Not in any workload" };
     return { key: "", label: "" };
-  };
+  }, [groupBy, subName]);
 
   const pad = density === "compact" ? "py-1" : "py-2";
-  const pageIds = resources.slice(0, limit).map((r) => r.id);
-  const allPickedOnPage = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const allPicked = resources.length > 0 && resources.every((r) => picked.has(r.id));
 
-  function onScroll(e: React.UIEvent<HTMLDivElement>) {
-    const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 400 && limit < resources.length) {
-      setLimit((n) => Math.min(n + 300, resources.length));
+  // IP2 — the flat row model (group headers + resource rows) is built ONCE per
+  // resources/groupBy/collapsed change instead of inline on every render (selection, density,
+  // hover all used to rebuild it). IP1 then virtualizes over this array.
+  type FlatItem = { kind: "group"; key: string; label: string; count: number } | { kind: "row"; r: InventoryResource };
+  const flatItems = useMemo<FlatItem[]>(() => {
+    if (groupBy === "none") return resources.map((r) => ({ kind: "row" as const, r }));
+    const groups = new Map<string, { label: string; items: InventoryResource[] }>();
+    for (const r of resources) {
+      const { key, label } = groupLabel(r);
+      if (!groups.has(key)) groups.set(key, { label, items: [] });
+      groups.get(key)!.items.push(r);
     }
-  }
+    const out: FlatItem[] = [];
+    for (const [key, g] of [...groups.entries()].sort((a, b) => b[1].items.length - a[1].items.length)) {
+      out.push({ kind: "group", key, label: g.label, count: g.items.length });
+      if (!collapsed.has(key)) for (const r of g.items) out.push({ kind: "row", r });
+    }
+    return out;
+  }, [resources, groupBy, collapsed, groupLabel]);
+
+  const colCount = 2 + cols.size; // checkbox + name + visible cols
+
+  // IP1 — virtualize the (potentially very large) row set so only the rows in view are in the
+  // DOM. Uses spacer rows so the native <table> column alignment + sticky header are preserved.
+  const rowVirtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (i) => (flatItems[i].kind === "group" ? 30 : density === "compact" ? 33 : 41),
+    overscan: 14,
+  });
+  // Reset scroll to the top when the underlying result set or grouping changes.
+  useEffect(() => { parentRef.current?.scrollTo({ top: 0 }); }, [resources, groupBy]);
 
   if (resources.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-        {refreshing ? "Loading…" : "No resources match your filters."}
+        {refreshing ? <Skeleton rows={8} className="w-2/3" /> : "No resources match your filters."}
       </div>
     );
   }
-
-  const colCount = 2 + cols.size; // checkbox + name + visible cols
 
   function SortTh({ k, label }: { k: SortKey; label: string }) {
     return (
@@ -976,10 +1088,10 @@ function Grid({
     );
   }
 
-  function Row({ r }: { r: InventoryResource }) {
+  function ResourceRow({ r, measureRef, index }: { r: InventoryResource; measureRef: (el: HTMLElement | null) => void; index: number }) {
     const c = costByRes[r.id.toLowerCase()];
     return (
-      <tr onClick={() => onSelect(r)} className={`group cursor-pointer ${selected?.id === r.id ? "bg-brand/5" : picked.has(r.id) ? "bg-brand/[0.03]" : "hover:bg-gray-50"}`}>
+      <tr ref={measureRef} data-index={index} onClick={() => onSelect(r)} className={`group cursor-pointer ${selected?.id === r.id ? "bg-brand/5" : picked.has(r.id) ? "bg-brand/[0.03]" : "bg-white hover:bg-gray-50"}`}>
         <td className={`px-2 ${pad} w-8`} onClick={(e) => e.stopPropagation()}>
           <input type="checkbox" checked={picked.has(r.id)} onChange={() => onPick(r.id)} className="h-3.5 w-3.5 rounded border-gray-300" />
         </td>
@@ -1020,44 +1132,17 @@ function Grid({
     );
   }
 
-  // Build grouped or flat rows for the windowed slice.
-  const rows: React.ReactNode[] = [];
-  if (groupBy === "none") {
-    for (const r of resources.slice(0, limit)) rows.push(<Row key={r.id} r={r} />);
-  } else {
-    const groups = new Map<string, { label: string; items: InventoryResource[] }>();
-    for (const r of resources) {
-      const { key, label } = groupLabel(r);
-      if (!groups.has(key)) groups.set(key, { label, items: [] });
-      groups.get(key)!.items.push(r);
-    }
-    let rendered = 0;
-    for (const [key, g] of [...groups.entries()].sort((a, b) => b[1].items.length - a[1].items.length)) {
-      const isCollapsed = collapsed.has(key);
-      rows.push(
-        <tr key={`g-${key}`} className="bg-gray-50/80">
-          <td colSpan={colCount} className={`px-3 ${pad} cursor-pointer text-[12px] font-semibold text-gray-600`} onClick={() => { const n = new Set(collapsed); if (n.has(key)) n.delete(key); else n.add(key); setCollapsed(n); }}>
-            {isCollapsed ? "▸" : "▾"} {g.label} <span className="ml-1 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{g.items.length}</span>
-          </td>
-        </tr>,
-      );
-      if (!isCollapsed) {
-        for (const r of g.items) {
-          if (rendered >= limit) break;
-          rows.push(<Row key={r.id} r={r} />);
-          rendered++;
-        }
-      }
-    }
-  }
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const paddingTop = virtualItems.length ? virtualItems[0].start : 0;
+  const paddingBottom = virtualItems.length ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
+    <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 z-10 bg-gray-50 text-[10px] uppercase tracking-wide text-gray-500 shadow-sm">
           <tr>
             <th className={`px-2 ${pad} w-8`}>
-              <input type="checkbox" checked={allPickedOnPage} onChange={(e) => onPickAll(pageIds, e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
+              <input type="checkbox" checked={allPicked} title="Select all filtered resources" onChange={(e) => onPickAll(resources.map((r) => r.id), e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
             </th>
             <SortTh k="name" label="Name" />
             {cols.has("type") && <SortTh k="type" label="Type" />}
@@ -1071,11 +1156,24 @@ function Grid({
             {cols.has("workloads") && <th className={`px-2 ${pad} text-left font-semibold`}>Workloads</th>}
           </tr>
         </thead>
-        <tbody className="divide-y">{rows}</tbody>
+        <tbody>
+          {paddingTop > 0 && <tr style={{ height: paddingTop }}><td colSpan={colCount} className="p-0" /></tr>}
+          {virtualItems.map((vi) => {
+            const item = flatItems[vi.index];
+            if (item.kind === "group") {
+              return (
+                <tr key={`g-${item.key}`} ref={rowVirtualizer.measureElement} data-index={vi.index} className="bg-gray-50/80">
+                  <td colSpan={colCount} className={`px-3 ${pad} cursor-pointer text-[12px] font-semibold text-gray-600`} onClick={() => { const n = new Set(collapsed); if (n.has(item.key)) n.delete(item.key); else n.add(item.key); setCollapsed(n); }}>
+                    {collapsed.has(item.key) ? "▸" : "▾"} {item.label} <span className="ml-1 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{item.count}</span>
+                  </td>
+                </tr>
+              );
+            }
+            return <ResourceRow key={item.r.id} r={item.r} measureRef={rowVirtualizer.measureElement} index={vi.index} />;
+          })}
+          {paddingBottom > 0 && <tr style={{ height: paddingBottom }}><td colSpan={colCount} className="p-0" /></tr>}
+        </tbody>
       </table>
-      {limit < resources.length && (
-        <div className="px-4 py-2 text-center text-[11px] text-gray-400">Showing {limit.toLocaleString()} of {resources.length.toLocaleString()} — scroll for more.</div>
-      )}
     </div>
   );
 }
@@ -1360,6 +1458,7 @@ function GovernanceTab({ resourceId, connectionId }: { resourceId: string; conne
     queryKey: ["invGovernance", resourceId, connectionId],
     queryFn: () => api.inventoryGovernance(resourceId, connectionId || null),
     retry: false,
+    staleTime: 5 * 60 * 1000,
   });
   if (q.isLoading) return <div className="text-[12px] text-gray-400">Resolving effective policy…</div>;
   if (q.isError) return <div className="text-[12px] text-red-500">{(q.error as Error)?.message || "Failed to resolve policy."}</div>;
@@ -1383,7 +1482,7 @@ function GovernanceTab({ resourceId, connectionId }: { resourceId: string; conne
 }
 
 function FindingsTab({ resourceId }: { resourceId: string }) {
-  const q = useQuery({ queryKey: ["invFindings", resourceId], queryFn: () => api.inventoryFindings(resourceId), retry: false });
+  const q = useQuery({ queryKey: ["invFindings", resourceId], queryFn: () => api.inventoryFindings(resourceId), retry: false, staleTime: 5 * 60 * 1000 });
   if (q.isLoading) return <div className="text-[12px] text-gray-400">Loading assessment findings…</div>;
   if (q.isError) return <div className="text-[12px] text-red-500">{(q.error as Error)?.message || "Failed to load findings."}</div>;
   const findings = q.data?.findings ?? [];
@@ -1559,7 +1658,7 @@ function OverviewMode({ inv, connectionId }: {
   connectionId: string;
 }) {
   const s = inv.summary;
-  const insQ = useQuery({ queryKey: ["invInsights", connectionId], queryFn: () => api.inventoryInsights(connectionId || null), retry: false });
+  const insQ = useQuery({ queryKey: ["invInsights", connectionId], queryFn: () => api.inventoryInsights(connectionId || null), retry: false, staleTime: 5 * 60 * 1000 });
   const sevTone: Record<string, string> = { critical: "border-red-200 bg-red-50", warning: "border-amber-200 bg-amber-50", info: "border-gray-200 bg-gray-50" };
 
   return (
@@ -1568,7 +1667,7 @@ function OverviewMode({ inv, connectionId }: {
         {/* AI insights */}
         <div className="rounded-xl border bg-gradient-to-br from-brand/5 to-violet-50 p-4 shadow-sm">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insQ.data?.source === "local" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
-          {insQ.isLoading ? <div className="text-[12px] text-gray-400">Analyzing your estate…</div> : (
+          {insQ.isLoading ? <Skeleton rows={3} className="max-w-xl" /> : (
             <>
               {insQ.data?.headline && <p className="mb-2 text-[13px] text-gray-700">{insQ.data.headline}</p>}
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1761,20 +1860,46 @@ function buildCostRollup(cost: InventoryCost, resources: InventoryResource[], ha
   };
 }
 
+// IU5 — per-row cleanup actions for an optimization candidate: open in the Portal and copy a
+// ready-to-run `az` delete command. Read-only by design — the app never deletes anything; the
+// user runs the copied command themselves after confirming the resource is truly unused.
+function OptimizationRowActions({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const cmd = `az resource delete --ids "${id}"`;
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <a
+        href={`https://portal.azure.com/#@/resource${id}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open in Azure Portal"
+        className="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+      >↗ Portal</a>
+      <button
+        onClick={() => { navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        title={`Copy: ${cmd}`}
+        className="rounded border border-gray-200 px-1.5 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+      >{copied ? "✓ Copied" : "⧉ az delete"}</button>
+    </div>
+  );
+}
+
 function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
   connectionId: string;
   onLoadCost: (force: boolean) => void;
   costLoading: boolean;
 }) {
+  const navigate = useNavigate();
   const q = useQuery({
     queryKey: ["inventoryOptimization", connectionId],
     queryFn: () => api.inventoryOptimization(connectionId || null),
+    staleTime: 5 * 60 * 1000,
   });
   const data: InventoryOptimization | undefined = q.data;
   const cur = data?.currency || "USD";
 
   if (q.isLoading) {
-    return <div className="p-8 text-center text-sm text-gray-400">Analyzing inventory…</div>;
+    return <div className="p-6"><Skeleton rows={8} className="mx-auto max-w-4xl" /></div>;
   }
   if (data && !data.available) {
     return (
@@ -1782,9 +1907,12 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
         <div className="mx-auto max-w-3xl rounded-xl border bg-amber-50 p-6 text-center">
           <div className="text-sm font-medium text-amber-800">Inventory not loaded yet</div>
           <p className="mt-1 text-xs text-amber-700">
-            Open the <b>Grid</b> tab once to collect resources, then return here to see
+            Collect resources on the <b>Grid</b> tab first, then return here to see
             orphaned and idle resources you can clean up.
           </p>
+          <button onClick={() => navigate("/inventory")} className="mt-3 rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-amber-700">
+            Go to Grid to load inventory →
+          </button>
         </div>
       </div>
     );
@@ -1855,6 +1983,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
                     <th className="px-3 py-2">Resource group</th>
                     <th className="px-3 py-2">Location</th>
                     <th className="px-3 py-2 text-right">Est. monthly</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1879,6 +2008,9 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
                       <td className="px-3 py-2 text-right font-medium tabular-nums text-gray-700">
                         {data?.cost_available ? moneyFmt(it.monthly_cost, cur) : "—"}
                       </td>
+                      <td className="px-3 py-2">
+                        <OptimizationRowActions id={it.id} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1896,7 +2028,7 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
   );
 }
 
-function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilters, onLoadCost, loading }: {
+function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilters, onLoadCost, loading, invFetchedAt }: {
   cost?: InventoryCost;
   resources: InventoryResource[];
   subName: Record<string, string>;
@@ -1905,6 +2037,7 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
   onClearFilters: () => void;
   onLoadCost: (force: boolean) => void;
   loading: boolean;
+  invFetchedAt?: string;
 }) {
   // Roll the (server-cached) per-resource cost up over the CURRENTLY FILTERED resources, so the
   // left-hand facet selections (workloads, types, regions, …) drive these charts live.
@@ -1919,6 +2052,8 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
   const notLoaded = !cost || cost.not_loaded;
   const unavailable = !!cost && !cost.not_loaded && !cost.available;
   const matchedCount = r?.top_resources ? resources.filter((x) => (cost?.by_resource || {})[x.id.toLowerCase()]).length : 0;
+  // IU4 — the (permanent) cost cache predates the current inventory snapshot → nudge a refresh.
+  const costStale = !!(cost?.available && cost.fetched_at && invFetchedAt && new Date(cost.fetched_at).getTime() < new Date(invFetchedAt).getTime() - 60_000);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -1972,6 +2107,13 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
         {(chipProps.kqlText || hasFilters) && (
           <div className="rounded-xl border bg-white px-4 py-2.5 shadow-sm">
             <FilterChipsBar p={chipProps} hasFilters={hasFilters} onClearAll={onClearFilters} />
+          </div>
+        )}
+
+        {costStale && !busy && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800">
+            ⚠ Your cost data was captured before the latest inventory scan, so newer resources may be missing costs.
+            <button onClick={() => onLoadCost(true)} className="ml-auto rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100">↻ Refresh cost</button>
           </div>
         )}
 
@@ -2058,8 +2200,8 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
 // =========================================================================== Changes mode (Theme 3)
 function ChangesMode({ connectionId, subName }: { connectionId: string; subName: Record<string, string> }) {
   const qc = useQueryClient();
-  const snapsQ = useQuery({ queryKey: ["invSnapshots", connectionId], queryFn: () => api.inventorySnapshots(connectionId || null), retry: false });
-  const driftQ = useQuery({ queryKey: ["invDrift", connectionId], queryFn: () => api.inventoryDrift(connectionId || null), retry: false });
+  const snapsQ = useQuery({ queryKey: ["invSnapshots", connectionId], queryFn: () => api.inventorySnapshots(connectionId || null), retry: false, staleTime: 5 * 60 * 1000 });
+  const driftQ = useQuery({ queryKey: ["invDrift", connectionId], queryFn: () => api.inventoryDrift(connectionId || null), retry: false, staleTime: 5 * 60 * 1000 });
   const [taking, setTaking] = useState(false);
   const snaps = snapsQ.data?.snapshots ?? [];
   const drift = driftQ.data?.drift;
@@ -2110,7 +2252,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
             </div>
           </>
         ) : (
-          <div className="text-[12px] text-gray-400">Computing drift…</div>
+          <Skeleton rows={4} className="max-w-md" />
         )}
 
         <div>

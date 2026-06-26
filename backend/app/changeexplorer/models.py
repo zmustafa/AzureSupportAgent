@@ -100,6 +100,10 @@ class ChangeEvent:
     actorIp: str = ""             # originating client IP (from the ipaddr claim)
     actorOnBehalfOf: str = ""     # originating user when an app/SPN acted on their behalf
     actorResolved: bool = False   # True when a friendly name was resolved from the directory
+    # Security intelligence (C1/C3) — computed deterministically each run.
+    securityFlags: list[dict[str, str]] = field(default_factory=list)  # [{code,label,severity}]
+    securitySeverity: str = ""    # highest flag severity (critical|high|medium|low) or ""
+    rollbackHint: str = ""        # read-only az command to inspect/revert (copy-only)
 
 
 @dataclass

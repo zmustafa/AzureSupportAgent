@@ -78,5 +78,6 @@ def normalize(raw: dict[str, Any], *, run_id: str, tenant_id: str, workload_id: 
         "actorIp": raw.get("actorIp", ""),
         "actorOnBehalfOf": raw.get("actorOnBehalfOf", ""),
         "actorResolved": bool(raw.get("actorResolved", False)),
+        "categoryHint": raw.get("category_hint", ""),
         "details": details,
     }

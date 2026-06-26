@@ -100,6 +100,30 @@ def update_run(tenant_id: str, run: dict[str, Any]) -> bool:
     return False
 
 
+def set_case(tenant_id: str, run_id: str, case: dict[str, Any]) -> dict[str, Any] | None:
+    """Persist the investigator 'case file' for a run (D1): pinned change ids + per-change notes +
+    a free-text case summary. ``case`` = {pinned: [changeId], notes: {changeId: text},
+    caseSummary: str}. Returns the saved case, or None if the run wasn't found."""
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    for runs in bucket.values():
+        for r in runs:
+            if r.get("runId") == run_id:
+                existing = r.get("caseFile") or {}
+                merged = {
+                    "pinned": list(case.get("pinned", existing.get("pinned", []))),
+                    "notes": {**(existing.get("notes") or {}), **(case.get("notes") or {})},
+                    "caseSummary": case.get("caseSummary", existing.get("caseSummary", "")),
+                    "updatedAt": _now(),
+                }
+                # Drop empty notes so they don't accumulate.
+                merged["notes"] = {k: v for k, v in merged["notes"].items() if (v or "").strip()}
+                r["caseFile"] = merged
+                _write(data)
+                return merged
+    return None
+
+
 def soft_delete(tenant_id: str, run_id: str) -> bool:
     data = _read()
     bucket = data.get(tenant_id or "default", {})
