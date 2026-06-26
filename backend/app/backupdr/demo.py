@@ -107,10 +107,10 @@ def build_demo_snapshot(*, sla_hours: int = 24, stale_drill_days: int = 180,
 
 def seed_demo(*, sla_hours: int = 24, stale_drill_days: int = 180, tenant_id: str = "default",
               scope_id: str = CONTOSO_ID, scope_name: str | None = None) -> dict[str, Any]:
-    from app.amba.demo import ensure_demo_workload
+    # Cache the demo snapshot only — do NOT auto-register the demo workload (explicit Demo Data
+    # load handles that), so viewing demo backup/DR coverage never creates a phantom workload.
     from app.backupdr import cache
 
-    ensure_demo_workload(scope_id)
     snap = build_demo_snapshot(sla_hours=sla_hours, stale_drill_days=stale_drill_days,
                                scope_id=scope_id, scope_name=scope_name)
     cache.write_snapshot(tenant_id, "workload", scope_id, snap)

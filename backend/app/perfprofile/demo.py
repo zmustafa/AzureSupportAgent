@@ -122,10 +122,10 @@ def build_demo_snapshot(*, scope_id: str = CONTOSO_ID, scope_name: str | None = 
 
 
 def seed_demo(tenant_id: str = "default", *, scope_id: str = CONTOSO_ID, scope_name: str | None = None) -> dict[str, Any]:
-    from app.amba.demo import ensure_demo_workload
+    # Cache the demo snapshot only — do NOT auto-register the demo workload (explicit Demo Data
+    # load handles that), so viewing the demo profiler never creates a phantom workload.
     from app.perfprofile import cache
 
-    ensure_demo_workload(scope_id)
     snap = build_demo_snapshot(scope_id=scope_id, scope_name=scope_name)
     cache.write_snapshot(tenant_id, "workload", scope_id, snap)
     return snap

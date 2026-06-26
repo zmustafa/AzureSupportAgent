@@ -124,13 +124,6 @@ export default function LoginPage() {
           </p>
         )}
       </div>
-
-      {/* Trust strip — signal the enterprise security posture before sign-in. */}
-      <div className="w-full max-w-sm text-center">
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          🔒 Runs in your tenant · 👁️ read-only by default · ✅ approval-gated writes · 🧾 audited
-        </p>
-      </div>
     </div>
   );
 }

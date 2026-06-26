@@ -97,7 +97,10 @@ export function TypeChips({ types, max = 8 }: { types: TypeCount[]; max?: number
 type Stage = "setup" | "running" | "review";
 
 export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections });
+  // Always refetch the connection list when the modal opens — `azureConnections` carries a 5-min
+  // staleTime default (it's requested by many screens), which otherwise serves a stale/empty list
+  // right after the user adds their first connection.
+  const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, refetchOnMount: "always" });
   const connections = connQ.data?.connections ?? [];
 
   const [connectionId, setConnectionId] = useState("");

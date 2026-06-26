@@ -102,6 +102,11 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
     "sessions": {
         "active_role": "VARCHAR(64)",
     },
+    "mission_runs": {
+        # The mission activity log, persisted so it reloads when the mission is reopened
+        # (the live in-memory log is evicted after the run finishes / on a restart).
+        "log_json": "JSON",
+    },
 }
 
 

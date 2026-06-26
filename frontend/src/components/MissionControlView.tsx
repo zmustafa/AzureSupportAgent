@@ -249,6 +249,26 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
     [applySystem, mergeMissionSystems, historyQ],
   );
 
+  // Open a mission (from history, or the latest on mount): load its FULL persisted record —
+  // including the activity log — so the Mission Log reloads instead of showing "No activity yet".
+  // If it's still in flight, hand off to the live stream; otherwise just render the saved state.
+  const openMission = useCallback(
+    async (missionId: string, quiet = false) => {
+      try {
+        const { mission } = await api.getMission(missionId);
+        setActive(mission);
+        mergeMissionSystems(mission.systems);
+        setLog(mission.log ?? []);
+        if (mission.status === "running" || mission.status === "queued") {
+          void follow(missionId, quiet);
+        }
+      } catch (e) {
+        if (!quiet) setErr(formatError(e));
+      }
+    },
+    [follow, mergeMissionSystems],
+  );
+
   const launch = useCallback(
     async (only?: string[]) => {
       if (!workloadId) return;
@@ -290,11 +310,11 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  // Reconnect to an in-flight mission on mount (the mission keeps running server-side even
-  // if this screen was unmounted — navigating away + back, a network blip, or an HMR reload
-  // must not leave the board stuck on a stale "Mission in progress…"). A direct fetch is used
-  // (not the cached history query, which has a staleTime that would hide a just-launched run).
-  // The `cancelled` flag makes this correct under React StrictMode's mount→unmount→remount.
+  // On mount, load the latest mission so the board + Mission Log reflect it: a running/queued
+  // one is followed live, a finished one has its persisted log + systems loaded (so reopening
+  // the mission always shows its activity log instead of "No activity yet"). A direct fetch is
+  // used (not the cached history query, which has a staleTime that would hide a just-launched
+  // run). The `cancelled` flag makes this correct under React StrictMode's mount→unmount→remount.
   useEffect(() => {
     if (!workloadId) return;
     let cancelled = false;
@@ -302,10 +322,14 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
       .listMissions(workloadId, 1)
       .then((r) => {
         const latest = r.missions?.[0];
-        if (!cancelled && latest && (latest.status === "running" || latest.status === "queued")) {
+        if (cancelled || !latest) return;
+        if (latest.status === "running" || latest.status === "queued") {
           setActive(latest);
           mergeMissionSystems(latest.systems);
           void follow(latest.id, true);
+        } else {
+          // Finished mission — load its full record (incl. log) so the log reloads on reopen.
+          void openMission(latest.id, true);
         }
       })
       .catch(() => {});
@@ -410,14 +434,18 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
                   const meta = READINESS_META[m.readiness] ?? READINESS_META.unknown;
                   const live = m.status === "running" || m.status === "queued";
                   return (
-                    <div key={m.id} className="group flex items-center gap-2 border-b px-3 py-2 last:border-0">
+                    <div key={m.id} className={`group flex items-center gap-2 border-b px-3 py-2 last:border-0 ${active?.id === m.id ? "bg-brand/5" : ""}`}>
                       <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: meta.ring }} />
-                      <div className="min-w-0 flex-1">
+                      <button
+                        onClick={() => void openMission(m.id)}
+                        className="min-w-0 flex-1 text-left"
+                        title="Open this mission — loads its activity log"
+                      >
                         <div className="truncate text-xs font-medium text-gray-700">{meta.label}</div>
                         <div className="text-[10px] text-gray-400">
                           {m.started_at ? new Date(m.started_at).toLocaleString() : ""} · {m.systems_done}/{m.systems_total}
                         </div>
-                      </div>
+                      </button>
                       <span className="shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-500">{m.status}</span>
                       {confirmDelete === m.id ? (
                         <span className="flex shrink-0 items-center gap-1">

@@ -275,6 +275,7 @@ class _Manager:
                 row.systems_done = pub["systems_done"]
                 row.systems_attention = pub["systems_attention"]
                 row.systems_json = pub["systems"]
+                row.log_json = mission.log  # persist the full activity log so it reloads on reopen
                 row.error = mission.error or None
                 if mission.status in _TERMINAL and row.ended_at is None:
                     row.ended_at = _now()
@@ -301,6 +302,7 @@ class _Manager:
                         readiness="unknown",
                         systems_total=len(mission.system_keys),
                         systems_json=[mission.systems[k] for k in mission.system_keys],
+                        log_json=list(mission.log),
                         force=mission.force,
                         triggered_by=mission.actor,
                         trigger=mission.trigger,
@@ -552,7 +554,7 @@ async def list_missions(tenant_id: str, workload_id: str | None = None, limit: i
             stmt = stmt.where(MissionRun.workload_id == workload_id)
         stmt = stmt.order_by(MissionRun.started_at.desc()).limit(limit)
         rows = (await db.execute(stmt)).scalars().all()
-    return [_row_public(r) for r in rows]
+    return [_row_public(r, include_log=False) for r in rows]
 
 
 async def reap_orphaned_missions() -> int:
@@ -641,7 +643,7 @@ async def delete_missions_for_workload(tenant_id: str, workload_id: str) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
 
-def _row_public(row: Any) -> dict[str, Any]:
+def _row_public(row: Any, *, include_log: bool = True) -> dict[str, Any]:
     return {
         "id": row.id,
         "workload_id": row.workload_id,
@@ -655,6 +657,9 @@ def _row_public(row: Any) -> dict[str, Any]:
         "systems_done": row.systems_done,
         "systems_attention": row.systems_attention,
         "systems": row.systems_json or [],
+        # The log can be long; the history LIST doesn't render it, so omit it there and only
+        # return it from get_mission (which the board uses to reload a reopened mission's log).
+        "log": (row.log_json or []) if include_log else [],
         "error": row.error or "",
         "created_at": row.started_at.isoformat() if row.started_at else "",
         "started_at": row.started_at.isoformat() if row.started_at else "",

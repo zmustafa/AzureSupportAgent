@@ -111,8 +111,8 @@ export const METRIC_CATALOG: Record<string, CatalogMetric[]> = {
     M("ResponseStatus", "Response status (5xx)", "count", "GreaterThan", "availability", null),
   ],
   "microsoft.network/loadbalancers": [
-    M("DipAvailability", "Health probe status", "%", "LessThan", "availability", 100),
-    M("VipAvailability", "Data path availability", "%", "LessThan", "availability", 100),
+    M("DipAvailability", "Health probe status", "%", "LessThan", "availability", 90),
+    M("VipAvailability", "Data path availability", "%", "LessThan", "availability", 90),
   ],
   "microsoft.network/azurefirewalls": [
     M("SNATPortUtilization", "SNAT port utilization", "%", "GreaterThan", "availability", 80),

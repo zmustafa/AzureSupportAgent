@@ -143,10 +143,11 @@ def ensure_demo_workload(scope_id: str = DEMO_WORKLOAD_ID) -> dict[str, Any]:
 
 def seed_demo(*, misconfig_counts_as_gap: bool = True, tolerance_pct: float = 10.0, tenant_id: str = "default",
               scope_id: str = DEMO_WORKLOAD_ID, scope_name: str | None = None) -> dict[str, Any]:
-    """Ensure the demo workload exists and cache a fresh demo coverage snapshot."""
+    """Cache a fresh demo coverage snapshot. Does NOT register the demo workload into the saved
+    workloads registry — only the explicit Settings -> Demo Data load does that (so merely
+    viewing a demo coverage page never auto-creates the 'Contoso Hotels' workload)."""
     from app.amba import cache
 
-    ensure_demo_workload(scope_id)
     snap = build_demo_snapshot(misconfig_counts_as_gap=misconfig_counts_as_gap, tolerance_pct=tolerance_pct,
                                scope_id=scope_id, scope_name=scope_name)
     cache.write_snapshot(tenant_id, "workload", scope_id, snap)

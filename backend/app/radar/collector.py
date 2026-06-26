@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.radar.builtin_seed import (
@@ -46,6 +46,20 @@ def _parse_date(value: Any) -> date | None:
     if not value:
         return None
     s = str(value).strip()
+    # Some Azure feeds (Service Health / Advisor properties) serialize dates as a .NET
+    # DateTime tick count — a big all-digit integer of 100-nanosecond intervals since
+    # 0001-01-01 (e.g. 639122472566870000). Also tolerate Unix epoch milliseconds/seconds.
+    if s.isdigit():
+        try:
+            n = int(s)
+            if n >= 10**17:  # .NET ticks (100ns since year 1)
+                return (datetime(1, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=n // 10)).date()
+            if n >= 10**12:  # Unix epoch milliseconds
+                return datetime.fromtimestamp(n / 1000, tz=timezone.utc).date()
+            if n >= 10**9:   # Unix epoch seconds
+                return datetime.fromtimestamp(n, tz=timezone.utc).date()
+        except (ValueError, OverflowError, OSError):
+            return None
     # Tolerate full ISO timestamps and bare dates.
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
@@ -56,6 +70,13 @@ def _parse_date(value: Any) -> date | None:
         return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
     except (ValueError, TypeError):
         return None
+
+
+def _iso_date(value: Any) -> str:
+    """Normalize a date-ish value (ISO string, .NET ticks, epoch) to an ``YYYY-MM-DD`` string,
+    or "" when it can't be parsed — so the UI never shows a raw tick number."""
+    d = _parse_date(value)
+    return d.isoformat() if d else ""
 
 
 def days_until(target: Any, *, today: date | None = None) -> int | None:
@@ -274,6 +295,8 @@ def merge_events(
                 "impacted_count": len(impacted),
                 "owner": dominant,
                 "unowned": unowned,
+                # Normalize to a clean ISO date so the UI never shows a raw .NET tick number.
+                "retirement_date": _iso_date(ev.get("retirement_date")),
                 "days_until": d,
                 "severity": severity_for_days(d),
             }
@@ -315,7 +338,7 @@ def build_model_items(
                 "stage": life.get("stage", "unknown") if life else "unknown",
                 "ga_date": life.get("ga_date", "") if life else "",
                 "deprecation_date": life.get("deprecation_date", "") if life else "",
-                "retirement_date": retire,
+                "retirement_date": _iso_date(retire),
                 "replacement": life.get("replacement", "") if life else "",
                 "days_until": d,
                 "severity": severity_for_days(d),
@@ -541,12 +564,23 @@ async def collect_radar(
     notes: list[str] = []
     raw: list[dict[str, Any]] = []
     deployments: list[dict[str, Any]] = []
+    # Advisor + AOAI are scoped by SUBSCRIPTION, not by the per-resource predicate. The workload
+    # scope predicate is an ``id in~ ('…','…',…)`` list of every resource node, which for a large
+    # workload exceeds Azure Resource Graph's query-length limit ("Query is too long"). Advisor
+    # recommendations and AOAI deployments live at the subscription level anyway, so a bounded
+    # ``subscriptionId in~ (…)`` clause is both correct and small. (Service Health already takes
+    # the subscription list directly.) Fall back to the resource predicate only if, somehow, no
+    # subscriptions were resolved.
+    if subscriptions:
+        sub_predicate = "subscriptionId in~ (" + ", ".join(f"'{_esc(s)}'" for s in sorted(set(subscriptions))) + ")"
+    else:
+        sub_predicate = predicate
     # RP4 — Advisor, Service Health and AOAI deployments are independent Azure reads; run them
     # concurrently instead of one-after-another to cut radar refresh latency.
     adv_res, sh_res, aoai_res = await asyncio.gather(
-        _query_advisor(predicate, connection),
+        _query_advisor(sub_predicate, connection),
         _query_service_health(subscriptions, connection),
-        _query_aoai_deployments(predicate, connection),
+        _query_aoai_deployments(sub_predicate, connection),
         return_exceptions=True,
     )
     if isinstance(adv_res, list):

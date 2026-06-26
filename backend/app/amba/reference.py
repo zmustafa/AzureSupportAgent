@@ -88,10 +88,28 @@ def load_reference() -> dict[str, Any]:
                 if a.get("key") not in have:
                     existing.append(copy.deepcopy(a))
                     changed = True
+        # Targeted, edit-respecting threshold reconciliations. Each entry only applies when
+        # the persisted threshold still equals the PRIOR built-in default (i.e. untouched by
+        # an admin) — so any manual customization is preserved. (v7: the LB availability
+        # alerts demanded a perfect 100%, which flagged any sub-100% reading as a breach; the
+        # Microsoft AMBA baseline alerts below 90%.)
+        for t, key, old, new in _THRESHOLD_RECONCILE:
+            for a in types.get(t, {}).get("alerts", []) or []:
+                if a.get("key") == key and a.get("threshold") == old:
+                    a["threshold"] = new
+                    changed = True
         doc["builtin_seed_version"] = BUILTIN_SEED_VERSION
         if changed:
             _write(doc)
     return doc
+
+
+# (type, alert key, prior built-in threshold, new built-in threshold). Applied during the
+# seed-version upgrade only to alerts still holding the prior default — never overrides edits.
+_THRESHOLD_RECONCILE: tuple[tuple[str, str, float, float], ...] = (
+    ("microsoft.network/loadbalancers", "lb_health_probe", 100.0, 90.0),
+    ("microsoft.network/loadbalancers", "lb_data_path", 100.0, 90.0),
+)
 
 
 def _sanitize_alert(raw: dict[str, Any]) -> dict[str, Any] | None:

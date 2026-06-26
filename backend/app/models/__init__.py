@@ -239,6 +239,7 @@ class MissionRun(Base):
     systems_done: Mapped[int] = mapped_column(Integer, default=0)
     systems_attention: Mapped[int] = mapped_column(Integer, default=0)
     systems_json: Mapped[list] = mapped_column(JSON, default=list)  # [{key,label,status,headline,detail,score,link,result_ref,started_at,ended_at,error}]
+    log_json: Mapped[list] = mapped_column(JSON, default=list)  # [{ts,key,message}] mission activity log (persisted so it reloads on reopen)
     force: Mapped[bool] = mapped_column(default=False)  # re-ran systems even if fresh
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     triggered_by: Mapped[str] = mapped_column(String(128), default="")

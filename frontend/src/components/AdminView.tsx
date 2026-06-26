@@ -871,6 +871,7 @@ function ConnectionsCard() {
       await api.upsertConnection(editing);
       setEditing(null);
       qc.invalidateQueries({ queryKey: ["adminConnections"] });
+      qc.invalidateQueries({ queryKey: ["azureConnections"] });
     } catch (e) {
       setError(formatError(e));
     }
@@ -882,6 +883,7 @@ function ConnectionsCard() {
     try {
       await api.deleteConnection(id);
       qc.invalidateQueries({ queryKey: ["adminConnections"] });
+      qc.invalidateQueries({ queryKey: ["azureConnections"] });
     } finally {
       setBusyId(null);
     }
@@ -892,6 +894,7 @@ function ConnectionsCard() {
     try {
       await api.setDefaultConnection(id);
       qc.invalidateQueries({ queryKey: ["adminConnections"] });
+      qc.invalidateQueries({ queryKey: ["azureConnections"] });
     } finally {
       setBusyId(null);
     }
@@ -910,6 +913,7 @@ function ConnectionsCard() {
         disabled: !c.disabled,
       });
       qc.invalidateQueries({ queryKey: ["adminConnections"] });
+      qc.invalidateQueries({ queryKey: ["azureConnections"] });
     } finally {
       setBusyId(null);
     }
@@ -4286,6 +4290,12 @@ function AIProviderCard() {
       });
       qc.invalidateQueries({ queryKey: ["llmConfig"] });
       qc.invalidateQueries({ queryKey: ["activeLlm"] });
+      // Auto-refresh the model catalogue on the FIRST successful save of a connection — i.e.
+      // when the viewed provider has no models loaded yet — so the admin doesn't have to click
+      // "↻ Refresh models" separately. Once a catalogue exists this won't re-fire on later saves.
+      if ((models[active]?.length ?? 0) === 0 && loadingModels !== active) {
+        void refreshModels(active, active === "openrouter" ? forms[active]?.freeOnly : undefined);
+      }
     } catch (e) {
       setError(formatError(e));
     }

@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 # Bumped whenever the seed below changes so the registry can offer "reset to builtin vN".
-BUILTIN_SEED_VERSION = 6
+BUILTIN_SEED_VERSION = 7
 
 
 def _a(
@@ -299,10 +299,10 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
         "category": "network",
         "alerts": [
             _a("lb_health_probe", "Health probe status low", "availability", metric="DipAvailability",
-               operator="LessThan", threshold=100, unit="%", window="PT5M", severity="error",
+               operator="LessThan", threshold=90, unit="%", window="PT5M", severity="error",
                why="Failing backend probes remove targets and can black-hole traffic."),
             _a("lb_data_path", "Data path availability low", "availability", metric="VipAvailability",
-               operator="LessThan", threshold=100, unit="%", window="PT5M", severity="error",
+               operator="LessThan", threshold=90, unit="%", window="PT5M", severity="error",
                why="VIP unavailability is a direct front-end outage."),
         ],
     },
