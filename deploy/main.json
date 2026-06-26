@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "10382632681959626024"
+      "templateHash": "12564780468028286422"
     }
   },
   "parameters": {
@@ -98,9 +98,42 @@
       "metadata": {
         "description": "Container memory allocation. Chromium and Azure CLI need headroom, so 2Gi is the default."
       }
+    },
+    "privateNetworking": {
+      "type": "string",
+      "defaultValue": "No",
+      "allowedValues": [
+        "No",
+        "Yes"
+      ],
+      "metadata": {
+        "description": "Deploy backing storage behind a Private Endpoint inside a VNet (Yes) or use the simple public deployment (No). PostgreSQL stays public/TLS in both modes. This is a create-time choice and cannot be toggled on an existing deployment."
+      }
+    },
+    "vnetAddressSpace": {
+      "type": "string",
+      "defaultValue": "10.42.0.0/22",
+      "metadata": {
+        "description": "VNet address space (CIDR) used only when Private networking = Yes. Pick a range that does not overlap your existing networks."
+      }
+    },
+    "infraSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.42.0.0/23",
+      "metadata": {
+        "description": "Infrastructure subnet (CIDR) for the Container Apps Environment. Must be at least a /23 (Container Apps requirement) and inside the VNet address space. Used only when Private networking = Yes."
+      }
+    },
+    "privateEndpointSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.42.2.0/27",
+      "metadata": {
+        "description": "Private Endpoint subnet (CIDR) for the storage private endpoint. Must be inside the VNet address space and not overlap the infrastructure subnet. Used only when Private networking = Yes."
+      }
     }
   },
   "variables": {
+    "isPrivate": "[equals(parameters('privateNetworking'), 'Yes')]",
     "normalizedAppName": "[toLower(parameters('appName'))]",
     "unique": "[uniqueString(resourceGroup().id, variables('normalizedAppName'))]",
     "compactAppName": "[replace(variables('normalizedAppName'), '-', '')]",
@@ -111,7 +144,14 @@
     "storageAccountName": "[toLower(replace(format('azsup{0}', variables('unique')), '-', ''))]",
     "fileShareName": "appdata",
     "managedEnvStorageName": "appdata",
-    "postgresServerName": "[format('{0}-pg-{1}', variables('namePrefix'), variables('unique'))]"
+    "postgresServerName": "[format('{0}-pg-{1}', variables('namePrefix'), variables('unique'))]",
+    "vnetName": "[format('{0}-vnet-{1}', variables('namePrefix'), variables('unique'))]",
+    "infraSubnetName": "snet-infra",
+    "peSubnetName": "snet-pe",
+    "infraSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('infraSubnetName'))]",
+    "peSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('peSubnetName'))]",
+    "filePrivateDnsZoneName": "[format('privatelink.file.{0}', environment().suffixes.storage)]",
+    "storageFilePeName": "[format('{0}-file-pe', variables('storageAccountName'))]"
   },
   "resources": [
     {
@@ -130,6 +170,43 @@
       }
     },
     {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressSpace')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('infraSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('infraSubnetPrefix')]",
+              "delegations": [
+                {
+                  "name": "aca-delegation",
+                  "properties": {
+                    "serviceName": "Microsoft.App/environments"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "[variables('peSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          }
+        ]
+      }
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[variables('environmentName')]",
@@ -141,10 +218,12 @@
             "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').customerId]",
             "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName')), '2023-09-01').primarySharedKey]"
           }
-        }
+        },
+        "vnetConfiguration": "[if(variables('isPrivate'), createObject('infrastructureSubnetId', variables('infraSubnetId')), null())]"
       },
       "dependsOn": [
-        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
       ]
     },
     {
@@ -160,7 +239,9 @@
         "minimumTlsVersion": "TLS1_2",
         "allowBlobPublicAccess": false,
         "allowSharedKeyAccess": true,
-        "supportsHttpsTrafficOnly": true
+        "supportsHttpsTrafficOnly": true,
+        "publicNetworkAccess": "[if(variables('isPrivate'), 'Disabled', 'Enabled')]",
+        "networkAcls": "[if(variables('isPrivate'), createObject('defaultAction', 'Deny', 'bypass', 'AzureServices'), createObject('defaultAction', 'Allow', 'bypass', 'AzureServices'))]"
       }
     },
     {
@@ -199,6 +280,77 @@
         "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', variables('fileShareName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('filePrivateDnsZoneName')]",
+      "location": "global"
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('filePrivateDnsZoneName'), format('{0}-link', variables('vnetName')))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('filePrivateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('storageFilePeName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('peSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "file",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+              "groupIds": [
+                "file"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', variables('storageFilePeName'), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "file",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('filePrivateDnsZoneName'))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('filePrivateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('storageFilePeName'))]"
       ]
     },
     {
@@ -366,7 +518,8 @@
         "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
         "[resourceId('Microsoft.App/managedEnvironments/storages', variables('environmentName'), variables('managedEnvStorageName'))]",
         "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
-        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('postgresServerName'), parameters('postgresDatabaseName'))]"
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('postgresServerName'), parameters('postgresDatabaseName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('storageFilePeName'), 'default')]"
       ]
     }
   ],
@@ -386,6 +539,14 @@
     "storageAccountName": {
       "type": "string",
       "value": "[variables('storageAccountName')]"
+    },
+    "privateNetworking": {
+      "type": "string",
+      "value": "[parameters('privateNetworking')]"
+    },
+    "vnetName": {
+      "type": "string",
+      "value": "[if(variables('isPrivate'), variables('vnetName'), '')]"
     }
   }
 }

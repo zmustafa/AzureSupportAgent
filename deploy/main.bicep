@@ -49,6 +49,31 @@ param containerCpu string = '1.0'
 ])
 param containerMemory string = '2Gi'
 
+// ---------------------------------------------------------------------------------------------
+// Private networking (optional). Choosing "Yes" injects the Container Apps Environment into a
+// VNet and puts the storage account behind a Private Endpoint (no public storage access). The
+// PostgreSQL Flexible Server stays on public access (TLS-only) in BOTH modes, so enabling this
+// needs NO database migration. NOTE: this is a CREATE-TIME choice — a Container Apps Environment's
+// VNet config is immutable, so an existing "No" deployment cannot be flipped to "Yes" in place;
+// it must be redeployed.
+@description('Deploy backing storage behind a Private Endpoint inside a VNet (Yes) or use the simple public deployment (No). PostgreSQL stays public/TLS in both modes. This is a create-time choice and cannot be toggled on an existing deployment.')
+@allowed([
+  'No'
+  'Yes'
+])
+param privateNetworking string = 'No'
+
+@description('VNet address space (CIDR) used only when Private networking = Yes. Pick a range that does not overlap your existing networks.')
+param vnetAddressSpace string = '10.42.0.0/22'
+
+@description('Infrastructure subnet (CIDR) for the Container Apps Environment. Must be at least a /23 (Container Apps requirement) and inside the VNet address space. Used only when Private networking = Yes.')
+param infraSubnetPrefix string = '10.42.0.0/23'
+
+@description('Private Endpoint subnet (CIDR) for the storage private endpoint. Must be inside the VNet address space and not overlap the infrastructure subnet. Used only when Private networking = Yes.')
+param privateEndpointSubnetPrefix string = '10.42.2.0/27'
+
+var isPrivate = privateNetworking == 'Yes'
+
 var normalizedAppName = toLower(appName)
 var unique = uniqueString(resourceGroup().id, normalizedAppName)
 var compactAppName = replace(normalizedAppName, '-', '')
@@ -61,6 +86,15 @@ var fileShareName = 'appdata'
 var managedEnvStorageName = 'appdata'
 var postgresServerName = '${namePrefix}-pg-${unique}'
 var databaseUrl = 'postgresql+asyncpg://${postgresAdminLogin}:${postgresAdminPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDatabaseName}?ssl=require'
+
+// Private-networking resource names + subnet resource IDs (only materialised when isPrivate).
+var vnetName = '${namePrefix}-vnet-${unique}'
+var infraSubnetName = 'snet-infra'
+var peSubnetName = 'snet-pe'
+var infraSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, infraSubnetName)
+var peSubnetId = resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, peSubnetName)
+var filePrivateDnsZoneName = 'privatelink.file.${environment().suffixes.storage}'
+var storageFilePeName = '${storageAccountName}-file-pe'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
@@ -76,6 +110,46 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
+// VNet for private networking (only when Private networking = Yes). Two subnets:
+//  - snet-infra: delegated to Microsoft.App/environments, hosts the VNet-injected Container Apps
+//    Environment. Container Apps requires this subnet to be at least a /23.
+//  - snet-pe: holds the storage Private Endpoint NIC; PE network policies disabled so the PE can
+//    be created.
+resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (isPrivate) {
+  name: vnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        vnetAddressSpace
+      ]
+    }
+    subnets: [
+      {
+        name: infraSubnetName
+        properties: {
+          addressPrefix: infraSubnetPrefix
+          delegations: [
+            {
+              name: 'aca-delegation'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
+        }
+      }
+      {
+        name: peSubnetName
+        properties: {
+          addressPrefix: privateEndpointSubnetPrefix
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+    ]
+  }
+}
+
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -87,7 +161,15 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
+    // VNet injection only in private mode. resourceId() doesn't create an implicit dependency,
+    // so the env's dependsOn (below) explicitly waits for the VNet when private.
+    vnetConfiguration: isPrivate ? {
+      infrastructureSubnetId: infraSubnetId
+    } : null
   }
+  dependsOn: isPrivate ? [
+    vnet
+  ] : []
 }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -100,8 +182,21 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
+    // The Container Apps Azure Files CSI driver authenticates with the account key, so shared-key
+    // access must stay enabled even in private mode.
     allowSharedKeyAccess: true
     supportsHttpsTrafficOnly: true
+    // In private mode the account is reachable ONLY through its Private Endpoint: public network
+    // access is disabled and the default network rule denies everything (AzureServices bypass lets
+    // the platform's trusted control-plane operations through).
+    publicNetworkAccess: isPrivate ? 'Disabled' : 'Enabled'
+    networkAcls: isPrivate ? {
+      defaultAction: 'Deny'
+      bypass: 'AzureServices'
+    } : {
+      defaultAction: 'Allow'
+      bypass: 'AzureServices'
+    }
   }
 }
 
@@ -129,6 +224,66 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
       shareName: fileShare.name
       accessMode: 'ReadWrite'
     }
+  }
+}
+
+// ----- Private storage path (only when Private networking = Yes) -----------------------------
+// Private DNS zone for Azure Files, linked to the VNet so the VNet-injected app resolves the
+// storage account's privatelink.file.* name to the Private Endpoint's private IP.
+resource fileDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (isPrivate) {
+  name: filePrivateDnsZoneName
+  location: 'global'
+}
+
+resource fileDnsZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (isPrivate) {
+  parent: fileDnsZone
+  name: '${vnetName}-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
+// Private Endpoint for the storage account's "file" sub-resource, in the PE subnet.
+resource storageFilePe 'Microsoft.Network/privateEndpoints@2023-11-01' = if (isPrivate) {
+  name: storageFilePeName
+  location: location
+  properties: {
+    subnet: {
+      id: peSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'file'
+        properties: {
+          privateLinkServiceId: storage.id
+          groupIds: [
+            'file'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    vnet
+  ]
+}
+
+resource storageFilePeDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = if (isPrivate) {
+  parent: storageFilePe
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'file'
+        properties: {
+          privateDnsZoneId: fileDnsZone.id
+        }
+      }
+    ]
   }
 }
 
@@ -293,6 +448,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     postgresDatabase
     allowAzureServices
     envStorage
+    storageFilePeDnsGroup
   ]
 }
 
@@ -300,3 +456,5 @@ output applicationUrl string = 'https://${containerApp.properties.configuration.
 output containerAppName string = containerApp.name
 output postgresServerName string = postgres.name
 output storageAccountName string = storage.name
+output privateNetworking string = privateNetworking
+output vnetName string = isPrivate ? vnetName : ''
