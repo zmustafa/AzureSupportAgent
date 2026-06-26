@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   api,
   type BackupDrCell,
@@ -17,6 +18,7 @@ import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
+import { Skeleton, useDebounced } from "../utils/perf";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PageIntro } from "./PageIntro";
@@ -82,7 +84,9 @@ function Donut({ pct }: { pct: number }) {
   );
 }
 
-function Cell({ cell }: { cell: BackupDrCell }) {
+// BP6 — memoized so a search/filter re-render of the matrix doesn't re-render every glyph cell
+// (the protection matrix renders up to 10 cells per row across many rows).
+const Cell = memo(function Cell({ cell }: { cell: BackupDrCell }) {
   return (
     <td className="px-2 py-2 text-center" title={`${cell.value}${cell.detail ? " — " + cell.detail : ""}`}>
       <span className={`${CELL_CLS[cell.status]} text-[11px]`}>
@@ -91,20 +95,84 @@ function Cell({ cell }: { cell: BackupDrCell }) {
       </span>
     </td>
   );
+});
+
+// BP1 — per-group protection matrix body. Small groups render inline; large groups (> 60 rows)
+// virtualize via an internal-scroll windowed <tbody> with spacer rows, keeping the sticky first
+// column + the up-to-10 per-check glyph columns. Rows already only open the drawer (no inline
+// expander), so virtualized rows stay fixed-height.
+const BDR_VIRT_THRESHOLD = 60;
+function BackupMatrixBody({ group, openDrawer }: { group: BackupDrGroup; openDrawer: (g: BackupDrGroup, r: BackupDrRow) => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualize = group.rows.length > BDR_VIRT_THRESHOLD;
+  const rowVirt = useVirtualizer({
+    count: group.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 41,
+    overscan: 10,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
+
+  const mainRow = (row: BackupDrRow) => (
+    <tr key={row.resource_id} className="border-t hover:bg-gray-50">
+      <td className="sticky left-0 bg-white px-3 py-2">
+        <button onClick={() => openDrawer(group, row)} className="text-left">
+          <div className="font-medium text-gray-800">{row.resource_name}</div>
+          <div className="text-[10px] text-gray-400">{row.region}</div>
+        </button>
+      </td>
+      {group.checks.map((c) => {
+        const cell = row.cells.find((x) => x.check === c);
+        return cell ? <Cell key={c} cell={cell} /> : <td key={c} className="px-2 py-2 text-center text-gray-300">–</td>;
+      })}
+      <td className="px-2 py-2 text-right">
+        <button onClick={() => openDrawer(group, row)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open</button>
+      </td>
+    </tr>
+  );
+
+  return (
+    <div ref={scrollRef} className="overflow-auto border-t" style={virtualize ? { maxHeight: "60vh" } : undefined}>
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500">
+          <tr>
+            <th className="sticky left-0 z-20 bg-gray-50 px-3 py-2 text-left font-medium">Resource</th>
+            {group.checks.map((c) => <th key={c} className="px-2 py-2 text-center font-medium">{CHECK_LABEL[c] || c}</th>)}
+            <th className="px-2 py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {virtualize ? (
+            <>
+              {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+              {vItems.map((vi) => mainRow(group.rows[vi.index]))}
+              {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
+            </>
+          ) : (
+            group.rows.map((row) => mainRow(row))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function BackupDrCoveragePanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"backup" | "dr" | "all">("backup");
+  const bp0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [tab, setTab] = useState<"backup" | "dr" | "all">((bp0.get("tab") as "backup" | "dr" | "all") || "backup");
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.backupdr.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.backupdr.workloadId", "");
   useWorkloadDeepLink(setScopeKind, setWorkloadId);
   const [subId, setSubId] = usePersistedState("azsup.backupdr.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.backupdr.subName", "");
   const [connId, setConnId] = usePersistedState("azsup.backupdr.connId", "");
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [query, setQuery] = useState(bp0.get("q") || "");
+  const dQuery = useDebounced(query, 150);
+  const [statusFilter, setStatusFilter] = useState(bp0.get("status") || "all");
   const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.backupdr.density", "expanded");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -146,6 +214,7 @@ export function BackupDrCoveragePanel() {
     queryKey: ["backupdr", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.backupDrCoverage(params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const data: BackupDrCoverage | undefined = enabled ? covQ.data : undefined;
   const allGaps = data?.gaps ?? [];
@@ -155,6 +224,7 @@ export function BackupDrCoveragePanel() {
     queryKey: ["backupdr-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("backupdr", params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
 
   function loadCoverage() {
@@ -293,7 +363,7 @@ export function BackupDrCoveragePanel() {
   }
   function rowVisible(r: BackupDrRow): boolean {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     if (q && !(`${r.resource_name} ${r.resource_group}`.toLowerCase().includes(q))) return false;
     return true;
   }
@@ -302,7 +372,26 @@ export function BackupDrCoveragePanel() {
     if (!data) return [] as BackupDrGroup[];
     return data.groups.map((g) => ({ ...g, rows: g.rows.filter(rowVisible) })).filter((g) => g.rows.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, query, statusFilter]);
+  }, [data, dQuery, statusFilter]);
+
+  // BU1 — reflect the active tab + filters into the URL (shareable / restored on reload).
+  const [, bSetParams] = useSearchParams();
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (tab !== "backup") next.set("tab", tab); else next.delete("tab");
+    if (statusFilter !== "all") next.set("status", statusFilter); else next.delete("status");
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    bSetParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, statusFilter, query]);
+
+  // BU3 — active-filter chips (each removable).
+  const bdrChips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (statusFilter !== "all") out.push({ key: "status", label: `Status: ${statusFilter}`, clear: () => setStatusFilter("all") });
+    if (query.trim()) out.push({ key: "q", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    return out;
+  }, [statusFilter, query]);
 
   // Per-status resource counts across all backup groups, for the header summary line.
   const statusTotals = useMemo(() => {
@@ -363,6 +452,10 @@ export function BackupDrCoveragePanel() {
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale_cache && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
               {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
             </span>
+            {/* BU4 — stale-cache rescan nudge (backup-DR uses stale_cache, not stale). */}
+            {data?.stale_cache && enabled && !refreshing && (
+              <button onClick={doRefresh} disabled={!scopeReady} title="This coverage scan is past its refresh interval — run a fresh scan." className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">⚠ stale · rescan</button>
+            )}
             {!enabled && (
               <button onClick={loadCoverage} disabled={!scopeReady} className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">Load coverage</button>
             )}
@@ -409,12 +502,31 @@ export function BackupDrCoveragePanel() {
               <span className="text-gray-300">·</span>
               <DensityToggle value={density} onChange={setDensity} title="Compact shows just the resource-type rows; Expanded shows the full protection matrix." />
             </div>
+            {/* BU3 — active filter chips. */}
+            {bdrChips.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {bdrChips.map((c) => (
+                  <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                    {c.label}
+                    <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+                  </span>
+                ))}
+                <button onClick={() => { setStatusFilter("all"); setQuery(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-gray-500">{allGaps.length} gap(s):</span>
               <button onClick={() => void genIac(allGaps, "bicep", "All gaps — Bicep")} disabled={busy === "iac"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Generate Bicep</button>
               <button onClick={() => void genIac(allGaps, "runbook", "All gaps — Runbook")} disabled={busy === "iac"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Generate runbook</button>
               <button onClick={() => void registerFindings()} disabled={busy === "findings"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Create Reliability findings</button>
               <button onClick={() => void sendApproval("bicep")} disabled={busy === "approval"} className="rounded-md border px-2 py-1 hover:bg-gray-50 disabled:opacity-50">Send to Approval Inbox</button>
+              {/* BU5 — matrix glyph legend. */}
+              <span className="ml-auto flex items-center gap-2 text-[11px] text-gray-400">
+                <span className="text-green-600">●</span> protected
+                <span className="text-amber-500">▲</span> at risk
+                <span className="text-red-500">✗</span> missing
+                <span className="text-gray-300">–</span> n/a
+              </span>
             </div>
           </>
         )}
@@ -448,7 +560,7 @@ export function BackupDrCoveragePanel() {
               : "Pick a workload or enter a subscription to begin."}
           </div>
         ) : covQ.isLoading ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading backup &amp; DR coverage…</div>
+          <div className="p-6"><Skeleton rows={8} /></div>
         ) : covQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(covQ.error)}</div>
         ) : data && data.report_exists === false ? (
@@ -465,21 +577,28 @@ export function BackupDrCoveragePanel() {
             {(data?.dr_pairs ?? []).length === 0 ? (
               <div className="py-16 text-center text-sm text-gray-400">No DR replication pairs found in this scope.</div>
             ) : (
-              (data?.dr_pairs ?? []).map((p) => (
-                <div key={p.name} className="rounded-xl border bg-white p-3">
+              (data?.dr_pairs ?? []).map((p) => {
+                // BU6 — DR SLA flag: a pair is "at risk" if replication is unhealthy, the drill is
+                // stale, or it was never drilled. Surfaced as a leading severity dot + an SLA badge.
+                const neverDrilled = p.last_failover_test_age_days == null;
+                const atRisk = !p.healthy || p.stale || neverDrilled;
+                return (
+                <div key={p.name} className={`rounded-xl border bg-white p-3 ${atRisk ? "border-l-4 border-l-red-400" : "border-l-4 border-l-green-400"}`}>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-gray-900">{p.name}</span>
                     <span className="text-xs text-gray-500">{p.primary_region} → {p.secondary_region}</span>
                     <span className={`rounded px-1.5 py-0.5 text-[11px] ${p.healthy ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
                       {p.healthy ? "✓ " : "✗ "}{p.replication_health}
                     </span>
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] ${p.stale ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-                      {p.last_failover_test_age_days == null ? "Never drilled" : `Last drill ${p.last_failover_test_age_days}d ago`}{p.stale ? " · stale" : ""}
+                    <span className={`rounded px-1.5 py-0.5 text-[11px] ${p.stale || neverDrilled ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                      {neverDrilled ? "Never drilled" : `Last drill ${p.last_failover_test_age_days}d ago`}{p.stale ? " · stale" : ""}
                     </span>
+                    {atRisk && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">⚠ DR SLA at risk</span>}
                     <span className="ml-auto text-[11px] text-gray-400">{p.protected_items} protected item(s)</span>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         ) : visibleGroups.length === 0 ? (
@@ -504,36 +623,7 @@ export function BackupDrCoveragePanel() {
                     </span>
                   </button>
                   {!isCollapsed && (
-                    <div className="overflow-x-auto border-t">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500">
-                          <tr>
-                            <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Resource</th>
-                            {g.checks.map((c) => <th key={c} className="px-2 py-2 text-center font-medium">{CHECK_LABEL[c] || c}</th>)}
-                            <th className="px-2 py-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {g.rows.map((row) => (
-                            <tr key={row.resource_id} className="border-t hover:bg-gray-50">
-                              <td className="sticky left-0 bg-white px-3 py-2">
-                                <button onClick={() => openDrawer(g, row)} className="text-left">
-                                  <div className="font-medium text-gray-800">{row.resource_name}</div>
-                                  <div className="text-[10px] text-gray-400">{row.region}</div>
-                                </button>
-                              </td>
-                              {g.checks.map((c) => {
-                                const cell = row.cells.find((x) => x.check === c);
-                                return cell ? <Cell key={c} cell={cell} /> : <td key={c} className="px-2 py-2 text-center text-gray-300">–</td>;
-                              })}
-                              <td className="px-2 py-2 text-right">
-                                <button onClick={() => openDrawer(g, row)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open</button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <BackupMatrixBody group={g} openDrawer={openDrawer} />
                   )}
                 </section>
               );

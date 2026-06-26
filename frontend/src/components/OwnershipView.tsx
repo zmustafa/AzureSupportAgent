@@ -2,7 +2,7 @@
 // and (in later phases) coverage, suggestions, my-estate and attestation. URL-driven tabs
 // (/ownership/:tab) so a refresh restores the view. User-level (ownership.read to view,
 // ownership.write to mutate).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +18,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { Skeleton, InlineSearch, useDebounced, VirtualList } from "../utils/perf";
 import { OWNERSHIP_NAV, type OwnershipTab } from "./navConfig";
 import { type ScopeKind } from "./ScopePicker";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
@@ -65,12 +66,37 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
   // My Estate) are a tenant-wide directory, so they don't.
   const scopeAware = tab === "assignments" || tab === "coverage" || tab === "suggestions" || tab === "attestation";
   // Deep link: /ownership/<tab>?workload_id=… (e.g. from the workload detail page) opens this
-  // section already scoped to that workload.
+  // section already scoped to that workload. OU2 — also accept ?scope=sub&sub=… and reflect the
+  // active scope back into the URL so a scoped view is shareable / restored.
   useEffect(() => {
-    const wid = new URLSearchParams(window.location.search).get("workload_id");
-    if (wid) setScope({ kind: "workload", workloadId: wid, subId: "", subName: "" });
+    const sp = new URLSearchParams(window.location.search);
+    const wid = sp.get("workload_id");
+    if (wid) { setScope({ kind: "workload", workloadId: wid, subId: "", subName: "" }); return; }
+    const sk = sp.get("scope");
+    if (sk === "subscription" && sp.get("sub")) {
+      setScope({ kind: "subscription", workloadId: "", subId: sp.get("sub")!, subName: sp.get("subName") || "" });
+    } else if (sk === "workload" && sp.get("wid")) {
+      setScope({ kind: "workload", workloadId: sp.get("wid")!, subId: "", subName: "" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // OU2 — reflect the active scope into the URL (shareable / back-aware).
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    next.delete("workload_id");
+    if (scope.kind === "subscription" && scope.subId) {
+      next.set("scope", "subscription"); next.set("sub", scope.subId);
+      if (scope.subName) next.set("subName", scope.subName); else next.delete("subName");
+      next.delete("wid");
+    } else if (scope.kind === "workload" && scope.workloadId) {
+      next.set("scope", "workload"); next.set("wid", scope.workloadId);
+      next.delete("sub"); next.delete("subName");
+    } else {
+      next.delete("scope"); next.delete("sub"); next.delete("subName"); next.delete("wid");
+    }
+    const qs = next.toString();
+    window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+  }, [scope]);
   // Switching connection: a previously picked subscription/workload may not belong to the new
   // connection, so reset to Tenant and refetch every scope-aware query.
   const onConnectionChange = (id: string) => {
@@ -88,7 +114,9 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
           </div>
           {scopeAware && (
             <div className="flex items-center gap-2">
-              <ConnectionScopePicker value={connectionId} onChange={onConnectionChange} align="right" />
+              {/* OU3 — Attestation reads the shared owner directory (connection-independent), so
+                  its connection picker was a no-op; hide it there while keeping the scope bar. */}
+              {tab !== "attestation" && <ConnectionScopePicker value={connectionId} onChange={onConnectionChange} align="right" />}
               <OwnershipScopeBar scope={scope} onChange={setScope} connectionId={connectionId} />
             </div>
           )}
@@ -186,8 +214,12 @@ function DirectoryTab() {
   const [importing, setImporting] = useState(false);
   const [tagApply, setTagApply] = useState(false);
   const [showRevisions, setShowRevisions] = useState(false);
+  const [oq, setOq] = useState("");
+  const [kindFilter, setKindFilter] = usePersistedState<string>("azsup.ownership.dir.kind", "all");
+  const [sortBy, setSortBy] = usePersistedState<string>("azsup.ownership.dir.sort", "name");
+  const dOq = useDebounced(oq, 150);
 
-  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners });
+  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners, staleTime: 5 * 60 * 1000 });
   const trashQ = useQuery({ queryKey: ["ownership", "owners", "trash"], queryFn: api.ownersTrash, enabled: showTrash });
 
   const invalidate = () => {
@@ -210,11 +242,39 @@ function DirectoryTab() {
   });
 
   const owners = ownersQ.data?.owners ?? [];
+  // OU1 — search / kind-filter / sort the owners directory (previously had none).
+  const shownOwners = useMemo(() => {
+    const t = dOq.trim().toLowerCase();
+    let list = owners.filter((o) => {
+      if (kindFilter !== "all" && o.kind !== kindFilter) return false;
+      if (t && !`${o.display_name} ${o.email ?? ""} ${o.kind}`.toLowerCase().includes(t)) return false;
+      return true;
+    });
+    list = [...list].sort((a, b) => {
+      if (sortBy === "assigned") return (b.assignment_count ?? 0) - (a.assignment_count ?? 0);
+      if (sortBy === "kind") return a.kind.localeCompare(b.kind) || a.display_name.localeCompare(b.display_name);
+      return a.display_name.localeCompare(b.display_name);
+    });
+    return list;
+  }, [owners, dOq, kindFilter, sortBy]);
 
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm text-gray-500">{owners.length} owner{owners.length === 1 ? "" : "s"}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <InlineSearch q={oq} setQ={setOq} shown={shownOwners.length} total={owners.length} placeholder="Search owners…" width="w-52" />
+          <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} className="rounded-md border px-2 py-1 text-xs text-gray-600">
+            <option value="all">All kinds</option>
+            <option value="person">People</option>
+            <option value="team">Teams</option>
+            <option value="service">Service</option>
+          </select>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort owners" className="rounded-md border px-2 py-1 text-xs text-gray-600">
+            <option value="name">Sort: Name</option>
+            <option value="assigned">Sort: Most assigned</option>
+            <option value="kind">Sort: Kind</option>
+          </select>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <OwnerExportButtons />
           <button onClick={() => setImporting(true)} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">📥 Import</button>
@@ -237,8 +297,8 @@ function DirectoryTab() {
         </div>
       </div>
 
-      {importing && <OwnerImportModal onClose={() => setImporting(false)} onImported={invalidate} />}
-      {tagApply && <OwnerTagApplyModal onClose={() => setTagApply(false)} onApplied={() => qc.invalidateQueries({ queryKey: ["tag-revisions", "ownership"] })} />}
+      {importing && <OwnerImportModal onClose={() => setImporting(false)} onImported={() => { invalidate(); setMsg("✓ Owners imported."); }} />}
+      {tagApply && <OwnerTagApplyModal onClose={() => setTagApply(false)} onApplied={() => { qc.invalidateQueries({ queryKey: ["tag-revisions", "ownership"] }); setMsg("✓ Owner tags applied to Azure resources."); }} />}
       {showRevisions && <div className="mb-4"><TagRevisionsPanel mode="ownership" /></div>}
 
       {msg && <div className="mb-3 rounded-lg border bg-white px-3 py-2 text-sm text-gray-600">{msg}</div>}
@@ -275,12 +335,31 @@ function DirectoryTab() {
       ) : owners.length === 0 ? (
         <div className="rounded-xl border border-dashed bg-white p-10 text-center">
           <p className="text-sm text-gray-500">No owners yet. Add a person or team — pick from your directory (SSO / Entra) or type one in.</p>
+          {/* OU6 — actionable empty-state CTA. */}
+          <button onClick={() => { setEditing(null); setPicking(true); }} className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark">+ Add owner</button>
         </div>
+      ) : ownersQ.isLoading ? (
+        <Skeleton rows={6} />
+      ) : shownOwners.length > 60 ? (
+        // OP2 — virtualize the owners grid at scale (chunk into rows of 3 cards).
+        <VirtualList
+          items={Array.from({ length: Math.ceil(shownOwners.length / 3) }, (_, i) => shownOwners.slice(i * 3, i * 3 + 3))}
+          estimateSize={150}
+          max="64vh"
+          render={(rowOwners: Owner[]) => (
+            <div className="grid gap-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
+              {rowOwners.map((o) => (
+                <OwnerCard key={o.id} owner={o} onEdit={() => { setEditing(o); setPicking(true); }} onDelete={() => del.mutate(o.id)} />
+              ))}
+            </div>
+          )}
+        />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {owners.map((o) => (
+          {shownOwners.map((o) => (
             <OwnerCard key={o.id} owner={o} onEdit={() => { setEditing(o); setPicking(true); }} onDelete={() => del.mutate(o.id)} />
           ))}
+          {shownOwners.length === 0 && <p className="col-span-full py-6 text-center text-sm text-gray-400">No owners match the filters.</p>}
         </div>
       )}
 
@@ -337,7 +416,7 @@ function OwnerEditorModal({ owner, onClose, onSaved }: { owner: Owner | null; on
   const [err, setErr] = useState("");
 
   // Other owners that this one can delegate accountability to (only when editing).
-  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners, enabled: !!owner });
+  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners, enabled: !!owner, staleTime: 5 * 60 * 1000 });
 
   const save = useMutation({
     mutationFn: () =>
@@ -496,7 +575,7 @@ function AssignmentsTab({ scope, connectionId }: { scope: OwnershipScope; connec
   const qc = useQueryClient();
   const [assigning, setAssigning] = useState<OwnershipSubject | null>(null);
   const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}:${connectionId}`;
-  const subjectsQ = useQuery({ queryKey: ["ownership", "subjects", scopeKey], queryFn: () => api.ownershipSubjects(scope, connectionId) });
+  const subjectsQ = useQuery({ queryKey: ["ownership", "subjects", scopeKey], queryFn: () => api.ownershipSubjects(scope, connectionId), staleTime: 5 * 60 * 1000 });
 
   const subjects = subjectsQ.data?.subjects ?? [];
   const owned = subjectsQ.data?.owned ?? 0;
@@ -576,7 +655,7 @@ function AssignModal({ subject, onClose, onSaved }: { subject: OwnershipSubject;
   const [primary, setPrimary] = useState(true);
   const [err, setErr] = useState("");
 
-  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners });
+  const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners, staleTime: 5 * 60 * 1000 });
   const existingQ = useQuery({
     queryKey: ["ownership", "assignments", subject.subject_kind, subject.subject_id],
     queryFn: () => api.ownershipAssignments({ subject_kind: subject.subject_kind, subject_id: subject.subject_id }),
@@ -716,11 +795,13 @@ function CoverageTab({ scope, onScopeChange, connectionId }: { scope: OwnershipS
     queryKey: ["ownership", "coverage", covKind, sid, connectionId],
     queryFn: () => api.ownershipCoverage(covKind, scope.workloadId, scope.subId, connectionId),
     enabled: loaded,
+    staleTime: 5 * 60 * 1000,
   });
   const trendQ = useQuery({
     queryKey: ["ownership", "trend", covKind, sid, connectionId],
     queryFn: () => api.ownershipTrend(covKind, scope.workloadId, scope.subId, connectionId),
     enabled: loaded,
+    staleTime: 5 * 60 * 1000,
   });
 
   const load = async () => {
@@ -770,6 +851,15 @@ function CoverageTab({ scope, onScopeChange, connectionId }: { scope: OwnershipS
       </div>
 
       {err && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
+
+      {/* OU5 — stale-coverage nudge: owner coverage drifts as resources/tags change; prompt a
+          rescan when the loaded snapshot is more than a day old. */}
+      {showData && !data!.error && data!.generated_at && (Date.now() - new Date(data!.generated_at).getTime()) > 24 * 3600 * 1000 && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          This coverage snapshot is {Math.floor((Date.now() - new Date(data!.generated_at).getTime()) / (24 * 3600 * 1000))}d old — ownership may have changed.
+          <button onClick={refresh} disabled={busy} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Rescan</button>
+        </div>
+      )}
 
       {scope.kind === "tenant" ? (
         <Empty hint="Use the Scope selector above — choose a Subscription or Workload — to compute owner coverage." />
@@ -886,7 +976,7 @@ function Empty({ hint }: { hint: string }) {
 
 // ============================================================ My Estate (owner cockpit)
 function EstateTab() {
-  const meQ = useQuery({ queryKey: ["ownership", "estate", "me"], queryFn: () => api.ownershipEstate() });
+  const meQ = useQuery({ queryKey: ["ownership", "estate", "me"], queryFn: () => api.ownershipEstate(), staleTime: 5 * 60 * 1000 });
   const ownersQ = useQuery({ queryKey: ["ownership", "owners"], queryFn: api.ownershipOwners });
   const [ownerId, setOwnerId] = useState("");
   const ownerQ = useQuery({
@@ -970,7 +1060,7 @@ function SuggestionsTab({ scope, connectionId }: { scope: OwnershipScope; connec
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState("");
   const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}:${connectionId}`;
-  const suggQ = useQuery({ queryKey: ["ownership", "suggestions", scopeKey], queryFn: () => api.ownershipSuggestions(scope, connectionId) });
+  const suggQ = useQuery({ queryKey: ["ownership", "suggestions", scopeKey], queryFn: () => api.ownershipSuggestions(scope, connectionId), staleTime: 5 * 60 * 1000 });
 
   const accept = useMutation({
     mutationFn: (s: OwnershipSuggestion) => api.acceptSuggestion(s),
@@ -1042,7 +1132,7 @@ const ATT_CLS: Record<string, string> = {
 function AttestationTab({ scope }: { scope: OwnershipScope }) {
   const qc = useQueryClient();
   const scopeKey = `${scope.kind}:${scope.workloadId}:${scope.subId}`;
-  const attQ = useQuery({ queryKey: ["ownership", "attestation", scopeKey], queryFn: () => api.ownershipAttestation(scope) });
+  const attQ = useQuery({ queryKey: ["ownership", "attestation", scopeKey], queryFn: () => api.ownershipAttestation(scope), staleTime: 5 * 60 * 1000 });
   const leaverQ = useQuery({ queryKey: ["ownership", "leavers"], queryFn: api.ownershipLeavers });
 
   const attest = useMutation({

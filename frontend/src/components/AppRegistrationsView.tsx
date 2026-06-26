@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegistration, type AppRegistrationsResponse } from "../api";
 import { formatError } from "../utils/format";
+import { Skeleton, useDebounced, VirtualList } from "../utils/perf";
 
 function agoText(seconds: number | null): string {
   if (seconds == null) return "never";
@@ -78,13 +78,11 @@ function FacetRow({ label, count, active, onClick }: { label: string; count?: nu
   );
 }
 
-function Kpi({ label, value, tone }: { label: string; value: number; tone?: string }) {
-  return (
-    <div className="rounded-lg border bg-white px-3 py-2">
-      <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
-      <div className="truncate text-[11px] text-gray-500">{label}</div>
-    </div>
-  );
+function Kpi({ label, value, tone, active, onClick }: { label: string; value: number; tone?: string; active?: boolean; onClick?: () => void }) {
+  const base = `rounded-lg border bg-white px-3 py-2 text-left transition ${active ? "ring-2 ring-brand border-brand" : ""}`;
+  const inner = (<><div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div><div className="truncate text-[11px] text-gray-500">{label}</div></>);
+  if (!onClick) return <div className={base}>{inner}</div>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
 }
 
 export function AppRegistrationsView({ connectionId = null }: { connectionId?: string | null }) {
@@ -99,6 +97,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   // Filters
   const [text, setText] = useState("");
+  const dText = useDebounced(text, 150);
   const [audSel, setAudSel] = useState<Set<string>>(new Set());
   const [permTypeSel, setPermTypeSel] = useState<Set<"Application" | "Delegated">>(new Set());
   const [credSel, setCredSel] = useState<Set<CredFilter>>(new Set());
@@ -204,7 +203,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
       for (const o of ownerSel) if (owners.has(o)) ok = true;
       if (!ok) return false;
     }
-    const t = text.trim().toLowerCase();
+    const t = dText.trim().toLowerCase();
     if (t) {
       const hay = `${a.displayName} ${a.appId} ${a.publisherDomain} ${a.tags.join(" ")} ${a.owners.join(" ")}`.toLowerCase();
       if (!hay.includes(t)) return false;
@@ -212,7 +211,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     return true;
   }
 
-  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, text]);
+  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, dText]);
 
   // Counts for the fixed facet rows (computed over the full app set, like the other facets).
   const facetCounts = useMemo(() => {
@@ -271,7 +270,12 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     link.download = "app-registrations.csv";
     link.click();
     URL.revokeObjectURL(url);
+    // IU6 — confirm the export (count reflects the active filters).
+    setMsg({ text: `Exported ${filtered.length} app registration${filtered.length === 1 ? "" : "s"} to CSV`, ok: true });
   }
+
+  // IU5 — toggle a credential facet from a KPI tile.
+  const toggleCred = (c: CredFilter) => { const n = new Set(credSel); n.has(c) ? n.delete(c) : n.add(c); setCredSel(n); };
 
   const s = data?.summary;
 
@@ -338,21 +342,28 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
         {/* Source provenance */}
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
-          <span>Source: {data?.source === "microsoft_graph" ? "Microsoft Graph" : "demo dummy data"}</span>
+          <span>Source: {data?.source === "microsoft_graph" ? "Microsoft Graph" : data?.source === "unavailable" ? "unavailable" : "demo dummy data"}</span>
           {data?.note && <span className="text-amber-600">· {data.note}</span>}
         </div>
 
         {/* KPI row */}
         {s && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-            <Kpi label="App registrations" value={s.total} />
-            <Kpi label="With secrets" value={s.withSecrets} />
-            <Kpi label="With certs" value={s.withCerts} />
-            <Kpi label="Expiring ≤30d" value={s.expiringSoon} tone={s.expiringSoon ? "text-orange-600" : undefined} />
-            <Kpi label="Expired creds" value={s.expired} tone={s.expired ? "text-red-600" : undefined} />
-            <Kpi label="High risk" value={s.highRisk} tone={s.highRisk ? "text-red-600" : undefined} />
-            <Kpi label="Ownerless" value={s.ownerless} tone={s.ownerless ? "text-amber-600" : undefined} />
+            <Kpi label="App registrations" value={s.total} active={!anyFilter} onClick={clearAll} />
+            <Kpi label="With secrets" value={s.withSecrets} active={credSel.has("secrets")} onClick={() => toggleCred("secrets")} />
+            <Kpi label="With certs" value={s.withCerts} active={credSel.has("certs")} onClick={() => toggleCred("certs")} />
+            <Kpi label="Expiring ≤30d" value={s.expiringSoon} tone={s.expiringSoon ? "text-orange-600" : undefined} active={credSel.has("expiring")} onClick={() => toggleCred("expiring")} />
+            <Kpi label="Expired creds" value={s.expired} tone={s.expired ? "text-red-600" : undefined} active={credSel.has("expired")} onClick={() => toggleCred("expired")} />
+            <Kpi label="High risk" value={s.highRisk} tone={s.highRisk ? "text-red-600" : undefined} active={highRiskOnly} onClick={() => setHighRiskOnly(!highRiskOnly)} />
+            <Kpi label="Ownerless" value={s.ownerless} tone={s.ownerless ? "text-amber-600" : undefined} active={ownerSel.has("(ownerless)")} onClick={() => { const n = new Set(ownerSel); n.has("(ownerless)") ? n.delete("(ownerless)") : n.add("(ownerless)"); setOwnerSel(n); }} />
             <Kpi label="App / Delegated perms" value={s.applicationPerms + s.delegatedPerms} />
+          </div>
+        )}
+        {/* IU4 — stale-cache nudge once the snapshot is more than a day old. */}
+        {data && !data.never_loaded && typeof data.age_seconds === "number" && data.age_seconds > 24 * 3600 && (
+          <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
+            App-registration snapshot is {agoText(data.age_seconds)} — credentials &amp; owners may have changed.
+            <button onClick={() => void doRefresh()} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
           </div>
         )}
       </div>
@@ -472,147 +483,123 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
             <span className="text-gray-500">
               {filtered.length} of {apps.length} app registration(s)
             </span>
+            {data?.truncated && (
+              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={`The refresh enumerates up to ${data.limit ?? 200} apps; raise the cap to see more.`}>
+                first {data.limit ?? 200} (capped)
+              </span>
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto">
             {q.isLoading ? (
-              <div className="py-16 text-center text-sm text-gray-400">Loading app registrations…</div>
+              <div className="p-6"><Skeleton rows={8} /></div>
             ) : q.isError ? (
               <div className="m-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(q.error)}</div>
             ) : data?.never_loaded ? (
               <div className="py-16 text-center text-sm text-gray-400">
                 Not loaded yet. Press <b>↻ Refresh</b> to pull the current Entra ID app registrations.
               </div>
+            ) : data?.connection_failed ? (
+              <div className="mx-auto max-w-xl py-16 text-center">
+                <div className="text-2xl">🔌</div>
+                <div className="mt-2 text-sm font-medium text-gray-700">Couldn’t read app registrations for this connection</div>
+                <div className="mx-auto mt-1 max-w-lg text-xs text-gray-500">{data.note || "This connection can’t authenticate to Microsoft Graph."}</div>
+                <div className="mx-auto mt-2 max-w-lg text-[11px] text-gray-400">App Registrations need a service-principal connection (client id + secret/cert) granted <b>Directory.Read.All</b> / <b>Application.Read.All</b>. Fix the connection in Settings → Azure Tenants, then Refresh.</div>
+              </div>
             ) : !filtered.length ? (
               <div className="py-16 text-center text-sm text-gray-400">No app registrations match the current filters.</div>
             ) : (
-              <table className="w-full border-collapse text-sm">
-                <thead className="sticky top-0 z-10 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Name</th>
-                    <th className="px-3 py-2 font-semibold">Audience</th>
-                    <th className="px-3 py-2 text-center font-semibold">Secrets</th>
-                    <th className="px-3 py-2 text-center font-semibold">Certs</th>
-                    <th className="px-3 py-2 text-center font-semibold">App perms</th>
-                    <th className="px-3 py-2 text-center font-semibold">Delegated</th>
-                    <th className="px-3 py-2 font-semibold">Next expiry</th>
-                    <th className="px-3 py-2 font-semibold">Owners</th>
-                    <th className="px-3 py-2 font-semibold">Risk</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((a) => {
+              <>
+                {/* IP1 — virtualized header + rows (expandable detail rendered inline; VirtualList
+                    measures variable heights). Was a plain <table> mapping every row. */}
+                <div className="sticky top-0 z-10 grid grid-cols-[2fr_1fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                  <span>Name</span><span>Audience</span><span className="text-center">Secrets</span><span className="text-center">Certs</span>
+                  <span className="text-center">App perms</span><span className="text-center">Delegated</span><span>Next expiry</span><span>Owners</span><span>Risk</span>
+                </div>
+                <VirtualList
+                  items={filtered}
+                  estimateSize={48}
+                  max="100%"
+                  render={(a: AppRegistration) => {
                     const open = expanded === a.id;
                     return (
-                      <Fragment key={a.id}>
-                        <tr
+                      <div className="border-b border-gray-100">
+                        <div
                           onClick={() => setExpanded(open ? null : a.id)}
-                          className="cursor-pointer border-b border-gray-100 hover:bg-gray-50"
+                          className="grid cursor-pointer grid-cols-[2fr_1fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
                         >
-                          <td className="px-3 py-2">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-gray-400">{open ? "▾" : "▸"}</span>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="truncate font-medium text-gray-900">{a.displayName}</span>
-                                  <a
-                                    href={portalUrl(a)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    title="Open in Azure portal"
-                                    className="shrink-0 text-gray-400 hover:text-brand"
-                                  >
-                                    ↗
-                                  </a>
-                                </div>
-                                <div className="truncate font-mono text-[10px] text-gray-400">{a.appId}</div>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="text-gray-400">{open ? "▾" : "▸"}</span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate font-medium text-gray-900">{a.displayName}</span>
+                                <a href={portalUrl(a)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="Open in Azure portal" className="shrink-0 text-gray-400 hover:text-brand">↗</a>
+                              </div>
+                              <div className="truncate font-mono text-[10px] text-gray-400">{a.appId}</div>
+                            </div>
+                          </div>
+                          <span className="truncate text-xs text-gray-600">{AUDIENCE_LABEL[a.signInAudience] ?? a.signInAudience}</span>
+                          <span className="text-center tabular-nums">{a.secretsCount || <span className="text-gray-300">0</span>}</span>
+                          <span className="text-center tabular-nums">{a.certsCount || <span className="text-gray-300">0</span>}</span>
+                          <span className="text-center tabular-nums">{a.applicationPermissionsCount ? <span className="font-medium text-red-600">{a.applicationPermissionsCount}</span> : <span className="text-gray-300">0</span>}</span>
+                          <span className="text-center tabular-nums">{a.delegatedPermissionsCount || <span className="text-gray-300">0</span>}</span>
+                          <span><ExpiryBadge days={a.nextExpiryDays} /></span>
+                          <span className="truncate text-xs text-gray-600">
+                            {a.ownerless ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
+                          </span>
+                          <span>{a.highRisk ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">high</span> : <span className="text-gray-300">—</span>}</span>
+                        </div>
+                        {open && (
+                          <div className="bg-gray-50/60 px-6 py-3">
+                            <div className="mb-3">
+                              <a href={portalUrl(a)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-brand/30 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/5">↗ Open in Azure portal</a>
+                            </div>
+                            <div className="grid gap-4 lg:grid-cols-2">
+                              <div>
+                                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Credentials ({a.credentials.length})</div>
+                                {a.credentials.length ? (
+                                  <ul className="space-y-1">
+                                    {a.credentials.map((c, i) => (
+                                      <li key={i} className="flex items-center gap-2 text-xs">
+                                        <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">{c.type === "certificate" ? "cert" : "secret"}</span>
+                                        <span className="text-gray-700">{c.displayName || "(unnamed)"}</span>
+                                        <ExpiryBadge days={c.daysUntilExpiry} />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div className="text-xs text-gray-400">No credentials (public client).</div>
+                                )}
+                                {a.tags.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    {a.tags.map((t) => (<span key={t} className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">{t}</span>))}
+                                  </div>
+                                )}
+                              </div>
+                              <div>
+                                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">API permissions ({a.permissions.length})</div>
+                                {a.permissions.length ? (
+                                  <ul className="space-y-1">
+                                    {a.permissions.map((p, i) => (
+                                      <li key={i} className="flex items-center gap-2 text-xs">
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${p.type === "Application" ? "bg-violet-100 text-violet-700" : "bg-emerald-100 text-emerald-700"}`}>{p.type}</span>
+                                        <span className="font-mono text-gray-700">{p.value}</span>
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${RISK_CLS[p.risk]}`}>{p.risk}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div className="text-xs text-gray-400">No API permissions.</div>
+                                )}
                               </div>
                             </div>
-                          </td>
-                          <td className="px-3 py-2 text-xs text-gray-600">{AUDIENCE_LABEL[a.signInAudience] ?? a.signInAudience}</td>
-                          <td className="px-3 py-2 text-center tabular-nums">{a.secretsCount || <span className="text-gray-300">0</span>}</td>
-                          <td className="px-3 py-2 text-center tabular-nums">{a.certsCount || <span className="text-gray-300">0</span>}</td>
-                          <td className="px-3 py-2 text-center tabular-nums">{a.applicationPermissionsCount ? <span className="font-medium text-red-600">{a.applicationPermissionsCount}</span> : <span className="text-gray-300">0</span>}</td>
-                          <td className="px-3 py-2 text-center tabular-nums">{a.delegatedPermissionsCount || <span className="text-gray-300">0</span>}</td>
-                          <td className="px-3 py-2"><ExpiryBadge days={a.nextExpiryDays} /></td>
-                          <td className="px-3 py-2 text-xs text-gray-600">
-                            {a.ownerless ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
-                          </td>
-                          <td className="px-3 py-2">
-                            {a.highRisk ? (
-                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-700">high</span>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
-                          </td>
-                        </tr>
-                        {open && (
-                          <tr className="border-b border-gray-100 bg-gray-50/60">
-                            <td colSpan={9} className="px-6 py-3">
-                              <div className="mb-3">
-                                <a
-                                  href={portalUrl(a)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-brand/30 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/5"
-                                >
-                                  ↗ Open in Azure portal
-                                </a>
-                              </div>
-                              <div className="grid gap-4 lg:grid-cols-2">
-                                <div>
-                                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                                    Credentials ({a.credentials.length})
-                                  </div>
-                                  {a.credentials.length ? (
-                                    <ul className="space-y-1">
-                                      {a.credentials.map((c, i) => (
-                                        <li key={i} className="flex items-center gap-2 text-xs">
-                                          <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">{c.type === "certificate" ? "cert" : "secret"}</span>
-                                          <span className="text-gray-700">{c.displayName || "(unnamed)"}</span>
-                                          <ExpiryBadge days={c.daysUntilExpiry} />
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <div className="text-xs text-gray-400">No credentials (public client).</div>
-                                  )}
-                                  {a.tags.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-1">
-                                      {a.tags.map((t) => (
-                                        <span key={t} className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700">{t}</span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                                    API permissions ({a.permissions.length})
-                                  </div>
-                                  {a.permissions.length ? (
-                                    <ul className="space-y-1">
-                                      {a.permissions.map((p, i) => (
-                                        <li key={i} className="flex items-center gap-2 text-xs">
-                                          <span className={`rounded px-1.5 py-0.5 text-[10px] ${p.type === "Application" ? "bg-violet-100 text-violet-700" : "bg-emerald-100 text-emerald-700"}`}>{p.type}</span>
-                                          <span className="font-mono text-gray-700">{p.value}</span>
-                                          <span className={`rounded px-1.5 py-0.5 text-[10px] ${RISK_CLS[p.risk]}`}>{p.risk}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <div className="text-xs text-gray-400">No API permissions.</div>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
+                          </div>
                         )}
-                      </Fragment>
+                      </div>
                     );
-                  })}
-                </tbody>
-              </table>
+                  }}
+                />
+              </>
             )}
           </div>
         </div>

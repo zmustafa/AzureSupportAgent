@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   api,
   type IdentityFinding,
@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { Skeleton, useDebounced } from "../utils/perf";
 import { IDENTITY_NAV, type IdentityTab } from "./navConfig";
 import { AppRegistrationsView } from "./AppRegistrationsView";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
@@ -103,19 +104,34 @@ export function IdentityPanel({ tab = "overview" }: { tab?: IdentityTab }) {
 function IdentityFindingsPanel({ connectionId = null }: { connectionId?: string | null }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [days, setDays] = useState(90);
+  const [, setParams] = useSearchParams();
+  const p0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [days, setDays] = useState(Number(p0.get("days")) || 90);
   const [customDays, setCustomDays] = useState("");
-  const [query, setQuery] = useState("");
-  const [sevFilter, setSevFilter] = useState("all");
-  const [mappedOnly, setMappedOnly] = useState(false);
+  const [query, setQuery] = useState(p0.get("q") || "");
+  const dQuery = useDebounced(query, 150);
+  const [sevFilter, setSevFilter] = useState(p0.get("sev") || "all");
+  const [mappedOnly, setMappedOnly] = useState(p0.get("mapped") === "1");
   const [collapsed, setCollapsed] = useState<Set<IdentityGroupKey>>(new Set());
   const [ticketFor, setTicketFor] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
 
+  // IU2 — reflect the window + filters into the URL (shareable / restored on reload).
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (days !== 90) next.set("days", String(days)); else next.delete("days");
+    if (sevFilter !== "all") next.set("sev", sevFilter); else next.delete("sev");
+    if (mappedOnly) next.set("mapped", "1"); else next.delete("mapped");
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, sevFilter, mappedOnly, query]);
+
   const overviewQ = useQuery({
     queryKey: ["identity", days, connectionId],
     queryFn: () => api.identityOverview(days, connectionId),
+    staleTime: 5 * 60 * 1000,
   });
   const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
   const ticketConnectors = (connectorsQ.data?.connectors ?? []).filter(
@@ -162,7 +178,7 @@ function IdentityFindingsPanel({ connectionId = null }: { connectionId?: string 
   function matchesFilters(f: IdentityFinding): boolean {
     if (sevFilter !== "all" && f.severity !== sevFilter) return false;
     if (mappedOnly && !f.workload_id) return false;
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     if (q && !(`${f.title} ${f.subject} ${f.detail} ${f.workload_name ?? ""}`.toLowerCase().includes(q)))
       return false;
     return true;
@@ -217,7 +233,7 @@ function IdentityFindingsPanel({ connectionId = null }: { connectionId?: string 
     for (const g of GROUPS) out[g.key] = (data.groups[g.key] ?? []).filter(matchesFilters);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, query, sevFilter, mappedOnly]);
+  }, [data, dQuery, sevFilter, mappedOnly]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
@@ -331,7 +347,7 @@ function IdentityFindingsPanel({ connectionId = null }: { connectionId?: string 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
         {overviewQ.isLoading ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading identity posture…</div>
+          <div className="p-6"><Skeleton rows={8} /></div>
         ) : overviewQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {formatError(overviewQ.error)}

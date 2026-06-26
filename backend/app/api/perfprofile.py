@@ -6,6 +6,7 @@ Findings register under the Performance pillar; ticketing + War-Room handoff inc
 Admin-gated. Read-only — uses az monitor metrics list only."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -426,19 +427,32 @@ async def refresh_stream(
                 for r in snap.get("resources", []):
                     yield {"event": "progress", "data": json.dumps({"resource": r["resource_name"], "type": r["resource_type"]})}
             else:
-                events: list[dict[str, Any]] = []
+                # PP4 — stream per-resource progress LIVE (not replayed after the scan): the
+                # collector's progress callback pushes onto a queue that we drain concurrently
+                # while the profile runs in a background task.
+                connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
+                queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
                 async def _collect(name: str, rtype: str):
-                    events.append({"resource": name, "type": rtype})
+                    await queue.put({"resource": name, "type": rtype})
 
-                connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
-                snap = await profile_workload(
-                    connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
-                    timespan=eff_window, interval=interval, scan_cap=cap,
-                    start_time=st, end_time=et, progress=_collect,
-                )
-                for e in events:
-                    yield {"event": "progress", "data": json.dumps(e)}
+                async def _run() -> dict[str, Any]:
+                    try:
+                        return await profile_workload(
+                            connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
+                            timespan=eff_window, interval=interval, scan_cap=cap,
+                            start_time=st, end_time=et, progress=_collect,
+                        )
+                    finally:
+                        await queue.put(None)  # sentinel: scan finished
+
+                task = asyncio.create_task(_run())
+                while True:
+                    ev = await queue.get()
+                    if ev is None:
+                        break
+                    yield {"event": "progress", "data": json.dumps(ev)}
+                snap = await task
             snap = dict(snap)
             snap["narrative"] = await narrate(snap, sli_context=_sli_context(scope_kind, scope_id, tenant_id))
             cache.write_snapshot(tenant_id, scope_kind, scope_id, snap)

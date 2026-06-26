@@ -31,9 +31,26 @@ export function ConnectionScopePicker({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Effective menu alignment. Starts from the requested `align`, but is flipped on open if that
+  // edge would push the 288px-wide (w-72) menu off-screen (e.g. a left-of-toolbar picker whose
+  // default right-alignment would extend the menu leftward under the sidebar).
+  const [placement, setPlacement] = useState<"left" | "right">(align);
 
   const connQ = useQuery({ queryKey: ["azure-connections"], queryFn: api.azureConnections, retry: false });
   const conns: TenantOption[] = connQ.data?.connections ?? [];
+
+  useEffect(() => {
+    if (!open) { setPlacement(align); return; }
+    const btn = ref.current?.getBoundingClientRect();
+    if (!btn) return;
+    const MENU_W = 288; // w-72
+    const margin = 8;
+    // Prefer opening RIGHTWARD (left-aligned): a leftward (right-aligned) menu can slide under a
+    // fixed left sidebar even while technically on-screen. Only open leftward when rightward would
+    // overflow the right viewport edge (e.g. a picker pinned to the top-right of a bar).
+    const fitsRightward = btn.left + MENU_W <= window.innerWidth - margin;
+    setPlacement(fitsRightward ? "left" : "right");
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
@@ -87,7 +104,7 @@ export function ConnectionScopePicker({
         <span className="text-gray-400">▾</span>
       </button>
       {open && (
-        <div className={`absolute z-50 mt-1 w-72 rounded-md border bg-white p-1.5 shadow-lg ${align === "left" ? "left-0" : "right-0"}`}>
+        <div className={`absolute z-50 mt-1 w-72 rounded-md border bg-white p-1.5 shadow-lg ${placement === "left" ? "left-0" : "right-0"}`}>
           <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-gray-400">Azure tenant</div>
           {conns.map((c) => (
             <button

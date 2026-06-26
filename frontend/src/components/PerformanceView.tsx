@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Markdown } from "./LazyMarkdown";
 import {
   api,
@@ -12,6 +13,7 @@ import {
   type PerfRunSummary,
 } from "../api";
 import { formatError } from "../utils/format";
+import { useDebounced, Skeleton } from "../utils/perf";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { queryClient } from "../queryClient";
 import { TrendChart } from "./TrendChart";
@@ -65,6 +67,14 @@ function useProfileRuns(): number {
 
 // datetime-local helpers for the time-range picker (default = last 24h).
 function _pad(n: number): string { return String(n).padStart(2, "0"); }
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+      {label}
+      <button onClick={onClear} className="text-brand/60 hover:text-brand">✕</button>
+    </span>
+  );
+}
 function _toLocalInput(d: Date): string {
   return `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}T${_pad(d.getHours())}:${_pad(d.getMinutes())}`;
 }
@@ -262,7 +272,8 @@ export function PerformancePanel() {
   const [ticketOpen, setTicketOpen] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   // Which sub-tab of the analysis is shown: the metric heatmap or the full resource list.
-  const [perfTab, setPerfTab] = useState<"analysis" | "all">("analysis");
+  // PU2 — persisted so the chosen sub-tab survives navigation/reload.
+  const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
@@ -273,8 +284,10 @@ export function PerformancePanel() {
   const [hmRegion, setHmRegion] = useState("");
   const [hmScore, setHmScore] = useState<"all" | "crit" | "risk" | "healthy">("all");
   const [hmSearch, setHmSearch] = useState("");
-  const [hmSort, setHmSort] = useState<"score" | "breaching" | "name">("score");
-  const [hmPrune, setHmPrune] = useState(true);
+  const dHmSearch = useDebounced(hmSearch, 150);
+  // PU2 — persist the sort + prune-empty-columns view prefs.
+  const [hmSort, setHmSort] = usePersistedState<"score" | "breaching" | "name">("azsup.performance.hmSort", "score");
+  const [hmPrune, setHmPrune] = usePersistedState<boolean>("azsup.performance.hmPrune", true);
   // Popover open-state + refs so the Types dropdown (and the ticket menu) close on an
   // outside click or Escape — the native <details> didn't, which felt buggy.
   const [hmTypesOpen, setHmTypesOpen] = useState(false);
@@ -317,6 +330,7 @@ export function PerformancePanel() {
     queryKey: ["perf-runs", scopeKind, effWorkloadId, subId],
     queryFn: () => api.perfRuns(params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const runs = runsQ.data?.runs ?? [];
 
@@ -333,6 +347,7 @@ export function PerformancePanel() {
     queryKey: ["perf-trend", scopeKind, effWorkloadId, subId],
     queryFn: () => api.coverageTrend("performance", params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Clear the shown run when the scope changes.
@@ -411,14 +426,14 @@ export function PerformancePanel() {
     if (hmScore === "crit") rows = rows.filter((r) => r.score < 50);
     else if (hmScore === "risk") rows = rows.filter((r) => r.score >= 50 && r.score < 80);
     else if (hmScore === "healthy") rows = rows.filter((r) => r.score >= 80);
-    const q = hmSearch.trim().toLowerCase();
+    const q = dHmSearch.trim().toLowerCase();
     if (q) rows = rows.filter((r) => r.resource_name.toLowerCase().includes(q) || r.display.toLowerCase().includes(q) || r.resource_type.toLowerCase().includes(q));
     const sorted = [...rows];
     if (hmSort === "score") sorted.sort((a, b) => a.score - b.score || a.resource_name.localeCompare(b.resource_name));
     else if (hmSort === "breaching") sorted.sort((a, b) => breachCellCount(b) - breachCellCount(a) || a.score - b.score);
     else sorted.sort((a, b) => a.resource_name.localeCompare(b.resource_name));
     return sorted;
-  }, [data, hmPosture, hmHideNoData, hmTypes, hmRegion, hmScore, hmSearch, hmSort]);
+  }, [data, hmPosture, hmHideNoData, hmTypes, hmRegion, hmScore, dHmSearch, hmSort]);
 
   // Group the heatmap columns by resource type so the header can show a resource-type band
   // above the vertical metric labels. metricCols stays a flat, type-ordered list (all of a
@@ -448,6 +463,19 @@ export function PerformancePanel() {
     const cols = groups.flatMap((g) => g.metrics.map((m) => ({ ...m, type: g.type })));
     return { metricGroups: groups, metricCols: cols };
   }, [data, filteredResources, hmPrune]);
+
+  // PP1 — windowed heatmap body: only the visible rows are live <tr> (the matrix can be ~200
+  // resources × 30+ metric columns). Spacer rows preserve the sticky header + first-column panes.
+  const matrixScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirt = useVirtualizer({
+    count: filteredResources.length,
+    getScrollElement: () => matrixScrollRef.current,
+    estimateSize: () => 37,
+    overscan: 12,
+  });
+  const vRows = rowVirt.getVirtualItems();
+  const padTop = vRows.length ? vRows[0].start : 0;
+  const padBottom = vRows.length ? rowVirt.getTotalSize() - vRows[vRows.length - 1].end : 0;
 
   function runProfile() {
     if (!enabled || runningHere) return;
@@ -488,6 +516,24 @@ export function PerformancePanel() {
       setBusy("");
     }
   }
+
+  // PU1 — deep-link the viewed run: load `?run=` once on mount, and reflect the loaded run id
+  // back into the URL so a profile is shareable / restored on reload.
+  const [, setSp] = useSearchParams();
+  const runDeepLinked = useRef(false);
+  useEffect(() => {
+    if (runDeepLinked.current) return;
+    runDeepLinked.current = true;
+    const rid = new URLSearchParams(window.location.search).get("run");
+    if (rid) void viewRun(rid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (data?.id) next.set("run", data.id); else next.delete("run");
+    setSp(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.id]);
 
   async function deleteRun(runId: string) {
     if (!window.confirm("Move this profile run to the Trash?")) return;
@@ -796,9 +842,14 @@ export function PerformancePanel() {
             <div className="mt-1 text-[11px] text-gray-400">{runningEntry?.steps ?? 0} step(s) · runs in the background, you can navigate away</div>
           </div>
         ) : !data ? (
+          busy.startsWith("view:") ? (
+            // PU3 — skeleton while loading a historic run (instead of the bare empty card).
+            <div className="rounded-lg border bg-white p-4"><Skeleton rows={10} /></div>
+          ) : (
           <div className="rounded-lg border border-dashed bg-white p-8 text-center text-sm text-gray-400">
             {enabled ? "Run a profile or click View on a historic run to see the analysis here." : "Pick a scope to begin."}
           </div>
+          )
         ) : (
           <>
             <div className="mb-2 flex items-center gap-2 text-[11px] text-gray-400">
@@ -1009,6 +1060,17 @@ export function PerformancePanel() {
                 <button onClick={clearHeatmapFilters} className="rounded border px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50">Clear filters</button>
               )}
             </div>
+            {/* PU4 — active heatmap filter chips. */}
+            {hmFiltersActive && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {hmPosture !== "all" && <FilterChip label={`Posture: ${hmPosture}`} onClear={() => setHmPosture("all")} />}
+                {hmScore !== "all" && <FilterChip label={`Score: ${hmScore}`} onClear={() => setHmScore("all")} />}
+                {hmRegion !== "" && <FilterChip label={`Region: ${hmRegion}`} onClear={() => setHmRegion("")} />}
+                {hmTypes.length > 0 && <FilterChip label={`${hmTypes.length} type(s)`} onClear={() => setHmTypes([])} />}
+                {hmHideNoData && <FilterChip label="Hide no-data" onClear={() => setHmHideNoData(false)} />}
+                {hmSearch.trim() !== "" && <FilterChip label={`“${hmSearch.trim()}”`} onClear={() => setHmSearch("")} />}
+              </div>
+            )}
             </div>
 
             {filteredResources.length === 0 ? (
@@ -1019,7 +1081,7 @@ export function PerformancePanel() {
                 )}
               </div>
             ) : (
-            <div className="mt-2 min-h-0 flex-1 overflow-auto rounded-lg border bg-white">
+            <div ref={matrixScrollRef} className="mt-2 min-h-0 flex-1 overflow-auto rounded-lg border bg-white">
               <table className="w-full text-[12px]">
                 <thead className="bg-gray-50 text-left text-gray-500">
                   <tr>
@@ -1047,11 +1109,13 @@ export function PerformancePanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredResources.map((r) => {
+                  {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+                  {vRows.map((vr) => {
+                    const r = filteredResources[vr.index];
                     const byKey: Record<string, PerfMetricCell> = {};
                     for (const c of r.cells) byKey[`${r.resource_type}|${c.metric}`] = c;
                     return (
-                      <tr key={r.resource_id} className="cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
+                      <tr key={r.resource_id} ref={rowVirt.measureElement} data-index={vr.index} className="cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
                         <td className="sticky left-0 z-10 max-w-[220px] bg-white px-2 py-1.5">
                           <div className="flex items-center gap-1.5">
                             <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${STATE_TONE[r.state]}`} />
@@ -1077,6 +1141,7 @@ export function PerformancePanel() {
                       </tr>
                     );
                   })}
+                  {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
                 </tbody>
               </table>
             </div>

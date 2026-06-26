@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   api,
   type ReservationItem,
@@ -8,6 +9,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { Skeleton, InlineSearch, useDebounced } from "../utils/perf";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_TEXT: Record<string, string> = {
@@ -54,28 +56,45 @@ function agoText(seconds: number | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
-  return (
-    <div className="rounded-lg border bg-white px-3 py-2">
+function Stat({ label, value, tone, active, onClick }: { label: string; value: string | number; tone?: string; active?: boolean; onClick?: () => void }) {
+  const base = `rounded-lg border bg-white px-3 py-2 text-left transition ${active ? "ring-2 ring-brand border-brand" : ""}`;
+  const inner = (
+    <>
       <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
       <div className="truncate text-[11px] text-gray-500">{label}</div>
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={base}>{inner}</div>;
+  return (
+    <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>
+      {inner}
+    </button>
   );
 }
 
 export function ReservationsMonitorPanel() {
   const qc = useQueryClient();
-  const [demo, setDemo] = useState(false);
+  const [, setParams] = useSearchParams();
+  const p0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [demo, setDemo] = usePersistedState<boolean>("azsup.reservations.demo", p0.get("demo") === "1");
   const [connId, setConnId] = usePersistedState<string>("azsup.reservations.connId", "");
   const [refreshing, setRefreshing] = useState(false);
   const [showDigest, setShowDigest] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [q, setQ] = useState(p0.get("q") || "");
+  const dQ = useDebounced(q, 150);
+  const [sortBy, setSortBy] = usePersistedState<string>("azsup.reservations.sort", "days");
+  // RU2 — status + renew + utilization filters (also driven by the KPI drill-through).
+  const [statusF, setStatusF] = useState(p0.get("status") || "all"); // all|urgent|expiring_soon|recently_expired|active
+  const [renewF, setRenewF] = useState(p0.get("renew") || "all");     // all|auto|none
+  const [utilF, setUtilF] = useState(p0.get("util") || "all");        // all|low
 
   // Selecting the view only READS the server cache (no Azure call), so it's safe to load
   // on mount. A miss returns never_loaded so we prompt for Refresh.
   const resQ = useQuery({
     queryKey: ["reservations", demo, connId],
     queryFn: () => api.reservationsOverview(demo, connId),
+    staleTime: 5 * 60 * 1000,
   });
   const data: ReservationsSnapshot | undefined = resQ.data;
   const items = data?.items ?? [];
@@ -87,7 +106,66 @@ export function ReservationsMonitorPanel() {
     enabled: showDigest,
   });
 
-  const sorted = useMemo(() => items, [items]);
+  // RU3 — reflect demo + view filters into the URL so a link / refresh restores the view.
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (demo) next.set("demo", "1"); else next.delete("demo");
+    const setOrDel = (k: string, v: string) => { if (v && v !== "all") next.set(k, v); else next.delete(k); };
+    setOrDel("status", statusF); setOrDel("renew", renewF); setOrDel("util", utilF);
+    if (q.trim()) next.set("q", q.trim()); else next.delete("q");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo, statusF, renewF, utilF, q]);
+
+  // RP2/RU2 — real client-side search + filters + sort over the loaded reservations.
+  const sorted = useMemo(() => {
+    const t = dQ.trim().toLowerCase();
+    let list = items.filter((r) => {
+      if (t && !`${r.display_name} ${r.sku} ${r.reserved_resource_type} ${r.applied_scope_type}`.toLowerCase().includes(t)) return false;
+      if (statusF === "urgent" && r.severity !== "red") return false;
+      if (statusF !== "all" && statusF !== "urgent" && r.bucket !== statusF) return false;
+      if (renewF === "auto" && r.renew !== true) return false;
+      if (renewF === "none" && r.renew !== false) return false;
+      if (utilF === "low" && !(typeof r.utilization_pct === "number" && r.utilization_pct < 25)) return false;
+      return true;
+    });
+    list = [...list].sort((a, b) => {
+      if (sortBy === "utilization") return (a.utilization_pct ?? 999) - (b.utilization_pct ?? 999);
+      if (sortBy === "name") return a.display_name.localeCompare(b.display_name);
+      return (a.days_until ?? 1e9) - (b.days_until ?? 1e9);
+    });
+    return list;
+  }, [items, dQ, sortBy, statusF, renewF, utilF]);
+
+  // RU2 — active-filter chips (each removable).
+  const chips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (statusF !== "all") out.push({ key: "status", label: `Status: ${statusF === "urgent" ? "Urgent" : statusF.replace("_", " ")}`, clear: () => setStatusF("all") });
+    if (renewF !== "all") out.push({ key: "renew", label: renewF === "auto" ? "Auto-renew" : "Not renewing", clear: () => setRenewF("all") });
+    if (utilF === "low") out.push({ key: "util", label: "Low utilization", clear: () => setUtilF("all") });
+    if (q.trim()) out.push({ key: "q", label: `“${q.trim()}”`, clear: () => setQ("") });
+    return out;
+  }, [statusF, renewF, utilF, q]);
+
+  // RU5 — KPI drill-through: clicking a tile toggles the matching filter.
+  const toggle = <T,>(cur: T, set: (v: T) => void, val: T, reset: T) => set(cur === val ? reset : val);
+
+  // RU6 — CSV export of the current (filtered) table + a confirmation toast.
+  function exportCsv() {
+    const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const head = ["Reservation", "SKU", "Term", "Created", "Expires", "Days", "Renew", "Utilization%", "Scope", "Status"];
+    const lines = sorted.map((r) => [
+      r.display_name || r.id, r.sku || r.reserved_resource_type, r.term, (r.created_date || "").slice(0, 10),
+      (r.expiry_date || "").slice(0, 10), r.days_until ?? "", r.renew === true ? "auto" : r.renew === false ? "no" : "",
+      r.utilization_pct ?? "", r.applied_scope_type, r.provisioning_state,
+    ].map(esc).join(","));
+    const blob = new Blob([[head.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `reservations-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setMsg({ text: `Exported ${sorted.length} reservation${sorted.length === 1 ? "" : "s"} to CSV`, ok: true });
+  }
 
   async function doRefresh() {
     setRefreshing(true);
@@ -140,6 +218,13 @@ export function ReservationsMonitorPanel() {
             Showing synthetic demo reservations. Untick “Demo data” for your live tenant.
           </div>
         )}
+        {/* RU4 — stale-data nudge once past the 6h backend TTL. */}
+        {!demo && data && !data.never_loaded && typeof data.age_seconds === "number" && data.age_seconds > 6 * 3600 && (
+          <div className="mt-2 flex items-center gap-2 rounded bg-amber-50 px-2.5 py-1 text-[11px] text-amber-700">
+            Data is {agoText(data.age_seconds)} — reservation status may have changed.
+            <button onClick={doRefresh} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
+          </div>
+        )}
         {msg && (
           <div className={`mt-2 rounded px-2.5 py-1 text-[11px] ${msg.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
             {msg.text}
@@ -150,7 +235,7 @@ export function ReservationsMonitorPanel() {
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto p-5">
         {resQ.isLoading ? (
-          <div className="text-sm text-gray-400">Loading…</div>
+          <div className="p-2"><Skeleton rows={6} /></div>
         ) : notConfigured ? (
           <EmptyCard
             title="No Azure connection configured"
@@ -175,12 +260,12 @@ export function ReservationsMonitorPanel() {
             {/* Summary */}
             {counts && (
               <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                <Stat label="Reservations" value={counts.total} />
-                <Stat label={`Expiring ≤${data?.window_days ?? 60}d`} value={counts.expiring_soon} tone="text-amber-600" />
-                <Stat label="Recently expired" value={counts.recently_expired} tone="text-red-600" />
-                <Stat label="Urgent" value={counts.red} tone="text-red-600" />
-                <Stat label="Not renewing" value={counts.non_renew} tone={counts.non_renew ? "text-red-600" : undefined} />
-                <Stat label="Low utilization" value={counts.low_utilization} tone={counts.low_utilization ? "text-amber-600" : undefined} />
+                <Stat label="Reservations" value={counts.total} active={statusF === "all" && renewF === "all" && utilF === "all"} onClick={() => { setStatusF("all"); setRenewF("all"); setUtilF("all"); }} />
+                <Stat label={`Expiring ≤${data?.window_days ?? 60}d`} value={counts.expiring_soon} tone="text-amber-600" active={statusF === "expiring_soon"} onClick={() => toggle(statusF, setStatusF, "expiring_soon", "all")} />
+                <Stat label="Recently expired" value={counts.recently_expired} tone="text-red-600" active={statusF === "recently_expired"} onClick={() => toggle(statusF, setStatusF, "recently_expired", "all")} />
+                <Stat label="Urgent" value={counts.red} tone="text-red-600" active={statusF === "urgent"} onClick={() => toggle(statusF, setStatusF, "urgent", "all")} />
+                <Stat label="Not renewing" value={counts.non_renew} tone={counts.non_renew ? "text-red-600" : undefined} active={renewF === "none"} onClick={() => toggle(renewF, setRenewF, "none", "all")} />
+                <Stat label="Low utilization" value={counts.low_utilization} tone={counts.low_utilization ? "text-amber-600" : undefined} active={utilF === "low"} onClick={() => toggle(utilF, setUtilF, "low", "all")} />
               </div>
             )}
 
@@ -189,7 +274,7 @@ export function ReservationsMonitorPanel() {
             )}
 
             {/* Table */}
-            {sorted.length === 0 ? (
+            {items.length === 0 ? (
               <EmptyCard
                 title="No reservations found"
                 body={
@@ -199,6 +284,44 @@ export function ReservationsMonitorPanel() {
                 }
               />
             ) : (
+              <>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <InlineSearch q={q} setQ={setQ} shown={sorted.length} total={items.length} placeholder="Search reservations…" width="w-56" />
+                <select value={statusF} onChange={(e) => setStatusF(e.target.value)} title="Filter by status" className="rounded-md border px-2 py-1 text-xs text-gray-600">
+                  <option value="all">Status: All</option>
+                  <option value="urgent">Urgent</option>
+                  <option value="expiring_soon">Expiring soon</option>
+                  <option value="recently_expired">Recently expired</option>
+                  <option value="active">Active</option>
+                </select>
+                <select value={renewF} onChange={(e) => setRenewF(e.target.value)} title="Filter by renew" className="rounded-md border px-2 py-1 text-xs text-gray-600">
+                  <option value="all">Renew: All</option>
+                  <option value="auto">Auto-renew</option>
+                  <option value="none">Not renewing</option>
+                </select>
+                <select value={utilF} onChange={(e) => setUtilF(e.target.value)} title="Filter by utilization" className="rounded-md border px-2 py-1 text-xs text-gray-600">
+                  <option value="all">Utilization: All</option>
+                  <option value="low">Low (&lt;25%)</option>
+                </select>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} title="Sort reservations" className="rounded-md border px-2 py-1 text-xs text-gray-600">
+                  <option value="days">Sort: Countdown</option>
+                  <option value="utilization">Sort: Utilization</option>
+                  <option value="name">Sort: Name</option>
+                </select>
+                <button onClick={exportCsv} disabled={sorted.length === 0} title="Export current view to CSV" className="rounded-md border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">⬇ CSV</button>
+              </div>
+              {/* RU2 — active filter chips. */}
+              {chips.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {chips.map((c) => (
+                    <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                      {c.label}
+                      <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+                    </span>
+                  ))}
+                  <button onClick={() => { setStatusF("all"); setRenewF("all"); setUtilF("all"); setQ(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+                </div>
+              )}
               <div className="overflow-hidden rounded-lg border bg-white">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
@@ -234,6 +357,8 @@ export function ReservationsMonitorPanel() {
                   </tbody>
                 </table>
               </div>
+              {sorted.length === 0 && <p className="py-4 text-center text-xs text-gray-400">No reservations match the current filters.</p>}
+              </>
             )}
 
             {/* Digest preview */}

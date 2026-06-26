@@ -371,13 +371,20 @@ async def collect_principal_directory(token: str, principal_ids: list[str]) -> t
         return out, st
     errors = 0
     last_code = 200
-    for start in range(0, len(ids), 1000):
-        chunk = ids[start : start + 1000]
-        value, err, code = await _graph_post(
-            token,
-            f"{_GRAPH}/directoryObjects/getByIds",
-            {"ids": chunk, "types": ["user", "group", "servicePrincipal"]},
-        )
+    # RP5 — resolve the ≤1000-id chunks concurrently (bounded) instead of sequentially; these are
+    # read-only Graph calls and the output is an id-keyed overlay, so ordering is irrelevant.
+    chunks = [ids[start : start + 1000] for start in range(0, len(ids), 1000)]
+    sem = asyncio.Semaphore(6)
+
+    async def _resolve(chunk: list[str]) -> tuple[list[dict[str, Any]], str | None, int]:
+        async with sem:
+            return await _graph_post(
+                token,
+                f"{_GRAPH}/directoryObjects/getByIds",
+                {"ids": chunk, "types": ["user", "group", "servicePrincipal"]},
+            )
+
+    for value, err, code in await asyncio.gather(*[_resolve(c) for c in chunks]):
         if err:
             errors += 1
             last_code = code

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useSearchParams } from "react-router-dom";
 import {
   api,
   type AmbaCell,
@@ -20,6 +22,7 @@ import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PageIntro } from "./PageIntro";
 import { PAGE_INTROS } from "../help/content";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
+import { Skeleton, useDebounced } from "../utils/perf";
 
 const SEV_CLS: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -71,6 +74,114 @@ function Donut({ pct }: { pct: number }) {
   );
 }
 
+// MP1 — per-group coverage matrix body. Small groups render inline (full inline-expand detail).
+// Large groups (> VIRT_THRESHOLD rows) virtualize the body via an internal-scroll windowed
+// <tbody> with spacer rows: only the visible window of rows is in the DOM, keeping the sticky
+// first column + dynamic alert columns. In virtualized mode a row click opens the detail drawer
+// (which carries the same per-cell detail the inline expander shows) so rows stay fixed-height.
+const VIRT_THRESHOLD = 60;
+function AmbaMatrixBody({ group, expandedRow, setExpandedRow, setDrawer }: {
+  group: AmbaGroup;
+  expandedRow: string | null;
+  setExpandedRow: (v: string | null) => void;
+  setDrawer: (v: { row: AmbaRow; cell: AmbaCell } | null) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualize = group.rows.length > VIRT_THRESHOLD;
+  const rowVirt = useVirtualizer({
+    count: group.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 41,
+    overscan: 10,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
+
+  const cols = group.recommended_alerts;
+  const mainRow = (row: AmbaRow) => (
+    <tr key={row.resource_id} className="border-t hover:bg-gray-50">
+      <td className="sticky left-0 bg-white px-3 py-2">
+        <button
+          onClick={() => (virtualize ? setDrawer({ row, cell: row.cells[0] }) : setExpandedRow(expandedRow === row.resource_id ? null : row.resource_id))}
+          className="text-left"
+        >
+          <div className="font-medium text-gray-800">{row.resource_name}</div>
+          <div className="text-[10px] text-gray-400">{row.resource_group}</div>
+        </button>
+      </td>
+      {cols.map((ra) => {
+        const cell = row.cells.find((c) => c.alert_key === ra.key);
+        if (!cell) return <td key={ra.key} className="px-2 py-2 text-center text-gray-300">–</td>;
+        return (
+          <td key={ra.key} className="px-2 py-2 text-center">
+            <button onClick={() => setDrawer({ row, cell })} className="text-base"><StatusMark status={cell.status} /></button>
+          </td>
+        );
+      })}
+    </tr>
+  );
+
+  return (
+    <div ref={scrollRef} className="overflow-auto border-t" style={virtualize ? { maxHeight: "60vh" } : undefined}>
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500">
+          <tr>
+            <th className="sticky left-0 z-20 bg-gray-50 px-3 py-2 text-left font-medium">Resource</th>
+            {cols.map((a) => (
+              <th key={a.key} className="px-2 py-2 text-center font-medium align-bottom" title={a.name}>
+                <div className="mx-auto w-[80px] whitespace-normal break-words leading-tight">{a.name}</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {virtualize ? (
+            <>
+              {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+              {vItems.map((vi) => mainRow(group.rows[vi.index]))}
+              {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
+            </>
+          ) : (
+            group.rows.map((row) => {
+              const isExp = expandedRow === row.resource_id;
+              return (
+                <Fragment key={row.resource_id}>
+                  {mainRow(row)}
+                  {isExp && (
+                    <tr className="border-t bg-gray-50/60">
+                      <td colSpan={cols.length + 1} className="px-4 py-2">
+                        <div className="space-y-1">
+                          {row.cells.map((c) => (
+                            <div key={c.alert_key} className="flex flex-wrap items-center gap-2 text-[11px]">
+                              <StatusMark status={c.status} />
+                              <span className={`rounded px-1.5 py-0.5 ${CAT_CLS[c.amba_category] ?? "bg-gray-100"}`}>{c.amba_category}</span>
+                              <span className={`rounded px-1.5 py-0.5 ${SEV_CLS[c.severity] ?? ""}`}>{c.severity}</span>
+                              <span className="text-gray-700">{c.alert_name}</span>
+                              <span className="text-gray-400">
+                                recommended {c.recommended.metric} {c.recommended.operator} {c.recommended.threshold ?? "—"}{c.recommended.unit}
+                                {c.observed.observed_thresholds?.length ? ` · observed ${c.observed.observed_thresholds.join(", ")}` : ""}
+                                {c.observed.rule_name ? ` · rule ${c.observed.rule_name}${c.observed.enabled === false ? " (disabled)" : ""}` : ""}
+                              </span>
+                              {c.status !== "present" && (
+                                <button onClick={() => setDrawer({ row, cell: c })} className="text-indigo-600 hover:underline">details</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function MonitoringCoveragePanel() {
   const qc = useQueryClient();
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.amba.scopeKind", "workload");
@@ -79,11 +190,13 @@ export function MonitoringCoveragePanel() {
   const [subId, setSubId] = usePersistedState<string>("azsup.amba.subId", "");
   const [subName, setSubName] = usePersistedState<string>("azsup.amba.subName", "");
   const [connId, setConnId] = usePersistedState<string>("azsup.amba.connId", "");
-  const [query, setQuery] = useState("");
-  const [catFilter, setCatFilter] = useState("all");
-  const [sevFilter, setSevFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [tab, setTab] = useState<"coverage" | "all">("coverage");
+  const mp0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [query, setQuery] = useState(mp0.get("q") || "");
+  const dQuery = useDebounced(query, 150);
+  const [catFilter, setCatFilter] = useState(mp0.get("cat") || "all");
+  const [sevFilter, setSevFilter] = useState(mp0.get("sev") || "all");
+  const [statusFilter, setStatusFilter] = useState(mp0.get("status") || "all");
+  const [tab, setTab] = useState<"coverage" | "all">(mp0.get("tab") === "all" ? "all" : "coverage");
   const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.amba.density", "expanded");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -127,6 +240,7 @@ export function MonitoringCoveragePanel() {
     queryKey: ["amba", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.ambaCoverage(params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const data: AmbaCoverage | undefined = enabled ? covQ.data : undefined;
 
@@ -135,6 +249,7 @@ export function MonitoringCoveragePanel() {
     queryKey: ["amba-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("amba", params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
 
   function loadCoverage() {
@@ -173,7 +288,7 @@ export function MonitoringCoveragePanel() {
     return true;
   }
   function rowVisible(r: AmbaRow): boolean {
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     if (q && !(`${r.resource_name} ${r.resource_group}`.toLowerCase().includes(q))) return false;
     return r.cells.some(cellVisible);
   }
@@ -313,7 +428,29 @@ export function MonitoringCoveragePanel() {
       .map((g) => ({ ...g, rows: g.rows.filter(rowVisible) }))
       .filter((g) => g.rows.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, query, catFilter, sevFilter, statusFilter]);
+  }, [data, dQuery, catFilter, sevFilter, statusFilter]);
+
+  // MU1 — reflect the active tab + filters into the URL (shareable / restored on reload).
+  const [, mSetParams] = useSearchParams();
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (tab !== "coverage") next.set("tab", tab); else next.delete("tab");
+    const setOrDel = (k: string, v: string) => { if (v && v !== "all") next.set(k, v); else next.delete(k); };
+    setOrDel("cat", catFilter); setOrDel("sev", sevFilter); setOrDel("status", statusFilter);
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    mSetParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, catFilter, sevFilter, statusFilter, query]);
+
+  // MU3 — active-filter chips (each removable).
+  const ambaChips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (catFilter !== "all") out.push({ key: "cat", label: `Category: ${catFilter}`, clear: () => setCatFilter("all") });
+    if (sevFilter !== "all") out.push({ key: "sev", label: `Severity: ${sevFilter}`, clear: () => setSevFilter("all") });
+    if (statusFilter !== "all") out.push({ key: "status", label: `Status: ${statusFilter}`, clear: () => setStatusFilter("all") });
+    if (query.trim()) out.push({ key: "q", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    return out;
+  }, [catFilter, sevFilter, statusFilter, query]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -370,6 +507,12 @@ export function MonitoringCoveragePanel() {
               ) : "—"}
               {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
             </span>
+            {/* MU5 — nudge a re-scan when the cached coverage is past its TTL. */}
+            {data?.stale && enabled && !refreshing && (
+              <button onClick={doRefresh} disabled={!scopeReady} title="This coverage scan is past its refresh interval — run a fresh scan." className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+                ⚠ stale · rescan
+              </button>
+            )}
             {!enabled && (
               <button
                 onClick={loadCoverage}
@@ -457,6 +600,18 @@ export function MonitoringCoveragePanel() {
           <DensityToggle value={density} onChange={setDensity} title="Compact shows just the resource-type rows; Expanded shows the full alert matrix." />
         </div>
         )}
+        {/* MU3 — active filter chips. */}
+        {tab === "coverage" && ambaChips.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {ambaChips.map((c) => (
+              <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                {c.label}
+                <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+              </span>
+            ))}
+            <button onClick={() => { setCatFilter("all"); setSevFilter("all"); setStatusFilter("all"); setQuery(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+          </div>
+        )}
 
         {/* Bulk toolbar */}
         {tab === "coverage" && (
@@ -500,7 +655,7 @@ export function MonitoringCoveragePanel() {
               : "Pick a workload or enter a subscription to begin."}
           </div>
         ) : covQ.isLoading ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading coverage…</div>
+          <div className="p-6"><Skeleton rows={8} /></div>
         ) : covQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(covQ.error)}</div>
         ) : data && data.report_exists === false ? (
@@ -539,73 +694,7 @@ export function MonitoringCoveragePanel() {
                   </button>
 
                   {!isCollapsed && (
-                    <div className="overflow-x-auto border-t">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500">
-                          <tr>
-                            <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left font-medium">Resource</th>
-                            {g.recommended_alerts.map((a) => (
-                              <th key={a.key} className="px-2 py-2 text-center font-medium align-bottom" title={a.name}>
-                                <div className="mx-auto w-[80px] whitespace-normal break-words leading-tight">{a.name}</div>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {g.rows.map((row) => {
-                            const rowKey = row.resource_id;
-                            const isExp = expandedRow === rowKey;
-                            return (
-                              <>
-                                <tr key={rowKey} className="border-t hover:bg-gray-50">
-                                  <td className="sticky left-0 bg-white px-3 py-2">
-                                    <button onClick={() => setExpandedRow(isExp ? null : rowKey)} className="text-left">
-                                      <div className="font-medium text-gray-800">{row.resource_name}</div>
-                                      <div className="text-[10px] text-gray-400">{row.resource_group}</div>
-                                    </button>
-                                  </td>
-                                  {g.recommended_alerts.map((ra) => {
-                                    const cell = row.cells.find((c) => c.alert_key === ra.key);
-                                    if (!cell) return <td key={ra.key} className="px-2 py-2 text-center text-gray-300">–</td>;
-                                    return (
-                                      <td key={ra.key} className="px-2 py-2 text-center">
-                                        <button onClick={() => setDrawer({ row, cell })} className="text-base">
-                                          <StatusMark status={cell.status} />
-                                        </button>
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                                {isExp && (
-                                  <tr className="border-t bg-gray-50/60">
-                                    <td colSpan={g.recommended_alerts.length + 1} className="px-4 py-2">
-                                      <div className="space-y-1">
-                                        {row.cells.map((c) => (
-                                          <div key={c.alert_key} className="flex flex-wrap items-center gap-2 text-[11px]">
-                                            <StatusMark status={c.status} />
-                                            <span className={`rounded px-1.5 py-0.5 ${CAT_CLS[c.amba_category] ?? "bg-gray-100"}`}>{c.amba_category}</span>
-                                            <span className={`rounded px-1.5 py-0.5 ${SEV_CLS[c.severity] ?? ""}`}>{c.severity}</span>
-                                            <span className="text-gray-700">{c.alert_name}</span>
-                                            <span className="text-gray-400">
-                                              recommended {c.recommended.metric} {c.recommended.operator} {c.recommended.threshold ?? "—"}{c.recommended.unit}
-                                              {c.observed.observed_thresholds?.length ? ` · observed ${c.observed.observed_thresholds.join(", ")}` : ""}
-                                              {c.observed.rule_name ? ` · rule ${c.observed.rule_name}${c.observed.enabled === false ? " (disabled)" : ""}` : ""}
-                                            </span>
-                                            {c.status !== "present" && (
-                                              <button onClick={() => setDrawer({ row, cell: c })} className="text-indigo-600 hover:underline">details</button>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <AmbaMatrixBody group={g} expandedRow={expandedRow} setExpandedRow={setExpandedRow} setDrawer={setDrawer} />
                   )}
                 </section>
               );

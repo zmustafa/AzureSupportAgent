@@ -218,9 +218,19 @@ async def _appregs_snapshot(principal: Principal, *, connection_id: str | None, 
         # No cache yet — do NOT compute on a plain page visit.
         return _empty_appregs(tenant_id)
 
-    snap = await appregs.collect_app_registrations(connection, tenant_id=tenant_id)
+    snap = await appregs.collect_app_registrations(connection, tenant_id=tenant_id, limit=_appregs_limit())
     fetched_at = appregs_cache.set_(tenant_id, cid, snap)
     return {**snap, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
+
+
+def _appregs_limit() -> int:
+    """IP4 — admin-configurable per-refresh app-enumeration cap (was a hard 200)."""
+    try:
+        from app.core.app_settings import load_settings
+
+        return max(50, min(5000, int(load_settings().get("app_registrations_limit", 500) or 500)))
+    except Exception:  # noqa: BLE001
+        return 500
 
 
 def _appregs_target(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
@@ -300,7 +310,7 @@ async def start_app_registrations_refresh(
     connection, tenant_id, cid = _appregs_target(principal, principal and connection_id)
     key = _appregs_job_key(tenant_id, cid)
     already = appregs_job.is_running(key)
-    job = appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid)
+    job = appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid, limit=_appregs_limit())
     if not already:
         db.add(
             AuditLog(
@@ -341,7 +351,7 @@ async def stream_app_registrations_refresh(
     connection, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
     if not appregs_job.is_running(key):
-        appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid)
+        appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid, limit=_appregs_limit())
     return EventSourceResponse(appregs_job.stream(key))
 
 

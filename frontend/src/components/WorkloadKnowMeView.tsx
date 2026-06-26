@@ -7,9 +7,10 @@
  * export (Markdown / PDF). A workload can have MANY Know-Me documents (drafts + a published
  * reference); each is keyed by its own ``km_id`` and supports soft-delete to a Trash.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Skeleton, useDebounced } from "../utils/perf";
 import {
   api,
   streamRegenerateKnowMe,
@@ -29,6 +30,15 @@ import { GuidedFill } from "./knowme/GuidedFill";
 import { SectionEditor } from "./knowme/SectionEditor";
 import { FieldInput } from "./knowme/FieldInput";
 import { fieldProgress, renderSectionRead, isPlaceholderMermaid, parseFieldToken, validateField, FIELD_META } from "./knowme/fields";
+
+// KP1 — memoized Markdown wrapper: only re-parses when its own body string or the (now stable)
+// components object changes. With the imperatively-driven chip highlight, a field click no longer
+// re-parses every section's markdown/tables/mermaid.
+const MemoMarkdown = memo(function MemoMarkdown(
+  { components, children }: { components: Record<string, unknown>; children: string },
+) {
+  return <Markdown components={components}>{children}</Markdown>;
+});
 
 const PROSE =
   "prose prose-sm max-w-none [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-1 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-gray-900 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-gray-800 [&_img]:max-w-full [&_img]:rounded-lg [&_table]:text-[12px]";
@@ -188,7 +198,7 @@ function withAssetUrls(kmId: string, md: string): string {
 export function KnowMeView({ kmId }: { kmId: string }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const kmQ = useQuery({ queryKey: ["knowMe", kmId], queryFn: () => api.knowMe(kmId) });
+  const kmQ = useQuery({ queryKey: ["knowMe", kmId], queryFn: () => api.knowMe(kmId), staleTime: 5 * 60 * 1000 });
 
   const km: KnowMe | null = kmQ.data?.know_me ?? null;
   const hasMemory = kmQ.data?.has_memory ?? false;
@@ -196,7 +206,14 @@ export function KnowMeView({ kmId }: { kmId: string }) {
   const workloadName = kmQ.data?.architecture?.workload_name ?? km?.workload_name ?? "";
   const workloadId = kmQ.data?.architecture?.workload_id ?? km?.workload_id ?? "";
 
-  const [mode, setMode] = useState<"read" | "fill" | "edit">("read");
+  // KU2 — Read/Fill/Edit mode is deep-linked (?mode=) so a refresh / shared link restores it.
+  const [sp, setSp] = useSearchParams();
+  const initialMode = (sp.get("mode") as "read" | "fill" | "edit" | null) ?? "read";
+  const [mode, setModeRaw] = useState<"read" | "fill" | "edit">(["read", "fill", "edit"].includes(initialMode) ? initialMode : "read");
+  const setMode = useCallback((m: "read" | "fill" | "edit") => {
+    setModeRaw(m);
+    setSp((prev) => { const n = new URLSearchParams(prev); if (m === "read") n.delete("mode"); else n.set("mode", m); return n; }, { replace: true });
+  }, [setSp]);
   // When set, guided fill is scoped to a single section's fields (per-section ✍️ button).
   const [fillScope, setFillScope] = useState<string>("");
   const [err, setErr] = useState("");
@@ -262,6 +279,23 @@ export function KnowMeView({ kmId }: { kmId: string }) {
     stopTimer();
     setGenState("idle");
   }
+
+  // KU4 — reconnect to a generation that's still running server-side (started before we
+  // navigated here, or continuing after we navigated away and back). The backend job is
+  // idempotent, so re-POSTing the stream just FOLLOWS the in-flight job; the saved doc lands
+  // via onGenDone regardless. Only the regenerate (km-keyed) job is reconnectable.
+  useEffect(() => {
+    if (!kmId) return;
+    let cancelled = false;
+    void api.knowMeGenerateJob(kmId).then((r) => {
+      if (cancelled || !r.job || r.job.status !== "running" || genState === "running") return;
+      const ctrl = startGen();
+      void streamRegenerateKnowMe(kmId, { onStatus: onGenStatus, onDone: onGenDone, onError: setErr }, ctrl.signal)
+        .finally(() => { stopTimer(); setGenState("idle"); });
+    }).catch(() => { /* no job — fine */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kmId]);
 
   // --- todos / fields ---
   const todos: KnowMeTodo[] = km?.todos ?? [];
@@ -387,25 +421,59 @@ export function KnowMeView({ kmId }: { kmId: string }) {
 
   // --- scroll-to-field for guided fill ---
   const docRef = useRef<HTMLDivElement>(null);
-  const [highlightId, setHighlightId] = useState<string>("");
+  // KP1 — the active field-chip highlight is driven IMPERATIVELY (a CSS class toggled on the
+  // chip) rather than via React state baked into the Markdown components object. Previously
+  // `highlightId` state was a dep of `docMarkdownComponents`, so every chip click re-created the
+  // components object and react-markdown re-parsed ALL sections (+ tables + mermaid). Now the
+  // components object is stable, so a chip click only flips one CSS class — no re-parse.
+  const highlightIdRef = useRef<string>("");
+  const setActiveChip = useCallback((tid: string) => {
+    highlightIdRef.current = tid;
+    const root = docRef.current;
+    if (!root) return;
+    root.querySelectorAll(".km-field.km-active-field").forEach((el) => el.classList.remove("km-active-field"));
+    if (tid) {
+      const chip = root.querySelector(`[data-kmfield="${CSS.escape(tid)}"]`);
+      if (chip) chip.classList.add("km-active-field");
+    }
+  }, []);
   // A click on an inline field chip opens a pick-or-type popover anchored to it.
   // Clicking a field chip opens an inline pick-or-type popover anchored to it (NOT the
   // right-hand guided-fill panel). ``anchor`` is the chip's viewport rect for positioning.
   const [picker, setPicker] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const openPicker = useCallback((tid: string, anchor: DOMRect) => {
-    setHighlightId(tid);
+    setActiveChip(tid);
     setPicker({ id: tid, anchor });
-  }, []);
-  const closePicker = useCallback(() => { setPicker(null); setHighlightId(""); }, []);
+  }, [setActiveChip]);
+  const closePicker = useCallback(() => { setPicker(null); setActiveChip(""); }, [setActiveChip]);
   function scrollToSection(sectionKey: string, todoId: string) {
-    setHighlightId(todoId);
-    // After the re-render paints the red marker, scroll the marker itself into view
-    // (falls back to the section). Two frames so the Markdown re-render has committed.
+    // After paint, mark the active chip then scroll it into view (falls back to the section).
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
+        setActiveChip(todoId);
         const marker = docRef.current?.querySelector(".km-active-field") as HTMLElement | null;
         const section = docRef.current?.querySelector(`[data-kmsec="${sectionKey}"]`) as HTMLElement | null;
         (marker ?? section)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }),
+    );
+  }
+
+  // KU5 — jump to the next empty field: prefer the next OPEN required field, else any open one.
+  // In read mode we scroll its chip into view and open its pick-or-type popover; in fill mode the
+  // GuidedFill panel already walks the open fields, so we just switch to it.
+  function jumpToNextEmpty() {
+    const open = todos.filter((t) => t.status !== "done" && !t.value);
+    if (open.length === 0) return;
+    const target = open.find((t) => t.required) ?? open[0];
+    if (mode !== "read") { setMode("read"); }
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = docRef.current?.querySelector(`[data-kmfield="${target.id}"]`) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          setActiveChip(target.id);
+          setTimeout(() => openPicker(target.id, el.getBoundingClientRect()), 320);
+        }
       }),
     );
   }
@@ -427,26 +495,25 @@ export function KnowMeView({ kmId }: { kmId: string }) {
         // shows the label with a dashed/amber style; the active (popover-open) chip is red.
         const field = parseFieldToken(text);
         if (field) {
-          const active = field.tid === highlightId;
+          const active = field.tid === highlightIdRef.current;
           const filled = !!field.value;
           return (
             <button
               type="button"
               data-kmfield={field.tid}
               onClick={(e) => { e.preventDefault(); openPicker(field.tid, (e.currentTarget as HTMLElement).getBoundingClientRect()); }}
-              title={active ? `Editing: ${field.label}` : filled ? `${field.label}: ${field.value} — click to edit` : `Click to pick or type: ${field.label}`}
+              title={filled ? `${field.label}: ${field.value} — click to edit` : `Click to pick or type: ${field.label}`}
               aria-label={filled ? `Edit field ${field.label}, current value ${field.value}` : `Fill field: ${field.label}`}
               className={
                 "km-field mx-0.5 inline-flex items-center gap-1 rounded-md border-2 px-1.5 py-0.5 align-baseline text-[12px] font-medium transition focus:outline-none focus:border-red-400 focus:bg-red-50 focus:text-red-700 focus:ring-2 focus:ring-red-300 " +
-                (active
-                  ? "km-active-field border-red-400 bg-red-50 text-red-700 ring-2 ring-red-300"
-                  : filled
-                    ? "border-gray-300 bg-white text-gray-800 hover:border-red-300 hover:bg-red-50"
-                    : "border-dashed border-amber-400 bg-amber-50 text-amber-700 hover:border-amber-500 hover:bg-amber-100")
+                (active ? "km-active-field " : "") +
+                (filled
+                  ? "border-gray-300 bg-white text-gray-800 hover:border-red-300 hover:bg-red-50"
+                  : "border-dashed border-amber-400 bg-amber-50 text-amber-700 hover:border-amber-500 hover:bg-amber-100")
               }
             >
               {/* A red ● marks an editable field (always shown so a filled value stays a field). */}
-              <span aria-hidden="true" className={active ? "text-red-500" : filled ? "text-red-400" : "text-amber-500"} style={{ fontSize: "8px", lineHeight: 1 }}>●</span>
+              <span aria-hidden="true" className={filled ? "text-red-400" : "text-amber-500"} style={{ fontSize: "8px", lineHeight: 1 }}>●</span>
               {filled ? field.value : field.label}
             </button>
           );
@@ -462,14 +529,21 @@ export function KnowMeView({ kmId }: { kmId: string }) {
         return <img src={cleanSrc} alt={alt || ""} style={width ? { width, maxWidth: "100%" } : undefined} {...props} />;
       },
     };
-  }, [highlightId, openPicker]);
+    // Stable across highlight changes — the active chip is toggled imperatively (KP1).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPicker]);
 
   // --- copy / export ---
   const [copied, setCopied] = useState(false);
+  const [exportToast, setExportToast] = useState(""); // KU7 — export feedback
   function copyMarkdown() {
     void navigator.clipboard.writeText(kmQ.data?.markdown ?? "");
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+  function noteExport(kind: string) {
+    setExportToast(`${kind} downloading…`);
+    setTimeout(() => setExportToast(""), 2800);
   }
 
   // --- history / revision viewing ---
@@ -543,6 +617,20 @@ export function KnowMeView({ kmId }: { kmId: string }) {
   const tocSections = useMemo(
     () => sections.filter((s) => (s.content || "").trim()).map((s) => ({ key: s.key, label: s.label })),
     [sections],
+  );
+  // KP1 — precompute each read-mode section's rendered Markdown body ONCE (keyed on its content +
+  // todos), so a chip click doesn't re-run renderSectionRead for all 13 sections. Paired with the
+  // memoized <Markdown> wrapper + stable components object, only edited sections re-render.
+  const readSections = useMemo(
+    () =>
+      sections
+        .filter((s) => (s.content || "").trim())
+        .map((s) => ({
+          section: s,
+          body: withAssetUrls(kmId, renderSectionRead(s.content, s.key, todos, "", s.label)),
+          openCount: todos.filter((t) => t.section_key === s.key && t.status !== "done").length,
+        })),
+    [sections, todos, kmId],
   );
   function jumpToSection(key: string) {
     const el = docRef.current?.querySelector(`[data-kmsec="${key}"]`) as HTMLElement | null;
@@ -662,6 +750,12 @@ export function KnowMeView({ kmId }: { kmId: string }) {
               ))}
             </div>
           )}
+          {/* KU5 — jump straight to the next empty (required-first) field. */}
+          {km && !viewingRevId && prog.open > 0 && (
+            <button onClick={jumpToNextEmpty} title="Scroll to and open the next empty field (required first)" className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100">
+              ↳ Next empty{prog.requiredOpen > 0 ? ` (${prog.requiredOpen} req)` : ""}
+            </button>
+          )}
           {!viewingRevId && (
           <button
             onClick={() => void generate()}
@@ -674,12 +768,17 @@ export function KnowMeView({ kmId }: { kmId: string }) {
           )}
           {km && <>
             <button onClick={copyMarkdown} aria-label="Copy document as Markdown" className="rounded-lg border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">{copied ? "✓ Copied" : "Copy"}</button>
-            <a href={api.knowMeExportUrl(kmId, "md")} aria-label="Download as Markdown" className="rounded-lg border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">⬇ .md</a>
-            <a href={api.knowMeExportUrl(kmId, "pdf")} aria-label="Download as PDF" className="rounded-lg border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">📄 PDF</a>
+            <a href={api.knowMeExportUrl(kmId, "md")} onClick={() => noteExport("Markdown")} aria-label="Download as Markdown" className="rounded-lg border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">⬇ .md</a>
+            <a href={api.knowMeExportUrl(kmId, "pdf")} onClick={() => noteExport("PDF")} aria-label="Download as PDF" className="rounded-lg border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">📄 PDF</a>
             <button onClick={() => (showHistory ? closeHistory() : setShowHistory(true))} aria-label="Toggle revision history" className={`rounded-lg border px-2 py-1 text-xs ${showHistory ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}>🕘 History</button>
           </>}
         </div>
       </div>
+
+      {/* KU7 — export-feedback toast. */}
+      {exportToast && (
+        <div className="fixed bottom-5 right-5 z-50 rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white shadow-lg">✓ {exportToast}</div>
+      )}
 
       {/* Generation progress */}
       {genState === "running" && (
@@ -711,7 +810,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
 
       {/* Body */}
       {kmQ.isLoading ? (
-        <div className="p-6 text-sm text-gray-500">Loading…</div>
+        <div className="p-6"><Skeleton rows={10} /></div>
       ) : !km ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
           <div className="text-4xl">📄</div>
@@ -850,9 +949,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                   {workloadName && <p className="text-sm text-gray-500">Workload: {workloadName}</p>}
                 </div>
               )}
-              {sections.filter((s) => (s.content || "").trim()).map((s) => {
-                const body = withAssetUrls(kmId, renderSectionRead(s.content, s.key, todos, highlightId, s.label));
-                const sectionOpen = todos.filter((t) => t.section_key === s.key && t.status !== "done").length;
+              {readSections.map(({ section: s, body, openCount: sectionOpen }) => {
                 return (
                   <section key={s.key} data-kmsec={s.key} className="group scroll-mt-20 rounded-xl border border-transparent px-3 py-2 transition hover:border-gray-100 hover:bg-gray-50/40">
                     <div className="flex items-center gap-2">
@@ -896,7 +993,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
                         )}
                       </div>
                     </div>
-                    <div className={PROSE}><Markdown components={docMarkdownComponents}>{body}</Markdown></div>
+                    <div className={PROSE}><MemoMarkdown components={docMarkdownComponents}>{body}</MemoMarkdown></div>
                   </section>
                 );
               })}
@@ -933,7 +1030,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
               sectionKeys={sectionKeys}
               saving={saving}
               onSave={(next) => void saveTodos(next)}
-              onExit={() => { setMode("read"); setHighlightId(""); setFillScope(""); }}
+              onExit={() => { setMode("read"); setActiveChip(""); setFillScope(""); }}
               onScrollToSection={scrollToSection}
               onPublish={() => void saveTodos(todos, "published")}
               scopeSection={fillScope || undefined}
@@ -1281,8 +1378,8 @@ export function KnowMeIndex() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
-  const term = q.trim().toLowerCase();
-  const query = useQuery({ queryKey: ["knowMeIndex"], queryFn: api.knowMeIndex });
+  const term = useDebounced(q, 150).trim().toLowerCase();
+  const query = useQuery({ queryKey: ["knowMeIndex"], queryFn: api.knowMeIndex, staleTime: 5 * 60 * 1000 });
   const [building, setBuilding] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [creating, setCreating] = useState("");
@@ -1350,6 +1447,13 @@ export function KnowMeIndex() {
   }
 
   const totalDocs = documents.length;
+  // Unfiltered workload-group count for the "N of M" search counter (KU6).
+  const totalGroups = useMemo(() => {
+    const ids = new Set<string>();
+    for (const b of buildable) ids.add(b.architecture_id);
+    for (const d of documents) ids.add(d.architecture_id);
+    return ids.size;
+  }, [buildable, documents]);
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50/40">
@@ -1380,6 +1484,8 @@ export function KnowMeIndex() {
               aria-label="Search Know-Me documents"
               className="w-56 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-dark focus:outline-none"
             />
+            {q && <button onClick={() => setQ("")} className="text-[11px] text-gray-400 hover:text-gray-700">✕ clear</button>}
+            <span className="shrink-0 text-[11px] text-gray-400">{groups.length} of {totalGroups}</span>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -1411,7 +1517,7 @@ export function KnowMeIndex() {
           </div>
         </div>
 
-        {query.isLoading && <div className="py-10 text-center text-sm text-gray-400">Loading…</div>}
+        {query.isLoading && <div className="p-4"><Skeleton rows={6} /></div>}
         {!query.isLoading && groups.length === 0 && !term && (
           <div className="rounded-xl border bg-white p-8 text-center">
             <div className="text-sm font-medium text-gray-700">No Know-Me documents yet</div>

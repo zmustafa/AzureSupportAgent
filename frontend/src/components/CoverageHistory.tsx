@@ -53,6 +53,7 @@ export function CoverageHistory<T>({
     queryKey: coverageRunsKey(feature, scopeKind, workloadId, subId),
     queryFn: () => api.coverageRuns(feature, params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const runs = runsQ.data?.runs ?? [];
 

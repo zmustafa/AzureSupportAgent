@@ -8,6 +8,7 @@ summarize``. Everything degrades gracefully when a query is unavailable.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -284,12 +285,24 @@ async def collect_inventory(connection: dict[str, Any] | None) -> dict[str, Any]
     if login_err:
         errors.append(login_err)
     try:
-        defs_rows, e1 = await _arg(_DEFINITIONS_KQL, connection, session_dir)
-        sets_rows, e2 = await _arg(_INITIATIVES_KQL, connection, session_dir)
-        asg_rows, e3 = await _arg(_ASSIGNMENTS_KQL, connection, session_dir)
-        exm_rows, e4 = await _arg(_EXEMPTIONS_KQL, connection, session_dir)
-        sub_rows, _e5 = await _arg(_SUBSCRIPTIONS_KQL, connection, session_dir)
-        mg_rows, _e6 = await _arg(_MANAGEMENTGROUPS_KQL, connection, session_dir)
+        # PP4 — the six inventory queries are independent reads; run them concurrently instead of
+        # sequential awaits (the dominant latency of the one big /inventory pull). Each shares the
+        # logged-in SP session dir.
+        (
+            (defs_rows, e1),
+            (sets_rows, e2),
+            (asg_rows, e3),
+            (exm_rows, e4),
+            (sub_rows, _e5),
+            (mg_rows, _e6),
+        ) = await asyncio.gather(
+            _arg(_DEFINITIONS_KQL, connection, session_dir),
+            _arg(_INITIATIVES_KQL, connection, session_dir),
+            _arg(_ASSIGNMENTS_KQL, connection, session_dir),
+            _arg(_EXEMPTIONS_KQL, connection, session_dir),
+            _arg(_SUBSCRIPTIONS_KQL, connection, session_dir),
+            _arg(_MANAGEMENTGROUPS_KQL, connection, session_dir),
+        )
         for e in (e1, e2, e3, e4):
             if e:
                 errors.append(e)
@@ -506,7 +519,7 @@ def resolve_effective(
 
 
 async def compliance_summary(
-    connection: dict[str, Any] | None, subscriptions: list[str], *, limit: int = 6
+    connection: dict[str, Any] | None, subscriptions: list[str], *, limit: int = 24
 ) -> dict[str, Any]:
     """Best-effort per-assignment compliance via the Policy Insights ``summarize`` API.
 
@@ -516,7 +529,10 @@ async def compliance_summary(
 
     Uses ARM REST with the connection's own token so it works for EVERY connection type
     (service principal, pasted ARM token, managed identity) — not just those with an ambient
-    ``az`` login (a pasted-token connection has none, and the CLI would return nothing)."""
+    ``az`` login (a pasted-token connection has none, and the CLI would return nothing).
+
+    PP5 — subscriptions are scanned with bounded concurrency (was a strictly sequential loop
+    capped at 6) so a multi-subscription tenant's "Scan compliance" no longer serializes."""
     from app.azure.arm import arm_rest
     from app.azure.credentials import get_arm_token
 
@@ -531,13 +547,21 @@ async def compliance_summary(
             "total_non_compliant_resources": 0, "available": False,
             "errors": [(terr or "No Azure token for this connection.")[:160]],
         }
-    for sub in subscriptions[:limit]:
+
+    sem = asyncio.Semaphore(6)
+
+    async def _one(sub: str) -> tuple[str, str, str]:
         url = (
             f"https://management.azure.com/subscriptions/{sub}"
             "/providers/Microsoft.PolicyInsights/policyStates/latest/summarize"
             "?api-version=2019-10-01&$top=200"
         )
-        text, err = await arm_rest(token, "POST", url)
+        async with sem:
+            text, err = await arm_rest(token, "POST", url)
+        return sub, text, err
+
+    results_list = await asyncio.gather(*[_one(sub) for sub in subscriptions[:limit]])
+    for sub, text, err in results_list:
         if err:
             errors.append(f"{sub[:8]}…: {err.strip()[:160]}")
             continue

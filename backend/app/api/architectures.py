@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -20,8 +20,14 @@ from sse_starlette.sse import EventSourceResponse
 from app.architectures import catalog
 from app.architectures import registry as arch_registry
 from app.core.azure_connections import resolve_connection
+from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
 from app.workloads.registry import get_workload
+
+# KP5/KU4 — background-survivable Know-Me generation. The generate/regenerate run as detached
+# jobs keyed by document (so navigating away doesn't lose the draft); SSE subscribers follow.
+_knowme_jobs = JobRegistry("knowme")
+
 
 router = APIRouter(prefix="/architectures", tags=["architectures"])
 
@@ -1297,13 +1303,16 @@ async def suggest_know_me_field_endpoint(
     return {"choices": merged, "choice_source": "ai"}
 
 
-async def _stream_generate_know_me(
+async def _run_generate_know_me(
+    progress: "Callable[[str, str], Awaitable[None]]",
     *, architecture_id: str, arch: dict[str, Any], principal: Principal, extra_context: str,
     target_km_id: str | None,
-):
-    """Shared SSE generator: transform an architecture's Memory into a Know-Me. When
-    ``target_km_id`` is set it regenerates that document; otherwise it creates a new one.
-    Yields SSE event dicts; the final ``done`` carries the full know-me response."""
+) -> dict[str, Any]:
+    """Background-job runner (KP5/KU4): transform an architecture's Memory into a Know-Me and
+    PERSIST it, reporting granular ``progress(phase, message)``. Returns the full know-me
+    response (the job's ``done`` payload). Runs detached from any SSE subscriber, so it survives
+    the browser navigating away — the document is saved regardless. Raises on hard failure (the
+    registry turns that into an ``error`` job)."""
     from app.architectures import memory as mem
     from app.knowme import context as kctx
     from app.knowme import generator as kgen
@@ -1316,26 +1325,25 @@ async def _stream_generate_know_me(
 
     memory = mem.get_memory(architecture_id)
     if memory is None or not any(str(s.get("content") or "").strip() for s in memory.get("sections", []) or []):
-        yield {"event": "error", "data": json.dumps({"message": "No architecture memory to transform. Generate the Memory first."})}
-        return
+        raise ValueError("No architecture memory to transform. Generate the Memory first.")
 
     wl = get_workload(workload_id) if workload_id else None
     wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
-    yield {"event": "status", "data": json.dumps({"phase": "scope", "message": "🔎 Resolving the workload's Azure scope & known values…"})}
+    await progress("scope", "🔎 Resolving the workload's Azure scope & known values…")
     facts = km.scope_facts(wl, arch)
     known = await kctx.gather_known_facts(wl, arch, tenant_id, connection_id, facts)
-    yield {"event": "status", "data": json.dumps({"phase": "evidence", "message": "📊 Pulling posture evidence (assessments, coverage, profiler)…"})}
+    await progress("evidence", "📊 Pulling posture evidence (assessments, coverage, profiler)…")
     evidence = await kctx.gather_evidence(architecture_id, workload_id, tenant_id, connection_id)
 
-    yield {"event": "status", "data": json.dumps({"phase": "ai", "message": "Transforming the architecture memory into a Know-Me…"})}
+    await progress("ai", "Transforming the architecture memory into a Know-Me…")
     queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
 
-    async def _progress(phase: str, message: str) -> None:
+    async def _gen_progress(phase: str, message: str) -> None:
         await queue.put({"phase": phase, "message": message})
 
     gen_task = asyncio.create_task(
         kgen.generate_know_me(
-            workload_name=wl_name, memory=memory, facts=facts, progress=_progress,
+            workload_name=wl_name, memory=memory, facts=facts, progress=_gen_progress,
             extra_context=extra_context, known_block=known.get("block", ""),
             evidence_block=evidence.get("block", ""),
         )
@@ -1345,18 +1353,17 @@ async def _stream_generate_know_me(
             ev = await asyncio.wait_for(queue.get(), timeout=0.25)
         except asyncio.TimeoutError:
             continue
-        yield {"event": "status", "data": json.dumps(ev)}
+        await progress(ev.get("phase", "ai"), ev.get("message", ""))
     result = await gen_task
     if result is None:
-        yield {"event": "error", "data": json.dumps({"message": "The AI could not draft the Know-Me. Try again."})}
-        return
+        raise RuntimeError("The AI could not draft the Know-Me. Try again.")
 
-    yield {"event": "status", "data": json.dumps({"phase": "save", "message": "💾 Validating sections & saving…"})}
+    await progress("save", "💾 Validating sections & saving…")
     existing = kreg.get_know_me(target_km_id) if target_km_id else None
     sections = kreg.merge_ai_sections((existing or {}).get("sections"), result["sections"])
     todos, autofilled = _finalize_know_me_todos(sections, existing, known)
     if autofilled:
-        yield {"event": "status", "data": json.dumps({"phase": "autofill", "message": f"✅ Auto-filled {autofilled} field(s) from platform data."})}
+        await progress("autofill", f"✅ Auto-filled {autofilled} field(s) from platform data.")
     ai_meta = {
         "confidence": result.get("confidence"),
         "passes": result.get("passes"),
@@ -1381,7 +1388,7 @@ async def _stream_generate_know_me(
             sections=sections, todos=todos, source="ai", ai=ai_meta,
             tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI",
         )
-    yield {"event": "done", "data": json.dumps(_know_me_response(architecture_id, arch, km_doc))}
+    return _know_me_response(architecture_id, arch, km_doc)
 
 
 @router.post("/{architecture_id}/know-me/generate/stream")
@@ -1390,22 +1397,20 @@ async def generate_know_me_stream_endpoint(
     payload: KnowMeGenerateRequest = Body(default_factory=KnowMeGenerateRequest),
     principal: Principal = Depends(_write),
 ):
-    """Create a NEW Know-Me for an architecture by transforming its Memory. SSE → done."""
+    """Create a NEW Know-Me for an architecture by transforming its Memory. Runs as a detached,
+    navigation-surviving job; this call starts it (idempotently) and follows it via SSE → done."""
     arch = _tenant_arch_or_404(architecture_id, principal)
     extra_context = payload.extra_context or ""
+    key = f"new:{architecture_id}"
 
-    async def _gen():
-        try:
-            async for ev in _stream_generate_know_me(
-                architecture_id=architecture_id, arch=arch, principal=principal,
-                extra_context=extra_context, target_km_id=None,
-            ):
-                yield ev
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Know-Me generation failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+    def _runner(progress):
+        return _run_generate_know_me(
+            progress, architecture_id=architecture_id, arch=arch, principal=principal,
+            extra_context=extra_context, target_km_id=None,
+        )
 
-    return EventSourceResponse(_gen())
+    _knowme_jobs.start(key, _runner)
+    return EventSourceResponse(_knowme_jobs.stream(key))
 
 
 @router.post("/know-me/{km_id}/generate/stream")
@@ -1414,24 +1419,30 @@ async def regenerate_know_me_stream_endpoint(
     payload: KnowMeGenerateRequest = Body(default_factory=KnowMeGenerateRequest),
     principal: Principal = Depends(_write),
 ):
-    """Regenerate an EXISTING Know-Me document from its architecture's Memory. SSE → done."""
+    """Regenerate an EXISTING Know-Me document from its architecture's Memory. Runs as a
+    detached, navigation-surviving job keyed by km_id; SSE follows it → done."""
     km_doc, arch = _km_or_404(km_id, principal)
     if not arch:
         raise HTTPException(status_code=400, detail="The source architecture no longer exists.")
     extra_context = payload.extra_context or ""
+    key = f"km:{km_id}"
 
-    async def _gen():
-        try:
-            async for ev in _stream_generate_know_me(
-                architecture_id=km_doc.get("architecture_id", ""), arch=arch, principal=principal,
-                extra_context=extra_context, target_km_id=km_id,
-            ):
-                yield ev
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Know-Me regeneration failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+    def _runner(progress):
+        return _run_generate_know_me(
+            progress, architecture_id=km_doc.get("architecture_id", ""), arch=arch, principal=principal,
+            extra_context=extra_context, target_km_id=km_id,
+        )
 
-    return EventSourceResponse(_gen())
+    _knowme_jobs.start(key, _runner)
+    return EventSourceResponse(_knowme_jobs.stream(key))
+
+
+@router.get("/know-me/{km_id}/generate/job")
+async def know_me_generate_job_endpoint(km_id: str, principal: Principal = Depends(get_principal)):
+    """KP5/KU4 — current generation-job status for a Know-Me doc (for reconnect on page visit).
+    Returns ``{job: null}`` when nothing is running/recent so the client can resume tailing a
+    generation that started before it navigated here."""
+    return {"job": _knowme_jobs.public_job(_knowme_jobs.get_job(f"km:{km_id}"))}
 
 
 def _finalize_know_me_todos(

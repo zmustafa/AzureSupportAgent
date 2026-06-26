@@ -11,6 +11,7 @@ unit-testable and powers the demo seed. ``collect_reservations`` resolves the co
 acquires an ARM token, and gathers the rows from Azure."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timezone
 from typing import Any
@@ -24,6 +25,8 @@ _API_VERSION = "2022-11-01"
 # Defensive cap on how many orders we expand (one child call each). Real tenants rarely
 # have many reservation orders; this just bounds a pathological case.
 _ORDER_CAP = 200
+# RP3 — bound on concurrent child-reservation expansions during live collection.
+_CHILD_CONCURRENCY = 8
 
 
 # --------------------------------------------------------------------- date helpers
@@ -282,19 +285,29 @@ async def collect_reservations(
         return empty_snapshot(connection_configured=True, window_days=window_days, error=err)
 
     orders = (data or {}).get("value", []) or []
-    records: list[dict[str, Any]] = []
-    for order in orders[:_ORDER_CAP]:
-        oid = order.get("name", "")
-        reservations: list[dict[str, Any]] = []
-        if oid:
+    capped = orders[:_ORDER_CAP]
+
+    # RP3 — expand each order's child reservations concurrently (bounded) instead of a
+    # sequential 1+N walk, so a large EA tenant's first load isn't N round-trips deep.
+    sem = asyncio.Semaphore(_CHILD_CONCURRENCY)
+
+    async def _children(oid: str) -> list[dict[str, Any]]:
+        if not oid:
+            return []
+        async with sem:
             child, cerr = await _arm_get(
                 token,
                 f"/providers/Microsoft.Capacity/reservationOrders/{oid}/reservations",
                 {"api-version": _API_VERSION},
             )
-            if not cerr:
-                reservations = (child or {}).get("value", []) or []
-        records.append(normalize_order(order, reservations))
+        if cerr:
+            return []
+        return (child or {}).get("value", []) or []
+
+    child_lists = await asyncio.gather(*[_children(o.get("name", "")) for o in capped])
+    records: list[dict[str, Any]] = [
+        normalize_order(order, reservations) for order, reservations in zip(capped, child_lists)
+    ]
 
     snap = compute_reservations(records, window_days=window_days)
     snap.update(

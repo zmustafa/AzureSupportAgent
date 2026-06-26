@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type RadarEvent, type RadarModelItem, type RadarSnapshot } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
+import { Skeleton, useDebounced, VirtualList } from "../utils/perf";
 import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
@@ -45,13 +46,11 @@ function agoText(seconds: number | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="rounded-lg border bg-white px-3 py-2">
-      <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
-      <div className="truncate text-[11px] text-gray-500">{label}</div>
-    </div>
-  );
+function Stat({ label, value, tone, active, onClick }: { label: string; value: string; tone?: string; active?: boolean; onClick?: () => void }) {
+  const base = `rounded-lg border bg-white px-3 py-2 text-left transition ${active ? "ring-2 ring-brand border-brand" : ""}`;
+  const inner = (<><div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div><div className="truncate text-[11px] text-gray-500">{label}</div></>);
+  if (!onClick) return <div className={base}>{inner}</div>;
+  return <button type="button" onClick={onClick} className={`${base} hover:border-brand hover:shadow-sm`} title={active ? "Click to clear filter" : `Filter to ${label}`}>{inner}</button>;
 }
 
 export function RetirementRadarPanel() {
@@ -63,10 +62,13 @@ export function RetirementRadarPanel() {
   const [subId, setSubId] = usePersistedState("azsup.radar.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.radar.subName", "");
   const [connId, setConnId] = usePersistedState("azsup.radar.connId", "");
-  const [typeFilter, setTypeFilter] = useState<"all" | "retirement" | "breaking_change">("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [query, setQuery] = useState("");
-  const [onlyUnowned, setOnlyUnowned] = useState(false);
+  const [, setParams] = useSearchParams();
+  const p0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [typeFilter, setTypeFilter] = useState<"all" | "retirement" | "breaking_change">((p0.get("type") as "all" | "retirement" | "breaking_change") || "all");
+  const [statusFilter, setStatusFilter] = useState(p0.get("status") || "all");
+  const [query, setQuery] = useState(p0.get("q") || "");
+  const dQuery = useDebounced(query, 150);
+  const [onlyUnowned, setOnlyUnowned] = useState(p0.get("unowned") === "1");
   const [drawer, setDrawer] = useState<RadarEvent | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState("");
@@ -93,13 +95,14 @@ export function RetirementRadarPanel() {
     queryKey: ["radar", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.radarOverview(params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const data: RadarSnapshot | undefined = radarQ.data;
   const events = data?.events ?? [];
   const models = data?.model_items ?? [];
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     return events.filter((e) => {
       if (typeFilter !== "all" && e.change_type !== typeFilter) return false;
       if (statusFilter !== "all" && (e.status || "new") !== statusFilter) return false;
@@ -107,7 +110,28 @@ export function RetirementRadarPanel() {
       if (q && !`${e.title} ${e.service} ${e.tracking_id} ${e.recommended_replacement}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [events, typeFilter, statusFilter, onlyUnowned, query]);
+  }, [events, typeFilter, statusFilter, onlyUnowned, dQuery]);
+
+  // RU2 — reflect the active filters into the URL (shareable / back-aware).
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    const setOrDel = (k: string, v: string) => { if (v && v !== "all") next.set(k, v); else next.delete(k); };
+    setOrDel("type", typeFilter); setOrDel("status", statusFilter);
+    if (onlyUnowned) next.set("unowned", "1"); else next.delete("unowned");
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typeFilter, statusFilter, onlyUnowned, query]);
+
+  // RU3 — active-filter chips (each removable).
+  const chips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (typeFilter !== "all") out.push({ key: "type", label: typeFilter === "breaking_change" ? "Breaking changes" : "Retirements", clear: () => setTypeFilter("all") });
+    if (statusFilter !== "all") out.push({ key: "status", label: `Status: ${STATUS_LABEL[statusFilter] ?? statusFilter}`, clear: () => setStatusFilter("all") });
+    if (onlyUnowned) out.push({ key: "unowned", label: "Unowned only", clear: () => setOnlyUnowned(false) });
+    if (query.trim()) out.push({ key: "q", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    return out;
+  }, [typeFilter, statusFilter, onlyUnowned, query]);
 
   async function doRefresh() {
     setRefreshing(true);
@@ -279,7 +303,7 @@ export function RetirementRadarPanel() {
               : "Enter a subscription to load the radar."}
           </div>
         ) : radarQ.isLoading ? (
-          <div className="p-8 text-center text-sm text-gray-500">Loading radar…</div>
+          <div className="p-6"><Skeleton rows={8} /></div>
         ) : !data ? (
           <div className="p-8 text-center text-sm text-gray-500">Pick a scope to load the radar.</div>
         ) : data.never_loaded ? (
@@ -317,6 +341,14 @@ export function RetirementRadarPanel() {
               </div>
             )}
 
+            {/* RU4 — stale-cache nudge once past the backend TTL. */}
+            {data.stale_cache && !data.never_loaded && (
+              <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Radar snapshot is {agoText(data.age_seconds)} — service retirements may have changed.
+                <button onClick={doRefresh} disabled={refreshing} className="rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50">Refresh</button>
+              </div>
+            )}
+
             {/* Countdown rail */}
             <div className="mb-4">
               <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Nearest deadlines</div>
@@ -341,11 +373,11 @@ export function RetirementRadarPanel() {
 
             {/* KPIs */}
             <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-              <Stat label="Total events" value={String(data.counts.total)} />
-              <Stat label="Retirements" value={String(data.counts.retirement)} />
-              <Stat label="Breaking changes" value={String(data.counts.breaking_change)} />
+              <Stat label="Total events" value={String(data.counts.total)} active={typeFilter === "all" && statusFilter === "all" && !onlyUnowned} onClick={() => { setTypeFilter("all"); setStatusFilter("all"); setOnlyUnowned(false); setQuery(""); }} />
+              <Stat label="Retirements" value={String(data.counts.retirement)} active={typeFilter === "retirement"} onClick={() => setTypeFilter(typeFilter === "retirement" ? "all" : "retirement")} />
+              <Stat label="Breaking changes" value={String(data.counts.breaking_change)} active={typeFilter === "breaking_change"} onClick={() => setTypeFilter(typeFilter === "breaking_change" ? "all" : "breaking_change")} />
               <Stat label="< 30 days" value={String(data.counts.red)} tone="text-red-600" />
-              <Stat label="Unowned" value={String(data.counts.unowned)} tone={data.counts.unowned ? "text-amber-600" : undefined} />
+              <Stat label="Unowned" value={String(data.counts.unowned)} tone={data.counts.unowned ? "text-amber-600" : undefined} active={onlyUnowned} onClick={() => setOnlyUnowned(!onlyUnowned)} />
               <Stat label="Impacted resources" value={String(data.counts.impacted_total)} />
             </div>
 
@@ -373,6 +405,7 @@ export function RetirementRadarPanel() {
                 Unowned only
               </label>
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" className="rounded-md border px-2 py-1.5 text-sm" />
+              <span className="text-[11px] text-gray-400">{filtered.length} of {events.length}</span>
               <div className="ml-auto flex items-center gap-2">
                 <button onClick={previewDigest} disabled={busy === "digest"} className="rounded-md border bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50">
                   📨 Preview digest
@@ -383,7 +416,48 @@ export function RetirementRadarPanel() {
               </div>
             </div>
 
-            {/* Main table */}
+            {/* RU3 — active filter chips. */}
+            {chips.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {chips.map((c) => (
+                  <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                    {c.label}
+                    <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+                  </span>
+                ))}
+                <button onClick={() => { setTypeFilter("all"); setStatusFilter("all"); setOnlyUnowned(false); setQuery(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+              </div>
+            )}
+
+            {/* Main table — virtualized (RP3) once the event list gets large; the plain table
+                renders for typical small sets so the common case is visually unchanged. */}
+            {filtered.length > 80 ? (
+              <div className="rounded-lg border bg-white">
+                <div className="grid grid-cols-[2fr_1fr_1fr_0.6fr_0.7fr_1.6fr_1fr_1fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                  <span>Service / feature</span><span>Type</span><span>Date</span><span>Days</span><span>Impacted</span><span>Replacement</span><span>Owner</span><span>Status</span>
+                </div>
+                <VirtualList
+                  items={filtered}
+                  estimateSize={52}
+                  max="60vh"
+                  render={(e: RadarEvent) => (
+                    <div onClick={() => setDrawer(e)} className="grid cursor-pointer grid-cols-[2fr_1fr_1fr_0.6fr_0.7fr_1.6fr_1fr_1fr] items-center gap-0 border-b px-3 py-2 text-sm hover:bg-gray-50">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2"><span className={`inline-block h-2 w-2 rounded-full ${SEV_DOT[e.severity]}`} /><span className="truncate font-medium text-gray-900">{e.title || e.service}</span></div>
+                        <div className="truncate text-[11px] text-gray-400">{e.tracking_id}</div>
+                      </div>
+                      <div><span className={`rounded px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{e.change_type === "breaking_change" ? "Breaking" : "Retirement"}</span></div>
+                      <div className="text-gray-600">{e.retirement_date || "TBD"}</div>
+                      <div className={`font-medium ${SEV_TEXT[e.severity]}`}>{daysLabel(e.days_until)}</div>
+                      <div className="text-gray-600">{e.impacted_count}</div>
+                      <div className="truncate text-gray-600" title={e.recommended_replacement}>{e.recommended_replacement || "—"}</div>
+                      <div className="truncate">{e.unowned ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span> : <span className="text-gray-700">{e.owner}</span>}</div>
+                      <div className="text-gray-600">{STATUS_LABEL[e.status || "new"]}</div>
+                    </div>
+                  )}
+                />
+              </div>
+            ) : (
             <div className="overflow-x-auto rounded-lg border bg-white">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
@@ -434,6 +508,7 @@ export function RetirementRadarPanel() {
                 </tbody>
               </table>
             </div>
+            )}
 
             {/* AI-model lifecycle lane */}
             <div className="mt-6">

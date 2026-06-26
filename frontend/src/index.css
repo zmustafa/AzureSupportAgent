@@ -13,6 +13,18 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Know-Me read-mode: the active field chip is highlighted via this class (toggled imperatively)
+ * so chip clicks DON'T re-create the Markdown components object and re-parse every section. */
+.km-field.km-active-field {
+  border-color: #f87171 !important;
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+  box-shadow: 0 0 0 2px #fca5a5 !important;
+}
+.km-field.km-active-field > span:first-child {
+  color: #ef4444 !important;
+}
+
 /* Rich formatting for assistant markdown answers. */
 .prose-chat {
   line-height: 1.6;

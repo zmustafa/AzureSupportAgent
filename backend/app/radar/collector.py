@@ -11,6 +11,7 @@ they're unit-testable and power the demo seed. ``collect_radar`` resolves the sc
 gathers the rows from Azure."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -539,14 +540,27 @@ async def collect_radar(
 
     notes: list[str] = []
     raw: list[dict[str, Any]] = []
-    try:
-        raw += await _query_advisor(predicate, connection)
-    except RuntimeError as exc:
-        notes.append(f"Advisor: {str(exc)[:160]}")
-    try:
-        raw += await _query_service_health(subscriptions, connection)
-    except RuntimeError as exc:
-        notes.append(f"Service Health: {str(exc)[:160]}")
+    deployments: list[dict[str, Any]] = []
+    # RP4 — Advisor, Service Health and AOAI deployments are independent Azure reads; run them
+    # concurrently instead of one-after-another to cut radar refresh latency.
+    adv_res, sh_res, aoai_res = await asyncio.gather(
+        _query_advisor(predicate, connection),
+        _query_service_health(subscriptions, connection),
+        _query_aoai_deployments(predicate, connection),
+        return_exceptions=True,
+    )
+    if isinstance(adv_res, list):
+        raw += adv_res
+    elif isinstance(adv_res, BaseException):
+        notes.append(f"Advisor: {str(adv_res)[:160]}")
+    if isinstance(sh_res, list):
+        raw += sh_res
+    elif isinstance(sh_res, BaseException):
+        notes.append(f"Service Health: {str(sh_res)[:160]}")
+    if isinstance(aoai_res, list):
+        deployments = aoai_res
+    elif isinstance(aoai_res, BaseException):
+        notes.append(f"AOAI deployments: {str(aoai_res)[:160]}")
 
     # Optional Azure Updates public feed (the only net-new external fetch).
     try:
@@ -560,12 +574,6 @@ async def collect_radar(
             notes.append("Azure Updates feed included (may lag announcements ~2 weeks).")
     except Exception as exc:  # noqa: BLE001
         notes.append(f"Azure Updates feed: {str(exc)[:120]}")
-
-    deployments: list[dict[str, Any]] = []
-    try:
-        deployments = await _query_aoai_deployments(predicate, connection)
-    except RuntimeError as exc:
-        notes.append(f"AOAI deployments: {str(exc)[:160]}")
 
     wl_index = _workload_index()
     events = merge_events(raw, wl_index=wl_index, tenant_id=tenant_id)

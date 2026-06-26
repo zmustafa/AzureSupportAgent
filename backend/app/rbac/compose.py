@@ -158,7 +158,34 @@ def build_master_rows(tenant_id: str) -> list[dict[str, Any]]:
     """The full normalized row set for a tenant: direct scope rows + directory rows + the
     group-derived effective rows expanded from the directory group graph, with GUID-only
     principals backfilled to friendly names from the resolved principal directory, and
-    management-group scopes shown by name rather than GUID."""
+    management-group scopes shown by name rather than GUID.
+
+    RP1 — memoised in-process keyed by the cache files' mtimes. This function is called by
+    /access (incl. every search keystroke), /pivots, /diagnostics, /overview, /scope-tree and the
+    exports, and each call otherwise re-reads + gunzips every scope sidecar from disk. The memo
+    means repeated reads between refreshes are O(1); any cache write (which bumps the index/blob
+    mtimes) transparently invalidates it."""
+    sig = _cache_signature(tenant_id)
+    hit = _MASTER_CACHE.get(tenant_id)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    rows = _build_master_rows_uncached(tenant_id)
+    _MASTER_CACHE[tenant_id] = (sig, rows)
+    return rows
+
+
+# RP1 — in-process memo: tenant -> (cache-version, rows). Bounded to the active tenants in a
+# process; entries are replaced (not accumulated) as the cache version advances.
+_MASTER_CACHE: dict[str, tuple[int, list[dict[str, Any]]]] = {}
+
+
+def _cache_signature(tenant_id: str) -> int:
+    """Freshness signature for a tenant's RBAC cache: the global write sequence, bumped on any
+    scope/directory/index write. Robust to filesystem mtime granularity."""
+    return cache.cache_version()
+
+
+def _build_master_rows_uncached(tenant_id: str) -> list[dict[str, Any]]:
     scope_rows = cache.all_scope_rows(tenant_id)
     directory = cache.read_directory(tenant_id)
     dir_rows = directory.get("rows", [])

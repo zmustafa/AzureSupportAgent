@@ -207,6 +207,10 @@ DEFAULTS: dict[str, Any] = {
     # Max privileged users scanned for MFA status per refresh (the scan is N Graph calls;
     # results are labelled "sampled" when more privileged users exist than this cap).
     "identity_mfa_scan_cap": 50,
+    # IP4 — max app registrations enumerated per refresh (each is several Graph calls for its
+    # credentials / API permissions / owners). The UI surfaces a "first N (capped)" notice when
+    # the live listing hits this. Raise for large tenants at the cost of a slower refresh.
+    "app_registrations_limit": 500,
     # --- AMBA Monitoring Coverage --------------------------------------------------
     # Server-side cache TTL (seconds) for coverage snapshots — the Resource Graph scans
     # are slow, so the dashboard serves a cached snapshot until it ages past this (6h).
@@ -226,6 +230,9 @@ DEFAULTS: dict[str, Any] = {
     "telemetry_approved_workspaces": [],
     # Max resources scanned for diagnostic settings per refresh (each is one Azure call).
     "telemetry_per_resource_scan_cap": 200,
+    # Bounded concurrency for the per-resource diagnostic-settings probe (TP1). Higher = faster
+    # telemetry scans on large estates; each probe fails soft so a wider fan-out stays safe.
+    "telemetry_scan_concurrency": 12,
     # --- Backup & DR Coverage ------------------------------------------------------
     # Server-side cache TTL (seconds) for backup/DR snapshots. Default 6h.
     "backupdr_cache_ttl_s": 21600,
@@ -421,6 +428,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["identity_expiry_days"] = max(1, min(365, int(current.get("identity_expiry_days", 90) or 90)))
     current["identity_cache_ttl_s"] = max(0, min(604800, int(current.get("identity_cache_ttl_s", 21600) or 21600)))
     current["identity_mfa_scan_cap"] = max(1, min(2000, int(current.get("identity_mfa_scan_cap", 50) or 50)))
+    current["app_registrations_limit"] = max(50, min(5000, int(current.get("app_registrations_limit", 500) or 500)))
     # AMBA: clamp cache TTL + tolerance; coerce the misconfig flag.
     current["amba_cache_ttl_s"] = max(0, min(604800, int(current.get("amba_cache_ttl_s", 21600) or 21600)))
     current["amba_misconfig_counts_as_gap"] = bool(current.get("amba_misconfig_counts_as_gap", True))
@@ -428,6 +436,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     # Telemetry: clamp cache TTL + scan cap; normalize the approved-workspace list.
     current["telemetry_cache_ttl_s"] = max(0, min(604800, int(current.get("telemetry_cache_ttl_s", 21600) or 21600)))
     current["telemetry_per_resource_scan_cap"] = max(1, min(2000, int(current.get("telemetry_per_resource_scan_cap", 200) or 200)))
+    current["telemetry_scan_concurrency"] = max(1, min(24, int(current.get("telemetry_scan_concurrency", 12) or 12)))
     raw_ws = current.get("telemetry_approved_workspaces") or []
     if not isinstance(raw_ws, list):
         raw_ws = []

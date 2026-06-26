@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "12564780468028286422"
+      "templateHash": "408056822883314379"
     }
   },
   "parameters": {
@@ -107,7 +107,7 @@
         "Yes"
       ],
       "metadata": {
-        "description": "Deploy backing storage behind a Private Endpoint inside a VNet (Yes) or use the simple public deployment (No). PostgreSQL stays public/TLS in both modes. This is a create-time choice and cannot be toggled on an existing deployment."
+        "description": "Deploy backing storage AND PostgreSQL behind Private Endpoints inside a VNet (Yes) or use the simple public deployment (No). This is a create-time choice and cannot be toggled on an existing deployment."
       }
     },
     "vnetAddressSpace": {
@@ -128,7 +128,7 @@
       "type": "string",
       "defaultValue": "10.42.2.0/27",
       "metadata": {
-        "description": "Private Endpoint subnet (CIDR) for the storage private endpoint. Must be inside the VNet address space and not overlap the infrastructure subnet. Used only when Private networking = Yes."
+        "description": "Private Endpoint subnet (CIDR) for the storage and PostgreSQL private endpoints. Must be inside the VNet address space and not overlap the infrastructure subnet. Used only when Private networking = Yes."
       }
     }
   },
@@ -151,7 +151,9 @@
     "infraSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('infraSubnetName'))]",
     "peSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('peSubnetName'))]",
     "filePrivateDnsZoneName": "[format('privatelink.file.{0}', environment().suffixes.storage)]",
-    "storageFilePeName": "[format('{0}-file-pe', variables('storageAccountName'))]"
+    "storageFilePeName": "[format('{0}-file-pe', variables('storageAccountName'))]",
+    "postgresPrivateDnsZoneName": "privatelink.postgres.database.azure.com",
+    "postgresPeName": "[format('{0}-pe', variables('postgresServerName'))]"
   },
   "resources": [
     {
@@ -377,7 +379,7 @@
           "mode": "Disabled"
         },
         "network": {
-          "publicNetworkAccess": "Enabled"
+          "publicNetworkAccess": "[if(variables('isPrivate'), 'Disabled', 'Enabled')]"
         }
       }
     },
@@ -394,6 +396,7 @@
       ]
     },
     {
+      "condition": "[not(variables('isPrivate'))]",
       "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
       "apiVersion": "2024-08-01",
       "name": "[format('{0}/{1}', variables('postgresServerName'), 'AllowAzureServices')]",
@@ -403,6 +406,77 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('postgresPrivateDnsZoneName')]",
+      "location": "global"
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('postgresPrivateDnsZoneName'), format('{0}-link', variables('vnetName')))]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('postgresPeName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('peSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "postgres",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+              "groupIds": [
+                "postgresqlServer"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('isPrivate')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', variables('postgresPeName'), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "postgres",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZoneName'))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('postgresPrivateDnsZoneName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', variables('postgresPeName'))]"
       ]
     },
     {
@@ -519,6 +593,7 @@
         "[resourceId('Microsoft.App/managedEnvironments/storages', variables('environmentName'), variables('managedEnvStorageName'))]",
         "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
         "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers/databases', variables('postgresServerName'), parameters('postgresDatabaseName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('postgresPeName'), 'default')]",
         "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('storageFilePeName'), 'default')]"
       ]
     }
@@ -547,6 +622,10 @@
     "vnetName": {
       "type": "string",
       "value": "[if(variables('isPrivate'), variables('vnetName'), '')]"
+    },
+    "postgresPrivateEndpoint": {
+      "type": "string",
+      "value": "[if(variables('isPrivate'), variables('postgresPeName'), '')]"
     }
   }
 }

@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useNavigate } from "react-router-dom";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
+import { useDebounced, VirtualList, Skeleton } from "../utils/perf";
 import { RBAC_NAV, type RbacTab } from "./navConfig";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { AzureIcon } from "./AzureIcon";
@@ -21,6 +22,9 @@ import { AzureIcon } from "./AzureIcon";
 // Shared via context so every tab + the refresh stream re-scope together without prop drilling.
 const RbacConnectionContext = createContext<string>("");
 const useRbacConnectionId = () => useContext(RbacConnectionContext) || null;
+
+// RP6 — access-grid server page size (the grid pages through the full result set as you scroll).
+const RBAC_PAGE = 200;
 
 // ---- helpers --------------------------------------------------------------------
 function agoText(seconds: number | null): string {
@@ -210,7 +214,7 @@ function FilterRail({ filter, onChange }: { filter: AccessFilter | null; onChang
   const [mode, setMode] = useState<"scope" | "workload">("scope");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const connectionId = useRbacConnectionId();
-  const treeQ = useQuery({ queryKey: ["rbac", "scope-tree", connectionId ?? ""], queryFn: () => api.rbacScopeTree(connectionId) });
+  const treeQ = useQuery({ queryKey: ["rbac", "scope-tree", connectionId ?? ""], queryFn: () => api.rbacScopeTree(connectionId), staleTime: 5 * 60 * 1000 });
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const root = treeQ.data?.root;
   const workloads = wlQ.data?.workloads ?? [];
@@ -315,6 +319,7 @@ function FilterRail({ filter, onChange }: { filter: AccessFilter | null; onChang
 // ---- access grid (shared) -------------------------------------------------------
 function AccessGrid({ tab }: { tab: string }) {
   const [search, setSearch] = useState("");
+  const dSearch = useDebounced(search, 250); // RP2 — don't re-query the server on every keystroke
   const [surface, setSurface] = useState("");
   const [ptype, setPtype] = useState("");
   const [privOnly, setPrivOnly] = useState(false);
@@ -329,28 +334,37 @@ function AccessGrid({ tab }: { tab: string }) {
     if (wid) setFilter({ type: "workload", label: params.get("workload_name") || wid, workload_id: wid });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const q = useQuery({
-    queryKey: ["rbac", "access", tab, search, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
-    queryFn: () =>
+  const q = useInfiniteQuery({
+    queryKey: ["rbac", "access", tab, dSearch, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
       api.rbacAccess({
         tab,
-        search,
+        search: dSearch,
         surface,
         principal_type: ptype,
         privileged_only: privOnly,
-        limit: 500,
+        offset: pageParam as number,
+        limit: RBAC_PAGE,
         scope_id: filter?.scope_id,
         subscription_ids: filter?.subscription_ids,
         workload_id: filter?.workload_id,
         connection_id: connectionId,
       }),
+    // RP6 — page through the full result set (was a hard 500-row cap). Each page is `RBAC_PAGE`
+    // rows; the virtualizer requests the next page as it nears the end (see effect below).
+    getNextPageParam: (last) => {
+      const loaded = last.offset + last.rows.length;
+      return loaded < last.total ? loaded : undefined;
+    },
     // Keep the current grid visible while a new tab/search/filter loads, instead of
     // flashing an empty table on every keystroke/tab switch (the rows come from a
     // server-side computed cache, so refetches are common as filters change).
     placeholderData: (prev) => prev,
+    staleTime: 60 * 1000,
   });
-  const rows = q.data?.rows ?? [];
-  const total = q.data?.total ?? 0;
+  const rows = useMemo(() => (q.data?.pages ?? []).flatMap((p) => p.rows), [q.data]);
+  const total = q.data?.pages?.[0]?.total ?? 0;
   // Virtualize the grid body: only the visible window of rows is in the DOM, so a 500-row
   // result stays at ~20 live <tr> instead of 500 (× 7 cells), keeping scroll/INP smooth.
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -363,12 +377,23 @@ function AccessGrid({ tab }: { tab: string }) {
   const vItems = rowVirt.getVirtualItems();
   const padTop = vItems.length ? vItems[0].start : 0;
   const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
+
+  // RP6 — fetch the next page when the virtualizer scrolls within ~24 rows of the loaded end.
+  const lastIndex = vItems.length ? vItems[vItems.length - 1].index : 0;
+  useEffect(() => {
+    if (lastIndex >= rows.length - 24 && q.hasNextPage && !q.isFetchingNextPage) {
+      void q.fetchNextPage();
+    }
+  }, [lastIndex, rows.length, q.hasNextPage, q.isFetchingNextPage, q]);
   const exportFilter = {
     scope_id: filter?.scope_id,
     subscription_ids: filter?.subscription_ids,
     workload_id: filter?.workload_id,
     connection_id: connectionId,
   };
+  // RU6 — transient export-feedback toast (the download is an <a href>, so confirm on click).
+  const [exportToast, setExportToast] = useState("");
+  const noteExport = (fmt: string) => { setExportToast(`${fmt} export started — honors the active scope & filters`); setTimeout(() => setExportToast(""), 3000); };
 
   return (
     <div className="flex h-full min-h-0">
@@ -397,10 +422,12 @@ function AccessGrid({ tab }: { tab: string }) {
           <label className="flex items-center gap-1 text-sm text-gray-700">
             <input type="checkbox" checked={privOnly} onChange={(e) => setPrivOnly(e.target.checked)} /> Privileged only
           </label>
-          <span className="ml-auto text-xs text-gray-500">{total.toLocaleString()} grant(s)</span>
-          <a href={api.rbacExportUrl("csv", tab, exportFilter)} className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ CSV</a>
-          <a href={api.rbacExportUrl("json", tab, exportFilter)} className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ JSON</a>
-          <a href={api.rbacWorkbookUrl(exportFilter)} className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
+          <span className="ml-auto text-xs text-gray-500">{rows.length < total ? `${rows.length.toLocaleString()} / ${total.toLocaleString()}` : total.toLocaleString()} grant(s)</span>
+          {q.isFetchingNextPage && <span className="text-[11px] text-gray-400">loading more…</span>}
+          {exportToast && <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {exportToast}</span>}
+          <a href={api.rbacExportUrl("csv", tab, exportFilter)} onClick={() => noteExport("CSV")} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ CSV</a>
+          <a href={api.rbacExportUrl("json", tab, exportFilter)} onClick={() => noteExport("JSON")} title="Export the current grid (honors the active filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ JSON</a>
+          <a href={api.rbacWorkbookUrl(exportFilter)} onClick={() => noteExport("Excel")} title="Multi-tab workbook of every RBAC view (honors the active scope/workload)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {q.isLoading ? (
@@ -651,7 +678,7 @@ function OverviewTab({
 
 function ScopesTab({ refreshCtl }: { refreshCtl: ReturnType<typeof useRbacRefresh> }) {
   const connectionId = useRbacConnectionId();
-  const q = useQuery({ queryKey: ["rbac", "scopes", connectionId ?? ""], queryFn: () => api.rbacScopes(connectionId) });
+  const q = useQuery({ queryKey: ["rbac", "scopes", connectionId ?? ""], queryFn: () => api.rbacScopes(connectionId), staleTime: 5 * 60 * 1000 });
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   const scopes = q.data?.scopes ?? [];
   return (
@@ -666,47 +693,53 @@ function ScopesTab({ refreshCtl }: { refreshCtl: ReturnType<typeof useRbacRefres
 
 function RolesTab() {
   const connectionId = useRbacConnectionId();
-  const q = useQuery({ queryKey: ["rbac", "roles", connectionId ?? ""], queryFn: () => api.rbacRoles(connectionId) });
+  const q = useQuery({ queryKey: ["rbac", "roles", connectionId ?? ""], queryFn: () => api.rbacRoles(connectionId), staleTime: 5 * 60 * 1000 });
   const [search, setSearch] = useState("");
+  const dSearch = useDebounced(search, 200);
   const roleDefs = (q.data?.role_defs ?? []) as Record<string, unknown>[];
   const principals = (q.data?.principals ?? []) as Record<string, unknown>[];
-  const fr = roleDefs.filter((r) => !search || JSON.stringify(r).toLowerCase().includes(search.toLowerCase()));
-  const fp = principals.filter((p) => !search || JSON.stringify(p).toLowerCase().includes(search.toLowerCase()));
+  // RP3 — precompute a lowercased search blob per row ONCE (was JSON.stringify per row per render),
+  // then filter against the debounced term.
+  const roleBlobs = useMemo(() => roleDefs.map((r) => JSON.stringify(r).toLowerCase()), [roleDefs]);
+  const princBlobs = useMemo(() => principals.map((p) => JSON.stringify(p).toLowerCase()), [principals]);
+  const t = dSearch.toLowerCase();
+  const fr = useMemo(() => roleDefs.filter((_, i) => !t || roleBlobs[i].includes(t)), [roleDefs, roleBlobs, t]);
+  const fp = useMemo(() => principals.filter((_, i) => !t || princBlobs[i].includes(t)), [principals, princBlobs, t]);
+  if (q.isLoading) return <div className="p-4"><Skeleton rows={10} /></div>;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4">
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search roles / principals…" className="mb-3 w-72 rounded border px-2 py-1 text-sm" />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-lg border bg-white">
-          <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">Role definitions ({fr.length})</div>
-          <div className="max-h-[60vh] overflow-auto">
-            <table className="w-full text-sm">
-              <tbody>
-                {fr.map((r, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="px-3 py-1.5 font-medium text-gray-800">{String(r.roleName ?? "")}</td>
-                    <td className="px-3 py-1.5 text-gray-500">{String(r.roleCategory ?? "")}</td>
-                    <td className="px-3 py-1.5">{r.roleIsPrivileged ? <span className="rounded bg-red-100 px-1.5 text-[10px] text-red-700">privileged</span> : null}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">Role definitions ({fr.length}{fr.length !== roleDefs.length ? ` of ${roleDefs.length}` : ""})</div>
+          {/* RP3 — virtualized (was a plain map capped only by max-height). */}
+          <VirtualList
+            items={fr}
+            estimateSize={34}
+            max="60vh"
+            render={(r: Record<string, unknown>) => (
+              <div className="grid grid-cols-[1.6fr_1fr_auto] items-center gap-2 border-b px-3 py-1.5 text-sm last:border-0">
+                <span className="truncate font-medium text-gray-800">{String(r.roleName ?? "")}</span>
+                <span className="truncate text-gray-500">{String(r.roleCategory ?? "")}</span>
+                <span>{r.roleIsPrivileged ? <span className="rounded bg-red-100 px-1.5 text-[10px] text-red-700">privileged</span> : null}</span>
+              </div>
+            )}
+          />
         </div>
         <div className="rounded-lg border bg-white">
-          <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">Principal directory ({fp.length})</div>
-          <div className="max-h-[60vh] overflow-auto">
-            <table className="w-full text-sm">
-              <tbody>
-                {fp.map((p, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="px-3 py-1.5 font-medium text-gray-800">{String(p.displayName ?? "")}</td>
-                    <td className="px-3 py-1.5 text-gray-500">{String(p.principalType ?? "")}</td>
-                    <td className="px-3 py-1.5 text-[11px] text-gray-400">{String(p.userPrincipalName ?? p.appId ?? "")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">Principal directory ({fp.length}{fp.length !== principals.length ? ` of ${principals.length}` : ""})</div>
+          <VirtualList
+            items={fp}
+            estimateSize={34}
+            max="60vh"
+            render={(p: Record<string, unknown>) => (
+              <div className="grid grid-cols-[1.4fr_0.8fr_1.2fr] items-center gap-2 border-b px-3 py-1.5 text-sm last:border-0">
+                <span className="truncate font-medium text-gray-800">{String(p.displayName ?? "")}</span>
+                <span className="truncate text-gray-500">{String(p.principalType ?? "")}</span>
+                <span className="truncate text-[11px] text-gray-400">{String(p.userPrincipalName ?? p.appId ?? "")}</span>
+              </div>
+            )}
+          />
         </div>
       </div>
     </div>
@@ -725,6 +758,7 @@ function InsightsTab() {
         workload_id: filter?.workload_id,
         connection_id: connectionId,
       }),
+    staleTime: 5 * 60 * 1000,
   });
   const pivots = q.data?.pivots ?? {};
   const labels = q.data?.labels ?? {};
@@ -764,7 +798,7 @@ function InsightsTab() {
 
 function DiagnosticsTab() {
   const connectionId = useRbacConnectionId();
-  const q = useQuery({ queryKey: ["rbac", "diagnostics", connectionId ?? ""], queryFn: () => api.rbacDiagnostics(connectionId) });
+  const q = useQuery({ queryKey: ["rbac", "diagnostics", connectionId ?? ""], queryFn: () => api.rbacDiagnostics(connectionId), staleTime: 5 * 60 * 1000 });
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   const collectors = q.data?.collectors ?? [];
   const errors = q.data?.errors ?? [];
@@ -870,7 +904,7 @@ function RbacPanelBody({
 }) {
   const refreshCtl = useRbacRefresh();
 
-  const overviewQ = useQuery({ queryKey: ["rbac", "overview", connectionId], queryFn: () => api.rbacOverview(connectionId) });
+  const overviewQ = useQuery({ queryKey: ["rbac", "overview", connectionId], queryFn: () => api.rbacOverview(connectionId), staleTime: 5 * 60 * 1000 });
 
   // Reconnect to any in-flight refresh job on mount (the job survives navigation).
   useEffect(() => {
@@ -950,7 +984,7 @@ function RbacPanelBody({
       {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700">{err}</div>}
 
       {overviewQ.isLoading ? (
-        <div className="p-6 text-sm text-gray-500">Loading…</div>
+        <div className="p-6"><Skeleton rows={8} /></div>
       ) : data && data.never_loaded && tab === "overview" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <div className="text-4xl">🛡️</div>

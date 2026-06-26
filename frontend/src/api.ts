@@ -263,8 +263,11 @@ export type AppRegistrationsResponse = {
   generated_at: string;
   tenant_id: string;
   connection_configured: boolean;
-  source: "demo_dummy_data" | "microsoft_graph";
+  source: "demo_dummy_data" | "microsoft_graph" | "unavailable";
   note: string;
+  // Set when a configured connection could NOT enumerate (Graph auth/config error or live
+  // failure). The view shows the actionable error instead of substituting demo data.
+  connection_failed?: boolean;
   apps: AppRegistration[];
   facets: {
     audiences: AppRegFacet[];
@@ -286,6 +289,9 @@ export type AppRegistrationsResponse = {
   never_loaded?: boolean;
   fetched_at: string;
   age_seconds: number | null;
+  // IU3 — set when the live listing hit the per-refresh cap (UI shows a "first N" notice).
+  truncated?: boolean;
+  limit?: number;
 };
 
 // ---- AMBA Monitoring Coverage ---------------------------------------------------
@@ -2929,6 +2935,9 @@ export const api = {
     }),
   knowMe: (kmId: string) =>
     http<KnowMeResponse>(`/architectures/know-me/${kmId}`),
+  // KP5/KU4 — current background generation-job status for a Know-Me (for reconnect on mount).
+  knowMeGenerateJob: (kmId: string) =>
+    http<{ job: { id: string; status: string; last_message: string } | null }>(`/architectures/know-me/${kmId}/generate/job`),
   saveKnowMe: (kmId: string, body: { title?: string; description?: string; sections?: KnowMeSection[]; todos?: KnowMeTodo[]; status?: string }) =>
     http<KnowMeResponse>(`/architectures/know-me/${kmId}`, { method: "PUT", body: JSON.stringify(body) }),
   setKnowMeReference: (kmId: string, isReference = true) =>
@@ -9515,6 +9524,9 @@ export const fmea = {
     http<FmeaResponse>(`/fmea/${fmeaId}/revisions/${revisionId}/restore`, { method: "POST", body: "{}" }),
   exportUrl: (fmeaId: string) => `${API_BASE}/fmea/${fmeaId}/export?format=csv`,
   exportXlsxUrl: (fmeaId: string) => `${API_BASE}/fmea/${fmeaId}/export?format=xlsx`,
+  // Background generation-job status for an FMEA doc (reconnect on mount).
+  generateJob: (fmeaId: string) =>
+    http<{ job: { id: string; status: string; last_message: string } | null }>(`/fmea/${fmeaId}/generate/job`),
 };
 
 /** Generic SSE reader for the FMEA generation endpoints (status… → done | error). */
@@ -9631,6 +9643,68 @@ export async function streamRegenerateFmeaTable(
   });
   await _consumeFmeaStream(res, handlers);
 }
+
+/** TP4 — live Telemetry-coverage scan over SSE: progress(scanned X of N) → done(snapshot).
+ *  Resolves with the final snapshot; the backend scan is shielded so it caches even if aborted. */
+export async function streamTelemetryRefresh(
+  params: { workload_id?: string; subscription_id?: string; connection_id?: string },
+  handlers: {
+    onProgress?: (p: { done: number; total: number; resource: string }) => void;
+    onDone?: (snap: TelemetryCoverage) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<TelemetryCoverage | null> {
+  const q = new URLSearchParams();
+  if (params.workload_id) q.set("workload_id", params.workload_id);
+  if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+  if (params.connection_id) q.set("connection_id", params.connection_id);
+  const res = await fetch(`${API_BASE}/telemetry/refresh/stream?${q.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: "{}",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let detail = `${res.status} ${res.statusText}`;
+    try { const b = await res.json(); if (b?.detail) detail = b.detail; } catch { /* ignore */ }
+    handlers.onError?.(detail);
+    return null;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final: TelemetryCoverage | null = null;
+  while (true) {
+    let value: Uint8Array | undefined;
+    let done = false;
+    try { ({ value, done } = await reader.read()); } catch (err) {
+      if ((err as Error)?.name === "AbortError") return final;
+      throw err;
+    }
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split(/\r\n\r\n|\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      let event = "message";
+      let data = "";
+      for (const rawLine of frame.split(/\r\n|\n/)) {
+        if (rawLine.startsWith("event:")) event = rawLine.slice(6).trim();
+        else if (rawLine.startsWith("data:")) data += rawLine.slice(5).trim();
+      }
+      if (!data) continue;
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(data); } catch { continue; }
+      if (event === "progress") handlers.onProgress?.(parsed as unknown as { done: number; total: number; resource: string });
+      else if (event === "done") { final = parsed as unknown as TelemetryCoverage; handlers.onDone?.(final); }
+      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Scan failed.");
+    }
+  }
+  return final;
+}
+
 export interface PlaybookStep {
   id: string;
   name: string;

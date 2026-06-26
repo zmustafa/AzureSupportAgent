@@ -70,9 +70,22 @@ def _read_index() -> dict[str, Any]:
     return {}
 
 
+# Monotonic write counter — bumped on every index/blob write so in-process consumers (e.g.
+# compose.build_master_rows' memo) can detect any cache change reliably, independent of
+# filesystem mtime granularity (which is too coarse for rapid successive writes in tests).
+_write_seq = 0
+
+
+def cache_version() -> int:
+    """Current cache write sequence; changes whenever any scope/directory/index is written."""
+    return _write_seq
+
+
 def _write_index(data: dict[str, Any]) -> None:
+    global _write_seq
     _INDEX.parent.mkdir(parents=True, exist_ok=True)
     _INDEX.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_seq += 1
 
 
 def _tenant_bucket(data: dict[str, Any], tenant_id: str) -> dict[str, Any]:
@@ -88,10 +101,12 @@ def _blob_path(tenant_id: str, scope: str) -> Path:
 
 
 def _write_blob(tenant_id: str, scope: str, payload: dict[str, Any]) -> None:
+    global _write_seq
     path = _blob_path(tenant_id, scope)
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     path.write_bytes(gzip.compress(raw))
+    _write_seq += 1
 
 
 def _read_blob(tenant_id: str, scope: str) -> dict[str, Any]:

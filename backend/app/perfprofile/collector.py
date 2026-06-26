@@ -151,6 +151,13 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
             elif ceiling_v and ceiling_v > float(threshold):
                 position = (observed - float(threshold)) / (ceiling_v - float(threshold))
                 state = STATE_HEALTHY if position >= 0.5 else STATE_APPROACHING
+            elif ceiling_v and float(threshold) >= ceiling_v:
+                # The alert threshold is at (or above) the metric's ceiling — e.g. an
+                # availability/health-probe metric that must stay at 100% (ceiling=100,
+                # threshold=100). There is no operating range ABOVE the threshold, so meeting
+                # it (observed >= threshold) is the best-possible state → healthy, not
+                # "approaching". (Without this, a perfect 100% read shows amber at 100%.)
+                state = STATE_HEALTHY
             else:
                 state = STATE_APPROACHING if observed < float(threshold) * 1.05 else STATE_HEALTHY
     elif observed is not None and threshold == 0:

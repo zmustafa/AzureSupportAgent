@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useDebounced } from "../utils/perf";
 import type { CoverageResource } from "../api";
 
 /** Shorts an ARM type like "microsoft.compute/virtualmachines" → "virtualmachines". */
@@ -14,6 +16,7 @@ function shortType(t: string): string {
  */
 export function AllResourcesTab({ resources }: { resources: CoverageResource[] }) {
   const [text, setText] = useState("");
+  const dText = useDebounced(text, 150);
   const [typeSel, setTypeSel] = useState("all");
   const [rgSel, setRgSel] = useState("all");
   const [refSel, setRefSel] = useState<"all" | "in" | "out">("all");
@@ -31,7 +34,7 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
   }, [resources]);
 
   const filtered = useMemo(() => {
-    const t = text.trim().toLowerCase();
+    const t = dText.trim().toLowerCase();
     return resources.filter((r) => {
       if (typeSel !== "all" && r.type !== typeSel) return false;
       if (rgSel !== "all" && r.resource_group !== rgSel) return false;
@@ -43,9 +46,21 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
       }
       return true;
     });
-  }, [resources, text, typeSel, rgSel, refSel]);
+  }, [resources, dText, typeSel, rgSel, refSel]);
 
   const inRefCount = useMemo(() => resources.filter((r) => r.in_reference).length, [resources]);
+
+  // Virtualize the (potentially large) resource table — only the visible rows are in the DOM.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rowVirt = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 33,
+    overscan: 16,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
 
   return (
     <div className="space-y-3">
@@ -89,9 +104,9 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
       ) : !filtered.length ? (
         <div className="py-16 text-center text-sm text-gray-400">No resources match the current filters.</div>
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-white">
+        <div ref={scrollRef} className="max-h-[60vh] overflow-auto rounded-xl border bg-white">
           <table className="w-full text-xs">
-            <thead className="bg-gray-50 text-left text-gray-500">
+            <thead className="sticky top-0 z-10 bg-gray-50 text-left text-gray-500 shadow-sm">
               <tr>
                 <th className="px-3 py-2 font-medium">Resource</th>
                 <th className="px-3 py-2 font-medium">Type</th>
@@ -101,8 +116,11 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id} className="border-t hover:bg-gray-50">
+              {padTop > 0 && <tr style={{ height: padTop }}><td colSpan={5} className="p-0" /></tr>}
+              {vItems.map((vi) => {
+                const r = filtered[vi.index];
+                return (
+                <tr key={r.id} ref={rowVirt.measureElement} data-index={vi.index} className="border-t hover:bg-gray-50">
                   <td className="px-3 py-2 font-medium text-gray-800">{r.name}</td>
                   <td className="px-3 py-2 font-mono text-[11px] text-gray-500">{r.type}</td>
                   <td className="px-3 py-2 text-gray-600">{r.resource_group || "—"}</td>
@@ -115,7 +133,9 @@ export function AllResourcesTab({ resources }: { resources: CoverageResource[] }
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
+              {padBottom > 0 && <tr style={{ height: padBottom }}><td colSpan={5} className="p-0" /></tr>}
             </tbody>
           </table>
         </div>

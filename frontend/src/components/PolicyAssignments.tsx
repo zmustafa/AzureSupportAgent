@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AzureIcon } from "./AzureIcon";
 import { api } from "../api";
 import type { PolicyInventory, PolicyAssignment } from "../api";
@@ -9,6 +10,16 @@ import type { PolicyInventory, PolicyAssignment } from "../api";
 // timeline with a slicer, and a configurable pivot builder). All client-side over inv.assignments.
 
 const BLANK = "(blank)";
+
+// PU5 — small removable active-filter chip.
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <span className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+      {label}
+      <button onClick={onClear} className="text-brand/60 hover:text-brand">✕</button>
+    </span>
+  );
+}
 
 // ----- dimensions ----------------------------------------------------------------
 export type PivotDim = "assigned_by" | "management_group" | "subscription" | "policy" | "dt";
@@ -451,6 +462,7 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
   const [scope, setScope] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("created");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [toast, setToast] = useState(""); // PU7 — export feedback
 
   const assignedByOptions = useMemo(() => {
     const s = new Set<string>();
@@ -505,6 +517,8 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
       ].map(csvEscape).join(","));
     }
     download(`policy-assignments-${stamp()}.csv`, lines.join("\n"), "text/csv");
+    setToast(`Exported ${rows.length} assignment${rows.length === 1 ? "" : "s"} to CSV`);
+    setTimeout(() => setToast(""), 2800);
   }
 
   async function exportXlsx() {
@@ -515,9 +529,24 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
     ] as (string | number)[]);
     const blob = await api.policyExportXlsx(`policy-assignments-${stamp()}`, [{ name: "Assignments", columns: cols, rows: xrows }]);
     downloadBlob(`policy-assignments-${stamp()}.xlsx`, blob);
+    setToast(`Exported ${rows.length} assignment${rows.length === 1 ? "" : "s"} to Excel`);
+    setTimeout(() => setToast(""), 2800);
   }
 
   const dryrun = rows.filter((a) => (a.enforcement_mode || "Default") === "DoNotEnforce").length;
+
+  // PP3 — windowed table body: only the visible rows are live <tr> (a real tenant can have
+  // thousands of assignments). Spacer rows preserve the table layout + header.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirt = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 33,
+    overscan: 14,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
 
   return (
     <div className="space-y-3">
@@ -539,12 +568,23 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
         </select>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search assignment / policy…" className="min-w-[180px] flex-1 rounded-md border px-2 py-1 text-xs" />
         <span className="text-[11px] text-gray-400">{rows.length} of {inv.assignments.length}{dryrun ? ` · ${dryrun} dry-run` : ""}</span>
+        {toast && <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {toast}</span>}
         <button onClick={exportCsv} className="rounded-md border px-2 py-1 text-xs hover:bg-gray-50">⬇ CSV</button>
         <button onClick={() => void exportXlsx()} className="rounded-md border border-green-300 bg-green-50 px-2 py-1 text-xs text-green-700 hover:bg-green-100">⬇ Excel</button>
       </div>
-      <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+      {/* PU5 — active filter chips. */}
+      {(enf !== "all" || scope !== "all" || byFilter !== "all" || q.trim()) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {enf !== "all" && <FilterChip label={`Enforcement: ${enf === "DoNotEnforce" ? "Dry-run" : "Enforced"}`} onClear={() => setEnf("all")} />}
+          {scope !== "all" && <FilterChip label={`Scope: ${scope}`} onClear={() => setScope("all")} />}
+          {byFilter !== "all" && <FilterChip label={`Assigned by: ${byFilter}`} onClear={() => setByFilter("all")} />}
+          {q.trim() && <FilterChip label={`“${q.trim()}”`} onClear={() => setQ("")} />}
+          <button onClick={() => { setEnf("all"); setScope("all"); setByFilter("all"); setQ(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+        </div>
+      )}
+      <div ref={scrollRef} className="max-h-[64vh] overflow-auto rounded-xl border bg-white shadow-sm">
         <table className="w-full text-left text-sm">
-          <thead className="bg-gray-50 text-[11px] uppercase text-gray-500">
+          <thead className="sticky top-0 z-10 bg-gray-50 text-[11px] uppercase text-gray-500 shadow-sm">
             <tr>
               <th className="cursor-pointer px-3 py-2 font-medium" onClick={() => toggleSort("enforcement")}>Enforce{arrow("enforcement")}</th>
               <th className="cursor-pointer px-3 py-2 font-medium" onClick={() => toggleSort("subscription")}>Subscription{arrow("subscription")}</th>
@@ -556,8 +596,11 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 1000).map((a) => (
-              <tr key={a.id} className={`border-t hover:bg-gray-50 ${(a.enforcement_mode || "Default") === "DoNotEnforce" ? "bg-amber-50/40" : ""}`}>
+            {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+            {vItems.map((vi) => {
+              const a = rows[vi.index];
+              return (
+              <tr key={a.id} ref={rowVirt.measureElement} data-index={vi.index} className={`border-t hover:bg-gray-50 ${(a.enforcement_mode || "Default") === "DoNotEnforce" ? "bg-amber-50/40" : ""}`}>
                 <td className="px-3 py-1.5">{enfBadge(a.enforcement_mode || "Default")}</td>
                 <td className="px-3 py-1.5 text-gray-700">{a.subscription_name || (a.scope_kind === "managementGroup" ? "—" : "—")}</td>
                 <td className="px-3 py-1.5 text-gray-700">{a.management_group_display || a.management_group_name || "—"}</td>
@@ -569,7 +612,9 @@ export function AssignmentsRegister({ inv }: { inv: PolicyInventory }) {
                 <td className="px-3 py-1.5 tabular-nums text-gray-600" title={a.created_on || ""}>{fmtDate(a.created_on)}</td>
                 <td className="max-w-[260px] truncate px-3 py-1.5 text-gray-500" title={a.description}>{a.description || "—"}</td>
               </tr>
-            ))}
+              );
+            })}
+            {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
             {!rows.length && <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">No assignments match the filters.</td></tr>}
           </tbody>
         </table>

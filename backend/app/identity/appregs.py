@@ -609,33 +609,44 @@ async def collect_app_registrations(
     source = "demo_dummy_data"
     note = ""
     apps: list[dict[str, Any]] = []
+    # When a connection IS configured the user wants their REAL tenant — never silently
+    # substitute demo data (it looks deceptively real). A Graph auth/config error or a live
+    # enumeration failure yields an empty snapshot + an actionable note instead.
+    connection_failed = False
     if connection is not None:
         from app.mcp.client import entra_graph_config_error, unwrap_exc_message
 
         cfg_err = entra_graph_config_error(connection)
         if cfg_err:
-            # The Graph MCP can't authenticate with this connection — don't spawn a doomed
-            # server; show the clear, actionable reason and fall back to demo data.
+            # The Graph MCP can't authenticate with this connection — surface the clear,
+            # actionable reason; do NOT fall back to demo.
             note = cfg_err
+            source = "unavailable"
+            connection_failed = True
             log.info("app-registrations: Graph MCP not usable with this connection: %s", cfg_err)
             await _say("error", cfg_err)
         else:
             try:
                 apps = await _collect_real(connection, limit=limit, progress=progress)
                 source = "microsoft_graph"
-            except Exception as exc:  # noqa: BLE001 - graceful fallback to demo
-                note = f"Live enumeration failed, showing demo data: {unwrap_exc_message(exc)[:200]}"
+            except Exception as exc:  # noqa: BLE001 - real connection: report, don't fake
+                note = f"Live enumeration failed: {unwrap_exc_message(exc)[:200]}"
+                source = "unavailable"
+                connection_failed = True
                 log.info("app-registrations live collect failed: %s", exc)
                 await _say("error", note)
                 apps = []
-    if not apps:
+    if not apps and connection is None:
+        # No Azure connection at all (fresh product exploration) — seed the illustrative demo set.
         apps = build_demo_app_registrations()
-        if connection is None:
-            note = note or "No Entra connection configured — showing demo data."
-            await _say("warn", note)
+        source = "demo_dummy_data"
+        note = note or "No Entra connection configured — showing demo data."
+        await _say("warn", note)
     await _say("info", "Aggregating facets (audiences, permissions, owners) and summary KPIs…")
     apps.sort(key=lambda a: a["displayName"].lower())
     agg = aggregate(apps)
+    # IU3 — flag when the live listing hit the per-refresh cap so the UI can show a "first N" notice.
+    truncated = source == "microsoft_graph" and len(apps) >= limit
     await _say("ok", f"Snapshot complete — {len(apps)} app registration(s).")
     return {
         "generated_at": _now_iso(),
@@ -643,9 +654,12 @@ async def collect_app_registrations(
         "connection_configured": connection is not None,
         "source": source,
         "note": note,
+        "connection_failed": connection_failed,
         "apps": apps,
         "facets": {"audiences": agg["audiences"], "permissions": agg["permissions"], "owners": agg["owners"]},
         "summary": agg["summary"],
+        "truncated": truncated,
+        "limit": limit,
     }
 
 

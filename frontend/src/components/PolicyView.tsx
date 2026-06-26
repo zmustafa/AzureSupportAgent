@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounced } from "../utils/perf";
 import { AzureIcon } from "./AzureIcon";
 import {
   api,
@@ -23,15 +24,16 @@ import {
 } from "../api";
 import { POLICY_NAV, type PolicyTab } from "./navConfig";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
-import {
-  AssignmentsRegister,
-  ByPersonPivot,
-  BySubscriptionPivot,
-  TimelinePivot,
-  PivotBuilder,
-  GovernanceInsights,
-} from "./PolicyAssignments";
-import { ExemptionsTab } from "./PolicyExemptions";
+// PP7 — code-split the heavy register/pivot + exemptions tabs out of the main Policy chunk.
+// They're each their own module already; lazy() pushes them into separate bundles loaded only
+// when their tab is first opened (the Overview/Inventory landing tabs no longer pay for them).
+const AssignmentsRegister = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.AssignmentsRegister })));
+const ByPersonPivot = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.ByPersonPivot })));
+const BySubscriptionPivot = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.BySubscriptionPivot })));
+const TimelinePivot = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.TimelinePivot })));
+const PivotBuilder = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.PivotBuilder })));
+const GovernanceInsights = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.GovernanceInsights })));
+const ExemptionsTab = lazy(() => import("./PolicyExemptions").then((m) => ({ default: m.ExemptionsTab })));
 
 function agoLabel(ts: number): string {
   if (!ts) return "";
@@ -251,12 +253,12 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
           </div>
         </div>
         {/* Tabs */}
-        <div className="mt-3 flex flex-wrap gap-1">
+        <div className="mt-3 flex gap-1 overflow-x-auto whitespace-nowrap">
           {POLICY_NAV.map(({ id, label }) => (
             <button
               key={id}
               onClick={() => goTab(id)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                 tab === id ? "bg-brand text-white" : "text-gray-600 hover:bg-gray-100"
               }`}
             >
@@ -307,26 +309,29 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
             {/* Key the stateful tabs on the active scope so switching connection/workload
                 fully resets their local working state (typed intent, chosen scope, queued
                 findings, in-progress simulation) instead of leaking it across scopes. */}
-            {tab === "overview" && <Overview inv={inv} />}
+            {tab === "overview" && <Overview inv={inv} onNavigate={goTab} />}
             {tab === "inventory" && <Inventory inv={inv} onOpenExemption={(id) => { setOpenExemptionId(id); goTab("exemptions"); }} />}
-            {tab === "assignments" && <AssignmentsRegister key={scopeKey} inv={inv} />}
-            {tab === "byperson" && <ByPersonPivot key={scopeKey} inv={inv} />}
-            {tab === "bysubscription" && <BySubscriptionPivot key={scopeKey} inv={inv} />}
-            {tab === "timeline" && <TimelinePivot key={scopeKey} inv={inv} />}
-            {tab === "pivot" && <PivotBuilder key={scopeKey} inv={inv} />}
-            {tab === "governance" && <GovernanceInsights key={scopeKey} inv={inv} />}
-            {tab === "exemptions" && (
-              <ExemptionsTab
-                key={scopeKey}
-                inv={inv}
-                connectionId={effectiveConn}
-                readOnly={connections.find((c) => c.id === effectiveConn)?.read_only ?? true}
-                focusAssignmentId={exemptionFocus?.id}
-                focusAssignmentName={exemptionFocus?.name}
-                openExemptionId={openExemptionId}
-                onChanged={() => refresh()}
-              />
-            )}
+            {/* PP7 — lazy tabs render inside a Suspense boundary (one-time chunk load). */}
+            <Suspense fallback={<Loading text="Loading…" />}>
+              {tab === "assignments" && <AssignmentsRegister key={scopeKey} inv={inv} />}
+              {tab === "byperson" && <ByPersonPivot key={scopeKey} inv={inv} />}
+              {tab === "bysubscription" && <BySubscriptionPivot key={scopeKey} inv={inv} />}
+              {tab === "timeline" && <TimelinePivot key={scopeKey} inv={inv} />}
+              {tab === "pivot" && <PivotBuilder key={scopeKey} inv={inv} />}
+              {tab === "governance" && <GovernanceInsights key={scopeKey} inv={inv} />}
+              {tab === "exemptions" && (
+                <ExemptionsTab
+                  key={scopeKey}
+                  inv={inv}
+                  connectionId={effectiveConn}
+                  readOnly={connections.find((c) => c.id === effectiveConn)?.read_only ?? true}
+                  focusAssignmentId={exemptionFocus?.id}
+                  focusAssignmentName={exemptionFocus?.name}
+                  openExemptionId={openExemptionId}
+                  onChanged={() => refresh()}
+                />
+              )}
+            </Suspense>
             {tab === "effective" && <Effective key={scopeKey} persistKey={scopeKey} inv={inv} onOpenExemptions={(id, name) => { setExemptionFocus({ id, name }); goTab("exemptions"); }} />}
             {tab === "advisors" && <Advisors key={scopeKey} inv={inv} connectionId={effectiveConn} />}
             {tab === "rollout" && <RolloutPlanner key={scopeKey} inv={inv} connectionId={effectiveConn} handoff={handoff} tagHandoff={tagHandoff} />}
@@ -389,7 +394,7 @@ function WorkloadBanner({ wl, name, refreshing, onClear }: {
 }
 
 // =========================================================================== Overview
-function Overview({ inv }: { inv: PolicyInventory }) {
+function Overview({ inv, onNavigate }: { inv: PolicyInventory; onNavigate?: (t: PolicyTab) => void }) {
   const byEffect = useMemo(() => {
     const m: Record<string, number> = {};
     for (const a of inv.assignments) {
@@ -404,15 +409,16 @@ function Overview({ inv }: { inv: PolicyInventory }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Kpi label="Definitions" value={inv.counts.definitions} sub={`${inv.counts.custom_definitions} custom`} icon="📜" />
-        <Kpi label="Initiatives" value={inv.counts.initiatives} icon="🧩" />
-        <Kpi label="Assignments" value={inv.counts.assignments} sub={dryRun ? `${dryRun} dry-run` : undefined} icon="📌" />
-        <Kpi label="Exemptions" value={inv.counts.exemptions} icon="🪪" />
+        <Kpi label="Definitions" value={inv.counts.definitions} sub={`${inv.counts.custom_definitions} custom`} icon="📜" onClick={onNavigate ? () => onNavigate("inventory") : undefined} />
+        <Kpi label="Initiatives" value={inv.counts.initiatives} icon="🧩" onClick={onNavigate ? () => onNavigate("inventory") : undefined} />
+        <Kpi label="Assignments" value={inv.counts.assignments} sub={dryRun ? `${dryRun} dry-run` : undefined} icon="📌" onClick={onNavigate ? () => onNavigate("assignments") : undefined} />
+        <Kpi label="Exemptions" value={inv.counts.exemptions} icon="🪪" onClick={onNavigate ? () => onNavigate("exemptions") : undefined} />
         <Kpi
           label="Non-compliant"
           value={inv.compliance.available ? inv.compliance.total_non_compliant_resources : "—"}
           sub={inv.compliance.available ? `${inv.compliance.subscriptions_scanned} subs` : "scan to see"}
           icon="⚠️"
+          onClick={onNavigate ? () => onNavigate("governance") : undefined}
         />
         <Kpi label="Scopes" value={inv.scope_tree.length} icon="🗂️" />
       </div>
@@ -426,6 +432,7 @@ function Overview({ inv }: { inv: PolicyInventory }) {
           value={adv.promote_to_deny.filter((p) => p.safe_to_promote).length}
           total={adv.promote_to_deny.length}
           desc="audit policies safe to enforce"
+          onClick={onNavigate ? () => onNavigate("governance") : undefined}
         />
         <HighlightCard
           tone="red"
@@ -433,6 +440,7 @@ function Overview({ inv }: { inv: PolicyInventory }) {
           title="Remediation gaps"
           value={adv.remediation_gaps.length}
           desc="DINE/modify with no identity"
+          onClick={onNavigate ? () => onNavigate("governance") : undefined}
         />
         <HighlightCard
           tone="amber"
@@ -441,6 +449,7 @@ function Overview({ inv }: { inv: PolicyInventory }) {
           value={(adv.exemption_hygiene.buckets.expired ?? 0) + (adv.exemption_hygiene.buckets.never_expires ?? 0)}
           total={adv.exemption_hygiene.total}
           desc="expired / never-expiring"
+          onClick={onNavigate ? () => onNavigate("exemptions") : undefined}
         />
         <HighlightCard
           tone="violet"
@@ -448,6 +457,7 @@ function Overview({ inv }: { inv: PolicyInventory }) {
           title="Conflicts"
           value={adv.conflicts.length}
           desc="duplicate / redundant assignments"
+          onClick={onNavigate ? () => onNavigate("governance") : undefined}
         />
       </div>
 
@@ -490,7 +500,17 @@ function Overview({ inv }: { inv: PolicyInventory }) {
 function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemption?: (exemptionId: string) => void }) {
   const [sub, setSub] = useState<"assignments" | "definitions" | "initiatives" | "exemptions">("assignments");
   const [q, setQ] = useState("");
-  const ql = q.toLowerCase();
+  const ql = useDebounced(q, 150).toLowerCase();
+
+  // PP1 — memoize the filtered lists (was an un-memoized inline filter recomputed every render +
+  // keystroke). Caps raised; a "showing N of M" notice replaces the silent 300/400 truncation.
+  const CAP = 2000;
+  const fAssign = useMemo(() => inv.assignments.filter((a) => !ql || `${a.display_name} ${a.definition_name} ${a.scope_label}`.toLowerCase().includes(ql)), [inv.assignments, ql]);
+  const fDefs = useMemo(() => inv.definitions.filter((d) => !ql || `${d.display_name} ${d.category}`.toLowerCase().includes(ql)), [inv.definitions, ql]);
+  const fInit = useMemo(() => inv.initiatives.filter((i) => !ql || `${i.display_name} ${i.category}`.toLowerCase().includes(ql)), [inv.initiatives, ql]);
+  const fExempt = useMemo(() => inv.exemptions.filter((e) => !ql || `${e.display_name} ${e.scope_label}`.toLowerCase().includes(ql)), [inv.exemptions, ql]);
+  const shownCount = sub === "assignments" ? fAssign.length : sub === "definitions" ? fDefs.length : sub === "initiatives" ? fInit.length : fExempt.length;
+  const totalCount = sub === "assignments" ? inv.assignments.length : sub === "definitions" ? inv.definitions.length : sub === "initiatives" ? inv.initiatives.length : inv.exemptions.length;
 
   return (
     <div className="space-y-3">
@@ -509,20 +529,20 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
             {label}
           </button>
         ))}
+        <span className="ml-auto text-[11px] text-gray-400">{shownCount.toLocaleString()} of {totalCount.toLocaleString()}{shownCount > CAP ? ` (showing first ${CAP.toLocaleString()})` : ""}</span>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search…"
-          className="ml-auto w-56 rounded-lg border border-gray-200 px-2.5 py-1 text-sm"
+          className="w-56 rounded-lg border border-gray-200 px-2.5 py-1 text-sm"
         />
       </div>
 
       <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
         {sub === "assignments" && (
           <Table head={["Assignment", "Scope", "Definition", "Effect", "Enforcement", "Identity"]}>
-            {inv.assignments
-              .filter((a) => !ql || `${a.display_name} ${a.definition_name} ${a.scope_label}`.toLowerCase().includes(ql))
-              .slice(0, 300)
+            {fAssign
+              .slice(0, CAP)
               .map((a) => (
                 <tr key={a.id} className="border-t hover:bg-gray-50">
                   <Td>
@@ -540,9 +560,8 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
         )}
         {sub === "definitions" && (
           <Table head={["Definition", "Type", "Category", "Effect", "Mode"]}>
-            {inv.definitions
-              .filter((d) => !ql || `${d.display_name} ${d.category}`.toLowerCase().includes(ql))
-              .slice(0, 400)
+            {fDefs
+              .slice(0, CAP)
               .map((d) => (
                 <tr key={d.id} className="border-t hover:bg-gray-50">
                   <Td className="font-medium text-gray-800">{d.display_name}</Td>
@@ -556,8 +575,8 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
         )}
         {sub === "initiatives" && (
           <Table head={["Initiative", "Type", "Category", "Policies"]}>
-            {inv.initiatives
-              .filter((i) => !ql || `${i.display_name} ${i.category}`.toLowerCase().includes(ql))
+            {fInit
+              .slice(0, CAP)
               .map((i) => (
                 <tr key={i.id} className="border-t hover:bg-gray-50">
                   <Td className="font-medium text-gray-800">{i.display_name}</Td>
@@ -570,8 +589,8 @@ function Inventory({ inv, onOpenExemption }: { inv: PolicyInventory; onOpenExemp
         )}
         {sub === "exemptions" && (
           <Table head={["Exemption", "Scope", "Category", "Expires", "Open"]}>
-            {inv.exemptions
-              .filter((e) => !ql || `${e.display_name} ${e.scope_label}`.toLowerCase().includes(ql))
+            {fExempt
+              .slice(0, CAP)
               .map((e) => (
                 <tr key={e.id} className="border-t hover:bg-gray-50">
                   <Td className="font-medium text-gray-800">{e.display_name}</Td>
@@ -615,44 +634,84 @@ function Effective({ inv, persistKey, onOpenExemptions }: { inv: PolicyInventory
   const [scope, setScope] = useState(() => {
     try { return localStorage.getItem(storeKey) || ""; } catch { return ""; }
   });
-  const [result, setResult] = useState<Awaited<ReturnType<typeof api.policyEffective>> | null>(null);
-  const [busy, setBusy] = useState(false);
+  // PU6 — resolve via a cached query keyed on the scope (+ inventory size signature) so navigating
+  // away and back, or re-picking a previously resolved scope, is instant instead of a fresh POST.
+  const [resolvedScope, setResolvedScope] = useState(scope);
+  const effQ = useQuery({
+    queryKey: ["policyEffective", resolvedScope, inv.counts.assignments, inv.counts.exemptions],
+    queryFn: () => api.policyEffective(resolvedScope, inv.assignments, inv.exemptions),
+    enabled: !!resolvedScope,
+    staleTime: 5 * 60 * 1000,
+  });
+  const result = resolvedScope ? effQ.data ?? null : null;
+  const busy = effQ.isFetching;
 
-  async function resolve(s: string) {
+  function resolve(s: string) {
     if (!s) return;
     setScope(s);
+    setResolvedScope(s);
     try { localStorage.setItem(storeKey, s); } catch { /* ignore */ }
-    setBusy(true);
-    try {
-      setResult(await api.policyEffective(s, inv.assignments, inv.exemptions));
-    } finally {
-      setBusy(false);
-    }
   }
-
-  // Re-resolve the remembered scope on mount (e.g. after navigating away and back).
-  useEffect(() => {
-    if (scope) resolve(scope);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <div className="space-y-4">
       <Card title="Effective-policy resolver" icon="🔬">
         <p className="mb-3 text-xs text-gray-500">
-          Pick any scope to see every policy that actually applies after inheritance, <code>notScopes</code> exclusions, and exemptions.
+          Click any scope in the tree to see every policy that actually applies after inheritance, <code>notScopes</code> exclusions, and exemptions.
         </p>
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={scope}
-            onChange={(e) => resolve(e.target.value)}
-            className="min-w-64 rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm"
-          >
-            <option value="">Select a scope…</option>
-            {inv.scope_tree.map((s) => (
-              <option key={s.scope} value={s.scope}>{"  ".repeat(s.depth)}{s.label}</option>
-            ))}
-          </select>
+        {/* Fixed scope tree — every scope with assignments/exemptions, indented by hierarchy.
+            Clicking a row loads its effective policy below (replaces the old dropdown). */}
+        {inv.scope_tree.length === 0 ? (
+          <Empty text="No assignment-bearing scopes discovered. Paste a scope id below to resolve any scope." />
+        ) : (
+          <div className="max-h-72 overflow-auto rounded-lg border border-gray-200">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                <tr>
+                  <th className="px-3 py-1.5 text-left font-medium">Scope</th>
+                  <th className="px-3 py-1.5 text-right font-medium">Assignments</th>
+                  <th className="px-3 py-1.5 text-right font-medium">Exemptions</th>
+                  <th className="px-2 py-1.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {inv.scope_tree.map((s) => {
+                  const selected = resolvedScope.toLowerCase() === s.scope.toLowerCase();
+                  return (
+                    <tr
+                      key={s.scope}
+                      onClick={() => resolve(s.scope)}
+                      title={s.scope}
+                      className={`cursor-pointer border-t transition ${selected ? "bg-brand/10" : "hover:bg-gray-50"}`}
+                    >
+                      <td className="px-3 py-1.5">
+                        <span className="flex items-center gap-1.5" style={{ paddingLeft: `${s.depth * 16}px` }}>
+                          <ScopeIcon kind={s.kind} />
+                          <span className={`truncate ${selected ? "font-semibold text-brand" : "font-medium text-gray-800"}`}>{s.label}</span>
+                          <span className="shrink-0 rounded bg-gray-100 px-1.5 text-[10px] uppercase tracking-wide text-gray-500">{scopeKindLabel(s.kind)}</span>
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{s.assignments || <span className="text-gray-300">0</span>}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">{s.exemptions || <span className="text-gray-300">0</span>}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        <a
+                          href={scopePortalUrl(s.scope)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Open this scope in the Azure portal"
+                          className="text-gray-400 hover:text-brand"
+                        >↗</a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {/* Secondary: resolve an arbitrary scope not in the tree (e.g. a specific resource). */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <input
             value={scope}
             onChange={(e) => setScope(e.target.value)}
@@ -661,21 +720,8 @@ function Effective({ inv, persistKey, onOpenExemptions }: { inv: PolicyInventory
             className="min-w-72 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm"
           />
           <button onClick={() => resolve(scope)} disabled={busy || !scope} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
-            Resolve
+            {busy ? "Resolving…" : "Resolve"}
           </button>
-          <a
-            href={scope ? scopePortalUrl(scope) : undefined}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-disabled={!scope}
-            onClick={(e) => { if (!scope) e.preventDefault(); }}
-            title="Open this scope in the Azure portal"
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-              scope ? "border-gray-200 text-gray-600 hover:bg-gray-50" : "cursor-not-allowed border-gray-200 text-gray-300"
-            }`}
-          >
-            Open in Azure ↗
-          </a>
         </div>
       </Card>
 
@@ -838,7 +884,7 @@ function Advisors({ inv, connectionId }: { inv: PolicyInventory; connectionId: s
 
 function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connectionId: string }) {
   const qc = useQueryClient();
-  const baseQ = useQuery({ queryKey: ["policyBaselines"], queryFn: api.policyBaselines });
+  const baseQ = useQuery({ queryKey: ["policyBaselines"], queryFn: api.policyBaselines, staleTime: 5 * 60 * 1000 });
   const workloadId = inv.workload?.id || "";
   const workloadName = inv.workload?.name || "";
   const [baselineId, setBaselineId] = useState("waf");
@@ -854,6 +900,7 @@ function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connecti
   const runsQ = useQuery({
     queryKey: ["policyCoverageRuns", workloadId],
     queryFn: () => api.policyCoverageRuns(workloadId || null),
+    staleTime: 5 * 60 * 1000,
   });
   const savedRuns = runsQ.data?.runs ?? [];
 
@@ -1068,6 +1115,7 @@ function RolloutPlanner({ inv, connectionId, handoff, tagHandoff }: { inv: Polic
   const savedSimsQ = useQuery({
     queryKey: ["policySimulations", wlId],
     queryFn: () => api.policySimulations(wlId || null),
+    staleTime: 5 * 60 * 1000,
     retry: false,
   });
   const savedSims = savedSimsQ.data?.simulations ?? [];
@@ -2068,7 +2116,7 @@ function TagGovTool({ connectionId }: { connectionId: string }) {
 
 // =========================================================================== Drift & IaC
 function DriftIac({ inv }: { inv: PolicyInventory }) {
-  const srcQ = useQuery({ queryKey: ["policyIacSource"], queryFn: api.policyIacSource, retry: false });
+  const srcQ = useQuery({ queryKey: ["policyIacSource"], queryFn: api.policyIacSource, retry: false, staleTime: 5 * 60 * 1000 });
   const [content, setContent] = useState<string | null>(null);
   const [format, setFormat] = useState("epac");
   const [res, setRes] = useState<PolicyDriftResult | null>(null);
@@ -2125,7 +2173,7 @@ function DriftIac({ inv }: { inv: PolicyInventory }) {
 
 // =========================================================================== History
 function History({ connectionId }: { connectionId: string }) {
-  const snapQ = useQuery({ queryKey: ["policySnapshots"], queryFn: api.policySnapshots, retry: false });
+  const snapQ = useQuery({ queryKey: ["policySnapshots"], queryFn: api.policySnapshots, retry: false, staleTime: 5 * 60 * 1000 });
   const [busy, setBusy] = useState(false);
   const [drift, setDrift] = useState<Awaited<ReturnType<typeof api.policyTakeSnapshot>>["drift_since_previous"]>(null);
   async function snap() {
@@ -2166,9 +2214,9 @@ function History({ connectionId }: { connectionId: string }) {
 }
 
 // =========================================================================== primitives
-function Kpi({ label, value, sub, icon }: { label: string; value: number | string; sub?: string; icon: string }) {
+function Kpi({ label, value, sub, icon, onClick }: { label: string; value: number | string; sub?: string; icon: string; onClick?: () => void }) {
   return (
-    <div className="rounded-xl border bg-white p-3 shadow-sm">
+    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-sm ${onClick ? "cursor-pointer transition hover:border-brand/50 hover:shadow" : ""}`} title={onClick ? `View ${label}` : undefined}>
       <div className="flex items-center justify-between"><span className="text-lg">{icon}</span></div>
       <div className="mt-1 text-2xl font-bold text-gray-800">{value}</div>
       <div className="text-[11px] text-gray-500">{label}</div>
@@ -2177,10 +2225,10 @@ function Kpi({ label, value, sub, icon }: { label: string; value: number | strin
   );
 }
 
-function HighlightCard({ tone, icon, title, value, total, desc }: { tone: string; icon: string; title: string; value: number; total?: number; desc: string }) {
+function HighlightCard({ tone, icon, title, value, total, desc, onClick }: { tone: string; icon: string; title: string; value: number; total?: number; desc: string; onClick?: () => void }) {
   const ring = tone === "green" ? "border-green-200" : tone === "red" ? "border-red-200" : tone === "amber" ? "border-amber-200" : "border-violet-200";
   return (
-    <div className={`rounded-xl border bg-white p-3 shadow-sm ${ring}`}>
+    <div onClick={onClick} className={`rounded-xl border bg-white p-3 shadow-sm ${ring} ${onClick ? "cursor-pointer transition hover:shadow-md" : ""}`} title={onClick ? `View ${title} in Governance` : undefined}>
       <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><span>{icon}</span>{title}</div>
       <div className="mt-1 text-2xl font-bold text-gray-800">{value}{total !== undefined && <span className="text-sm font-normal text-gray-400"> / {total}</span>}</div>
       <div className="text-[11px] text-gray-500">{desc}</div>
@@ -2231,6 +2279,17 @@ function ScopeIcon({ kind }: { kind: string }) {
   if (kind === "managementGroup") return <AzureIcon kind="mg" className="h-4 w-4" />;
   if (kind === "tenant") return <span>🌐</span>;
   return <AzureIcon kind="subscription" className="h-4 w-4" />;
+}
+
+/** Short uppercase tag for a policy scope kind (used in the effective-policy scope tree). */
+function scopeKindLabel(kind: string): string {
+  switch (kind) {
+    case "managementGroup": return "MG";
+    case "subscription": return "Sub";
+    case "resourceGroup": return "RG";
+    case "tenant": return "Tenant";
+    default: return kind || "scope";
+  }
 }
 
 function Empty({ text }: { text: string }) {

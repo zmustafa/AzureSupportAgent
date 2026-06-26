@@ -27,6 +27,8 @@ import {
   type FmeaRiskBand,
 } from "../api";
 import { formatError } from "../utils/format";
+import { Skeleton, useDebounced } from "../utils/perf";
+import { usePersistedState } from "../utils/persistedState";
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   draft: { label: "Draft", cls: "bg-gray-100 text-gray-600" },
@@ -399,7 +401,7 @@ function FmeaTableGrid({
 export function FmeaView({ fmeaId }: { fmeaId: string }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const query = useQuery({ queryKey: ["fmea", fmeaId], queryFn: () => fmeaApi.get(fmeaId) });
+  const query = useQuery({ queryKey: ["fmea", fmeaId], queryFn: () => fmeaApi.get(fmeaId), staleTime: 5 * 60 * 1000 });
 
   const [doc, setDoc] = useState<FmeaDoc | null>(null);
   const [summary, setSummary] = useState<FmeaSummary | null>(null);
@@ -413,6 +415,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
   const [genElapsed, setGenElapsed] = useState(0);
   const [regenTable, setRegenTable] = useState<string>("");
   const [hasMemory, setHasMemory] = useState(true);
+  const [exportNote, setExportNote] = useState(""); // export-feedback toast
   const abortRef = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -524,6 +527,36 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
     }
   }
 
+  // Reconnect to a generation still running server-side (started before navigating here, or
+  // continuing after navigating away and back). The backend job is idempotent — re-POSTing the
+  // stream just FOLLOWS the in-flight job; the saved doc lands via onDone regardless.
+  useEffect(() => {
+    if (!fmeaId) return;
+    let cancelled = false;
+    void fmeaApi.generateJob(fmeaId).then((r) => {
+      if (cancelled || !r.job || r.job.status !== "running" || generating) return;
+      setGenerating(true);
+      setGenStatus("Reconnecting…");
+      setGenStart(Date.now());
+      setGenElapsed(0);
+      abortRef.current = new AbortController();
+      pushLog("start", "🔄 Reconnecting to a generation in progress…");
+      const handlers = {
+        onStatus: (s: { phase: string; message: string }) => pushLog(s.phase, s.message),
+        onDone: (rr: FmeaResponse) => {
+          const n = (rr.fmea.tables || []).reduce((a, t) => a + (t.rows?.length || 0), 0);
+          pushLog("done", `✅ Done — ${rr.fmea.tables.length} table(s) · ${n} failure mode(s).`);
+          applyResponse(rr);
+          setGenerating(false);
+        },
+        onError: (msg: string) => { pushLog("error", `❌ ${msg}`); setError(msg); setGenerating(false); },
+      };
+      void streamRegenerateFmea(fmeaId, handlers, abortRef.current.signal).catch(() => setGenerating(false));
+    }).catch(() => { /* no job — fine */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fmeaId]);
+
   async function regenerateTable(tableId: string) {
     setRegenTable(tableId);
     setGenLog([]);
@@ -552,7 +585,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
   }
 
   if (query.isLoading || !doc) {
-    return <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading…</div>;
+    return <div className="p-6"><Skeleton rows={8} /></div>;
   }
 
   const sm = STATUS_META[doc.status] ?? STATUS_META.draft;
@@ -591,6 +624,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
             </select>
             <a
               href={fmeaApi.exportXlsxUrl(fmeaId)}
+              onClick={() => { setExportNote("Excel workbook downloading…"); setTimeout(() => setExportNote(""), 2800); }}
               className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100"
               title="Download a richly-formatted Excel workbook (one sheet per table, colour-scaled scores, live RPN formulas)"
             >
@@ -598,6 +632,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
             </a>
             <a
               href={fmeaApi.exportUrl(fmeaId)}
+              onClick={() => { setExportNote("CSV downloading…"); setTimeout(() => setExportNote(""), 2800); }}
               className="rounded-lg border border-gray-300 px-2.5 py-1 text-[12px] font-medium text-gray-600 hover:bg-gray-50"
               title="Export as CSV"
             >
@@ -644,6 +679,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
           </div>
         )}
         {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-1.5 text-[12px] text-red-600">{error}</div>}
+        {exportNote && <div className="mt-2 rounded-lg bg-emerald-50 px-3 py-1.5 text-[12px] text-emerald-700">✓ {exportNote}</div>}
       </div>
 
       {/* tables */}
@@ -803,13 +839,14 @@ function NewFmeaModal({
 export function FmeaIndex() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [q, setQ] = useState("");
-  const term = q.trim().toLowerCase();
-  const query = useQuery({ queryKey: ["fmeaIndex"], queryFn: fmeaApi.index });
+  const [q, setQ] = usePersistedState<string>("azsup.fmea.search", "");
+  const term = useDebounced(q, 150).trim().toLowerCase();
+  const query = useQuery({ queryKey: ["fmeaIndex"], queryFn: fmeaApi.index, staleTime: 5 * 60 * 1000 });
   const [showTrash, setShowTrash] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "draft" | "in_review" | "published" | "archived">("all");
+  // Persist the index status filter so the chosen view survives navigation/reload.
+  const [statusFilter, setStatusFilter] = usePersistedState<"all" | "draft" | "in_review" | "published" | "archived">("azsup.fmea.statusFilter", "all");
 
   const documents: FmeaDocumentSummary[] = query.data?.documents ?? [];
   const buildable: FmeaBuildable[] = query.data?.buildable ?? [];

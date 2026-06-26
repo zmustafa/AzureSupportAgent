@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Markdown as LazyMarkdown } from "./LazyMarkdown";
 import {
   api,
@@ -17,6 +17,7 @@ import {
   type Workload,
 } from "../api";
 import { formatError, formatTimestamp } from "../utils/format";
+import { useDebounced, Skeleton, VirtualList } from "../utils/perf";
 import { CopyButton } from "./CopyButton";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
 import { PillarRadar } from "./PillarRadar";
@@ -312,6 +313,7 @@ function ComplianceView({ compliance }: { compliance: Record<string, AssessmentC
 // ---------------- Scanned resources view ----------------
 function ResourcesView({ resources, totalCount }: { resources: AssessmentScannedResource[]; totalCount: number | null }) {
   const [query, setQuery] = useState("");
+  const dQuery = useDebounced(query, 150);
   const [typeFilter, setTypeFilter] = useState("all");
 
   // Group by ARM type for the type facet + section headers.
@@ -324,7 +326,7 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
   }, [resources]);
 
   const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     return resources.filter((r) => {
       if (typeFilter !== "all" && r.type.toLowerCase() !== typeFilter) return false;
       if (q) {
@@ -333,7 +335,7 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
       }
       return true;
     });
-  }, [resources, query, typeFilter]);
+  }, [resources, dQuery, typeFilter]);
 
   if (resources.length === 0) {
     return (
@@ -370,8 +372,38 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
           </button>
         ))}
       </div>
-      {/* Resource table */}
+      {/* Resource table — virtualized at scale (the scanned-resource list can run to thousands). */}
       <div className="overflow-hidden rounded-lg border bg-white">
+        {rows.length > 100 ? (
+          <>
+            <div className="grid grid-cols-[2fr_1.2fr_1.2fr_1fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-400">
+              <span>Resource</span><span>Type</span><span>Resource group</span><span>Region</span>
+            </div>
+            <VirtualList
+              items={rows}
+              estimateSize={37}
+              max="60vh"
+              render={(r: AssessmentScannedResource) => (
+                <div className="grid grid-cols-[2fr_1.2fr_1.2fr_1fr] items-center gap-0 border-t px-3 py-2 text-sm hover:bg-gray-50">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <AzureIcon kind="resource" type={r.type} className="h-4 w-4 shrink-0" />
+                    {r.id ? (
+                      <a href={portalUrl(r.id)} target="_blank" rel="noopener noreferrer" title="Open in Azure Portal" className="group inline-flex min-w-0 items-center gap-1 font-medium text-gray-800 hover:text-brand hover:underline">
+                        <span className="truncate">{r.name || "—"}</span>
+                        <span className="text-gray-300 transition group-hover:text-brand">↗</span>
+                      </a>
+                    ) : (
+                      <span className="truncate font-medium text-gray-800">{r.name || "—"}</span>
+                    )}
+                  </div>
+                  <span className="truncate text-gray-600">{friendlyResourceType(r.type)}</span>
+                  <span className="truncate text-gray-500">{r.resource_group || "—"}</span>
+                  <span className="truncate text-gray-500">{r.location || "—"}</span>
+                </div>
+              )}
+            />
+          </>
+        ) : (
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-400">
             <tr>
@@ -410,6 +442,7 @@ function ResourcesView({ resources, totalCount }: { resources: AssessmentScanned
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );
@@ -448,6 +481,7 @@ function FindingsTable({
     [linksQ.data],
   );
   const [query, setQuery] = useState("");
+  const dQuery = useDebounced(query, 150);
   const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" }>({ col: "status", dir: "asc" });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Multi-select framework filter (OR semantics): empty = no framework filtering.
@@ -521,7 +555,7 @@ function FindingsTable({
   const matchesFrameworks = (f: AssessmentFinding) =>
     frameworkFilter.size === 0 || findingFrameworks(f).some((k) => frameworkFilter.has(k));
   const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     let list = findings.filter((f) => {
       if (pillar !== "all" && f.pillar !== pillar) return false;
       if (statusFilter !== "all" && f.status !== statusFilter) return false;
@@ -542,7 +576,7 @@ function FindingsTable({
       return sort.dir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [findings, query, pillar, statusFilter, frameworkFilter, sort]);
+  }, [findings, dQuery, pillar, statusFilter, frameworkFilter, sort]);
 
   const arrow = (col: string) => (sort.col === col ? (sort.dir === "asc" ? "▲" : "▼") : "↕");
 
@@ -550,7 +584,7 @@ function FindingsTable({
   // independently of its own selection (but respects the OTHER filters + search), and the
   // button sets are taken from the full run so they don't appear/disappear while filtering.
   const facet = useMemo(() => {
-    const qq = query.trim().toLowerCase();
+    const qq = dQuery.trim().toLowerCase();
     const searched = qq
       ? findings.filter((f) => `${f.title} ${f.description} ${(f.frameworks.cis || []).join(" ")} ${(f.frameworks.nist || []).join(" ")} ${(f.frameworks.iso || []).join(" ")} ${(f.frameworks.mcsb || []).join(" ")} ${(f.frameworks.pci || []).join(" ")}`.toLowerCase().includes(qq))
       : findings;
@@ -575,7 +609,7 @@ function FindingsTable({
       statusesPresent: STATUS_ORDER.filter((s) => findings.some((f) => f.status === s)),
       frameworksPresent: FRAMEWORK_ORDER.filter((k) => findings.some((f) => (f.frameworks[k]?.length ?? 0) > 0)),
     };
-  }, [findings, query, pillar, statusFilter, frameworkFilter]);
+  }, [findings, dQuery, pillar, statusFilter, frameworkFilter]);
 
   async function setState(checkId: string, patch: Partial<{ status: string; assignee: string }>) {
     setBusy(checkId);
@@ -1007,13 +1041,25 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
   const run = q.data?.run as AssessmentRunDetail | undefined;
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"findings" | "compliance" | "resources">("findings");
+  // Deep-link the report sub-tab + filters so a shared link / reload restores the view.
+  const [, setParams] = useSearchParams();
+  const rp0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [tab, setTab] = useState<"findings" | "compliance" | "resources">((rp0.get("rtab") as "findings" | "compliance" | "resources") || "findings");
   const [busy, setBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const pdfAbortRef = useRef<AbortController | null>(null);
   // Findings filter state, lifted here so the score gauge + pillar tiles can drive it.
-  const [pillar, setPillar] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [pillar, setPillar] = useState(rp0.get("pillar") || "all");
+  const [statusFilter, setStatusFilter] = useState(rp0.get("fstatus") || "all");
+  // Reflect the report sub-tab + filters into the URL.
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (tab !== "findings") next.set("rtab", tab); else next.delete("rtab");
+    if (pillar !== "all") next.set("pillar", pillar); else next.delete("pillar");
+    if (statusFilter !== "all") next.set("fstatus", statusFilter); else next.delete("fstatus");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, pillar, statusFilter]);
   // Clicking a pillar tile / the overall gauge focuses the Controls tab and filters it.
   function focusPillar(p: string) {
     setTab("findings");
@@ -1026,6 +1072,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
     queryKey: ["assessmentFindingStates", run?.workload_id],
     queryFn: () => api.assessmentFindingStates(run!.workload_id),
     enabled: !!run?.workload_id,
+    staleTime: 5 * 60 * 1000,
   });
   const trendQ = useQuery({
     queryKey: ["assessmentTrend", run?.workload_id],
@@ -1033,7 +1080,7 @@ function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
     enabled: !!run?.workload_id,
   });
 
-  if (q.isLoading) return <div className="p-8 text-sm text-gray-400">Loading assessment…</div>;
+  if (q.isLoading) return <div className="p-6"><Skeleton rows={10} /></div>;
   if (!run) return <div className="p-8 text-sm text-red-600">Assessment run not found.</div>;
   const states = statesQ.data?.states ?? {};
   const trend = (trendQ.data?.points ?? []).map((p) => p.overall ?? 0);

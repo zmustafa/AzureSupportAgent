@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   api,
   apiBase,
+  streamTelemetryRefresh,
   type TelemetryCategory,
   type TelemetryCoverage,
   type TelemetryGap,
@@ -18,6 +20,7 @@ import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
+import { Skeleton, useDebounced } from "../utils/perf";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PageIntro } from "./PageIntro";
@@ -76,6 +79,126 @@ function shortWs(id: string): string {
   return m ? m[1] : id.slice(0, 28);
 }
 
+// TP/matrix — per-group telemetry matrix body. Small groups render inline (with the category
+// checklist expander). Large groups (> 60 rows) virtualize via an internal-scroll windowed
+// <tbody>; the per-row "Details" drawer carries the same checklist, so virtualized rows stay
+// fixed-height (no inline expander).
+const TEL_VIRT_THRESHOLD = 60;
+function TelemetryMatrixBody({ group, expandedRow, setExpandedRow, setDrawer }: {
+  group: TelemetryGroup;
+  expandedRow: string | null;
+  setExpandedRow: (v: string | null) => void;
+  setDrawer: (v: { group: TelemetryGroup; row: TelemetryRow } | null) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualize = group.rows.length > TEL_VIRT_THRESHOLD;
+  const rowVirt = useVirtualizer({
+    count: group.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 41,
+    overscan: 10,
+  });
+  const vItems = rowVirt.getVirtualItems();
+  const padTop = vItems.length ? vItems[0].start : 0;
+  const padBottom = vItems.length ? rowVirt.getTotalSize() - vItems[vItems.length - 1].end : 0;
+  const recCount = group.recommended_categories.length;
+
+  const mainRow = (row: TelemetryRow) => {
+    const have = recCount - row.missing_categories.length;
+    const dest = row.destinations.find((d) => d.workspace_id);
+    const retention = Math.max(0, ...row.destinations.map((d) => d.retention_days || 0));
+    const hasStorage = row.destinations.some((d) => d.storage_account_id);
+    const hasEh = row.destinations.some((d) => d.event_hub);
+    const isExp = expandedRow === row.resource_id;
+    return (
+      <tr key={row.resource_id} className="border-t hover:bg-gray-50">
+        <td className="px-3 py-2">
+          <button onClick={() => (virtualize ? setDrawer({ group, row }) : setExpandedRow(isExp ? null : row.resource_id))} className="text-left">
+            <div className="font-medium text-gray-800">{row.resource_name}</div>
+            <div className="text-[10px] text-gray-400">{row.resource_group}</div>
+          </button>
+        </td>
+        <td className="px-2 py-2"><StatusDot status={row.status} /></td>
+        <td className="px-2 py-2 text-center">
+          <span className={have === recCount ? "text-green-600" : row.missing_audit_categories.length ? "text-red-600" : "text-amber-600"}>{have}/{recCount}</span>
+        </td>
+        <td className="px-2 py-2">
+          {dest ? (
+            <span className={row.has_drift ? "text-amber-600" : "text-gray-600"} title={dest.workspace_id}>
+              {row.has_drift ? "⚠ " : ""}{shortWs(dest.workspace_id)}
+            </span>
+          ) : <span className="text-gray-300">—</span>}
+        </td>
+        <td className="px-2 py-2 text-center text-gray-600">{retention ? `${retention}d` : "—"}</td>
+        <td className="px-2 py-2 text-center">{hasStorage ? "✓" : <span className="text-gray-300">—</span>}</td>
+        <td className="px-2 py-2 text-center">{hasEh ? "✓" : <span className="text-gray-300">—</span>}</td>
+        <td className="px-2 py-2 text-right">
+          <button onClick={() => setDrawer({ group, row })} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Details</button>
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div ref={scrollRef} className="overflow-auto border-t" style={virtualize ? { maxHeight: "60vh" } : undefined}>
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500">
+          <tr>
+            <th className="px-3 py-2 text-left font-medium">Resource</th>
+            <th className="px-2 py-2 text-left font-medium">Status</th>
+            <th className="px-2 py-2 text-center font-medium">Categories</th>
+            <th className="px-2 py-2 text-left font-medium">Destination</th>
+            <th className="px-2 py-2 text-center font-medium">Retention</th>
+            <th className="px-2 py-2 text-center font-medium">Storage</th>
+            <th className="px-2 py-2 text-center font-medium">Event Hub</th>
+            <th className="px-2 py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {virtualize ? (
+            <>
+              {padTop > 0 && <tr style={{ height: padTop }} aria-hidden />}
+              {vItems.map((vi) => mainRow(group.rows[vi.index]))}
+              {padBottom > 0 && <tr style={{ height: padBottom }} aria-hidden />}
+            </>
+          ) : (
+            group.rows.map((row) => {
+              const isExp = expandedRow === row.resource_id;
+              return (
+                <Fragment key={row.resource_id}>
+                  {mainRow(row)}
+                  {isExp && (
+                    <tr className="border-t bg-gray-50/60">
+                      <td colSpan={8} className="px-4 py-2">
+                        <div className="mb-1 text-[11px] font-medium text-gray-600">Category checklist</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.recommended_categories.map((c: TelemetryCategory) => {
+                            const on = !row.missing_categories.includes(c.key);
+                            const isAudit = c.group === "audit" || c.group === "security";
+                            return (
+                              <span key={c.key} title={c.why}
+                                className={`rounded px-1.5 py-0.5 text-[10px] ${on ? "bg-green-50 text-green-700" : isAudit ? "bg-red-100 text-red-700" : "bg-amber-50 text-amber-700"}`}>
+                                {on ? "✓" : "✗"} {c.name}{isAudit && !on ? " ⚠" : ""}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {row.missing_audit_categories.length > 0 && (
+                          <div className="mt-1 text-[11px] text-red-600">⚠ Audit/security categories off: {row.missing_audit_categories.join(", ")}</div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function TelemetryCoveragePanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -85,9 +208,11 @@ export function TelemetryCoveragePanel() {
   const [subId, setSubId] = usePersistedState("azsup.telemetry.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.telemetry.subName", "");
   const [connId, setConnId] = usePersistedState("azsup.telemetry.connId", "");
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [tab, setTab] = useState<"coverage" | "all">("coverage");
+  const tp0 = useRef(new URLSearchParams(window.location.search)).current;
+  const [query, setQuery] = useState(tp0.get("q") || "");
+  const dQuery = useDebounced(query, 150);
+  const [statusFilter, setStatusFilter] = useState(tp0.get("status") || "all");
+  const [tab, setTab] = useState<"coverage" | "all">(tp0.get("tab") === "all" ? "all" : "coverage");
   const [density, setDensity] = usePersistedState<"compact" | "expanded">("azsup.telemetry.density", "expanded");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -124,11 +249,14 @@ export function TelemetryCoveragePanel() {
   const refreshKey = `telemetry:${scopeKey}`;
   const refreshVersion = useBackgroundRefresh();
   const refreshing = isRefreshing(refreshKey);
+  // TP4 — live scan progress (scanned X of N) surfaced while a refresh streams.
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
 
   const covQ = useQuery({
     queryKey: ["telemetry", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.telemetryCoverage(params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
   const data: TelemetryCoverage | undefined = enabled ? covQ.data : undefined;
   const allGaps = data?.gaps ?? [];
@@ -138,6 +266,7 @@ export function TelemetryCoveragePanel() {
     queryKey: ["telemetry-trend", scopeKind, effectiveWorkloadId, subId, connId],
     queryFn: () => api.coverageTrend("telemetry", params),
     enabled,
+    staleTime: 5 * 60 * 1000,
   });
 
   function loadCoverage() {
@@ -152,8 +281,22 @@ export function TelemetryCoveragePanel() {
     const dataKey = ["telemetry", scopeKind, effectiveWorkloadId, subId, connId] as const;
     const trendKey = ["telemetry-trend", scopeKind, effectiveWorkloadId, subId, connId] as const;
     startBackgroundRefresh(refreshKey, async () => {
-      const fresh = await api.refreshTelemetry(p);
-      qc.setQueryData(dataKey, fresh);
+      // TP4 — stream the scan so the UI can show live "scanned X of N" progress. The backend
+      // scan is shielded (caches even if we navigate away); falls back to a plain refresh on
+      // any stream error so a transient SSE hiccup never blocks getting a result.
+      setScanProgress({ done: 0, total: 0 });
+      try {
+        const fresh = await streamTelemetryRefresh(p, {
+          onProgress: (pr) => setScanProgress({ done: pr.done, total: pr.total }),
+        });
+        const snap = fresh ?? (await api.refreshTelemetry(p));
+        qc.setQueryData(dataKey, snap);
+      } catch {
+        const snap = await api.refreshTelemetry(p);
+        qc.setQueryData(dataKey, snap);
+      } finally {
+        setScanProgress(null);
+      }
       await qc.invalidateQueries({ queryKey: trendKey });
       await qc.invalidateQueries({ queryKey: coverageRunsKey("telemetry", scopeKind, effectiveWorkloadId, subId) });
     });
@@ -291,7 +434,7 @@ export function TelemetryCoveragePanel() {
 
   function rowVisible(r: TelemetryRow): boolean {
     if (statusFilter !== "all" && r.status !== statusFilter) return false;
-    const q = query.trim().toLowerCase();
+    const q = dQuery.trim().toLowerCase();
     if (q && !(`${r.resource_name} ${r.resource_group}`.toLowerCase().includes(q))) return false;
     return true;
   }
@@ -300,7 +443,26 @@ export function TelemetryCoveragePanel() {
     if (!data) return [] as TelemetryGroup[];
     return data.groups.map((g) => ({ ...g, rows: g.rows.filter(rowVisible) })).filter((g) => g.rows.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, query, statusFilter]);
+  }, [data, dQuery, statusFilter]);
+
+  // TU1 — reflect the active tab + filters into the URL (shareable / restored on reload).
+  const [, tSetParams] = useSearchParams();
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search);
+    if (tab !== "coverage") next.set("tab", tab); else next.delete("tab");
+    if (statusFilter !== "all") next.set("status", statusFilter); else next.delete("status");
+    if (query.trim()) next.set("q", query.trim()); else next.delete("q");
+    tSetParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, statusFilter, query]);
+
+  // TU3 — active-filter chips (each removable).
+  const telChips = useMemo(() => {
+    const out: { key: string; label: string; clear: () => void }[] = [];
+    if (statusFilter !== "all") out.push({ key: "status", label: `Status: ${statusFilter}`, clear: () => setStatusFilter("all") });
+    if (query.trim()) out.push({ key: "q", label: `“${query.trim()}”`, clear: () => setQuery("") });
+    return out;
+  }, [statusFilter, query]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -345,8 +507,12 @@ export function TelemetryCoveragePanel() {
             />
             <span className="text-xs text-gray-500">
               {data ? (<>Updated {agoText(data.age_seconds)}{data.stale && <span className="ml-1 text-amber-600">· stale</span>}<span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px]">cached</span></>) : "—"}
-              {refreshing && <span className="ml-1 text-blue-600">· refreshing…</span>}
+              {refreshing && <span className="ml-1 text-blue-600">· {scanProgress && scanProgress.total > 0 ? `scanned ${scanProgress.done} of ${scanProgress.total}` : "refreshing…"}</span>}
             </span>
+            {/* TU6 — stale-cache rescan nudge. */}
+            {data?.stale && enabled && !refreshing && (
+              <button onClick={doRefresh} disabled={!scopeReady} title="This coverage scan is past its refresh interval — run a fresh scan." className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">⚠ stale · rescan</button>
+            )}
             {!enabled && (
               <button onClick={loadCoverage} disabled={!scopeReady} className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50">Load coverage</button>
             )}
@@ -381,6 +547,19 @@ export function TelemetryCoveragePanel() {
           <span className="text-gray-300">·</span>
           <DensityToggle value={density} onChange={setDensity} title="Compact shows just the resource-type rows; Expanded shows the full detail table." />
         </div>
+        )}
+
+        {/* TU3 — active filter chips. */}
+        {tab === "coverage" && telChips.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {telChips.map((c) => (
+              <span key={c.key} className="flex items-center gap-1 rounded-md bg-brand/10 px-2 py-0.5 text-[11px] text-brand">
+                {c.label}
+                <button onClick={c.clear} className="text-brand/60 hover:text-brand">✕</button>
+              </span>
+            ))}
+            <button onClick={() => { setStatusFilter("all"); setQuery(""); }} className="rounded-md border px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-50">Clear all</button>
+          </div>
         )}
 
         {tab === "coverage" && (
@@ -422,7 +601,7 @@ export function TelemetryCoveragePanel() {
               : "Pick a workload or enter a subscription to begin."}
           </div>
         ) : covQ.isLoading ? (
-          <div className="py-16 text-center text-sm text-gray-400">Loading telemetry coverage…</div>
+          <div className="p-6"><Skeleton rows={8} /></div>
         ) : covQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(covQ.error)}</div>
         ) : data && data.report_exists === false ? (
@@ -461,84 +640,7 @@ export function TelemetryCoveragePanel() {
                   </button>
 
                   {!isCollapsed && (
-                    <div className="overflow-x-auto border-t">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 text-gray-500">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-medium">Resource</th>
-                            <th className="px-2 py-2 text-left font-medium">Status</th>
-                            <th className="px-2 py-2 text-center font-medium">Categories</th>
-                            <th className="px-2 py-2 text-left font-medium">Destination</th>
-                            <th className="px-2 py-2 text-center font-medium">Retention</th>
-                            <th className="px-2 py-2 text-center font-medium">Storage</th>
-                            <th className="px-2 py-2 text-center font-medium">Event Hub</th>
-                            <th className="px-2 py-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {g.rows.map((row) => {
-                            const isExp = expandedRow === row.resource_id;
-                            const recCount = g.recommended_categories.length;
-                            const have = recCount - row.missing_categories.length;
-                            const dest = row.destinations.find((d) => d.workspace_id);
-                            const retention = Math.max(0, ...row.destinations.map((d) => d.retention_days || 0));
-                            const hasStorage = row.destinations.some((d) => d.storage_account_id);
-                            const hasEh = row.destinations.some((d) => d.event_hub);
-                            return (
-                              <>
-                                <tr key={row.resource_id} className="border-t hover:bg-gray-50">
-                                  <td className="px-3 py-2">
-                                    <button onClick={() => setExpandedRow(isExp ? null : row.resource_id)} className="text-left">
-                                      <div className="font-medium text-gray-800">{row.resource_name}</div>
-                                      <div className="text-[10px] text-gray-400">{row.resource_group}</div>
-                                    </button>
-                                  </td>
-                                  <td className="px-2 py-2"><StatusDot status={row.status} /></td>
-                                  <td className="px-2 py-2 text-center">
-                                    <span className={have === recCount ? "text-green-600" : row.missing_audit_categories.length ? "text-red-600" : "text-amber-600"}>{have}/{recCount}</span>
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    {dest ? (
-                                      <span className={row.has_drift ? "text-amber-600" : "text-gray-600"} title={dest.workspace_id}>
-                                        {row.has_drift ? "⚠ " : ""}{shortWs(dest.workspace_id)}
-                                      </span>
-                                    ) : <span className="text-gray-300">—</span>}
-                                  </td>
-                                  <td className="px-2 py-2 text-center text-gray-600">{retention ? `${retention}d` : "—"}</td>
-                                  <td className="px-2 py-2 text-center">{hasStorage ? "✓" : <span className="text-gray-300">—</span>}</td>
-                                  <td className="px-2 py-2 text-center">{hasEh ? "✓" : <span className="text-gray-300">—</span>}</td>
-                                  <td className="px-2 py-2 text-right">
-                                    <button onClick={() => setDrawer({ group: g, row })} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Details</button>
-                                  </td>
-                                </tr>
-                                {isExp && (
-                                  <tr className="border-t bg-gray-50/60">
-                                    <td colSpan={8} className="px-4 py-2">
-                                      <div className="mb-1 text-[11px] font-medium text-gray-600">Category checklist</div>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {g.recommended_categories.map((c: TelemetryCategory) => {
-                                          const on = !row.missing_categories.includes(c.key);
-                                          const isAudit = c.group === "audit" || c.group === "security";
-                                          return (
-                                            <span key={c.key} title={c.why}
-                                              className={`rounded px-1.5 py-0.5 text-[10px] ${on ? "bg-green-50 text-green-700" : isAudit ? "bg-red-100 text-red-700" : "bg-amber-50 text-amber-700"}`}>
-                                              {on ? "✓" : "✗"} {c.name}{isAudit && !on ? " ⚠" : ""}
-                                            </span>
-                                          );
-                                        })}
-                                      </div>
-                                      {row.missing_audit_categories.length > 0 && (
-                                        <div className="mt-1 text-[11px] text-red-600">⚠ Audit/security categories off: {row.missing_audit_categories.join(", ")}</div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                )}
-                              </>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <TelemetryMatrixBody group={g} expandedRow={expandedRow} setExpandedRow={setExpandedRow} setDrawer={setDrawer} />
                   )}
                 </section>
               );

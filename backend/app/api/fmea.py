@@ -15,13 +15,14 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from app.architectures import registry as arch_registry
+from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
 from app.fmea import compute
 from app.fmea import registry as freg
@@ -32,6 +33,10 @@ logger = logging.getLogger("app.api.fmea")
 router = APIRouter(prefix="/fmea", tags=["fmea"])
 get_principal = require_permission("architectures.read")
 _write = require_permission("architectures.write")
+
+# Background-survivable FMEA generation (mirrors Know-Me): generate / regenerate / per-table
+# regen run as detached jobs keyed by document so navigating away never loses the draft.
+_fmea_jobs = JobRegistry("fmea")
 
 
 def _actor(principal: Principal) -> str:
@@ -357,13 +362,14 @@ def _csv_cell(value: Any) -> str:
 
 
 # ------------------------------------------------------------------------- AI generation
-async def _stream_generate_fmea(
+async def _run_generate_fmea(
+    progress: "Callable[[str, str], Awaitable[None]]",
     *, architecture_id: str, arch: dict[str, Any], principal: Principal,
     extra_context: str, focus: str, target_fmea_id: str | None, target_table_id: str | None = None,
-):
-    """Shared SSE generator: transform an architecture's Memory into FMEA tables. When
-    ``target_fmea_id`` is set it appends/replaces into that document; otherwise it creates a
-    new one. ``target_table_id`` regenerates just one table. Yields SSE event dicts."""
+) -> dict[str, Any]:
+    """Background-job runner: transform an architecture's Memory into FMEA tables and PERSIST.
+    Reports ``progress(phase, message)``; returns the full FMEA response (the job's ``done``
+    payload). Runs detached from any SSE subscriber so it survives the browser navigating away."""
     from app.architectures import memory as mem
     from app.fmea import generator as fgen
     from app.knowme import context as kctx
@@ -375,20 +381,19 @@ async def _stream_generate_fmea(
 
     memory = mem.get_memory(architecture_id)
     if memory is None or not any(str(s.get("content") or "").strip() for s in memory.get("sections", []) or []):
-        yield {"event": "error", "data": json.dumps({"message": "No architecture memory to transform. Generate the Memory first."})}
-        return
+        raise ValueError("No architecture memory to transform. Generate the Memory first.")
 
     wl = get_workload(workload_id) if workload_id else None
     wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
-    yield {"event": "status", "data": json.dumps({"phase": "scope", "message": "🔎 Resolving the workload's Azure scope…"})}
+    await progress("scope", "🔎 Resolving the workload's Azure scope…")
     facts = km.scope_facts(wl, arch)
     n_subs = len(facts.get("subscriptions") or [])
     n_res = len(facts.get("resources") or [])
     n_rg = len(facts.get("resource_groups") or [])
-    yield {"event": "status", "data": json.dumps({"phase": "scope", "message": f"🔎 Scope resolved: {n_res} resource(s) across {n_rg} resource group(s), {n_subs} subscription(s)."})}
+    await progress("scope", f"🔎 Scope resolved: {n_res} resource(s) across {n_rg} resource group(s), {n_subs} subscription(s).")
     n_sections = sum(1 for s in memory.get("sections", []) or [] if str(s.get("content") or "").strip())
-    yield {"event": "status", "data": json.dumps({"phase": "memory", "message": f"🧠 Reading the Architecture Memory ({n_sections} filled section(s))…"})}
-    yield {"event": "status", "data": json.dumps({"phase": "evidence", "message": "📊 Pulling posture evidence (assessments, coverage)…"})}
+    await progress("memory", f"🧠 Reading the Architecture Memory ({n_sections} filled section(s))…")
+    await progress("evidence", "📊 Pulling posture evidence (assessments, coverage)…")
     evidence = await kctx.gather_evidence(architecture_id, workload_id, tenant_id, connection_id)
     ev_assess = (evidence.get("assessment") or {})
     ev_findings = len(ev_assess.get("findings", []) or [])
@@ -399,17 +404,17 @@ async def _stream_generate_fmea(
     if ev_cov:
         ev_bits.append(f"coverage: {', '.join(ev_cov)}")
     ev_msg = ("📊 Evidence gathered — " + "; ".join(ev_bits) + ".") if ev_bits else "📊 No prior posture evidence found — grounding on memory + scope only."
-    yield {"event": "status", "data": json.dumps({"phase": "evidence", "message": ev_msg})}
+    await progress("evidence", ev_msg)
 
-    yield {"event": "status", "data": json.dumps({"phase": "ai", "message": "🤖 Handing context to the model — enumerating failure modes & scoring risk…"})}
+    await progress("ai", "🤖 Handing context to the model — enumerating failure modes & scoring risk…")
     queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
 
-    async def _progress(phase: str, message: str) -> None:
+    async def _gen_progress(phase: str, message: str) -> None:
         await queue.put({"phase": phase, "message": message})
 
     gen_task = asyncio.create_task(
         fgen.generate_fmea(
-            workload_name=wl_name, memory=memory, facts=facts, progress=_progress,
+            workload_name=wl_name, memory=memory, facts=facts, progress=_gen_progress,
             extra_context=extra_context, evidence_block=evidence.get("block", ""), focus=focus,
         )
     )
@@ -418,18 +423,17 @@ async def _stream_generate_fmea(
             ev = await asyncio.wait_for(queue.get(), timeout=0.25)
         except asyncio.TimeoutError:
             continue
-        yield {"event": "status", "data": json.dumps(ev)}
+        await progress(ev.get("phase", "ai"), ev.get("message", ""))
     result = await gen_task
     if result is None or not result.get("tables"):
-        yield {"event": "error", "data": json.dumps({"message": "The AI could not draft the FMEA. Try again."})}
-        return
+        raise RuntimeError("The AI could not draft the FMEA. Try again.")
 
     new_tables = result["tables"]
     n_tables = len(new_tables)
     n_rows = sum(len(t.get("rows", []) or []) for t in new_tables)
     conf = result.get("confidence")
     conf_txt = f" · confidence {round(float(conf) * 100)}%" if isinstance(conf, (int, float)) else ""
-    yield {"event": "status", "data": json.dumps({"phase": "save", "message": f"💾 Recomputing RPN & saving {n_tables} table(s) · {n_rows} failure mode(s){conf_txt}…"})}
+    await progress("save", f"💾 Recomputing RPN & saving {n_tables} table(s) · {n_rows} failure mode(s){conf_txt}…")
     ai_meta = {
         "confidence": result.get("confidence"),
         "passes": result.get("passes"),
@@ -464,7 +468,7 @@ async def _stream_generate_fmea(
             tables=new_tables, source="ai", ai=ai_meta,
             tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI",
         )
-    yield {"event": "done", "data": json.dumps(_fmea_response(arch, doc))}
+    return _fmea_response(arch, doc)
 
 
 @router.post("/generate/stream")
@@ -472,23 +476,23 @@ async def generate_fmea_stream_endpoint(
     payload: FmeaGenerateRequest = Body(default_factory=FmeaGenerateRequest),
     principal: Principal = Depends(_write),
 ):
-    """Create a NEW FMEA for an architecture by transforming its Memory. SSE → done."""
+    """Create a NEW FMEA for an architecture by transforming its Memory. Runs as a detached,
+    navigation-surviving job; this call starts it (idempotently) and follows it via SSE → done."""
     if not payload.architecture_id:
         raise HTTPException(status_code=400, detail="architecture_id is required.")
     arch = _arch_or_404(payload.architecture_id, principal)
+    extra_context = payload.extra_context or ""
+    focus = payload.focus or ""
+    key = f"new:{payload.architecture_id}"
 
-    async def _gen():
-        try:
-            async for ev in _stream_generate_fmea(
-                architecture_id=payload.architecture_id, arch=arch, principal=principal,
-                extra_context=payload.extra_context or "", focus=payload.focus or "", target_fmea_id=None,
-            ):
-                yield ev
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("FMEA generation failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+    def _runner(progress):
+        return _run_generate_fmea(
+            progress, architecture_id=payload.architecture_id, arch=arch, principal=principal,
+            extra_context=extra_context, focus=focus, target_fmea_id=None,
+        )
 
-    return EventSourceResponse(_gen())
+    _fmea_jobs.start(key, _runner)
+    return EventSourceResponse(_fmea_jobs.stream(key))
 
 
 @router.post("/{fmea_id}/generate/stream")
@@ -497,23 +501,29 @@ async def regenerate_fmea_stream_endpoint(
     payload: FmeaGenerateRequest = Body(default_factory=FmeaGenerateRequest),
     principal: Principal = Depends(_write),
 ):
-    """Regenerate an EXISTING FMEA document from its architecture's Memory. SSE → done."""
+    """Regenerate an EXISTING FMEA document from its architecture's Memory. Detached,
+    navigation-surviving job keyed by fmea_id; SSE follows it → done."""
     doc, arch = _fmea_or_404(fmea_id, principal)
     if not arch:
         raise HTTPException(status_code=400, detail="The source architecture no longer exists.")
+    extra_context = payload.extra_context or ""
+    focus = payload.focus or ""
+    key = f"fmea:{fmea_id}"
 
-    async def _gen():
-        try:
-            async for ev in _stream_generate_fmea(
-                architecture_id=doc.get("architecture_id", ""), arch=arch, principal=principal,
-                extra_context=payload.extra_context or "", focus=payload.focus or "", target_fmea_id=fmea_id,
-            ):
-                yield ev
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("FMEA regeneration failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+    def _runner(progress):
+        return _run_generate_fmea(
+            progress, architecture_id=doc.get("architecture_id", ""), arch=arch, principal=principal,
+            extra_context=extra_context, focus=focus, target_fmea_id=fmea_id,
+        )
 
-    return EventSourceResponse(_gen())
+    _fmea_jobs.start(key, _runner)
+    return EventSourceResponse(_fmea_jobs.stream(key))
+
+
+@router.get("/{fmea_id}/generate/job")
+async def fmea_generate_job_endpoint(fmea_id: str, principal: Principal = Depends(get_principal)):
+    """Current generation-job status for an FMEA doc (for reconnect on page visit)."""
+    return {"job": _fmea_jobs.public_job(_fmea_jobs.get_job(f"fmea:{fmea_id}"))}
 
 
 @router.post("/{fmea_id}/tables/{table_id}/generate/stream")
@@ -530,17 +540,17 @@ async def regenerate_fmea_table_stream_endpoint(
     if table is None:
         raise HTTPException(status_code=404, detail="Table not found.")
     focus = payload.focus or table.get("name", "") or table.get("scope_ref", "")
+    extra_context = payload.extra_context or ""
+    key = f"tbl:{fmea_id}:{table_id}"
 
-    async def _gen():
-        try:
-            async for ev in _stream_generate_fmea(
-                architecture_id=doc.get("architecture_id", ""), arch=arch, principal=principal,
-                extra_context=payload.extra_context or "", focus=focus,
-                target_fmea_id=fmea_id, target_table_id=table_id,
-            ):
-                yield ev
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("FMEA table regeneration failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+    def _runner(progress):
+        return _run_generate_fmea(
+            progress, architecture_id=doc.get("architecture_id", ""), arch=arch, principal=principal,
+            extra_context=extra_context, focus=focus,
+            target_fmea_id=fmea_id, target_table_id=table_id,
+        )
 
-    return EventSourceResponse(_gen())
+    _fmea_jobs.start(key, _runner)
+    return EventSourceResponse(_fmea_jobs.stream(key))
+
+

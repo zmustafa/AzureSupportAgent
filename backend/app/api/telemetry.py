@@ -8,11 +8,13 @@ standardization list. Admin-gated."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -56,6 +58,7 @@ def _decorate(snap: dict[str, Any], ttl_s: int) -> dict[str, Any]:
 async def _get_snapshot(
     principal: Principal, scope_kind: str, scope_id: str, *, force: bool, compute: bool = True,
     connection_id: str | None = None,
+    progress: "Callable[[int, int, str], Awaitable[None]] | None" = None,
 ) -> dict[str, Any]:
     from app.core.azure_connections import connection_for_scope
     from app.workloads.registry import get_workload
@@ -101,6 +104,7 @@ async def _get_snapshot(
             workload=workload,
             approved_workspaces=approved,
             scan_cap=cap,
+            progress=progress,
         )
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl)
@@ -211,6 +215,61 @@ async def refresh(
     )
     await db.commit()
     return snap
+
+
+@router.post("/refresh/stream")
+async def refresh_stream(
+    workload_id: str | None = Query(default=None),
+    subscription_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_admin),
+):
+    """TP4 — live coverage scan over SSE: start → progress* (scanned X of N) → done(snapshot).
+    The scan runs as a shielded background task (drained via a queue) so it finishes + caches
+    even if the client disconnects; the result is also recorded as a trend point + saved run."""
+    scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
+    tenant_id = principal.tenant_id or "default"
+
+    async def _gen():
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def _progress(done: int, total: int, name: str) -> None:
+            await queue.put({"done": done, "total": total, "resource": name})
+
+        async def _run() -> dict[str, Any]:
+            try:
+                return await _get_snapshot(
+                    principal, scope_kind, scope_id, force=True, connection_id=connection_id, progress=_progress,
+                )
+            finally:
+                await queue.put(None)  # sentinel
+
+        try:
+            yield {"event": "start", "data": json.dumps({"scope_kind": scope_kind, "scope_id": scope_id})}
+            task = asyncio.create_task(asyncio.shield(_run()))
+            while True:
+                ev = await queue.get()
+                if ev is None:
+                    break
+                yield {"event": "progress", "data": json.dumps(ev)}
+            snap = await task
+            from app.core import coverage_trends, coverage_runs
+
+            coverage_trends.record(
+                "telemetry", tenant_id, scope_kind, scope_id,
+                pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
+            )
+            coverage_runs.save_run(
+                "telemetry", tenant_id, scope_kind, scope_id, snap,
+                headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
+                resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
+            )
+            yield {"event": "done", "data": json.dumps(snap)}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("telemetry refresh stream failed")
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+
+    return EventSourceResponse(_gen())
 
 
 @router.get("/trend")

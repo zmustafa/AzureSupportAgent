@@ -19,7 +19,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from app.telemetry.reference import load_reference
 from app.core.coverage_resources import build_all_resources
@@ -319,8 +319,12 @@ async def collect_coverage(
     workload: dict[str, Any] | None,
     approved_workspaces: list[str],
     scan_cap: int,
+    progress: "Callable[[int, int, str], Awaitable[None]] | None" = None,
 ) -> dict[str, Any]:
-    """Resolve scope, query ARG for resources, fan out per-resource diag-settings, compute."""
+    """Resolve scope, query ARG for resources, fan out per-resource diag-settings, compute.
+
+    TP4 — when ``progress`` is given it's awaited once per probed resource as
+    ``progress(done, total, resource_name)`` so an SSE refresh can stream live scan progress."""
     from app.assessments.runner import _resolve_scope, scope_predicate_batches
 
     if scope_kind == "workload" and workload is not None:
@@ -345,7 +349,18 @@ async def collect_coverage(
 
     diag_by_resource: dict[str, list[dict[str, Any]]] = {}
     unreadable: set[str] = set()
-    sem = asyncio.Semaphore(6)
+    # TP1 — the per-resource diagnostic-settings probe is the slowest part of any coverage scan.
+    # Raise the bounded concurrency (admin-tunable) so a large estate doesn't crawl at 6-at-a-time;
+    # _diag_settings_for already fails soft per resource so a wider fan-out stays safe.
+    try:
+        from app.core.app_settings import load_settings
+        _conc = max(1, min(24, int(load_settings().get("telemetry_scan_concurrency", 12) or 12)))
+    except Exception:  # noqa: BLE001
+        _conc = 12
+    sem = asyncio.Semaphore(_conc)
+    _total = len(targets)
+    _done = 0
+    _plock = asyncio.Lock()
 
     async def _one(res: dict[str, Any]) -> None:
         rid = res.get("id", "")
@@ -356,6 +371,15 @@ async def collect_coverage(
             diag_by_resource[rid.lower()] = []
         else:
             diag_by_resource[rid.lower()] = settings
+        if progress is not None:
+            nonlocal _done
+            async with _plock:
+                _done += 1
+                done_now = _done
+            try:
+                await progress(done_now, _total, str(res.get("name", "")))
+            except Exception:  # noqa: BLE001 - progress is best-effort, never sink a scan
+                pass
 
     await asyncio.gather(*[_one(r) for r in targets])
 
