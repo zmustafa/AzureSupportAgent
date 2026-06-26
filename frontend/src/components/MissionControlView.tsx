@@ -10,6 +10,11 @@ import {
 } from "../api";
 import { formatError } from "../utils/format";
 
+/** A small spinning ring used wherever something is actively running. */
+function Spinner({ className = "h-3 w-3" }: { className?: string }) {
+  return <span className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent ${className}`} aria-hidden />;
+}
+
 // Map a per-system status to a compact chip.
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string; spin?: boolean }> = {
@@ -113,10 +118,14 @@ function SystemTile({ system, onRun, busy }: { system: MissionSystem; onRun: (ke
         <button
           onClick={() => onRun(system.key)}
           disabled={busy || system.status === "running" || system.status === "queued"}
-          className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           title="Run just this system"
         >
-          {system.status === "running" ? "Running…" : "Run"}
+          {system.status === "running"
+            ? <><Spinner className="h-3 w-3 text-blue-600" /> Running…</>
+            : system.status === "queued"
+            ? "Queued…"
+            : "Run"}
         </button>
         <button
           onClick={() => open(system.link)}
@@ -346,9 +355,9 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
                 <button
                   onClick={() => launch()}
                   disabled={running}
-                  className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                 >
-                  {running ? "Mission in progress…" : "🚀 Launch full sweep"}
+                  {running ? <><Spinner className="h-4 w-4" /> Mission in progress…</> : "🚀 Launch full sweep"}
                 </button>
               </div>
               <label className="flex items-center gap-1.5 text-xs text-gray-600">

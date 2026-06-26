@@ -99,6 +99,7 @@ function FieldPopover({
   onClose,
   onSuggest,
   suggesting,
+  onStep,
 }: {
   todo: KnowMeTodo;
   anchor: DOMRect;
@@ -107,6 +108,9 @@ function FieldPopover({
   onClose: () => void;
   onSuggest: () => void;
   suggesting: boolean;
+  // KU5 — step to the previous/next field without leaving the popover. Receives the current
+  // draft so the parent can persist it before moving on.
+  onStep: (dir: 1 | -1, draft: string) => void;
 }) {
   const [draft, setDraft] = useState(todo.value || "");
   const ref = useRef<HTMLDivElement>(null);
@@ -148,11 +152,48 @@ function FieldPopover({
   const error = validateField(todo, draft);
   const meta = FIELD_META[todo.type];
 
+  // Automatically ask AI for suggestions the moment the popover opens — but only for fields that
+  // don't already have a useful choice set (mirrors FieldInput's `canSuggest`), only when the
+  // field is still empty, and only once per open. Once AI returns, choice_source becomes "ai" and
+  // this won't re-fire. The user can still type their own value while suggestions load.
+  const autoSuggestedRef = useRef(false);
+  useEffect(() => {
+    if (autoSuggestedRef.current) return;
+    const eligible =
+      todo.choice_source !== "platform" &&
+      todo.choice_source !== "ai" &&
+      (todo.choices?.length ?? 0) === 0 &&
+      !(todo.value || "").trim() &&
+      !suggesting;
+    if (eligible) {
+      autoSuggestedRef.current = true;
+      onSuggest();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todo.id]);
+
   return (
     <div ref={ref} style={style} className="rounded-xl border border-gray-200 bg-white p-3 shadow-2xl">
       <div className="mb-1.5 flex items-start gap-2">
         <span className="min-w-0 flex-1 text-[13px] font-semibold text-gray-800">{todo.label}</span>
         {todo.required && <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">required</span>}
+        {/* KU5 — step between fields without closing; saves the current valid entry first. */}
+        <div className="shrink-0 flex items-center gap-0.5">
+          <button
+            onClick={() => onStep(-1, draft)}
+            disabled={saving || !!error}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+            title="Previous field"
+            aria-label="Previous field"
+          >↤</button>
+          <button
+            onClick={() => onStep(1, draft)}
+            disabled={saving || !!error}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40"
+            title="Next field"
+            aria-label="Next field"
+          >↦</button>
+        </div>
         <button onClick={onClose} aria-label="Close" className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100">✕</button>
       </div>
       {meta?.label && <div className="mb-1.5 text-[11px] text-gray-400">{meta.label}{meta.placeholder ? ` · e.g. ${meta.placeholder}` : ""}</div>}
@@ -421,6 +462,9 @@ export function KnowMeView({ kmId }: { kmId: string }) {
 
   // --- scroll-to-field for guided fill ---
   const docRef = useRef<HTMLDivElement>(null);
+  // KU5 — remember the last field "Next empty" jumped to, so each press ADVANCES to the next
+  // open field in document order (and wraps back to the first after the last).
+  const lastJumpedFieldRef = useRef<string>("");
   // KP1 — the active field-chip highlight is driven IMPERATIVELY (a CSS class toggled on the
   // chip) rather than via React state baked into the Markdown components object. Previously
   // `highlightId` state was a dep of `docMarkdownComponents`, so every chip click re-created the
@@ -458,13 +502,17 @@ export function KnowMeView({ kmId }: { kmId: string }) {
     );
   }
 
-  // KU5 — jump to the next empty field: prefer the next OPEN required field, else any open one.
-  // In read mode we scroll its chip into view and open its pick-or-type popover; in fill mode the
-  // GuidedFill panel already walks the open fields, so we just switch to it.
+  // KU5 — cycle through the empty fields: each press jumps to the NEXT open field in document
+  // order, advancing past the last one we visited and wrapping back to the first after the last.
+  // In fill/edit mode we switch to read mode first (where the clickable field chips live).
   function jumpToNextEmpty() {
     const open = todos.filter((t) => t.status !== "done" && !t.value);
     if (open.length === 0) return;
-    const target = open.find((t) => t.required) ?? open[0];
+    // Advance from the last-jumped field to the next open one (wrapping). If that field is no
+    // longer open (just got filled) or we've never jumped, start at the first open field.
+    const prevIdx = open.findIndex((t) => t.id === lastJumpedFieldRef.current);
+    const target = prevIdx === -1 ? open[0] : open[(prevIdx + 1) % open.length];
+    lastJumpedFieldRef.current = target.id;
     if (mode !== "read") { setMode("read"); }
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
@@ -472,6 +520,27 @@ export function KnowMeView({ kmId }: { kmId: string }) {
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
           setActiveChip(target.id);
+          setTimeout(() => openPicker(target.id, el.getBoundingClientRect()), 320);
+        }
+      }),
+    );
+  }
+
+  // KU5 — step the open popover to the previous/next field in document order (the ↤/↦ buttons
+  // inside the popover). Wraps around the ends. Re-anchors the popover to the new field's chip
+  // after scrolling it into view, so the user can walk field-by-field without closing.
+  function stepField(currentId: string, dir: 1 | -1) {
+    if (todos.length === 0) return;
+    const i = todos.findIndex((t) => t.id === currentId);
+    const start = i === -1 ? 0 : i;
+    const target = todos[(start + dir + todos.length) % todos.length];
+    if (!target || target.id === currentId) return;
+    setActiveChip(target.id);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = docRef.current?.querySelector(`[data-kmfield="${CSS.escape(target.id)}"]`) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
           setTimeout(() => openPicker(target.id, el.getBoundingClientRect()), 320);
         }
       }),
@@ -661,6 +730,7 @@ export function KnowMeView({ kmId }: { kmId: string }) {
         if (!todo) return null;
         return (
           <FieldPopover
+            key={picker.id}
             todo={todo}
             anchor={picker.anchor}
             saving={saving}
@@ -668,6 +738,15 @@ export function KnowMeView({ kmId }: { kmId: string }) {
             onClose={closePicker}
             onSuggest={() => void suggestField(picker.id)}
             suggesting={suggestingId === picker.id}
+            onStep={async (dir, draft) => {
+              // Persist the current entry first (if it's a valid change), then move to the
+              // prev/next field — so walking the doc doesn't lose what you just typed.
+              const fid = picker.id;
+              if (draft !== (todo.value || "") && !validateField(todo, draft)) {
+                await saveField(fid, draft);
+              }
+              stepField(fid, dir);
+            }}
           />
         );
       })()}
@@ -750,9 +829,9 @@ export function KnowMeView({ kmId }: { kmId: string }) {
               ))}
             </div>
           )}
-          {/* KU5 — jump straight to the next empty (required-first) field. */}
+          {/* KU5 — cycle to the next empty field (wraps back to the first after the last). */}
           {km && !viewingRevId && prog.open > 0 && (
-            <button onClick={jumpToNextEmpty} title="Scroll to and open the next empty field (required first)" className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100">
+            <button onClick={jumpToNextEmpty} title="Jump to the next empty field — press again for the next, cycling back to the first" className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100">
               ↳ Next empty{prog.requiredOpen > 0 ? ` (${prog.requiredOpen} req)` : ""}
             </button>
           )}

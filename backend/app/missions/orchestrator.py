@@ -26,8 +26,12 @@ from app.missions import systems as sysreg
 
 logger = logging.getLogger("app.missions.orchestrator")
 
-_MAX_SYSTEM_CONCURRENCY = 4   # systems running at once (≥3 so the board fills fast)
-_AI_CONCURRENCY = 2           # of those, at most this many heavy-LLM systems at once (429 guard)
+_MAX_SYSTEM_CONCURRENCY = 1   # systems run ONE AT A TIME — each system issues its own Azure
+                              # Resource Graph / ARM queries, and fanning several out in parallel
+                              # trips Azure's per-tenant request throttling (HTTP 429). Serializing
+                              # the systems keeps the whole sweep under Azure's rate limits.
+_AI_CONCURRENCY = 1           # at most this many heavy-LLM systems at once (moot while system
+                              # concurrency is 1, but kept as an explicit guard).
 _AI_MAX_RETRIES = 3           # retry a rate-limited (429) AI system this many times
 _AI_BACKOFF_BASE = 4.0        # seconds; exponential backoff base for 429 retries
 _RETAIN_SECONDS = 1800  # keep finished missions in memory briefly for live SSE replay
@@ -452,12 +456,12 @@ class _Manager:
             ai_sem = asyncio.Semaphore(_AI_CONCURRENCY)
             keys = list(mission.system_keys)
 
-            # Dependency-aware parallel scheduling. Every system is launched at once and runs
-            # under the shared semaphore (so ≥3 are in flight from the start instead of idling
-            # while the slow Architecture AI call blocks everything). A system that declares
-            # `depends_on` (e.g. Memory → Architecture) simply waits for those systems to finish
-            # first — but only for dependencies that are part of THIS mission, so a subset that
-            # excludes the dependency still runs.
+            # Dependency-aware SERIAL scheduling. Every system coroutine is created up front, but
+            # the shared `sem` (concurrency 1) lets only ONE run at a time, so the systems execute
+            # sequentially — no parallel Azure calls that would trip 429 throttling. A system that
+            # declares `depends_on` (e.g. Memory → Architecture) still waits for those systems to
+            # finish first — but only for dependencies that are part of THIS mission, so a subset
+            # that excludes the dependency still runs.
             done_events: dict[str, asyncio.Event] = {k: asyncio.Event() for k in keys}
 
             async def _scheduled(key: str) -> None:
