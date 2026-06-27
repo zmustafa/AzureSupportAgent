@@ -317,6 +317,34 @@ function EstateCoveragePanel() {
 }
 
 
+// ---- Sort + classification filter config (workload fleet) ------------------------
+// Sort options shown in the toolbar dropdown. "" = the backend's natural order (the
+// table view keeps its own worst-health-first triage when no explicit sort is chosen).
+const SORT_OPTIONS: { key: string; label: string }[] = [
+  { key: "", label: "Default order" },
+  { key: "name_asc", label: "Name (A → Z)" },
+  { key: "name_desc", label: "Name (Z → A)" },
+  { key: "created_desc", label: "Newest first" },
+  { key: "created_asc", label: "Oldest first" },
+  { key: "updated_desc", label: "Recently updated" },
+  { key: "resources_desc", label: "Most resources" },
+  { key: "resources_asc", label: "Fewest resources" },
+  { key: "crit_desc", label: "Most critical" },
+  { key: "health_asc", label: "Worst health first" },
+];
+
+// Faceted classification filter. Within a facet the selected values are OR'd; across
+// facets they're AND'd (e.g. (production OR development) AND critical AND confidential).
+const CLASS_FACETS: { facet: "environment" | "criticality" | "data_classification"; label: string; values: string[] }[] = [
+  { facet: "environment", label: "Environment", values: ["production", "staging", "development", "test", "dr", "shared"] },
+  { facet: "criticality", label: "Criticality", values: ["critical", "high", "medium", "low"] },
+  { facet: "data_classification", label: "Data class", values: ["confidential", "internal", "public"] },
+];
+
+// Criticality ordering for the "Most critical" sort (higher = more critical).
+const CRIT_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+
+
 export function WorkloadsPanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -332,6 +360,22 @@ export function WorkloadsPanel() {
     (localStorage.getItem("azsup.workloads.view") as "cards" | "table" | "board" | "map") || "cards");
   const [fleetFilter, setFleetFilter] = useState<string>("");  // category/env filter from cockpit
   const [search, setSearch] = useState<string>("");  // free-text filter over name/description/tags/type
+  // Sort + faceted classification filter (persisted so the choice sticks across visits).
+  const [sortKey, setSortKey] = useState<string>(() => localStorage.getItem("azsup.workloads.sort") || "");
+  const setSort = (k: string) => { setSortKey(k); localStorage.setItem("azsup.workloads.sort", k); };
+  const [classFilters, setClassFilters] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem("azsup.workloads.classFilters") || "[]")); } catch { return new Set(); }
+  });
+  const persistClassFilters = (next: Set<string>) => {
+    setClassFilters(next);
+    localStorage.setItem("azsup.workloads.classFilters", JSON.stringify([...next]));
+  };
+  const toggleClassFilter = (token: string) => {
+    const next = new Set(classFilters);
+    if (next.has(token)) next.delete(token); else next.add(token);
+    persistClassFilters(next);
+  };
+  const clearClassFilters = () => persistClassFilters(new Set());
   // Saved fleet views: named {view mode + active filter} the user can recall in one click.
   const [savedViews, setSavedViews] = useState<{ name: string; view: string; filter: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem("azsup.workloads.savedViews") || "[]"); } catch { return []; }
@@ -403,8 +447,54 @@ export function WorkloadsPanel() {
     ].filter(Boolean).join(" ").toLowerCase();
     return hay.includes(q);
   };
-  // The visible set: fleet-cockpit filter AND the free-text search, used everywhere below.
-  const visibleWorkloads = workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w));
+  // Faceted classification filter: a workload's environment/criticality/data-class value
+  // (own field, falling back to its profile) must be one of the selected values in every
+  // facet that has any selection. No selection in a facet ⇒ that facet doesn't constrain.
+  const classOf = (w: Workload, facet: "environment" | "criticality" | "data_classification"): string => {
+    const own = (w[facet] || "").toLowerCase();
+    if (own) return own;
+    const p = profileById[w.id]?.classification;
+    return (p ? (p[facet] || "") : "").toLowerCase();
+  };
+  const matchesClass = (w: Workload): boolean => {
+    if (classFilters.size === 0) return true;
+    for (const { facet, values } of CLASS_FACETS) {
+      const active = values.filter((v) => classFilters.has(`${facet}:${v}`));
+      if (active.length === 0) continue;
+      if (!active.includes(classOf(w, facet))) return false;
+    }
+    return true;
+  };
+
+  // Resource count for sorting: prefer the profile's true total, else count resource nodes.
+  const resourceCount = (w: Workload): number =>
+    profileById[w.id]?.composition.total ?? (w.nodes || []).filter((n) => n.kind === "resource").length;
+  const ts = (s?: string): number => (s ? new Date(s).getTime() || 0 : 0);
+  // Apply the chosen sort. "" keeps the backend order (table view still triages by health).
+  const sortWorkloads = (list: Workload[]): Workload[] => {
+    if (!sortKey) return list;
+    const arr = [...list];
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case "name_asc": return a.name.localeCompare(b.name);
+        case "name_desc": return b.name.localeCompare(a.name);
+        case "created_desc": return ts(b.created_at) - ts(a.created_at);
+        case "created_asc": return ts(a.created_at) - ts(b.created_at);
+        case "updated_desc": return ts(b.updated_at || b.last_refreshed) - ts(a.updated_at || a.last_refreshed);
+        case "resources_desc": return resourceCount(b) - resourceCount(a);
+        case "resources_asc": return resourceCount(a) - resourceCount(b);
+        case "crit_desc": return (CRIT_RANK[classOf(b, "criticality")] ?? 0) - (CRIT_RANK[classOf(a, "criticality")] ?? 0);
+        case "health_asc": return (profileById[a.id]?.health.score ?? -1) - (profileById[b.id]?.health.score ?? -1);
+        default: return 0;
+      }
+    });
+    return arr;
+  };
+  // The visible set: fleet-cockpit filter AND free-text search AND classification facets,
+  // then sorted. Used everywhere below.
+  const visibleWorkloads = sortWorkloads(
+    workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w) && matchesClass(w)),
+  );
 
   const setViewMode = (v: "cards" | "table" | "board" | "map") => {
     setView(v);
@@ -695,6 +785,20 @@ export function WorkloadsPanel() {
                 <button onClick={() => setSearch("")} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
               )}
             </div>
+            {/* Sort — affects cards, table, board and map. */}
+            <label className="inline-flex items-center gap-1 text-xs text-gray-500">
+              <span className="text-gray-400">↕</span>
+              <select
+                value={sortKey}
+                onChange={(e) => setSort(e.target.value)}
+                className="rounded-lg border bg-white py-1 pl-1.5 pr-5 text-xs text-gray-600"
+                title="Sort workloads"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}</option>
+                ))}
+              </select>
+            </label>
             {fleetFilter && (
               <button onClick={() => setFleetFilter("")} className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand">
                 Filter: {fleetFilter.replace(":", " · ")} ✕
@@ -712,6 +816,37 @@ export function WorkloadsPanel() {
               {visibleWorkloads.length} of {workloads.length}
               {profilesQ.isFetching && " · refreshing profiles…"}
             </span>
+          </div>
+        )}
+
+        {/* Classification filters: production / critical / confidential / development / … */}
+        {!showTrash && workloads.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {CLASS_FACETS.map(({ facet, label, values }) => (
+              <div key={facet} className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+                {values.map((v) => {
+                  const token = `${facet}:${v}`;
+                  const on = classFilters.has(token);
+                  return (
+                    <button
+                      key={token}
+                      onClick={() => toggleClassFilter(token)}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize transition ${
+                        on ? "border-brand bg-brand/10 text-brand" : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                      }`}
+                    >
+                      {v}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {classFilters.size > 0 && (
+              <button onClick={clearClassFilters} className="text-[11px] font-medium text-gray-400 hover:text-brand">
+                Clear filters ✕
+              </button>
+            )}
           </div>
         )}
 
@@ -741,6 +876,7 @@ export function WorkloadsPanel() {
             workloads={visibleWorkloads}
             profileById={profileById}
             onOpen={(id) => navigate(`/workloads/${id}`)}
+            respectOrder={sortKey !== ""}
           />
         )}
 
@@ -763,7 +899,7 @@ export function WorkloadsPanel() {
         {!showTrash && workloads.length > 0 && visibleWorkloads.length === 0 && (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">
             No workloads match {search.trim() ? <>“<span className="font-medium">{search}</span>”</> : "the current filter"}.{" "}
-            <button onClick={() => { setSearch(""); setFleetFilter(""); }} className="font-medium text-brand hover:underline">Clear filters</button>
+            <button onClick={() => { setSearch(""); setFleetFilter(""); clearClassFilters(); }} className="font-medium text-brand hover:underline">Clear filters</button>
           </div>
         )}
 

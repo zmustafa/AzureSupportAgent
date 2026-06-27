@@ -19,17 +19,24 @@ export function WorkloadTable({
   workloads,
   profileById,
   onOpen,
+  respectOrder,
 }: {
   workloads: Workload[];
   profileById: Record<string, WorkloadProfile>;
   onOpen: (id: string) => void;
+  // When true, render workloads in the order given (an explicit sort is active upstream).
+  // When false/omitted, fall back to the table's worst-health-first triage default.
+  respectOrder?: boolean;
 }) {
-  // Default: worst score first (triage).
-  const rows = [...workloads].sort((a, b) => {
-    const pa = profileById[a.id]?.health.score ?? -1;
-    const pb = profileById[b.id]?.health.score ?? -1;
-    return pa - pb;
-  });
+  // Default: worst score first (triage). When an explicit sort is active upstream,
+  // honor that order instead.
+  const rows = respectOrder
+    ? workloads
+    : [...workloads].sort((a, b) => {
+        const pa = profileById[a.id]?.health.score ?? -1;
+        const pb = profileById[b.id]?.health.score ?? -1;
+        return pa - pb;
+      });
   return (
     <div className="overflow-x-auto rounded-xl border bg-white">
       <table className="w-full text-sm">

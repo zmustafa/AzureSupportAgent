@@ -4335,10 +4335,18 @@ function AIProviderCard() {
         {/* Provider list */}
         <div className="w-52 shrink-0 space-y-2 border-r p-2">
           {(() => {
+            // Fresh install: nothing has been set up yet (every provider is disabled).
+            // In that state we show the FULL provider list in the rail so a new admin
+            // sees all the options up front — they're all disabled until configured.
+            const providersData = cfg.data?.providers ?? {};
+            const isFreshInstall = !Object.values(providersData).some(
+              (p) => p && !p.disabled,
+            );
             // A provider is "primary" (always visible) when it's enabled, the global
             // default, or the one being viewed; disabled/not-set-up providers are tucked
-            // behind "Show all".
+            // behind "Show all". On a fresh install every provider is primary (shown).
             const isPrimary = (id: string) => {
+              if (isFreshInstall) return true;
               const prov = cfg.data?.providers[id];
               return (
                 active === id ||
@@ -4394,7 +4402,7 @@ function AIProviderCard() {
                               )}
                             </span>
                             <span className="flex shrink-0 items-center gap-1">
-                              {isActive && (
+                              {isActive && !isDisabled && (
                                 <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">
                                   default
                                 </span>

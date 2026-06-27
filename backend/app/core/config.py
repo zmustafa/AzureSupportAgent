@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
 
     # LLM
-    llm_provider: str = "openai"
+    # Empty by default so a fresh install enables NO provider — every provider stays
+    # disabled (hidden from the model picker) until it's set up in the admin UI. Set
+    # LLM_PROVIDER explicitly (and/or LLM_API_KEY) to auto-enable a provider for an
+    # env-driven deployment.
+    llm_provider: str = ""
     llm_model: str = "gpt-4.1"
     llm_api_key: str = ""
     azure_openai_endpoint: str = ""

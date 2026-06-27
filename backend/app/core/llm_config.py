@@ -151,7 +151,9 @@ def _default_config() -> dict[str, Any]:
     install — a provider only becomes available once it's actually set up. The
     exceptions are providers seeded with a real credential from the environment
     (``LLM_API_KEY`` for OpenAI / Azure OpenAI) and a provider explicitly selected via
-    ``LLM_PROVIDER``, so existing env-driven deployments keep working unchanged.
+    ``LLM_PROVIDER``, so existing env-driven deployments keep working unchanged. When
+    neither is set (a true fresh install) ``LLM_PROVIDER`` is empty, so NOTHING is
+    auto-enabled — the admin sees the full provider list, all disabled.
     """
     s = get_settings()
     env_provider = (s.llm_provider or "").lower()
