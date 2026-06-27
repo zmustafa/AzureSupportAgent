@@ -885,9 +885,9 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                         )}
                       </div>
                       <div className="flex gap-2 text-xs">
-                        <button onClick={() => setSelected(new Set(visibleCandidates.map(({ i }) => i)))} className="text-brand hover:underline" title="Select all shown">All</button>
-                        <button onClick={() => setSelected(new Set(visibleCandidates.filter(({ c }) => (c.confidence ?? 0) >= 0.8).map(({ i }) => i)))} className="text-green-700 hover:underline" title="Select high-confidence candidates">High&nbsp;only</button>
-                        <button onClick={() => setSelected(new Set())} className="text-gray-500 hover:underline">None</button>
+                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.forEach(({ i }) => n.add(i)); return n; })} className="text-brand hover:underline" title="Add all shown (current filter) to your selection">Add&nbsp;all</button>
+                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.filter(({ c }) => (c.confidence ?? 0) >= 0.8).forEach(({ i }) => n.add(i)); return n; })} className="text-green-700 hover:underline" title="Add high-confidence shown to your selection">Add&nbsp;high</button>
+                        <button onClick={() => setSelected(new Set())} className="text-gray-500 hover:underline" title="Clear selection">None</button>
                       </div>
                     </div>
                   </div>
@@ -1051,6 +1051,7 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
           )}
           {stage === "review" && (
             <>
+              <button onClick={() => { abortRef.current?.abort(); setStage("setup"); }} className="mr-auto rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50" title="Go back to adjust scope and run discovery again">← Back</button>
               <button onClick={cancel} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Close</button>
               {candidates.length === 0 ? (
                 <button onClick={() => setStage("setup")} className="rounded-lg border border-brand/40 px-3.5 py-1.5 text-sm text-brand hover:bg-brand/5">

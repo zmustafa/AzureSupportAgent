@@ -1421,11 +1421,20 @@ function RunFlow({ onQueued, preselectWorkloadId = "" }: { onQueued: () => void;
 }
 
 function RunHistory({ runs, onOpen, onDelete, onCancel }: { runs: AssessmentRunSummary[]; onOpen: (id: string) => void; onDelete: (id: string) => void; onCancel: (id: string) => void }) {
-  const [groupBy, setGroupBy] = useState<"none" | "workload" | "status">("workload");
+  const [groupBy, setGroupBy] = useState<"none" | "workload" | "status">(
+    () => (localStorage.getItem("azsup.assessments.groupBy") as "none" | "workload" | "status") || "workload");
   // "all" = full grouped history; "latest" = one row per workload (its newest run).
-  const [view, setView] = useState<"all" | "latest">("all");
+  const [view, setView] = useState<"all" | "latest">(
+    () => (localStorage.getItem("azsup.assessments.view") as "all" | "latest") || "all");
   // Recency window in days (0 = all time). Active runs are always kept regardless.
-  const [windowDays, setWindowDays] = useState<0 | 7 | 30 | 90>(0);
+  const [windowDays, setWindowDays] = useState<0 | 7 | 30 | 90>(() => {
+    const v = Number(localStorage.getItem("azsup.assessments.windowDays"));
+    return ([0, 7, 30, 90] as const).includes(v as 0 | 7 | 30 | 90) ? (v as 0 | 7 | 30 | 90) : 0;
+  });
+  // Persist the history toolbar preferences (window / view / group by) across sessions.
+  useEffect(() => { localStorage.setItem("azsup.assessments.groupBy", groupBy); }, [groupBy]);
+  useEffect(() => { localStorage.setItem("azsup.assessments.view", view); }, [view]);
+  useEffect(() => { localStorage.setItem("azsup.assessments.windowDays", String(windowDays)); }, [windowDays]);
   // Per-group open/closed override (key → bool). Unset keys fall back to the busy heuristic.
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 

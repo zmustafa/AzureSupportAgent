@@ -1095,6 +1095,35 @@ export type PerfRunSummary = {
   deleted_at?: string;
 };
 
+// ---- Performance Fleet (latest run per workload + mass launch) -------------------
+export type PerfFleetRow = {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  criticality: string;
+  environment: string;
+  has_runs: boolean;
+  run_id: string;
+  run_at: string;
+  window: string;
+  workload_score: number | null;
+  resources_profiled: number;
+  breaching: number;
+  approaching: number;
+  healthy: number;
+  top_bottleneck: { resource_name: string; metric_name: string; pct_of_threshold: number | null; state: string } | null;
+  demo: boolean;
+  age_seconds: number | null;
+  stale: boolean;
+};
+export type PerfFleet = {
+  workloads: PerfFleetRow[];
+  ttl_s: number;
+  default_window: string;
+  total: number;
+  profiled: number;
+};
+
 // ---- Coverage / posture trend (shared by the 4 dashboards) ----------------------
 export type CoverageTrendPoint = { at: string; pct: number | null; extra?: Record<string, number>; demo?: boolean };
 export type CoverageTrend = {
@@ -2771,6 +2800,11 @@ export const api = {
     http<{ ok: boolean }>(`/workloads/${id}/purge`, { method: "DELETE" }),
   emptyWorkloadTrash: () =>
     http<{ ok: boolean; deleted: number }>("/workloads/trash/empty", { method: "POST", body: "{}" }),
+  mergeWorkloads: (body: { workload_ids: string[]; name?: string }) =>
+    http<{ workload: Workload }>("/workloads/merge", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   workloadTree: (body: {
     connection_id: string;
     group_by?: string;
@@ -3907,6 +3941,7 @@ export const api = {
       body: "{}",
     }),
   // Performance Profiler
+  perfFleet: () => http<PerfFleet>("/performance/fleet"),
   perfProfile: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -4301,6 +4336,7 @@ export const api = {
 
   // --- Change Explorer ---
   changeExplorerWorkloads: () => http<{ workloads: ChangeWorkload[] }>("/changeexplorer/workloads"),
+  changeExplorerFleet: () => http<ChangeFleet>("/changeexplorer/fleet"),
   changeExplorerAnalyze: (body: {
     workload_id?: string; subscription_id?: string; subscription_name?: string;
     connection_id?: string; start_time: string; end_time: string; scope_mode: string;
@@ -4924,6 +4960,34 @@ export interface ChangeRunSummary {
   informationalCount: number;
   demo: boolean;
   deleted_at?: string;
+}
+
+// ---- Change Explorer Fleet (latest run per workload + mass launch) ---------------
+export interface ChangeFleetRow {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  environment: string;
+  has_runs: boolean;
+  run_id: string;
+  run_at: string;
+  start_time: string;
+  end_time: string;
+  scope_mode: string;
+  status: string;
+  total_changes: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  informational_count: number;
+  demo: boolean;
+  age_seconds: number | null;
+}
+export interface ChangeFleet {
+  workloads: ChangeFleetRow[];
+  total: number;
+  analyzed: number;
 }
 
 // NL change search ("Ask AI"): the parsed filter spec + which loaded events it matched. When

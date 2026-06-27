@@ -25,6 +25,7 @@ import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState"
 import { ScopePicker, type ScopeKind } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
+import { ChangeExplorerFleet } from "./changeexplorer/ChangeExplorerFleet";
 import { PageIntro } from "./PageIntro";
 import { CHANGEEXPLORER_NAV, type ChangeExplorerTab } from "./navConfig";
 import { formatError } from "../utils/format";
@@ -49,10 +50,15 @@ const _lastResult = new Map<string, ChangeAnalysisRun>();   // last completed ru
 let _version = 0;
 const _subs = new Set<() => void>();
 function _bump() { _version++; _subs.forEach((f) => f()); }
-function useAnalysisVersion(): number {
+export function useAnalysisVersion(): number {
   return useSyncExternalStore((cb) => { _subs.add(cb); return () => _subs.delete(cb); }, () => _version, () => _version);
 }
-function startAnalysis(scopeKey: string, body: ChangeAnalyzeBody) {
+// Read the in-flight analysis for a scope (if any) — used by the Fleet view to show a live
+// "Analyzing… {phase}" indicator and disable the row's launch button.
+export function peekAnalysis(scopeKey: string): AnalysisState | undefined {
+  return _runs.get(scopeKey);
+}
+export function startAnalysis(scopeKey: string, body: ChangeAnalyzeBody) {
   if (_runs.has(scopeKey)) return;
   const abort = new AbortController();
   _runs.set(scopeKey, { progress: { phase: "start", message: "Starting analysis…" }, result: null, error: "", abort });
@@ -105,6 +111,8 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const [connId, setConnId] = usePersistedState<string>("azsup.changeexp.connId", "");
   const [start, setStart] = usePersistedState<string>("azsup.changeexp.start", defaultStart());
   const [end, setEnd] = usePersistedState<string>("azsup.changeexp.end", defaultEnd());
+  // Top-level view: the single-scope Explorer vs the all-workloads Fleet overview.
+  const [mainView, setMainView] = usePersistedState<"explorer" | "fleet">("azsup.changeexp.view", "explorer");
   const [rangeLabel, setRangeLabel] = usePersistedState<string>("azsup.changeexp.rangeLabel", "Last 24 hours");
   // AI analysis is the slowest phase, so it's OPT-IN per the "Perform AI analysis" checkbox.
   // Default OFF — the run completes fast (deterministic only), and the user runs AI on demand.
@@ -390,6 +398,24 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* Top-level view tabs: Explorer (single scope) vs Fleet (all workloads). */}
+      <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+        {(["explorer", "fleet"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setMainView(v)}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${mainView === v ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+          >
+            {v === "explorer" ? "🧭 Explorer" : "🚀 Fleet"}
+          </button>
+        ))}
+      </div>
+      {mainView === "fleet" ? (
+        <ChangeExplorerFleet
+          onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("explorer"); }}
+        />
+      ) : (
+      <>
       {/* Filter bar */}
       <div className="border-b bg-white px-5 py-3">
         <div className="flex items-center gap-2">
@@ -677,6 +703,8 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
           onInvestigate={() => investigateChange(selected)}
           onClose={() => { setSelected(null); clearChangeDeepLink(); }}
         />
+      )}
+      </>
       )}
     </div>
   );

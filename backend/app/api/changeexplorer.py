@@ -86,6 +86,67 @@ async def list_workloads(_: Principal = Depends(require_admin)):
     return {"workloads": out}
 
 
+@router.get("/fleet")
+async def fleet(principal: Principal = Depends(require_admin)):
+    """Summarize the LATEST change-analysis run for EVERY active workload — drives the Fleet
+    view's mass overview + mass-launch grid. Reads stored runs only (no analysis)."""
+    import time
+    from datetime import datetime
+
+    from app.workloads.registry import list_workloads as reg_list
+
+    tenant_id = principal.tenant_id
+    workloads = reg_list()
+    latest = runs_store.latest_runs_for_workloads(tenant_id, [w.get("id", "") for w in workloads])
+
+    rows: list[dict[str, Any]] = []
+    for w in workloads:
+        summ = latest.get(w.get("id", ""))
+        run_at = (summ or {}).get("completedAt") or (summ or {}).get("createdAt") or ""
+        age: float | None = None
+        if run_at:
+            try:
+                dt = datetime.fromisoformat(run_at.replace("Z", "+00:00"))
+                age = max(0.0, time.time() - dt.timestamp())
+            except (ValueError, TypeError):
+                age = None
+        rows.append({
+            "workload_id": w.get("id", ""),
+            "name": w.get("name", ""),
+            "connection_id": w.get("connection_id", ""),
+            "environment": w.get("environment", ""),
+            "has_runs": summ is not None,
+            "run_id": (summ or {}).get("runId", ""),
+            "run_at": run_at,
+            "start_time": (summ or {}).get("startTime", ""),
+            "end_time": (summ or {}).get("endTime", ""),
+            "scope_mode": (summ or {}).get("scopeMode", ""),
+            "status": (summ or {}).get("status", ""),
+            "total_changes": (summ or {}).get("totalChanges", 0),
+            "critical_count": (summ or {}).get("criticalCount", 0),
+            "high_count": (summ or {}).get("highCount", 0),
+            "medium_count": (summ or {}).get("mediumCount", 0),
+            "low_count": (summ or {}).get("lowCount", 0),
+            "informational_count": (summ or {}).get("informationalCount", 0),
+            "demo": (summ or {}).get("demo", False),
+            "age_seconds": int(age) if age is not None else None,
+        })
+    # Worst first: never-analyzed last, then most critical, then most high, then most changes.
+    rows.sort(
+        key=lambda r: (
+            not r["has_runs"],
+            -(r["critical_count"] or 0),
+            -(r["high_count"] or 0),
+            -(r["total_changes"] or 0),
+        )
+    )
+    return {
+        "workloads": rows,
+        "total": len(rows),
+        "analyzed": sum(1 for r in rows if r["has_runs"]),
+    }
+
+
 class AnalyzeReq(BaseModel):
     workload_id: str = ""
     subscription_id: str = ""

@@ -93,6 +93,27 @@ async def empty_workload_trash_endpoint(_: Principal = Depends(_write)):
     return {"ok": True, "deleted": deleted}
 
 
+class MergeRequest(BaseModel):
+    workload_ids: list[str] = Field(default_factory=list)
+    name: str = Field(default="", max_length=200)
+
+
+@router.post("/merge")
+async def merge_workloads_endpoint(payload: MergeRequest, _: Principal = Depends(_write)):
+    """Merge two or more workloads into one new workload (sources moved to Trash). The
+    merged workload is a normal workload, so architecture, missions and assessments can be
+    re-run against it. Its name gets a trailing ``MERGED`` marker."""
+    ids = [i for i in payload.workload_ids if i]
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Select at least two workloads to merge.")
+    merged = wl_registry.merge_workloads(ids, payload.name)
+    if merged is None:
+        raise HTTPException(
+            status_code=404, detail="Need at least two valid (active) workloads to merge."
+        )
+    return {"workload": merged}
+
+
 @router.delete("/{workload_id}")
 async def delete_workload_endpoint(workload_id: str, _: Principal = Depends(_write)):
     """Soft-delete a workload: move it to the Trash (restorable until purged)."""

@@ -145,6 +145,25 @@ def latest_run(tenant_id: str, scope_kind: str, scope_id: str) -> dict[str, Any]
     return None
 
 
+def latest_runs_for_scopes(
+    tenant_id: str, scopes: list[tuple[str, str]]
+) -> dict[str, dict[str, Any]]:
+    """Latest non-trashed run SUMMARY per scope, reading the store ONCE (no N+1 file reads).
+
+    ``scopes`` is a list of ``(scope_kind, scope_id)`` pairs; the result maps
+    ``"<scope_kind>:<scope_id>"`` → run summary for the scopes that have at least one active
+    run. Scopes with no runs are simply absent from the result."""
+    bucket = _read().get(tenant_id or "default", {})
+    out: dict[str, dict[str, Any]] = {}
+    for scope_kind, scope_id in scopes:
+        k = _key(scope_kind, scope_id)
+        for r in bucket.get(k, []):  # newest-first; first active wins
+            if not r.get("deleted_at"):
+                out[k] = _summary(r)
+                break
+    return out
+
+
 def delete_run(tenant_id: str, run_id: str) -> bool:
     """Soft-delete: move a run to the Trash (set ``deleted_at``). Hidden from history but
     restorable until purged. Returns False if not found or already trashed."""

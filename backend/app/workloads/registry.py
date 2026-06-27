@@ -170,3 +170,95 @@ def empty_trash() -> int:
     if trashed:
         _write(data)
     return len(trashed)
+
+
+def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, Any] | None:
+    """Merge two or more active workloads into a single NEW workload.
+
+    Combines their node membership (deduped by ARM id), tags and evidence; the highest
+    criticality across the sources wins. The merged workload's name gets a trailing
+    ``MERGED`` marker. The source workloads are moved to the Trash (soft-deleted), so the
+    operation stays reversible. Returns the new workload, or ``None`` when fewer than two
+    valid (active) sources are found. The result is a normal workload, so Refresh, Mission
+    Control, assessments and architecture generation can all be run against it again."""
+    data = _read()
+    workloads = data.get("workloads", {})
+    sources: list[dict[str, Any]] = []
+    for wid in workload_ids:
+        wl = workloads.get(wid)
+        if wl is None or wl.get("deleted_at"):
+            continue
+        merged = json.loads(json.dumps(DEFAULTS))
+        merged.update(wl)
+        merged["id"] = wid
+        sources.append(merged)
+    if len(sources) < 2:
+        return None
+
+    # Combine nodes, deduped by ARM id (case-insensitive). When the same node appears in
+    # multiple sources, intersect their excludes — a child is only excluded if EVERY source
+    # excluded it (otherwise some source legitimately included it).
+    merged_nodes: dict[str, dict[str, Any]] = {}
+    for src in sources:
+        for n in src.get("nodes", []):
+            key = (n.get("id") or "").lower()
+            if not key:
+                continue
+            if key not in merged_nodes:
+                merged_nodes[key] = {**n, "excludes": list(n.get("excludes", []) or [])}
+            else:
+                prev = merged_nodes[key]
+                prev_ex = {e.lower() for e in prev.get("excludes", [])}
+                cur_ex = {e.lower() for e in (n.get("excludes", []) or [])}
+                keep = prev_ex & cur_ex
+                prev["excludes"] = [e for e in prev.get("excludes", []) if e.lower() in keep]
+
+    # Combine tags / evidence (deduped, order-preserving).
+    tags: list[str] = []
+    for src in sources:
+        for t in src.get("tags", []) or []:
+            if t not in tags:
+                tags.append(t)
+    evidence: list[dict[str, Any]] = []
+    seen_ev: set[str] = set()
+    for src in sources:
+        for ev in src.get("evidence", []) or []:
+            sig = json.dumps(ev, sort_keys=True)
+            if sig not in seen_ev:
+                seen_ev.add(sig)
+                evidence.append(ev)
+
+    base = sources[0]
+    name = (new_name.strip() or " + ".join(s.get("name", "") for s in sources)).strip()
+    if not name.upper().endswith("MERGED"):
+        name = f"{name} MERGED"
+
+    crit_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "": 0}
+    criticality = max(
+        (s.get("criticality", "") for s in sources), key=lambda c: crit_rank.get(c, 0)
+    )
+
+    new_wl = {
+        "name": name[:200],
+        "description": base.get("description", ""),
+        "connection_id": base.get("connection_id", ""),
+        "tenant_id": base.get("tenant_id", ""),
+        "nodes": list(merged_nodes.values()),
+        "tags": tags,
+        "origin": base.get("origin", {}),
+        "reasoning": "Merged from: "
+        + ", ".join(f"\u201c{s.get('name', '')}\u201d" for s in sources),
+        "confidence": max((float(s.get("confidence", 0) or 0) for s in sources), default=0.0),
+        "workload_type": base.get("workload_type", ""),
+        "environment": base.get("environment", ""),
+        "criticality": criticality,
+        "data_classification": base.get("data_classification", ""),
+        "evidence": evidence,
+        "created_by": base.get("created_by", ""),
+    }
+    # upsert_workload does its own read/write, so create the merged workload first, then
+    # soft-delete the sources via delete_workload (each manages its own persistence).
+    saved = upsert_workload(new_wl)
+    for src in sources:
+        delete_workload(src["id"])
+    return saved

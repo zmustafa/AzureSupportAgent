@@ -136,6 +136,71 @@ async def profile(
     return latest
 
 
+# ----------------------------------------------------------------------- fleet (all workloads)
+@router.get("/fleet")
+async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """Summarize the LATEST performance-profile run for EVERY active workload — drives the
+    Fleet view's mass overview + mass-launch grid. Reads stored runs only (no profiling)."""
+    import time
+    from datetime import datetime
+
+    from app.perfprofile import runs
+    from app.workloads.registry import list_workloads
+
+    ttl, default_window, _interval, _cap = _settings()
+    tenant_id = principal.tenant_id or "default"
+    workloads = list_workloads()
+    scopes = [("workload", w["id"]) for w in workloads]
+    latest = runs.latest_runs_for_scopes(tenant_id, scopes)
+
+    rows: list[dict[str, Any]] = []
+    for w in workloads:
+        summ = latest.get(f"workload:{w['id']}")
+        run_at = (summ or {}).get("run_at") or ""
+        age: float | None = None
+        if run_at:
+            try:
+                dt = datetime.fromisoformat(run_at.replace("Z", "+00:00"))
+                age = max(0.0, time.time() - dt.timestamp())
+            except (ValueError, TypeError):
+                age = None
+        rows.append({
+            "workload_id": w["id"],
+            "name": w.get("name", ""),
+            "connection_id": w.get("connection_id", ""),
+            "criticality": w.get("criticality", ""),
+            "environment": w.get("environment", ""),
+            "has_runs": summ is not None,
+            "run_id": (summ or {}).get("id", ""),
+            "run_at": run_at,
+            "window": (summ or {}).get("window", ""),
+            "workload_score": (summ or {}).get("workload_score"),
+            "resources_profiled": (summ or {}).get("resources_profiled", 0),
+            "breaching": (summ or {}).get("breaching", 0),
+            "approaching": (summ or {}).get("approaching", 0),
+            "healthy": (summ or {}).get("healthy", 0),
+            "top_bottleneck": (summ or {}).get("top_bottleneck"),
+            "demo": (summ or {}).get("demo", False),
+            "age_seconds": int(age) if age is not None else None,
+            "stale": (summ is None) or (age is None) or (age >= ttl),
+        })
+    # Worst first: never-profiled last, then most breaching, then lowest score.
+    rows.sort(
+        key=lambda r: (
+            not r["has_runs"],
+            -(r["breaching"] or 0),
+            r["workload_score"] if r["workload_score"] is not None else 999,
+        )
+    )
+    return {
+        "workloads": rows,
+        "ttl_s": ttl,
+        "default_window": default_window,
+        "total": len(rows),
+        "profiled": sum(1 for r in rows if r["has_runs"]),
+    }
+
+
 # ----------------------------------------------------------------------- run history
 @router.get("/runs")
 async def list_runs(

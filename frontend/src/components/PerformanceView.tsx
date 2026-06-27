@@ -23,6 +23,7 @@ import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
+import { PerformanceFleet } from "./performance/PerformanceFleet";
 
 // ---- Background profile-run registry --------------------------------------------
 // A profile started from this screen keeps streaming even if the user switches scope or
@@ -52,7 +53,7 @@ function _bumpRuns() {
 
 // Subscribe a component to registry changes; returns a monotonically-increasing version
 // so effects can depend on "something changed".
-function useProfileRuns(): number {
+export function useProfileRuns(): number {
   return useSyncExternalStore(
     (cb) => {
       _runListeners.add(cb);
@@ -63,6 +64,12 @@ function useProfileRuns(): number {
     () => _runVersion,
     () => _runVersion,
   );
+}
+
+// Read the in-flight profile run for a scope (if any) — used by the Fleet view to show a
+// live "Profiling… {resource}" indicator and disable the row's launch button.
+export function peekRunningProfile(scopeKey: string): RunningProfile | undefined {
+  return _runningProfiles.get(scopeKey);
 }
 
 // datetime-local helpers for the time-range picker (default = last 24h).
@@ -81,7 +88,7 @@ function _toLocalInput(d: Date): string {
 function _perfDefaultEnd(): string { return _toLocalInput(new Date()); }
 function _perfDefaultStart(): string { return _toLocalInput(new Date(Date.now() - 24 * 3600_000)); }
 
-function startBackgroundProfile(opts: {
+export function startBackgroundProfile(opts: {
   scopeKey: string;
   scopeLabel: string;
   windowLabel: string;
@@ -274,6 +281,8 @@ export function PerformancePanel() {
   // Which sub-tab of the analysis is shown: the metric heatmap or the full resource list.
   // PU2 — persisted so the chosen sub-tab survives navigation/reload.
   const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
+  // Top-level view: the single-scope Profiler vs the all-workloads Fleet overview.
+  const [mainView, setMainView] = usePersistedState<"profiler" | "fleet">("azsup.performance.view", "profiler");
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
@@ -691,6 +700,24 @@ export function PerformancePanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Top-level view tabs: Profiler (single scope) vs Fleet (all workloads). */}
+      <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+        {(["profiler", "fleet"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setMainView(v)}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${mainView === v ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+          >
+            {v === "profiler" ? "🔥 Profiler" : "🚀 Fleet"}
+          </button>
+        ))}
+      </div>
+      {mainView === "fleet" ? (
+        <PerformanceFleet
+          onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("profiler"); }}
+        />
+      ) : (
+      <>
       {/* Header + controls */}
       <div className="border-b bg-white px-5 py-3">
         <div className="flex flex-wrap items-center gap-4">
@@ -1193,6 +1220,8 @@ export function PerformancePanel() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

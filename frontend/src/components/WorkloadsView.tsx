@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, type Workload, type WorkloadNode, type WorkloadNodeKind, type WorkloadProfile } from "../api";
@@ -321,7 +321,8 @@ export function WorkloadsPanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
-  const [editing, setEditing] = useState<Partial<Workload> | null>(null);
+  // Preserve the page scroll position across navigation (e.g. open a workload then hit Back).
+  const scrollRef = useRef<HTMLDivElement>(null);  const [editing, setEditing] = useState<Partial<Workload> | null>(null);
   const [autopilot, setAutopilot] = useState(false);
   const [refreshing, setRefreshing] = useState<string>("");
   const [msg, setMsg] = useState("");
@@ -349,6 +350,22 @@ export function WorkloadsPanel() {
   };
 
   const workloads = wlQ.data?.workloads ?? [];
+
+  // Restore the saved scroll position once the workload list has rendered (so the content is
+  // tall enough to scroll). Runs when data first arrives; the stored value is set on scroll.
+  const dataReady = wlQ.isSuccess;
+  useEffect(() => {
+    if (!dataReady) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = Number(sessionStorage.getItem("azsup.workloads.scrollTop") || 0);
+    if (saved > 0) {
+      // Wait a frame so card heights/images are laid out before scrolling.
+      requestAnimationFrame(() => {
+        el.scrollTop = saved;
+      });
+    }
+  }, [dataReady]);
 
   // Cache-only command-center profiles for the whole fleet — ONE request powers every card,
   // the cockpit strip and the table. Never scans Azure.
@@ -457,8 +474,42 @@ export function WorkloadsPanel() {
     }
   }
 
+  // Merge 2+ selected workloads into one new workload (originals move to Trash). The merged
+  // workload is a normal workload, so architecture, missions and assessments can all be
+  // re-run against it. Its name gets a trailing "MERGED" marker.
+  async function mergeSelected() {
+    if (selected.size < 2) return;
+    const names = workloads.filter((w) => selected.has(w.id)).map((w) => w.name);
+    const suggested = names.join(" + ");
+    const name = window.prompt(
+      `Name the merged workload (“ MERGED” is appended automatically):`,
+      suggested,
+    );
+    if (name === null) return;
+    setMsg("");
+    setNotice("");
+    try {
+      const r = await api.mergeWorkloads({ workload_ids: Array.from(selected), name: name.trim() });
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["workloads"] });
+      qc.invalidateQueries({ queryKey: ["workloadProfiles"] });
+      qc.invalidateQueries({ queryKey: ["workloadsTrash"] });
+      setNotice(
+        `Merged ${names.length} workloads into “${r.workload.name}”. The originals are in Trash. ` +
+          `Opening it now — run Refresh, Mission Control, Assess and architecture again from there.`,
+      );
+      navigate(`/workloads/${r.workload.id}`);
+    } catch (e) {
+      setMsg(formatError(e));
+    }
+  }
+
   return (
-    <div className="h-full overflow-y-auto bg-gray-50">
+    <div
+      ref={scrollRef}
+      onScroll={(e) => sessionStorage.setItem("azsup.workloads.scrollTop", String(e.currentTarget.scrollTop))}
+      className="h-full overflow-y-auto bg-gray-50"
+    >
       <div className="space-y-5 p-8">
         <div className="flex items-start justify-between">
           <div>
@@ -541,6 +592,11 @@ export function WorkloadsPanel() {
             <button onClick={launchFleet} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">
               🚀 Launch missions
             </button>
+            {selected.size >= 2 && (
+              <button onClick={mergeSelected} className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5" title="Merge the selected workloads into one new workload (originals move to Trash)">
+                ⛙ Merge {selected.size} → 1
+              </button>
+            )}
             <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
           </div>
         )}
@@ -559,6 +615,26 @@ export function WorkloadsPanel() {
                 </button>
               ))}
             </div>
+            {(() => {
+              const visible = workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter));
+              const allSelected = visible.length > 0 && visible.every((w) => selected.has(w.id));
+              return (
+                <button
+                  onClick={() =>
+                    setSelected((s) => {
+                      const n = new Set(s);
+                      if (allSelected) visible.forEach((w) => n.delete(w.id));
+                      else visible.forEach((w) => n.add(w.id));
+                      return n;
+                    })
+                  }
+                  className="rounded-lg border px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                  title={allSelected ? "Deselect all shown workloads" : "Select all shown workloads"}
+                >
+                  {allSelected ? "☑ Deselect all" : "☐ Select all"}
+                </button>
+              );
+            })()}
             {fleetFilter && (
               <button onClick={() => setFleetFilter("")} className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand">
                 Filter: {fleetFilter.replace(":", " · ")} ✕
@@ -580,7 +656,7 @@ export function WorkloadsPanel() {
         )}
 
         {!showTrash && view === "cards" && (
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter)).map((w) => (
               <WorkloadCard
                 key={w.id}

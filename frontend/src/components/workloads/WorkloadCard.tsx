@@ -50,14 +50,24 @@ export function WorkloadCard({
   const topTypes = (comp?.by_type ?? []).slice(0, 5);
 
   return (
-    <div className="group rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow">
+    <div
+      onClick={(e) => {
+        // Toggle selection when clicking anywhere on the card, except on interactive
+        // controls (buttons, the checkbox, links, selects) which keep their own behavior.
+        if ((e.target as HTMLElement).closest("button, input, a, select")) return;
+        onToggleSelect();
+      }}
+      className={`group cursor-pointer rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow ${
+        selected ? "border-brand ring-2 ring-brand/40" : ""
+      }`}
+    >
       {/* Header */}
       <div className="flex items-start gap-2">
         <input
           type="checkbox"
           checked={selected}
           onChange={onToggleSelect}
-          title="Select for a fleet mission"
+          title="Select for a fleet mission or merge"
           className="mt-1 shrink-0"
         />
         <div className="min-w-0 flex-1">

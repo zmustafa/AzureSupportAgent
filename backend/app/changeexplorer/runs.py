@@ -69,6 +69,23 @@ def list_trashed(tenant_id: str, workload_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def latest_runs_for_workloads(
+    tenant_id: str, workload_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Latest non-trashed run SUMMARY per workload, reading the store ONCE (no N+1 reads).
+
+    Returns a map of ``workload_id`` → run summary for the workloads that have at least one
+    active run; workloads with no runs are simply absent from the result."""
+    bucket = _read().get(tenant_id or "default", {})
+    out: dict[str, dict[str, Any]] = {}
+    for wid in workload_ids:
+        for r in bucket.get(wid or "default", []):  # newest-first; first active wins
+            if not r.get("deleted_at"):
+                out[wid] = _summary(r)
+                break
+    return out
+
+
 def get_run(tenant_id: str, run_id: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
     bucket = _read().get(tenant_id or "default", {})
     for runs in bucket.values():
