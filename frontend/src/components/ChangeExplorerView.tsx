@@ -22,6 +22,7 @@ import {
 } from "../api";
 import { useNavigate } from "react-router-dom";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
+import { queryClient } from "../queryClient";
 import { ScopePicker, type ScopeKind } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
@@ -58,6 +59,17 @@ export function useAnalysisVersion(): number {
 export function peekAnalysis(scopeKey: string): AnalysisState | undefined {
   return _runs.get(scopeKey);
 }
+// Plain (non-hook) subscription to analysis-registry changes — lets the module-level fleet
+// scheduler self-drive its queue even while no component is mounted.
+export function subscribeAnalysis(cb: () => void): () => void {
+  _subs.add(cb);
+  return () => { _subs.delete(cb); };
+}
+// A finished analysis must refresh BOTH the Fleet table and any open single-scope history grid.
+function _invalidateAnalysisQueries() {
+  void queryClient.invalidateQueries({ queryKey: ["changeFleet"] });
+  void queryClient.invalidateQueries({ queryKey: ["changeExplorerRuns"] });
+}
 export function startAnalysis(scopeKey: string, body: ChangeAnalyzeBody) {
   if (_runs.has(scopeKey)) return;
   const abort = new AbortController();
@@ -65,9 +77,9 @@ export function startAnalysis(scopeKey: string, body: ChangeAnalyzeBody) {
   _bump();
   void streamChangeExplorerAnalyze(body, {
     onProgress: (p) => { const s = _runs.get(scopeKey); if (s) { s.progress = p; _bump(); } },
-    onDone: (run) => { _lastResult.set(scopeKey, run); _runs.delete(scopeKey); _bump(); },
-    onError: (msg) => { const s = _runs.get(scopeKey); if (s) { s.error = msg; } _runs.delete(scopeKey); _bump(); },
-  }, abort.signal).catch((e) => { _runs.delete(scopeKey); _lastResult.delete(scopeKey); console.error(e); _bump(); });
+    onDone: (run) => { _lastResult.set(scopeKey, run); _runs.delete(scopeKey); _bump(); _invalidateAnalysisQueries(); },
+    onError: (msg) => { const s = _runs.get(scopeKey); if (s) { s.error = msg; } _runs.delete(scopeKey); _bump(); _invalidateAnalysisQueries(); },
+  }, abort.signal).catch((e) => { _runs.delete(scopeKey); _lastResult.delete(scopeKey); console.error(e); _bump(); _invalidateAnalysisQueries(); });
 }
 
 function fmtTime(iso: string): string {

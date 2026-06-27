@@ -2,15 +2,17 @@
 // profile run for every workload, plus a mass-launch bar that profiles the selected
 // workloads over ONE shared time window. Runs stream in the background (parallelism 3) via
 // the shared profile-run registry, so progress survives tab switches / navigation.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type PerfFleetRow } from "../../api";
+import { api } from "../../api";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
 import { TimeRangePicker } from "../changeexplorer/TimeRangePicker";
-import { peekRunningProfile, startBackgroundProfile, useProfileRuns } from "../PerformanceView";
+import { peekRunningProfile, startBackgroundProfile, useProfileRuns, subscribeProfileRuns } from "../PerformanceView";
+import { enqueueFleet, fleetQueuedKeys, fleetOutstanding, useFleetQueue } from "../fleetScheduler";
 
 const MAX_PARALLEL = 3;
+const QUEUE_ID = "perfFleet";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function toLocalInput(d: Date): string {
@@ -46,7 +48,9 @@ function relTime(iso: string): string {
 type SortKey = "worst" | "score" | "breaching" | "name" | "run_at";
 
 export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
-  const runsVersion = useProfileRuns();
+  // Re-render on run-registry changes (live "profiling…" rows) and on queue changes (queued badges).
+  useProfileRuns();
+  useFleetQueue();
   const fleetQ = useQuery({ queryKey: ["perfFleet"], queryFn: api.perfFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
 
@@ -58,37 +62,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
   const [rangeLabel, setRangeLabel] = useState("Last 1 day");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  // Mass-launch scheduler: a pending queue drained at MAX_PARALLEL concurrency. The set of
-  // scopeKeys in THIS batch lets us count how many of our launches are still running.
-  const [pending, setPending] = useState<PerfFleetRow[]>([]);
-  const batchKeys = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (pending.length === 0) return;
-    let running = 0;
-    for (const k of batchKeys.current) if (peekRunningProfile(k)) running++;
-    const slots = MAX_PARALLEL - running;
-    if (slots <= 0) return;
-    const toStart = pending.slice(0, slots);
-    setPending((p) => p.slice(toStart.length));
-    for (const row of toStart) {
-      startBackgroundProfile({
-        scopeKey: `workload:${row.workload_id}`,
-        scopeLabel: row.name,
-        windowLabel: rangeLabel,
-        body: {
-          workload_id: row.workload_id,
-          connection_id: row.connection_id || undefined,
-          start_time: startTime,
-          end_time: endTime,
-        },
-        runsKey: ["perfFleet"],
-        trendKey: ["perfFleet"],
-        onError: (m) => setMsg({ text: `${row.name}: ${m}`, ok: false }),
-      });
-    }
-    // runsVersion drives re-scheduling as each run starts/finishes.
-  }, [pending, runsVersion, rangeLabel, startTime, endTime]);
+  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -103,7 +77,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
         case "run_at": return (b.run_at || "").localeCompare(a.run_at || "");
         case "worst":
         default:
-          return (Number(a.has_runs) - Number(b.has_runs)) || ((b.breaching ?? 0) - (a.breaching ?? 0)) || ((a.workload_score ?? 999) - (b.workload_score ?? 999));
+          return (Number(b.has_runs) - Number(a.has_runs)) || ((b.breaching ?? 0) - (a.breaching ?? 0)) || ((a.workload_score ?? 999) - (b.workload_score ?? 999));
       }
     });
     return sorted;
@@ -128,15 +102,41 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
   function launch() {
     const chosen = rows.filter((r) => selected.has(r.workload_id));
     if (chosen.length === 0 || !startTime || !endTime) return;
-    chosen.forEach((r) => batchKeys.current.add(`workload:${r.workload_id}`));
-    setPending((p) => [...p, ...chosen.filter((r) => !p.some((x) => x.workload_id === r.workload_id))]);
-    setMsg({ text: `Launched profiler on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${rangeLabel}). Running ${MAX_PARALLEL} at a time…`, ok: true });
+    // Snapshot the window NOW so a later picker change can't retroactively alter queued jobs.
+    const startIso = new Date(startTime).toISOString();
+    const endIso = new Date(endTime).toISOString();
+    const label = rangeLabel;
+    enqueueFleet(
+      QUEUE_ID,
+      chosen.map((row) => ({
+        key: `workload:${row.workload_id}`,
+        run: () =>
+          startBackgroundProfile({
+            scopeKey: `workload:${row.workload_id}`,
+            scopeLabel: row.name,
+            windowLabel: label,
+            body: {
+              workload_id: row.workload_id,
+              connection_id: row.connection_id || undefined,
+              // ISO 8601 (matches the single-scope view) so Azure Monitor queries the right
+              // window — sending the raw datetime-local string profiled a wrong/naive window.
+              start_time: startIso,
+              end_time: endIso,
+            },
+            runsKey: ["perf-runs", "workload", row.workload_id, ""],
+            trendKey: ["perf-trend", "workload", row.workload_id, ""],
+            onError: (m) => setMsg({ text: `${row.name}: ${m}`, ok: false }),
+          }),
+      })),
+      { maxParallel: MAX_PARALLEL, isRunning: (k) => !!peekRunningProfile(k), subscribe: subscribeProfileRuns },
+    );
+    setMsg({ text: `Launched profiler on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${label}). Running ${MAX_PARALLEL} at a time…`, ok: true });
     setSelected(new Set());
   }
 
   const profiled = fleetQ.data?.profiled ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const activeRuns = rows.filter((r) => peekRunningProfile(`workload:${r.workload_id}`)).length + pending.length;
+  const activeRuns = fleetOutstanding(QUEUE_ID);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -182,7 +182,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
       {/* Summary table */}
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
         {fleetQ.isLoading ? (
-          <Skeleton className="h-64 w-full" />
+          <Skeleton rows={8} />
         ) : fleetQ.isError ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{formatError(fleetQ.error)}</div>
         ) : rows.length === 0 ? (
@@ -209,7 +209,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
               {filtered.map((r) => {
                 const scopeKey = `workload:${r.workload_id}`;
                 const running = peekRunningProfile(scopeKey);
-                const queued = pending.some((p) => p.workload_id === r.workload_id);
+                const queued = queuedKeys.has(scopeKey);
                 return (
                   <tr key={r.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(r.workload_id) ? "bg-brand/5" : ""}`}>
                     <td className="px-2 py-1.5">

@@ -2,15 +2,17 @@
 // analysis run for every workload, plus a mass-launch bar that analyzes the selected workloads
 // over ONE shared time window. Runs stream in the background (parallelism 3) via the shared
 // analysis registry, so progress survives tab switches / navigation.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type ChangeFleetRow } from "../../api";
+import { api } from "../../api";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
 import { TimeRangePicker } from "./TimeRangePicker";
-import { peekAnalysis, startAnalysis, useAnalysisVersion } from "../ChangeExplorerView";
+import { peekAnalysis, startAnalysis, useAnalysisVersion, subscribeAnalysis } from "../ChangeExplorerView";
+import { enqueueFleet, fleetQueuedKeys, fleetOutstanding, useFleetQueue } from "../fleetScheduler";
 
 const MAX_PARALLEL = 3;
+const QUEUE_ID = "changeFleet";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function toLocalInput(d: Date): string {
@@ -47,7 +49,9 @@ function CountCell({ n, cls }: { n: number; cls: string }) {
 type SortKey = "worst" | "changes" | "critical" | "name" | "run_at";
 
 export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
-  const version = useAnalysisVersion();
+  // Re-render on analysis-registry changes (live "analyzing…" rows) and queue changes.
+  useAnalysisVersion();
+  useFleetQueue();
   const fleetQ = useQuery({ queryKey: ["changeFleet"], queryFn: api.changeExplorerFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
 
@@ -61,32 +65,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
   const [rangeLabel, setRangeLabel] = useState("Last 24 hours");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  // Mass-launch scheduler: a pending queue drained at MAX_PARALLEL concurrency. The set of
-  // scopeKeys in THIS batch lets us count how many of our launches are still running.
-  const [pending, setPending] = useState<ChangeFleetRow[]>([]);
-  const batchKeys = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (pending.length === 0) return;
-    let running = 0;
-    for (const k of batchKeys.current) if (peekAnalysis(k)) running++;
-    const slots = MAX_PARALLEL - running;
-    if (slots <= 0) return;
-    const toStart = pending.slice(0, slots);
-    setPending((p) => p.slice(toStart.length));
-    for (const row of toStart) {
-      startAnalysis(`workload:${row.workload_id}`, {
-        workload_id: row.workload_id,
-        connection_id: row.connection_id || "",
-        start_time: toIso(start),
-        end_time: toIso(end),
-        scope_mode: scopeMode,
-        run_ai: runAi,
-      });
-    }
-    // version drives re-scheduling as each run starts/finishes; refresh the grid too.
-    void fleetQ.refetch();
-  }, [pending, version, start, end, scopeMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -101,7 +80,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
         case "run_at": return (b.run_at || "").localeCompare(a.run_at || "");
         case "worst":
         default:
-          return (Number(a.has_runs) - Number(b.has_runs)) || ((b.critical_count ?? 0) - (a.critical_count ?? 0)) || ((b.high_count ?? 0) - (a.high_count ?? 0)) || ((b.total_changes ?? 0) - (a.total_changes ?? 0));
+          return (Number(b.has_runs) - Number(a.has_runs)) || ((b.critical_count ?? 0) - (a.critical_count ?? 0)) || ((b.high_count ?? 0) - (a.high_count ?? 0)) || ((b.total_changes ?? 0) - (a.total_changes ?? 0));
       }
     });
     return sorted;
@@ -126,15 +105,35 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
   function launch() {
     const chosen = rows.filter((r) => selected.has(r.workload_id));
     if (chosen.length === 0 || !start || !end) return;
-    chosen.forEach((r) => batchKeys.current.add(`workload:${r.workload_id}`));
-    setPending((p) => [...p, ...chosen.filter((r) => !p.some((x) => x.workload_id === r.workload_id))]);
-    setMsg({ text: `Launched ${runAi ? "AI" : "fast"} change analysis on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${rangeLabel}). Running ${MAX_PARALLEL} at a time…`, ok: true });
+    // Snapshot window / scope / AI-mode NOW so changing a control mid-batch can't retroactively
+    // alter still-queued jobs (B8).
+    const startIso = toIso(start);
+    const endIso = toIso(end);
+    const mode = scopeMode;
+    const ai = runAi;
+    enqueueFleet(
+      QUEUE_ID,
+      chosen.map((row) => ({
+        key: `workload:${row.workload_id}`,
+        run: () =>
+          startAnalysis(`workload:${row.workload_id}`, {
+            workload_id: row.workload_id,
+            connection_id: row.connection_id || "",
+            start_time: startIso,
+            end_time: endIso,
+            scope_mode: mode,
+            run_ai: ai,
+          }),
+      })),
+      { maxParallel: MAX_PARALLEL, isRunning: (k) => !!peekAnalysis(k), subscribe: subscribeAnalysis },
+    );
+    setMsg({ text: `Launched ${ai ? "AI" : "fast"} change analysis on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${rangeLabel}). Running ${MAX_PARALLEL} at a time…`, ok: true });
     setSelected(new Set());
   }
 
   const analyzed = fleetQ.data?.analyzed ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const activeRuns = rows.filter((r) => peekAnalysis(`workload:${r.workload_id}`)).length + pending.length;
+  const activeRuns = fleetOutstanding(QUEUE_ID);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -225,7 +224,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
               {filtered.map((r) => {
                 const scopeKey = `workload:${r.workload_id}`;
                 const running = peekAnalysis(scopeKey);
-                const queued = pending.some((p) => p.workload_id === r.workload_id);
+                const queued = queuedKeys.has(scopeKey);
                 return (
                   <tr key={r.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(r.workload_id) ? "bg-brand/5" : ""}`}>
                     <td className="px-2 py-1.5">

@@ -72,6 +72,15 @@ export function peekRunningProfile(scopeKey: string): RunningProfile | undefined
   return _runningProfiles.get(scopeKey);
 }
 
+// Plain (non-hook) subscription to run-registry changes — lets the module-level fleet scheduler
+// self-drive its queue (re-drain when a run finishes) even while no component is mounted.
+export function subscribeProfileRuns(cb: () => void): () => void {
+  _runListeners.add(cb);
+  return () => {
+    _runListeners.delete(cb);
+  };
+}
+
 // datetime-local helpers for the time-range picker (default = last 24h).
 function _pad(n: number): string { return String(n).padStart(2, "0"); }
 function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
@@ -124,6 +133,11 @@ export function startBackgroundProfile(opts: {
       // may have unmounted). The just-saved run replaces the optimistic "Running" row.
       void queryClient.invalidateQueries({ queryKey: opts.runsKey });
       void queryClient.invalidateQueries({ queryKey: opts.trendKey });
+      // Cross-view freshness: a Fleet launch must update an open single-scope history/trend, and
+      // a single-scope run must update the Fleet table. Broad-prefix invalidations cover both.
+      void queryClient.invalidateQueries({ queryKey: ["perf-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["perf-trend"] });
+      void queryClient.invalidateQueries({ queryKey: ["perfFleet"] });
     },
     onError: (m) => {
       _runningProfiles.delete(opts.scopeKey);
