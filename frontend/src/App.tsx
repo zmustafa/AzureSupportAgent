@@ -5,7 +5,7 @@ import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
 import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
 import { WelcomeModal } from "./components/WelcomeModal";
-import { APP_VERSION } from "./version";
+import { APP_VERSION, APP_VERSION_DISPLAY } from "./version";
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -52,7 +52,7 @@ export default function App() {
             className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
             title={`Azure Support Agent ${APP_VERSION}`}
           >
-            {APP_VERSION}
+            {APP_VERSION_DISPLAY}
           </span>
           <Link to="/dashboard" className="rounded px-2 py-1 hover:bg-white/10">
             Dashboard

@@ -27,6 +27,7 @@ import { ScopePicker, type ScopeKind } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { ChangeExplorerFleet } from "./changeexplorer/ChangeExplorerFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
 import { PageIntro } from "./PageIntro";
 import { CHANGEEXPLORER_NAV, type ChangeExplorerTab } from "./navConfig";
 import { formatError } from "../utils/format";
@@ -133,7 +134,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const [start, setStart] = usePersistedState<string>("azsup.changeexp.start", defaultStart());
   const [end, setEnd] = usePersistedState<string>("azsup.changeexp.end", defaultEnd());
   // Top-level view: the single-scope Explorer vs the all-workloads Fleet overview.
-  const [mainView, setMainView] = usePersistedState<"explorer" | "fleet">("azsup.changeexp.view", "explorer");
+  const [mainView, setMainView] = usePersistedState<"explorer" | "fleet" | "cleanup">("azsup.changeexp.view", "explorer");
   const [rangeLabel, setRangeLabel] = usePersistedState<string>("azsup.changeexp.rangeLabel", "Last 24 hours");
   // AI analysis is the slowest phase, so it's OPT-IN per the "Perform AI analysis" checkbox.
   // Default OFF — the run completes fast (deterministic only), and the user runs AI on demand.
@@ -419,19 +420,32 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Top-level view tabs: Explorer (single scope) vs Fleet (all workloads). */}
+      {/* Top-level view tabs: Explorer (single scope) vs Fleet (all workloads) vs Cleanup. */}
       <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
-        {(["explorer", "fleet"] as const).map((v) => (
+        {(["explorer", "fleet", "cleanup"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setMainView(v)}
             className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${mainView === v ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}
           >
-            {v === "explorer" ? "🧭 Explorer" : "🚀 Fleet"}
+            {v === "explorer" ? "🧭 Explorer" : v === "fleet" ? "🚀 Fleet" : "🧹 Cleanup"}
           </button>
         ))}
       </div>
-      {mainView === "fleet" ? (
+      {mainView === "cleanup" ? (
+        <RunCleanup
+          prefix="/changeexplorer"
+          queryKey={["changeCleanup"]}
+          invalidateKeys={[["changeFleet"]]}
+          isEmptyRun={(r) => (r.total_changes ?? 0) === 0}
+          renderMeta={(r) => (
+            <span className="text-gray-700">
+              {r.scope_name}{typeof r.total_changes === "number" ? <span className="ml-2 text-gray-400">{r.total_changes} changes</span> : null}
+              {r.critical_count ? <span className="ml-2 text-red-600">{r.critical_count} critical</span> : null}
+            </span>
+          )}
+        />
+      ) : mainView === "fleet" ? (
         <ChangeExplorerFleet
           onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("explorer"); }}
         />

@@ -201,6 +201,41 @@ async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]
     }
 
 
+# ----------------------------------------------------------------------- cleanup (cross-scope)
+class _CleanupIds(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.get("/cleanup")
+async def cleanup_list(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """All profile runs across EVERY scope (active + trashed) with size — drives the Cleanup tab."""
+    from app.perfprofile import runs
+
+    tid = principal.tenant_id or "default"
+    return {"runs": runs.list_all_runs(tid), "stats": runs.cleanup_stats(tid)}
+
+
+@router.post("/cleanup/trash")
+async def cleanup_trash(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.perfprofile import runs
+
+    return runs.trash_runs(principal.tenant_id or "default", body.ids)
+
+
+@router.post("/cleanup/restore")
+async def cleanup_restore(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.perfprofile import runs
+
+    return runs.restore_runs(principal.tenant_id or "default", body.ids)
+
+
+@router.post("/cleanup/purge")
+async def cleanup_purge(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.perfprofile import runs
+
+    return runs.purge_runs(principal.tenant_id or "default", body.ids)
+
+
 # ----------------------------------------------------------------------- run history
 @router.get("/runs")
 async def list_runs(

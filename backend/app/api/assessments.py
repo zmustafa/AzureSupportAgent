@@ -372,6 +372,120 @@ async def empty_trash_endpoint(principal: Principal = Depends(write_dep), db: As
     return {"ok": True, "purged": len(rows)}
 
 
+# ============================ Cleanup (cross-workload) ============================
+def _run_size(r: AssessmentRun) -> int:
+    try:
+        return len(json.dumps(r.findings_json or [], default=str)) + len(json.dumps(r.resources_json or [], default=str))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cleanup_summary(r: AssessmentRun) -> dict:
+    return {
+        "id": r.id,
+        "scope_kind": "workload",
+        "scope_id": r.workload_id,
+        "scope_name": r.workload_name or r.workload_id,
+        "run_at": r.started_at.isoformat() if r.started_at else "",
+        "status": r.status,
+        "score": r.overall_score,
+        "resource_count": r.resource_count or 0,
+        "demo": False,
+        "size_bytes": _run_size(r),
+        "deleted_at": r.deleted_at.isoformat() if getattr(r, "deleted_at", None) else "",
+    }
+
+
+class CleanupIds(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.get("/cleanup")
+async def cleanup_list_endpoint(principal: Principal = Depends(read_dep), db: AsyncSession = Depends(get_db)):
+    """Every assessment run (active + trashed) for the tenant with a size estimate — Cleanup tab."""
+    rows = (
+        await db.execute(
+            select(AssessmentRun)
+            .where(AssessmentRun.tenant_id == principal.tenant_id)
+            .order_by(desc(AssessmentRun.started_at))
+        )
+    ).scalars().all()
+    summaries = [_cleanup_summary(r) for r in rows]
+    active = [s for s in summaries if not s["deleted_at"]]
+    trashed = [s for s in summaries if s["deleted_at"]]
+    scopes = {s["scope_id"] for s in summaries}
+    oldest = min((s["run_at"] for s in active if s["run_at"]), default="")
+    stats = {
+        "total_runs": len(summaries),
+        "active_runs": len(active),
+        "trashed_runs": len(trashed),
+        "total_bytes": sum(s["size_bytes"] for s in summaries),
+        "trashed_bytes": sum(s["size_bytes"] for s in trashed),
+        "scopes": len(scopes),
+        "oldest_run_at": oldest,
+    }
+    return {"runs": summaries, "stats": stats}
+
+
+async def _cleanup_rows(db: AsyncSession, tenant_id: str | None, ids: list[str]) -> list[AssessmentRun]:
+    idset = [i for i in ids if i]
+    if not idset:
+        return []
+    return list((
+        await db.execute(
+            select(AssessmentRun).where(
+                AssessmentRun.tenant_id == tenant_id, AssessmentRun.id.in_(idset)
+            )
+        )
+    ).scalars().all())
+
+
+@router.post("/cleanup/trash")
+async def cleanup_trash_endpoint(body: CleanupIds, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    rows = await _cleanup_rows(db, principal.tenant_id, body.ids)
+    count = 0
+    freed = 0
+    for r in rows:
+        if r.deleted_at is None:
+            r.deleted_at = _now()
+            if getattr(r, "is_baseline", False):
+                r.is_baseline = False
+            count += 1
+            freed += _run_size(r)
+    if count:
+        await _audit(db, principal, "assessment.cleanup.trash", "bulk", count=count)
+        await db.commit()
+    return {"count": count, "freed_bytes": freed}
+
+
+@router.post("/cleanup/restore")
+async def cleanup_restore_endpoint(body: CleanupIds, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    rows = await _cleanup_rows(db, principal.tenant_id, body.ids)
+    count = 0
+    for r in rows:
+        if r.deleted_at is not None:
+            r.deleted_at = None
+            count += 1
+    if count:
+        await db.commit()
+    return {"count": count}
+
+
+@router.post("/cleanup/purge")
+async def cleanup_purge_endpoint(body: CleanupIds, principal: Principal = Depends(write_dep), db: AsyncSession = Depends(get_db)):
+    rows = await _cleanup_rows(db, principal.tenant_id, body.ids)
+    count = 0
+    freed = 0
+    for r in rows:
+        freed += _run_size(r)
+        await db.delete(r)
+        count += 1
+    if count:
+        await _audit(db, principal, "assessment.cleanup.purge", "bulk", count=count)
+        await db.commit()
+    return {"count": count, "freed_bytes": freed}
+
+
 @router.post("/runs/{run_id}/baseline")
 async def set_baseline_endpoint(
     run_id: str,

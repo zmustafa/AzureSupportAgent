@@ -24,6 +24,7 @@ import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PerformanceFleet } from "./performance/PerformanceFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
 
 // ---- Background profile-run registry --------------------------------------------
 // A profile started from this screen keeps streaming even if the user switches scope or
@@ -347,7 +348,7 @@ export function PerformancePanel() {
   // PU2 — persisted so the chosen sub-tab survives navigation/reload.
   const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
   // Top-level view: the single-scope Profiler vs the all-workloads Fleet overview.
-  const [mainView, setMainView] = usePersistedState<"profiler" | "fleet">("azsup.performance.view", "profiler");
+  const [mainView, setMainView] = usePersistedState<"profiler" | "fleet" | "cleanup">("azsup.performance.view", "profiler");
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
@@ -765,19 +766,32 @@ export function PerformancePanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Top-level view tabs: Profiler (single scope) vs Fleet (all workloads). */}
+      {/* Top-level view tabs: Profiler (single scope) vs Fleet (all workloads) vs Cleanup. */}
       <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
-        {(["profiler", "fleet"] as const).map((v) => (
+        {(["profiler", "fleet", "cleanup"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setMainView(v)}
             className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${mainView === v ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}
           >
-            {v === "profiler" ? "🔥 Profiler" : "🚀 Fleet"}
+            {v === "profiler" ? "🔥 Profiler" : v === "fleet" ? "🚀 Fleet" : "🧹 Cleanup"}
           </button>
         ))}
       </div>
-      {mainView === "fleet" ? (
+      {mainView === "cleanup" ? (
+        <RunCleanup
+          prefix="/performance"
+          queryKey={["perfCleanup"]}
+          invalidateKeys={[["perfFleet"]]}
+          isEmptyRun={(r) => (r.resources_profiled ?? 0) === 0}
+          renderMeta={(r) => (
+            <span className="text-gray-700">
+              {r.scope_name}{typeof r.workload_score === "number" ? <span className="ml-2 text-gray-400">score {r.workload_score}</span> : null}
+              {r.breaching ? <span className="ml-2 text-red-600">{r.breaching} breaching</span> : null}
+            </span>
+          )}
+        />
+      ) : mainView === "fleet" ? (
         <PerformanceFleet
           onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("profiler"); }}
         />

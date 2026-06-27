@@ -147,6 +147,33 @@ async def fleet(principal: Principal = Depends(require_admin)):
     }
 
 
+# ----------------------------------------------------------------------- cleanup (cross-scope)
+class CleanupIds(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.get("/cleanup")
+async def cleanup_list(principal: Principal = Depends(require_admin)):
+    """All change-analysis runs across EVERY workload (active + trashed) with size."""
+    tid = principal.tenant_id
+    return {"runs": runs_store.list_all_runs(tid), "stats": runs_store.cleanup_stats(tid)}
+
+
+@router.post("/cleanup/trash")
+async def cleanup_trash(body: CleanupIds, principal: Principal = Depends(require_admin)):
+    return runs_store.trash_runs(principal.tenant_id, body.ids)
+
+
+@router.post("/cleanup/restore")
+async def cleanup_restore(body: CleanupIds, principal: Principal = Depends(require_admin)):
+    return runs_store.restore_runs(principal.tenant_id, body.ids)
+
+
+@router.post("/cleanup/purge")
+async def cleanup_purge(body: CleanupIds, principal: Principal = Depends(require_admin)):
+    return runs_store.purge_runs(principal.tenant_id, body.ids)
+
+
 class AnalyzeReq(BaseModel):
     workload_id: str = ""
     subscription_id: str = ""

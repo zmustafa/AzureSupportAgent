@@ -5,63 +5,19 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
   plugins: [
     react(),
-    // Precache built JS/CSS assets so repeat visits load instantly even when
-    // the network is slow. We deliberately do NOT cache API responses — keeping
-    // dynamic data fresh is more important than offline access for this app.
+    // SERVICE WORKER REMOVAL (self-destroying). This app is online-only — API responses are
+    // deliberately never cached, the backend serves index.html no-cache + hashed assets
+    // immutable, so a service worker provided ~no benefit while causing real staleness bugs:
+    // a still-active OLD worker served STALE lazily-loaded route chunks (e.g. v72 Performance
+    // code) even after a hard refresh updated the document to v73, and the "waiting" worker
+    // re-prompted endlessly. `selfDestroying: true` emits a sw.js that UNREGISTERS the existing
+    // worker and DELETES all its caches on the client's next visit, then this plugin is removed
+    // entirely in a follow-up release. Reliable freshness now comes from plain HTTP caching +
+    // the lightweight /version poll banner in src/pwa.ts (long-open tabs still get notified).
     VitePWA({
-      // PROMPT (not autoUpdate): a freshly-installed worker WAITS until the user accepts the
-      // "Update available" toast (src/pwa.ts onNeedRefresh) — we never silently reload, which
-      // could drop an unsent chat message or unsaved form. We register + drive the update
-      // checks manually (injectRegister:null) so a long-open SPA tab detects a deploy within
-      // ~1 min (autoUpdate alone only checks on a full navigation).
-      registerType: "prompt",
+      selfDestroying: true,
       injectRegister: null,
-      includeAssets: ["favicon.ico"],
-      // Only emit a service worker in production builds (`npm run build`); the
-      // dev server stays SW-free so HMR isn't intercepted.
       devOptions: { enabled: false },
-      workbox: {
-        // Precache the built static assets (matches Vite's hashed output).
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
-        // Bypass anything under /api — those are dynamic and must hit the
-        // backend, never the SW cache.
-        navigateFallbackDenylist: [/^\/api\//],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
-        // Take control of open pages as soon as the user accepts the update, and drop stale
-        // precaches. (No skipWaiting here — PROMPT keeps the new worker waiting until the user
-        // clicks Reload, at which point updateSW(true) posts SKIP_WAITING and reloads.)
-        clientsClaim: true,
-        cleanupOutdatedCaches: true,
-        runtimeCaching: [
-          // Navigations (the HTML document) use NetworkFirst: fetch the fresh index.html when
-          // online (so a deploy is picked up on any reload), fall back to the precache only when
-          // offline. This stops a plain reload from pinning to a stale asset graph.
-          {
-            urlPattern: ({ request }) => request.mode === "navigate",
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "azsup-html",
-              networkTimeoutSeconds: 4,
-            },
-          },
-          // For static assets requested at runtime (e.g. lazy-loaded chunks),
-          // serve from cache first and revalidate in the background.
-          {
-            urlPattern: /\.(?:js|css|woff2)$/,
-            handler: "StaleWhileRevalidate",
-            options: { cacheName: "azsup-assets" },
-          },
-        ],
-      },
-      manifest: {
-        name: "Azure Support Agent",
-        short_name: "AzSupAgent",
-        theme_color: "#2563eb",
-        background_color: "#ffffff",
-        display: "standalone",
-        start_url: "/dashboard",
-        icons: [],
-      },
     }),
   ],
   server: {

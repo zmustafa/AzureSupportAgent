@@ -1074,6 +1074,43 @@ export type PerfProfile = {
   no_runs?: boolean;
 };
 
+// ---- Cleanup tab (cross-scope run cleanup, shared across 6 screens) --------------
+export interface CleanupRun {
+  id: string;
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  run_at: string;
+  size_bytes: number;
+  deleted_at: string;
+  demo?: boolean;
+  // feature-specific meta (any of these may be present)
+  workload_score?: number | null;
+  score?: number | null;
+  breaching?: number;
+  resources_profiled?: number;
+  total_changes?: number;
+  critical_count?: number;
+  headline?: number | null;
+  resource_count?: number;
+  status?: string;
+  window?: string;
+}
+export interface CleanupStats {
+  total_runs: number;
+  active_runs: number;
+  trashed_runs: number;
+  total_bytes: number;
+  trashed_bytes: number;
+  scopes: number;
+  oldest_run_at: string;
+}
+export interface CleanupData {
+  runs: CleanupRun[];
+  stats: CleanupStats;
+}
+export type CleanupResult = { count: number; freed_bytes?: number };
+
 export type PerfRunSummary = {
   id: string;
   run_at: string;
@@ -3948,6 +3985,14 @@ export const api = {
     }),
   // Performance Profiler
   perfFleet: () => http<PerfFleet>("/performance/fleet"),
+  // --- Cleanup tab (cross-scope) — one set per feature prefix ---
+  cleanupList: (prefix: string) => http<CleanupData>(`${prefix}/cleanup`),
+  cleanupTrash: (prefix: string, ids: string[]) =>
+    http<CleanupResult>(`${prefix}/cleanup/trash`, { method: "POST", body: JSON.stringify({ ids }) }),
+  cleanupRestore: (prefix: string, ids: string[]) =>
+    http<CleanupResult>(`${prefix}/cleanup/restore`, { method: "POST", body: JSON.stringify({ ids }) }),
+  cleanupPurge: (prefix: string, ids: string[]) =>
+    http<CleanupResult>(`${prefix}/cleanup/purge`, { method: "POST", body: JSON.stringify({ ids }) }),
   perfProfile: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);

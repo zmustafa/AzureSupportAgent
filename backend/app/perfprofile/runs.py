@@ -234,3 +234,99 @@ def delete_scope_runs(tenant_id: str, scope_kind: str, scope_id: str) -> int:
         del bucket[k]
         _write(data)
     return n
+
+
+# --------------------------------------------------------------------------- cleanup
+def _run_size(run: dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(run, default=str))
+    except (TypeError, ValueError):
+        return 0
+
+
+def list_all_runs(tenant_id: str) -> list[dict[str, Any]]:
+    """Every run across EVERY scope for the tenant (active + trashed), each summary annotated
+    with ``size_bytes`` — drives the cross-scope Cleanup tab. Newest-first."""
+    bucket = _read().get(tenant_id or "default", {})
+    out: list[dict[str, Any]] = []
+    for runs in bucket.values():
+        for r in runs:
+            s = _summary(r)
+            s["size_bytes"] = _run_size(r)
+            out.append(s)
+    out.sort(key=lambda r: r.get("run_at", ""), reverse=True)
+    return out
+
+
+def cleanup_stats(tenant_id: str) -> dict[str, Any]:
+    """Aggregate totals for the Cleanup header strip — one store read."""
+    runs = list_all_runs(tenant_id)
+    active = [r for r in runs if not r.get("deleted_at")]
+    trashed = [r for r in runs if r.get("deleted_at")]
+    total_bytes = sum(r.get("size_bytes", 0) for r in runs)
+    scopes = {f"{r.get('scope_kind')}:{r.get('scope_id')}" for r in runs}
+    oldest = min((r.get("run_at", "") for r in active if r.get("run_at")), default="")
+    return {
+        "total_runs": len(runs),
+        "active_runs": len(active),
+        "trashed_runs": len(trashed),
+        "total_bytes": total_bytes,
+        "trashed_bytes": sum(r.get("size_bytes", 0) for r in trashed),
+        "scopes": len(scopes),
+        "oldest_run_at": oldest,
+    }
+
+
+def trash_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
+    """Bulk soft-delete by id. Returns {count, freed_bytes} (bytes that BECAME trashed)."""
+    idset = {i for i in ids if i}
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    count = 0
+    freed = 0
+    for runs in bucket.values():
+        for r in runs:
+            if r.get("id") in idset and not r.get("deleted_at"):
+                r["deleted_at"] = _now()
+                count += 1
+                freed += _run_size(r)
+    if count:
+        _write(data)
+    return {"count": count, "freed_bytes": freed}
+
+
+def restore_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
+    """Bulk restore by id. Returns {count}."""
+    idset = {i for i in ids if i}
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    count = 0
+    for runs in bucket.values():
+        for r in runs:
+            if r.get("id") in idset and r.get("deleted_at"):
+                r["deleted_at"] = ""
+                count += 1
+    if count:
+        _write(data)
+    return {"count": count}
+
+
+def purge_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
+    """Bulk hard-delete by id (irreversible). Returns {count, freed_bytes}."""
+    idset = {i for i in ids if i}
+    data = _read()
+    bucket = data.get(tenant_id or "default", {})
+    count = 0
+    freed = 0
+    for k in list(bucket.keys()):
+        keep: list[dict[str, Any]] = []
+        for r in bucket[k]:
+            if r.get("id") in idset:
+                count += 1
+                freed += _run_size(r)
+            else:
+                keep.append(r)
+        bucket[k] = keep
+    if count:
+        _write(data)
+    return {"count": count, "freed_bytes": freed}

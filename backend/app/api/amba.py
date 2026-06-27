@@ -304,6 +304,41 @@ async def empty_trash(
     return {"purged": coverage_runs.empty_trash("amba", principal.tenant_id or "default", scope_kind, scope_id)}
 
 
+# ----------------------------------------------------------------------- cleanup (cross-scope)
+class _CleanupIds(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+@router.get("/cleanup")
+async def cleanup_list(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """All saved runs across EVERY scope (active + trashed) with size — drives the Cleanup tab."""
+    from app.core import coverage_runs
+
+    tid = principal.tenant_id or "default"
+    return {"runs": coverage_runs.list_all_runs("amba", tid), "stats": coverage_runs.cleanup_stats("amba", tid)}
+
+
+@router.post("/cleanup/trash")
+async def cleanup_trash(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.core import coverage_runs
+
+    return coverage_runs.trash_runs("amba", principal.tenant_id or "default", body.ids)
+
+
+@router.post("/cleanup/restore")
+async def cleanup_restore(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.core import coverage_runs
+
+    return coverage_runs.restore_runs("amba", principal.tenant_id or "default", body.ids)
+
+
+@router.post("/cleanup/purge")
+async def cleanup_purge(body: _CleanupIds, principal: Principal = Depends(require_admin)) -> dict[str, int]:
+    from app.core import coverage_runs
+
+    return coverage_runs.purge_runs("amba", principal.tenant_id or "default", body.ids)
+
+
 
 # ----------------------------------------------------------------------- reference set
 @router.get("/reference")

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAuth } from "./AuthContext";
-import { APP_VERSION } from "../version";
+import { APP_VERSION_DISPLAY } from "../version";
 import { DOCS_LINKS, GLOSSARY, SHORTCUTS, TRUST_POINTS } from "../help/content";
 
 type ModalKind = null | "glossary" | "shortcuts" | "trust" | "about";
@@ -225,7 +225,7 @@ function AboutModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       <dl className="mt-4 space-y-1.5 text-sm">
-        <Row label="Version" value={APP_VERSION} />
+        <Row label="Version" value={APP_VERSION_DISPLAY} />
         <Row label="Environment" value={metaQ.data?.environment ?? "—"} />
       </dl>
       <p className="mt-4 text-xs text-gray-400">
