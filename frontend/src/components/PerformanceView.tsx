@@ -237,6 +237,44 @@ function scoreTone(score: number): string {
   return "text-red-600";
 }
 
+// Deep-link an ARM resource id to the Azure Portal overview blade (current tenant).
+function portalHref(resourceId: string): string {
+  return `https://portal.azure.com/#@/resource${resourceId}/overview`;
+}
+
+// A small "open in Azure Portal" arrow link. Stops click propagation so it doesn't also trigger
+// a row's onClick (e.g. opening the drill drawer).
+function PortalLink({ resourceId, className = "" }: { resourceId: string; className?: string }) {
+  if (!resourceId) return null;
+  return (
+    <a
+      href={portalHref(resourceId)}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title="Open in Azure Portal"
+      className={`shrink-0 text-gray-300 transition hover:text-brand ${className}`}
+    >
+      ↗
+    </a>
+  );
+}
+
+// The percentage label for a metric cell. CRITICAL: for LOWER-IS-WORSE metrics (availability,
+// health-probe, available-memory) the backend's pct_of_threshold is the INVERSE ratio
+// (threshold/observed), so a WORSE reading shows a BIGGER number (e.g. a breaching 49.5% vs 90%
+// floor renders "181.7%") — backwards and confusing. Reframe lower-is-worse as "% of the floor
+// achieved" (observed/threshold), so <100% = below floor = bad and >100% = healthy headroom,
+// matching intuition. Higher-is-worse keeps "% of threshold" (toward breach).
+function metricPctLabel(cell: { higher_is_worse: boolean; pct_of_threshold: number | null; observed: number | null; threshold: number | null }): string | null {
+  if (cell.pct_of_threshold == null) return null;
+  if (cell.higher_is_worse) return `${cell.pct_of_threshold}%`;
+  if (cell.observed != null && cell.threshold) {
+    return `${Math.round((cell.observed / cell.threshold) * 100)}%`;
+  }
+  return `${cell.pct_of_threshold}%`;
+}
+
 // Circular performance-score gauge (mirrors the Telemetry Coverage donut). Shows the
 // 0-100 score with a green/amber/red ring; a null score renders a muted placeholder.
 function ScoreDonut({ score }: { score: number | null | undefined }) {
@@ -968,6 +1006,7 @@ export function PerformancePanel() {
                     <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
                       <span className={`inline-block h-2 w-2 rounded-full ${STATE_TONE[b.state]}`} />
                       <span className="font-medium text-gray-800">{b.resource_name}</span>
+                      <PortalLink resourceId={b.resource_id} />
                       <span className="text-gray-500">{b.metric_name}</span>
                       <span className={STATE_TEXT[b.state]}>{b.observed}{b.unit} / {b.threshold}{b.unit} ({b.pct_of_threshold}%)</span>
                       {b.trend_pct ? <span className="text-[11px] text-gray-400">trend {b.trend_pct > 0 ? "+" : ""}{b.trend_pct}%</span> : null}
@@ -1169,11 +1208,12 @@ export function PerformancePanel() {
                     const byKey: Record<string, PerfMetricCell> = {};
                     for (const c of r.cells) byKey[`${r.resource_type}|${c.metric}`] = c;
                     return (
-                      <tr key={r.resource_id} ref={rowVirt.measureElement} data-index={vr.index} className="cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
+                      <tr key={r.resource_id} ref={rowVirt.measureElement} data-index={vr.index} className="group cursor-pointer border-t hover:bg-gray-50" onClick={() => setDrawer(r)}>
                         <td className="sticky left-0 z-10 max-w-[220px] bg-white px-2 py-1.5">
                           <div className="flex items-center gap-1.5">
                             <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${STATE_TONE[r.state]}`} />
                             <span className="truncate font-medium text-gray-800" title={r.resource_name}>{r.resource_name}</span>
+                            <PortalLink resourceId={r.resource_id} className="opacity-0 group-hover:opacity-100" />
                           </div>
                           <div className="truncate text-[10px] text-gray-400">{r.display}</div>
                         </td>
@@ -1183,10 +1223,11 @@ export function PerformancePanel() {
                           const border = firstInGroup ? "border-l border-gray-100" : "";
                           const cell = byKey[mc.key];
                           if (!cell) return <td key={mc.key} className={`px-2 py-1.5 text-center text-gray-200 ${border}`}>·</td>;
+                          const floorWord = cell.higher_is_worse ? "threshold" : "floor";
                           return (
                             <td key={mc.key} className={`px-1 py-1 text-center ${border}`}>
-                              <span className={`inline-block min-w-[38px] rounded border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit}`}>
-                                {cell.pct_of_threshold != null ? `${cell.pct_of_threshold}%` : cell.state === "no_data" ? "—" : "ok"}
+                              <span className={`inline-block min-w-[38px] rounded border px-1 py-0.5 text-[11px] ${STATE_CELL[cell.state]}`} title={`${cell.observed ?? "?"}${cell.unit} vs ${cell.threshold ?? "—"}${cell.unit} ${floorWord}`}>
+                                {metricPctLabel(cell) ?? (cell.state === "no_data" ? "—" : "ok")}
                               </span>
                             </td>
                           );
@@ -1218,6 +1259,7 @@ export function PerformancePanel() {
                 <div className="flex items-center gap-2">
                   <span className={`inline-block h-2.5 w-2.5 rounded-full ${STATE_TONE[drawer.state]}`} />
                   <h3 className="text-base font-semibold text-gray-900">{drawer.resource_name}</h3>
+                  <PortalLink resourceId={drawer.resource_id} className="text-base text-gray-400" />
                   <span className={`text-sm font-semibold ${scoreTone(drawer.score)}`}>{drawer.score}/100</span>
                 </div>
                 <div className="text-[11px] text-gray-400">{drawer.display} · {drawer.region}</div>
@@ -1231,7 +1273,8 @@ export function PerformancePanel() {
                     <span className={`inline-block h-2 w-2 rounded-full ${STATE_TONE[c.state]}`} />
                     <span className="text-sm font-medium text-gray-800">{c.name}</span>
                     <span className={`ml-auto text-[12px] ${STATE_TEXT[c.state]}`}>
-                      {c.observed ?? "?"}{c.unit} / {c.threshold ?? "—"}{c.unit}{c.pct_of_threshold != null ? ` (${c.pct_of_threshold}%)` : ""}
+                      {c.observed ?? "?"}{c.unit} / {c.threshold ?? "—"}{c.unit} {c.higher_is_worse ? "threshold" : "floor"}
+                      {metricPctLabel(c) != null ? ` (${metricPctLabel(c)} of ${c.higher_is_worse ? "threshold" : "floor"})` : ""}
                     </span>
                   </div>
                   <Sparkline cell={c} />
