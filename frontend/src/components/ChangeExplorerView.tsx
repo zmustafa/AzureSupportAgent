@@ -48,6 +48,9 @@ const RISK_BG: Record<string, string> = {
 interface AnalysisState { progress: ChangeProgress | null; result: ChangeAnalysisRun | null; error: string; abort: AbortController }
 const _runs = new Map<string, AnalysisState>();
 const _lastResult = new Map<string, ChangeAnalysisRun>();   // last completed run per scope (survives nav)
+// Per-scope last error (e.g. Azure throttling exhausted retries) — surfaced by the Fleet view so a
+// failed analysis shows a red "failed — retry" row instead of silently falling back to "never".
+const _analysisErrors = new Map<string, string>();
 let _version = 0;
 const _subs = new Set<() => void>();
 function _bump() { _version++; _subs.forEach((f) => f()); }
@@ -65,6 +68,11 @@ export function subscribeAnalysis(cb: () => void): () => void {
   _subs.add(cb);
   return () => { _subs.delete(cb); };
 }
+// The last error for a scope (if its most recent attempt failed). The Fleet view reads this to
+// render a red "failed — retry" row + tooltip.
+export function peekAnalysisError(scopeKey: string): string | undefined {
+  return _analysisErrors.get(scopeKey);
+}
 // A finished analysis must refresh BOTH the Fleet table and any open single-scope history grid.
 function _invalidateAnalysisQueries() {
   void queryClient.invalidateQueries({ queryKey: ["changeFleet"] });
@@ -74,12 +82,13 @@ export function startAnalysis(scopeKey: string, body: ChangeAnalyzeBody) {
   if (_runs.has(scopeKey)) return;
   const abort = new AbortController();
   _runs.set(scopeKey, { progress: { phase: "start", message: "Starting analysis…" }, result: null, error: "", abort });
+  _analysisErrors.delete(scopeKey);  // a fresh attempt clears any prior failure
   _bump();
   void streamChangeExplorerAnalyze(body, {
     onProgress: (p) => { const s = _runs.get(scopeKey); if (s) { s.progress = p; _bump(); } },
-    onDone: (run) => { _lastResult.set(scopeKey, run); _runs.delete(scopeKey); _bump(); _invalidateAnalysisQueries(); },
-    onError: (msg) => { const s = _runs.get(scopeKey); if (s) { s.error = msg; } _runs.delete(scopeKey); _bump(); _invalidateAnalysisQueries(); },
-  }, abort.signal).catch((e) => { _runs.delete(scopeKey); _lastResult.delete(scopeKey); console.error(e); _bump(); _invalidateAnalysisQueries(); });
+    onDone: (run) => { _lastResult.set(scopeKey, run); _runs.delete(scopeKey); _analysisErrors.delete(scopeKey); _bump(); _invalidateAnalysisQueries(); },
+    onError: (msg) => { _runs.delete(scopeKey); _analysisErrors.set(scopeKey, msg); _bump(); _invalidateAnalysisQueries(); },
+  }, abort.signal).catch((e) => { _runs.delete(scopeKey); _analysisErrors.set(scopeKey, formatError(e)); _bump(); _invalidateAnalysisQueries(); });
 }
 
 function fmtTime(iso: string): string {

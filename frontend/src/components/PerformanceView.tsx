@@ -43,6 +43,9 @@ type RunningProfile = {
 
 const _runningProfiles = new Map<string, RunningProfile>();
 let _lastCompleted: { scopeKey: string; snap: PerfProfile; at: number } | null = null;
+// Per-scope last error (e.g. Azure throttling exhausted retries) — surfaced by the Fleet view so a
+// failed run shows a red "failed — retry" row instead of silently falling back to "never".
+const _profileErrors = new Map<string, string>();
 let _runVersion = 0;
 const _runListeners = new Set<() => void>();
 
@@ -81,6 +84,12 @@ export function subscribeProfileRuns(cb: () => void): () => void {
   };
 }
 
+// The last error for a scope (if its most recent attempt failed), e.g. Azure throttling. The Fleet
+// view reads this to render a red "failed — retry" row + tooltip.
+export function peekProfileError(scopeKey: string): string | undefined {
+  return _profileErrors.get(scopeKey);
+}
+
 // datetime-local helpers for the time-range picker (default = last 24h).
 function _pad(n: number): string { return String(n).padStart(2, "0"); }
 function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
@@ -115,6 +124,7 @@ export function startBackgroundProfile(opts: {
     lastResource: "",
     steps: 0,
   });
+  _profileErrors.delete(opts.scopeKey);  // a fresh attempt clears any prior failure
   _bumpRuns();
   void streamPerfRefresh(opts.body, {
     onProgress: (d) => {
@@ -128,6 +138,7 @@ export function startBackgroundProfile(opts: {
     onDone: (snap) => {
       _runningProfiles.delete(opts.scopeKey);
       _lastCompleted = { scopeKey: opts.scopeKey, snap, at: Date.now() };
+      _profileErrors.delete(opts.scopeKey);
       _bumpRuns();
       // Refresh the history grid + trend wherever they're mounted (originating component
       // may have unmounted). The just-saved run replaces the optimistic "Running" row.
@@ -141,11 +152,13 @@ export function startBackgroundProfile(opts: {
     },
     onError: (m) => {
       _runningProfiles.delete(opts.scopeKey);
+      _profileErrors.set(opts.scopeKey, m);
       _bumpRuns();
       opts.onError(m);
     },
   }).catch((err) => {
     _runningProfiles.delete(opts.scopeKey);
+    _profileErrors.set(opts.scopeKey, formatError(err));
     _bumpRuns();
     opts.onError(formatError(err));
   });

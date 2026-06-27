@@ -8,10 +8,11 @@ import { api } from "../../api";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
 import { TimeRangePicker } from "../changeexplorer/TimeRangePicker";
-import { peekRunningProfile, startBackgroundProfile, useProfileRuns, subscribeProfileRuns } from "../PerformanceView";
+import { peekRunningProfile, startBackgroundProfile, useProfileRuns, subscribeProfileRuns, peekProfileError } from "../PerformanceView";
 import { enqueueFleet, fleetQueuedKeys, fleetOutstanding, useFleetQueue } from "../fleetScheduler";
 
 const MAX_PARALLEL = 3;
+const STAGGER_MS = 400;
 const QUEUE_ID = "perfFleet";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
@@ -99,13 +100,8 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
       return n;
     });
 
-  function launch() {
-    const chosen = rows.filter((r) => selected.has(r.workload_id));
-    if (chosen.length === 0 || !startTime || !endTime) return;
-    // Snapshot the window NOW so a later picker change can't retroactively alter queued jobs.
-    const startIso = new Date(startTime).toISOString();
-    const endIso = new Date(endTime).toISOString();
-    const label = rangeLabel;
+  // Enqueue a set of fleet rows for profiling (shared by Launch + Retry-failed).
+  function enqueueRows(chosen: typeof rows, startIso: string, endIso: string, label: string) {
     enqueueFleet(
       QUEUE_ID,
       chosen.map((row) => ({
@@ -128,10 +124,30 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
             onError: (m) => setMsg({ text: `${row.name}: ${m}`, ok: false }),
           }),
       })),
-      { maxParallel: MAX_PARALLEL, isRunning: (k) => !!peekRunningProfile(k), subscribe: subscribeProfileRuns },
+      { maxParallel: MAX_PARALLEL, staggerMs: STAGGER_MS, isRunning: (k) => !!peekRunningProfile(k), subscribe: subscribeProfileRuns },
     );
+  }
+
+  function launch() {
+    const chosen = rows.filter((r) => selected.has(r.workload_id));
+    if (chosen.length === 0 || !startTime || !endTime) return;
+    // Snapshot the window NOW so a later picker change can't retroactively alter queued jobs.
+    const startIso = new Date(startTime).toISOString();
+    const endIso = new Date(endTime).toISOString();
+    const label = rangeLabel;
+    enqueueRows(chosen, startIso, endIso, label);
     setMsg({ text: `Launched profiler on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${label}). Running ${MAX_PARALLEL} at a time…`, ok: true });
     setSelected(new Set());
+  }
+
+  // Rows whose most recent attempt failed (e.g. Azure throttling) — not running, not queued.
+  const failedRows = rows.filter(
+    (r) => !!peekProfileError(`workload:${r.workload_id}`) && !peekRunningProfile(`workload:${r.workload_id}`) && !queuedKeys.has(`workload:${r.workload_id}`),
+  );
+  function retryFailed() {
+    if (failedRows.length === 0 || !startTime || !endTime) return;
+    enqueueRows(failedRows, new Date(startTime).toISOString(), new Date(endTime).toISOString(), rangeLabel);
+    setMsg({ text: `Retrying ${failedRows.length} failed workload${failedRows.length === 1 ? "" : "s"}…`, ok: true });
   }
 
   const profiled = fleetQ.data?.profiled ?? 0;
@@ -165,6 +181,11 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
               <option value="name">Sort: name</option>
             </select>
             <TimeRangePicker start={startTime} end={endTime} label={rangeLabel} onApply={(s, e, lbl) => { setStartTime(s); setEndTime(e); setRangeLabel(lbl); }} />
+            {failedRows.length > 0 && (
+              <button onClick={retryFailed} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100" title="Re-run the workloads whose last profile failed (e.g. Azure throttling)">
+                ↻ Retry failed ({failedRows.length})
+              </button>
+            )}
             <button
               onClick={launch}
               disabled={selected.size === 0 || !startTime || !endTime}
@@ -210,6 +231,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                 const scopeKey = `workload:${r.workload_id}`;
                 const running = peekRunningProfile(scopeKey);
                 const queued = queuedKeys.has(scopeKey);
+                const err = !running && !queued ? peekProfileError(scopeKey) : undefined;
                 return (
                   <tr key={r.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(r.workload_id) ? "bg-brand/5" : ""}`}>
                     <td className="px-2 py-1.5">
@@ -229,6 +251,8 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                         <span className="inline-flex items-center gap-1 text-[11px] text-brand"><span className="animate-spin">↻</span>profiling…</span>
                       ) : queued ? (
                         <span className="text-[11px] text-gray-400">queued</span>
+                      ) : err ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700" title={err}>⚠ failed</span>
                       ) : r.has_runs ? (
                         <ScorePill score={r.workload_score} />
                       ) : (
@@ -246,9 +270,15 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-1.5 text-gray-500" title={r.run_at || ""}>
-                      {running ? <span className="truncate text-[11px] text-brand">{running.lastResource || "starting…"}</span> : relTime(r.run_at)}
-                      {r.has_runs && r.window && !running && <div className="text-[10px] text-gray-400">{r.window}</div>}
+                    <td className="px-2 py-1.5 text-gray-500" title={err || r.run_at || ""}>
+                      {running ? (
+                        <span className="truncate text-[11px] text-brand">{running.lastResource || "starting…"}</span>
+                      ) : err ? (
+                        <span className="text-[11px] text-red-600">failed — retry</span>
+                      ) : (
+                        relTime(r.run_at)
+                      )}
+                      {r.has_runs && r.window && !running && !err && <div className="text-[10px] text-gray-400">{r.window}</div>}
                     </td>
                     <td className="px-2 py-1.5">
                       <button onClick={() => onOpenWorkload(r.workload_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>

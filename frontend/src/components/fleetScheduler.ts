@@ -24,6 +24,10 @@ interface QueueState {
   pending: FleetJob[];
   started: Set<string>;
   maxParallel: number;
+  staggerMs: number;
+  lastStartAt: number;
+  draining: boolean;       // re-entrancy guard (a job's synchronous run() can re-trigger _drain)
+  redrainRequested: boolean;
   isRunning: (key: string) => boolean;
   unsubscribe?: () => void;
 }
@@ -81,16 +85,29 @@ export function enqueueFleet(
     maxParallel: number;
     isRunning: (key: string) => boolean;
     subscribe: (cb: () => void) => () => void;
+    /** Minimum gap between two job STARTS (ms) — spreads the launch herd so we don't hit Azure's
+     *  per-tenant rate limit in the same instant. 0 = no stagger. */
+    staggerMs?: number;
   },
 ): void {
   let q = _queues.get(queueId);
   if (!q) {
-    q = { pending: [], started: new Set(), maxParallel: opts.maxParallel, isRunning: opts.isRunning };
+    q = {
+      pending: [],
+      started: new Set(),
+      maxParallel: opts.maxParallel,
+      staggerMs: opts.staggerMs ?? 0,
+      lastStartAt: 0,
+      draining: false,
+      redrainRequested: false,
+      isRunning: opts.isRunning,
+    };
     _queues.set(queueId, q);
     // Self-drive: re-drain on every run-registry change until the queue empties.
     q.unsubscribe = opts.subscribe(() => _drain(queueId));
   }
   q.maxParallel = opts.maxParallel;
+  q.staggerMs = opts.staggerMs ?? q.staggerMs;
   q.isRunning = opts.isRunning;
   for (const j of jobs) {
     if (q.pending.some((p) => p.key === j.key)) continue;
@@ -104,21 +121,48 @@ export function enqueueFleet(
 function _drain(queueId: string): void {
   const q = _queues.get(queueId);
   if (!q) return;
-  // Reap jobs we started that are no longer running.
-  for (const k of [...q.started]) {
-    if (!q.isRunning(k)) q.started.delete(k);
+  // Re-entrancy guard: a job's run() synchronously notifies the run-registry, which synchronously
+  // calls THIS queue's subscriber (-> _drain) again mid-loop. Without the guard the nested drain
+  // over-fills (stale slot count) and the real concurrency blows past maxParallel — which throttled
+  // Azure and dropped the tail of big batches. Coalesce nested calls into one re-drain pass.
+  if (q.draining) {
+    q.redrainRequested = true;
+    return;
   }
-  // Fill open slots from the pending queue.
-  const slots = Math.max(0, q.maxParallel - q.started.size);
-  for (let i = 0; i < slots && q.pending.length > 0; i++) {
-    const job = q.pending.shift();
-    if (!job) break;
-    q.started.add(job.key);
-    try {
-      job.run();
-    } catch {
-      q.started.delete(job.key);
-    }
+  q.draining = true;
+  try {
+    do {
+      q.redrainRequested = false;
+      // Reap jobs we started that are no longer running.
+      for (const k of [...q.started]) {
+        if (!q.isRunning(k)) q.started.delete(k);
+      }
+      // Fill open slots ONE AT A TIME, re-reading started.size each iteration so the cap is exact.
+      while (q.started.size < q.maxParallel && q.pending.length > 0) {
+        // Honor the start stagger: if not enough time has passed since the last start, defer the
+        // next fill to a timer instead of bursting. (Re-drain fires again after the gap.)
+        if (q.staggerMs > 0) {
+          const now = Date.now();
+          const wait = q.lastStartAt + q.staggerMs - now;
+          if (wait > 0) {
+            window.setTimeout(() => _drain(queueId), wait);
+            break;
+          }
+        }
+        const job = q.pending.shift();
+        if (!job) break;
+        q.started.add(job.key);
+        q.lastStartAt = Date.now();
+        try {
+          // run() may synchronously re-enter _drain; the guard above turns that into redrainRequested.
+          job.run();
+        } catch {
+          q.started.delete(job.key);
+        }
+      }
+    } while (q.redrainRequested);
+  } finally {
+    q.draining = false;
   }
   // Tear the queue down once fully drained so a future batch re-subscribes cleanly.
   if (q.pending.length === 0 && q.started.size === 0) {
