@@ -9,7 +9,13 @@ export default defineConfig({
     // the network is slow. We deliberately do NOT cache API responses — keeping
     // dynamic data fresh is more important than offline access for this app.
     VitePWA({
-      registerType: "autoUpdate",
+      // PROMPT (not autoUpdate): a freshly-installed worker WAITS until the user accepts the
+      // "Update available" toast (src/pwa.ts onNeedRefresh) — we never silently reload, which
+      // could drop an unsent chat message or unsaved form. We register + drive the update
+      // checks manually (injectRegister:null) so a long-open SPA tab detects a deploy within
+      // ~1 min (autoUpdate alone only checks on a full navigation).
+      registerType: "prompt",
+      injectRegister: null,
       includeAssets: ["favicon.ico"],
       // Only emit a service worker in production builds (`npm run build`); the
       // dev server stays SW-free so HMR isn't intercepted.
@@ -21,7 +27,23 @@ export default defineConfig({
         // backend, never the SW cache.
         navigateFallbackDenylist: [/^\/api\//],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // Take control of open pages as soon as the user accepts the update, and drop stale
+        // precaches. (No skipWaiting here — PROMPT keeps the new worker waiting until the user
+        // clicks Reload, at which point updateSW(true) posts SKIP_WAITING and reloads.)
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
+          // Navigations (the HTML document) use NetworkFirst: fetch the fresh index.html when
+          // online (so a deploy is picked up on any reload), fall back to the precache only when
+          // offline. This stops a plain reload from pinning to a stale asset graph.
+          {
+            urlPattern: ({ request }) => request.mode === "navigate",
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "azsup-html",
+              networkTimeoutSeconds: 4,
+            },
+          },
           // For static assets requested at runtime (e.g. lazy-loaded chunks),
           // serve from cache first and revalidate in the background.
           {

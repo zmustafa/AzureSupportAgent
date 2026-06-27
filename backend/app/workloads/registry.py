@@ -262,3 +262,152 @@ def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, An
     for src in sources:
         delete_workload(src["id"])
     return saved
+
+
+# --------------------------------------------------------------------------- overlaps
+def _overlap_workload_scope(wl: dict[str, Any], connection_id: str | None) -> bool:
+    """True when a workload should be included given an optional connection filter."""
+    if not connection_id:
+        return True
+    wl_conn = wl.get("connection_id") or ""
+    # Include workloads with no connection (hand-built) so they aren't silently dropped.
+    return (not wl_conn) or wl_conn == connection_id
+
+
+def _index_explicit_memberships(
+    workloads: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Map ARM id (lowercased) -> one membership per OWNING WORKLOAD for every explicit
+    ``resource``-kind node. A resource listed twice in the same workload counts once."""
+    index: dict[str, list[dict[str, Any]]] = {}
+    for wl in workloads:
+        wid = wl["id"]
+        seen_in_wl: set[str] = set()
+        for n in wl.get("nodes", []):
+            if n.get("kind") != "resource":
+                continue
+            rid = str(n.get("id") or "")
+            key = rid.lower()
+            if not key or key in seen_in_wl:
+                continue
+            seen_in_wl.add(key)
+            index.setdefault(key, []).append({
+                "workload_id": wid,
+                "workload_name": wl.get("name", ""),
+                "via": "explicit",
+                "id": rid,
+                "name": n.get("name", ""),
+                "resource_type": n.get("resource_type", ""),
+                "resource_group": n.get("resource_group", ""),
+                "subscription_id": n.get("subscription_id", ""),
+                "location": n.get("location", ""),
+            })
+    return index
+
+
+def _shape_overlaps(index: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    """Turn an id->memberships index into the API payload: only ids in >=2 DISTINCT
+    workloads, plus summary + pairwise tallies."""
+    from app.workloads.summarize import friendly_type
+
+    overlaps: list[dict[str, Any]] = []
+    pair_counts: dict[tuple[str, str], int] = {}
+    pair_names: dict[str, str] = {}
+    workloads_involved: set[str] = set()
+    type_counts: dict[str, int] = {}
+
+    for key, members in index.items():
+        # Dedupe by workload (a resource pulled in both explicitly AND via scope = one chip,
+        # preferring the explicit membership so the UI can offer a remove action).
+        by_wl: dict[str, dict[str, Any]] = {}
+        for m in members:
+            prev = by_wl.get(m["workload_id"])
+            if prev is None or (prev.get("via") != "explicit" and m.get("via") == "explicit"):
+                by_wl[m["workload_id"]] = m
+        if len(by_wl) < 2:
+            continue
+        chips = sorted(by_wl.values(), key=lambda m: (m["workload_name"] or "").lower())
+        # Display metadata: prefer the first non-empty value across memberships.
+        def _first(field: str) -> str:
+            for m in chips:
+                if m.get(field):
+                    return str(m[field])
+            return ""
+        rtype = _first("resource_type")
+        ftype = friendly_type(rtype) if rtype else ""
+        overlaps.append({
+            "id": chips[0]["id"],
+            "name": _first("name"),
+            "resource_type": rtype,
+            "friendly_type": ftype,
+            "resource_group": _first("resource_group"),
+            "subscription_id": _first("subscription_id"),
+            "location": _first("location"),
+            "count": len(by_wl),
+            "all_explicit": all(m.get("via") == "explicit" for m in chips),
+            "workloads": [
+                {"id": m["workload_id"], "name": m["workload_name"], "via": m.get("via", "explicit")}
+                for m in chips
+            ],
+        })
+        for m in chips:
+            workloads_involved.add(m["workload_id"])
+            pair_names[m["workload_id"]] = m["workload_name"]
+        if ftype:
+            type_counts[ftype] = type_counts.get(ftype, 0) + 1
+        # Pairwise tally (every unordered pair of workloads sharing this resource).
+        wids = sorted(by_wl.keys())
+        for i in range(len(wids)):
+            for j in range(i + 1, len(wids)):
+                pair_counts[(wids[i], wids[j])] = pair_counts.get((wids[i], wids[j]), 0) + 1
+
+    overlaps.sort(key=lambda o: (-o["count"], o["friendly_type"], (o["name"] or "").lower()))
+    by_pair = [
+        {
+            "a": {"id": a, "name": pair_names.get(a, "")},
+            "b": {"id": b, "name": pair_names.get(b, "")},
+            "shared_count": n,
+        }
+        for (a, b), n in pair_counts.items()
+    ]
+    by_pair.sort(key=lambda p: -p["shared_count"])
+    by_type = sorted(
+        ({"friendly_type": k, "count": v} for k, v in type_counts.items()),
+        key=lambda t: -t["count"],
+    )
+    total_extra = sum(o["count"] - 1 for o in overlaps)
+    return {
+        "overlaps": overlaps,
+        "summary": {
+            "duplicated_resources": len(overlaps),
+            "workloads_involved": len(workloads_involved),
+            "total_extra_memberships": total_extra,
+            "by_type": by_type,
+        },
+        "by_pair": by_pair,
+    }
+
+
+def find_overlaps(connection_id: str | None = None) -> dict[str, Any]:
+    """Tier 1 — resources EXPLICITLY listed (as ``resource`` nodes) in 2+ workloads.
+
+    Pure, instant (no Azure calls). Optionally restricted to a connection. Returns
+    ``{overlaps, summary, by_pair}`` (see ``_shape_overlaps``)."""
+    workloads = [w for w in list_workloads() if _overlap_workload_scope(w, connection_id)]
+    return _shape_overlaps(_index_explicit_memberships(workloads))
+
+
+def find_overlaps_with_memberships(
+    connection_id: str | None,
+    scope_members: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Tier 2 — combine explicit resource memberships with caller-supplied SCOPE-implied
+    memberships (a resource pulled in by a workload's whole RG/subscription/MG). The caller
+    enumerates scopes (live, cached) and passes ``scope_members`` keyed by lowercased ARM id;
+    each value is a list of ``{workload_id, workload_name, via, id, name, resource_type,
+    resource_group, subscription_id, location}``. Excludes must already be applied."""
+    workloads = [w for w in list_workloads() if _overlap_workload_scope(w, connection_id)]
+    index = _index_explicit_memberships(workloads)
+    for key, members in scope_members.items():
+        index.setdefault(key, []).extend(members)
+    return _shape_overlaps(index)

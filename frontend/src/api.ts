@@ -2805,6 +2805,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  workloadOverlaps: (connectionId = "", deep = false) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    if (deep) q.set("deep", "true");
+    return http<WorkloadOverlaps>(`/workloads/overlaps?${q.toString()}`);
+  },
   workloadTree: (body: {
     connection_id: string;
     group_by?: string;
@@ -7798,6 +7804,43 @@ export interface Workload {
 export interface WorkloadEvidence {
   kind: string; // provenance | network | scope | rbac
   detail: string;
+}
+
+// ---- Workload overlaps (resources shared across multiple workloads) --------------
+export interface OverlapWorkloadRef {
+  id: string;
+  name: string;
+  via: "explicit" | "resource_group" | "subscription" | "mg";
+}
+export interface WorkloadOverlapRow {
+  id: string;
+  name: string;
+  resource_type: string;
+  friendly_type: string;
+  resource_group: string;
+  subscription_id: string;
+  location: string;
+  count: number;
+  all_explicit: boolean;
+  workloads: OverlapWorkloadRef[];
+}
+export interface WorkloadOverlapPair {
+  a: { id: string; name: string };
+  b: { id: string; name: string };
+  shared_count: number;
+}
+export interface WorkloadOverlaps {
+  overlaps: WorkloadOverlapRow[];
+  summary: {
+    duplicated_resources: number;
+    workloads_involved: number;
+    total_extra_memberships: number;
+    by_type: { friendly_type: string; count: number }[];
+  };
+  by_pair: WorkloadOverlapPair[];
+  generated_at: string;
+  deep: boolean;
+  truncated: boolean;
 }
 
 // ---- Workload command-center profile (cache-only rollup) ------------------------

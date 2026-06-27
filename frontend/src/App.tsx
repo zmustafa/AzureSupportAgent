@@ -87,6 +87,7 @@ export default function App() {
           <Route path="/automations" element={<ChatView />} />
           <Route path="/automations/:section" element={<ChatView />} />
           <Route path="/workloads" element={<ChatView />} />
+          <Route path="/workloads/overlaps" element={<ChatView />} />
           <Route path="/workloads/:id" element={<ChatView />} />
           <Route path="/mission-control" element={<ChatView />} />
           <Route path="/mission-control/:id" element={<ChatView />} />

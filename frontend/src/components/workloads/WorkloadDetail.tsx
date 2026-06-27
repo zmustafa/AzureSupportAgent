@@ -8,6 +8,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Workload, type WorkloadProfile } from "../../api";
 import { AzureIcon } from "../AzureIcon";
+import { WorkloadForm } from "../WorkloadsView";
 import {
   CompositionDonut,
   HealthRadar,
@@ -42,6 +43,7 @@ export function WorkloadDetailPanel() {
   const [tab, setTab] = useState<Tab>("overview");
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeMsg, setAnalyzeMsg] = useState("");
+  const [editing, setEditing] = useState(false);
 
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const workload: Workload | undefined = wlQ.data?.workloads.find((w) => w.id === id);
@@ -118,6 +120,7 @@ export function WorkloadDetailPanel() {
             <button onClick={() => navigate(`/assessments?workload_id=${encodeURIComponent(id)}`)} className="rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">✓ Assess</button>
             <button onClick={() => navigate(`/mission-control/${id}`)} className="rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">🚀 Mission</button>
             <button onClick={() => navigate(`/graph?workload_id=${encodeURIComponent(id)}`)} className="rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">🕸️ Graph</button>
+            <button onClick={() => setEditing(true)} className="rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50" title="Edit name, description, classification and resources">✏️ Edit</button>
           </div>
         </div>
         {analyzeMsg && <div className="mt-2 rounded-lg bg-brand/5 px-3 py-1.5 text-xs text-brand">{analyzeMsg}</div>}
@@ -137,6 +140,19 @@ export function WorkloadDetailPanel() {
         {tab === "security" && <DeepLinkTab id={id} navigate={navigate} kind="security" />}
         {tab === "lifecycle" && <DeepLinkTab id={id} navigate={navigate} kind="lifecycle" profile={profile} />}
       </div>
+
+      {editing && (
+        <WorkloadForm
+          value={workload}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            qc.invalidateQueries({ queryKey: ["workloads"] });
+            qc.invalidateQueries({ queryKey: ["workloadProfile", id] });
+            qc.invalidateQueries({ queryKey: ["workloadProfiles"] });
+          }}
+        />
+      )}
     </div>
   );
 }

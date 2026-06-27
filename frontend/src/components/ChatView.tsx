@@ -108,6 +108,9 @@ const WorkloadsPanel = lazy(() =>
 const WorkloadDetailPanel = lazy(() =>
   import("./workloads/WorkloadDetail").then((m) => ({ default: m.WorkloadDetailPanel })),
 );
+const WorkloadOverlapsPanel = lazy(() =>
+  import("./workloads/WorkloadOverlapsView").then((m) => ({ default: m.WorkloadOverlapsView })),
+);
 const OwnershipPanel = lazy(() =>
   import("./OwnershipView").then((m) => ({ default: m.OwnershipPanel })),
 );
@@ -507,8 +510,10 @@ export default function ChatView() {
   // /workloads is the fleet list.
   const workloadDetailId = (() => {
     const seg = location.pathname.split("/");
-    return seg[1] === "workloads" && seg[2] ? seg[2] : "";
+    // `overlaps` is a reserved sub-route (the duplicate-resource report), NOT a workload id.
+    return seg[1] === "workloads" && seg[2] && seg[2] !== "overlaps" ? seg[2] : "";
   })();
+  const inWorkloadOverlaps = location.pathname === "/workloads/overlaps";
   // Ownership section. Sub-tab lives in the URL (/ownership/:tab) so a refresh restores it.
   const inOwnership = location.pathname.startsWith("/ownership");
   const ownershipTab: OwnershipTab = (() => {
@@ -2913,7 +2918,7 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Workloads">
             <Suspense fallback={<PanelLoading />}>
-              {workloadDetailId ? <WorkloadDetailPanel /> : <WorkloadsPanel />}
+              {inWorkloadOverlaps ? <WorkloadOverlapsPanel /> : workloadDetailId ? <WorkloadDetailPanel /> : <WorkloadsPanel />}
             </Suspense>
           </PanelErrorBoundary>
         </main>

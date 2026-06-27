@@ -18,6 +18,33 @@ function cacheAgeMs(now: number, cachedAt: number): number {
   return Math.max(0, now - cachedAt);
 }
 
+// Highlight every case-insensitive occurrence of `q` in `text` (used in search results so the
+// user can SEE why a row matched — esp. when the match was on a hidden field like the RG).
+function highlight(text: string, q: string): ReactNode {
+  if (!q) return text;
+  const lc = text.toLowerCase();
+  const ql = q.toLowerCase();
+  if (!lc.includes(ql)) return text;
+  const out: ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  while (i < text.length) {
+    const hit = lc.indexOf(ql, i);
+    if (hit === -1) {
+      out.push(text.slice(i));
+      break;
+    }
+    if (hit > i) out.push(text.slice(i, hit));
+    out.push(
+      <mark key={k++} className="rounded bg-yellow-200 px-0.5 text-gray-900">
+        {text.slice(hit, hit + ql.length)}
+      </mark>,
+    );
+    i = hit + ql.length;
+  }
+  return out;
+}
+
 // Cache is considered stale (shown in bold red) once it's older than 1 minute.
 function cacheStale(now: number, cachedAt: number): boolean {
   return cacheAgeMs(now, cachedAt) > 60_000;
@@ -93,6 +120,7 @@ export function ResourcePicker({
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [locFilter, setLocFilter] = useState<string[]>([]);
   const [searchRows, setSearchRows] = useState<TreeNode[]>([]);
+  const [searchedQuery, setSearchedQuery] = useState("");
   const [searching, setSearching] = useState(false);
 
   // Record a cached_at ISO timestamp, keeping the OLDEST one seen (worst-case freshness).
@@ -365,6 +393,7 @@ export function ResourcePicker({
       });
       if (r.error) setError(r.error);
       setSearchRows(r.rows);
+      setSearchedQuery(query.trim());
     } catch (e) {
       setError(formatError(e));
     } finally {
@@ -620,6 +649,7 @@ export function ResourcePicker({
                     onToggleExpand={() => {}}
                     onToggleSelect={() => toggleSelect(node)}
                     hideChevron
+                    query={searchedQuery}
                   />
                 ))
               )}
@@ -679,6 +709,7 @@ function BrowseRow({
   onToggleExpand,
   onToggleSelect,
   hideChevron,
+  query = "",
 }: {
   node: TreeNode;
   depth: number;
@@ -688,12 +719,17 @@ function BrowseRow({
   onToggleExpand: () => void;
   onToggleSelect: () => void;
   hideChevron?: boolean;
+  query?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (ref.current) ref.current.indeterminate = checkState === "indeterminate";
   }, [checkState]);
   const hasChevron = !hideChevron && node.has_children;
+  // In search results, surface the resource group under the name — it's a field the query
+  // matches on (name | type | resourceGroup) but isn't otherwise shown, so a row that matched
+  // only on its RG (e.g. "ppp-") looked unexplained.
+  const showRg = !!query && node.kind === "resource" && !!node.resource_group;
   return (
     <tr className="border-b hover:bg-gray-50">
       <td className="px-6 py-1.5">
@@ -713,11 +749,20 @@ function BrowseRow({
             className="h-3.5 w-3.5"
           />
           <AzureIcon kind={node.kind} type={node.resource_type} className="h-4 w-4" />
-          <span className="truncate text-gray-800">{node.name || node.id}</span>
+          <div className="min-w-0">
+            <span className="block truncate text-gray-800">{query ? highlight(node.name || node.id, query) : (node.name || node.id)}</span>
+            {showRg && (
+              <span className="block truncate text-[11px] text-gray-400">
+                RG: {highlight(node.resource_group as string, query)}
+              </span>
+            )}
+          </div>
         </div>
       </td>
       <td className="px-3 py-1.5 text-xs text-gray-500">
-        {node.kind === "resource" ? friendlyResourceType(node.resource_type) : KIND_LABEL[node.kind]}
+        {node.kind === "resource"
+          ? (query ? highlight(friendlyResourceType(node.resource_type), query) : friendlyResourceType(node.resource_type))
+          : KIND_LABEL[node.kind]}
       </td>
       <td className="px-3 py-1.5 text-xs text-gray-500">{node.location ? friendlyLocation(node.location) : "-"}</td>
     </tr>

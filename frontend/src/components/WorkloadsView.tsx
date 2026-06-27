@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type Workload, type WorkloadNode, type WorkloadNodeKind, type WorkloadProfile } from "../api";
 import { formatError } from "../utils/format";
 import { ResourcePicker } from "./ResourcePicker";
-import { AutopilotModal, TypeChips } from "./AutopilotModal";
+import { AutopilotModal, TypeChips, TYPE_LABELS, CRIT_OPTIONS } from "./AutopilotModal";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
 import { WorkloadCard } from "./workloads/WorkloadCard";
 import { FleetCockpit, matchesFleetFilter } from "./workloads/FleetCockpit";
@@ -331,6 +331,7 @@ export function WorkloadsPanel() {
   const [view, setView] = useState<"cards" | "table" | "board" | "map">(() =>
     (localStorage.getItem("azsup.workloads.view") as "cards" | "table" | "board" | "map") || "cards");
   const [fleetFilter, setFleetFilter] = useState<string>("");  // category/env filter from cockpit
+  const [search, setSearch] = useState<string>("");  // free-text filter over name/description/tags/type
   // Saved fleet views: named {view mode + active filter} the user can recall in one click.
   const [savedViews, setSavedViews] = useState<{ name: string; view: string; filter: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem("azsup.workloads.savedViews") || "[]"); } catch { return []; }
@@ -377,6 +378,33 @@ export function WorkloadsPanel() {
   });
   const profileById: Record<string, WorkloadProfile> = {};
   for (const p of profilesQ.data?.profiles ?? []) profileById[p.id] = p;
+
+  // Lightweight (Tier-1, no Azure calls) duplicate-resource check → drives the banner + button.
+  const overlapsQ = useQuery({
+    queryKey: ["workloadOverlaps", "", false],
+    queryFn: () => api.workloadOverlaps("", false),
+    enabled: workloads.length > 1 && !showTrash,
+    staleTime: 60_000,
+  });
+  const overlapCount = overlapsQ.data?.summary?.duplicated_resources ?? 0;
+
+  // Free-text search over a workload's name / description / tags / classification fields.
+  const matchesSearch = (w: Workload): boolean => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const hay = [
+      w.name,
+      w.description,
+      w.workload_type,
+      w.environment,
+      w.criticality,
+      w.data_classification,
+      ...(w.tags ?? []),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  };
+  // The visible set: fleet-cockpit filter AND the free-text search, used everywhere below.
+  const visibleWorkloads = workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w));
 
   const setViewMode = (v: "cards" | "table" | "board" | "map") => {
     setView(v);
@@ -534,6 +562,15 @@ export function WorkloadsPanel() {
               + New workload
             </button>
             <button
+              onClick={() => navigate("/workloads/overlaps")}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
+                overlapCount > 0 ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100" : "border-gray-300 text-gray-600 hover:bg-gray-50"
+              }`}
+              title="Resources that belong to more than one workload"
+            >
+              🧩 Overlaps{overlapCount > 0 ? ` (${overlapCount})` : ""}
+            </button>
+            <button
               onClick={() => setShowTrash((s) => !s)}
               className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
                 showTrash ? "border-gray-400 bg-gray-100 text-gray-800" : "border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -551,6 +588,16 @@ export function WorkloadsPanel() {
           </div>
         )}
         {msg && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>}
+        {!showTrash && overlapCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span>⚠</span>
+            <span>
+              <b>{overlapCount}</b> resource{overlapCount === 1 ? " is" : "s are"} in more than one workload
+              {(overlapsQ.data?.summary?.total_extra_memberships ?? 0) > 0 && <> — {overlapsQ.data!.summary.total_extra_memberships} membership{overlapsQ.data!.summary.total_extra_memberships === 1 ? "" : "s"} could be removed</>}.
+            </span>
+            <button onClick={() => navigate("/workloads/overlaps")} className="ml-auto rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700">Review overlaps</button>
+          </div>
+        )}
         {wlQ.isLoading && <div className="text-sm text-gray-500">Loading…</div>}
 
         {/* Front door: first-run onboarding. When the estate has no workloads yet, lead
@@ -616,7 +663,7 @@ export function WorkloadsPanel() {
               ))}
             </div>
             {(() => {
-              const visible = workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter));
+              const visible = visibleWorkloads;
               const allSelected = visible.length > 0 && visible.every((w) => selected.has(w.id));
               return (
                 <button
@@ -635,6 +682,19 @@ export function WorkloadsPanel() {
                 </button>
               );
             })()}
+            {/* Free-text search — filters the workloads shown across every view. */}
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">⌕</span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search workloads…"
+                className="w-52 rounded-lg border py-1 pl-6 pr-6 text-xs"
+              />
+              {search && (
+                <button onClick={() => setSearch("")} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
+              )}
+            </div>
             {fleetFilter && (
               <button onClick={() => setFleetFilter("")} className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand">
                 Filter: {fleetFilter.replace(":", " · ")} ✕
@@ -649,7 +709,7 @@ export function WorkloadsPanel() {
             ))}
             <button onClick={saveCurrentView} className="rounded-full border border-dashed px-2.5 py-1 text-xs text-gray-500 hover:border-brand hover:text-brand" title="Save the current layout + filter as a view">+ Save view</button>
             <span className="ml-auto text-xs text-gray-400">
-              {workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter)).length} of {workloads.length}
+              {visibleWorkloads.length} of {workloads.length}
               {profilesQ.isFetching && " · refreshing profiles…"}
             </span>
           </div>
@@ -657,7 +717,7 @@ export function WorkloadsPanel() {
 
         {!showTrash && view === "cards" && (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter)).map((w) => (
+            {visibleWorkloads.map((w) => (
               <WorkloadCard
                 key={w.id}
                 w={w}
@@ -678,7 +738,7 @@ export function WorkloadsPanel() {
 
         {!showTrash && view === "table" && (
           <WorkloadTable
-            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            workloads={visibleWorkloads}
             profileById={profileById}
             onOpen={(id) => navigate(`/workloads/${id}`)}
           />
@@ -686,7 +746,7 @@ export function WorkloadsPanel() {
 
         {!showTrash && view === "board" && (
           <WorkloadBoard
-            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            workloads={visibleWorkloads}
             profileById={profileById}
             onOpen={(id) => navigate(`/workloads/${id}`)}
           />
@@ -694,10 +754,17 @@ export function WorkloadsPanel() {
 
         {!showTrash && view === "map" && (
           <ConstellationMap
-            workloads={workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter))}
+            workloads={visibleWorkloads}
             profileById={profileById}
             onOpen={(id) => navigate(`/workloads/${id}`)}
           />
+        )}
+
+        {!showTrash && workloads.length > 0 && visibleWorkloads.length === 0 && (
+          <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">
+            No workloads match {search.trim() ? <>“<span className="font-medium">{search}</span>”</> : "the current filter"}.{" "}
+            <button onClick={() => { setSearch(""); setFleetFilter(""); }} className="font-medium text-brand hover:underline">Clear filters</button>
+          </div>
         )}
 
         {workloads.length === 0 && !wlQ.isLoading && (
@@ -802,7 +869,7 @@ export function WorkloadsPanel() {
   );
 }
 
-function WorkloadForm({
+export function WorkloadForm({
   value,
   onClose,
   onSaved,
@@ -890,6 +957,54 @@ function WorkloadForm({
                 <option key={c.id} value={c.id}>{c.display_name}</option>
               ))}
             </select>
+          </div>
+
+          {/* Classification — the type/environment/criticality/data-class pills shown on cards. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={label}>Type</label>
+              <select className={input} value={form.workload_type ?? ""} onChange={(e) => set({ workload_type: e.target.value })}>
+                <option value="">—</option>
+                {Object.entries(TYPE_LABELS).map(([v, lbl]) => (
+                  <option key={v} value={v}>{lbl}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={label}>Environment</label>
+              <select className={input} value={form.environment ?? ""} onChange={(e) => set({ environment: e.target.value })}>
+                {["", "production", "staging", "development", "test", "dr", "shared", "unknown"].map((v) => (
+                  <option key={v} value={v}>{v ? v[0].toUpperCase() + v.slice(1) : "—"}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={label}>Criticality</label>
+              <select className={input} value={form.criticality ?? ""} onChange={(e) => set({ criticality: e.target.value })}>
+                {CRIT_OPTIONS.map((v) => (
+                  <option key={v} value={v}>{v ? v[0].toUpperCase() + v.slice(1) : "—"}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={label}>Data classification</label>
+              <select className={input} value={form.data_classification ?? ""} onChange={(e) => set({ data_classification: e.target.value })}>
+                {["", "confidential", "internal", "public", "unknown"].map((v) => (
+                  <option key={v} value={v}>{v ? v[0].toUpperCase() + v.slice(1) : "—"}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Tags — comma-separated free-text labels. */}
+          <div>
+            <label className={label}>Tags <span className="font-normal text-gray-400">(comma-separated)</span></label>
+            <input
+              className={input}
+              value={(form.tags ?? []).join(", ")}
+              onChange={(e) => set({ tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) })}
+              placeholder="e.g. gis, billing, pci"
+            />
           </div>
 
           <div>

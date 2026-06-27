@@ -492,6 +492,22 @@ async def readyz():
     return {"status": "ready"}
 
 
+@app.get("/version")
+async def version():
+    """Public, unauthenticated build version — polled by the SPA so a long-open tab can detect
+    a new deploy and prompt the user to reload (defense-in-depth alongside the service worker).
+    Mirrors the baked frontend VITE_APP_VERSION (both come from the same APP_VERSION build arg).
+    No-store so a proxy/browser cache can't mask a fresh deploy."""
+    import os
+
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        {"version": os.getenv("APP_VERSION") or "dev"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @api.get("/llm/active")
 async def llm_active():
     """Currently active AI provider + model (non-sensitive) for display in the UI."""

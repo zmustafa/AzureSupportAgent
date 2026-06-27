@@ -761,6 +761,109 @@ async def estate_coverage_endpoint(
     }
 
 
+# ----------------------------------------------------------------- overlaps (duplicates)
+def _sub_id_of(value: str) -> str:
+    """Extract the bare subscription GUID from an ARM id or scope value."""
+    v = value or ""
+    if "/subscriptions/" in v.lower():
+        # /subscriptions/<guid>/...
+        parts = v.split("/")
+        for i, p in enumerate(parts):
+            if p.lower() == "subscriptions" and i + 1 < len(parts):
+                return parts[i + 1]
+    return v
+
+
+@router.get("/overlaps")
+async def overlaps_endpoint(
+    connection_id: str = "",
+    deep: bool = False,
+    principal: Principal = Depends(get_principal),
+):
+    """Report resources that belong to MORE THAN ONE workload.
+
+    Tier 1 (default, instant, no Azure calls): resources EXPLICITLY listed as ``resource``
+    nodes in 2+ workloads. Tier 2 (``deep=true``): also detect SCOPE-IMPLIED overlaps — a
+    resource explicitly in one workload while another workload includes its whole resource
+    group / subscription (excludes honored). Read-only."""
+    from datetime import datetime, timezone
+
+    cid = connection_id or None
+    if not deep:
+        result = wl_registry.find_overlaps(cid)
+        result["generated_at"] = datetime.now(timezone.utc).isoformat()
+        result["deep"] = False
+        result["truncated"] = False
+        return result
+
+    # ---- Deep scan: enumerate the estate, then attribute resources to scope nodes. ----
+    conn = resolve_connection(connection_id or None)
+    if not conn:
+        raise HTTPException(status_code=400, detail="Pick an Azure connection first for a deep scan.")
+
+    workloads = [
+        w for w in wl_registry.list_workloads()
+        if (not cid) or (not w.get("connection_id")) or w.get("connection_id") == cid
+    ]
+
+    # Enumerate all resources across the connection's subscriptions (cached, paged).
+    subs = await discovery.list_top_level(conn, "subscription")
+    sub_ids = [_sub_id_of(s.get("id", "")) or s.get("id", "") for s in subs]
+    sub_ids = [s for s in sub_ids if s]
+    resources, truncated = await discovery.enumerate_resources_paged(conn, sub_ids, cap=5000)
+
+    # Index estate resources by subscription and by (sub, rg) for fast scope attribution.
+    res_by_sub: dict[str, list[dict[str, Any]]] = {}
+    res_by_rg: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in resources:
+        s = (r.get("subscription_id") or "").lower()
+        rg = (r.get("resource_group") or "").lower()
+        res_by_sub.setdefault(s, []).append(r)
+        res_by_rg.setdefault((s, rg), []).append(r)
+
+    def _member(wl: dict[str, Any], via: str, r: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workload_id": wl["id"],
+            "workload_name": wl.get("name", ""),
+            "via": via,
+            "id": r.get("id", ""),
+            "name": r.get("name", ""),
+            "resource_type": r.get("resource_type", ""),
+            "resource_group": r.get("resource_group", ""),
+            "subscription_id": r.get("subscription_id", ""),
+            "location": r.get("location", ""),
+        }
+
+    # Build scope-implied memberships keyed by lowercased ARM id.
+    scope_members: dict[str, list[dict[str, Any]]] = {}
+    for wl in workloads:
+        for n in wl.get("nodes", []):
+            kind = n.get("kind")
+            if kind not in ("subscription", "resource_group"):
+                continue  # mg expansion omitted (rare for workloads)
+            excludes = {str(x).lower() for x in (n.get("excludes") or [])}
+            covered: list[dict[str, Any]] = []
+            if kind == "subscription":
+                sub = (_sub_id_of(n.get("id", "")) or n.get("subscription_id", "")).lower()
+                covered = res_by_sub.get(sub, [])
+            else:  # resource_group
+                sub = (n.get("subscription_id") or _sub_id_of(n.get("id", ""))).lower()
+                rg = (n.get("resource_group") or n.get("name") or "").lower()
+                covered = res_by_rg.get((sub, rg), [])
+            for r in covered:
+                rid = (r.get("id") or "").lower()
+                if not rid or rid in excludes:
+                    continue
+                scope_members.setdefault(rid, []).append(_member(wl, kind, r))
+
+    result = wl_registry.find_overlaps_with_memberships(cid, scope_members)
+    result["generated_at"] = datetime.now(timezone.utc).isoformat()
+    result["deep"] = True
+    result["truncated"] = truncated
+    return result
+
+
+
 
 
 # ----------------------------------------------------------------- refresh
