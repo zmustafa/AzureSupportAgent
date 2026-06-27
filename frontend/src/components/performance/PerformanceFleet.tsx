@@ -46,7 +46,8 @@ function relTime(iso: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-type SortKey = "worst" | "score" | "breaching" | "name" | "run_at";
+type SortKey = "worst" | "score" | "resources" | "breaching" | "approaching" | "healthy" | "bottleneck" | "name" | "run_at";
+type SortDir = "asc" | "desc";
 
 export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
   // Re-render on run-registry changes (live "profiling…" rows) and on queue changes (queued badges).
@@ -58,6 +59,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("worst");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [startTime, setStartTime] = useState(() => defaultStart());
   const [endTime, setEndTime] = useState(() => defaultEnd());
   const [rangeLabel, setRangeLabel] = useState("Last 1 day");
@@ -70,19 +72,32 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
     let list = rows;
     if (q) list = list.filter((r) => r.name.toLowerCase().includes(q) || (r.top_bottleneck?.resource_name ?? "").toLowerCase().includes(q));
     const sorted = [...list];
+    const dir = sortDir === "asc" ? 1 : -1;
+    // Numeric value for a row under the active column ("never run" sinks via -1).
+    const numVal = (r: (typeof rows)[number]): number => {
+      switch (sortKey) {
+        case "score": return r.has_runs ? (r.workload_score ?? -1) : -1;
+        case "resources": return r.has_runs ? (r.resources_profiled ?? -1) : -1;
+        case "breaching": return r.has_runs ? (r.breaching ?? -1) : -1;
+        case "approaching": return r.has_runs ? (r.approaching ?? -1) : -1;
+        case "healthy": return r.has_runs ? (r.healthy ?? -1) : -1;
+        case "bottleneck": return typeof r.top_bottleneck?.pct_of_threshold === "number" ? r.top_bottleneck.pct_of_threshold : -1;
+        default: return 0;
+      }
+    };
     sorted.sort((a, b) => {
       switch (sortKey) {
-        case "name": return a.name.localeCompare(b.name);
-        case "score": return (a.workload_score ?? 999) - (b.workload_score ?? 999);
-        case "breaching": return (b.breaching ?? 0) - (a.breaching ?? 0);
-        case "run_at": return (b.run_at || "").localeCompare(a.run_at || "");
         case "worst":
-        default:
+          // Default composite triage (direction-independent): run rows first, then most
+          // breaching, then lowest score.
           return (Number(b.has_runs) - Number(a.has_runs)) || ((b.breaching ?? 0) - (a.breaching ?? 0)) || ((a.workload_score ?? 999) - (b.workload_score ?? 999));
+        case "name": return dir * a.name.localeCompare(b.name);
+        case "run_at": return dir * (a.run_at || "").localeCompare(b.run_at || "");
+        default: return dir * (numVal(a) - numVal(b));
       }
     });
     return sorted;
-  }, [rows, search, sortKey]);
+  }, [rows, search, sortKey, sortDir]);
 
   const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.workload_id));
   const toggleAll = () =>
@@ -99,6 +114,23 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
       else n.add(id);
       return n;
     });
+
+  // Click a column header to sort by it; click again to flip direction. The composite
+  // "worst" default lives only in the dropdown.
+  const clickSort = (key: SortKey, defDir: SortDir = "desc") => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(defDir); }
+  };
+  const SortTh = ({ label, sk, defDir = "desc", cls = "" }: { label: string; sk: SortKey; defDir?: SortDir; cls?: string }) => (
+    <th
+      onClick={() => clickSort(sk, defDir)}
+      className={`cursor-pointer select-none px-2 py-2 font-medium hover:text-gray-700 ${sortKey === sk ? "text-gray-700" : ""} ${cls}`}
+      title={`Sort by ${label}`}
+    >
+      {label}
+      <span className="ml-0.5 text-[9px] text-gray-400">{sortKey === sk ? (sortDir === "asc" ? "▲" : "▼") : "↕"}</span>
+    </th>
+  );
 
   // Enqueue a set of fleet rows for profiling (shared by Launch + Retry-failed).
   function enqueueRows(chosen: typeof rows, startIso: string, endIso: string, label: string) {
@@ -173,7 +205,17 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
               placeholder="Filter workloads…"
               className="w-44 rounded-md border px-2 py-1 text-xs"
             />
-            <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} className="rounded-md border px-2 py-1 text-xs text-gray-600" title="Sort">
+            <select
+              value={sortKey}
+              onChange={(e) => {
+                const k = e.target.value as SortKey;
+                setSortKey(k);
+                // Match each preset's intent: lowest score / name ascending, the rest descending.
+                setSortDir(k === "score" || k === "name" ? "asc" : "desc");
+              }}
+              className="rounded-md border px-2 py-1 text-xs text-gray-600"
+              title="Sort"
+            >
               <option value="worst">Sort: worst first</option>
               <option value="score">Sort: lowest score</option>
               <option value="breaching">Sort: most breaching</option>
@@ -215,14 +257,14 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                 <th className="w-8 px-2 py-2">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} title="Select all shown" />
                 </th>
-                <th className="px-2 py-2 font-medium">Workload</th>
-                <th className="px-2 py-2 font-medium">Score</th>
-                <th className="px-2 py-2 font-medium">Resources</th>
-                <th className="px-2 py-2 font-medium">Breaching</th>
-                <th className="px-2 py-2 font-medium">Approaching</th>
-                <th className="px-2 py-2 font-medium">Healthy</th>
-                <th className="px-2 py-2 font-medium">Top bottleneck</th>
-                <th className="px-2 py-2 font-medium">Last run</th>
+                <SortTh label="Workload" sk="name" defDir="asc" />
+                <SortTh label="Score" sk="score" defDir="asc" />
+                <SortTh label="Resources" sk="resources" />
+                <SortTh label="Breaching" sk="breaching" />
+                <SortTh label="Approaching" sk="approaching" />
+                <SortTh label="Healthy" sk="healthy" />
+                <SortTh label="Top bottleneck" sk="bottleneck" />
+                <SortTh label="Last run" sk="run_at" />
                 <th className="px-2 py-2"></th>
               </tr>
             </thead>

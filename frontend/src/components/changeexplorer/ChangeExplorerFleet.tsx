@@ -48,7 +48,8 @@ function CountCell({ n, cls }: { n: number; cls: string }) {
   return <span className={`tabular-nums ${n ? cls : "text-gray-300"}`}>{n || "—"}</span>;
 }
 
-type SortKey = "worst" | "changes" | "critical" | "name" | "run_at";
+type SortKey = "worst" | "changes" | "critical" | "high" | "medium" | "low" | "name" | "run_at";
+type SortDir = "asc" | "desc";
 
 export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
   // Re-render on analysis-registry changes (live "analyzing…" rows) and queue changes.
@@ -60,6 +61,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("worst");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [scopeMode, setScopeMode] = useState<string>("workload");
   const [runAi, setRunAi] = useState<boolean>(false);
   const [start, setStart] = useState(() => defaultStart());
@@ -74,19 +76,31 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
     let list = rows;
     if (q) list = list.filter((r) => r.name.toLowerCase().includes(q));
     const sorted = [...list];
+    const dir = sortDir === "asc" ? 1 : -1;
+    // Numeric value for a row under the active column ("never run" sinks via -1).
+    const numVal = (r: (typeof rows)[number]): number => {
+      switch (sortKey) {
+        case "changes": return r.has_runs ? (r.total_changes ?? -1) : -1;
+        case "critical": return r.has_runs ? (r.critical_count ?? -1) : -1;
+        case "high": return r.has_runs ? (r.high_count ?? -1) : -1;
+        case "medium": return r.has_runs ? (r.medium_count ?? -1) : -1;
+        case "low": return r.has_runs ? (r.low_count ?? -1) : -1;
+        default: return 0;
+      }
+    };
     sorted.sort((a, b) => {
       switch (sortKey) {
-        case "name": return a.name.localeCompare(b.name);
-        case "changes": return (b.total_changes ?? 0) - (a.total_changes ?? 0);
-        case "critical": return (b.critical_count ?? 0) - (a.critical_count ?? 0);
-        case "run_at": return (b.run_at || "").localeCompare(a.run_at || "");
         case "worst":
-        default:
+          // Default composite triage (direction-independent): run rows first, then most
+          // critical, high, then total changes.
           return (Number(b.has_runs) - Number(a.has_runs)) || ((b.critical_count ?? 0) - (a.critical_count ?? 0)) || ((b.high_count ?? 0) - (a.high_count ?? 0)) || ((b.total_changes ?? 0) - (a.total_changes ?? 0));
+        case "name": return dir * a.name.localeCompare(b.name);
+        case "run_at": return dir * (a.run_at || "").localeCompare(b.run_at || "");
+        default: return dir * (numVal(a) - numVal(b));
       }
     });
     return sorted;
-  }, [rows, search, sortKey]);
+  }, [rows, search, sortKey, sortDir]);
 
   const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.workload_id));
   const toggleAll = () =>
@@ -104,8 +118,22 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
       return n;
     });
 
-  // Enqueue a set of fleet rows for change analysis (shared by Launch + Retry-failed). AI mode is
-  // heavier (adds an AOAI pass), so it runs at a LOWER concurrency to avoid Azure/AOAI throttling.
+  // Click a column header to sort by it; click again to flip direction. The composite
+  // "worst" default lives only in the dropdown.
+  const clickSort = (key: SortKey, defDir: SortDir = "desc") => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(defDir); }
+  };
+  const SortTh = ({ label, sk, defDir = "desc", cls = "" }: { label: string; sk: SortKey; defDir?: SortDir; cls?: string }) => (
+    <th
+      onClick={() => clickSort(sk, defDir)}
+      className={`cursor-pointer select-none px-2 py-2 font-medium hover:text-gray-700 ${sortKey === sk ? "text-gray-700" : ""} ${cls}`}
+      title={`Sort by ${label}`}
+    >
+      {label}
+      <span className="ml-0.5 text-[9px] text-gray-400">{sortKey === sk ? (sortDir === "asc" ? "▲" : "▼") : "↕"}</span>
+    </th>
+  );
   function enqueueRows(chosen: typeof rows, startIso: string, endIso: string, mode: string, ai: boolean) {
     enqueueFleet(
       QUEUE_ID,
@@ -173,7 +201,17 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
               placeholder="Filter workloads…"
               className="w-44 rounded-md border px-2 py-1 text-xs"
             />
-            <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} className="rounded-md border px-2 py-1 text-xs text-gray-600" title="Sort">
+            <select
+              value={sortKey}
+              onChange={(e) => {
+                const k = e.target.value as SortKey;
+                setSortKey(k);
+                // Match each preset's intent: name ascending, the rest descending.
+                setSortDir(k === "name" ? "asc" : "desc");
+              }}
+              className="rounded-md border px-2 py-1 text-xs text-gray-600"
+              title="Sort"
+            >
               <option value="worst">Sort: worst first</option>
               <option value="critical">Sort: most critical</option>
               <option value="changes">Sort: most changes</option>
@@ -234,13 +272,13 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                 <th className="w-8 px-2 py-2">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} title="Select all shown" />
                 </th>
-                <th className="px-2 py-2 font-medium">Workload</th>
-                <th className="px-2 py-2 font-medium">Changes</th>
-                <th className="px-2 py-2 font-medium">Critical</th>
-                <th className="px-2 py-2 font-medium">High</th>
-                <th className="px-2 py-2 font-medium">Medium</th>
-                <th className="px-2 py-2 font-medium">Low</th>
-                <th className="px-2 py-2 font-medium">Last run</th>
+                <SortTh label="Workload" sk="name" defDir="asc" />
+                <SortTh label="Changes" sk="changes" />
+                <SortTh label="Critical" sk="critical" />
+                <SortTh label="High" sk="high" />
+                <SortTh label="Medium" sk="medium" />
+                <SortTh label="Low" sk="low" />
+                <SortTh label="Last run" sk="run_at" />
                 <th className="px-2 py-2"></th>
               </tr>
             </thead>
