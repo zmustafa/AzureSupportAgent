@@ -10,7 +10,6 @@ Stored token file (backend/.data/chatgpt_oauth_tokens.json):
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -313,84 +312,29 @@ async def complete_with_callback_url(callback_url: str) -> dict[str, Any]:
 
 
 def _capture_code_sync(authorize_url: str, timeout_ms: int) -> str:
-    """Open a browser to the authorize URL and capture the `code` from the redirect to
-    the callback URI. Blocking; run in a worker thread. Returns the code (or "")."""
-    from playwright.sync_api import sync_playwright
+    """Removed: server-side browser capture is no longer supported.
 
-    captured: dict[str, str] = {"code": ""}
-    _PROFILE_BASE.mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(_PROFILE_BASE / "chatgpt_oauth_profile"),
-            headless=False,
-            args=["--no-first-run", "--no-default-browser-check"],
-        )
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-
-            def on_nav(req: Any) -> None:
-                try:
-                    url = req.url
-                    if url.startswith(_REDIRECT_URI):
-                        qs = parse_qs(urlparse(url).query)
-                        code = (qs.get("code") or [""])[0]
-                        if code:
-                            captured["code"] = code
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # Watch both requests and frame navigations for the redirect.
-            context.on("request", on_nav)
-            page.on("framenavigated", lambda frame: on_nav(frame))  # type: ignore[arg-type]
-
-            try:
-                page.goto(authorize_url, wait_until="domcontentloaded", timeout=min(timeout_ms, 60_000))
-            except Exception:  # noqa: BLE001 - navigation to localhost callback will fail; that's fine
-                pass
-
-            deadline = time.time() + timeout_ms / 1000
-            while time.time() < deadline and not captured["code"]:
-                try:
-                    # Also check the current URL in case the listener missed it.
-                    cur = page.url
-                    if cur.startswith(_REDIRECT_URI):
-                        qs = parse_qs(urlparse(cur).query)
-                        code = (qs.get("code") or [""])[0]
-                        if code:
-                            captured["code"] = code
-                            break
-                    page.wait_for_timeout(400)
-                except Exception:  # noqa: BLE001
-                    break
-            return captured["code"]
-        finally:
-            try:
-                context.close()
-            except Exception:  # noqa: BLE001
-                pass
+    The interactive (Chromium) sign-in path was removed to drop the headful-browser
+    stack from the container. Sign-in now uses the link/paste flow exclusively
+    (``build_authorize_url`` + ``complete_with_callback_url``).
+    """
+    raise RuntimeError(
+        "Server-side browser sign-in has been removed. Use 'Get sign-in link', open it "
+        "in any browser, sign in, then paste the redirected URL (…/auth/callback?code=…)."
+    )
 
 
 async def interactive_login(timeout_seconds: int = 240) -> dict[str, Any]:
-    """Launch a browser for ChatGPT OAuth sign-in, capture the code, and store tokens.
+    """Removed: there is no server-side browser. Use the link/paste sign-in flow.
 
-    Mirrors BuddyAI's ChatGPTOAuthImportForm but uses Playwright. Falls back gracefully:
-    if the browser can't capture the code (e.g. headless/remote host), the admin can use
-    the paste-URL path (build_authorize_url + complete_with_callback_url) instead.
+    Kept as a raising stub so any lingering caller fails loudly with guidance rather
+    than importing a missing symbol. The supported flow is ``build_authorize_url`` then
+    ``complete_with_callback_url`` (the admin UI's 'Get sign-in link' + paste).
     """
-    info = build_authorize_url()
-    pending = _load_pending_pkce() or {}
-    verifier = pending.get("verifier", "")
-    code = await asyncio.to_thread(_capture_code_sync, info["authorize_url"], timeout_seconds * 1000)
-    if not code:
-        raise RuntimeError(
-            "Sign-in window closed or timed out before the ChatGPT authorization code "
-            "could be captured. You can instead use 'Get sign-in link' and paste the "
-            "redirected URL."
-        )
-    token_resp = await _exchange_code(code, verifier)
-    _persist_new_login(token_resp)
-    _clear_pending_pkce()
-    return status()
+    raise RuntimeError(
+        "Server-side browser sign-in has been removed. Use 'Get sign-in link', open it "
+        "in any browser, sign in, then paste the redirected URL (…/auth/callback?code=…)."
+    )
 
 
 def sign_out() -> dict[str, Any]:

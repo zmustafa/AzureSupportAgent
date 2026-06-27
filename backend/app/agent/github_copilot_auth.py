@@ -1,48 +1,39 @@
-"""Self-managed GitHub Copilot token capture via a real browser session.
+"""Self-managed GitHub Copilot token capture via the GitHub OAuth device flow.
 
-This replaces any dependency on the BuddyAI desktop app. It mirrors BuddyAI's
-WebView2 approach, but the browser is driven by this backend with Playwright:
+This replaces any dependency on the BuddyAI desktop app, and uses NO server-side
+browser:
 
-- A persistent browser profile (cookies) is kept in backend/.data/gh_copilot_profile,
-  so the user signs in to GitHub *once*; afterwards tokens refresh non-interactively.
-- We navigate to https://github.com/copilot and sniff the short-lived
-  "GitHub-Bearer" token from the Authorization header of the requests the page makes
-  to api.*.githubcopilot.com. The request host also gives us the correct per-account
-  API base URL (api.individual / api.business / api.enterprise .githubcopilot.com).
-- The token + base URL + expiry are cached to backend/.data/gh_copilot_token.json.
-  Because the token is short-lived, "refresh" = re-sniff headlessly using the
-  persisted cookies (exactly what BuddyAI's RefreshTokenAsync does).
+- The user runs the OAuth device flow (open a short URL on any device, type a code).
+  GitHub returns a long-lived OAuth token (gho_…), which this backend exchanges for a
+  short-lived Copilot bearer via the copilot_internal token endpoint. The same endpoint
+  gives the correct per-account API base URL (api.individual / api.business /
+  api.enterprise .githubcopilot.com).
+- The OAuth token + bearer + base URL + expiry are cached to
+  backend/.data/gh_copilot_token.json. "refresh" = re-mint the bearer from the stored
+  OAuth token (no browser, no interaction).
 
-The persistent cookies act as the long-lived credential; the sniffed bearer is the
-short-lived access token. No GitHub client secret or device-flow polling is needed.
+The long-lived OAuth token is the credential; the minted bearer is the short-lived
+access token. This is the same mechanism the VS Code Copilot extension and the GitHub
+CLI use, so it works in a fully headless container (Azure Container Apps).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / ".data"
-# Chromium needs a profile dir on a filesystem that supports its SingletonLock (a
-# symlink/lock file). Network shares (Azure Files / SMB) reject that with EACCES, so the
-# browser profile lives on local-writable storage (BROWSER_PROFILE_DIR, e.g. /tmp in a
-# container) — NOT on the data volume. Only the token cache below stays on the volume.
-_PROFILE_BASE = Path(os.environ.get("BROWSER_PROFILE_DIR") or _DATA_DIR)
-_PROFILE_DIR = _PROFILE_BASE / "gh_copilot_profile"
 _TOKEN_FILE = _DATA_DIR / "gh_copilot_token.json"
 # Pending OAuth device-flow state (device_code + interval) while the user authorizes on
 # their own device. Persisted so polling survives a backend restart.
 _DEVICE_FILE = _DATA_DIR / "gh_copilot_device.json"
 
 DEFAULT_API_BASE_URL = "https://api.githubcopilot.com"
-_COPILOT_URL = "https://github.com/copilot"
 
 # --- GitHub OAuth Device Flow (headless / remote sign-in, no server browser) ----------
 # This is the same mechanism the VS Code Copilot extension and the GitHub CLI use: the
@@ -62,22 +53,8 @@ _EDITOR_HEADERS = {
     "Accept": "application/json",
 }
 
-# Sniffed bearer tokens are short-lived; assume ~20 min and refresh as needed.
+# Minted bearer tokens are short-lived; assume ~20 min and refresh as needed.
 _TOKEN_TTL_SECONDS = 20 * 60
-
-# Serialize browser launches so we never open two Chromium profiles at once.
-_capture_lock = asyncio.Lock()
-
-
-def _normalize_bearer(raw: str | None) -> str:
-    """Port of C# NormalizeBearer: strip 'GitHub-Bearer '/'Bearer ' prefixes."""
-    if not raw:
-        return ""
-    value = raw.strip()
-    for prefix in ("GitHub-Bearer ", "Bearer "):
-        if value.lower().startswith(prefix.lower()):
-            return value[len(prefix):].strip()
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +122,6 @@ def _is_expired(cache: dict[str, Any]) -> bool:
     return datetime.now(timezone.utc) >= exp
 
 
-def has_browser_profile() -> bool:
-    """True if the user has signed in at least once (persistent cookies exist)."""
-    return _PROFILE_DIR.exists() and any(_PROFILE_DIR.iterdir())
-
-
 def _has_oauth_token() -> bool:
     """True if we hold a long-lived OAuth token (device-flow sign-in)."""
     cache = _read_cache()
@@ -159,8 +131,8 @@ def _has_oauth_token() -> bool:
 def status() -> dict[str, Any]:
     """Non-sensitive status for the admin UI."""
     cache = _read_cache()
-    # Signed in if EITHER a device-flow OAuth token OR a browser session exists.
-    signed_in = bool(cache and cache.get("oauth_token")) or has_browser_profile()
+    # Signed in if a device-flow OAuth token exists (the only supported sign-in).
+    signed_in = bool(cache and cache.get("oauth_token"))
     if not cache:
         return {
             "signed_in": signed_in,
@@ -179,16 +151,12 @@ def status() -> dict[str, Any]:
 
 
 def sign_out() -> None:
-    """Forget the token and the browser session (next use needs a fresh sign-in)."""
+    """Forget the token and any pending device flow (next use needs a fresh sign-in)."""
     for f in (_TOKEN_FILE, _DEVICE_FILE):
         try:
             f.unlink(missing_ok=True)
         except OSError:
             pass
-    if _PROFILE_DIR.exists():
-        import shutil
-
-        shutil.rmtree(_PROFILE_DIR, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -300,107 +268,29 @@ async def poll_device_flow() -> dict[str, Any]:
     if not oauth_token:
         return {"status": "pending"}
 
-    # Authorized — mint the Copilot bearer and cache both tokens.
     bearer, api_base, expires_at = await _mint_copilot_token(oauth_token)
     _write_cache(bearer, api_base, expires_at=expires_at, oauth_token=oauth_token, auth_scheme="Bearer")
     _DEVICE_FILE.unlink(missing_ok=True)
     return {"status": "authorized", **status()}
 
 
-# ---------------------------------------------------------------------------
-# Browser capture (runs the SYNC Playwright API in a worker thread)
-# ---------------------------------------------------------------------------
-def _capture_sync(headless: bool, timeout_ms: int) -> tuple[str, str]:
-    """Open github.com/copilot and sniff a GitHub-Bearer token. Blocking; run in a thread."""
-    from playwright.sync_api import sync_playwright
-
-    captured: dict[str, str] = {"token": "", "base": ""}
-    _PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(_PROFILE_DIR),
-            headless=headless,
-            args=["--no-first-run", "--no-default-browser-check"],
-        )
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-
-            def on_request(request: Any) -> None:
-                try:
-                    if "githubcopilot.com" not in request.url:
-                        return
-                    token = _normalize_bearer(request.headers.get("authorization"))
-                    if token:
-                        captured["token"] = token
-                        parsed = urlparse(request.url)
-                        captured["base"] = f"{parsed.scheme}://{parsed.netloc}"
-                except Exception:  # noqa: BLE001 - never let a sniff error abort capture
-                    pass
-
-            context.on("request", on_request)
-
-            try:
-                page.goto(_COPILOT_URL, wait_until="domcontentloaded", timeout=min(timeout_ms, 60_000))
-            except Exception:  # noqa: BLE001 - navigation may stall; keep polling for the token
-                pass
-
-            deadline = time.time() + timeout_ms / 1000
-            while time.time() < deadline and not captured["token"]:
-                # Nudge the page so it issues authenticated Copilot API calls.
-                try:
-                    page.wait_for_timeout(500)
-                except Exception:  # noqa: BLE001
-                    break
-
-            return captured["token"], captured["base"]
-        finally:
-            try:
-                context.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-async def interactive_login(timeout_seconds: int = 180) -> dict[str, Any]:
-    """Open a visible browser so the user can sign in to GitHub Copilot, then capture
-    a token. Returns the new status. Raises RuntimeError if no token was captured."""
-    async with _capture_lock:
-        token, base = await asyncio.to_thread(_capture_sync, False, timeout_seconds * 1000)
-    if not token:
-        raise RuntimeError(
-            "Sign-in window closed or timed out before a GitHub Copilot token could be "
-            "captured. Make sure you signed in and that your account has Copilot access."
-        )
-    _write_cache(token, base)
-    return status()
-
-
 async def refresh_token() -> str | None:
     """Mint a fresh Copilot bearer without any browser.
 
-    Preferred path: re-exchange the stored long-lived OAuth token (device-flow sign-in).
-    Falls back to re-sniffing via the persisted browser session if that's all we have
-    (legacy local sign-ins). Returns the new bearer, or None if no session is usable.
+    Re-exchanges the stored long-lived OAuth token (device-flow sign-in) for a fresh
+    short-lived bearer. Returns the new bearer, or None if there is no stored OAuth
+    token or it has been revoked (the user must sign in again).
     """
     cache = _read_cache() or {}
     oauth_token = cache.get("oauth_token")
-    if oauth_token:
-        try:
-            bearer, base, expires_at = await _mint_copilot_token(oauth_token)
-        except Exception:  # noqa: BLE001 - token may have been revoked; signal re-login
-            return None
-        _write_cache(bearer, base, expires_at=expires_at, oauth_token=oauth_token, auth_scheme="Bearer")
-        return bearer
-
-    # Legacy fallback: re-sniff using a persisted browser profile (local dev only).
-    if not has_browser_profile():
+    if not oauth_token:
         return None
-    async with _capture_lock:
-        token, base = await asyncio.to_thread(_capture_sync, True, 45 * 1000)
-    if not token:
+    try:
+        bearer, base, expires_at = await _mint_copilot_token(oauth_token)
+    except Exception:  # noqa: BLE001 - token may have been revoked; signal re-login
         return None
-    _write_cache(token, base)
-    return token
+    _write_cache(bearer, base, expires_at=expires_at, oauth_token=oauth_token, auth_scheme="Bearer")
+    return bearer
 
 
 async def get_valid_token() -> tuple[str, str]:
@@ -424,135 +314,3 @@ async def get_valid_token() -> tuple[str, str]:
         "Not signed in to GitHub Copilot. Open the admin AI Provider settings and "
         "click 'Sign in with GitHub Copilot'."
     )
-
-
-# ---------------------------------------------------------------------------
-# Image upload (ported from BuddyAI's C# GitHubCopilotWebViewBridge.UploadImageAsync)
-# ---------------------------------------------------------------------------
-_UPLOAD_JS = r"""
-async (args) => {
-    const { threadId, base64Data, fileName, mimeType, size } = args;
-    try {
-        let nonce = '', clientVersion = '';
-        for (const m of document.querySelectorAll('meta[name]')) {
-            const name = (m.getAttribute('name') || '').toLowerCase();
-            const content = m.getAttribute('content') || '';
-            if (!nonce && name.indexOf('nonce') !== -1 && content) nonce = content;
-            if (!clientVersion && name.indexOf('client-version') !== -1 && content) clientVersion = content;
-        }
-        function ghHeaders(extra) {
-            const h = Object.assign({
-                'Accept': 'application/json',
-                'GitHub-Verified-Fetch': 'true',
-                'X-Requested-With': 'XMLHttpRequest'
-            }, extra || {});
-            if (nonce) h['X-Fetch-Nonce'] = nonce;
-            if (clientVersion) h['X-GitHub-Client-Version'] = clientVersion;
-            return h;
-        }
-        const policyForm = new FormData();
-        policyForm.append('name', fileName);
-        policyForm.append('size', String(size));
-        policyForm.append('content_type', mimeType);
-        policyForm.append('thread_id', threadId);
-        const policyResp = await fetch('https://github.com/upload/policies/copilot-chat-attachments', {
-            method: 'POST', body: policyForm, credentials: 'same-origin', headers: ghHeaders()
-        });
-        if (!policyResp.ok) {
-            return { stage: 'policy', status: policyResp.status, body: await policyResp.text() };
-        }
-        const policy = await policyResp.json();
-        const binaryStr = atob(base64Data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-        const blob = new Blob([bytes], { type: mimeType });
-        const uploadForm = new FormData();
-        const form = policy.form || {};
-        for (const k in form) uploadForm.append(k, form[k]);
-        uploadForm.append('file', blob, fileName);
-        const uploadUrl = policy.upload_url || policy.upload_uri;
-        const uploadResp = await fetch(uploadUrl, { method: 'POST', body: uploadForm, mode: 'cors' });
-        if (!uploadResp.ok && uploadResp.status !== 204 && uploadResp.status !== 201) {
-            return { stage: 'upload', status: uploadResp.status, body: await uploadResp.text() };
-        }
-        let finUrl = policy.asset_upload_url;
-        if (finUrl && finUrl.startsWith('/')) finUrl = 'https://github.com' + finUrl;
-        const finForm = new FormData();
-        finForm.append('authenticity_token', policy.asset_upload_authenticity_token);
-        const finResp = await fetch(finUrl, {
-            method: 'PUT', body: finForm, credentials: 'same-origin', headers: ghHeaders()
-        });
-        const finText = await finResp.text();
-        return { stage: 'done', status: finResp.status, body: finText, asset: policy.asset };
-    } catch (e) {
-        return { stage: 'exception', status: 0, body: String(e && e.message ? e.message : e) };
-    }
-}
-"""
-
-
-def _extract_asset_url(result: dict[str, Any]) -> str:
-    if result.get("stage") != "done":
-        raise RuntimeError(
-            f"Copilot image upload failed at stage '{result.get('stage')}' "
-            f"(status {result.get('status')}): {str(result.get('body'))[:300]}"
-        )
-    body = result.get("body") or ""
-    try:
-        fin = json.loads(body)
-        for prop in ("href", "url", "asset_url", "download_url"):
-            if isinstance(fin.get(prop), str) and fin[prop]:
-                return fin[prop]
-    except (json.JSONDecodeError, TypeError):
-        pass
-    asset = result.get("asset") or {}
-    for prop in ("href", "url"):
-        if isinstance(asset.get(prop), str) and asset[prop]:
-            return asset[prop]
-    raise RuntimeError("Copilot upload completed but no asset URL was returned.")
-
-
-def _upload_image_sync(thread_id: str, data_url: str, timeout_ms: int) -> str:
-    """Upload one image via the persistent browser session; returns the asset URL."""
-    import base64 as _b64
-
-    from playwright.sync_api import sync_playwright
-
-    header, _, b64 = data_url.partition(";base64,")
-    mime = header.split(":", 1)[1] if ":" in header else "image/png"
-    ext = {"image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(mime, ".png")
-    size = len(_b64.b64decode(b64))
-
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(_PROFILE_DIR),
-            headless=True,
-            args=["--no-first-run", "--no-default-browser-check"],
-        )
-        try:
-            page = context.pages[0] if context.pages else context.new_page()
-            page.goto(_COPILOT_URL, wait_until="domcontentloaded", timeout=min(timeout_ms, 60_000))
-            result = page.evaluate(
-                _UPLOAD_JS,
-                {
-                    "threadId": thread_id,
-                    "base64Data": b64,
-                    "fileName": f"image{ext}",
-                    "mimeType": mime,
-                    "size": size,
-                },
-            )
-            return _extract_asset_url(result)
-        finally:
-            try:
-                context.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-async def upload_image(thread_id: str, data_url: str, timeout_seconds: int = 60) -> str:
-    """Upload an image attachment to a Copilot chat thread and return its asset URL."""
-    async with _capture_lock:
-        return await asyncio.to_thread(
-            _upload_image_sync, thread_id, data_url, timeout_seconds * 1000
-        )

@@ -2273,11 +2273,6 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  githubCopilotLogin: () =>
-    http<{ ok: boolean; status: GithubCopilotStatus }>("/admin/llm/oauth/github/login", {
-      method: "POST",
-      body: "{}",
-    }),
   // GitHub OAuth device flow (headless / remote sign-in — no server browser).
   githubCopilotDeviceStart: () =>
     http<{ ok: boolean; user_code: string; verification_uri: string; expires_in: number; interval: number }>(
@@ -2306,11 +2301,6 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  chatgptLogin: () =>
-    http<{ ok: boolean; status: ChatgptStatus }>("/admin/llm/oauth/chatgpt/login", {
-      method: "POST",
-      body: "{}",
-    }),
   chatgptAuthorizeUrl: () =>
     http<{ ok: boolean; authorize_url: string; state: string }>(
       "/admin/llm/oauth/chatgpt/authorize-url",
@@ -2329,11 +2319,6 @@ export const api = {
   chatgptStatus: () => http<ChatgptStatus>("/admin/llm/oauth/chatgpt/status"),
   claudeRefresh: () =>
     http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/refresh", {
-      method: "POST",
-      body: "{}",
-    }),
-  claudeLogin: () =>
-    http<{ ok: boolean; status: ClaudeOauthStatus }>("/admin/llm/oauth/claude/login", {
       method: "POST",
       body: "{}",
     }),

@@ -83,6 +83,9 @@ playwright-report/
 test-results/
 .playwright/
 
+# --- Local security scan reports (gitleaks/trivy/zap/etc.) --------------------
+.security/
+
 # --- Local-only E2E test suite  -------
 /e2e/
 

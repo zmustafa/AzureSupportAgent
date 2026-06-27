@@ -3892,21 +3892,6 @@ function AIProviderCard() {
     }
   }
 
-  async function chatgptLogin() {
-    setGhBusy(true);
-    setImportMsg("Opening browser — sign in to ChatGPT…");
-    try {
-      await api.chatgptLogin();
-      setImportMsg("✓ Signed in & token captured");
-      cgStatus.refetch();
-      qc.invalidateQueries({ queryKey: ["activeLlm"] });
-    } catch (e) {
-      setImportMsg(formatError(e));
-    } finally {
-      setGhBusy(false);
-    }
-  }
-
   async function chatgptGetLink() {
     setGhBusy(true);
     setImportMsg("Creating sign-in link…");
@@ -3969,21 +3954,6 @@ function AIProviderCard() {
       await api.claudeRefresh();
       setImportMsg("✓ Token refreshed");
       claudeStatus.refetch();
-    } catch (e) {
-      setImportMsg(formatError(e));
-    } finally {
-      setGhBusy(false);
-    }
-  }
-
-  async function claudeLogin() {
-    setGhBusy(true);
-    setImportMsg("Opening browser — sign in to Claude…");
-    try {
-      await api.claudeLogin();
-      setImportMsg("✓ Signed in & token captured");
-      claudeStatus.refetch();
-      qc.invalidateQueries({ queryKey: ["activeLlm"] });
     } catch (e) {
       setImportMsg(formatError(e));
     } finally {
@@ -4704,7 +4674,8 @@ function AIProviderCard() {
             {p.auth === "oauth" && p.id === "chatgpt" && (
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="mb-2 text-xs text-gray-600">
-                  Sign in with your ChatGPT subscription using the in-app browser
+                  Sign in with your ChatGPT subscription: click <b>Get sign-in link</b>,
+                  sign in in the browser tab that opens, then paste the URL you land on
                   below. The token is stored by this app and refreshed automatically.
                 </div>
 
@@ -4729,11 +4700,11 @@ function AIProviderCard() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => void chatgptLogin()}
+                    onClick={() => void chatgptGetLink()}
                     disabled={ghBusy}
                     className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5 disabled:opacity-50"
                   >
-                    Sign in with ChatGPT
+                    Get sign-in link
                   </button>
                   {cgStatus.data?.signed_in && (
                     <button
@@ -4756,25 +4727,13 @@ function AIProviderCard() {
                   {importMsg && <span className="text-xs text-gray-500">{importMsg}</span>}
                 </div>
 
-                {/* Paste-URL fallback for headless / remote (non-localhost) hosts */}
-                <details className="mt-3 text-xs text-gray-600">
-                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
-                    Can't open a browser here? Use a sign-in link instead
-                  </summary>
-                  <div className="mt-2 space-y-2">
+                {/* Sign-in link + paste (works on any host, including headless/remote) */}
+                <div className="mt-3 space-y-2 text-xs text-gray-600">
                     <p className="text-[11px] text-gray-500">
-                      Use this when the app runs on a remote/headless host. Get a link,
-                      open it in any browser, sign in, then paste the URL you land on
+                      Open the link, sign in, then paste the URL you land on
                       (it ends in <code className="rounded bg-white px-1">…/auth/callback?code=…</code>,
                       and won't load — that's expected).
                     </p>
-                    <button
-                      onClick={() => void chatgptGetLink()}
-                      disabled={ghBusy}
-                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Get sign-in link
-                    </button>
                     {chatgptAuthUrl && (
                       <input
                         readOnly
@@ -4799,16 +4758,17 @@ function AIProviderCard() {
                         Complete
                       </button>
                     </div>
-                  </div>
-                </details>
+                </div>
               </div>
             )}
 
             {p.auth === "oauth" && p.id === "claude_oauth" && (
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="mb-2 text-xs text-gray-600">
-                  Sign in with your Claude Pro/Max subscription using the in-app browser
-                  below. The token is stored by this app and refreshed automatically.
+                  Sign in with your Claude Pro/Max subscription: click <b>Get sign-in
+                  link</b>, sign in in the browser tab that opens, then paste the code
+                  you're shown below. The token is stored by this app and refreshed
+                  automatically.
                 </div>
 
                 <div className="mb-2 flex items-center gap-2 text-xs">
@@ -4832,11 +4792,11 @@ function AIProviderCard() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => void claudeLogin()}
+                    onClick={() => void claudeGetLink()}
                     disabled={ghBusy}
                     className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5 disabled:opacity-50"
                   >
-                    Sign in with Claude
+                    Get sign-in link
                   </button>
                   {claudeStatus.data?.signed_in && (
                     <button
@@ -4859,25 +4819,13 @@ function AIProviderCard() {
                   {importMsg && <span className="text-xs text-gray-500">{importMsg}</span>}
                 </div>
 
-                {/* Paste-code fallback for headless / remote (non-localhost) hosts */}
-                <details className="mt-3 text-xs text-gray-600">
-                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
-                    Can't open a browser here? Use a sign-in link instead
-                  </summary>
-                  <div className="mt-2 space-y-2">
+                {/* Sign-in link + paste (works on any host, including headless/remote) */}
+                <div className="mt-3 space-y-2 text-xs text-gray-600">
                     <p className="text-[11px] text-gray-500">
-                      Use this when the app runs on a remote/headless host. Get a link,
-                      open it in any browser, sign in, then paste the code shown on the
+                      Open the link, sign in, then paste the code shown on the
                       Claude callback page (it looks like{" "}
                       <code className="rounded bg-white px-1">code#state</code>).
                     </p>
-                    <button
-                      onClick={() => void claudeGetLink()}
-                      disabled={ghBusy}
-                      className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Get sign-in link
-                    </button>
                     {claudeAuthUrl && (
                       <input
                         readOnly
@@ -4902,8 +4850,7 @@ function AIProviderCard() {
                         Complete
                       </button>
                     </div>
-                  </div>
-                </details>
+                </div>
               </div>
             )}
 

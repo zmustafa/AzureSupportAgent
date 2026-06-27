@@ -1021,36 +1021,6 @@ async def chatgpt_oauth_refresh(_: Principal = Depends(require_admin)):
     return {"ok": True, "status": st}
 
 
-@router.post("/llm/oauth/chatgpt/login")
-async def chatgpt_oauth_login(
-    principal: Principal = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Open a browser for ChatGPT OAuth sign-in and capture/store the token.
-
-    Mirrors the GitHub Copilot login: launches a visible browser, the user signs in,
-    and the OAuth authorization code is captured + exchanged for tokens. For headless or
-    remote hosts where a browser can't be launched, use the 'authorize-url' + 'complete'
-    endpoints (paste-the-redirected-URL flow) instead.
-    """
-    try:
-        st = await chatgpt_oauth.interactive_login()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # Signing in sets up the provider — make it available in the model picker.
-    set_provider_enabled("chatgpt", True)
-    db.add(
-        AuditLog(
-            tenant_id=principal.tenant_id,
-            actor_id=principal.subject,
-            action="llm.chatgpt_oauth_login",
-            target="chatgpt",
-        )
-    )
-    await db.commit()
-    return {"ok": True, "status": st}
-
-
 @router.post("/llm/oauth/chatgpt/authorize-url")
 async def chatgpt_oauth_authorize_url(_: Principal = Depends(require_admin)):
     """Start a sign-in and return the OpenAI authorize URL to open in any browser.
@@ -1106,36 +1076,6 @@ async def claude_oauth_refresh(_: Principal = Depends(require_admin)):
         st = await claude_oauth.force_refresh()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "status": st}
-
-
-@router.post("/llm/oauth/claude/login")
-async def claude_oauth_login(
-    principal: Principal = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Open a browser for Claude OAuth sign-in and capture/store the token.
-
-    Launches a visible browser, the user signs in to their Claude Pro/Max account, and
-    the OAuth authorization code is captured + exchanged for tokens. For headless or
-    remote hosts where a browser can't be launched, use the 'authorize-url' + 'complete'
-    endpoints (paste-the-code flow) instead.
-    """
-    try:
-        st = await claude_oauth.interactive_login()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # Signing in sets up the provider — make it available in the model picker.
-    set_provider_enabled("claude_oauth", True)
-    db.add(
-        AuditLog(
-            tenant_id=principal.tenant_id,
-            actor_id=principal.subject,
-            action="llm.claude_oauth_login",
-            target="claude_oauth",
-        )
-    )
-    await db.commit()
     return {"ok": True, "status": st}
 
 
@@ -1220,36 +1160,6 @@ async def chatgpt_oauth_signout(
     )
     await db.commit()
     return {"ok": True, "status": st}
-
-
-@router.post("/llm/oauth/github/login")
-async def github_copilot_login(
-    principal: Principal = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """Open a browser so the user can sign in to GitHub Copilot, then capture a token.
-
-    A persistent browser profile is kept so future refreshes are non-interactive. The
-    short-lived GitHub-Bearer token is sniffed from the github.com/copilot session and
-    cached by this backend (no BuddyAI / external app needed).
-    """
-    try:
-        status = await github_copilot_auth.interactive_login()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # Signing in sets up the provider — make it available in the model picker.
-    set_provider_enabled("github_copilot", True)
-    db.add(
-        AuditLog(
-            tenant_id=principal.tenant_id,
-            actor_id=principal.subject,
-            action="llm.github_copilot_login",
-            target="github_copilot",
-            metadata_json={"api_base_url": status.get("api_base_url", "")},
-        )
-    )
-    await db.commit()
-    return {"ok": True, "status": status, "config": public_config()}
 
 
 @router.post("/llm/oauth/github/device/start")

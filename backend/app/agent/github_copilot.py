@@ -583,20 +583,11 @@ class GitHubCopilotChatProvider(LLMProvider):
             if not thread_id:
                 raise RuntimeError("GitHub Copilot did not return a thread id.")
 
-            # Step 1b: upload any attached images and reference them as mediaContent.
-            # The Copilot thread API rejects inline data URLs, so images must be
-            # uploaded first via the browser session (ported from the BuddyAI C# app).
+            # Image attachments are not supported on this provider: uploading to a
+            # Copilot thread required a same-origin browser session (cookies + page
+            # nonce), which was removed with the headful-browser stack. Text chat,
+            # streaming and tools are unaffected; any attached images are ignored.
             media_content: list[dict[str, Any]] = []
-            for data_url in _latest_user_images(messages):
-                try:
-                    asset_url = await auth.upload_image(thread_id, data_url)
-                    header = data_url.split(";base64,", 1)[0]
-                    mime = header.split(":", 1)[1] if ":" in header else "image/png"
-                    media_content.append(
-                        {"type": "image", "mimeType": mime, "url": asset_url, "fileName": "image"}
-                    )
-                except Exception:  # noqa: BLE001 - continue without the image rather than fail
-                    pass
 
             # Step 2: post the message and consume the SSE stream.
             messages_url = f"{base_url}/github/chat/threads/{thread_id}/messages"

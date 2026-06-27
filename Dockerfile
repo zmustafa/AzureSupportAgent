@@ -28,13 +28,16 @@ ENV PYTHONUNBUFFERED=1 \
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
 
-# Node.js (for `npx @azure/mcp`), the Azure CLI (DefaultAzureCredential), Xvfb (a
-# virtual display so the OAuth sign-in flows can launch a headful Chromium in this
-# server container without a real screen), and the networking CLIs the built-in utility
-# tools shell out to (ping, traceroute, dig, etc.). One layer.
+# Node.js (for `npx @azure/mcp`), the Azure CLI (DefaultAzureCredential), and the
+# networking CLIs the built-in utility tools shell out to (ping, traceroute, dig, etc.).
+# One layer.
+# `apt-get upgrade` pulls in the latest Debian security patches for the base image so a
+# rebuild closes known OS-package CVEs instead of inheriting whatever was current when
+# the base tag was published.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-        curl ca-certificates gnupg xvfb xauth \
+        curl ca-certificates gnupg \
         iputils-ping traceroute dnsutils netcat-openbsd iproute2 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -62,11 +65,6 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt \
     && pip install --no-deps .
 
-# Playwright drives a headless Chromium for the GitHub Copilot / ChatGPT (Codex) OAuth
-# sign-in flows. Install the browser + its OS libraries into the image so those flows
-# don't fail with "Executable doesn't exist … please run playwright install".
-RUN python -m playwright install --with-deps chromium
-
 # Bundled SPA goes into the package's static dir, which main.py serves.
 COPY --from=frontend /web/dist ./app/static
 
@@ -80,7 +78,6 @@ RUN python -m venv /opt/eidmcp \
 
 EXPOSE 8000
 
-# Run DB migrations then start the API + SPA. Wrap in xvfb-run so the OAuth sign-in
-# flows (GitHub Copilot / ChatGPT Codex) can launch a headful Chromium against a
-# virtual display instead of failing with "Missing X server".
-CMD ["sh", "-c", "alembic upgrade head && xvfb-run -a --server-args='-screen 0 1280x1024x24' uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Run DB migrations then start the API + SPA. All AI-provider sign-in flows are headless
+# (OAuth device flow + paste-the-code), so no virtual display / browser is needed.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
