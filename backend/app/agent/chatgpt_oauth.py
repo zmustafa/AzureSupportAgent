@@ -23,7 +23,11 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from app.core.crypto import decrypt, encrypt
+
 _DATA_DIR = Path(__file__).resolve().parents[2] / ".data"
+# Token fields encrypted at rest (Fernet); decrypt() passes legacy plaintext through.
+_SECRET_FIELDS = ("access_token", "refresh_token", "id_token")
 # Chromium's SingletonLock can't be created on a network share (Azure Files / SMB), so
 # the browser profile lives on local-writable storage (BROWSER_PROFILE_DIR, e.g. /tmp in
 # a container) — NOT on the data volume. Token/PKCE files below stay on the volume.
@@ -56,7 +60,12 @@ def _read_tokens() -> dict[str, Any]:
         return {}
     try:
         data = json.loads(_TOKENS_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        for f in _SECRET_FIELDS:
+            if data.get(f):
+                data[f] = decrypt(data[f])
+        return data
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -93,9 +102,13 @@ def _write_tokens(access_token: str, refresh_token: str, account_id: str, id_tok
     if id_token:
         data["id_token"] = id_token
     data["last_refresh"] = datetime.now(timezone.utc).isoformat()
+    out = dict(data)
+    for f in _SECRET_FIELDS:
+        if out.get(f):
+            out[f] = encrypt(out[f])
     try:
         _TOKENS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _TOKENS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        _TOKENS_PATH.write_text(json.dumps(out, indent=2), encoding="utf-8")
     except OSError:
         pass
 

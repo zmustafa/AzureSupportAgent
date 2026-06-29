@@ -50,6 +50,8 @@ async def seed_admin(db: AsyncSession) -> None:
     admin/admin). The bootstrap admin is forced to set a new password on first login
     (``must_change_password``) so a deployment never keeps the seeded/default credential.
     """
+    import logging
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -58,11 +60,24 @@ async def seed_admin(db: AsyncSession) -> None:
     if count is not None:
         await db.commit()
         return
+    # Default-credential hardening: outside local dev, refuse to seed the well-known
+    # "admin" password. If the operator left it at the default, mint a strong random
+    # one-time password and log it once — the admin must still change it on first login
+    # (must_change_password). This closes the "admin/admin works in prod" backdoor while
+    # keeping local dev / tests on the convenient default.
+    seed_pw = settings.seed_admin_password
+    if settings.environment != "local" and seed_pw == "admin":
+        seed_pw = secrets.token_urlsafe(24)
+        logging.getLogger("app.auth").warning(
+            "SEED_ADMIN_PASSWORD not set; generated a random bootstrap admin password "
+            "(must be changed on first login): %s",
+            seed_pw,
+        )
     admin = User(
         email="admin@local",
         username=settings.seed_admin_username,
         display_name="Administrator",
-        password_hash=hash_password(settings.seed_admin_password),
+        password_hash=hash_password(seed_pw),
         status="active",
         auth_source="local",
         must_change_password=True,

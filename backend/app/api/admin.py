@@ -321,6 +321,13 @@ async def _fetch_provider_models(
 ) -> dict[str, Any]:
     """Internal: fetch the raw model catalogue for a provider (live + fallback).
     Caller is responsible for applying the per-provider hidden-models filter."""
+    base_url = (prov.get("base_url") or "").strip()
+    if base_url:
+        from app.core.ssrf import check_url
+
+        blocked = check_url(base_url, allow_private=provider in LOCAL_PROVIDERS)
+        if blocked:
+            return {"models": [], "error": blocked}
     api_key = prov.get("api_key", "")
 
     if provider in ("openai", "openai_eu"):
@@ -626,6 +633,13 @@ async def _diagnose_provider(provider: str):
     if not host:
         yield _ev("endpoint", "error", "Endpoint URL invalid", f"Could not parse host from '{probe_base}'.", _ms_since(t0))
         yield {"event": "done", "data": json.dumps({"ok": False, "detail": "Invalid endpoint URL"})}
+        return
+    from app.core.ssrf import check_url
+
+    ssrf_blocked = check_url(probe_base, allow_private=provider in LOCAL_PROVIDERS)
+    if ssrf_blocked:
+        yield _ev("endpoint", "error", "Endpoint blocked", ssrf_blocked, _ms_since(t0))
+        yield {"event": "done", "data": json.dumps({"ok": False, "detail": ssrf_blocked})}
         return
     try:
         loop = asyncio.get_running_loop()

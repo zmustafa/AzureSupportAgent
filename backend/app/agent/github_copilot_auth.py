@@ -27,8 +27,12 @@ from typing import Any
 
 import httpx
 
+from app.core.crypto import decrypt, encrypt
+
 _DATA_DIR = Path(__file__).resolve().parents[2] / ".data"
 _TOKEN_FILE = _DATA_DIR / "gh_copilot_token.json"
+# Token fields encrypted at rest (Fernet); decrypt() passes legacy plaintext through.
+_SECRET_FIELDS = ("access_token", "oauth_token")
 # Pending OAuth device-flow state (device_code + interval) while the user authorizes on
 # their own device. Persisted so polling survives a backend restart.
 _DEVICE_FILE = _DATA_DIR / "gh_copilot_device.json"
@@ -64,7 +68,11 @@ def _read_cache() -> dict[str, Any] | None:
     if not _TOKEN_FILE.exists():
         return None
     try:
-        return json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
+        data = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
+        for f in _SECRET_FIELDS:
+            if isinstance(data, dict) and data.get(f):
+                data[f] = decrypt(data[f])
+        return data
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -98,7 +106,11 @@ def _write_cache(
     tok = oauth_token if oauth_token is not None else existing.get("oauth_token")
     if tok:
         data["oauth_token"] = tok
-    _TOKEN_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    out = dict(data)
+    for f in _SECRET_FIELDS:
+        if out.get(f):
+            out[f] = encrypt(out[f])
+    _TOKEN_FILE.write_text(json.dumps(out, indent=2), encoding="utf-8")
     return data
 
 

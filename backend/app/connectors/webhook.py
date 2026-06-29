@@ -30,6 +30,11 @@ async def _send(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     url = config.get("url", "")
     if not url:
         return err("Webhook URL is not configured.")
+    from app.core.ssrf import check_url
+
+    blocked = check_url(url, require_https=True)
+    if blocked:
+        return err(blocked)
     # The payload is either an explicit object, or a {title, message, severity, facts} envelope.
     payload: Any = args.get("payload")
     if not isinstance(payload, (dict, list)):

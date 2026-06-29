@@ -144,6 +144,11 @@ async def _post_webhook(config: dict[str, Any], args: dict[str, Any]) -> dict[st
     url = config.get("webhook_url", "")
     if not url:
         return err("Teams webhook URL is not configured.")
+    from app.core.ssrf import check_url
+
+    blocked = check_url(url, require_https=True)
+    if blocked:
+        return err(blocked)
     title = args.get("title") or ""
     text = args.get("message") or ""
     if not text and not title:
