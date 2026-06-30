@@ -12,6 +12,7 @@ import { usePersistedState } from "../utils/persistedState";
 import { Skeleton, useDebounced } from "../utils/perf";
 import { IDENTITY_NAV, type IdentityTab } from "./navConfig";
 import { AppRegistrationsView } from "./AppRegistrationsView";
+import { PimReviewPanel } from "./PimReviewView";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 
 const SEV_META: Record<string, { label: string; cls: string; dot: string; rank: number }> = {
@@ -96,7 +97,13 @@ export function IdentityPanel({ tab = "overview" }: { tab?: IdentityTab }) {
           <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
         </div>
       </div>
-      {tab === "app-registrations" ? <AppRegistrationsView connectionId={connectionId || null} /> : <IdentityFindingsPanel connectionId={connectionId || null} />}
+      {tab === "app-registrations" ? (
+        <AppRegistrationsView connectionId={connectionId || null} />
+      ) : tab === "pim" ? (
+        <PimReviewPanel connectionId={connectionId || null} />
+      ) : (
+        <IdentityFindingsPanel connectionId={connectionId || null} />
+      )}
     </div>
   );
 }

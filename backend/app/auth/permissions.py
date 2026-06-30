@@ -68,6 +68,10 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("evidence.read", "View the Evidence Locker (investigation snapshots) and diffs"),
         ("evidence.write", "Create, attach, share, and export evidence snapshots"),
     ]),
+    ("Incident response", [
+        ("cases.read", "View durable case files and their timelines"),
+        ("cases.write", "Open, update, attach to, and resolve case files"),
+    ]),
     ("Observability", [
         ("monitor.view", "View the Monitor dashboard"),
         ("coverage.read", "View monitoring, telemetry, and backup/DR coverage"),
@@ -79,6 +83,7 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("netdiag.run", "Run private network and DNS reachability probes"),
     ]),
     ("Integrations", [
+        ("connections.read", "View Azure connections and the capability / blind-spot matrix"),
         ("connections.manage", "Manage Azure tenant connections"),
         ("connectors.manage", "Manage connectors (Teams, Slack, Email, Jira, Grafana)"),
     ]),

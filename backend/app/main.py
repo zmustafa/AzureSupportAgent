@@ -20,6 +20,8 @@ from app.api import (
     automations,
     backup,
     backupdr,
+    capability,
+    cases,
     changeexplorer,
     charts,
     chats,
@@ -479,6 +481,8 @@ api.include_router(reservations.router)
 api.include_router(quota.router)
 api.include_router(ownership.router)
 api.include_router(vms.router)
+api.include_router(capability.router)
+api.include_router(cases.router)
 
 
 # Health/readiness probes stay at the root (no auth, no /api) for Container Apps.

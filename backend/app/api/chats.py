@@ -182,6 +182,106 @@ async def list_investigations(
     return {"investigations": out}
 
 
+class SaveRcaIn(BaseModel):
+    # Optional explicit target. When omitted, the architecture is resolved from the chat's
+    # linked workload (used when exactly one architecture with a Memory is linked).
+    architecture_id: str | None = None
+
+
+@router.post("/investigations/{message_id}/save-rca")
+async def save_investigation_rca(
+    message_id: str,
+    payload: SaveRcaIn,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist a deep investigation's root-cause analysis into the linked architecture's
+    Memory under "Known issues & past incidents", so future investigations recall it.
+
+    This closes the learning loop ("Case Law"): an RCA that today evaporates when the chat
+    scrolls away becomes durable expert context injected into the next incident. Idempotent
+    — re-saving the same investigation is a no-op. Tenant scoped."""
+    row = (
+        await db.execute(
+            select(Message, Chat)
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(Message.id == message_id, Chat.tenant_id == principal.tenant_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Investigation not found.")
+    msg, chat = row
+    inv = msg.investigation_json
+    if not isinstance(inv, dict):
+        raise HTTPException(status_code=400, detail="This message has no investigation to save.")
+    conclusion = inv.get("conclusion") or {}
+    root_cause = str(conclusion.get("root_cause", "")).strip() if isinstance(conclusion, dict) else ""
+    if not root_cause or root_cause.lower() == "inconclusive":
+        raise HTTPException(
+            status_code=400,
+            detail="The investigation has no concrete root cause to save as case law.",
+        )
+
+    from app.agent.investigation_summary import confidence_score
+    from app.architectures import memory as _mem
+    from app.architectures import registry as _arch_reg
+
+    # Resolve which architecture's Memory to write to: an explicit pick wins; otherwise
+    # use the single architecture linked to the chat's workload. When ambiguous (zero or
+    # many), ask the caller to choose rather than guessing where the knowledge lands.
+    arch_id = (payload.architecture_id or "").strip()
+    arch: dict[str, Any] | None = None
+    if arch_id:
+        arch = _arch_reg.get_architecture(arch_id)
+        if not arch or (arch.get("tenant_id") and arch.get("tenant_id") != principal.tenant_id):
+            raise HTTPException(status_code=404, detail="Architecture not found.")
+    else:
+        all_archs = _arch_reg.list_architectures(principal.tenant_id)
+        linked = [a for a in all_archs if a.get("workload_id") and a.get("workload_id") == chat.workload_id]
+        if len(linked) == 1:
+            arch = linked[0]
+        else:
+            return {
+                "saved": False,
+                "needs_selection": True,
+                "reason": "no_linked_architecture" if not linked else "multiple_linked_architectures",
+                "candidates": [
+                    {"id": a["id"], "name": a.get("name", ""), "workload_name": a.get("workload_name", "")}
+                    for a in (linked or all_archs)
+                ],
+            }
+
+    entry = _mem.build_known_issue_entry(
+        root_cause=root_cause,
+        summary=str(conclusion.get("summary", "")).strip(),
+        severity=str(conclusion.get("severity", "")).strip(),
+        evidence=[str(x) for x in (conclusion.get("evidence") or [])],
+        actions=[str(x) for x in (conclusion.get("actions") or [])],
+        confidence=confidence_score(inv),
+        chat_title=chat.title or "",
+        message_id=message_id,
+        when=msg.created_at,
+    )
+    saved, appended = _mem.append_known_issue(
+        arch["id"],
+        entry_markdown=entry,
+        dedupe_token=f"ref {message_id}",
+        actor=principal.email or principal.subject,
+        tenant_id=principal.tenant_id,
+        workload_id=arch.get("workload_id", ""),
+        title=arch.get("name", ""),
+    )
+    if saved is None:
+        raise HTTPException(status_code=500, detail="Could not write to architecture memory.")
+    return {
+        "saved": True,
+        "already_saved": not appended,
+        "architecture_id": arch["id"],
+        "architecture_name": arch.get("name", ""),
+        "memory_id": saved.get("id", ""),
+    }
+
+
 @router.post("", response_model=ChatOut)
 async def create_chat(
     payload: ChatCreate,

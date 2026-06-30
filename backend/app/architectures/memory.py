@@ -245,6 +245,94 @@ def upsert_memory(
     return dict(merged)
 
 
+def build_known_issue_entry(
+    *,
+    root_cause: str,
+    summary: str = "",
+    severity: str = "",
+    evidence: list[str] | None = None,
+    actions: list[str] | None = None,
+    confidence: int | None = None,
+    chat_title: str = "",
+    message_id: str = "",
+    when: Any = None,
+) -> str:
+    """Format a deep-investigation RCA as a Markdown 'known issue' entry for Case Law.
+
+    The output is appended verbatim to the ``known_issues`` section so a future
+    investigation injects it back as expert context — closing the learning loop."""
+    date = ""
+    if when is not None:
+        try:
+            date = when.date().isoformat() if hasattr(when, "date") else str(when)[:10]
+        except Exception:  # noqa: BLE001
+            date = str(when)[:10]
+    if not date:
+        date = _now()[:10]
+    meta: list[str] = []
+    if confidence is not None:
+        meta.append(f"confidence {confidence}%")
+    if severity:
+        meta.append(f"severity {severity}")
+    meta_str = f" ({', '.join(meta)})" if meta else ""
+    lines = [f"### {date} — {root_cause}{meta_str}"]
+    if summary:
+        lines += ["", summary]
+    ev = [str(e).strip() for e in (evidence or []) if str(e).strip()]
+    if ev:
+        lines += ["", "**Evidence:**"] + [f"- {e}" for e in ev]
+    ac = [str(a).strip() for a in (actions or []) if str(a).strip()]
+    if ac:
+        lines += ["", "**Recommended actions:**"] + [f"- {a}" for a in ac]
+    prov = "Learned from investigation"
+    if chat_title:
+        prov += f' \u201c{chat_title}\u201d'
+    if message_id:
+        prov += f" \u00b7 ref {message_id}"
+    lines += ["", f"_{prov}_"]
+    return "\n".join(lines).strip()
+
+
+def append_known_issue(
+    architecture_id: str,
+    *,
+    entry_markdown: str,
+    dedupe_token: str = "",
+    actor: str = "",
+    tenant_id: str = "",
+    workload_id: str = "",
+    title: str = "",
+    reason: str = "RCA learned from investigation",
+) -> tuple[dict[str, Any] | None, bool]:
+    """Append a Markdown entry to the architecture's ``known_issues`` section, creating the
+    memory and/or the section if they don't exist yet. Auto-snapshots a revision via
+    ``upsert_memory``. Returns ``(memory, appended)`` — ``appended`` is False when
+    ``dedupe_token`` already appears in the section (idempotent re-save)."""
+    entry = (entry_markdown or "").strip()
+    if not architecture_id or not entry:
+        return None, False
+    memory = get_memory(architecture_id)
+    sections = [dict(s) for s in (memory.get("sections", []) or [])] if memory else []
+    ki = next((s for s in sections if s.get("key") == "known_issues"), None)
+    if ki is None:
+        ki = {"key": "known_issues", "label": section_label("known_issues"), "content": ""}
+        sections.append(ki)
+    existing = str(ki.get("content") or "")
+    if dedupe_token and dedupe_token in existing:
+        return memory, False
+    ki["content"] = (existing.strip() + "\n\n" + entry).strip() if existing.strip() else entry
+    saved = upsert_memory(
+        architecture_id,
+        workload_id=workload_id or (memory or {}).get("workload_id", ""),
+        title=title or (memory or {}).get("title", ""),
+        sections=sections,
+        tenant_id=tenant_id or (memory or {}).get("tenant_id", ""),
+        actor=actor,
+        reason=reason,
+    )
+    return saved, True
+
+
 def delete_memory(architecture_id: str) -> bool:
     data = _read()
     if architecture_id in data.get("memories", {}):

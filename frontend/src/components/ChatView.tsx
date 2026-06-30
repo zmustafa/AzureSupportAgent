@@ -178,6 +178,12 @@ const ReservationsMonitorPanel = lazy(() =>
 const QuotaMonitorPanel = lazy(() =>
   import("./QuotaView").then((m) => ({ default: m.QuotaMonitorPanel })),
 );
+const CapabilityMatrixPanel = lazy(() =>
+  import("./CapabilityView").then((m) => ({ default: m.CapabilityMatrixPanel })),
+);
+const CasesPanel = lazy(() =>
+  import("./CasesView").then((m) => ({ default: m.CasesPanel })),
+);
 const PerformancePanel = lazy(() =>
   import("./PerformanceView").then((m) => ({ default: m.PerformancePanel })),
 );
@@ -568,6 +574,8 @@ export default function ChatView() {
   const inBackupDr = location.pathname.startsWith("/backupdr");
   // Evidence Locker (investigation snapshots).
   const inEvidence = location.pathname.startsWith("/evidence");
+  // Durable Case Files (the persistent incident spine).
+  const inCases = location.pathname.startsWith("/cases");
   // Retirement & Breaking-Change Radar (admin-only).
   const inRadar = location.pathname.startsWith("/radar");
   // Telemetry Intelligence (AI correlation & triage over App Insights, admin-only).
@@ -576,6 +584,8 @@ export default function ChatView() {
   const inReservations = location.pathname.startsWith("/reservations");
   // Quota Monitor (subscription/region quota posture).
   const inQuota = location.pathname.startsWith("/quota");
+  // Connection capability & blind-spot matrix (what each connection can/can't reach).
+  const inCapability = location.pathname.startsWith("/capability");
   // Performance Profiler (profile against AMBA, admin-only).
   const inPerformance = location.pathname.startsWith("/performance");
   // Estate Graph: central workload-aware knowledge graph (admin-only).
@@ -668,7 +678,7 @@ export default function ChatView() {
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
     || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
-    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota;
+    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota || inCapability || inCases;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2078,12 +2088,41 @@ export default function ChatView() {
     try { raw = sessionStorage.getItem("azsup.warRoomHandoff"); } catch { /* ignore */ }
     if (!raw) return;
     try { sessionStorage.removeItem("azsup.warRoomHandoff"); } catch { /* ignore */ }
-    let scope: { workloadId?: string; prompt?: string };
+    let scope: { workloadId?: string; workloadName?: string; prompt?: string; title?: string; severity?: string };
     try { scope = JSON.parse(raw); } catch { return; }
     syncedChatRef.current = activeChat?.id ?? null;
     setThinkingLevel("deep");
     if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
     if (scope.prompt) setInputSynced(scope.prompt);
+    // Durable spine: the sessionStorage handoff is one-shot and dies on refresh, so mirror
+    // the War Room context into a server-side Case File. Reuse an open case for the same
+    // workload (so re-investigating doesn't pile up duplicates) or open a new one. Best-
+    // effort — a failure here must never block the investigation itself.
+    if (scope.workloadId) {
+      (async () => {
+        try {
+          const wid = scope.workloadId as string;
+          const existing = await api.cases({ workloadId: wid, openOnly: true });
+          const open = existing.cases[0];
+          if (open) {
+            await api.addCaseNote(
+              open.id,
+              scope.prompt ? `War Room re-opened: ${scope.prompt.slice(0, 200)}` : "War Room re-opened from a dashboard.",
+              "handoff",
+            );
+          } else {
+            await api.createCase({
+              title: scope.title || `Investigation: ${scope.workloadName || wid}`,
+              summary: scope.prompt || "",
+              severity: scope.severity || "warning",
+              workload_id: wid,
+              workload_name: scope.workloadName || null,
+            });
+          }
+          qc.invalidateQueries({ queryKey: ["cases"] });
+        } catch { /* best-effort; the durable case is a convenience, not a gate */ }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
 
@@ -2431,21 +2470,25 @@ export default function ChatView() {
             architectures: ArchitectureIcon, knowme: KnowMeIcon, fmea: FmeaIcon, ownership: OwnershipIcon, graph: GraphIcon,
             assessments: AssessmentIcon, performance: PerformanceIcon,
             coverage: CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
+            capability: CoverageIcon,
             inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
             policy: PolicyIcon, identity: IdentityIcon, rbac: RbacIcon,
             radar: RadarIcon, reservations: ReservationIcon,
             quota: PerformanceIcon,
             "telemetry-intel": TelemetryIntelIcon, evidence: EvidenceIcon,
+            cases: EvidenceIcon,
           };
           const activeById: Record<string, boolean> = {
             architectures: inArchitectures, knowme: inKnowMe, fmea: inFmea, ownership: inOwnership, graph: inGraph,
             assessments: inAssessments, performance: inPerformance,
             coverage: inCoverage, telemetry: inTelemetry, backupdr: inBackupDr,
+            capability: inCapability,
             inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
             policy: inPolicy, identity: inIdentity, rbac: inRbac,
             radar: inRadar, reservations: inReservations,
             quota: inQuota,
             "telemetry-intel": inTeleIntel, evidence: inEvidence,
+            cases: inCases,
           };
           const anyActive = inAnyProactive;
           return railCollapsed ? (
@@ -3116,6 +3159,22 @@ export default function ChatView() {
           <PanelErrorBoundary name="Quota Monitor">
             <Suspense fallback={<PanelLoading />}>
               <QuotaMonitorPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inCapability ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Connection Capability">
+            <Suspense fallback={<PanelLoading />}>
+              <CapabilityMatrixPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inCases ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Case Files">
+            <Suspense fallback={<PanelLoading />}>
+              <CasesPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>
@@ -3888,6 +3947,11 @@ export default function ChatView() {
           <InvestigationPanel
             investigation={panelInv}
             live={openInvestigation === "__live__"}
+            messageId={
+              openInvestigation && openInvestigation !== "__live__" && openInvestigation !== "__deep_idle__"
+                ? openInvestigation
+                : undefined
+            }
             pinned={investigationPinned}
             onTogglePin={toggleInvestigationPinned}
             onClose={() => {
@@ -4544,17 +4608,102 @@ function investigationConfidence(
   return Math.max(0, Math.min(100, Math.round(score * 100)));
 }
 
+/** "Save to Case Law" — file an investigation's RCA into the linked architecture's
+ * Memory so the next investigation recalls it. Handles the disambiguation flow when zero
+ * or several architectures are linked to the chat's workload. */
+function SaveToCaseLaw({ messageId }: { messageId: string }) {
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [msg, setMsg] = useState("");
+  const [choices, setChoices] = useState<{ id: string; name: string }[] | null>(null);
+
+  async function save(architectureId?: string) {
+    setState("saving");
+    setChoices(null);
+    try {
+      const r = await api.saveInvestigationRca(messageId, architectureId);
+      if (r.saved) {
+        setState("saved");
+        setMsg(
+          r.already_saved
+            ? `Already in ${r.architecture_name || "Case Law"}`
+            : `Saved to ${r.architecture_name || "architecture"} · Case Law`,
+        );
+      } else if (r.needs_selection && r.candidates && r.candidates.length > 0) {
+        setState("idle");
+        setChoices(r.candidates.map((c) => ({ id: c.id, name: c.name || c.workload_name || c.id })));
+        setMsg(
+          r.reason === "multiple_linked_architectures"
+            ? "Several architectures are linked — pick where to file this:"
+            : "No linked architecture — choose where to file this:",
+        );
+      } else {
+        setState("error");
+        setMsg("No architecture available. Create one and link it to this workload first.");
+      }
+    } catch {
+      setState("error");
+      setMsg("Couldn't save to Case Law.");
+    }
+  }
+
+  if (state === "saved") {
+    return (
+      <div className="mt-3 flex items-center gap-1.5 text-[12px] font-medium text-emerald-700">
+        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 10l4 4 8-9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {msg}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-emerald-200/70 pt-2.5">
+      {choices ? (
+        <div className="space-y-1.5">
+          <div className="text-[11px] text-gray-600">{msg}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {choices.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => save(c.id)}
+                className="rounded-lg border border-emerald-300 bg-white px-2 py-1 text-[12px] font-medium text-emerald-700 transition hover:bg-emerald-50"
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={() => save()}
+            disabled={state === "saving"}
+            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[12px] font-medium text-white transition hover:bg-emerald-700 disabled:opacity-60"
+            title="File this root-cause analysis into the linked architecture's Memory so future investigations recall it"
+          >
+            {state === "saving" ? "Saving…" : "📚 Save to Case Law"}
+          </button>
+          {state === "error" && <div className="mt-1 text-[11px] text-red-600">{msg}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Right-side drawer rendering a deep-investigation: phase timeline, the branching
  * hypothesis tree with colored status pills, and the structured conclusion. */
 function InvestigationPanel({
   investigation,
   live,
+  messageId,
   pinned,
   onTogglePin,
   onClose,
 }: {
   investigation: Investigation;
   live?: boolean;
+  messageId?: string;
   pinned?: boolean;
   onTogglePin?: () => void;
   onClose: () => void;
@@ -4792,6 +4941,10 @@ function InvestigationPanel({
                 </ul>
               </div>
             )}
+            {messageId && !live && (conclusion.root_cause || "").trim() &&
+              (conclusion.root_cause || "").trim().toLowerCase() !== "inconclusive" && (
+                <SaveToCaseLaw messageId={messageId} />
+              )}
           </div>
         )}
 

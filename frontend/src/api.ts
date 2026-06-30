@@ -221,7 +221,53 @@ export type IdentityOverview = {
   never_loaded?: boolean;
 };
 
-// ---- App Registrations (Identity tab) -------------------------------------------
+// ---- PIM / JIT lifecycle review (Identity tab) ----------------------------------
+export type PimGroupKey = "standing_access" | "stale_eligible" | "stale_active" | "activation_review";
+
+export type PimFinding = {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string;
+  severity: "critical" | "error" | "warning" | "info" | "ok";
+  subject: string;
+  subject_id: string;
+  role: string;
+  role_tier: "tier0" | "tier1" | "tier2";
+  scope: string;
+  assignment_type: "eligible" | "active" | "activated" | "";
+  last_activated_at?: string | null;
+  days_idle?: number | null;
+  activation_count_90d?: number | null;
+  expires_at?: string | null;
+  days_left?: number | null;
+  workload_id?: string | null;
+  workload_name?: string | null;
+  remediation: string;
+};
+
+export type PimOverview = {
+  generated_at: string;
+  tenant_id: string;
+  connection_configured: boolean;
+  kpis: {
+    standing_access: number;
+    high_priv_standing: number;
+    stale_eligible: number;
+    stale_active: number;
+    activations: number;
+  };
+  group_severity: Record<PimGroupKey, string>;
+  groups: Record<PimGroupKey, PimFinding[]>;
+  errors: Partial<Record<PimGroupKey, string>>;
+  meta: { source?: string; thresholds?: Record<string, number> };
+  ttl_s: number;
+  age_seconds: number | null;
+  stale: boolean;
+  never_loaded?: boolean;
+};
+
+
 export type AppRegCredential = {
   type: "secret" | "certificate";
   displayName: string;
@@ -2079,9 +2125,135 @@ export type QuotaScanParams = {
   include_unused?: boolean;
 };
 
+// ---- Connection capability & blind-spot matrix -----------------------------------
+export type CapStatus = "full" | "degraded" | "blind" | "disabled";
+export interface CapCell {
+  status: CapStatus;
+  reason: string;
+  remediation?: string;
+}
+export interface CapabilityColumn {
+  key: string;
+  label: string;
+  desc: string;
+}
+export interface CapabilityConnection {
+  id: string;
+  display_name: string;
+  auth_method: string;
+  tenant_id: string;
+  default_subscription: string;
+  is_default: boolean;
+  disabled: boolean;
+  read_only: boolean;
+  status: string;
+  status_detail: string;
+  last_tested: string;
+  log_analytics_workspace_id: string;
+  has_graph_token: boolean;
+  caps: Record<string, CapCell>;
+  blind_spots: string[];
+  score: number;
+}
+export interface CapabilityMatrix {
+  generated_at: string;
+  live: boolean;
+  capabilities: CapabilityColumn[];
+  connections: CapabilityConnection[];
+  summary: { connections: number; with_blind_spots: number; fully_capable: number };
+}
+
+// ---- Case Law: save an investigation RCA into architecture Memory ----------------
+export interface SaveRcaResult {
+  saved: boolean;
+  already_saved?: boolean;
+  architecture_id?: string;
+  architecture_name?: string;
+  memory_id?: string;
+  needs_selection?: boolean;
+  reason?: "no_linked_architecture" | "multiple_linked_architectures";
+  candidates?: { id: string; name: string; workload_name?: string }[];
+}
+
+// ---- Durable Case Files ----------------------------------------------------------
+export type CaseStatus =
+  | "open" | "investigating" | "remediating" | "verifying" | "resolved" | "closed";
+export interface CaseFile {
+  id: string;
+  title: string;
+  summary: string;
+  status: CaseStatus;
+  severity: string;
+  risk_score: number | null;
+  confidence: number | null;
+  workload_id: string;
+  workload_name: string;
+  connection_id: string;
+  architecture_id: string;
+  finding_uids: string[];
+  change_event_ids: string[];
+  investigation_chat_id: string;
+  investigation_message_id: string;
+  evidence_snapshot_ids: string[];
+  remediation_task_id: string;
+  verification_json: Record<string, unknown> | null;
+  assignee: string;
+  opened_by: string;
+  opened_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+export interface CaseTimelineEvent {
+  id: string;
+  case_id: string;
+  kind: string;
+  actor: string;
+  message: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+export interface CaseListResp {
+  cases: CaseFile[];
+  summary: { total: number; open: number };
+}
+export interface CaseDetail {
+  case: CaseFile;
+  timeline: CaseTimelineEvent[];
+}
+export interface CaseCreateBody {
+  title: string;
+  summary?: string;
+  severity?: string;
+  workload_id?: string | null;
+  workload_name?: string | null;
+  connection_id?: string | null;
+  architecture_id?: string | null;
+  investigation_chat_id?: string | null;
+  investigation_message_id?: string | null;
+  finding_uids?: string[];
+  change_event_ids?: string[];
+  risk_score?: number | null;
+  confidence?: number | null;
+  assignee?: string | null;
+}
+export interface CaseUpdateBody {
+  title?: string;
+  summary?: string;
+  status?: CaseStatus;
+  severity?: string;
+  risk_score?: number | null;
+  confidence?: number | null;
+  assignee?: string | null;
+  remediation_task_id?: string | null;
+  verification_json?: Record<string, unknown> | null;
+}
+
 export const api = {
   me: () => http<Me>("/me"),
   activeLlm: () => http<ActiveLlm>("/llm/active"),
+  // Connection capability & blind-spot matrix. live=true verifies ARM/Graph tokens for real.
+  capabilityMatrix: (live = false) =>
+    http<CapabilityMatrix>(`/capability/matrix?live=${live ? "true" : "false"}`),
   listChats: () => http<Chat[]>("/chats"),
   // Server source of truth for chats with an in-flight turn (cross-tab spinners).
   activeTurns: () => http<{ active: string[] }>("/chats/active"),
@@ -2091,6 +2263,40 @@ export const api = {
   // Recent deep investigations across the caller's chats (history + confidence).
   deepInvestigations: (limit = 30) =>
     http<{ investigations: DeepInvestigationSummary[] }>(`/chats/investigations?limit=${limit}`),
+  // Save an investigation's root-cause analysis into the linked architecture's Memory
+  // ("Case Law"). Pass architectureId to disambiguate when several are linked.
+  saveInvestigationRca: (messageId: string, architectureId?: string) =>
+    http<SaveRcaResult>(`/chats/investigations/${messageId}/save-rca`, {
+      method: "POST",
+      body: JSON.stringify({ architecture_id: architectureId ?? null }),
+    }),
+  // Durable Case Files — the persistent spine of an incident.
+  cases: (opts?: { status?: string; workloadId?: string; openOnly?: boolean }) => {
+    const p = new URLSearchParams();
+    if (opts?.status) p.set("status", opts.status);
+    if (opts?.workloadId) p.set("workload_id", opts.workloadId);
+    if (opts?.openOnly) p.set("open_only", "true");
+    const qs = p.toString();
+    return http<CaseListResp>(`/cases${qs ? `?${qs}` : ""}`);
+  },
+  caseMeta: () => http<{ statuses: CaseStatus[]; severities: string[] }>("/cases/meta"),
+  createCase: (body: CaseCreateBody) =>
+    http<CaseFile>("/cases", { method: "POST", body: JSON.stringify(body) }),
+  getCase: (id: string) => http<CaseDetail>(`/cases/${id}`),
+  updateCase: (id: string, body: CaseUpdateBody) =>
+    http<CaseFile>(`/cases/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  attachToCase: (id: string, field: string, values: string[], label?: string) =>
+    http<CaseFile>(`/cases/${id}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ field, values, label }),
+    }),
+  addCaseNote: (id: string, message: string, kind = "note") =>
+    http<CaseTimelineEvent>(`/cases/${id}/events`, {
+      method: "POST",
+      body: JSON.stringify({ message, kind }),
+    }),
+  deleteCase: (id: string) =>
+    http<{ deleted: boolean }>(`/cases/${id}`, { method: "DELETE" }),
   createChat: () => http<Chat>("/chats", { method: "POST", body: "{}" }),
   deleteChat: (id: string) => http<{ ok: boolean }>(`/chats/${id}`, { method: "DELETE" }),
   deleteAllChats: () => http<{ ok: boolean; deleted: number }>("/chats", { method: "DELETE" }),
@@ -3208,6 +3414,19 @@ export const api = {
       "/identity/ticket",
       { method: "POST", body: JSON.stringify(body) },
     ),
+  // PIM / JIT lifecycle review — server-cached; visiting reads, refresh recomputes.
+  pimOverview: (connectionId?: string | null) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    const qs = q.toString();
+    return http<PimOverview>(`/identity/pim${qs ? `?${qs}` : ""}`);
+  },
+  refreshPim: (connectionId?: string | null) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    const qs = q.toString();
+    return http<PimOverview>(`/identity/pim/refresh${qs ? `?${qs}` : ""}`, { method: "POST" });
+  },
   // App Registrations (Identity tab) — server-cached; refresh forces a re-pull.
   appRegistrations: (connectionId?: string | null) =>
     http<AppRegistrationsResponse>(

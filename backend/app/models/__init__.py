@@ -549,6 +549,66 @@ class VmRun(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Case(Base):
+    """A durable investigation case file — the persistent spine of an incident.
+
+    Replaces the fragile sessionStorage War Room handoff: a Case survives refreshes, tab
+    closes and reassignment, and stitches together the finding(s) that opened it, the deep
+    investigation, evidence snapshots, the remediation task and the post-fix verification —
+    with an append-only timeline (CaseEvent) recording everything that happened."""
+
+    __tablename__ = "cases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(512), default="Untitled case")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # open → investigating → remediating → verifying → resolved → closed
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="info")  # info|warning|error|critical
+    risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0-100
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0-100 (from investigation)
+    # Scope linkage.
+    workload_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    workload_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    architecture_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Cross-feature attachments that stitch the estate operations loop together.
+    finding_uids: Mapped[list] = mapped_column(JSON, default=list)  # assessment/identity finding keys
+    change_event_ids: Mapped[list] = mapped_column(JSON, default=list)  # change-explorer ids
+    investigation_chat_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    investigation_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    evidence_snapshot_ids: Mapped[list] = mapped_column(JSON, default=list)
+    remediation_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    verification_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # post-fix recheck result
+    # Ownership + lifecycle timestamps.
+    assignee: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    opened_by: Mapped[str] = mapped_column(String(128), default="")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CaseEvent(Base):
+    """One append-only entry in a Case's timeline.
+
+    Records status changes, attachments, notes and handoffs so the full history of an
+    incident is reconstructable and auditable, independent of any chat thread."""
+
+    __tablename__ = "case_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    case_id: Mapped[str] = mapped_column(String(36), index=True)
+    # opened|status|note|attach|investigation|handoff|resolved|reopened|assigned
+    kind: Mapped[str] = mapped_column(String(32), default="note")
+    actor: Mapped[str] = mapped_column(String(256), default="")
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 # Auth / access-control models (users, roles, groups, sessions, identity providers).
 # Imported here so they register on Base.metadata for create_all / schema sync.
 from app.models.auth import (  # noqa: E402,F401

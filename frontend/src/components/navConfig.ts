@@ -120,6 +120,7 @@ export const PROACTIVE_NAV: ProactiveItem[] = [
   { id: "coverage", to: "/coverage", label: "Monitoring Coverage", icon: "📡", group: "Coverage", desc: "Measure Azure Monitor baseline alert coverage and close gaps with generated IaC." },
   { id: "telemetry", to: "/telemetry", label: "Telemetry Coverage", icon: "📊", desc: "Measure diagnostic-settings coverage per resource type against the recommended baseline." },
   { id: "backupdr", to: "/backupdr", label: "Backup & DR Coverage", icon: "🔁", desc: "Audit backup and disaster-recovery protection and generate remediation runbooks." },
+  { id: "capability", to: "/capability", label: "Connection Capability", icon: "🔌", desc: "What each Azure connection can and can't reach — ARM, Graph, Log Analytics, Key Vault and gated writes — surfacing the blind spots that make an answer half-blind." },
   // Estate intelligence — what's deployed, how it's tagged, what changed.
   { id: "inventory", to: "/inventory", label: "Inventory", icon: "📋", group: "Estate intelligence", desc: "A unified resource grid with overview, location, cost and optimization lenses." },
   { id: "tagintel", to: "/tagintel", label: "Tag Intelligence", icon: "🏷️", desc: "Tag census, hygiene, coverage, cost allocation, drift and policy generation." },
@@ -134,6 +135,7 @@ export const PROACTIVE_NAV: ProactiveItem[] = [
   { id: "quota", to: "/quota", label: "Quota Monitor", icon: "📊", desc: "Subscription/region quota usage, limits, headroom and risk — before deployments fail." },
   { id: "telemetry-intel", to: "/telemetry-intel", label: "Telemetry Intelligence", icon: "🔬", desc: "AI correlation and triage over Application Insights with KQL translation." },
   { id: "evidence", to: "/evidence", label: "Evidence Locker", icon: "🗄️", desc: "Investigation snapshots, diffs, sharing and export for audit trails." },
+  { id: "cases", to: "/cases", label: "Case Files", icon: "🗂️", desc: "Durable incident case files — findings → investigation → evidence → remediation → verification on one append-only timeline that survives refresh and reassignment." },
 ];
 
 export const PROACTIVE_PATHS = new Set<string>(PROACTIVE_NAV.map((n) => n.to));
@@ -370,10 +372,11 @@ export const OWNERSHIP_TAB_IDS = new Set<OwnershipTab>(OWNERSHIP_NAV.map((n) => 
 // ---- Identity -------------------------------------------------------------------
 // Sub-tabs of the Identity screen, driven by the /identity/:tab URL so a refresh (or a
 // shared link) restores the same view. "overview" is the default (bare /identity).
-export type IdentityTab = "overview" | "app-registrations";
+export type IdentityTab = "overview" | "pim" | "app-registrations";
 
 export const IDENTITY_NAV: { id: IdentityTab; label: string }[] = [
   { id: "overview", label: "🔍 Security Findings" },
+  { id: "pim", label: "🔑 PIM / JIT" },
   { id: "app-registrations", label: "📝 App Registrations" },
 ];
 

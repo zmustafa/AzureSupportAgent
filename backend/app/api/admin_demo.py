@@ -91,6 +91,9 @@ def _purge_features(tenant_id: str) -> dict[str, Any]:
     from app.identity import appregs_cache
     step("app_registrations", lambda: appregs_cache.delete_demo(tenant_id))
 
+    from app.identity import pim_cache
+    step("pim_lifecycle", lambda: pim_cache.delete_snapshot(tenant_id))
+
     from app.rbac import cache as rbac_cache
     step("rbac", lambda: rbac_cache.purge_demo(tenant_id))
 
@@ -209,6 +212,7 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     from app.teleintel import demo as ti_demo
     from app.telemetry import demo as tel_demo
     from app.identity import appregs
+    from app.identity import pim as pim_demo
     from app.workloads import demo_workloads as zava_demo
     from app.demo_catalog import all_demo_ids
 
@@ -232,6 +236,7 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     step("rbac", lambda: rbac_demo.seed_demo(tenant_id))
     step("reservations", lambda: res_cache.write_snapshot(tenant_id, res_demo.DEMO_SCOPE_ID, res_demo.seed_demo()))
     step("app_registrations", lambda: appregs.seed_demo(tenant_id))
+    step("pim_lifecycle", lambda: pim_demo.seed_demo(tenant_id))
     step("evidence_locker", lambda: ev_demo.seed_demo(tenant_id=tenant_id))
     step("dns_debug", lambda: dns_demo.seed_demo(tenant_id=tenant_id))
     step("network_reachability", lambda: nc_demo.seed_demo(tenant_id=tenant_id))

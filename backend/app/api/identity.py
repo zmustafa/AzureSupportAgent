@@ -180,6 +180,88 @@ async def refresh(
     return snap
 
 
+# --------------------------------------------------------------------------- PIM / JIT review
+_PIM_GROUPS = ("standing_access", "stale_eligible", "stale_active", "activation_review")
+
+
+def _empty_pim(tenant_id: str, connection: dict[str, Any] | None) -> dict[str, Any]:
+    """A 'not loaded yet' PIM snapshot — empty groups so the UI prompts the user to Refresh.
+    Visiting the page must never trigger the (slow) Graph aggregation; only Refresh recomputes."""
+    return {
+        "generated_at": "",
+        "tenant_id": tenant_id,
+        "connection_configured": connection is not None,
+        "kpis": {"standing_access": 0, "high_priv_standing": 0, "stale_eligible": 0, "stale_active": 0, "activations": 0},
+        "group_severity": {g: "ok" for g in _PIM_GROUPS},
+        "groups": {g: [] for g in _PIM_GROUPS},
+        "errors": {},
+        "meta": {},
+        "never_loaded": True,
+    }
+
+
+async def _get_pim(principal: Principal, *, force: bool, connection_id: str | None) -> dict[str, Any]:
+    from app.core.azure_connections import resolve_connection
+    from app.identity import pim, pim_cache
+
+    ttl, _ = _settings()
+    connection = resolve_connection(connection_id)
+    tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
+
+    if not force:
+        snap = pim_cache.read_snapshot(tenant_id)
+        base = snap if snap else _empty_pim(tenant_id, connection)
+        age = pim_cache.age_seconds(base)
+        out = dict(base)
+        out["ttl_s"] = ttl
+        out["age_seconds"] = int(age) if age is not None else None
+        out["stale"] = (age is None) or (age >= ttl)
+        out.setdefault("never_loaded", not bool(snap))
+        return out
+
+    lock = pim_cache.get_lock(tenant_id)
+    async with lock:
+        fresh = await pim.collect_pim(connection, tenant_id=tenant_id)
+        pim_cache.write_snapshot(tenant_id, fresh)
+        age = pim_cache.age_seconds(fresh)
+        fresh = dict(fresh)
+        fresh["ttl_s"] = ttl
+        fresh["age_seconds"] = int(age) if age is not None else 0
+        fresh["stale"] = False
+        fresh["never_loaded"] = False
+        return fresh
+
+
+@router.get("/pim")
+async def pim_overview(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return the PIM / JIT lifecycle snapshot — cached; visiting never recomputes."""
+    return await _get_pim(principal, force=False, connection_id=connection_id)
+
+
+@router.post("/pim/refresh")
+async def pim_refresh(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Force a recompute of the PIM snapshot and overwrite the cache (Refresh button)."""
+    snap = await _get_pim(principal, force=True, connection_id=connection_id)
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="identity.pim.refresh",
+            target="pim",
+            metadata_json={"kpis": snap.get("kpis", {})},
+        )
+    )
+    await db.commit()
+    return snap
+
+
 # --------------------------------------------------------------------------- app registrations
 def _empty_appregs(tenant_id: str) -> dict[str, Any]:
     """A 'not loaded yet' snapshot — no apps, never_loaded flag set so the UI prompts the
