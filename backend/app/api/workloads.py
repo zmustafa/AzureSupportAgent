@@ -114,6 +114,182 @@ async def merge_workloads_endpoint(payload: MergeRequest, _: Principal = Depends
     return {"workload": merged}
 
 
+# ----------------------------------------------------------------- groups (applications)
+# A Workload Group is a lightweight, NON-destructive association ("application" / service
+# family) over workloads that keep their own identity — e.g. "CRM PROD" + "CRM DEV" under a
+# "CRM" group. Membership lives as ``group_id`` on each workload (see registry.py). These
+# routes are registered BEFORE the ``/{workload_id}`` routes so ``groups`` is never captured
+# as a workload id.
+class GroupUpsert(BaseModel):
+    id: str | None = None
+    name: str = Field(max_length=200)
+    description: str = Field(default="", max_length=2000)
+    color: str = Field(default="", max_length=32)
+    owner: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list)
+
+
+class GroupAssign(BaseModel):
+    group_id: str = ""  # existing group to assign to (ignored when `name` creates one)
+    name: str = Field(default="", max_length=200)  # create a new group with this name
+    workload_ids: list[str] = Field(default_factory=list)
+    mode: str = "add"  # add | remove
+
+
+def _members_by_group(workloads: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for w in workloads:
+        gid = w.get("group_id") or ""
+        if gid:
+            out.setdefault(gid, []).append(w)
+    return out
+
+
+def _member_ref(w: dict) -> dict:
+    return {
+        "id": w["id"],
+        "name": w.get("name", ""),
+        "environment": w.get("environment", ""),
+        "criticality": w.get("criticality", ""),
+        "connection_id": w.get("connection_id", ""),
+    }
+
+
+@router.put("/groups")
+async def upsert_group_endpoint(payload: GroupUpsert, principal: Principal = Depends(_write)):
+    """Create or update a Workload Group's metadata (name/description/owner/color/tags).
+    Membership is managed separately via ``POST /groups/assign``."""
+    from app.workloads import groups as wl_groups
+
+    data = payload.model_dump()
+    if not payload.id:
+        data["created_by"] = principal.subject
+        data["tenant_id"] = principal.tenant_id or ""
+    return {"group": wl_groups.upsert_group(data)}
+
+
+@router.get("/groups")
+async def list_groups_endpoint(principal: Principal = Depends(get_principal)):
+    """List Workload Groups, each with its member refs + a cache-only rollup (aggregate
+    health, resources, worst criticality, environment mix, risk). One request powers the
+    grouped fleet view."""
+    from app.core.app_settings import load_settings
+    from app.workloads import groups as wl_groups
+    from app.workloads import profile as wl_profile
+
+    settings = load_settings()
+    tenant = _profile_tenant(principal)
+    all_wl = wl_registry.list_workloads()
+    by_group = _members_by_group(all_wl)
+    out = []
+    for g in wl_groups.list_groups():
+        members = by_group.get(g["id"], [])
+        profiles = wl_profile.build_profiles(members, tenant, settings)
+        out.append({
+            **g,
+            "member_ids": [m["id"] for m in members],
+            "members": [_member_ref(m) for m in members],
+            "member_count": len(members),
+            "rollup": wl_groups.rollup_from_profiles(profiles),
+        })
+    ungrouped = sum(1 for w in all_wl if not w.get("group_id"))
+    return {"groups": out, "ungrouped": ungrouped, "total_workloads": len(all_wl)}
+
+
+@router.post("/groups/assign")
+async def assign_group_endpoint(payload: GroupAssign, principal: Principal = Depends(_write)):
+    """Assign or unassign workloads to a group. Provide ``group_id`` for an existing group,
+    or ``name`` to create a new group on the fly. ``mode=remove`` detaches the workloads
+    (ignores group_id/name). Non-destructive — the workloads themselves are untouched."""
+    from app.workloads import groups as wl_groups
+
+    if payload.mode == "remove":
+        changed = wl_registry.assign_group(payload.workload_ids, "")
+        return {"ok": True, "updated": changed, "group": None}
+
+    gid = payload.group_id
+    group: dict | None
+    if gid:
+        group = wl_groups.get_group(gid)
+        if group is None:
+            raise HTTPException(status_code=404, detail="Group not found.")
+    elif payload.name.strip():
+        group = wl_groups.upsert_group({
+            "name": payload.name.strip(),
+            "created_by": principal.subject,
+            "tenant_id": principal.tenant_id or "",
+        })
+        gid = group["id"]
+    else:
+        raise HTTPException(
+            status_code=400, detail="Provide an existing group_id or a name for a new group."
+        )
+    changed = wl_registry.assign_group(payload.workload_ids, gid)
+    return {"ok": True, "updated": changed, "group": group}
+
+
+@router.post("/groups/suggest")
+async def suggest_groups_endpoint(_: Principal = Depends(get_principal)):
+    """Suggest Workload Groups from environment-family name patterns ("CRM PROD" + "CRM DEV"
+    → "CRM"). Only considers currently-ungrouped workloads. Read-only, no Azure calls."""
+    from app.workloads import groups as wl_groups
+
+    return {"suggestions": wl_groups.suggest_groups(wl_registry.list_workloads())}
+
+
+@router.get("/groups/{group_id}")
+async def group_detail_endpoint(group_id: str, principal: Principal = Depends(get_principal)):
+    """Full detail for one group: metadata, member workloads, their cache-only profiles and
+    the aggregate rollup — powering the group command-center page."""
+    from app.core.app_settings import load_settings
+    from app.workloads import groups as wl_groups
+    from app.workloads import profile as wl_profile
+
+    group = wl_groups.get_group(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found.")
+    settings = load_settings()
+    tenant = _profile_tenant(principal)
+    members = [w for w in wl_registry.list_workloads() if w.get("group_id") == group_id]
+    profiles = wl_profile.build_profiles(members, tenant, settings)
+    return {
+        "group": group,
+        "members": members,
+        "profiles": profiles,
+        "rollup": wl_groups.rollup_from_profiles(profiles),
+    }
+
+
+@router.get("/groups/{group_id}/compare")
+async def group_compare_endpoint(group_id: str, principal: Principal = Depends(get_principal)):
+    """PROD-vs-DEV drift comparison across a group's members (cache-only): aligned member
+    summaries plus resource-type / category / health-signal coverage drift and human-readable
+    highlights ("PROD has a WAF that DEV lacks"). Powers the group's Compare tab."""
+    from app.core.app_settings import load_settings
+    from app.workloads import groups as wl_groups
+    from app.workloads import profile as wl_profile
+
+    group = wl_groups.get_group(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found.")
+    settings = load_settings()
+    tenant = _profile_tenant(principal)
+    members = [w for w in wl_registry.list_workloads() if w.get("group_id") == group_id]
+    profiles = wl_profile.build_profiles(members, tenant, settings)
+    return {"group": group, "compare": wl_groups.compare_profiles(profiles)}
+
+
+@router.delete("/groups/{group_id}")
+async def delete_group_endpoint(group_id: str, _: Principal = Depends(_write)):
+    """Delete a group. Its member workloads are detached (their ``group_id`` cleared) but NOT
+    deleted."""
+    from app.workloads import groups as wl_groups
+
+    if not wl_groups.delete_group(group_id):
+        raise HTTPException(status_code=404, detail="Group not found.")
+    return {"ok": True}
+
+
 @router.delete("/{workload_id}")
 async def delete_workload_endpoint(workload_id: str, _: Principal = Depends(_write)):
     """Soft-delete a workload: move it to the Trash (restorable until purged)."""

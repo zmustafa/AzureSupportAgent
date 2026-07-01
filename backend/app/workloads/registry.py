@@ -39,6 +39,11 @@ DEFAULTS: dict[str, Any] = {
     "environment": "",        # production | staging | development | test | dr | shared | unknown
     "criticality": "",        # critical | high | medium | low (drives downstream severity/SLA weighting)
     "data_classification": "",  # confidential | internal | public | unknown
+    # Workload Group ("application" / service family) this workload belongs to, or "" when
+    # ungrouped. A lightweight, non-destructive association (see workloads/groups.py) — e.g.
+    # "CRM PROD" and "CRM DEV" share a group while staying separate workloads. Distinct from
+    # merge (which fuses workloads) and overlaps (shared resources).
+    "group_id": "",
     # Evidence the grouper used to justify membership (network/RBAC/dependency/provenance
     # signals). Shape: [{kind, detail}] — surfaced in the UI for trust.
     "evidence": [],
@@ -170,6 +175,44 @@ def empty_trash() -> int:
     if trashed:
         _write(data)
     return len(trashed)
+
+
+def assign_group(workload_ids: list[str], group_id: str) -> int:
+    """Set (or clear, when ``group_id`` is "") the Workload Group association for a set of
+    workloads. Returns the number actually changed. Trashed workloads are skipped, and a
+    workload already carrying the target group is left untouched (no spurious ``updated_at``)."""
+    data = _read()
+    workloads = data.get("workloads", {})
+    changed = 0
+    for wid in workload_ids:
+        wl = workloads.get(wid)
+        if wl is None or wl.get("deleted_at"):
+            continue
+        if wl.get("group_id", "") == group_id:
+            continue
+        wl["group_id"] = group_id
+        wl["updated_at"] = _now()
+        changed += 1
+    if changed:
+        _write(data)
+    return changed
+
+
+def clear_group(group_id: str) -> int:
+    """Remove a group association from every workload that carries it (used when a group is
+    deleted). Includes trashed workloads so no stale reference survives. Returns the count."""
+    if not group_id:
+        return 0
+    data = _read()
+    changed = 0
+    for wl in data.get("workloads", {}).values():
+        if wl.get("group_id") == group_id:
+            wl["group_id"] = ""
+            wl["updated_at"] = _now()
+            changed += 1
+    if changed:
+        _write(data)
+    return changed
 
 
 def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, Any] | None:

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api, type Workload, type WorkloadNode, type WorkloadNodeKind, type WorkloadProfile } from "../api";
+import { api, type Workload, type WorkloadNode, type WorkloadNodeKind, type WorkloadProfile, type WorkloadGroup } from "../api";
 import { formatError } from "../utils/format";
 import { ResourcePicker } from "./ResourcePicker";
 import { AutopilotModal, TypeChips, TYPE_LABELS, CRIT_OPTIONS } from "./AutopilotModal";
@@ -345,6 +345,192 @@ const CLASS_FACETS: { facet: "environment" | "criticality" | "data_classificatio
 const CRIT_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
 
+// ---- Workload Groups (applications / service families) ---------------------------
+// Small rollup chip used on group section headers + the group detail page.
+function RollupChip({ tone, children }: { tone: "gray" | "green" | "amber" | "red" | "indigo"; children: React.ReactNode }) {
+  const cls = {
+    gray: "bg-gray-100 text-gray-600",
+    green: "bg-green-50 text-green-700",
+    amber: "bg-amber-50 text-amber-700",
+    red: "bg-red-50 text-red-700",
+    indigo: "bg-indigo-50 text-indigo-700",
+  }[tone];
+  return <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>;
+}
+
+const bandTone = (band?: string): "green" | "amber" | "red" | "gray" =>
+  band === "good" ? "green" : band === "warn" ? "amber" : band === "poor" ? "red" : "gray";
+
+// Compact rollup summary reused on group headers (and the detail page header).
+export function GroupRollupChips({ rollup }: { rollup: WorkloadGroup["rollup"] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <RollupChip tone={bandTone(rollup.health.band)}>
+        ♥ {rollup.health.avg_score ?? "—"}{rollup.analyzed_count < rollup.member_count ? ` · ${rollup.analyzed_count}/${rollup.member_count} analyzed` : ""}
+      </RollupChip>
+      <RollupChip tone="gray">▦ {rollup.total_resources} resources</RollupChip>
+      {rollup.criticality && <RollupChip tone={rollup.criticality === "critical" || rollup.criticality === "high" ? "red" : "gray"}>◆ {rollup.criticality}</RollupChip>}
+      {rollup.risk.retirements_90d > 0 && <RollupChip tone="amber">⚠ {rollup.risk.retirements_90d} retiring ≤90d</RollupChip>}
+      {rollup.risk.criticals > 0 && <RollupChip tone="red">🔴 {rollup.risk.criticals} critical</RollupChip>}
+    </div>
+  );
+}
+
+// Modal to assign the selected workloads to an existing group or a brand-new one.
+function GroupAssignModal({
+  groups,
+  count,
+  onAssign,
+  onClose,
+}: {
+  groups: WorkloadGroup[];
+  count: number;
+  onAssign: (body: { group_id?: string; name?: string }) => void;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = useState<"existing" | "new">(groups.length ? "existing" : "new");
+  const [groupId, setGroupId] = useState(groups[0]?.id ?? "");
+  const [name, setName] = useState("");
+  const canSubmit = mode === "existing" ? !!groupId : !!name.trim();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-base font-semibold text-gray-800">Group {count} workload{count === 1 ? "" : "s"}</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Grouping keeps each workload separate — it just associates them as one application /
+          service family (e.g. CRM PROD + CRM DEV → “CRM”). This is not a merge.
+        </p>
+        <div className="mt-4 space-y-3">
+          {groups.length > 0 && (
+            <label className="flex items-start gap-2">
+              <input type="radio" checked={mode === "existing"} onChange={() => setMode("existing")} className="mt-1" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-700">Add to an existing group</div>
+                <select
+                  value={groupId}
+                  onChange={(e) => { setGroupId(e.target.value); setMode("existing"); }}
+                  className="mt-1 w-full rounded-lg border px-2 py-1.5 text-sm"
+                >
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name} ({g.member_count})</option>
+                  ))}
+                </select>
+              </div>
+            </label>
+          )}
+          <label className="flex items-start gap-2">
+            <input type="radio" checked={mode === "new"} onChange={() => setMode("new")} className="mt-1" />
+            <div className="flex-1">
+              <div className="text-sm font-medium text-gray-700">Create a new group</div>
+              <input
+                value={name}
+                onChange={(e) => { setName(e.target.value); setMode("new"); }}
+                placeholder="e.g. CRM"
+                className="mt-1 w-full rounded-lg border px-2 py-1.5 text-sm"
+              />
+            </div>
+          </label>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border px-3.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button
+            disabled={!canSubmit}
+            onClick={() => onAssign(mode === "existing" ? { group_id: groupId } : { name: name.trim() })}
+            className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
+          >
+            Group
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Collapsible cards grouped by their Workload Group. Ungrouped workloads fall under a final
+// "Ungrouped" section. Each group header shows a rollup + a link to its command-center page.
+function GroupedCards({
+  groups,
+  workloads,
+  renderCard,
+  onOpenGroup,
+}: {
+  groups: WorkloadGroup[];
+  workloads: Workload[];
+  renderCard: (w: Workload) => React.ReactNode;
+  onOpenGroup: (id: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setCollapsed((c) => {
+      const n = new Set(c);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+
+  const byGroup = new Map<string, Workload[]>();
+  const ungrouped: Workload[] = [];
+  for (const w of workloads) {
+    const gid = w.group_id || "";
+    if (!gid) { ungrouped.push(w); continue; }
+    const arr = byGroup.get(gid) ?? [];
+    arr.push(w);
+    byGroup.set(gid, arr);
+  }
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+  // Groups that have at least one visible member, ordered like the groups list.
+  const shown = groups.filter((g) => (byGroup.get(g.id)?.length ?? 0) > 0);
+  // Orphan group ids (member carries a group_id whose group was deleted mid-view) — rare.
+  const orphanIds = [...byGroup.keys()].filter((gid) => !groupById.has(gid));
+
+  const Section = ({ id, title, accent, rollup, members, openable }: {
+    id: string; title: string; accent?: string; rollup?: WorkloadGroup["rollup"]; members: Workload[]; openable: boolean;
+  }) => {
+    const open = !collapsed.has(id);
+    return (
+      <div className="rounded-xl border bg-white">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+          <button onClick={() => toggle(id)} className="shrink-0 text-gray-400" aria-label={open ? "Collapse" : "Expand"}>
+            <span className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
+          </button>
+          {accent !== undefined && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: accent || "#6366f1" }} />}
+          {openable ? (
+            <button onClick={() => onOpenGroup(id)} className="font-semibold text-gray-800 hover:text-brand hover:underline">{title}</button>
+          ) : (
+            <span className="font-semibold text-gray-500">{title}</span>
+          )}
+          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">{members.length}</span>
+          {rollup && <div className="ml-1"><GroupRollupChips rollup={rollup} /></div>}
+          {openable && (
+            <button onClick={() => onOpenGroup(id)} className="ml-auto shrink-0 rounded-lg border border-brand/40 bg-brand/5 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/10">
+              Open group ▸
+            </button>
+          )}
+        </div>
+        {open && (
+          <div className="grid grid-cols-1 gap-3 border-t p-3 md:grid-cols-2 2xl:grid-cols-3">
+            {members.map((w) => renderCard(w))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      {shown.map((g) => (
+        <Section key={g.id} id={g.id} title={g.name} accent={g.color} rollup={g.rollup} members={byGroup.get(g.id)!} openable />
+      ))}
+      {orphanIds.map((gid) => (
+        <Section key={gid} id={gid} title="Unknown group" members={byGroup.get(gid)!} openable={false} />
+      ))}
+      {ungrouped.length > 0 && (
+        <Section id="__ungrouped__" title="Ungrouped" members={ungrouped} openable={false} />
+      )}
+    </div>
+  );
+}
+
+
 export function WorkloadsPanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -394,6 +580,21 @@ export function WorkloadsPanel() {
     setFleetFilter(s.filter);
   };
 
+  // Workload Groups (applications). `grouped` toggles the collapsible by-group cards layout;
+  // `groupFilter` narrows the fleet to one group ("" = all, "__ungrouped__" = ungrouped).
+  const [grouped, setGrouped] = useState<boolean>(() => localStorage.getItem("azsup.workloads.grouped") === "1");
+  const toggleGrouped = () => {
+    setGrouped((g) => {
+      const next = !g;
+      localStorage.setItem("azsup.workloads.grouped", next ? "1" : "0");
+      if (next && view !== "cards") setViewMode("cards");
+      return next;
+    });
+  };
+  const [groupFilter, setGroupFilter] = useState<string>("");
+  const [grouping, setGrouping] = useState(false);  // group-assign modal open
+  const [dismissedSuggest, setDismissedSuggest] = useState<Set<string>>(new Set());
+
   const workloads = wlQ.data?.workloads ?? [];
 
   // Restore the saved scroll position once the workload list has rendered (so the content is
@@ -431,6 +632,28 @@ export function WorkloadsPanel() {
     staleTime: 60_000,
   });
   const overlapCount = overlapsQ.data?.summary?.duplicated_resources ?? 0;
+
+  // Workload Groups + their cache-only rollups (one request powers the grouped view + chips).
+  const groupsQ = useQuery({
+    queryKey: ["workloadGroups"],
+    queryFn: api.workloadGroups,
+    enabled: !showTrash,
+    staleTime: 60_000,
+  });
+  const groups = groupsQ.data?.groups ?? [];
+  const groupById: Record<string, WorkloadGroup> = {};
+  for (const g of groups) groupById[g.id] = g;
+  const groupNameOf = (w: Workload): string => (w.group_id ? groupById[w.group_id]?.name ?? "" : "");
+
+  // Auto-suggested env-family groups (e.g. CRM PROD + CRM DEV → "CRM"), for currently-ungrouped
+  // workloads only. Dismissible per stem for this session.
+  const suggestQ = useQuery({
+    queryKey: ["workloadGroupSuggest"],
+    queryFn: api.suggestWorkloadGroups,
+    enabled: !showTrash && workloads.length > 1,
+    staleTime: 60_000,
+  });
+  const suggestions = (suggestQ.data?.suggestions ?? []).filter((s) => !dismissedSuggest.has(s.stem));
 
   // Free-text search over a workload's name / description / tags / classification fields.
   const matchesSearch = (w: Workload): boolean => {
@@ -492,8 +715,13 @@ export function WorkloadsPanel() {
   };
   // The visible set: fleet-cockpit filter AND free-text search AND classification facets,
   // then sorted. Used everywhere below.
+  const matchesGroup = (w: Workload): boolean => {
+    if (!groupFilter) return true;
+    if (groupFilter === "__ungrouped__") return !w.group_id;
+    return w.group_id === groupFilter;
+  };
   const visibleWorkloads = sortWorkloads(
-    workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w) && matchesClass(w)),
+    workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w) && matchesClass(w) && matchesGroup(w)),
   );
 
   const setViewMode = (v: "cards" | "table" | "board" | "map") => {
@@ -622,6 +850,60 @@ export function WorkloadsPanel() {
     }
   }
 
+  // Group the selected workloads into an existing or brand-new group (non-destructive — the
+  // workloads stay separate, they just gain a shared group association).
+  async function assignToGroup(body: { group_id?: string; name?: string }) {
+    setMsg("");
+    setNotice("");
+    try {
+      const r = await api.assignWorkloadGroup({ ...body, workload_ids: Array.from(selected), mode: "add" });
+      setSelected(new Set());
+      setGrouping(false);
+      qc.invalidateQueries({ queryKey: ["workloads"] });
+      qc.invalidateQueries({ queryKey: ["workloadGroups"] });
+      qc.invalidateQueries({ queryKey: ["workloadGroupSuggest"] });
+      setNotice(`Grouped ${r.updated} workload${r.updated === 1 ? "" : "s"}${r.group ? ` into “${r.group.name}”` : ""}.`);
+    } catch (e) {
+      setMsg(formatError(e));
+    }
+  }
+
+  // Accept an auto-suggested env-family group in one click.
+  async function acceptSuggestion(s: { name: string; workload_ids: string[] }) {
+    setMsg("");
+    setNotice("");
+    try {
+      const r = await api.assignWorkloadGroup({ name: s.name, workload_ids: s.workload_ids, mode: "add" });
+      qc.invalidateQueries({ queryKey: ["workloads"] });
+      qc.invalidateQueries({ queryKey: ["workloadGroups"] });
+      qc.invalidateQueries({ queryKey: ["workloadGroupSuggest"] });
+      setNotice(`Created group “${r.group?.name ?? s.name}” with ${r.updated} workload${r.updated === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setMsg(formatError(e));
+    }
+  }
+
+  // renderCard: one workload card wired to all the fleet actions. Reused by the flat cards
+  // grid and the grouped layout (which passes members section-by-section).
+  const renderCard = (w: Workload) => (
+    <WorkloadCard
+      key={w.id}
+      w={w}
+      profile={profileById[w.id]}
+      selected={selected.has(w.id)}
+      onToggleSelect={() => toggleSelected(w.id)}
+      onOpen={() => navigate(`/workloads/${w.id}`)}
+      onRefresh={() => void refresh(w.id)}
+      onEdit={() => setEditing(w)}
+      onDelete={() => void remove(w.id)}
+      onMission={() => navigate(`/mission-control/${w.id}`)}
+      onAssess={() => { sessionStorage.setItem("azsup.assessWorkload", w.id); navigate("/assessments"); }}
+      refreshing={refreshing === w.id}
+      groupName={grouped ? undefined : groupNameOf(w)}
+      onOpenGroup={w.group_id ? () => navigate(`/workloads/groups/${w.group_id}`) : undefined}
+    />
+  );
+
   return (
     <div
       ref={scrollRef}
@@ -688,6 +970,27 @@ export function WorkloadsPanel() {
             <button onClick={() => navigate("/workloads/overlaps")} className="ml-auto rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700">Review overlaps</button>
           </div>
         )}
+        {!showTrash && suggestions.length > 0 && (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 text-sm">
+            <div className="mb-1.5 flex items-center gap-2 text-indigo-800">
+              <span>⊞</span>
+              <span className="font-medium">Suggested groups</span>
+              <span className="text-xs text-indigo-500">We spotted workloads that look like the same application across environments.</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.slice(0, 6).map((s) => (
+                <span key={s.stem} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs">
+                  <span className="font-semibold text-gray-700">{s.name}</span>
+                  <span className="text-gray-400">{s.members.map((m) => m.environment || "?").join(" · ")}</span>
+                  <button onClick={() => void acceptSuggestion(s)} className="rounded bg-indigo-600 px-1.5 py-0.5 text-[11px] font-medium text-white hover:bg-indigo-700" title={`Group ${s.members.map((m) => m.name).join(", ")}`}>
+                    + Group {s.workload_ids.length}
+                  </button>
+                  <button onClick={() => setDismissedSuggest((d) => new Set(d).add(s.stem))} className="text-gray-300 hover:text-gray-500" title="Dismiss">✕</button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {wlQ.isLoading && <div className="text-sm text-gray-500">Loading…</div>}
 
         {/* Front door: first-run onboarding. When the estate has no workloads yet, lead
@@ -734,6 +1037,9 @@ export function WorkloadsPanel() {
                 ⛙ Merge {selected.size} → 1
               </button>
             )}
+            <button onClick={() => setGrouping(true)} className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50" title="Group the selected workloads as one application / service family (they stay separate — this is not a merge)">
+              ⊞ Group{selected.size > 1 ? ` ${selected.size}` : ""}
+            </button>
             <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
           </div>
         )}
@@ -752,6 +1058,28 @@ export function WorkloadsPanel() {
                 </button>
               ))}
             </div>
+            {/* Group-by-application toggle (applies to the cards layout) + a group filter. */}
+            <button
+              onClick={toggleGrouped}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-medium ${grouped ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-gray-50"}`}
+              title="Group the cards by application / service family"
+            >
+              ⊞ Group by app
+            </button>
+            {groups.length > 0 && (
+              <select
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+                className="rounded-lg border bg-white py-1 pl-1.5 pr-5 text-xs text-gray-600"
+                title="Filter by group"
+              >
+                <option value="">All groups</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name} ({g.member_count})</option>
+                ))}
+                <option value="__ungrouped__">Ungrouped</option>
+              </select>
+            )}
             {(() => {
               const visible = visibleWorkloads;
               const allSelected = visible.length > 0 && visible.every((w) => selected.has(w.id));
@@ -851,24 +1179,18 @@ export function WorkloadsPanel() {
         )}
 
         {!showTrash && view === "cards" && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {visibleWorkloads.map((w) => (
-              <WorkloadCard
-                key={w.id}
-                w={w}
-                profile={profileById[w.id]}
-                selected={selected.has(w.id)}
-                onToggleSelect={() => toggleSelected(w.id)}
-                onOpen={() => navigate(`/workloads/${w.id}`)}
-                onRefresh={() => void refresh(w.id)}
-                onEdit={() => setEditing(w)}
-                onDelete={() => void remove(w.id)}
-                onMission={() => navigate(`/mission-control/${w.id}`)}
-                onAssess={() => { sessionStorage.setItem("azsup.assessWorkload", w.id); navigate("/assessments"); }}
-                refreshing={refreshing === w.id}
-              />
-            ))}
-          </div>
+          grouped ? (
+            <GroupedCards
+              groups={groups}
+              workloads={visibleWorkloads}
+              renderCard={renderCard}
+              onOpenGroup={(id) => navigate(`/workloads/groups/${id}`)}
+            />
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {visibleWorkloads.map((w) => renderCard(w))}
+            </div>
+          )
         )}
 
         {!showTrash && view === "table" && (
@@ -999,6 +1321,14 @@ export function WorkloadsPanel() {
             qc.invalidateQueries({ queryKey: ["workloads"] });
             setNotice("Saved discovered workloads.");
           }}
+        />
+      )}
+      {grouping && (
+        <GroupAssignModal
+          groups={groups}
+          count={selected.size}
+          onAssign={(body) => void assignToGroup(body)}
+          onClose={() => setGrouping(false)}
         />
       )}
     </div>

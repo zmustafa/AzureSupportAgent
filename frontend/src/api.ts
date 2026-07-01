@@ -3033,6 +3033,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  // --- Workload Groups (applications / service families) ---
+  workloadGroups: () =>
+    http<{ groups: WorkloadGroup[]; ungrouped: number; total_workloads: number }>("/workloads/groups"),
+  workloadGroup: (id: string) =>
+    http<WorkloadGroupDetail>(`/workloads/groups/${encodeURIComponent(id)}`),
+  workloadGroupCompare: (id: string) =>
+    http<WorkloadGroupCompareResult>(`/workloads/groups/${encodeURIComponent(id)}/compare`),
+  upsertWorkloadGroup: (body: { id?: string; name: string; description?: string; color?: string; owner?: string; tags?: string[] }) =>
+    http<{ group: WorkloadGroupBase }>("/workloads/groups", { method: "PUT", body: JSON.stringify(body) }),
+  deleteWorkloadGroup: (id: string) =>
+    http<{ ok: boolean }>(`/workloads/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  assignWorkloadGroup: (body: { group_id?: string; name?: string; workload_ids: string[]; mode?: "add" | "remove" }) =>
+    http<{ ok: boolean; updated: number; group: WorkloadGroupBase | null }>("/workloads/groups/assign", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  suggestWorkloadGroups: () =>
+    http<{ suggestions: WorkloadGroupSuggestion[] }>("/workloads/groups/suggest", { method: "POST", body: "{}" }),
   workloadOverlaps: (connectionId = "", deep = false) => {
     const q = new URLSearchParams();
     if (connectionId) q.set("connection_id", connectionId);
@@ -3322,7 +3340,7 @@ export const api = {
   assessmentRun: (id: string) => http<{ run: AssessmentRunDetail }>(`/assessments/runs/${id}`),
   enqueueAssessments: (body: {
     workload_ids: string[];
-    pillars: string[];
+    pillars?: string[];
     pack?: string | null;
     connection_id?: string | null;
     use_ai?: boolean;
@@ -8048,11 +8066,126 @@ export interface Workload {
   created_at?: string;
   updated_at?: string;
   deleted_at?: string;
+  // Workload Group ("application" / service family) this workload belongs to, or "" / undefined
+  // when ungrouped. See the WorkloadGroup type + /workloads/groups endpoints.
+  group_id?: string;
 }
 
 export interface WorkloadEvidence {
   kind: string; // provenance | network | scope | rbac
   detail: string;
+}
+
+// ---- Workload Groups (applications / service families) ---------------------------
+// A non-destructive association over workloads that keep their own identity — e.g. a "CRM"
+// group containing the separate "CRM PROD" and "CRM DEV" workloads. Distinct from merge
+// (which fuses workloads into one) and overlaps (shared resources).
+export interface WorkloadGroupBase {
+  id: string;
+  name: string;
+  description: string;
+  color?: string;
+  owner?: string;
+  tags: string[];
+  tenant_id?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkloadGroupRollup {
+  member_count: number;
+  analyzed_count: number;
+  total_resources: number;
+  health: { avg_score: number | null; band: "good" | "warn" | "poor" | "unknown"; distribution: Record<string, number> };
+  criticality: string;
+  risk: { retirements_90d: number; criticals: number };
+  by_category: { category: string; count: number }[];
+  by_environment: { environment: string; count: number }[];
+}
+
+export interface WorkloadGroupMemberRef {
+  id: string;
+  name: string;
+  environment?: string;
+  criticality?: string;
+  connection_id?: string;
+}
+
+export interface WorkloadGroup extends WorkloadGroupBase {
+  member_ids: string[];
+  members: WorkloadGroupMemberRef[];
+  member_count: number;
+  rollup: WorkloadGroupRollup;
+}
+
+export interface WorkloadGroupSuggestion {
+  name: string;
+  stem: string;
+  workload_ids: string[];
+  members: { id: string; name: string; environment?: string }[];
+}
+
+export interface WorkloadGroupDetail {
+  group: WorkloadGroupBase;
+  members: Workload[];
+  profiles: WorkloadProfile[];
+  rollup: WorkloadGroupRollup;
+}
+
+// ---- Group compare (PROD-vs-DEV drift) -------------------------------------------
+export interface WorkloadGroupCompareMember {
+  id: string;
+  name: string;
+  environment: string;
+  criticality: string;
+  data_classification: string;
+  workload_type: string;
+  total_resources: number;
+  health_score: number | null;
+  health_band: "good" | "warn" | "poor" | "unknown";
+  retirements_90d: number;
+  criticals: number;
+  analyzed: boolean;
+}
+export interface WorkloadGroupCompareSignal {
+  key: string;
+  label: string;
+  values: Record<string, number | null>; // member_id -> signal score
+  drift: boolean;
+}
+export interface WorkloadGroupCompareCategory {
+  category: string;
+  counts: Record<string, number>; // member_id -> count (absent = 0)
+  present_in: number;
+  total: number;
+  drift: boolean;
+}
+export interface WorkloadGroupCompareType {
+  type: string;
+  friendly: string;
+  counts: Record<string, number>; // member_id -> count (absent = 0)
+  present_in: number;
+  total: number;
+  drift: boolean;
+}
+export interface WorkloadGroupCompare {
+  members: WorkloadGroupCompareMember[];
+  signals: WorkloadGroupCompareSignal[];
+  categories: WorkloadGroupCompareCategory[];
+  types: WorkloadGroupCompareType[];
+  highlights: string[];
+  summary: {
+    member_count: number;
+    drift_types: number;
+    drift_categories: number;
+    drift_signals: number;
+    health_spread: number;
+  };
+}
+export interface WorkloadGroupCompareResult {
+  group: WorkloadGroupBase;
+  compare: WorkloadGroupCompare;
 }
 
 // ---- Workload overlaps (resources shared across multiple workloads) --------------

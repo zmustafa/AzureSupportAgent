@@ -31,6 +31,8 @@ export function WorkloadCard({
   onMission,
   onAssess,
   refreshing,
+  groupName,
+  onOpenGroup,
 }: {
   w: Workload;
   profile?: WorkloadProfile;
@@ -43,6 +45,10 @@ export function WorkloadCard({
   onMission: () => void;
   onAssess: () => void;
   refreshing: boolean;
+  // When the workload belongs to a group and we're NOT already inside that group's section,
+  // show a chip linking to the group's command-center page.
+  groupName?: string;
+  onOpenGroup?: () => void;
 }) {
   const comp = profile?.composition;
   const health = profile?.health;
@@ -79,6 +85,16 @@ export function WorkloadCard({
               <span className="shrink-0 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">autopilot</span>
             )}
           </div>
+          {groupName && (
+            <button
+              onClick={onOpenGroup}
+              title="Open the group this workload belongs to"
+              className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 hover:bg-indigo-100"
+            >
+              <span>⊞</span>
+              <span className="truncate">{groupName}</span>
+            </button>
+          )}
           {profile && <div className="mt-1"><ClassPills c={profile.classification} /></div>}
           {w.description && <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">{w.description}</p>}
         </div>
