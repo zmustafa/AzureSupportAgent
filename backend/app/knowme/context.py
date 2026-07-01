@@ -305,9 +305,15 @@ def _evidence_block(ev: dict[str, Any]) -> str:
     if p:
         tb = p.get("top_bottleneck") or {}
         sc = f"Performance health {p['score']}/100" if p.get("score") is not None else "Performance profiler"
-        if tb:
+        # pct_of_threshold can be None (a bottleneck without a numeric threshold ratio), so guard
+        # before float() — tb.get(k, 0) still returns None when the key exists with a None value.
+        pct = tb.get("pct_of_threshold")
+        if tb and pct is not None:
             lines.append(f"{sc}; top bottleneck: {tb.get('resource_name','?')} {tb.get('metric_name','')} "
-                         f"at {round(float(tb.get('pct_of_threshold', 0)))}% of threshold ({tb.get('state','')}).")
+                         f"at {round(float(pct))}% of threshold ({tb.get('state','')}).")
+        elif tb:
+            lines.append(f"{sc}; top bottleneck: {tb.get('resource_name','?')} {tb.get('metric_name','')} "
+                         f"({tb.get('state','')}).")
         else:
             lines.append(f"{sc}.")
     idle = ev.get("idle") or []
