@@ -40,8 +40,13 @@ CAPABILITIES: list[dict[str, str]] = [
      "desc": "List and read Azure Resource Manager resources, subscriptions and management groups."},
     {"key": "resource_graph", "label": "Resource Graph",
      "desc": "Run Azure Resource Graph (ARG) queries for inventory and change history."},
-    {"key": "graph_directory", "label": "Microsoft Graph (Entra)",
-     "desc": "Read directory objects — principals, app registrations, PIM, conditional access."},
+    {"key": "graph_directory", "label": "Microsoft Graph token",
+     "desc": "Acquire a raw Microsoft Graph access token (the app's own Graph client and the "
+             "Entra-policy assessment controls). A managed identity with Directory.Read.All can do this."},
+    {"key": "entra_directory", "label": "Entra directory (PIM / app regs)",
+     "desc": "Run the EntraID directory features — PIM/JIT review, app registrations and conditional "
+             "access — via the bundled Microsoft Graph MCP server, which needs a service-principal "
+             "client secret or certificate (managed identity / pasted token cannot drive it)."},
     {"key": "log_analytics", "label": "Log Analytics",
      "desc": "Query Log Analytics / App Insights logs (KQL) on the data plane."},
     {"key": "key_vault_data", "label": "Key Vault data",
@@ -60,6 +65,26 @@ _FULL_IDENTITY = ("service_principal", "service_principal_cert", "default_chain"
 
 def _cell(status: str, reason: str, remediation: str = "") -> dict[str, str]:
     return {"status": status, "reason": reason, "remediation": remediation}
+
+
+def _entra_directory_cell(conn: dict[str, Any]) -> dict[str, str]:
+    """Capability for the EntraID directory features — PIM/JIT, app registrations, conditional
+    access — which all run through the bundled Microsoft Graph MCP server.
+
+    Driven by the EXACT gate those features enforce (``entra_graph_config_error``) so the matrix
+    and the Identity / App-Registrations pages can never disagree. That server authenticates only
+    with an explicit service-principal secret or certificate; a managed identity, a pasted ARM
+    token and a secret-less service principal are all blind here — even when they can still mint a
+    raw Graph token (the separate ``graph_directory`` column)."""
+    from app.mcp.client import entra_graph_config_error  # local import: avoid an import cycle
+
+    err = entra_graph_config_error(conn)
+    if not err:
+        return _cell(FULL, "A service-principal secret / certificate can drive the EntraID MCP "
+                           "server (PIM, app registrations, conditional access).")
+    return _cell(BLIND, err,
+                 "Add a service-principal connection (client id + secret or certificate) granted "
+                 "Directory.Read.All / Application.Read.All.")
 
 
 def _static_caps(conn: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -85,6 +110,7 @@ def _static_caps(conn: dict[str, Any]) -> dict[str, dict[str, str]]:
             f"{_method_label(method)} can mint a Microsoft Graph token."
             + (" Requires Directory.Read.All on the identity." if method == "default_chain" else ""),
         )
+        caps["entra_directory"] = _entra_directory_cell(conn)
         caps["log_analytics"] = (
             _cell(FULL, "Can mint a Log Analytics token (needs Log Analytics Reader on the workspace).")
             if has_la
@@ -134,6 +160,7 @@ def _static_caps(conn: dict[str, Any]) -> dict[str, dict[str, str]]:
                 "Paste a Graph token (az account get-access-token --resource-type ms-graph) "
                 "or use a service-principal / managed-identity connection.")
 
+        caps["entra_directory"] = _entra_directory_cell(conn)
         caps["log_analytics"] = _cell(
             BLIND,
             "A pasted ARM token cannot query the Log Analytics data plane — no log token is available.",
