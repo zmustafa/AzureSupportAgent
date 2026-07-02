@@ -26,7 +26,7 @@ from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
 from app.fmea import compute
 from app.fmea import registry as freg
-from app.workloads.registry import get_workload
+from app.workloads.registry import get_workload, list_workloads
 
 logger = logging.getLogger("app.api.fmea")
 
@@ -137,18 +137,27 @@ async def list_fmea_endpoint(principal: Principal = Depends(get_principal)):
     from app.architectures import memory as mem
 
     archs = {a["id"]: a for a in arch_registry.list_architectures(principal.tenant_id)}
+    # Active (non-trashed) workload ids — an architecture whose backing workload was deleted
+    # is "orphaned" even though the architecture itself still exists.
+    active_wl = {w["id"] for w in list_workloads()}
     memories = {m.get("architecture_id", "") for m in mem.list_memories(principal.tenant_id)}
+
+    def _workload_exists(wid: str) -> bool:
+        # A standalone architecture (no workload_id) is never workload-orphaned.
+        return (not wid) or (wid in active_wl)
 
     def _doc(doc: dict[str, Any]) -> dict[str, Any]:
         aid = doc.get("architecture_id", "")
         arch = archs.get(aid)
         summary = compute.summarize(doc)
+        wid = doc.get("workload_id", "") or (arch or {}).get("workload_id", "")
         return {
             "id": doc.get("id"),
             "architecture_id": aid,
             "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
             "architecture_exists": arch is not None,
-            "workload_id": doc.get("workload_id", "") or (arch or {}).get("workload_id", ""),
+            "workload_id": wid,
+            "workload_exists": _workload_exists(wid),
             "workload_name": (arch or {}).get("workload_name", "") or doc.get("workload_name", ""),
             "title": doc.get("title", ""),
             "status": doc.get("status", "draft"),
@@ -169,11 +178,19 @@ async def list_fmea_endpoint(principal: Principal = Depends(get_principal)):
     buildable: list[dict[str, Any]] = []
     for aid in memories:
         arch = archs.get(aid)
+        wid = (arch or {}).get("workload_id", "")
+        # Don't offer "+ New FMEA" for an architecture whose backing workload was deleted —
+        # its card would otherwise linger on the index after the workload is gone. Any FMEA
+        # documents it already has still surface (via `documents`, flagged orphaned) so they
+        # can be reviewed/trashed.
+        if wid and wid not in active_wl:
+            continue
         buildable.append({
             "architecture_id": aid,
             "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
             "architecture_exists": arch is not None,
-            "workload_id": (arch or {}).get("workload_id", ""),
+            "workload_id": wid,
+            "workload_exists": _workload_exists(wid),
             "workload_name": (arch or {}).get("workload_name", ""),
             "fmea_count": by_arch.get(aid, 0),
         })

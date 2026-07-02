@@ -62,6 +62,10 @@ focused. The hypothesis tree is saved with the chat.
   against.
 - **Architectures** — turn a workload into a living diagram: AI reverse-engineers it,
   you refine it, overlay an assessment, run **drift detection**, and save revisions.
+- **Know-Me** — turn an architecture's **Memory** into a support-facing reference: an
+  AI-drafted triage runbook with known issues, SLA thresholds, incident checklists and
+  Mermaid diagrams. **Read** it inline, **guided-fill** the remaining gaps, or **edit**
+  per-section; regenerate one section at a time; publish and export to Markdown/PDF.
 
 ## 5. Assess — Well-Architected & Policy  *(admin)*
 
@@ -70,28 +74,65 @@ focused. The hypothesis tree is saved with the chat.
   schedule or across many workloads at once.
 - **Azure Policy** — explore assignments, scan compliance, simulate a guardrail before you
   enforce it (read-only), and use the **Rollout Planner** to stage audit → deny safely.
+- **FMEA** — *Failure Mode and Effects Analysis.* Generate scored risk tables from an
+  architecture's Memory: each failure mode gets **Severity × Occurrence × Detection → RPN**,
+  colour-coded by risk band. Edit cells live, regenerate a single table, track owners and due
+  dates, move a doc through *draft → in review → published*, and export to CSV or a rich
+  **Excel** workbook.
+
+> **Deleted a workload?** FMEA and Know-Me cards built from that workload disappear from the
+> **+ New** suggestions once the workload is gone. Any existing FMEA / Know-Me *documents*
+> for it remain, flagged **"workload deleted"** so you can review or Trash them — nothing is
+> lost silently.
 
 ## 6. Proactive Support — find risk before it bites  *(admin)*
 
-Grouped under **Proactive Support** in the sidebar:
+Everything under **Proactive Support** shares a rhythm: pick a scope, run a live scan, and
+save the result to **history** (most export to **PDF** or **Save to Evidence**). The sidebar
+organizes the tools into groups — *Daily intelligence, Design & ownership, Assessment &
+performance, Coverage, Estate intelligence, Governance & identity,* and *Lifecycle &
+investigation*.
 
-| Tool | Use it to… |
-| --- | --- |
-| **Monitoring Coverage (AMBA)** | Find missing/misconfigured baseline alerts; export Bicep/Terraform fixes. |
-| **Telemetry Coverage** | Find resources missing diagnostic settings or drifting to unapproved workspaces; export Bicep/Policy. |
-| **Backup & DR Coverage** | Audit protection/RTO/RPO posture; export Bicep + runbook fixes. |
-| **Performance Profiler** | Spot bottlenecks on a resource × metric heatmap. |
-| **Retirement Radar** | Track service retirements & breaking changes by workload/owner/deadline. |
-| **Reservations Monitor** | Track RI / savings-plan coverage and expirations. |
-| **Identity** | Entra ID posture: expiring creds, MFA gaps, risky sign-ins. |
-| **RBAC** | "Who can do what, where, and why" access review. |
-| **Telemetry Intelligence** | Analyze telemetry content for noise, gaps, and cost. |
-| **Evidence Locker** | Capture tamper-evident, hash-stamped snapshots for audit/forensics. |
+**✨ AI Insight Packs** *(Daily intelligence)* are scheduled AI "watchers." Each pack gathers
+change and telemetry data over a window, reasons over it, and pings you **only when something
+material happens** — cutting alert fatigue. Build one with the AI wizard (describe the goal →
+guided interview → generated pack) or by hand, run it on-demand against a tenant /
+subscription / workload to test, then put it on a schedule. Each run produces a digest with a
+change table and a verdict (*nothing notable / notable / urgent*) plus any security flags;
+browse past digests under **Insights → Runs**.
+
+The scan-based detectors and dashboards:
+
+| Tool | Group | Use it to… |
+| --- | --- | --- |
+| **Monitoring Coverage (AMBA)** | Coverage | Find missing/misconfigured baseline alerts; export Bicep/Terraform fixes. |
+| **Telemetry Coverage** | Coverage | Find resources missing diagnostic settings or drifting to unapproved workspaces; export Bicep/Policy. |
+| **Backup & DR Coverage** | Coverage | Audit protection/RTO/RPO posture; export Bicep + runbook fixes. |
+| **Connection Capability** | Coverage | See what each Azure connection can actually reach (ARM, Graph, Log Analytics, Key Vault) and where the blind spots are. |
+| **Performance Profiler** | Assessment & performance | Spot bottlenecks on a resource × metric heatmap. |
+| **Estate Graph** | Design & ownership | A workload-aware knowledge graph of the tenant with cost, retirement and RBAC overlays. |
+| **Ownership** | Design & ownership | Assign accountable owners and teams across subscriptions, workloads and resources. |
+| **Inventory** | Estate intelligence | Sortable grid, world map, cost & optimization lenses; search your estate in natural language. |
+| **Tag Intelligence** | Estate intelligence | Tag census, hygiene, coverage, cost allocation, drift and policy generation. |
+| **Change Explorer** | Estate intelligence | Analyze what changed in a workload over a window — by risk, actor and dependency. |
+| **Identity** | Governance & identity | Entra ID posture: expiring creds, MFA gaps, risky sign-ins, app-registration hygiene. |
+| **RBAC** | Governance & identity | "Who can do what, where, and why" access review. |
+| **Retirement Radar** | Lifecycle & investigation | Track service retirements & breaking changes by workload/owner/deadline. |
+| **Reservations Monitor** | Lifecycle & investigation | Track RI / savings-plan coverage and expirations. |
+| **Quota Monitor** | Lifecycle & investigation | Subscription/region quota headroom and risk — before deployments fail. |
+| **Telemetry Intelligence** | Lifecycle & investigation | AI correlation and triage over Application Insights, with KQL translation. |
+| **Evidence Locker** | Lifecycle & investigation | Capture tamper-evident, hash-stamped snapshots for audit/forensics. |
+| **Case Files** | Lifecycle & investigation | Durable incident case files on one append-only timeline (findings → investigation → evidence → remediation → verification). |
 
 **How a coverage scan works:** open a tool, pick a workload (or subscription), and click
 **Refresh now / Run first scan** — it runs live against Azure and saves to **history**. Each
 scan exports to **PDF** or **Save to Evidence**. The Dashboard's **Coverage** row can export a
 combined **Estate Coverage PDF** across all three detectors.
+
+**✨ Mission Control** *(admin)* runs *every* analysis for a workload in one coordinated sweep
+— architecture, assessment, performance, all three coverage detectors, FMEA and Retirement
+Radar — streaming live progress you can watch, re-run per-system, and revisit from history.
+Open it from the top navigation.
 
 ## 7. Act — Automations & integrations
 

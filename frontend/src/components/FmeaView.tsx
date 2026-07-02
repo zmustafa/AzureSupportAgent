@@ -853,18 +853,18 @@ export function FmeaIndex() {
   const trashCount = query.data?.trash_count ?? 0;
 
   const groups = useMemo(() => {
-    const byArch = new Map<string, { architecture_id: string; architecture_name: string; workload_name: string; architecture_exists: boolean; docs: FmeaDocumentSummary[] }>();
+    const byArch = new Map<string, { architecture_id: string; architecture_name: string; workload_name: string; architecture_exists: boolean; workload_exists: boolean; docs: FmeaDocumentSummary[] }>();
     for (const b of buildable) {
       byArch.set(b.architecture_id, {
         architecture_id: b.architecture_id, architecture_name: b.architecture_name,
-        workload_name: b.workload_name, architecture_exists: b.architecture_exists, docs: [],
+        workload_name: b.workload_name, architecture_exists: b.architecture_exists, workload_exists: b.workload_exists !== false, docs: [],
       });
     }
     for (const d of documents) {
       if (statusFilter !== "all" && d.status !== statusFilter) continue;
       let g = byArch.get(d.architecture_id);
       if (!g) {
-        g = { architecture_id: d.architecture_id, architecture_name: d.architecture_name, workload_name: d.workload_name, architecture_exists: d.architecture_exists, docs: [] };
+        g = { architecture_id: d.architecture_id, architecture_name: d.architecture_name, workload_name: d.workload_name, architecture_exists: d.architecture_exists, workload_exists: d.workload_exists !== false, docs: [] };
         byArch.set(d.architecture_id, g);
       }
       g.docs.push(d);
@@ -990,6 +990,7 @@ export function FmeaIndex() {
                       <span className="flex items-center gap-2">
                         <span className="truncate text-sm font-semibold text-gray-800">{g.workload_name || g.architecture_name}</span>
                         {!g.architecture_exists && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-600">orphaned</span>}
+                        {g.architecture_exists && !g.workload_exists && <span title="The workload this architecture was built from has been deleted" className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">workload deleted</span>}
                       </span>
                       <span className="block truncate text-[11px] text-gray-400">{g.architecture_name}</span>
                     </span>

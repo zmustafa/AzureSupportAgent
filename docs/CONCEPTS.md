@@ -22,12 +22,27 @@ overlay an assessment onto it, run **drift detection** against live Azure, and s
 revisions. **Architecture Memory** is the persistent, versioned knowledge captured from
 those diagrams that powers dashboards and investigations.
 
+### Know-Me
+A **Know-Me** document turns an architecture's **Memory** into a support-facing reference:
+an AI-drafted triage runbook with known issues, SLA thresholds, incident-response checklists
+and Mermaid diagrams. You **read** it inline, **guided-fill** the remaining gaps against a
+human-completion checklist, or **edit** per-section; each section can be regenerated on its
+own. Docs move through *draft → in review → published* and export to Markdown / PDF.
+
 ### Assessment (Well-Architected)
 An **Assessment** scores a workload against the five Azure **Well-Architected Framework**
 pillars — Security, Reliability, Cost, Operational Excellence, and Performance Efficiency —
 producing an overall score out of 100, prioritized findings with remediation, and mappings
 to control frameworks (**CIS**, **NIST 800-53**, **ISO 27001**). Findings have a lifecycle
 (open → waived/resolved) and can be turned into tickets.
+
+### FMEA (Failure Mode and Effects Analysis)
+An **FMEA** turns an architecture's Memory into scored risk tables. Each potential failure
+mode gets **Severity × Occurrence × Detection** scores (each 1–10); their product is the
+**Risk Priority Number (RPN)**, colour-coded by risk band so the worst risks rise to the
+top. RPN is always computed server-side (never trusted from the model). Edit cells live,
+regenerate a single table, track recommended actions / owners / due dates, move a doc through
+*draft → in review → published*, and export to CSV or a rich **Excel** workbook.
 
 ### Deep Investigation ("War Room")
 Switch a chat to **Deep** mode and the agent forms multiple hypotheses and dispatches
@@ -37,9 +52,14 @@ hypothesis with evidence, and converge on a root-cause conclusion with remediati
 result — a navigable hypothesis tree — is saved with the chat.
 
 ### Proactive Support
-The umbrella for the posture/forensic dashboards that surface risk *before you ask*:
-Assessments, the three **Coverage** detectors, Identity, Retirement Radar, Telemetry
-Intelligence, Performance Profiler, Reservations Monitor, and the Evidence Locker.
+The umbrella for the posture/forensic dashboards that surface risk *before you ask*. The
+sidebar organizes them into groups — **Daily intelligence** (AI Insight Packs), **Design &
+ownership** (Architectures, Know-Me, Ownership, Estate Graph), **Assessment & performance**
+(Assessments, Performance Profiler, FMEA), **Coverage** (the three detectors + Connection
+Capability), **Estate intelligence** (Inventory, Tag Intelligence, Change Explorer),
+**Governance & identity** (Azure Policy, Identity, RBAC), and **Lifecycle & investigation**
+(Retirement Radar, Reservations Monitor, Quota Monitor, Telemetry Intelligence, Evidence
+Locker, Case Files). **Mission Control** runs the whole sweep for a workload at once.
 
 ---
 
@@ -76,6 +96,14 @@ to *Reliability*.
 
 ## Other Proactive Support tools
 
+### AI Insight Packs
+Scheduled AI "watchers." Each **pack** gathers change and telemetry data over a time window,
+reasons over it, and pings you **only when something material happens** — cutting alert
+fatigue. Author one with the AI wizard (goal → guided interview → generated pack) or by hand,
+run it on-demand against a tenant / subscription / workload to test, then put it on a
+schedule. Each **run** produces a digest with a change table and a verdict (*nothing notable
+/ notable / urgent*) plus any security flags.
+
 ### Identity
 A posture dashboard for **Entra ID** (Azure AD): expiring secrets/certificates, users
 without MFA, risky sign-ins, stale guests, and app-registration hygiene — read via the
@@ -100,6 +128,40 @@ hottest against their baseline metric thresholds.
 
 ### Reservations Monitor
 Tracks Azure **Reserved Instances** / savings-plan coverage and upcoming expirations.
+
+### Quota Monitor
+Tracks subscription / region **quota** usage, limits, and headroom so deployments don't fail
+because a compute or networking limit was silently reached.
+
+### Change Explorer
+Analyzes **what changed** in a workload over a time window — grouped by risk, actor, and
+dependency — so a regression or drift can be traced back to the change that caused it.
+
+### Tag Intelligence
+A tag census, hygiene, and coverage lens: cost allocation by tag, drift detection, and
+generated **Azure Policy** to enforce a tagging standard.
+
+### Estate Graph
+A workload-aware **knowledge graph** of the whole tenant, with cost, retirement, and RBAC
+overlays, for exploring how resources connect.
+
+### Ownership
+Assigns **accountable owners** and teams across subscriptions, workloads, and resources, so
+every finding has someone to route to.
+
+### Connection Capability
+Shows what each Azure **connection** can actually reach — ARM, Microsoft Graph, Log
+Analytics, Key Vault, and gated writes — surfacing the blind spots that would otherwise make
+an answer half-blind.
+
+### Case Files
+Durable incident **case files** on a single append-only timeline: findings → investigation →
+evidence → remediation → verification, surviving refresh and reassignment.
+
+### Mission Control
+Runs *every* analysis for a workload in one coordinated **mission** sweep — architecture,
+assessment, performance, all three coverage detectors, FMEA, and Retirement Radar — streaming
+live progress you can watch, re-run per-system, and revisit from history.
 
 ### Evidence Locker
 A **write-once, hash-stamped** snapshot store for forensic investigations and audit. Capture

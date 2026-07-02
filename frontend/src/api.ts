@@ -9195,6 +9195,7 @@ export interface KnowMeDocument {
   architecture_name: string;
   architecture_exists: boolean;
   workload_id: string;
+  workload_exists?: boolean;
   workload_name: string;
   title: string;
   description?: string;
@@ -9214,6 +9215,7 @@ export interface KnowMeBuildable {
   architecture_name: string;
   architecture_exists: boolean;
   workload_id: string;
+  workload_exists?: boolean;
   workload_name: string;
   know_me_count: number;
 }
@@ -10277,6 +10279,7 @@ export interface FmeaDocumentSummary {
   architecture_name: string;
   architecture_exists: boolean;
   workload_id: string;
+  workload_exists?: boolean;
   workload_name: string;
   title: string;
   status: "draft" | "in_review" | "published" | "archived";
@@ -10294,6 +10297,7 @@ export interface FmeaBuildable {
   architecture_name: string;
   architecture_exists: boolean;
   workload_id: string;
+  workload_exists?: boolean;
   workload_name: string;
   fmea_count: number;
 }

@@ -22,7 +22,7 @@ from app.architectures import registry as arch_registry
 from app.core.azure_connections import resolve_connection
 from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
-from app.workloads.registry import get_workload
+from app.workloads.registry import get_workload, list_workloads
 
 # KP5/KU4 — background-survivable Know-Me generation. The generate/regenerate run as detached
 # jobs keyed by document (so navigating away doesn't lose the draft); SSE subscribers follow.
@@ -326,19 +326,28 @@ async def list_know_me_endpoint(principal: Principal = Depends(get_principal)):
     from app.knowme import registry as kreg
 
     archs = {a["id"]: a for a in arch_registry.list_architectures(principal.tenant_id)}
+    # Active (non-trashed) workload ids — an architecture whose backing workload was deleted
+    # is "orphaned" even though the architecture itself still exists.
+    active_wl = {w["id"] for w in list_workloads()}
     memories = {m.get("architecture_id", "") for m in mem.list_memories(principal.tenant_id)}
+
+    def _workload_exists(wid: str) -> bool:
+        # A standalone architecture (no workload_id) is never workload-orphaned.
+        return (not wid) or (wid in active_wl)
 
     def _doc(km_doc: dict[str, Any]) -> dict[str, Any]:
         aid = km_doc.get("architecture_id", "")
         arch = archs.get(aid)
         sections = km_doc.get("sections", []) or []
         todos = km_doc.get("todos", []) or []
+        wid = km_doc.get("workload_id", "") or (arch or {}).get("workload_id", "")
         return {
             "id": km_doc.get("id"),
             "architecture_id": aid,
             "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
             "architecture_exists": arch is not None,
-            "workload_id": km_doc.get("workload_id", "") or (arch or {}).get("workload_id", ""),
+            "workload_id": wid,
+            "workload_exists": _workload_exists(wid),
             "workload_name": (arch or {}).get("workload_name", "") or km_doc.get("workload_name", ""),
             "title": km_doc.get("title", ""),
             "description": km_doc.get("description", ""),
@@ -362,11 +371,19 @@ async def list_know_me_endpoint(principal: Principal = Depends(get_principal)):
     buildable: list[dict[str, Any]] = []
     for aid in memories:
         arch = archs.get(aid)
+        wid = (arch or {}).get("workload_id", "")
+        # Don't offer "+ New Know-Me" for an architecture whose backing workload was deleted —
+        # its card would otherwise linger on the index after the workload is gone. Any Know-Me
+        # documents it already has still surface (via `documents`, flagged orphaned) so they
+        # can be reviewed/trashed.
+        if wid and wid not in active_wl:
+            continue
         buildable.append({
             "architecture_id": aid,
             "architecture_name": (arch or {}).get("name", "") or "(deleted architecture)",
             "architecture_exists": arch is not None,
-            "workload_id": (arch or {}).get("workload_id", ""),
+            "workload_id": wid,
+            "workload_exists": _workload_exists(wid),
             "workload_name": (arch or {}).get("workload_name", ""),
             "know_me_count": by_arch.get(aid, 0),
         })

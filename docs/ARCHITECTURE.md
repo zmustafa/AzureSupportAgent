@@ -38,10 +38,12 @@ How Azure Support Agent is put together, so you can find your way around and ext
 | Agent loop | `app/agent/` | Orchestrator + one module per LLM provider. |
 | MCP tools | `app/mcp/` | Azure (~65) + Microsoft Graph (~43) tools, read/write classified. |
 | Coverage detectors | `app/amba/`, `app/telemetry/`, `app/backupdr/` | Each: `collector.py`, `cache.py`, `reference.py`, `demo.py`, `iac.py`. |
-| Other proactive | `app/radar/`, `app/perfprofile/`, `app/teleintel/`, `app/reservations/`, `app/identity/`, `app/rbac/` | Same shape (collector + demo + cache). |
+| Other proactive | `app/radar/`, `app/perfprofile/`, `app/teleintel/`, `app/reservations/`, `app/quota/`, `app/identity/`, `app/rbac/`, `app/tagintel/`, `app/changeexplorer/`, `app/capability/`, `app/graph/`, `app/ownership/`, `app/netcheck/` | Same shape (collector + demo + cache). |
 | Assessments | `app/assessments/` | Catalog, runner, `pdf_report.py`. |
+| Architecture intelligence | `app/architectures/`, `app/knowme/`, `app/fmea/` | Diagrams + Memory, Know-Me runbooks, FMEA risk tables (JSON registries, soft-delete Trash, revisions). |
+| Daily intelligence | `app/insights/` (AI Insight Packs), `app/missions/` (Mission Control) | Scheduled AI digest packs; one-sweep workload orchestration across systems. |
+| Investigation | `app/cases/`, `app/evidence/` | Durable case files; write-once, SHA-256-stamped snapshots. |
 | Shared PDF engine | `app/core/pdf_common.py` | Primitives shared by assessment + coverage PDFs. |
-| Evidence Locker | `app/evidence/` | Write-once, SHA-256-stamped snapshots. |
 | Automations | `app/automations/`, `app/workbooks/`, `app/playbooks/` | Scheduler, sub-agents, connectors. |
 | Cross-cutting | `app/core/` | `db.py`, `security.py`, `app_settings.py`, `azure_connections.py`, coverage trend/run stores. |
 

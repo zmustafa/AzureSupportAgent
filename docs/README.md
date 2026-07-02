@@ -22,11 +22,14 @@ four pillars:
 1. **Converse** — chat with an agent that reads your live Azure estate through the official
    Azure MCP and Microsoft Graph servers, and (in *Deep* mode) dispatches a "War Room" of
    specialist agents to investigate in parallel.
-2. **Map** — discover **Workloads** (groups of resources that make up an app) and let AI
-   reverse-engineer **Architecture** diagrams from what's actually deployed.
-3. **Assess** — score workloads against the **Well-Architected Framework**, and run a
-   **Proactive Support** suite (Monitoring / Telemetry / Backup-DR coverage, Identity,
-   Retirement Radar, Performance Profiler) that surfaces risk before you ask.
+2. **Map** — discover **Workloads** (groups of resources that make up an app), let AI
+   reverse-engineer **Architecture** diagrams from what's actually deployed, and turn them
+   into **Know-Me** support runbooks.
+3. **Assess** — score workloads against the **Well-Architected Framework**, run **FMEA**
+   risk analysis, and use a broad **Proactive Support** suite (Monitoring / Telemetry /
+   Backup-DR coverage, Identity, RBAC, Retirement Radar, Performance Profiler, Tag
+   Intelligence, Change Explorer, Quota and more) — plus scheduled **AI Insight Packs** and
+   one-sweep **Mission Control** — that surfaces risk before you ask.
 4. **Act** — every Azure write is **read-only by default, approval-gated, and audited**;
    findings route to Teams / Jira / ServiceNow via connectors and scheduled agents.
 
