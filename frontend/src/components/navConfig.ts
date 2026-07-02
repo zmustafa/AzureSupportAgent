@@ -107,6 +107,8 @@ export const ADMIN_SECTION_IDS = new Set<AdminSection>([
 export type ProactiveItem = { id: string; to: string; label: string; icon: string; group?: string; desc?: string };
 
 export const PROACTIVE_NAV: ProactiveItem[] = [
+  // Daily intelligence — scheduled AI insight packs that watch the estate and ping only when it matters.
+  { id: "insights", to: "/insights", label: "AI Insight Packs", icon: "🧠", group: "Daily intelligence", desc: "Scheduled AI packs that gather change/telemetry data, reason over it, and notify you only when something material happens." },
   // Design & ownership — how the estate is shaped, who owns it, how it connects.
   { id: "architectures", to: "/architectures", label: "Architectures", icon: "📐", group: "Design & ownership", desc: "Visual application architecture diagrams — hand-drawn or AI-reverse-engineered from a workload." },
   { id: "knowme", to: "/knowme", label: "Know-Me", icon: "📄", desc: "Support-facing workload references transformed from Architecture Memory — triage runbook, known issues, thresholds and a human-completion checklist." },

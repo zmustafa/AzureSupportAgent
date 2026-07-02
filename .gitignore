@@ -37,6 +37,18 @@ sap.txt
 # Personal build/deploy runbook (operational notes, invoked as a skill — not product code).
 DEPLOY_RUNBOOK.md
 
+# Internal UI test plan (QA working notes — not product documentation).
+docs/UI_TEST_PLAN.md
+
+# Internal data-retention engineering plan (design working notes — not product docs).
+docs/DATA_RETENTION_PLAN.md
+
+# Internal UX engineering plan (design working notes — not product docs).
+docs/UX_ADVANCED_PLAN.md
+
+# Throwaway UX audit screenshots (Playwright captures — not distributable).
+.uxshots/
+
 # Spreadsheets (workbooks, exports, scratch) — not distributable.
 *.xlsx
 

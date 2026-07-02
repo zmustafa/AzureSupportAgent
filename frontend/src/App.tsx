@@ -1,4 +1,5 @@
 import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import ChatView from "./components/ChatView";
 import { useAuth } from "./components/AuthContext";
 import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
@@ -6,9 +7,36 @@ import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
 import { WelcomeModal } from "./components/WelcomeModal";
 import { APP_VERSION, APP_VERSION_DISPLAY } from "./version";
+import { api } from "./api";
+
+// Friendly labels for the active AI provider shown in the top bar.
+const PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  openai_eu: "OpenAI (EU)",
+  azure_openai: "Azure OpenAI",
+  azure_foundry: "Azure Foundry",
+  github: "GitHub Models",
+  github_copilot: "GitHub Copilot",
+  chatgpt: "ChatGPT OAuth",
+  claude: "Claude API",
+  claude_oauth: "Claude OAuth",
+  gemini: "Google Gemini",
+  grok: "Grok (xAI)",
+  mistral: "Mistral",
+  openrouter: "OpenRouter",
+  ollama: "Ollama (local)",
+  lmstudio: "LM Studio (local)",
+};
 
 export default function App() {
   const { user, loading, logout } = useAuth();
+  const activeLlmQ = useQuery({
+    queryKey: ["activeLlm"],
+    queryFn: api.activeLlm,
+    enabled: !!user,
+    staleTime: 60_000,
+    retry: false,
+  });
 
   if (loading) {
     return (
@@ -25,6 +53,10 @@ export default function App() {
   if (user.must_change_password) {
     return <ForcePasswordChange />;
   }
+
+  const aiProvider = activeLlmQ.data?.provider ?? "";
+  const aiModel = activeLlmQ.data?.model ?? "";
+  const aiProviderLabel = PROVIDER_LABELS[aiProvider] ?? aiProvider;
 
   return (
     <div className="flex h-full flex-col">
@@ -48,6 +80,29 @@ export default function App() {
             <kbd className="rounded bg-white/20 px-1 text-[10px]">⌘K</kbd>
           </button>
           <HelpMenu />
+          {aiProvider ? (
+            user.role === "admin" ? (
+              <Link
+                to="/admin/providers"
+                title="Change AI provider"
+                className="hidden items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs text-white/80 hover:bg-white/20 md:flex"
+              >
+                <span>🧠</span>
+                <span className="font-medium text-white/90">{aiProviderLabel}</span>
+                {aiModel && <span className="text-white/50">· {aiModel}</span>}
+                <span className="text-white/60">⚙︎</span>
+              </Link>
+            ) : (
+              <span
+                title="Active AI model"
+                className="hidden items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs text-white/80 md:flex"
+              >
+                <span>🧠</span>
+                <span className="font-medium text-white/90">{aiProviderLabel}</span>
+                {aiModel && <span className="text-white/50">· {aiModel}</span>}
+              </span>
+            )
+          ) : null}
           <span
             className="rounded bg-white/10 px-1.5 py-0.5 text-xs font-medium text-white/70"
             title={`Azure Support Agent ${APP_VERSION}`}
@@ -103,6 +158,8 @@ export default function App() {
           <Route path="/tagintel/:tab" element={<ChatView />} />
           <Route path="/change-explorer" element={<ChatView />} />
           <Route path="/change-explorer/:tab" element={<ChatView />} />
+          <Route path="/insights" element={<ChatView />} />
+          <Route path="/insights/:section" element={<ChatView />} />
           <Route path="/rbac" element={<ChatView />} />
           <Route path="/rbac/:tab" element={<ChatView />} />
           <Route path="/assessments" element={<ChatView />} />

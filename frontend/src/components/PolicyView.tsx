@@ -24,6 +24,8 @@ import {
 } from "../api";
 import { POLICY_NAV, type PolicyTab } from "./navConfig";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { TabStrip } from "./ui/TabStrip";
+import { Freshness } from "./ui/Freshness";
 // PP7 — code-split the heavy register/pivot + exemptions tabs out of the main Policy chunk.
 // They're each their own module already; lazy() pushes them into separate bundles loaded only
 // when their tab is first opened (the Overview/Inventory landing tabs no longer pay for them).
@@ -34,17 +36,6 @@ const TimelinePivot = lazy(() => import("./PolicyAssignments").then((m) => ({ de
 const PivotBuilder = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.PivotBuilder })));
 const GovernanceInsights = lazy(() => import("./PolicyAssignments").then((m) => ({ default: m.GovernanceInsights })));
 const ExemptionsTab = lazy(() => import("./PolicyExemptions").then((m) => ({ default: m.ExemptionsTab })));
-
-function agoLabel(ts: number): string {
-  if (!ts) return "";
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
-}
 
 // Human-friendly elapsed duration: "0.4s", "12.7s", "1m 05s".
 function fmtDur(ms: number): string {
@@ -245,27 +236,18 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
                   Refreshing…
                 </span>
               ) : updatedAt ? (
-                <span className="text-[11px] text-gray-400" title={new Date(updatedAt).toLocaleString()}>
-                  {`Updated ${agoLabel(updatedAt)}${inv.cached ? " · cached" : ""}`}
-                </span>
+                <Freshness ts={updatedAt} cached={inv.cached} />
               ) : null
             )}
           </div>
         </div>
         {/* Tabs */}
-        <div className="mt-3 flex gap-1 overflow-x-auto whitespace-nowrap">
-          {POLICY_NAV.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => goTab(id)}
-              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                tab === id ? "bg-brand text-white" : "text-gray-600 hover:bg-gray-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabStrip
+          className="mt-3"
+          tabs={POLICY_NAV.map(({ id, label }) => ({ id, label }))}
+          active={tab}
+          onChange={goTab}
+        />
       </div>
 
       {/* Body — cached data always wins; only show the full loader when there's nothing yet. */}

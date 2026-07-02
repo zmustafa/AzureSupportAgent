@@ -130,6 +130,9 @@ const TagIntelligencePanel = lazy(() =>
 const ChangeExplorerPanel = lazy(() =>
   import("./ChangeExplorerView").then((m) => ({ default: m.ChangeExplorerPanel })),
 );
+const InsightPacksPanel = lazy(() =>
+  import("./InsightPacksView").then((m) => ({ default: m.InsightPacksPanel })),
+);
 const AssessmentsPanel = lazy(() =>
   import("./AssessmentsView").then((m) => ({ default: m.AssessmentsPanel })),
 );
@@ -607,6 +610,8 @@ export default function ChatView() {
     return seg && POLICY_TAB_IDS.has(seg) ? seg : "overview";
   })();
   const inNotifications = location.pathname.startsWith("/notifications");
+  // AI Insight Packs — scheduled AI digests that watch the estate (admin-only).
+  const inInsights = location.pathname.startsWith("/insights");
   // Getting-started / overview page for newcomers.
   const inDashboard = location.pathname.startsWith("/dashboard");
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -686,7 +691,7 @@ export default function ChatView() {
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
     || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
     || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
-    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota || inCapability || inCases;
+    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota || inCapability || inCases || inInsights;
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2475,6 +2480,7 @@ export default function ChatView() {
             Estate Graph now live in here too. Admin-only. */}
         {me?.role === "admin" && (() => {
           const PROACTIVE_ICONS: Record<string, typeof ProactiveIcon> = {
+            insights: SparkleIcon,
             architectures: ArchitectureIcon, knowme: KnowMeIcon, fmea: FmeaIcon, ownership: OwnershipIcon, graph: GraphIcon,
             assessments: AssessmentIcon, performance: PerformanceIcon,
             coverage: CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
@@ -2487,6 +2493,7 @@ export default function ChatView() {
             cases: EvidenceIcon,
           };
           const activeById: Record<string, boolean> = {
+            insights: inInsights,
             architectures: inArchitectures, knowme: inKnowMe, fmea: inFmea, ownership: inOwnership, graph: inGraph,
             assessments: inAssessments, performance: inPerformance,
             coverage: inCoverage, telemetry: inTelemetry, backupdr: inBackupDr,
@@ -3143,6 +3150,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Evidence Locker">
             <Suspense fallback={<PanelLoading />}>
               <EvidenceLockerPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inInsights ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="AI Insight Packs">
+            <Suspense fallback={<PanelLoading />}>
+              <InsightPacksPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>

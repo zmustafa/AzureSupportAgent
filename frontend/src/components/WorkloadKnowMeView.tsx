@@ -22,6 +22,7 @@ import {
   type KnowMeTodo,
   type KnowMeDocument,
   type KnowMeBuildable,
+  type KnowMeBuildJob,
 } from "../api";
 import { Markdown } from "./LazyMarkdown";
 import { MermaidDiagram } from "./MermaidDiagram";
@@ -1233,63 +1234,96 @@ function BuildFromWorkloadModal({ onClose, onBuilt }: { onClose: () => void; onB
   const start = useRef(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const builtId = useRef("");
   const stepsRef = useRef<HTMLOListElement>(null);
 
   useEffect(() => {
     const el = stepsRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [steps.length]);
+  // On unmount, stop the local timer and detach the SSE reader — but NOT the job: it runs
+  // detached on the server, so closing the modal / navigating away keeps it building.
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); abort.current?.abort(); }, []);
+
+  // Reattach to an in-flight background build (started earlier, then dismissed) so reopening the
+  // dialog shows live progress again and completes / navigates when the build finishes.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { jobs } = await api.knowMeFromWorkloadActive();
+        const running = jobs.find((j) => j.status === "running");
+        if (running && !cancelled) {
+          setWlId(running.workload_id);
+          setSteps([]);
+          setPhase("architecture");
+          void tail(running.workload_id);
+        }
+      } catch { /* no active build to resume */ }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function stopTimer() {
     if (timer.current) { clearInterval(timer.current); timer.current = null; }
   }
 
-  async function build() {
-    if (!wlId || state === "running") return;
+  // Attach to the (idempotent, detached) build job for a workload and tail its SSE progress.
+  // Used both for a fresh build and to reattach to one already running in the background.
+  async function tail(id: string) {
+    if (!id) return;
     setErr("");
     setState("running");
-    setSteps([{ phase: "architecture", message: "Starting…", at: 0 }]);
-    setPhase("architecture");
     start.current = Date.now();
     setElapsed(0);
     stopTimer();
     timer.current = setInterval(() => setElapsed(Math.floor((Date.now() - start.current) / 1000)), 1000);
     const ctrl = new AbortController();
     abort.current = ctrl;
-    let builtId = "";
+    builtId.current = "";
     await streamBuildKnowMeFromWorkload(
-      { workload_id: wlId },
+      { workload_id: id },
       {
         onStatus: (s) => {
           if (s.phase) setPhase(s.phase);
           setSteps((prev) => [...prev, { phase: s.phase, message: s.message, at: Math.floor((Date.now() - start.current) / 1000) }]);
         },
-        onDone: (r: KnowMeResponse) => { builtId = r.id ?? r.know_me?.id ?? ""; },
+        onDone: (r: KnowMeResponse) => { builtId.current = r.id ?? r.know_me?.id ?? ""; },
         onError: (m) => setErr(m),
       },
       ctrl.signal,
     );
     stopTimer();
+    if (ctrl.signal.aborted) return; // detached to background — leave the job running
     setState("idle");
-    if (builtId) onBuilt(builtId);
+    if (builtId.current) onBuilt(builtId.current);
   }
 
-  function cancel() {
+  function build() {
+    if (!wlId || state === "running") return;
+    setSteps([{ phase: "architecture", message: "Starting…", at: 0 }]);
+    setPhase("architecture");
+    void tail(wlId);
+  }
+
+  // Detach: stop tailing (the job keeps running on the server) and close the modal. The tray on
+  // the Know-Me index keeps showing progress and offers to open the doc once it's built.
+  function runInBackground() {
     abort.current?.abort();
     stopTimer();
-    setState("idle");
+    onClose();
   }
 
   const selected = workloads.find((w) => w.id === wlId);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => state !== "running" && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => (state === "running" ? runInBackground() : onClose())}>
       <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <span className="text-lg">✨</span>
           <span className="text-sm font-semibold text-gray-800">Build a Know-Me from a workload</span>
-          <button onClick={() => state !== "running" && onClose()} disabled={state === "running"} className="ml-auto rounded-md px-2 py-1 text-gray-400 hover:bg-gray-100 disabled:opacity-40">✕</button>
+          <button onClick={() => (state === "running" ? runInBackground() : onClose())} title={state === "running" ? "Keep building in the background" : "Close"} className="ml-auto rounded-md px-2 py-1 text-gray-400 hover:bg-gray-100">✕</button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -1327,7 +1361,7 @@ function BuildFromWorkloadModal({ onClose, onBuilt }: { onClose: () => void; onB
                 <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                 <span className="font-medium">{PHASE_META[phase]?.icon ?? "⏳"} {PHASE_META[phase]?.label ?? "Working"}…</span>
                 <span className="font-mono tabular-nums text-brand/80">{fmtElapsed(elapsed)}</span>
-                <span className="ml-auto text-[10px] text-brand/60">this can take a few minutes</span>
+                <span className="ml-auto text-[10px] text-brand/60">keeps building if you close</span>
               </div>
               <ol ref={stepsRef} className="mt-2 max-h-52 space-y-0.5 overflow-y-auto border-t border-brand/10 pt-2">
                 {steps.map((s, i) => {
@@ -1351,7 +1385,7 @@ function BuildFromWorkloadModal({ onClose, onBuilt }: { onClose: () => void; onB
           <span className="text-[11px] text-gray-400">{PHASE_META.architecture.icon} Architecture → {PHASE_META.memory.icon} Memory → {PHASE_META.knowme.icon} Know-Me</span>
           <div className="ml-auto flex items-center gap-2">
             {state === "running" ? (
-              <button onClick={cancel} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={runInBackground} title="Closes this dialog — the build keeps running and appears in the background tray" className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Run in background</button>
             ) : (
               <>
                 <button onClick={onClose} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Close</button>
@@ -1366,6 +1400,72 @@ function BuildFromWorkloadModal({ onClose, onBuilt }: { onClose: () => void; onB
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Background "Build from workload" progress tray — the AI pipeline (Architecture → Memory →
+ *  Know-Me) runs detached on the server, so a build survives navigating away. This polls for
+ *  in-flight builds, shows live status, and offers to open each finished Know-Me. */
+function KnowMeBuildTray() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const seenDone = useRef<Set<string>>(new Set());
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const q = useQuery({
+    queryKey: ["knowMeFromWorkloadActive"],
+    queryFn: api.knowMeFromWorkloadActive,
+    refetchInterval: (query) => {
+      const data = query.state.data as { jobs?: KnowMeBuildJob[] } | undefined;
+      return (data?.jobs ?? []).some((j) => j.status === "running") ? 2500 : false;
+    },
+  });
+
+  // When a build finishes, refresh the index so its new document shows up in the list.
+  useEffect(() => {
+    let newlyDone = false;
+    for (const j of q.data?.jobs ?? []) {
+      if (j.status !== "running" && !seenDone.current.has(j.id)) {
+        seenDone.current.add(j.id);
+        if (j.status === "done") newlyDone = true;
+      }
+    }
+    if (newlyDone) void qc.invalidateQueries({ queryKey: ["knowMeIndex"] });
+  }, [q.data, qc]);
+
+  const jobs = (q.data?.jobs ?? []).filter((j) => !dismissed.has(j.id));
+  if (jobs.length === 0) return null;
+  const running = jobs.filter((j) => j.status === "running").length;
+
+  return (
+    <div className="space-y-2 rounded-xl border border-brand/20 bg-brand/5 p-3">
+      <div className="flex items-center gap-2">
+        {running > 0 && <span className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-brand border-t-transparent" />}
+        <h2 className="text-sm font-semibold text-gray-700">Building Know-Me in the background{running > 0 ? ` · ${running} running` : ""}</h2>
+      </div>
+      <div className="space-y-1.5">
+        {jobs.map((j) => (
+          <div key={j.id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-2">
+            {j.status === "running" ? (
+              <span className="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+            ) : j.status === "error" ? (
+              <span className="shrink-0 text-red-500">⚠️</span>
+            ) : (
+              <span className="shrink-0 text-emerald-600">✓</span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-gray-800">🧩 {j.workload_name || "Workload"}</span>
+              <span className={`block truncate text-[11px] ${j.status === "error" ? "text-red-600" : "text-gray-500"}`}>{j.status === "error" ? j.error || "Failed." : j.last_message || "Starting…"}</span>
+            </span>
+            {j.status === "done" && j.result?.id && (
+              <button onClick={() => navigate(`/knowme/${j.result!.id}`)} className="shrink-0 rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-dark">Open</button>
+            )}
+            {j.status !== "running" && (
+              <button onClick={() => setDismissed((prev) => new Set(prev).add(j.id))} className="shrink-0 rounded-lg border px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-50">Dismiss</button>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1595,6 +1695,8 @@ export function KnowMeIndex() {
             </button>
           </div>
         </div>
+
+        <KnowMeBuildTray />
 
         {query.isLoading && <div className="p-4"><Skeleton rows={6} /></div>}
         {!query.isLoading && groups.length === 0 && !term && (

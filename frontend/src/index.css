@@ -13,6 +13,16 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Hide the native scrollbar while keeping the element scrollable (used by the overflow-safe
+ * TabStrip so long tab rows scroll without a clipping scrollbar sitting on the tabs). */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit */
+}
+
 /* Know-Me read-mode: the active field chip is highlighted via this class (toggled imperatively)
  * so chip clicks DON'T re-create the Markdown components object and re-parse every section. */
 .km-field.km-active-field {

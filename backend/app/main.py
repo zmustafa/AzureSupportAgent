@@ -33,6 +33,7 @@ from app.api import (
     fmea,
     graph,
     identity,
+    insights,
     inventory,
     meta,
     missions,
@@ -483,6 +484,7 @@ api.include_router(ownership.router)
 api.include_router(vms.router)
 api.include_router(capability.router)
 api.include_router(cases.router)
+api.include_router(insights.router)
 
 
 # Health/readiness probes stay at the root (no auth, no /api) for Container Apps.

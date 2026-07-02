@@ -16,8 +16,10 @@ const EVENT_TYPES = [
   "workbook.failed",
   "playbook.completed",
   "investigation.completed",
+  "insight.notable",
+  "insight.urgent",
 ];
-const SOURCES = ["task", "workbook", "playbook", "investigation"];
+const SOURCES = ["task", "workbook", "playbook", "investigation", "insight_pack"];
 
 export function NotificationsSection() {
   const qc = useQueryClient();

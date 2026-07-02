@@ -23,6 +23,10 @@ export function notificationLink(n: AppNotification): string | null {
   if (n.source === "playbook" || kind === "playbook_run" || s(links.playbook_id)) {
     return "/automations/playbooks";
   }
+  // Insight-pack digests open the AI Insight Packs runs tab.
+  if (n.source === "insight_pack" || s(links.insight_run) || s(links.pack_id)) {
+    return "/insights/runs";
+  }
   // Agent runs open their chat thread; other scheduled tasks open the Schedules list.
   if (threadId) return `/c/${threadId}`;
   if (n.source === "task" || s(links.task_id)) return "/automations/tasks";

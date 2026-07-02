@@ -2790,6 +2790,47 @@ export const api = {
       body: JSON.stringify({ goal, answers }),
     }),
 
+  // --- AI Insight Packs ---
+  insightPacks: () => http<InsightPackLibrary>("/insights/packs"),
+  insightTemplates: () => http<{ templates: InsightPack[] }>("/insights/templates"),
+  insightPack: (id: string) => http<{ pack: InsightPack; markdown: string }>(`/insights/packs/${id}`),
+  upsertInsightPack: (pack: Partial<InsightPack>) =>
+    http<{ pack: InsightPack }>("/insights/packs", { method: "PUT", body: JSON.stringify(pack) }),
+  deleteInsightPack: (id: string) =>
+    http<{ ok: boolean }>(`/insights/packs/${id}`, { method: "DELETE" }),
+  setInsightPackEnabled: (id: string, enabled: boolean) =>
+    http<{ pack: InsightPack }>(`/insights/packs/${id}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  cloneInsightPack: (id: string) =>
+    http<{ pack: InsightPack }>(`/insights/packs/${id}/clone`, { method: "POST" }),
+  insightInterview: (goal: string, answers: AgentAnswer[], step: number) =>
+    http<AgentInterviewResult>("/insights/draft/interview", {
+      method: "POST",
+      body: JSON.stringify({ goal, answers, step }),
+    }),
+  insightGenerate: (goal: string, answers: AgentAnswer[]) =>
+    http<{ draft: InsightPack; summary: string }>("/insights/draft/generate", {
+      method: "POST",
+      body: JSON.stringify({ goal, answers }),
+    }),
+  runInsightPack: (body: {
+    pack_id?: string;
+    pack?: Partial<InsightPack>;
+    scope: InsightScope;
+    overrides?: Record<string, unknown>;
+    notify?: boolean;
+  }) => http<{ run: InsightRun }>("/insights/run", { method: "POST", body: JSON.stringify(body) }),
+  insightRuns: (packId?: string, limit = 100) =>
+    http<{ runs: InsightRun[] }>(
+      `/insights/runs?limit=${limit}${packId ? `&pack_id=${encodeURIComponent(packId)}` : ""}`,
+    ),
+  insightLatest: () => http<{ latest: InsightRun[] }>("/insights/latest"),
+  insightRun: (id: string) => http<{ run: InsightRun }>(`/insights/runs/${id}`),
+  insightUpcoming: (days = 7) =>
+    http<{ days: number; occurrences: InsightOccurrence[] }>(`/insights/schedule/upcoming?days=${days}`),
+
   // --- Scheduled tasks ---
   scheduledTasks: () =>
     http<{ tasks: ScheduledTask[]; metrics: TaskMetrics }>("/admin/automations/tasks"),
@@ -3242,6 +3283,10 @@ export const api = {
   // KP5/KU4 — current background generation-job status for a Know-Me (for reconnect on mount).
   knowMeGenerateJob: (kmId: string) =>
     http<{ job: { id: string; status: string; last_message: string } | null }>(`/architectures/know-me/${kmId}/generate/job`),
+  // In-flight / recently-finished "Build from workload" jobs for this tenant. The build runs
+  // detached server-side, so the index can show a background tray and reattach after nav.
+  knowMeFromWorkloadActive: () =>
+    http<{ jobs: KnowMeBuildJob[] }>("/architectures/know-me/from-workload/active"),
   saveKnowMe: (kmId: string, body: { title?: string; description?: string; sections?: KnowMeSection[]; todos?: KnowMeTodo[]; status?: string }) =>
     http<KnowMeResponse>(`/architectures/know-me/${kmId}`, { method: "PUT", body: JSON.stringify(body) }),
   setKnowMeReference: (kmId: string, isReference = true) =>
@@ -7252,6 +7297,101 @@ export interface AgentDraft {
   rationale: string;
 }
 
+// --- AI Insight Packs ---
+export type InsightVerdict = "nothing_notable" | "notable" | "urgent";
+
+export interface InsightPack {
+  id: string;
+  name: string;
+  icon: string;
+  category: string;
+  description: string;
+  sources: string[];
+  supported_scopes: string[];
+  lookback_hours: number;
+  filters: { categories?: string[]; operations?: string[]; min_risk?: string };
+  materiality: { notify_threshold: InsightVerdict; always_notify_if: string[] };
+  output: { format?: string[]; table_columns?: string[] };
+  instructions: string;
+  enabled: boolean;
+  builtin: boolean;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface InsightSource {
+  id: string;
+  label: string;
+  icon: string;
+  description: string;
+}
+
+export interface InsightFlagCode {
+  code: string;
+  label: string;
+}
+
+export interface InsightPackLibrary {
+  packs: InsightPack[];
+  categories: string[];
+  sources: InsightSource[];
+  flag_codes: InsightFlagCode[];
+  verdicts: InsightVerdict[];
+}
+
+export interface InsightScope {
+  mode: "tenant" | "subscription" | "workload" | "workload_dependencies";
+  workload_ids?: string[];
+  workload_id?: string;
+  subscription_id?: string;
+  subscription_name?: string;
+  connection_id?: string;
+}
+
+export interface InsightTableRow {
+  time: string;
+  workload: string;
+  change: string;
+  risk: string;
+  owner: string;
+  recommended_action: string;
+}
+
+export interface InsightRun {
+  id: string;
+  pack_id: string;
+  pack_name: string;
+  pack_icon: string;
+  tenant_id: string;
+  trigger: string;
+  task_id?: string | null;
+  scope: InsightScope;
+  scope_label: string;
+  lookback_hours: number;
+  verdict: InsightVerdict;
+  headline: string;
+  bullets: string[];
+  table: InsightTableRow[];
+  counts: { changes: number; flags: string[] };
+  sources: string[];
+  notified: boolean;
+  gate_reason: string;
+  ai_error?: string | null;
+  status: string;
+  created_at?: string;
+}
+
+export interface InsightOccurrence {
+  task_id: string;
+  task_name: string;
+  pack_id: string;
+  pack_name: string;
+  pack_icon: string;
+  at: string;
+  schedule_label: string;
+}
+
 // Portable agent config export shapes.
 export interface AgentConfig {
   name: string;
@@ -7310,7 +7450,7 @@ export interface ScheduledTask {
   instructions: string;
   agent_id: string | null;
   connection_id: string | null;
-  target_type: "agent" | "assessment" | "workbook" | "playbook";
+  target_type: "agent" | "assessment" | "workbook" | "playbook" | "insight_pack";
   target_config?: Record<string, unknown>;
   target_label?: string;
   target_meta?: { label: string; icon: string };
@@ -9081,6 +9221,21 @@ export interface KnowMeIndex {
   documents: KnowMeDocument[];
   buildable: KnowMeBuildable[];
   trash_count: number;
+}
+/** A detached "Build from workload" job (Architecture → Memory → Know-Me). Survives navigation;
+ *  the index polls these to show background progress and offer an Open link on completion. */
+export interface KnowMeBuildJob {
+  id: string;
+  key: string;
+  status: "running" | "done" | "error";
+  started_at: string;
+  finished_at: string | null;
+  progress_count: number;
+  last_message: string;
+  error: string;
+  workload_id: string;
+  workload_name: string;
+  result: { id: string } | null;
 }
 /** A soft-deleted Know-Me in the Trash. */
 export interface KnowMeTrashEntry {

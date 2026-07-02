@@ -42,14 +42,23 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 // Schedule target types (what a schedule invokes) — mirrors backend TARGET_META.
+// TARGET_TYPES are the types creatable from this generic form. Other types (radar, mission,
+// insight_pack) are created from their own dedicated dialogs but still appear in this list,
+// so TARGET_META / DISPLAY_TYPES cover them for read-only rendering.
 const TARGET_TYPES = ["agent", "assessment", "workbook", "playbook"] as const;
 type TargetType = (typeof TARGET_TYPES)[number];
-const TARGET_META: Record<TargetType, { label: string; icon: string; blurb: string }> = {
+const TARGET_META: Record<string, { label: string; icon: string; blurb: string }> = {
   agent: { label: "Sub Agent", icon: "🤖", blurb: "Run an AI agent that investigates and delivers a report." },
   assessment: { label: "Assessment", icon: "🛡️", blurb: "Score workloads against Well-Architected pillars." },
   workbook: { label: "Workbook", icon: "📓", blurb: "Run an az / KQL / PowerShell operation and AI-summarize it." },
   playbook: { label: "Playbook", icon: "📋", blurb: "Run a chained sequence of workbooks." },
+  radar: { label: "Radar", icon: "📡", blurb: "Scan for upcoming service retirements and breaking changes." },
+  mission: { label: "Mission", icon: "🎯", blurb: "Run a Mission Control system check." },
+  insight_pack: { label: "AI Insight Pack", icon: "🧠", blurb: "Gather data, reason with AI, and deliver a materiality-gated digest." },
 };
+// Display order for grouping/filtering — covers every type that can appear in the list.
+const DISPLAY_TYPES = ["agent", "assessment", "workbook", "playbook", "radar", "mission", "insight_pack"] as const;
+const targetMeta = (tt: string) => TARGET_META[tt] ?? { label: tt, icon: "•", blurb: "" };
 const ASSESSMENT_PILLARS = [
   { id: "security", label: "🛡️ Security" },
   { id: "reliability", label: "🔄 Reliability" },
@@ -2336,7 +2345,7 @@ function TasksSection() {
           </td>
           <td className="py-2 pr-3">
             <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
-              {TARGET_META[tt].icon} {TARGET_META[tt].label}
+              {targetMeta(tt).icon} {targetMeta(tt).label}
             </span>
           </td>
           <td className="py-2 pr-3">
@@ -2440,9 +2449,9 @@ function TasksSection() {
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <div className="inline-flex overflow-hidden rounded-md border text-xs">
               <button onClick={() => setTypeFilter("all")} className={`px-2.5 py-1 ${typeFilter === "all" ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>All ({tasks.length})</button>
-              {TARGET_TYPES.map((tt) => (
-                <button key={tt} onClick={() => setTypeFilter(tt)} className={`border-l px-2.5 py-1 ${typeFilter === tt ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
-                  {TARGET_META[tt].icon} {TARGET_META[tt].label} ({typeCounts[tt] ?? 0})
+              {DISPLAY_TYPES.filter((tt) => (typeCounts[tt] ?? 0) > 0).map((tt) => (
+                <button key={tt} onClick={() => setTypeFilter(tt as TargetType)} className={`border-l px-2.5 py-1 ${typeFilter === tt ? "bg-brand text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+                  {targetMeta(tt).icon} {targetMeta(tt).label} ({typeCounts[tt] ?? 0})
                 </button>
               ))}
             </div>
@@ -2485,13 +2494,13 @@ function TasksSection() {
               </thead>
               <tbody>
                 {(groupByType
-                  ? TARGET_TYPES.flatMap((tt) => {
+                  ? DISPLAY_TYPES.flatMap((tt) => {
                       const group = visibleTasks.filter((t) => (t.target_type ?? "agent") === tt);
                       if (group.length === 0) return [];
                       return [
                         <tr key={`grp-${tt}`} className="bg-gray-50/70">
                           <td colSpan={9} className="py-1.5 pl-1 text-xs font-semibold text-gray-600">
-                            {TARGET_META[tt].icon} {TARGET_META[tt].label} <span className="font-normal text-gray-400">({group.length})</span>
+                            {targetMeta(tt).icon} {targetMeta(tt).label} <span className="font-normal text-gray-400">({group.length})</span>
                           </td>
                         </tr>,
                         ...group.map((t) => renderTaskRow(t)),
@@ -2745,22 +2754,31 @@ function TaskForm({
       {/* Target type picker */}
       <div>
         <label className={label}>What should this schedule run?</label>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {TARGET_TYPES.map((tt) => {
-            const on = targetType === tt;
-            return (
-              <button
-                key={tt}
-                type="button"
-                onClick={() => set({ target_type: tt, target_config: tt === targetType ? cfg : (tt === "assessment" ? { pillars: ["security", "reliability"], use_ai: true, alert_on_new_findings: true, alert_min_severity: "warning", workload_ids: [] } : {}) })}
-                className={`rounded-lg border p-2.5 text-left transition ${on ? "border-brand bg-brand/10" : "border-gray-200 bg-white hover:bg-gray-50"}`}
-              >
-                <div className="text-sm font-medium text-gray-800">{TARGET_META[tt].icon} {TARGET_META[tt].label}</div>
-                <div className="mt-0.5 text-[11px] text-gray-500">{TARGET_META[tt].blurb}</div>
-              </button>
-            );
-          })}
-        </div>
+        {(TARGET_TYPES as readonly string[]).includes(targetType) ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {TARGET_TYPES.map((tt) => {
+              const on = targetType === tt;
+              return (
+                <button
+                  key={tt}
+                  type="button"
+                  onClick={() => set({ target_type: tt, target_config: tt === targetType ? cfg : (tt === "assessment" ? { pillars: ["security", "reliability"], use_ai: true, alert_on_new_findings: true, alert_min_severity: "warning", workload_ids: [] } : {}) })}
+                  className={`rounded-lg border p-2.5 text-left transition ${on ? "border-brand bg-brand/10" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+                >
+                  <div className="text-sm font-medium text-gray-800">{TARGET_META[tt].icon} {TARGET_META[tt].label}</div>
+                  <div className="mt-0.5 text-[11px] text-gray-500">{TARGET_META[tt].blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-200 bg-white p-2.5">
+            <div className="text-sm font-medium text-gray-800">{targetMeta(targetType).icon} {targetMeta(targetType).label}</div>
+            <div className="mt-0.5 text-[11px] text-gray-500">
+              This target type is configured from its own dedicated screen. Here you can edit the name, schedule, and notifications.
+            </div>
+          </div>
+        )}
       </div>
 
       <div>

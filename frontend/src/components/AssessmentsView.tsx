@@ -1915,7 +1915,7 @@ export function AssessmentsPanel() {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="space-y-5 p-6">
+      <div className="mx-auto max-w-7xl space-y-5 p-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-800">Assessments</h1>
           <p className="mt-1 text-sm text-gray-500">Evaluate workloads against the Azure Well-Architected pillars (Security, Reliability, Cost, Operations, Performance), mapped to CIS / NIST / ISO 27001. Score 0–100, track trends, accept risks, assign owners, open tickets, and schedule recurring runs.</p>

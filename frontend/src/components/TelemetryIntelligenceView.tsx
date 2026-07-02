@@ -12,6 +12,7 @@ import { formatError } from "../utils/format";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { ScreenHeader } from "./ui/ScreenHeader";
 
 const SEV_TONE: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -309,19 +310,20 @@ export function TelemetryIntelligencePanel() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <div className="border-b bg-white px-5 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">📈 Telemetry Intelligence</h1>
-            <p className="text-xs text-gray-500">
-              Investigate Application Insights data without writing KQL by hand. This page correlates
-              requests, dependencies, exceptions, and detected changes to explain slowdowns and failures.
-            </p>
-            <p className="mt-1 text-[11px] text-gray-400">
+      <ScreenHeader
+        icon="📈"
+        title="Telemetry Intelligence"
+        subtitle={
+          <>
+            Investigate Application Insights data without writing KQL by hand. This page correlates
+            requests, dependencies, exceptions, and detected changes to explain slowdowns and failures.
+            <span className="mt-1 block text-[11px] text-gray-400">
               Nothing runs when you land here. Pick a workload or subscription, then click Load telemetry.
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+            </span>
+          </>
+        }
+        actions={
+          <>
             <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
             <ScopePicker
               scopeKind={scopeKind}
@@ -345,15 +347,17 @@ export function TelemetryIntelligencePanel() {
             >
               Load telemetry
             </button>
-          </div>
-        </div>
-        {overview && (
-          <div className="mt-1 text-[11px] text-gray-400">
-            {overview.demo ? "Demo data · " : overview.connection_configured ? "" : "No Azure connection · "}
-            {overview.components.length} App Insights component(s){overview.error ? ` · ${overview.error}` : ""}
-          </div>
-        )}
-      </div>
+          </>
+        }
+        footer={
+          overview && (
+            <div className="mt-1 text-[11px] text-gray-400">
+              {overview.demo ? "Demo data · " : overview.connection_configured ? "" : "No Azure connection · "}
+              {overview.components.length} App Insights component(s){overview.error ? ` · ${overview.error}` : ""}
+            </div>
+          )
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
         <div className="mb-4 grid gap-3 lg:grid-cols-3">

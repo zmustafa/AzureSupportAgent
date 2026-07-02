@@ -20,7 +20,7 @@ from typing import Any
 
 logger = logging.getLogger("app.automations.targets")
 
-TARGET_TYPES = ("agent", "assessment", "workbook", "playbook", "radar", "mission")
+TARGET_TYPES = ("agent", "assessment", "workbook", "playbook", "radar", "mission", "insight_pack")
 
 TARGET_META: dict[str, dict[str, str]] = {
     "agent": {"label": "Sub Agent", "icon": "🤖"},
@@ -29,6 +29,7 @@ TARGET_META: dict[str, dict[str, str]] = {
     "playbook": {"label": "Playbook", "icon": "📋"},
     "radar": {"label": "Retirement Radar", "icon": "📡"},
     "mission": {"label": "Mission Control", "icon": "🚀"},
+    "insight_pack": {"label": "AI Insight Pack", "icon": "🧠"},
 }
 
 
@@ -476,6 +477,64 @@ class MissionTarget(Target):
         return ExecResult(status=status, summary=summary, result_ref={"kind": "mission", "id": last_id})
 
 
+class InsightPackTarget(Target):
+    """Runs an AI Insight Pack on a cadence against a chosen scope: gather deterministic
+    data -> AI reasons over it -> gate on materiality -> deliver a digest (only notifying
+    when it matters). cfg: {pack_id, scope:{mode, workload_ids|subscription_id, ...}, overrides?}."""
+
+    type_name = "insight_pack"
+
+    def validate(self, cfg: dict[str, Any]) -> str | None:
+        from app.insights import registry as packs
+
+        pid = cfg.get("pack_id") or ""
+        if not pid:
+            return "Select an insight pack to schedule."
+        if packs.get_pack(pid) is None:
+            return "The selected insight pack no longer exists."
+        scope = cfg.get("scope") or {}
+        mode = scope.get("mode", "workload")
+        if mode in ("workload", "workload_dependencies") and not (scope.get("workload_ids") or scope.get("workload_id")):
+            return "Select at least one workload for the insight pack scope."
+        if mode == "subscription" and not scope.get("subscription_id"):
+            return "Select a subscription for the insight pack scope."
+        return None
+
+    def label(self, cfg: dict[str, Any]) -> str:
+        from app.insights import registry as packs
+        from app.insights import sources as sources_mod
+
+        pack = packs.get_pack(cfg.get("pack_id") or "") or {}
+        scope = cfg.get("scope") or {}
+        return f"Insight Pack: {pack.get('name', 'pack')} · {sources_mod.scope_label(scope)}"
+
+    async def execute(self, task: Any) -> ExecResult:
+        from app.insights import registry as packs
+        from app.insights.runner import run_pack
+
+        cfg = task.target_config or {}
+        pack = packs.get_pack(cfg.get("pack_id") or "")
+        if pack is None:
+            return ExecResult(status="failed", error="Insight pack not found.")
+        try:
+            digest = await run_pack(
+                pack, cfg.get("scope") or {}, tenant_id=task.tenant_id or "default",
+                overrides=cfg.get("overrides") or {}, trigger="schedule",
+                notify=True, notify_connector_ids=list(task.notify_connector_ids or []),
+                task_id=task.id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ExecResult(status="failed", error=str(exc)[:1000])
+        verdict = digest.get("verdict", "nothing_notable")
+        notified = "notified" if digest.get("notified") else "no notification"
+        summary = f"[{verdict}] {digest.get('headline', '')} ({notified})"
+        return ExecResult(
+            status="succeeded",
+            summary=summary[:1000],
+            result_ref={"kind": "insight_run", "id": digest.get("id", ""), "pack_id": pack["id"]},
+        )
+
+
 _REGISTRY: dict[str, Target] = {
     "agent": AgentTarget(),
     "assessment": AssessmentTarget(),
@@ -483,6 +542,7 @@ _REGISTRY: dict[str, Target] = {
     "playbook": PlaybookTarget(),
     "radar": RadarTarget(),
     "mission": MissionTarget(),
+    "insight_pack": InsightPackTarget(),
 }
 
 

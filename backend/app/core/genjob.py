@@ -75,6 +75,11 @@ class JobRegistry:
     def get_job(self, key: str) -> dict[str, Any] | None:
         return self._jobs.get(key)
 
+    def jobs_with_prefix(self, prefix: str) -> list[dict[str, Any]]:
+        """All jobs whose key starts with ``prefix`` (raw job dicts). Lets a caller surface
+        every in-flight/recent job for a scope (e.g. one tenant) in a progress tray."""
+        return [job for key, job in self._jobs.items() if key.startswith(prefix)]
+
     def is_running(self, key: str) -> bool:
         job = self._jobs.get(key)
         return bool(job and job["status"] == "running")

@@ -121,6 +121,12 @@ export function DashboardPanel() {
     retry: false,
     staleTime: 2 * 60_000,
   });
+  const insightLatestQ = useQuery({
+    queryKey: ["insightLatestDashboard"],
+    queryFn: () => api.insightLatest(),
+    retry: false,
+    staleTime: 2 * 60_000,
+  });
 
   // --- Primary workload (drives the per-scope coverage lenses below) -------------
   // Coverage / telemetry / backup / performance are per-scope, so the dashboard reads
@@ -623,6 +629,15 @@ export function DashboardPanel() {
     return out.sort((a, b) => (a.sev === "red" ? -1 : 1) - (b.sev === "red" ? -1 : 1)).slice(0, 6);
   }, [runs, identityKpis, retirementsSoon, reservationsExpiringSoon]);
 
+  // -------- Daily intelligence (latest insight-pack digests worth reading) -------
+  const insightDigests = useMemo(() => {
+    const rank: Record<string, number> = { urgent: 2, notable: 1, nothing_notable: 0 };
+    return (insightLatestQ.data?.latest ?? [])
+      .filter((r) => (rank[r.verdict] ?? 0) >= 1)
+      .sort((a, b) => (rank[b.verdict] ?? 0) - (rank[a.verdict] ?? 0))
+      .slice(0, 4);
+  }, [insightLatestQ.data]);
+
   // -------- Upcoming scheduled automations --------------------------------------
   const upcomingTasks = useMemo(() => {
     const tasks = tasksQ.data?.tasks ?? [];
@@ -844,7 +859,33 @@ export function DashboardPanel() {
           </div>
         )}
 
-        {/* Coverage lenses — per-workload posture (Monitoring / Telemetry / Backup / Performance) */}
+        {/* Daily intelligence — latest AI Insight Pack digests that flagged something */}
+        {!isHidden("insights") && insightDigests.length > 0 && (
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Daily intelligence</h2>
+              <Link to="/insights/runs" className="text-[11px] font-medium text-brand hover:underline">All digests →</Link>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {insightDigests.map((d) => (
+                <Link
+                  key={d.id}
+                  to="/insights/runs"
+                  className={`block rounded-xl border p-3 hover:shadow-sm ${d.verdict === "urgent" ? "border-red-200 bg-red-50/50" : "border-amber-200 bg-amber-50/40"}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">{d.pack_icon || "🧠"}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800" title={d.pack_name}>{d.pack_name}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${d.verdict === "urgent" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{d.verdict}</span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[12px] text-gray-600">{d.headline}</p>
+                  <div className="mt-1.5 text-[10px] text-gray-400">{d.scope_label} · {d.counts?.changes ?? 0} change(s) · {d.counts?.flags?.length ?? 0} flag(s)</div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {isAdmin && !isHidden("coverage") && (
           <div>
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -1350,6 +1391,7 @@ function scoreTone(score: number | null | undefined): string {
 // Hideable dashboard sections, shown in the "Customize" panel.
 const SECTION_TOGGLES: { key: string; label: string }[] = [
   { key: "attention", label: "Needs attention" },
+  { key: "insights", label: "Daily intelligence" },
   { key: "coverage", label: "Coverage" },
   { key: "posture", label: "Posture & risks" },
   { key: "scheduled", label: "Scheduled next" },
