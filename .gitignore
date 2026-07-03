@@ -40,6 +40,15 @@ DEPLOY_RUNBOOK.md
 # Internal UI test plan (QA working notes — not product documentation).
 docs/UI_TEST_PLAN.md
 
+# Full-suite test findings (QA working notes / bug documentation — not distributable).
+docs/test-findings/
+backend/scripts/_insights_e2e.ps1
+backend/scripts/_insights_probe.ps1
+backend/scripts/_fullsuite_*.ps1
+# Scratch test harnesses (underscore-prefixed, QA working scripts — not distributable).
+backend/scripts/_*.py
+backend/scripts/_*.txt
+
 # Internal data-retention engineering plan (design working notes — not product docs).
 docs/DATA_RETENTION_PLAN.md
 

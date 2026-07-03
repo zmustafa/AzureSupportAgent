@@ -454,6 +454,7 @@ async def _run_generate_fmea(
     ai_meta = {
         "confidence": result.get("confidence"),
         "passes": result.get("passes"),
+        "mode": result.get("mode"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_by": _actor(principal),
     }

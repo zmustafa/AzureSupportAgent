@@ -12,6 +12,7 @@ loads_tolerant, with a generous max_tokens so the multi-table JSON returns whole
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -102,12 +103,19 @@ async def generate_fmea(
     evidence_block: str = "",
     focus: str = "",
     two_pass: bool = True,
+    fanout: bool = True,
 ) -> dict[str, Any] | None:
     """Draft FMEA tables from the architecture memory + real scope + posture evidence, then
     (optionally) run a verification pass that keeps scores defensible and grounded.
 
     Returns ``{"tables": [...], "confidence": float, "passes": int}`` or None. The caller
     recomputes every RPN server-side — the model's factor numbers are proposals only.
+
+    When ``fanout`` is set and no single-subsystem ``focus`` is requested, a whole-document
+    generation is parallelised: one quick planning pass enumerates the subsystems, then each
+    subsystem's table is drafted concurrently. Wall time drops from the *sum* of all tables
+    (two serial passes) to roughly the *slowest single table*. A single-subsystem ``focus``
+    request (per-table regen) always uses the original serial path — it is already one table.
     """
     system = SYSTEM_PROMPT
     blocks = [km.scope_facts_block(facts)]
@@ -120,11 +128,18 @@ async def generate_fmea(
             "ADDITIONAL HUMAN-PROVIDED CONTEXT (treat as authoritative; fold relevant facts "
             "into the analysis):\n" + extra_context.strip()[:8000]
         )
-    user = (
-        f"Workload: {workload_name or '(unnamed)'}\n\n"
-        + "\n\n".join(blocks)
-        + f"\n\nARCHITECTURE MEMORY (authoritative technical source):\n{_memory_block(memory)}"
-    )
+    mem_block = _memory_block(memory)
+    header = f"Workload: {workload_name or '(unnamed)'}\n\n"
+    user = header + "\n\n".join(blocks) + f"\n\nARCHITECTURE MEMORY (authoritative technical source):\n{mem_block}"
+
+    # ---- Fan-out: a whole-document generate is parallelised per subsystem. ----
+    if fanout and not focus.strip():
+        fan = await _generate_fanout(system, blocks, header, mem_block, progress)
+        if fan is not None and fan.get("tables"):
+            return fan
+        # Planning or every worker failed → fall through to the serial path as a safety net.
+        if progress is not None:
+            await progress("pass", "↩️ Parallel drafting unavailable — falling back to a single pass…")
 
     # ---- Pass 1: draft ----
     if progress is not None:
@@ -169,6 +184,177 @@ async def generate_fmea(
         return refined
     logger.info("FMEA pass 2 did not parse; returning pass-1 draft.")
     return draft
+
+
+# ============================================================ fan-out (parallel per-subsystem)
+_MAX_FANOUT = 4  # concurrent per-table completions (bounded to respect provider rate limits)
+
+_PLAN_SYSTEM = """\
+You are an FMEA planner. From the Architecture Memory, the REAL AZURE SCOPE block and the
+POSTURE EVIDENCE block, identify the major subsystems / tiers / process steps that each deserve
+their OWN FMEA table (e.g. "Ingress & Front Door", "App tier", "Data tier", "Identity & secrets",
+"Observability"). Return 3-8 subsystems, HIGHEST-RISK first. Do NOT enumerate failure modes yet —
+only the plan. Use exact resource names/types from the scope/memory in ``scope_ref`` where useful.
+Respond with ONLY a JSON object of this EXACT shape (no prose, no code fence):
+{"subsystems": [{"name": "<subsystem>", "scope_ref": "<resource group / service, optional>"}]}
+"""
+
+
+async def _generate_fanout(
+    system: str,
+    blocks: list[str],
+    header: str,
+    mem_block: str,
+    progress: Callable[[str, str], Awaitable[None]] | None,
+) -> dict[str, Any] | None:
+    """Plan the subsystems, then draft each subsystem's table concurrently and merge. Returns
+    ``{"tables": [...], "confidence": float|None, "passes": 1, "mode": "fanout"}`` or None if
+    planning yielded nothing (caller falls back to the serial path)."""
+    plan = await _plan_subsystems(header, blocks, mem_block, progress)
+    if not plan:
+        return None
+
+    if progress is not None:
+        await progress("pass", f"⚡ Drafting {len(plan)} subsystem table(s) in parallel…")
+
+    sem = asyncio.Semaphore(_MAX_FANOUT)
+    lock = asyncio.Lock()
+    done = 0
+    total = len(plan)
+
+    async def _one(spec: dict[str, str]) -> dict[str, Any] | None:
+        nonlocal done
+        async with sem:
+            table = await _generate_focused_table(system, header, blocks, mem_block, spec)
+        async with lock:
+            done += 1
+            if progress is not None:
+                if table and table.get("rows"):
+                    n = len(table["rows"])
+                    await progress("table", f"✅ {done}/{total} · “{spec['name']}” — {n} failure mode{'s' if n != 1 else ''} scored.")
+                else:
+                    await progress("table", f"⚠️ {done}/{total} · “{spec['name']}” — no rows produced.")
+        return table
+
+    results = await asyncio.gather(*[_one(s) for s in plan], return_exceptions=True)
+
+    tables: list[dict[str, Any]] = []
+    confs: list[float] = []
+    for spec, res in zip(plan, results):
+        if isinstance(res, Exception):
+            logger.warning("FMEA fan-out worker failed for %r: %s", spec.get("name"), res)
+            continue
+        if isinstance(res, dict) and res.get("rows"):
+            res["name"] = spec.get("name") or res.get("name") or "Subsystem"
+            if spec.get("scope_ref") and not res.get("scope_ref"):
+                res["scope_ref"] = spec["scope_ref"]
+            c = res.pop("_confidence", None)
+            if isinstance(c, (int, float)):
+                confs.append(float(c))
+            tables.append(res)
+
+    if not tables:
+        return None
+    if progress is not None:
+        total_rows = sum(len(t.get("rows", []) or []) for t in tables)
+        await progress("ai", f"⚡ Parallel analysis complete — {len(tables)} table(s) · {total_rows} failure mode(s).")
+    confidence = round(sum(confs) / len(confs), 3) if confs else None
+    return {"tables": tables, "confidence": confidence, "passes": 1, "mode": "fanout"}
+
+
+async def _plan_subsystems(
+    header: str,
+    blocks: list[str],
+    mem_block: str,
+    progress: Callable[[str, str], Awaitable[None]] | None,
+) -> list[dict[str, str]]:
+    """Quick, small completion that returns the subsystem plan (names + scope refs), deduped
+    and capped at 8. Returns [] if nothing parseable came back."""
+    if progress is not None:
+        await progress("pass", "🗺️ Planning the subsystems to analyse…")
+    user = header + "\n\n".join(blocks) + f"\n\nARCHITECTURE MEMORY (authoritative technical source):\n{mem_block}"
+    provider = build_provider()
+    parts: list[str] = []
+    # Generous cap: reasoning models spend part of the budget on hidden reasoning tokens, so a
+    # small cap truncates the (short) plan JSON before it closes.
+    async for ev in provider.stream(
+        [{"role": "system", "content": _PLAN_SYSTEM}, {"role": "user", "content": user}], None, max_tokens=8000
+    ):
+        if ev.type == "token":
+            parts.append(ev.text)
+    raw = "".join(parts)
+    obj = _extract_json_obj(raw)
+    subs = (obj or {}).get("subsystems") if isinstance(obj, dict) else None
+    if not isinstance(subs, list):
+        logger.warning("FMEA planning did not parse (raw len=%d) head=%r tail=%r",
+                       len(raw), raw[:200], raw[-200:])
+        return []
+    plan: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for s in subs:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name") or "").strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        plan.append({"name": name[:120], "scope_ref": str(s.get("scope_ref") or "").strip()[:120]})
+        if len(plan) >= 8:
+            break
+    return plan
+
+
+async def _generate_focused_table(
+    system: str,
+    header: str,
+    blocks: list[str],
+    mem_block: str,
+    spec: dict[str, str],
+) -> dict[str, Any] | None:
+    """Draft EXACTLY ONE FMEA table for a single planned subsystem (single pass). Returns the
+    table dict (with a transient ``_confidence`` the caller strips) or None."""
+    scope_hint = f" (scope: {spec['scope_ref']})" if spec.get("scope_ref") else ""
+    focus_block = (
+        f"FOCUS: Produce EXACTLY ONE FMEA table for the subsystem \"{spec['name']}\"{scope_hint}. "
+        "Enumerate only THIS subsystem's highest-risk failure modes — do not cover other subsystems. "
+        "Return the standard shape with a single entry in \"tables\"."
+    )
+    user = header + "\n\n".join(blocks + [focus_block]) + f"\n\nARCHITECTURE MEMORY (authoritative technical source):\n{mem_block}"
+    text = await _stream_completion(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        None, compose_msg="", pass_label=spec["name"],
+    )
+    parsed = parse_completion(text)
+    if not parsed or not parsed.get("tables"):
+        return None
+    table = parsed["tables"][0]
+    if isinstance(table, dict):
+        table["_confidence"] = parsed.get("confidence")
+        return table
+    return None
+
+
+def _extract_json_obj(text: str) -> dict[str, Any] | None:
+    """Strip a ```json fence / prose preamble and parse the first JSON object, tolerantly,
+    repairing a truncated tail (reasoning models routinely hit the token cap mid-object)."""
+    t = (text or "").strip()
+    if "```" in t:
+        m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
+        if m:
+            t = m.group(1).strip()
+    if not t.startswith("{"):
+        m = re.search(r"(\{.*\})", t, re.DOTALL)
+        if m:
+            t = m.group(1)
+    obj = loads_tolerant(t)
+    if isinstance(obj, dict):
+        return obj
+    repaired = _repair_truncated_json(t)
+    if repaired:
+        obj = loads_tolerant(repaired)
+        if isinstance(obj, dict):
+            return obj
+    return None
 
 
 async def _stream_completion(

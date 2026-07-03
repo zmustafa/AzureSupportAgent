@@ -194,6 +194,49 @@ async def owner_from_directory(body: DirectoryOwnerIn, principal: Principal = De
     return owner
 
 
+# NOTE: the literal ``/owners/export`` and ``/owners/template`` routes MUST be declared before
+# the parameterized ``/owners/{owner_id}`` route below — FastAPI matches in declaration order, so
+# a param route declared first would shadow them (a request to /owners/export would bind
+# owner_id="export" and 404 with "Owner not found").
+def _assignment_counts(tenant_id: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for a in registry.list_assignments(tenant_id):
+        counts[a.get("owner_id", "")] = counts.get(a.get("owner_id", ""), 0) + 1
+    return counts
+
+
+@router.get("/owners/export")
+async def export_owners(format: str = Query(default="csv"), principal: Principal = Depends(read_dep)):
+    """Download the owner directory as CSV or XLSX."""
+    from app.ownership import sheet
+
+    owners = registry.list_owners(principal.tenant_id)
+    counts = _assignment_counts(principal.tenant_id)
+    if format.lower() == "xlsx":
+        content = sheet.owners_to_xlsx(owners, counts)
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="owners.xlsx"'},
+        )
+    csv_text = sheet.owners_to_csv(owners, counts)
+    return Response(
+        content=csv_text, media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="owners.csv"'},
+    )
+
+
+@router.get("/owners/template")
+async def owners_template(_: Principal = Depends(read_dep)):
+    """A blank CSV import template with the recommended columns + an example row."""
+    from app.ownership import sheet
+
+    return Response(
+        content=sheet.blank_template_csv(), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="owners-template.csv"'},
+    )
+
+
 @router.get("/owners/{owner_id}")
 async def get_owner(owner_id: str, principal: Principal = Depends(read_dep)) -> dict[str, Any]:
     owner = registry.get_owner(principal.tenant_id, owner_id)
@@ -876,45 +919,6 @@ async def writeback_apply(body: TagWritebackIn, principal: Principal = Depends(w
 
 
 # =============================================================== Owners export / import
-def _assignment_counts(tenant_id: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for a in registry.list_assignments(tenant_id):
-        counts[a.get("owner_id", "")] = counts.get(a.get("owner_id", ""), 0) + 1
-    return counts
-
-
-@router.get("/owners/export")
-async def export_owners(format: str = Query(default="csv"), principal: Principal = Depends(read_dep)):
-    """Download the owner directory as CSV or XLSX."""
-    from app.ownership import sheet
-
-    owners = registry.list_owners(principal.tenant_id)
-    counts = _assignment_counts(principal.tenant_id)
-    if format.lower() == "xlsx":
-        content = sheet.owners_to_xlsx(owners, counts)
-        return Response(
-            content=content,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="owners.xlsx"'},
-        )
-    csv_text = sheet.owners_to_csv(owners, counts)
-    return Response(
-        content=csv_text, media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="owners.csv"'},
-    )
-
-
-@router.get("/owners/template")
-async def owners_template(_: Principal = Depends(read_dep)):
-    """A blank CSV import template with the recommended columns + an example row."""
-    from app.ownership import sheet
-
-    return Response(
-        content=sheet.blank_template_csv(), media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="owners-template.csv"'},
-    )
-
-
 @router.post("/owners/import/preview")
 async def import_owners_preview(
     file: UploadFile = File(...),

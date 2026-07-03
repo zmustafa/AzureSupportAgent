@@ -1178,6 +1178,9 @@ export function InsightPacksPanel() {
   const [schedView, setSchedView] = useState<"timeline" | "coverage">("timeline");
   const [caseCreated, setCaseCreated] = useState<{ id: string; title: string } | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  // Transient status toast (e.g. "Run now" feedback). Auto-clears after a few seconds.
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 4000); return () => clearTimeout(t); }, [toast]);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -1348,11 +1351,13 @@ export function InsightPacksPanel() {
   });
   const taskRunNow = useMutation({
     mutationFn: (taskId: string) => api.runTaskNow(taskId),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      setToast({ kind: "ok", msg: res?.message || "Run started — it continues on the server. Check Recent runs for the result." });
       qc.invalidateQueries({ queryKey: ["insightUpcoming"] });
       qc.invalidateQueries({ queryKey: ["insightCoverageAll"] });
       qc.invalidateQueries({ queryKey: ["insightRuns"] });
     },
+    onError: (e) => setToast({ kind: "err", msg: formatError(e) }),
   });
   const taskToggle = useMutation({
     mutationFn: (taskId: string) => api.toggleTask(taskId),
@@ -1554,6 +1559,12 @@ export function InsightPacksPanel() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
+      {/* transient status toast (Run now feedback, etc.) */}
+      {toast && (
+        <div className={`pointer-events-none fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-lg px-4 py-2 text-sm font-medium shadow-lg ${toast.kind === "ok" ? "bg-gray-900 text-white" : "bg-red-600 text-white"}`}>
+          {toast.msg}
+        </div>
+      )}
       {/* header */}
       <div className="border-b border-gray-200 bg-white px-6 py-4">
         <div className="flex items-center justify-between">
@@ -1905,7 +1916,7 @@ export function InsightPacksPanel() {
                             <div className="truncate text-xs text-gray-500">{w.schedule_label} · {w.scope_label}{w.enabled && w.next_run_at ? ` · next run ${timeUntil(w.next_run_at)}` : ""}</div>
                           </div>
                           <div className="flex shrink-0 items-center gap-1">
-                            <button onClick={() => taskRunNow.mutate(w.task_id)} disabled={taskRunNow.isPending} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">Run now</button>
+                            <button onClick={() => taskRunNow.mutate(w.task_id)} disabled={taskRunNow.isPending && taskRunNow.variables === w.task_id} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">{taskRunNow.isPending && taskRunNow.variables === w.task_id ? "Starting…" : "Run now"}</button>
                             <button onClick={() => taskToggle.mutate(w.task_id)} disabled={taskToggle.isPending} className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">{w.enabled ? "Pause" : "Resume"}</button>
                             <button onClick={() => navigate("/automations/tasks")} className="rounded-lg px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-100">Edit</button>
                           </div>
@@ -1934,7 +1945,7 @@ export function InsightPacksPanel() {
                                 <div className="truncate text-sm font-medium text-gray-900">{o.pack_name}</div>
                                 <div className="truncate text-xs text-gray-500">{o.schedule_label}{o.scope_label ? ` · ${o.scope_label}` : ""}</div>
                               </div>
-                              <button onClick={() => taskRunNow.mutate(o.task_id)} disabled={taskRunNow.isPending} className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">Run now</button>
+                              <button onClick={() => taskRunNow.mutate(o.task_id)} disabled={taskRunNow.isPending && taskRunNow.variables === o.task_id} className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">{taskRunNow.isPending && taskRunNow.variables === o.task_id ? "Starting…" : "Run now"}</button>
                             </div>
                           ))}
                         </div>

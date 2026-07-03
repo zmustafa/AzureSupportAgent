@@ -27,6 +27,35 @@ from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSp
 
 DEFAULT_API_BASE_URL = auth.DEFAULT_API_BASE_URL
 
+# Reasoning models (Opus 4.x, GPT-5, o-series, Sonnet 4 thinking, …) spend part of the
+# OUTPUT-token budget on HIDDEN reasoning before emitting any visible text. When the
+# caller's cap (or the configured default) is small, reasoning can consume the ENTIRE
+# budget and the completion comes back EMPTY (observed: raw len=0 → downstream 422). So
+# for these models we enforce a minimum output budget regardless of what the caller asked,
+# guaranteeing headroom for actual output after the reasoning tokens are spent. This is a
+# FLOOR (unlike the Claude provider's MAX_TOKENS ceiling); a larger caller cap is kept.
+_REASONING_MODEL_MARKERS = ("gpt-5", "o1-", "o3-", "o4-", "opus-4", "sonnet-4", "-thinking", "reasoning")
+_REASONING_MIN_OUTPUT_TOKENS = 16000
+
+
+def _is_reasoning_model(model: str) -> bool:
+    m = (model or "").lower()
+    # Bare "o1"/"o3"/"o4" (no suffix) plus the hyphenated variants above.
+    if m in ("o1", "o3", "o4"):
+        return True
+    return any(marker in m for marker in _REASONING_MODEL_MARKERS)
+
+
+def _reasoning_floor(model: str, max_tokens: int | None) -> int | None:
+    """Return an output-token cap that guarantees a reasoning model has room to emit real
+    output after hidden reasoning. Non-reasoning models are returned unchanged."""
+    if not _is_reasoning_model(model):
+        return max_tokens
+    if not max_tokens:
+        return _REASONING_MIN_OUTPUT_TOKENS
+    return max(int(max_tokens), _REASONING_MIN_OUTPUT_TOKENS)
+
+
 # The Copilot thread API rejects very large message content with a 'contentTooLarge'
 # error. The combined Azure + EntraID tool catalog (~100 tools) plus accumulated tool
 # results (a single list call can return tens of KB) easily exceeds the limit. We budget
@@ -532,6 +561,10 @@ class GitHubCopilotChatProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        # Guarantee reasoning models (Opus 4.x, GPT-5, o-series, …) enough output budget
+        # so hidden reasoning can't consume the whole cap and return an EMPTY completion.
+        # Applied here so every downstream path (editor completions, /responses) inherits it.
+        max_tokens = _reasoning_floor(self._model, max_tokens)
         # Device-flow (editor) tokens use the OpenAI-compatible completions API with
         # native tool calling; only the legacy browser-sniffed web token uses the thread
         # API + ReAct protocol below.

@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.agent.factory import build_provider_for
-from app.core.utils import safe_json_parse
+from app.core.utils import loads_tolerant, safe_json_parse
 
 from .catalog import DATASOURCE_CATALOG, DEFAULT_SIZE, WIDGET_CATALOG
 from .playbooks import DASHBOARD_ARCHETYPES, infer_topology, playbooks_for_types
@@ -26,11 +27,17 @@ _MAX_WIDGETS = 12
 
 
 async def _complete(messages: list[dict[str, Any]]) -> str:
-    """One non-streaming completion by draining the provider's token stream."""
+    """One non-streaming completion by draining the provider's token stream.
+
+    A generous ``max_tokens`` is REQUIRED: reasoning models (e.g. Opus) spend part of the
+    budget on hidden reasoning tokens, so without headroom the whole budget is consumed by
+    reasoning and ZERO visible tokens are emitted — which is what made the Monitor
+    "AI-suggest dashboard" flow return an empty completion → 422.
+    """
     provider = build_provider_for(None, None)
     parts: list[str] = []
     try:
-        async for ev in provider.stream(messages, None):
+        async for ev in provider.stream(messages, None, max_tokens=32000):
             if ev.type == "token":
                 parts.append(ev.text)
     finally:
@@ -41,6 +48,75 @@ async def _complete(messages: list[dict[str, Any]]) -> str:
             except Exception:  # noqa: BLE001
                 pass
     return "".join(parts)
+
+
+def _parse_ai_json(raw: str) -> dict[str, Any]:
+    """Robustly parse a JSON object out of an LLM completion.
+
+    Reasoning models (e.g. Opus) frequently wrap the JSON in a ```json fence, add a prose
+    preamble, or hit the output cap mid-object. The strict ``safe_json_parse`` returns ``{}``
+    for all of these, which is what made the Monitor "AI-suggest dashboard" flow fail. This
+    strips a fence / preamble, extracts the outermost ``{...}`` (repairing a truncated tail by
+    closing open brackets at the last complete element), and parses tolerantly.
+    """
+    obj = safe_json_parse(raw, None)
+    if isinstance(obj, dict):
+        return obj
+    t = (raw or "").strip()
+    if "```" in t:
+        m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
+        if m:
+            t = m.group(1).strip()
+    if not t.startswith("{"):
+        m = re.search(r"(\{.*\})", t, re.DOTALL)
+        if m:
+            t = m.group(1)
+    parsed = loads_tolerant(t)
+    if isinstance(parsed, dict):
+        return parsed
+    repaired = _repair_truncated_object(t)
+    if repaired:
+        parsed = loads_tolerant(repaired)
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _repair_truncated_object(t: str) -> str | None:
+    """Close the open brackets of a truncated JSON object at its last complete element, turning
+    a valid-prefix-but-cut-off completion back into parseable JSON (keeps all complete keys)."""
+    start = t.find("{")
+    if start < 0:
+        return None
+    s = t[start:]
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    last_idx = -1
+    last_stack: list[str] | None = None
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_idx = i
+            last_stack = list(stack)
+    if last_idx < 0 or last_stack is None:
+        return None
+    head = s[: last_idx + 1]
+    closers = "".join("}" if c == "{" else "]" for c in reversed(last_stack))
+    return head + closers
 
 
 def _catalog_brief() -> str:
@@ -282,7 +358,7 @@ async def _design_brief(ctx: dict[str, Any], archetype: str) -> dict[str, Any]:
     )
     user = json.dumps({"archetype": _archetype_brief(archetype), "context": ctx})[:_MAX_CTX]
     raw = await _complete([{"role": "system", "content": sys}, {"role": "user", "content": user}])
-    obj = safe_json_parse(raw, {})
+    obj = _parse_ai_json(raw)
     if isinstance(obj, dict) and obj:
         return obj
     return {
@@ -318,8 +394,9 @@ async def suggest_dashboard(workload_id: str, *, tenant_id: str, archetype: str 
     )
     user = json.dumps({"archetype": _archetype_brief(archetype), "design_brief": brief, "context": ctx})[:_MAX_CTX]
     raw = await _complete([{"role": "system", "content": sys}, {"role": "user", "content": user}])
-    obj = safe_json_parse(raw, {})
+    obj = _parse_ai_json(raw)
     if not isinstance(obj, dict) or not isinstance(obj.get("widgets"), list):
+        logger.warning("Monitor suggest: no widgets parsed (raw len=%d) head=%r", len(raw or ""), (raw or "")[:200])
         return {"error": "The model did not return valid suggestions.", "raw": raw[:500]}
     obj["workload_name"] = ctx["workload"]["name"]
     obj["used_memory"] = bool(ctx["memories"])
