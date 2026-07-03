@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.automations.schedule import compute_next_run, human_schedule
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.insights import designer, packfile, registry, runs as runs_store, sources, starters
+from app.insights import designer, packfile, registry, runs as runs_store, snapshots, sources, starters
 from app.models import ScheduledTask
+from app.workloads import registry as workloads_registry
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 log = logging.getLogger("app.api.insights")
@@ -40,6 +41,7 @@ async def list_packs_endpoint(_: Principal = Depends(_read)) -> dict[str, Any]:
     return {
         "packs": registry.list_packs(),
         "categories": registry.CATEGORIES,
+        "collections": registry.list_collections(),
         "sources": sources.SOURCE_CATALOG,
         "flag_codes": designer.FLAG_CODES,
         "verdicts": list(packfile.VERDICTS),
@@ -108,6 +110,85 @@ async def enable_pack_endpoint(pack_id: str, body: EnableBody, _: Principal = De
     if pack is None:
         raise HTTPException(status_code=404, detail="Insight pack not found.")
     return {"pack": pack}
+
+
+class SnoozeBody(BaseModel):
+    days: float = 7.0
+
+
+@router.post("/packs/{pack_id}/snooze")
+async def snooze_pack_endpoint(pack_id: str, body: SnoozeBody, _: Principal = Depends(_write)) -> dict[str, Any]:
+    """Mute a pack's notifications for ``days`` (a value <= 0 clears the snooze). Snoozed packs
+    still run on schedule and record digests — the runner just suppresses the notification."""
+    until = ""
+    if body.days and body.days > 0:
+        until = (datetime.now(timezone.utc) + timedelta(days=float(body.days))).isoformat()
+    pack = registry.set_snooze(pack_id, until)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Insight pack not found.")
+    return {"pack": pack}
+
+
+class PinBody(BaseModel):
+    pinned: bool = True
+
+
+@router.post("/packs/{pack_id}/pin")
+async def pin_pack_endpoint(pack_id: str, body: PinBody, _: Principal = Depends(_write)) -> dict[str, Any]:
+    """Pin/unpin a pack so it surfaces in the Library's top section."""
+    pack = registry.set_pinned(pack_id, body.pinned)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Insight pack not found.")
+    return {"pack": pack}
+
+
+class PackCollectionsBody(BaseModel):
+    collection_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/packs/{pack_id}/collections")
+async def set_pack_collections_endpoint(pack_id: str, body: PackCollectionsBody,
+                                        _: Principal = Depends(_write)) -> dict[str, Any]:
+    """Replace a pack's collection membership (unknown collection ids are dropped)."""
+    pack = registry.set_pack_collections(pack_id, body.collection_ids)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Insight pack not found.")
+    return {"pack": pack}
+
+
+# --------------------------------------------------------------------------- collections
+class CollectionBody(BaseModel):
+    name: str = ""
+    icon: str = "\U0001f4c1"
+
+
+@router.get("/collections")
+async def list_collections_endpoint(_: Principal = Depends(_read)) -> dict[str, Any]:
+    return {"collections": registry.list_collections()}
+
+
+@router.post("/collections")
+async def create_collection_endpoint(body: CollectionBody, principal: Principal = Depends(_write)) -> dict[str, Any]:
+    col = registry.create_collection(body.name, icon=body.icon, actor=_actor(principal))
+    if col is None:
+        raise HTTPException(status_code=400, detail="A collection name is required.")
+    return {"collection": col}
+
+
+@router.post("/collections/{collection_id}")
+async def update_collection_endpoint(collection_id: str, body: CollectionBody,
+                                     _: Principal = Depends(_write)) -> dict[str, Any]:
+    col = registry.update_collection(collection_id, name=body.name, icon=body.icon)
+    if col is None:
+        raise HTTPException(status_code=404, detail="Collection not found.")
+    return {"collection": col}
+
+
+@router.delete("/collections/{collection_id}")
+async def delete_collection_endpoint(collection_id: str, _: Principal = Depends(_write)) -> dict[str, Any]:
+    if not registry.delete_collection(collection_id):
+        raise HTTPException(status_code=404, detail="Collection not found.")
+    return {"ok": True}
 
 
 @router.post("/packs/{pack_id}/clone")
@@ -184,9 +265,61 @@ async def latest_runs_endpoint(principal: Principal = Depends(_read)) -> dict[st
     return {"latest": list(by_pack.values())}
 
 
+@router.get("/health")
+async def pack_health_endpoint(principal: Principal = Depends(_read)) -> dict[str, Any]:
+    """Per-pack health rollup (verdict mix, notify/false-positive rates, verdict sparkline)
+    that powers the Trends view, the Library 'noisy' hints, and threshold-tuning suggestions."""
+    runs = runs_store.list_runs(principal.tenant_id, limit=500)
+    return {"health": runs_store.aggregate_health(runs)}
+
+
 @router.get("/runs/{run_id}")
 async def get_run_endpoint(run_id: str, principal: Principal = Depends(_read)) -> dict[str, Any]:
     run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return {"run": run}
+
+
+@router.get("/runs/{run_id}/pdf")
+async def run_pdf_endpoint(run_id: str, principal: Principal = Depends(_read)) -> Response:
+    """Render one run's digest as a board-ready PDF via the shared xhtml2pdf engine."""
+    run = runs_store.get_run(principal.tenant_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    from app.insights.pdf_report import build_insight_pdf
+    pdf = build_insight_pdf(run)
+    fname = f"insight-{(run.get('pack_id') or 'pack')}-{run_id[:8]}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+class RunStateBody(BaseModel):
+    read: bool | None = None
+    acknowledged: bool | None = None
+    false_positive: bool | None = None
+
+
+@router.post("/runs/read-all")
+async def mark_all_read_endpoint(principal: Principal = Depends(_write)) -> dict[str, Any]:
+    """Stamp every notified-but-unread run as read (clears the inbox badge)."""
+    return {"updated": runs_store.mark_all_read(principal.tenant_id)}
+
+
+@router.post("/runs/{run_id}/state")
+async def set_run_state_endpoint(run_id: str, body: RunStateBody,
+                                 principal: Principal = Depends(_write)) -> dict[str, Any]:
+    """Update a run's review state: read (opened), acknowledged, or flagged false-positive."""
+    now = datetime.now(timezone.utc).isoformat()
+    patch: dict[str, Any] = {}
+    if body.read is not None:
+        patch["read_at"] = now if body.read else None
+    if body.acknowledged is not None:
+        patch["acknowledged_at"] = now if body.acknowledged else None
+        patch["acknowledged_by"] = _actor(principal) if body.acknowledged else None
+    if body.false_positive is not None:
+        patch["false_positive"] = bool(body.false_positive)
+    run = runs_store.update_run(principal.tenant_id, run_id, patch)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found.")
     return {"run": run}
@@ -212,6 +345,7 @@ async def upcoming_endpoint(days: int = 7, principal: Principal = Depends(_read)
     for t in rows:
         cfg = t.target_config or {}
         pack = registry.get_pack(cfg.get("pack_id") or "") or {}
+        scope_lbl = sources.scope_label(sources.resolve_scope_names(cfg.get("scope") or {}))
         task_dict = {
             "schedule_kind": t.schedule_kind, "cron_expr": t.cron_expr, "time_of_day": t.time_of_day,
             "weekday": t.weekday, "timezone": t.timezone, "start_date": t.start_date, "end_date": t.end_date,
@@ -225,8 +359,188 @@ async def upcoming_endpoint(days: int = 7, principal: Principal = Depends(_read)
                 "task_id": t.id, "task_name": t.name,
                 "pack_id": pack.get("id", ""), "pack_name": pack.get("name", ""),
                 "pack_icon": pack.get("icon", "🧠"),
+                "scope_label": scope_lbl,
                 "at": nxt.isoformat(), "schedule_label": human_schedule(task_dict),
             })
             after = nxt
     occurrences.sort(key=lambda o: o["at"])
     return {"days": days, "occurrences": occurrences}
+
+
+# --------------------------------------------------------------------------- coverage (watchers)
+_STALE_GRACE_DAYS = 1.0
+_STATUS_RANK = {"covered": 3, "stale": 2, "paused": 1}
+
+
+def _task_schedule_dict(t: ScheduledTask) -> dict[str, Any]:
+    return {
+        "schedule_kind": t.schedule_kind, "cron_expr": t.cron_expr, "time_of_day": t.time_of_day,
+        "weekday": t.weekday, "timezone": t.timezone, "start_date": t.start_date, "end_date": t.end_date,
+    }
+
+
+def _interval_days(kind: str | None) -> float:
+    return {"weekly": 7.0, "cron": 1.0}.get(kind or "daily", 1.0)
+
+
+def _age_seconds(iso: str | None, now: datetime) -> float | None:
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (now - dt.astimezone(timezone.utc)).total_seconds()
+
+
+def _sub_guid(value: str) -> str:
+    """Bare subscription GUID from an ARM id or plain guid (for subscription-scope matching)."""
+    s = str(value or "").strip("/")
+    if "subscriptions/" in s:
+        s = s.split("subscriptions/", 1)[1]
+    return s.split("/", 1)[0].lower()
+
+
+def _workload_sub_guids(wl: dict[str, Any] | None) -> set[str]:
+    out: set[str] = set()
+    for n in (wl or {}).get("nodes") or []:
+        if not isinstance(n, dict):
+            continue
+        if n.get("subscription_id"):
+            out.add(_sub_guid(n["subscription_id"]))
+        if n.get("kind") == "subscription" and n.get("id"):
+            out.add(_sub_guid(n["id"]))
+    return {g for g in out if g}
+
+
+def _scope_covers_workload(scope: dict[str, Any], workload_id: str, sub_guids: set[str]) -> bool:
+    """Does a pack scheduled against ``scope`` watch ``workload_id``?"""
+    mode = (scope or {}).get("mode", "workload")
+    if mode == "tenant":
+        return True
+    if mode == "subscription":
+        return _sub_guid(scope.get("subscription_id", "")) in sub_guids
+    wids = scope.get("workload_ids") or ([scope["workload_id"]] if scope.get("workload_id") else [])
+    return workload_id in [str(w) for w in wids]
+
+
+@router.get("/coverage")
+async def coverage_endpoint(workload_id: str = "", days: int = 7,
+                            principal: Principal = Depends(_read),
+                            db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Watcher coverage: which insight packs watch a scope, on what cadence, how healthy, and
+    where the blind spots are. With ``?workload_id=`` it pivots to one workload (per-workload
+    coverage view); without it, returns the flat watcher join (feeds the coverage matrix)."""
+    now = datetime.now(timezone.utc)
+    days = min(31, max(1, days))
+    rows = (await db.execute(
+        select(ScheduledTask).where(
+            ScheduledTask.tenant_id == principal.tenant_id,
+            ScheduledTask.target_type == "insight_pack",
+            ScheduledTask.status.in_(("on", "off")),
+            ScheduledTask.deleted_at.is_(None),
+        )
+    )).scalars().all()
+
+    packs_by_id = {p["id"]: p for p in registry.list_packs()}
+    all_runs = runs_store.list_runs(principal.tenant_id, limit=500)
+    # Latest run per (pack_id, scope_key) — runs are newest-first, so first wins.
+    latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in all_runs:
+        key = (r.get("pack_id", ""), snapshots.scope_key(r.get("scope") or {}))
+        latest_by_key.setdefault(key, r)
+
+    wl = workloads_registry.get_workload(workload_id, include_deleted=True) if workload_id else None
+    sub_guids = _workload_sub_guids(wl)
+
+    watchers: list[dict[str, Any]] = []
+    for t in rows:
+        cfg = t.target_config or {}
+        scope = sources.resolve_scope_names(cfg.get("scope") or {})
+        if workload_id and not _scope_covers_workload(scope, workload_id, sub_guids):
+            continue
+        pack = packs_by_id.get(cfg.get("pack_id") or "") or {}
+        skey = snapshots.scope_key(scope)
+        enabled = t.status == "on"
+        sched = _task_schedule_dict(t)
+        nxt = compute_next_run(sched) if enabled else None
+        last = latest_by_key.get((pack.get("id", ""), skey))
+        if not enabled:
+            status = "paused"
+        elif last is None:
+            status = "stale"
+        else:
+            age = _age_seconds(last.get("created_at"), now)
+            fresh_for = (_interval_days(t.schedule_kind) + _STALE_GRACE_DAYS) * 86400
+            status = "covered" if (age is not None and age <= fresh_for) else "stale"
+        watchers.append({
+            "task_id": t.id, "task_name": t.name, "enabled": enabled,
+            "pack_id": pack.get("id", cfg.get("pack_id", "")), "pack_name": pack.get("name", cfg.get("pack_id", "")),
+            "pack_icon": pack.get("icon", "\U0001f9e0"), "category": pack.get("category", "general"),
+            "sources": pack.get("sources", []), "lookback_hours": pack.get("lookback_hours", 24),
+            "scope": scope, "scope_key": skey, "scope_label": sources.scope_label(scope),
+            "schedule_label": human_schedule(sched), "next_run_at": nxt.isoformat() if nxt else None,
+            "status": status,
+            "last_run_id": (last or {}).get("id"), "last_verdict": (last or {}).get("verdict"),
+            "last_run_at": (last or {}).get("created_at"), "last_headline": (last or {}).get("headline"),
+            "last_notified": bool((last or {}).get("notified")),
+        })
+
+    result: dict[str, Any] = {"watchers": watchers, "categories": registry.CATEGORIES}
+    if not workload_id:
+        return result
+
+    # Per-workload pivot: area (category) rollup, gaps, summary.
+    areas: list[dict[str, Any]] = []
+    gaps: list[str] = []
+    summary = {"covered": 0, "stale": 0, "paused": 0, "gaps": 0}
+    for cat in registry.CATEGORIES:
+        cat_watchers = [w for w in watchers if w["category"] == cat["id"]]
+        if not cat_watchers:
+            gaps.append(cat["id"])
+            summary["gaps"] += 1
+            areas.append({"area": cat["id"], "label": cat["label"], "icon": cat["icon"],
+                          "status": "gap", "packs": []})
+            continue
+        best = max((w["status"] for w in cat_watchers), key=lambda s: _STATUS_RANK.get(s, 0))
+        summary[best] = summary.get(best, 0) + 1
+        areas.append({
+            "area": cat["id"], "label": cat["label"], "icon": cat["icon"], "status": best,
+            "packs": sorted(cat_watchers, key=lambda w: (-_STATUS_RANK.get(w["status"], 0), w["pack_name"].lower())),
+        })
+
+    # Scoped upcoming occurrences over the window (enabled watchers only).
+    horizon = now + timedelta(days=days)
+    upcoming: list[dict[str, Any]] = []
+    for t in rows:
+        cfg = t.target_config or {}
+        scope = sources.resolve_scope_names(cfg.get("scope") or {})
+        if t.status != "on" or not _scope_covers_workload(scope, workload_id, sub_guids):
+            continue
+        pack = packs_by_id.get(cfg.get("pack_id") or "") or {}
+        sched = _task_schedule_dict(t)
+        after: datetime | None = None
+        for _ in range(20):
+            occ = compute_next_run(sched, after=after)
+            if occ is None or occ > horizon:
+                break
+            upcoming.append({
+                "task_id": t.id, "task_name": t.name, "pack_id": pack.get("id", ""), "pack_name": pack.get("name", ""),
+                "pack_icon": pack.get("icon", "\U0001f9e0"), "at": occ.isoformat(),
+                "scope_label": sources.scope_label(scope), "schedule_label": human_schedule(sched),
+            })
+            after = occ
+    upcoming.sort(key=lambda o: o["at"])
+
+    # Scoped recent runs (most recent first).
+    recent = [r for r in all_runs
+              if _scope_covers_workload(r.get("scope") or {}, workload_id, sub_guids)][:25]
+
+    result.update({
+        "workload_id": workload_id, "workload_name": (wl or {}).get("name", ""),
+        "areas": areas, "gaps": gaps, "summary": summary,
+        "upcoming": upcoming, "recent_runs": recent,
+    })
+    return result

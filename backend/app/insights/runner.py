@@ -50,6 +50,7 @@ async def run_pack(pack: dict[str, Any], scope: dict[str, Any], *, tenant_id: st
     overrides = overrides or {}
     lookback = int(overrides.get("lookback_hours") or pack["lookback_hours"])
     filters = {**pack["filters"], **(overrides.get("filters") or {})}
+    scope = sources_mod.resolve_scope_names(scope)  # fill workload_names so labels show real names
     scope_label = sources_mod.scope_label(scope)
 
     # 1) GATHER
@@ -74,6 +75,16 @@ async def run_pack(pack: dict[str, Any], scope: dict[str, Any], *, tenant_id: st
         flag_codes=flag_codes,
     )
     notified = bool(notify and should_notify)
+    # Respect a pack-level snooze: still run + record the digest, just suppress the notify.
+    snoozed_until = str(pack.get("snoozed_until") or "")
+    if notified and snoozed_until:
+        from datetime import datetime, timezone
+        try:
+            if datetime.fromisoformat(snoozed_until.replace("Z", "+00:00")) > datetime.now(timezone.utc):
+                notified = False
+                gate_reason = f"snoozed until {snoozed_until}"
+        except ValueError:
+            pass
 
     # Build & persist the digest (always saved, notified or not).
     digest = {

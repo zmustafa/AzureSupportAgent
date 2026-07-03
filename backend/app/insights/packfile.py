@@ -35,6 +35,9 @@ DEFAULTS: dict[str, Any] = {
     "created_by": "",
     "created_at": "",
     "updated_at": "",
+    "snoozed_until": "",  # ISO instant; runtime mute state (kept out of the portable .pack.md)
+    "pinned": False,       # organizational state — pin to the Library top section (not in .pack.md)
+    "collection_ids": [],  # user-defined collection membership (not in .pack.md)
 }
 
 VERDICTS = ("nothing_notable", "notable", "urgent")
@@ -77,6 +80,9 @@ def normalize(raw: dict[str, Any]) -> dict[str, Any]:
     p["name"] = str(p.get("name") or "")[:200]
     p["enabled"] = bool(p.get("enabled", True))
     p["builtin"] = bool(p.get("builtin", False))
+    p["snoozed_until"] = str(p.get("snoozed_until") or "")
+    p["pinned"] = bool(p.get("pinned", False))
+    p["collection_ids"] = [str(c) for c in (p.get("collection_ids") or []) if c]
     return p
 
 

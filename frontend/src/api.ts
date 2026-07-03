@@ -2828,8 +2828,51 @@ export const api = {
     ),
   insightLatest: () => http<{ latest: InsightRun[] }>("/insights/latest"),
   insightRun: (id: string) => http<{ run: InsightRun }>(`/insights/runs/${id}`),
+  setInsightRunState: (
+    id: string,
+    body: { read?: boolean; acknowledged?: boolean; false_positive?: boolean },
+  ) =>
+    http<{ run: InsightRun }>(`/insights/runs/${id}/state`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  markAllInsightRunsRead: () =>
+    http<{ updated: number }>("/insights/runs/read-all", { method: "POST" }),
   insightUpcoming: (days = 7) =>
     http<{ days: number; occurrences: InsightOccurrence[] }>(`/insights/schedule/upcoming?days=${days}`),
+  insightCoverage: (workloadId?: string, days = 7) =>
+    http<InsightCoverage>(
+      `/insights/coverage?days=${days}${workloadId ? `&workload_id=${encodeURIComponent(workloadId)}` : ""}`,
+    ),
+  insightHealth: () => http<{ health: Record<string, InsightPackHealth> }>("/insights/health"),
+  snoozeInsightPack: (id: string, days: number) =>
+    http<{ pack: InsightPack }>(`/insights/packs/${id}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ days }),
+    }),
+  pinInsightPack: (id: string, pinned: boolean) =>
+    http<{ pack: InsightPack }>(`/insights/packs/${id}/pin`, {
+      method: "POST",
+      body: JSON.stringify({ pinned }),
+    }),
+  setInsightPackCollections: (id: string, collection_ids: string[]) =>
+    http<{ pack: InsightPack }>(`/insights/packs/${id}/collections`, {
+      method: "POST",
+      body: JSON.stringify({ collection_ids }),
+    }),
+  createInsightCollection: (name: string, icon = "📁") =>
+    http<{ collection: InsightCollection }>("/insights/collections", {
+      method: "POST",
+      body: JSON.stringify({ name, icon }),
+    }),
+  updateInsightCollection: (id: string, body: { name?: string; icon?: string }) =>
+    http<{ collection: InsightCollection }>(`/insights/collections/${id}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteInsightCollection: (id: string) =>
+    http<{ ok: boolean }>(`/insights/collections/${id}`, { method: "DELETE" }),
+  insightRunPdf: (id: string) => httpBlob(`/insights/runs/${id}/pdf`),
 
   // --- Scheduled tasks ---
   scheduledTasks: () =>
@@ -7318,6 +7361,17 @@ export interface InsightPack {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
+  snoozed_until?: string;
+  pinned?: boolean;
+  collection_ids?: string[];
+}
+
+export interface InsightCollection {
+  id: string;
+  name: string;
+  icon?: string;
+  created_by?: string;
+  created_at?: string;
 }
 
 export interface InsightSource {
@@ -7334,7 +7388,8 @@ export interface InsightFlagCode {
 
 export interface InsightPackLibrary {
   packs: InsightPack[];
-  categories: string[];
+  categories: { id: string; label: string; icon: string }[];
+  collections: InsightCollection[];
   sources: InsightSource[];
   flag_codes: InsightFlagCode[];
   verdicts: InsightVerdict[];
@@ -7344,6 +7399,7 @@ export interface InsightScope {
   mode: "tenant" | "subscription" | "workload" | "workload_dependencies";
   workload_ids?: string[];
   workload_id?: string;
+  workload_names?: string[];
   subscription_id?: string;
   subscription_name?: string;
   connection_id?: string;
@@ -7380,6 +7436,10 @@ export interface InsightRun {
   ai_error?: string | null;
   status: string;
   created_at?: string;
+  read_at?: string | null;
+  acknowledged_at?: string | null;
+  acknowledged_by?: string | null;
+  false_positive?: boolean;
 }
 
 export interface InsightOccurrence {
@@ -7390,6 +7450,68 @@ export interface InsightOccurrence {
   pack_icon: string;
   at: string;
   schedule_label: string;
+  scope_label?: string;
+}
+
+export interface InsightWatcher {
+  task_id: string;
+  task_name: string;
+  enabled: boolean;
+  pack_id: string;
+  pack_name: string;
+  pack_icon: string;
+  category: string;
+  sources: string[];
+  lookback_hours: number;
+  scope: InsightScope;
+  scope_key: string;
+  scope_label: string;
+  schedule_label: string;
+  next_run_at?: string | null;
+  status: "covered" | "stale" | "paused";
+  last_run_id?: string | null;
+  last_verdict?: InsightVerdict | null;
+  last_run_at?: string | null;
+  last_headline?: string | null;
+  last_notified?: boolean;
+}
+
+export interface InsightCoverageArea {
+  area: string;
+  label: string;
+  icon: string;
+  status: "covered" | "stale" | "paused" | "gap";
+  packs: InsightWatcher[];
+}
+
+export interface InsightCoverage {
+  watchers: InsightWatcher[];
+  categories: { id: string; label: string; icon: string }[];
+  workload_id?: string;
+  workload_name?: string;
+  areas?: InsightCoverageArea[];
+  gaps?: string[];
+  summary?: { covered: number; stale: number; paused: number; gaps: number };
+  upcoming?: InsightOccurrence[];
+  recent_runs?: InsightRun[];
+}
+
+export interface InsightPackHealth {
+  pack_id: string;
+  pack_name: string;
+  pack_icon: string;
+  runs_total: number;
+  notified: number;
+  false_positive: number;
+  acknowledged: number;
+  verdicts: { nothing_notable: number; notable: number; urgent: number };
+  spark: number[];
+  last_run_at?: string | null;
+  last_verdict?: InsightVerdict | null;
+  material: number;
+  noise_score: number;
+  fp_rate: number;
+  suggest_raise_threshold: boolean;
 }
 
 // Portable agent config export shapes.

@@ -70,3 +70,82 @@ def get_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:
 def latest_run(tenant_id: str, *, pack_id: str | None = None) -> dict[str, Any] | None:
     runs = list_runs(tenant_id, pack_id=pack_id, limit=1)
     return runs[0] if runs else None
+
+
+def update_run(tenant_id: str, run_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+    """Shallow-merge ``patch`` into the stored run (review state: read/ack/false-positive).
+    Returns the updated run, or None if not found."""
+    runs = _read(tenant_id)
+    for r in runs:
+        if r.get("id") == run_id:
+            r.update(patch)
+            _write(tenant_id, runs)
+            return r
+    return None
+
+
+def mark_all_read(tenant_id: str, *, at: str | None = None) -> int:
+    """Stamp ``read_at`` on every notified-but-unread run. Returns how many were updated."""
+    at = at or _now()
+    runs = _read(tenant_id)
+    updated = 0
+    for r in runs:
+        if r.get("notified") and not r.get("read_at"):
+            r["read_at"] = at
+            updated += 1
+    if updated:
+        _write(tenant_id, runs)
+    return updated
+
+
+def aggregate_health(runs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per-pack health rollup from a newest-first run list. Pure over stored runs so it is
+    trivially unit-testable: run counts, verdict mix, notify/false-positive rates, a recent
+    verdict sparkline (oldest\u2192newest), and a "raise the threshold" hint for noisy packs."""
+    from app.insights.packfile import VERDICT_RANK
+
+    order: list[str] = []
+    acc: dict[str, dict[str, Any]] = {}
+    for r in runs:
+        pid = r.get("pack_id") or ""
+        if not pid:
+            continue
+        h = acc.get(pid)
+        if h is None:
+            h = {
+                "pack_id": pid,
+                "pack_name": r.get("pack_name", ""),
+                "pack_icon": r.get("pack_icon", "\U0001f9e0"),
+                "runs_total": 0, "notified": 0, "false_positive": 0, "acknowledged": 0,
+                "verdicts": {"nothing_notable": 0, "notable": 0, "urgent": 0},
+                "spark": [],  # verdict ranks, newest-first while accumulating
+                "last_run_at": r.get("created_at"), "last_verdict": r.get("verdict"),
+            }
+            acc[pid] = h
+            order.append(pid)
+        h["runs_total"] += 1
+        if r.get("notified"):
+            h["notified"] += 1
+        if r.get("false_positive"):
+            h["false_positive"] += 1
+        if r.get("acknowledged_at"):
+            h["acknowledged"] += 1
+        v = r.get("verdict") or "nothing_notable"
+        if v in h["verdicts"]:
+            h["verdicts"][v] += 1
+        if len(h["spark"]) < 20:
+            h["spark"].append(VERDICT_RANK.get(v, 0))
+
+    out: dict[str, dict[str, Any]] = {}
+    for pid in order:
+        h = acc[pid]
+        total = max(1, h["runs_total"])
+        notified = h["notified"]
+        h["material"] = h["verdicts"]["notable"] + h["verdicts"]["urgent"]
+        h["noise_score"] = round(notified / total, 3)
+        h["fp_rate"] = round(h["false_positive"] / max(1, notified), 3)
+        h["spark"] = list(reversed(h["spark"]))  # oldest\u2192newest for drawing
+        # Noisy = pings often but is frequently dismissed as a false positive.
+        h["suggest_raise_threshold"] = bool(notified >= 5 and h["false_positive"] / max(1, notified) >= 0.5)
+        out[pid] = h
+    return out

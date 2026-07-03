@@ -68,6 +68,10 @@ def _ensure_seeded(data: dict[str, Any]) -> dict[str, Any]:
         p["updated_at"] = now
         p["created_by"] = existing.get("created_by") or "system"
         p["builtin"] = True
+        # Preserve per-install runtime/organizational state across re-seeds.
+        p["snoozed_until"] = existing.get("snoozed_until", "")
+        p["pinned"] = existing.get("pinned", False)
+        p["collection_ids"] = existing.get("collection_ids", []) or []
         data["packs"][p["id"]] = p
     data["seeded"] = True
     data["seed_version"] = starters.SEED_VERSION
@@ -104,6 +108,11 @@ def upsert_pack(pack: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
         p["created_at"] = existing.get("created_at") or _now()
         p["created_by"] = existing.get("created_by") or actor
         p["builtin"] = existing.get("builtin", False)  # builtin flag is not user-editable
+        # Snooze is runtime state the edit form doesn't carry — preserve it across upserts.
+        p["snoozed_until"] = p.get("snoozed_until") or existing.get("snoozed_until", "")
+        # Pin + collection membership are organizational state the edit form doesn't carry.
+        p["pinned"] = existing.get("pinned", False)
+        p["collection_ids"] = existing.get("collection_ids", []) or []
     p["updated_at"] = _now()
     data["packs"][pid] = p
     _write(data)
@@ -131,6 +140,20 @@ def set_enabled(pack_id: str, enabled: bool) -> dict[str, Any] | None:
     return packfile.normalize(p)
 
 
+def set_snooze(pack_id: str, until_iso: str) -> dict[str, Any] | None:
+    """Mute a pack's notifications until ``until_iso`` (an empty string clears the snooze).
+    Snoozed packs still run on schedule and record digests; the runner just won't notify."""
+    data = _ensure_seeded(_read())
+    p = data["packs"].get(pack_id)
+    if not p:
+        return None
+    p["snoozed_until"] = str(until_iso or "")
+    p["updated_at"] = _now()
+    data["packs"][pack_id] = p
+    _write(data)
+    return packfile.normalize(p)
+
+
 def clone_pack(pack_id: str, *, actor: str = "") -> dict[str, Any] | None:
     """Duplicate a pack (or a starter template) into a new, editable, non-builtin pack."""
     src = get_pack(pack_id) or starters.by_id(pack_id)
@@ -141,3 +164,84 @@ def clone_pack(pack_id: str, *, actor: str = "") -> dict[str, Any] | None:
     p["name"] = f"{p['name']} (copy)"
     p["builtin"] = False
     return upsert_pack(p, actor=actor)
+
+
+def set_pinned(pack_id: str, pinned: bool) -> dict[str, Any] | None:
+    """Pin/unpin a pack so it surfaces in the Library's top section."""
+    data = _ensure_seeded(_read())
+    p = data["packs"].get(pack_id)
+    if not p:
+        return None
+    p["pinned"] = bool(pinned)
+    p["updated_at"] = _now()
+    data["packs"][pack_id] = p
+    _write(data)
+    return packfile.normalize(p)
+
+
+# ------------------------------------------------------------------ collections
+# User-defined groupings for the Library. A pack may belong to zero or more collections
+# (membership lives on the pack as ``collection_ids``); this store holds their names/icons.
+def list_collections() -> list[dict[str, Any]]:
+    data = _ensure_seeded(_read())
+    cols = [c for c in (data.get("collections") or []) if isinstance(c, dict) and c.get("id")]
+    cols.sort(key=lambda c: str(c.get("name", "")).lower())
+    return cols
+
+
+def create_collection(name: str, *, icon: str = "📁", actor: str = "") -> dict[str, Any] | None:
+    name = (name or "").strip()[:80]
+    if not name:
+        return None
+    data = _ensure_seeded(_read())
+    cols = list(data.get("collections") or [])
+    col = {"id": str(uuid.uuid4()), "name": name, "icon": (icon or "📁")[:8],
+           "created_by": actor, "created_at": _now()}
+    cols.append(col)
+    data["collections"] = cols
+    _write(data)
+    return col
+
+
+def update_collection(collection_id: str, *, name: str | None = None, icon: str | None = None) -> dict[str, Any] | None:
+    data = _ensure_seeded(_read())
+    cols = list(data.get("collections") or [])
+    for c in cols:
+        if c.get("id") == collection_id:
+            if name is not None and name.strip():
+                c["name"] = name.strip()[:80]
+            if icon is not None and icon.strip():
+                c["icon"] = icon.strip()[:8]
+            data["collections"] = cols
+            _write(data)
+            return c
+    return None
+
+
+def delete_collection(collection_id: str) -> bool:
+    """Remove a collection and detach it from every pack that referenced it."""
+    data = _ensure_seeded(_read())
+    cols = list(data.get("collections") or [])
+    remaining = [c for c in cols if c.get("id") != collection_id]
+    if len(remaining) == len(cols):
+        return False
+    data["collections"] = remaining
+    for p in data["packs"].values():
+        if collection_id in (p.get("collection_ids") or []):
+            p["collection_ids"] = [c for c in p["collection_ids"] if c != collection_id]
+    _write(data)
+    return True
+
+
+def set_pack_collections(pack_id: str, collection_ids: list[str]) -> dict[str, Any] | None:
+    """Replace a pack's collection membership (unknown collection ids are dropped)."""
+    data = _ensure_seeded(_read())
+    p = data["packs"].get(pack_id)
+    if not p:
+        return None
+    valid = {c.get("id") for c in (data.get("collections") or [])}
+    p["collection_ids"] = [str(c) for c in (collection_ids or []) if str(c) in valid]
+    p["updated_at"] = _now()
+    data["packs"][pack_id] = p
+    _write(data)
+    return packfile.normalize(p)

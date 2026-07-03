@@ -60,16 +60,52 @@ def source_label(source_id: str) -> str:
 
 
 def scope_label(scope: dict[str, Any]) -> str:
-    """A human label for the resolved scope, used to fill the ``{{scope_label}}`` placeholder."""
+    """A human label for the resolved scope, used to fill the ``{{scope_label}}`` placeholder.
+
+    Prefers real workload names when the scope carries ``workload_names`` (populated by
+    :func:`resolve_scope_names` at run time and by the UI at schedule creation); otherwise
+    degrades gracefully to a workload count.
+    """
     mode = (scope or {}).get("mode", "workload")
     if mode == "tenant":
         return "the whole tenant"
     if mode == "subscription":
         return scope.get("subscription_name") or f"subscription {str(scope.get('subscription_id', ''))[:8]}…"
+    names = [str(n) for n in (scope.get("workload_names") or []) if n]
     wids = scope.get("workload_ids") or ([scope["workload_id"]] if scope.get("workload_id") else [])
+    named = names[0] if len(names) == 1 else (f"{names[0]} +{len(names) - 1} more" if names else "")
     if mode == "workload_dependencies":
+        if named:
+            return f"{named} + dependencies"
         return f"{len(wids)} workload(s) + dependencies" if len(wids) != 1 else "the workload + its dependencies"
+    if named:
+        return named
     return f"{len(wids)} workload(s)" if len(wids) != 1 else "the workload"
+
+
+def resolve_scope_names(scope: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort: return a copy of ``scope`` with ``workload_names`` filled from the registry
+    so digests and labels show real names instead of "the workload". Never raises; unknown or
+    deleted workloads are simply skipped (deleted ones are still resolved so historical runs
+    keep a readable label)."""
+    if not scope or scope.get("workload_names"):
+        return scope
+    wids = scope.get("workload_ids") or ([scope["workload_id"]] if scope.get("workload_id") else [])
+    if not wids:
+        return scope
+    try:
+        from app.workloads.registry import get_workload
+    except Exception:  # noqa: BLE001 — labeling must never break a run
+        return scope
+    names: list[str] = []
+    for wid in wids:
+        try:
+            wl = get_workload(str(wid), include_deleted=True)
+        except Exception:  # noqa: BLE001
+            wl = None
+        if wl and wl.get("name"):
+            names.append(str(wl["name"]))
+    return {**scope, "workload_names": names} if names else scope
 
 
 def _iso_window(lookback_hours: int) -> tuple[str, str]:

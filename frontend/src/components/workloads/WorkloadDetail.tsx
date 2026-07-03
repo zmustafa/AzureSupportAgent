@@ -3,7 +3,7 @@
 // command-center profile; the "Analyze" button fans out to the existing per-feature refresh
 // endpoints (on-demand, never automatic) and then re-reads the profile. Deep-links scope the
 // heavy analyzers (Performance, Policy, RBAC, Change Explorer, …) to this workload.
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Workload, type WorkloadProfile } from "../../api";
@@ -21,14 +21,14 @@ import {
   bandColor,
 } from "./viz";
 
-type Tab = "overview" | "resources" | "coverage" | "security" | "lifecycle";
+type Tab = "overview" | "resources";
 
+// The workload detail page is intentionally two tabs: a single scrollable "Overview"
+// that stacks the at-a-glance, health & coverage, watchers, security and lifecycle
+// sections (each is short on its own), and a dedicated "Resources" table.
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "📊 Overview" },
   { id: "resources", label: "📦 Resources" },
-  { id: "coverage", label: "🩺 Health & Coverage" },
-  { id: "security", label: "🛡️ Security & Governance" },
-  { id: "lifecycle", label: "🛰️ Lifecycle" },
 ];
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -57,6 +57,13 @@ export function WorkloadDetailPanel() {
   const openArchitecture = () => {
     if (workloadArch) navigate(`/architectures/${workloadArch.id}`);
     else navigate(`/architectures?workload_id=${encodeURIComponent(id)}`);
+  };
+
+  // Overview is one scrollable page; "next best action" chips jump to the right section.
+  const scrollToSection = (sectionId: string) => {
+    if (typeof document !== "undefined") {
+      document.getElementById(`wl-section-${sectionId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   };
 
   async function analyzeAll() {
@@ -134,11 +141,26 @@ export function WorkloadDetailPanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-gray-50 p-6">
-        {tab === "overview" && <OverviewTab workload={workload} profile={profile} onAnalyze={analyzeAll} onGoTab={setTab} />}
+        {tab === "overview" && (
+          <div className="space-y-6">
+            <Section id="glance" title="📊 At a glance">
+              <OverviewTab workload={workload} profile={profile} onAnalyze={analyzeAll} onGoSection={scrollToSection} />
+            </Section>
+            <Section id="coverage" title="🩺 Health & Coverage">
+              <CoverageTab id={id} profile={profile} navigate={navigate} />
+            </Section>
+            <Section id="watchers" title="🔭 Watchers">
+              <WatchersTab id={id} navigate={navigate} />
+            </Section>
+            <Section id="security" title="🛡️ Security & Governance">
+              <DeepLinkTab id={id} navigate={navigate} kind="security" />
+            </Section>
+            <Section id="lifecycle" title="🛰️ Lifecycle">
+              <DeepLinkTab id={id} navigate={navigate} kind="lifecycle" profile={profile} />
+            </Section>
+          </div>
+        )}
         {tab === "resources" && <ResourcesTab workload={workload} profile={profile} />}
-        {tab === "coverage" && <CoverageTab id={id} profile={profile} navigate={navigate} />}
-        {tab === "security" && <DeepLinkTab id={id} navigate={navigate} kind="security" />}
-        {tab === "lifecycle" && <DeepLinkTab id={id} navigate={navigate} kind="lifecycle" profile={profile} />}
       </div>
 
       {editing && (
@@ -157,17 +179,27 @@ export function WorkloadDetailPanel() {
   );
 }
 
+// ---- Section wrapper (single-page Overview) -------------------------------------
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section id={`wl-section-${id}`} className="scroll-mt-4">
+      <h2 className="mb-3 text-sm font-semibold text-gray-700">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
 // ---- Overview -------------------------------------------------------------------
-function OverviewTab({ profile, onAnalyze, onGoTab }: { workload: Workload; profile?: WorkloadProfile; onAnalyze: () => void; onGoTab: (t: Tab) => void }) {
+function OverviewTab({ profile, onAnalyze, onGoSection }: { workload: Workload; profile?: WorkloadProfile; onAnalyze: () => void; onGoSection: (id: string) => void }) {
   const comp = profile?.composition;
   const health = profile?.health;
   const nextActions = useMemo(() => {
-    const out: { label: string; tab: Tab }[] = [];
+    const out: { label: string; section: string }[] = [];
     if (!health) return out;
-    const add = (sig: string, label: string, tab: Tab) => {
+    const add = (sig: string, label: string, section: string) => {
       const v = (health as unknown as Record<string, number | null>)[sig];
-      if (v == null) out.push({ label: `${SIGNAL_LABELS[sig]} not analyzed — run Analyze`, tab });
-      else if (v < 50) out.push({ label, tab });
+      if (v == null) out.push({ label: `${SIGNAL_LABELS[sig]} not analyzed — run Analyze`, section });
+      else if (v < 50) out.push({ label, section });
     };
     add("backupdr", "Backup/DR coverage is low — generate protection runbooks", "coverage");
     add("monitoring", "Monitoring coverage is low — close alert gaps", "coverage");
@@ -241,7 +273,7 @@ function OverviewTab({ profile, onAnalyze, onGoTab }: { workload: Workload; prof
             <ul className="space-y-1.5">
               {nextActions.map((a, i) => (
                 <li key={i}>
-                  <button onClick={() => onGoTab(a.tab)} className="flex w-full items-start gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs text-gray-600 hover:border-brand/40 hover:bg-brand/5">
+                  <button onClick={() => onGoSection(a.section)} className="flex w-full items-start gap-2 rounded-lg border px-2.5 py-1.5 text-left text-xs text-gray-600 hover:border-brand/40 hover:bg-brand/5">
                     <span className="text-amber-500">➜</span>
                     <span>{a.label}</span>
                   </button>
@@ -395,6 +427,146 @@ function DeepLinkTab({ id, navigate, kind, profile }: { id: string; navigate: Re
           <div className="mt-2 text-[11px] text-brand">{g.scoped ? "Open scoped to this workload →" : "Open →"}</div>
         </button>
       ))}
+    </div>
+  );
+}
+
+// ---- Watchers (insight-pack coverage) -------------------------------------------
+// Distinct from the "Health & Coverage" tab: this shows which AI Insight Packs are
+// scheduled to watch this workload — their cadence, freshness and latest verdict.
+const WATCH_STATUS = {
+  covered: { label: "Covered", badge: "bg-emerald-50 text-emerald-700 border border-emerald-200", ring: "border-emerald-200" },
+  stale: { label: "Stale", badge: "bg-amber-50 text-amber-700 border border-amber-200", ring: "border-amber-200" },
+  paused: { label: "Paused", badge: "bg-gray-100 text-gray-500 border border-gray-200", ring: "border-gray-200" },
+  gap: { label: "Gap", badge: "bg-rose-50 text-rose-700 border border-rose-200", ring: "border-dashed border-rose-200" },
+} as const;
+const VERDICT_STYLE = {
+  urgent: "bg-rose-50 text-rose-700",
+  notable: "bg-amber-50 text-amber-700",
+  nothing_notable: "bg-gray-100 text-gray-500",
+} as const;
+
+function fmtWhen(iso?: string | null): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const diff = (Date.now() - t) / 1000;
+  const ahead = diff < 0;
+  const s = Math.abs(diff);
+  const rel = s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)}m` : s < 129600 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
+  if (rel === "just now") return rel;
+  return ahead ? `in ${rel}` : `${rel} ago`;
+}
+
+function WatchPill({ n, label, cls }: { n: number; label: string; cls: string }) {
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{n} {label}</span>;
+}
+
+function WatchersTab({ id, navigate }: { id: string; navigate: ReturnType<typeof useNavigate> }) {
+  const covQ = useQuery({ queryKey: ["insightCoverage", id], queryFn: () => api.insightCoverage(id), enabled: !!id });
+  const cov = covQ.data;
+  // Land in the Insights library pre-scoped to this workload (and optionally the gap's
+  // category) so scheduling a pack watches THIS workload without re-picking the scope.
+  const addWatcher = (category?: string) =>
+    navigate("/insights/library", { state: { anchorWorkloadId: id, anchorWorkloadName: cov?.workload_name, category } });
+  if (covQ.isLoading) return <div className="p-8 text-sm text-gray-500">Loading watchers…</div>;
+  if (!cov) return <div className="p-8 text-sm text-gray-500">No coverage data available.</div>;
+  const s = cov.summary ?? { covered: 0, stale: 0, paused: 0, gaps: 0 };
+  const areas = cov.areas ?? [];
+  const upcoming = cov.upcoming ?? [];
+  const recent = cov.recent_runs ?? [];
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-gray-700">Watcher coverage</span>
+        <WatchPill n={s.covered} label="covered" cls="bg-emerald-50 text-emerald-700" />
+        <WatchPill n={s.stale} label="stale" cls="bg-amber-50 text-amber-700" />
+        <WatchPill n={s.paused} label="paused" cls="bg-gray-100 text-gray-500" />
+        <WatchPill n={s.gaps} label="gaps" cls="bg-rose-50 text-rose-700" />
+        <button onClick={() => addWatcher()} className="ml-auto rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">＋ Add a watcher</button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {areas.map((a) => {
+          const st = WATCH_STATUS[a.status] ?? WATCH_STATUS.gap;
+          return (
+            <div key={a.area} className={`rounded-xl border bg-white p-4 ${st.ring}`}>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-gray-800"><span>{a.icon}</span>{a.label}</span>
+                <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${st.badge}`}>{st.label}</span>
+              </div>
+              {a.packs.length === 0 ? (
+                <div className="mt-3">
+                  <div className="text-xs text-gray-400">No watcher scheduled.</div>
+                  <button onClick={() => addWatcher(a.area)} className="mt-2 text-[11px] font-medium text-brand hover:underline">＋ Add a {a.label.toLowerCase()} watcher →</button>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2.5">
+                  {a.packs.map((w) => {
+                    const ws = WATCH_STATUS[w.status] ?? WATCH_STATUS.paused;
+                    return (
+                      <div key={w.task_id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-gray-800"><span>{w.pack_icon}</span><span className="truncate">{w.pack_name}</span></span>
+                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${ws.badge}`}>{ws.label}</span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500">
+                          <span>{w.schedule_label}</span>
+                          {w.enabled && w.next_run_at ? <span>· next {fmtWhen(w.next_run_at)}</span> : null}
+                        </div>
+                        {w.last_verdict ? (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className={`rounded px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[w.last_verdict] ?? ""}`}>{w.last_verdict.replace("_", " ")}</span>
+                            <span className="truncate text-[11px] text-gray-400">{fmtWhen(w.last_run_at)}</span>
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-[11px] text-gray-400">No runs yet</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-sm font-medium text-gray-800">Upcoming runs</div>
+          {upcoming.length === 0 ? (
+            <div className="mt-2 text-xs text-gray-400">No scheduled runs in the next 7 days.</div>
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {upcoming.slice(0, 8).map((o, i) => (
+                <li key={`${o.task_id}-${i}`} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="flex min-w-0 items-center gap-1.5 text-gray-700"><span>{o.pack_icon}</span><span className="truncate">{o.pack_name}</span></span>
+                  <span className="shrink-0 text-gray-400">{fmtWhen(o.at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="rounded-xl border bg-white p-4">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-gray-800">Recent runs</div>
+            <button onClick={() => navigate("/insights")} className="text-[11px] text-brand hover:underline">Open Insights →</button>
+          </div>
+          {recent.length === 0 ? (
+            <div className="mt-2 text-xs text-gray-400">No runs recorded for this workload yet.</div>
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {recent.slice(0, 8).map((r) => (
+                <li key={r.id} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="flex min-w-0 items-center gap-1.5 text-gray-700"><span>{r.pack_icon}</span><span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold ${VERDICT_STYLE[r.verdict] ?? ""}`}>{r.verdict.replace("_", " ")}</span><span className="truncate">{r.headline}</span></span>
+                  <span className="shrink-0 text-gray-400">{fmtWhen(r.created_at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
