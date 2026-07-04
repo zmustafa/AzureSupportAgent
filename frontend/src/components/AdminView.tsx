@@ -1572,7 +1572,7 @@ function BuiltinToolsCard() {
             custom). On by default since they&apos;re read-only.
           </div>
         </div>
-        <Toggle label="" checked={enabled} onChange={(v) => void save({ builtin_tools_enabled: v })} />
+        <Toggle label="" ariaLabel="Enable built-in utility tools" checked={enabled} onChange={(v) => void save({ builtin_tools_enabled: v })} />
       </div>
 
       {saving && <p className="mb-2 text-xs text-gray-400">Saving…</p>}
@@ -1600,6 +1600,7 @@ function BuiltinToolsCard() {
                   <span className="rounded bg-green-100 px-2 py-0.5 text-xs text-green-800">read</span>
                   <Toggle
                     label=""
+                    ariaLabel={`Enable tool ${t.name}`}
                     checked={enabled && !off}
                     onChange={(v) => toggleTool(t.name, v)}
                   />
@@ -1662,7 +1663,7 @@ function EntraToolsCard() {
               in separately via their &ldquo;EntraID&rdquo; tool checkbox.
             </div>
           </div>
-          <Toggle label="" checked={enabled} onChange={(v) => void toggleEnabled(v)} />
+          <Toggle label="" ariaLabel="Expose EntraID tools to the default assistant" checked={enabled} onChange={(v) => void toggleEnabled(v)} />
         </div>
         {saving && <p className="mb-2 text-xs text-gray-400">Saving…</p>}
         {error && (
@@ -1975,7 +1976,7 @@ function SiemDestinationRow({ dest }: { dest: SiemDestination }) {
             {st.forwarded_total.toLocaleString()} delivered
           </span>
         </button>
-        <Toggle label="" checked={cfg.enabled} onChange={(v) => void toggleEnabled(v)} />
+        <Toggle label="" ariaLabel={`Enable SIEM destination ${cfg.name || cfg.endpoint || ""}`.trim()} checked={cfg.enabled} onChange={(v) => void toggleEnabled(v)} />
         <button
           onClick={() => setOpen((o) => !o)}
           className={`text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}
@@ -2842,11 +2843,14 @@ function Toggle({
   hint,
   checked,
   onChange,
+  ariaLabel,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  /** Accessible name for the switch when `label` is empty (icon-only / inline usage). */
+  ariaLabel?: string;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 py-2">
@@ -2856,6 +2860,7 @@ function Toggle({
       </div>
       <button
         onClick={() => onChange(!checked)}
+        aria-label={ariaLabel || label || undefined}
         className={`relative h-6 w-11 shrink-0 rounded-full transition ${
           checked ? "bg-brand" : "bg-gray-300"
         }`}

@@ -135,6 +135,13 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
   const [end, setEnd] = usePersistedState<string>("azsup.changeexp.end", defaultEnd());
   // Top-level view: the single-scope Explorer vs the all-workloads Fleet overview.
   const [mainView, setMainView] = usePersistedState<"explorer" | "fleet" | "cleanup">("azsup.changeexp.view", "explorer");
+  // Never LAND on the destructive-adjacent Cleanup tab: if it was the persisted view from a
+  // previous visit, fall back to the primary Explorer on mount (the choice still holds while
+  // you're on the page).
+  useEffect(() => {
+    if (mainView === "cleanup") setMainView("explorer");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [rangeLabel, setRangeLabel] = usePersistedState<string>("azsup.changeexp.rangeLabel", "Last 24 hours");
   // AI analysis is the slowest phase, so it's OPT-IN per the "Perform AI analysis" checkbox.
   // Default OFF — the run completes fast (deterministic only), and the user runs AI on demand.

@@ -10,6 +10,7 @@ import {
   type CaseTimelineEvent,
 } from "../api";
 import { Skeleton } from "../utils/perf";
+import { useConfirm } from "./ConfirmDialog";
 
 // ---------------------------------------------------------------- status / severity styling
 const STATUS_ORDER: CaseStatus[] = [
@@ -257,6 +258,7 @@ function CaseList() {
 function CaseDetailView({ caseId }: { caseId: string }) {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [note, setNote] = useState("");
 
   const q = useQuery<CaseDetail>({
@@ -328,7 +330,17 @@ function CaseDetailView({ caseId }: { caseId: string }) {
             {c.summary && <p className="mt-0.5 max-w-3xl text-[13px] text-gray-500">{c.summary}</p>}
           </div>
           <button
-            onClick={() => { if (window.confirm("Delete this case file? This cannot be undone.")) del.mutate(); }}
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: "Delete case file?",
+                  message: "This permanently deletes the case file and its entire timeline. This cannot be undone.",
+                  confirmLabel: "Delete",
+                  destructive: true,
+                })
+              )
+                del.mutate();
+            }}
             disabled={del.isPending}
             className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[12px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >

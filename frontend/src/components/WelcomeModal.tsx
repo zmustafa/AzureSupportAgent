@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
@@ -22,6 +22,18 @@ export function WelcomeModal() {
 
   const demoQ = useQuery({ queryKey: ["demoStatus"], queryFn: api.demoStatus, enabled: open && isAdmin, retry: false });
   const demoLoaded = demoQ.data?.loaded ?? false;
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus into the dialog on open (accessible name is the heading) and restore it to
+  // the previously-focused element on close, so keyboard users aren't stranded.
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    return () => previouslyFocused?.focus?.();
+  }, [open]);
 
   function dismiss() {
     localStorage.setItem(seenKey, "1");
@@ -58,13 +70,24 @@ export function WelcomeModal() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-[1px]">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
+    <div
+      className="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-[1px]"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="welcome-modal-title"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          dismiss();
+        }
+      }}
+    >
+      <div ref={dialogRef} className="w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
         <div className="bg-gradient-to-br from-brand/10 to-violet-50 px-6 py-5">
           <div className="flex items-center gap-3">
             <span className="text-3xl" aria-hidden>🤖</span>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Welcome to Azure Support Agent</h2>
+              <h2 id="welcome-modal-title" className="text-lg font-bold text-gray-900">Welcome to Azure Support Agent</h2>
               <p className="text-sm text-gray-600">An AI operations workbench that runs in your own tenant.</p>
             </div>
           </div>
@@ -115,7 +138,7 @@ export function WelcomeModal() {
 
           <div className="flex items-center justify-between pt-1">
             <a href={DOCS_LINKS.userGuide} target="_blank" rel="noreferrer" className="text-xs text-brand hover:underline">Read the User Guide →</a>
-            <button onClick={dismiss} className="text-xs text-gray-400 hover:text-gray-600">Skip for now</button>
+            <button ref={closeRef} onClick={dismiss} className="rounded-md px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-brand/40">Skip for now</button>
           </div>
         </div>
       </div>

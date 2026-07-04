@@ -1,13 +1,14 @@
 // Adds a top-level "Overview | 🧹 Cleanup" tab bar to a screen that doesn't otherwise have
 // tabs (Assessments + the 3 Coverage screens). Renders the screen's normal panel on the
-// Overview tab and the shared RunCleanup on the Cleanup tab. The active tab is persisted.
+// Overview tab and the shared RunCleanup on the Cleanup tab. The screen always OPENS on
+// Overview (its primary content) — the Cleanup tab is a secondary, destructive-adjacent
+// view, so we deliberately don't persist it as the landing tab. The choice still holds
+// while you're on the page; navigating away and back resets to Overview.
 import { useState } from "react";
-import { usePersistedState } from "../../utils/persistedState";
 import { RunCleanup } from "./RunCleanup";
 import type { CleanupRun } from "../../api";
 
 export function CleanupTabShell({
-  storageKey,
   overviewLabel,
   prefix,
   queryKey,
@@ -16,7 +17,8 @@ export function CleanupTabShell({
   isEmptyRun,
   children,
 }: {
-  storageKey: string;
+  /** Retained for API compatibility with callers; no longer used for persistence. */
+  storageKey?: string;
   overviewLabel: string;
   prefix: string;
   queryKey: readonly unknown[];
@@ -25,7 +27,7 @@ export function CleanupTabShell({
   isEmptyRun?: (r: CleanupRun) => boolean;
   children: React.ReactNode;
 }) {
-  const [view, setView] = usePersistedState<"overview" | "cleanup">(storageKey, "overview");
+  const [view, setView] = useState<"overview" | "cleanup">("overview");
   // Mount the overview lazily-kept (display:none) so its in-flight state survives a tab peek.
   const [touchedCleanup, setTouchedCleanup] = useState(false);
   return (

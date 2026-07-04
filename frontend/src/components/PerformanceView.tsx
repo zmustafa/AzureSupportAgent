@@ -349,6 +349,13 @@ export function PerformancePanel() {
   const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
   // Top-level view: the single-scope Profiler vs the all-workloads Fleet overview.
   const [mainView, setMainView] = usePersistedState<"profiler" | "fleet" | "cleanup">("azsup.performance.view", "profiler");
+  // Never LAND on the destructive-adjacent Cleanup tab: if it was the persisted view from a
+  // previous visit, fall back to the primary Profiler on mount (the choice still holds while
+  // you're on the page).
+  useEffect(() => {
+    if (mainView === "cleanup") setMainView("profiler");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
 
