@@ -93,8 +93,10 @@ Backend defaults to `environment=local` (which enables `/docs`). The SPA talks t
 
 A multi-arch Docker image bundles the built SPA and the API. `deploy/main.bicep`
 (+ compiled `main.json`) provisions a Container App, PostgreSQL Flexible Server, and an Azure
-Files share. `APP_VERSION` / `VITE_APP_VERSION` build args stamp the running version (shown
-in the header and **Help → About**). See [DEPLOYMENT.md](DEPLOYMENT.md).
+Files share. `APP_VERSION` / `VITE_APP_VERSION` build args stamp the running version and
+`APP_RELEASE` / `VITE_APP_RELEASE` stamp a sequential release number (git commit count), so
+the header and **Help → About** show a pill like `v1 (rel 102)`. See
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Repo hygiene
 

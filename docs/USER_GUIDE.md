@@ -138,10 +138,16 @@ Open it from the top navigation.
 
 **Automations** groups the ways the agent works *for* you:
 
-- **Scheduled Tasks** — recurring workflows ("weekly Backup-DR scan → email PDF").
+- **Scheduled Tasks** — recurring workflows ("weekly Backup-DR scan → email PDF"). An
+  advanced recurrence builder compiles cron from an interval, weekdays, day-of-month, months
+  and one or more times of day, with a live "next runs" preview.
 - **Sub Agents** — specialized agents you design with scoped tools (AI-guided wizard).
 - **Workbooks → Playbooks** — saved operations chained into conditional flows.
-- **Connectors** — Teams, Slack, Jira, ServiceNow, Grafana, email.
+- **Connectors** — messaging (Teams, Slack), email (Outlook, SMTP), ITSM & on-call (Jira,
+  ServiceNow, PagerDuty), SIEM & security (Splunk, Sumo Logic, CrowdStrike NG-SIEM, AWS
+  Security Hub, Cortex XSOAR), dashboards (Grafana), cloud & eventing (Azure Logic Apps,
+  Azure Service Bus, Amazon SQS/S3), and generic webhooks. Each has a guided setup panel and
+  a **Send test** button.
 - **Notifications** — in-app center + connector fan-out.
 
 ## 8. Monitor & observe

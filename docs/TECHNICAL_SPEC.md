@@ -244,7 +244,7 @@ not require relational querying.
 | `workbooks.json` | Reusable workbook definitions |
 | `playbooks.json` | Chained workbook definitions |
 | `automations_agents.json` | Custom agent definitions |
-| `automations_connectors.json` | Connector configuration |
+| `connectors.json` | Connector configuration (secrets encrypted at rest) |
 | `monitor_dashboards.json` | Monitor 2.0 dashboard/widget definitions and revisions |
 | `monitor_ping_history.json` | Rolling web/TCP ping samples |
 | `policies_baseline.json` | Policy baselines |
@@ -393,7 +393,9 @@ Playbooks chain workbook steps into repeatable workflows and support import/expo
 Automations include:
 
 - Custom agents with instructions, tools, model/provider, and run modes.
-- Scheduled tasks with cron-like schedules and target configurations.
+- Scheduled tasks with cron-like schedules and target configurations. An advanced recurrence
+  builder (shared `RecurrenceBuilder.tsx`) compiles cron from interval/weekday/day-of-month/
+  month/time inputs; `POST /admin/automations/tasks/preview` returns the next N runs.
 - In-process scheduler with bounded concurrency.
 - Manual task runs and run history.
 - Connector tool access and portability helpers.
@@ -401,8 +403,9 @@ Automations include:
 ### 9.10 Connectors and Notifications
 
 Connectors provide external integrations such as Teams, Outlook, Jira, Grafana, Slack,
-webhooks, ServiceNow, PagerDuty, email, Splunk, Cortex XSOAR, S3, SQS, and Azure
-Service Bus.
+webhooks, ServiceNow, PagerDuty, email, Splunk, Cortex XSOAR, S3, SQS, Azure Service Bus,
+Azure Logic Apps, Sumo Logic, and CrowdStrike Next-Gen SIEM. Each connector type exposes a
+guided setup panel and a `POST /admin/connectors/{id}/send-test` action.
 
 Notifications support in-app delivery, delivery tracking, rules, and connector-backed
 external delivery where configured.

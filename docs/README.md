@@ -31,7 +31,8 @@ four pillars:
    Intelligence, Change Explorer, Quota and more) — plus scheduled **AI Insight Packs** and
    one-sweep **Mission Control** — that surfaces risk before you ask.
 4. **Act** — every Azure write is **read-only by default, approval-gated, and audited**;
-   findings route to Teams / Jira / ServiceNow via connectors and scheduled agents.
+   findings route to Teams / Slack / Jira / ServiceNow / PagerDuty, your SIEM (Splunk, Sumo
+   Logic, CrowdStrike NG-SIEM), or Azure Logic Apps via connectors and scheduled agents.
 
 > **New to the vocabulary?** The [Concepts & Glossary](CONCEPTS.md) defines every term used
 > in the UI. The same glossary is available in-app under the **Help (?) menu**.

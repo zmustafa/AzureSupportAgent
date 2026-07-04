@@ -35,8 +35,8 @@ server** and a **Microsoft Graph (Entra ID) MCP server**, reasons over live evid
 turns *"why is the website throwing 5xx?"* into a ranked, validated answer — with the
 diagrams, assessments, and dashboards to back it up. And it doesn't just wait to be asked:
 a whole **Proactive Support** suite continuously scans your estate for coverage gaps and
-looming retirements, while scheduled autonomous agents push findings to Teams, Jira, or
-ServiceNow before they bite.
+looming retirements, while scheduled autonomous agents push findings to Teams, Jira,
+ServiceNow, PagerDuty, your SIEM, or Azure Logic Apps before they bite.
 
 - 🧠 **Agentic, not just a chatbot** — a War Room of specialist agents investigates in parallel against your real Azure data.
 - 🛡️ **Proactive, not just reactive** — a Proactive Support hub (Assessments · Identity · Monitoring, Telemetry & Backup/DR coverage · Retirement Radar · Telemetry Intelligence · Performance Profiler · Ownership · Tag Intelligence · Change Explorer · Estate Graph) surfaces risks before you ask, and scheduled autonomous agents notify you via connectors.
@@ -166,9 +166,10 @@ Profiler**, **Backup/DR coverage**, **Retirement Radar**, and telemetry intellig
 <td width="50%" valign="top">
 
 ### 🤖 Automations & workflows
-Build custom sub-agents with scoped tools, schedule recurring tasks, chain Workbooks into
-Playbooks, and route results through in-app Notifications and external connectors
-(Jira, ServiceNow).
+Build custom sub-agents with scoped tools, schedule recurring tasks (advanced cron
+recurrence builder), chain Workbooks into Playbooks, and route results through in-app
+Notifications and external connectors — Teams, Slack, Jira, ServiceNow, PagerDuty, Splunk,
+Sumo Logic, CrowdStrike NG-SIEM, AWS Security Hub, Grafana, Azure Logic Apps, and more.
 
 </td>
 </tr>
@@ -362,7 +363,7 @@ change, keep PRs focused, and make sure backend tests and the frontend type-chec
 
 ## 🙏 Acknowledgements
 
-- [Azure MCP server](https://github.com/Azure/azure-mcp) — the official Azure tool surface
+- [Azure MCP server](https://github.com/microsoft/mcp) — the official Azure tool surface
 - EntraID MCP server (Microsoft Graph, FastMCP) — vendored under `third_party/`
 - The Model Context Protocol community
 

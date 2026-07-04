@@ -183,11 +183,17 @@ output. A **Playbook** chains workbooks into a multi-step, conditional flow.
 
 ### Scheduled Tasks
 Recurring agent workflows that run on a schedule (e.g. "every Monday, scan Backup & DR for
-*Prod* and email the PDF").
+*Prod* and email the PDF"). An advanced recurrence builder compiles a cron expression from an
+interval, weekdays, day-of-month, months and one or more times of day, with a live preview of
+the next runs. The same scheduler powers **AI Insight Packs**.
 
 ### Connectors
-Outbound integrations — **Teams, Slack, Jira, ServiceNow, Grafana, email** — that route
-findings and notifications to where your team already works.
+Outbound integrations that route findings and notifications to where your team already
+works: messaging (**Teams**, **Slack**), email (**Outlook**, **SMTP**), ITSM & on-call
+(**Jira**, **ServiceNow**, **PagerDuty**), SIEM & security (**Splunk**, **Sumo Logic**,
+**CrowdStrike NG-SIEM**, **AWS Security Hub**, **Cortex XSOAR**), dashboards (**Grafana**),
+cloud & eventing (**Azure Logic Apps**, **Azure Service Bus**, **Amazon SQS/S3**), and
+generic **webhooks**.
 
 ### Notifications
 The in-app notification center; events can also fan out to connectors.
