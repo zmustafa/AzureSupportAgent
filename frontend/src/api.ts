@@ -2695,6 +2695,11 @@ export const api = {
       `/admin/connectors/${id}/test`,
       { method: "POST", body: "{}" },
     ),
+  sendTestConnectorMessage: (id: string) =>
+    http<{ ok: boolean; detail?: string; connector?: AppConnector }>(
+      `/admin/connectors/${id}/send-test`,
+      { method: "POST", body: "{}" },
+    ),
 
   // --- Custom agents ---
   customAgents: () =>
@@ -2806,7 +2811,7 @@ export const api = {
   cloneInsightPack: (id: string) =>
     http<{ pack: InsightPack }>(`/insights/packs/${id}/clone`, { method: "POST" }),
   insightInterview: (goal: string, answers: AgentAnswer[], step: number) =>
-    http<AgentInterviewResult>("/insights/draft/interview", {
+    http<InsightInterviewResult>("/insights/draft/interview", {
       method: "POST",
       body: JSON.stringify({ goal, answers, step }),
     }),
@@ -2815,6 +2820,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ goal, answers }),
     }),
+  insightPreview: (goal: string, answers: AgentAnswer[]) =>
+    http<InsightPackPreview>("/insights/draft/preview", {
+      method: "POST",
+      body: JSON.stringify({ goal, answers }),
+    }),
+  refineInsightPack: (pack: Partial<InsightPack>, instruction: string, mode: InsightRefineMode) =>
+    http<InsightRefineResult>("/insights/draft/refine", {
+      method: "POST",
+      body: JSON.stringify({ pack, instruction, mode }),
+    }),
   runInsightPack: (body: {
     pack_id?: string;
     pack?: Partial<InsightPack>;
@@ -2822,6 +2837,15 @@ export const api = {
     overrides?: Record<string, unknown>;
     notify?: boolean;
   }) => http<{ run: InsightRun }>("/insights/run", { method: "POST", body: JSON.stringify(body) }),
+  startInsightRun: (body: {
+    pack_id?: string;
+    pack?: Partial<InsightPack>;
+    scope: InsightScope;
+    overrides?: Record<string, unknown>;
+    notify?: boolean;
+  }) => http<{ job_id: string }>("/insights/run/async", { method: "POST", body: JSON.stringify(body) }),
+  getInsightRunJob: (jobId: string) =>
+    http<{ job: InsightRunJob }>(`/insights/run/jobs/${encodeURIComponent(jobId)}`),
   insightRuns: (packId?: string, limit = 100) =>
     http<{ runs: InsightRun[] }>(
       `/insights/runs?limit=${limit}${packId ? `&pack_id=${encodeURIComponent(packId)}` : ""}`,
@@ -2877,6 +2901,17 @@ export const api = {
   // --- Scheduled tasks ---
   scheduledTasks: () =>
     http<{ tasks: ScheduledTask[]; metrics: TaskMetrics }>("/admin/automations/tasks"),
+  previewSchedule: (body: {
+    schedule_kind: string;
+    cron_expr?: string | null;
+    time_of_day?: string | null;
+    weekday?: number | null;
+    timezone?: string;
+  }) =>
+    http<{ valid: boolean; error: string | null; next_run_at: string | null; next_runs: string[]; schedule_label: string | null }>(
+      "/admin/automations/tasks/preview",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   upsertTask: (body: Partial<ScheduledTask>) =>
     http<{ task: ScheduledTask }>("/admin/automations/tasks", {
       method: "PUT",
@@ -7395,6 +7430,80 @@ export interface InsightPackLibrary {
   verdicts: InsightVerdict[];
 }
 
+// --- AI Insight Pack wizard (richer than the shared AgentWizardQuestion) ---
+export interface InsightWizardOption {
+  value: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+export interface InsightWizardQuestion {
+  id: string;
+  prompt: string;
+  kind: "single" | "multi" | "text";
+  options: InsightWizardOption[];
+  allow_custom: boolean;
+  help?: string;
+  required?: boolean;
+}
+
+export interface InsightInterviewResult {
+  questions: InsightWizardQuestion[];
+  done: boolean;
+  note: string;
+  off_topic?: boolean;
+  suggestions?: string[];
+}
+
+// Fast, deterministic (no-LLM) best-guess of the pack while the interview is in progress.
+export interface InsightPackPreview {
+  name?: string;
+  category?: string;
+  sources?: string[];
+  lookback_hours?: number;
+  materiality?: { notify_threshold?: InsightVerdict; always_notify_if?: string[] };
+  source_labels?: string[];
+}
+
+// --- AI copilot for the pack editor (refine) ---
+export type InsightRefineMode =
+  | "command"
+  | "improve_instructions"
+  | "suggest"
+  | "explain"
+  | "critique"
+  | "sample";
+
+export interface InsightRefineChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface InsightCritiqueFinding {
+  severity: "high" | "medium" | "low";
+  message: string;
+  field?: string | null;
+}
+
+export interface InsightSampleFinding {
+  verdict: InsightVerdict;
+  headline: string;
+  bullets: string[];
+  table: { time: string; change: string; risk: string; owner: string; recommended_action: string }[];
+}
+
+// A refine call returns exactly one of these shapes depending on the mode requested.
+export interface InsightRefineResult {
+  pack?: InsightPack;
+  changes?: InsightRefineChange[];
+  changed_fields?: string[];
+  rationale?: string;
+  explanation?: string;
+  findings?: InsightCritiqueFinding[];
+  sample?: InsightSampleFinding;
+}
+
 export interface InsightScope {
   mode: "tenant" | "subscription" | "workload" | "workload_dependencies";
   workload_ids?: string[];
@@ -7453,8 +7562,28 @@ export interface InsightOccurrence {
   scope_label?: string;
 }
 
-export interface InsightWatcher {
-  task_id: string;
+export interface InsightRunStep {
+  ts: number;
+  stage: string;
+  label: string;
+  detail: string;
+  state: "done" | "active" | "error";
+}
+
+export interface InsightRunJob {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  stage: string;
+  label: string;
+  pct: number;
+  steps: InsightRunStep[];
+  run: InsightRun | null;
+  error: string | null;
+  pack_name: string;
+  scope_label: string;
+}
+
+export interface InsightWatcher {  task_id: string;
   task_name: string;
   enabled: boolean;
   pack_id: string;
@@ -7591,6 +7720,7 @@ export interface ScheduledTask {
   status: string;
   completed_runs: number;
   last_run_at: string | null;
+  last_status?: string | null;
   next_run_at: string | null;
   deleted_at?: string | null;
   run_count?: number;
@@ -7604,6 +7734,7 @@ export interface TaskMetrics {
   active: number;
   total: number;
   total_runs: number;
+  failed?: number;
 }
 
 export interface TaskRunInfo {

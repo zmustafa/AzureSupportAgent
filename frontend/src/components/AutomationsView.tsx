@@ -16,6 +16,8 @@ import {
   type TaskRunInfo,
 } from "../api";
 import { formatError, formatRelativeFromNow, formatTimestamp } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
+import { RecurrenceBuilder } from "./RecurrenceBuilder";
 
 export type { AutomationsSection } from "./navConfig";
 import { AUTOMATIONS_NAV, type AutomationsSection } from "./navConfig";
@@ -257,6 +259,19 @@ export function ConnectorsSection() {
       setBusyId(null);
     }
   }
+  async function sendTest(id: string) {
+    setBusyId(id);
+    setMsg(null);
+    try {
+      const r = await api.sendTestConnectorMessage(id);
+      setMsg({ id, ok: r.ok, text: r.ok ? `✓ Test message sent — ${r.detail || "delivered"}` : `✗ ${r.detail || "Failed to send"}` });
+      qc.invalidateQueries({ queryKey: ["connectors"] });
+    } catch (e) {
+      setMsg({ id, ok: false, text: formatError(e) });
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <>
@@ -273,8 +288,9 @@ export function ConnectorsSection() {
     >
       <p className="mb-3 text-xs text-gray-500">
         Give the agent tools for external services — Teams, Slack, Microsoft Outlook, Email,
-        Jira, ServiceNow, PagerDuty, Splunk, Cortex XSOAR, Grafana, Webhook, Amazon SQS/S3,
-        AWS Security Hub, and Azure Service Bus. Secrets are encrypted at rest and never shown again.
+        Jira, ServiceNow, PagerDuty, Splunk, Cortex XSOAR, Grafana, Webhook, Azure Logic Apps,
+        Sumo Logic, CrowdStrike Next-Gen SIEM, Amazon SQS/S3, AWS Security Hub, and Azure Service Bus.
+        Secrets are encrypted at rest and never shown again.
       </p>
 
       {q.isLoading && <div className="h-16 animate-pulse rounded-lg border bg-gray-100" />}
@@ -304,6 +320,9 @@ export function ConnectorsSection() {
               </div>
               <div className="flex shrink-0 items-center gap-1.5 text-xs">
                 <button onClick={() => void test(c.id)} disabled={busyId === c.id} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Test</button>
+                {TEST_MESSAGE_TYPES.has(c.type) && (
+                  <button onClick={() => void sendTest(c.id)} disabled={busyId === c.id || c.disabled} title={c.disabled ? "Enable the connector first" : "Deliver a real test message"} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50">Send test</button>
+                )}
                 <button onClick={() => setWizard({ initial: toEdit(c) })} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
                 <button onClick={() => void remove(c.id)} disabled={busyId === c.id} className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50">Delete</button>
               </div>
@@ -357,15 +376,40 @@ function toEdit(c: AppConnector): EditConnector {
   return { id: c.id, type: c.type, mode: c.mode, name: c.name, disabled: c.disabled, config };
 }
 
+// Connector types where "Send test" delivers a harmless message/alert (mirrors the
+// backend allowlist) — ticketing/storage connectors are excluded so a test can't open
+// a real incident or write an object.
+const TEST_MESSAGE_TYPES = new Set(["teams", "slack", "email", "outlook", "webhook", "pagerduty", "splunk", "grafana", "logicapp", "sumologic", "crowdstrike_ngsiem"]);
+
 // Marketing-oriented catalog grouping for the empty-state gallery. Any connector type
 // not listed here still shows up under a trailing "More" group.
 const CONNECTOR_CATEGORIES: { label: string; blurb: string; ids: string[] }[] = [
   { label: "Messaging & ChatOps", blurb: "Reach your team where they already work.", ids: ["teams", "slack", "outlook", "email"] },
   { label: "Ticketing & ITSM", blurb: "Turn findings into tracked work — automatically.", ids: ["jira", "servicenow", "pagerduty"] },
-  { label: "Observability & SIEM", blurb: "Push evidence into the tools your SOC already trusts.", ids: ["splunk", "grafana", "securityhub", "xsoar"] },
+  { label: "Observability & SIEM", blurb: "Push evidence into the tools your SOC already trusts.", ids: ["splunk", "grafana", "securityhub", "xsoar", "sumologic", "crowdstrike_ngsiem"] },
   { label: "Queues & Storage", blurb: "Pipe results into your own automation and data lake.", ids: ["servicebus", "sqs", "s3"] },
+  { label: "Automation & Orchestration", blurb: "Kick off your own workflows and runbooks.", ids: ["logicapp"] },
   { label: "Custom", blurb: "Call any HTTP API the agent doesn't natively support.", ids: ["webhook"] },
 ];
+
+/** Group a list of connector types by the marketing categories above, in category order,
+ *  with any uncategorized types collected under a trailing "More" group. */
+function groupConnectorTypes(
+  types: ConnectorTypeMeta[],
+): { label: string; blurb: string; items: ConnectorTypeMeta[] }[] {
+  const byId = new Map(types.map((t) => [t.id, t]));
+  const used = new Set<string>();
+  const groups = CONNECTOR_CATEGORIES.map((cat) => {
+    const items = cat.ids
+      .map((id) => byId.get(id))
+      .filter((x): x is ConnectorTypeMeta => !!x);
+    items.forEach((i) => used.add(i.id));
+    return { label: cat.label, blurb: cat.blurb, items };
+  }).filter((g) => g.items.length > 0);
+  const leftovers = types.filter((t) => !used.has(t.id));
+  if (leftovers.length > 0) groups.push({ label: "More", blurb: "", items: leftovers });
+  return groups;
+}
 
 /** Empty-state showcase: advertises every available connector, grouped by use case.
  *  Clicking a card opens the wizard pre-seeded to that connector's setup step. Also
@@ -434,6 +478,382 @@ function ConnectorGallery({
     </div>
   );
 }
+
+/** A copyable one-line command block (mirrors the Azure connection setup guidance). */
+function CmdBlock({ cmd }: { cmd: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-1 flex items-stretch gap-1">
+      <button
+        type="button"
+        onClick={() => { void navigator.clipboard?.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+        title="Copy command"
+        className="shrink-0 rounded border border-gray-200 bg-white px-1.5 text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+      >
+        {copied ? "✓ Copied" : "⧉ Copy"}
+      </button>
+      <pre className="flex-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">{cmd}</pre>
+    </div>
+  );
+}
+
+/** Contextual setup guidance for the Microsoft Outlook connector, shown in the wizard
+ *  step 2 (mirrors the detailed guidance on Azure tenant connections). Documents the
+ *  connector as it works today: app-only Microsoft Graph via the selected Azure
+ *  connection's service principal. Copy varies by mode (office365 vs graph). */
+function OutlookSetupGuide({ mode }: { mode: string }) {
+  const isOffice365 = mode === "office365";
+  return (
+    <div className="space-y-2">
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        <div className="mb-1 font-semibold">How to set up Outlook</div>
+        <p className="mb-2">
+          This connector sends mail <strong>app-only</strong> through Microsoft Graph, using the
+          service principal of the <strong>Azure connection</strong> you select below — so set that
+          connection up first (Settings → Connections) with a tenant ID, client ID and secret.
+        </p>
+        <ol className="list-decimal space-y-1 pl-4">
+          <li>
+            In Entra ID → <strong>App registrations</strong>, open the app behind your Azure
+            connection (or register one) and note its <strong>Client ID</strong> and{" "}
+            <strong>Tenant ID</strong>; create a <strong>client secret</strong>.
+          </li>
+          <li>
+            Under <strong>API permissions</strong>, add these Microsoft Graph{" "}
+            <strong>Application</strong> permissions, then click <strong>Grant admin consent</strong>:
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              <li><code className="rounded bg-white px-1">Mail.Send</code> — required to send.</li>
+              {isOffice365 && (
+                <>
+                  <li><code className="rounded bg-white px-1">Mail.ReadWrite</code> — required to reply to threads.</li>
+                  <li><code className="rounded bg-white px-1">Mail.Read</code> — required to read the inbox.</li>
+                </>
+              )}
+            </ul>
+          </li>
+          <li>
+            Prefer the CLI? Add + consent <code className="rounded bg-white px-1">Mail.Send</code> in one go:
+            <CmdBlock cmd="az ad app permission add --id <CLIENT_ID> --api 00000003-0000-0000-c000-000000000000 --api-permissions b633e1c5-b582-4048-a93e-9f11b44c7e96=Role" />
+            <CmdBlock cmd="az ad app permission admin-consent --id <CLIENT_ID>" />
+          </li>
+          <li>
+            Set <strong>{isOffice365 ? "Connected mailbox" : "From mailbox"}</strong> below to a
+            licensed mailbox the app may send as (Graph sends via{" "}
+            <code className="rounded bg-white px-1">/users/&#123;mailbox&#125;/sendMail</code>).
+          </li>
+          <li>
+            Save, then use <strong>Send test</strong> on the connector row to confirm delivery.
+          </li>
+        </ol>
+        <div className="mt-2 text-[11px] text-blue-800">
+          {isOffice365
+            ? "Office 365 mode exposes send, reply, and read tools."
+            : "Graph mode exposes the send tool only."}
+        </div>
+      </div>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="mb-1 font-semibold">Before you go live</div>
+        <p>
+          Admin consent is mandatory for application permissions. App-only access can send as{" "}
+          <em>any</em> mailbox in the tenant — scope it to specific mailboxes with an{" "}
+          <a
+            href="https://learn.microsoft.com/en-us/graph/auth-limit-mailbox-access"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Application Access Policy
+          </a>. See the{" "}
+          <a
+            href="https://learn.microsoft.com/en-us/azure/sre-agent/outlook-connector"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Outlook connector docs
+          </a>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Contextual setup guidance for the Azure Logic Apps connector, shown in the wizard
+ *  step 2. Documents grabbing the HTTP request trigger URL and the secret/side-effect
+ *  caveats, mirroring the Outlook guidance style. */
+function LogicAppSetupGuide() {
+  return (
+    <div className="space-y-2">
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+        <div className="mb-1 font-semibold">How to set up Azure Logic Apps</div>
+        <p className="mb-2">
+          This connector starts a workflow by posting JSON to its{" "}
+          <strong>HTTP request trigger</strong>. Grab that trigger URL from the Logic App and paste
+          it below.
+        </p>
+        <ol className="list-decimal space-y-1 pl-4">
+          <li>
+            In the Azure portal, open your Logic App → <strong>Logic app designer</strong>.
+          </li>
+          <li>
+            Add or open the <strong>“When an HTTP request is received”</strong> trigger. Save the
+            workflow once so Azure generates the callback URL.
+          </li>
+          <li>
+            Copy the trigger’s <strong>HTTP POST URL</strong> and paste it into{" "}
+            <strong>HTTP trigger URL</strong> above. It ends in{" "}
+            <code className="rounded bg-white px-1">…&amp;sig=…</code>.
+          </li>
+          <li>
+            (Optional) Add <strong>custom headers</strong> or <strong>static payload</strong> values
+            your flow expects.
+          </li>
+          <li>
+            Save, then click <strong>Send test</strong> on the connector row to fire the workflow.
+          </li>
+        </ol>
+        <div className="mt-2 text-[11px] text-blue-800">
+          The agent sends a{" "}
+          <code className="rounded bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
+          JSON body by default. Design your flow’s trigger schema to match, or accept any JSON:
+        </div>
+        <pre className="mt-1 overflow-x-auto rounded bg-white px-2 py-1.5 font-mono text-[11px] leading-relaxed text-gray-800">{`{
+  "title": "High CPU on vm-prod-01",
+  "message": "CPU has been above 90% for 15 minutes.",
+  "severity": "warning",
+  "facts": {
+    "Resource": "vm-prod-01",
+    "Subscription": "Contoso Prod"
+  }
+}`}</pre>
+        <div className="mt-1 text-[11px] text-blue-800">
+          Any <strong>static payload</strong> values you add are merged in as extra top-level keys.
+        </div>
+      </div>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="mb-1 font-semibold">Treat the URL as a secret</div>
+        <p>
+          The trigger URL contains a SAS signature — anyone with it can start your workflow, and{" "}
+          <strong>Send test</strong> runs whatever the flow does (emails, tickets, deployments). Only{" "}
+          <code className="mx-1 rounded bg-white px-1">*.logic.azure.com</code> URLs are accepted. See the{" "}
+          <a
+            href="https://learn.microsoft.com/en-us/azure/logic-apps/logic-apps-http-endpoint"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            HTTP endpoint docs
+          </a>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Contextual setup guidance for the Sumo Logic connector, shown in the wizard step 2. */
+function SumoLogicSetupGuide() {
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+      <div className="mb-1 font-semibold">How to set up Sumo Logic</div>
+      <p className="mb-2">
+        This connector ingests events into a Sumo Logic <strong>HTTP Logs &amp; Metrics Source</strong>.
+        Create one (or reuse it) and paste its URL above.
+      </p>
+      <ol className="list-decimal space-y-1 pl-4">
+        <li>In Sumo Logic: <strong>Manage Data → Collection</strong>, and open (or add) a <strong>Hosted Collector</strong>.</li>
+        <li>Click <strong>Add Source → HTTP Logs &amp; Metrics</strong>; give it a name and (optionally) a source category.</li>
+        <li>Save, then copy the generated <strong>HTTP Source URL</strong> into <strong>HTTP source URL</strong> above. It embeds a token — treat it as a secret.</li>
+        <li>Save here, then click <strong>Send test</strong> to ingest a sample event.</li>
+      </ol>
+      <div className="mt-2 text-[11px] text-blue-800">
+        The agent sends a{" "}
+        <code className="rounded bg-white px-1">&#123;title, message, severity, facts&#125;</code>{" "}
+        JSON event by default; search it in Sumo by the source category you set.
+      </div>
+    </div>
+  );
+}
+
+/** Contextual setup guidance for the CrowdStrike Next-Gen SIEM connector. */
+function CrowdStrikeSetupGuide() {
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+      <div className="mb-1 font-semibold">How to set up CrowdStrike Next-Gen SIEM</div>
+      <p className="mb-2">
+        Next-Gen SIEM ingests third-party events over an <strong>HEC</strong> endpoint. Create a HEC
+        data connector in Falcon and paste its URL + API key above.
+      </p>
+      <ol className="list-decimal space-y-1 pl-4">
+        <li>In Falcon: <strong>Next-Gen SIEM → Data onboarding</strong> (Data connectors).</li>
+        <li>Add a <strong>HEC / third-party</strong> connector; choose or create a parser.</li>
+        <li>Copy the connector’s <strong>API URL</strong> into <strong>HEC ingest URL</strong> and its <strong>API key</strong> into <strong>HEC API key</strong> above.</li>
+        <li>Save here, then click <strong>Send test</strong> to ingest a sample event.</li>
+      </ol>
+      <div className="mt-2 text-[11px] text-blue-800">
+        Events are sent HEC-style as{" "}
+        <code className="rounded bg-white px-1">&#123;&quot;event&quot;: &#123;…&#125;&#125;</code>; query them in
+        Next-Gen SIEM with CQL. The API key is stored as a secret. Only{" "}
+        <code className="rounded bg-white px-1">*.crowdstrike.com</code> /{" "}
+        <code className="rounded bg-white px-1">*.humio.com</code> hosts are accepted.
+      </div>
+    </div>
+  );
+}
+
+/** A compact, data-driven setup guide (blue callout) shared by connectors that don't
+ *  need bespoke formatting. Richer connectors (Outlook, Logic Apps, Sumo Logic,
+ *  CrowdStrike) keep their own components above. */
+type GuideDef = { title: string; intro?: React.ReactNode; steps: React.ReactNode[]; note?: React.ReactNode };
+
+function SetupGuide({ def }: { def: GuideDef }) {
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+      <div className="mb-1 font-semibold">{def.title}</div>
+      {def.intro && <p className="mb-2">{def.intro}</p>}
+      <ol className="list-decimal space-y-1 pl-4">
+        {def.steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+      {def.note && <div className="mt-2 text-[11px] text-blue-800">{def.note}</div>}
+    </div>
+  );
+}
+
+const SETUP_GUIDES: Record<string, GuideDef> = {
+  teams: {
+    title: "How to set up Microsoft Teams",
+    intro: "Post to a channel via an Incoming Webhook (simplest) or Microsoft Graph.",
+    steps: [
+      <>Webhook mode: in Teams, open the target channel → <strong>•••</strong> → <strong>Workflows</strong> (or Connectors) → “Post to a channel when a webhook request is received” → copy the URL.</>,
+      <>Graph mode: instead select an Azure connection (service principal) and provide the <strong>Team ID</strong> and <strong>Channel ID</strong>.</>,
+      <>Paste the URL above, save, then click <strong>Send test</strong>.</>,
+    ],
+    note: "Webhook mode renders a rich, severity-colored Adaptive Card.",
+  },
+  slack: {
+    title: "How to set up Slack",
+    intro: "Post via an Incoming Webhook or a bot token.",
+    steps: [
+      <>Create or open an app at <code className="rounded bg-white px-1">api.slack.com/apps</code>.</>,
+      <>Webhook mode: enable <strong>Incoming Webhooks</strong> → Add New Webhook to Workspace → pick a channel → copy the URL.</>,
+      <>Token mode: under <strong>OAuth &amp; Permissions</strong> add the <code className="rounded bg-white px-1">chat:write</code> scope, install the app, copy the Bot token (<code className="rounded bg-white px-1">xoxb-…</code>), and set a default channel.</>,
+    ],
+    note: "Send test posts a Block Kit message.",
+  },
+  email: {
+    title: "How to set up Email (SMTP)",
+    intro: "Send through any SMTP server.",
+    steps: [
+      <>Enter your SMTP <strong>host</strong> and <strong>port</strong> (587 = STARTTLS, 465 = SSL, 25 = plain).</>,
+      <>Set the <strong>From address</strong> recipients will see.</>,
+      <>If the server requires auth, add the <strong>username</strong> and <strong>password</strong>.</>,
+    ],
+    note: "Send test emails a sample HTML message.",
+  },
+  jira: {
+    title: "How to set up Jira",
+    intro: "Create issues, comment, and search via the Jira Cloud REST API.",
+    steps: [
+      <>Enter your site base URL (<code className="rounded bg-white px-1">https://your-org.atlassian.net</code>).</>,
+      <>Create an API token at <code className="rounded bg-white px-1">id.atlassian.com/manage-profile/security/api-tokens</code>.</>,
+      <>Enter your Atlassian <strong>account email</strong> + the <strong>token</strong>; optionally set a default project + issue type.</>,
+    ],
+  },
+  servicenow: {
+    title: "How to set up ServiceNow",
+    intro: "Create/update incidents, add work notes, and search via the Table API.",
+    steps: [
+      <>Enter your instance URL (<code className="rounded bg-white px-1">https://your-instance.service-now.com</code>).</>,
+      <>Use a dedicated integration user with the <strong>itil</strong> (or a scoped) role; enter its username + password.</>,
+      <>Optionally set a default assignment group, caller, urgency, and impact.</>,
+    ],
+  },
+  grafana: {
+    title: "How to set up Grafana",
+    intro: "Query datasources, list alerts, and add annotations.",
+    steps: [
+      <>Enter your Grafana base URL.</>,
+      <>In Grafana: <strong>Administration → Service accounts</strong> → add a service account (Editor/Admin) and a token; copy it.</>,
+      <>Optionally set a default datasource UID for queries.</>,
+    ],
+  },
+  webhook: {
+    title: "How to set up a Webhook",
+    intro: "POST JSON to any HTTPS endpoint.",
+    steps: [
+      <>Enter the HTTPS <strong>endpoint URL</strong> to POST to.</>,
+      <>Optionally add <strong>custom headers</strong> (auth/routing) and an <strong>HMAC signing secret</strong>.</>,
+      <>Save, then click <strong>Send test</strong>.</>,
+    ],
+    note: "When a secret is set, requests include X-Signature: sha256=<hmac>.",
+  },
+  pagerduty: {
+    title: "How to set up PagerDuty",
+    intro: "Trigger, acknowledge, and resolve incidents via the Events API v2.",
+    steps: [
+      <>In PagerDuty, open the target <strong>Service → Integrations → Add</strong> → <strong>Events API v2</strong>.</>,
+      <>Copy the <strong>Integration / Routing Key</strong> and paste it above.</>,
+      <>Save, then click <strong>Send test</strong>.</>,
+    ],
+    note: "Send test triggers a test alert — resolve it in PagerDuty afterward.",
+  },
+  splunk: {
+    title: "How to set up Splunk",
+    intro: "Send events via the HTTP Event Collector (HEC).",
+    steps: [
+      <>In Splunk: <strong>Settings → Data inputs → HTTP Event Collector → New Token</strong>; make sure HEC is enabled in Global Settings.</>,
+      <>Copy the token; note the HEC URL (host on port <strong>8088</strong>).</>,
+      <>Enter the HEC URL + token above; optionally set an index and sourcetype.</>,
+    ],
+  },
+  xsoar: {
+    title: "How to set up Cortex XSOAR",
+    intro: "Create incidents and add entries in Cortex XSOAR (Demisto).",
+    steps: [
+      <>Enter your XSOAR server URL.</>,
+      <>In XSOAR: <strong>Settings → API Keys</strong> → generate a key; copy it.</>,
+      <>For <strong>XSOAR 8 / XSIAM</strong>, also provide the API key ID.</>,
+    ],
+  },
+  sqs: {
+    title: "How to set up Amazon SQS",
+    intro: "Send messages to an SQS queue.",
+    steps: [
+      <>Enter the AWS <strong>region</strong> and the <strong>queue URL</strong>.</>,
+      <>Provide IAM access keys, or choose <strong>Role</strong> mode and supply a role ARN to assume.</>,
+    ],
+    note: "The identity needs sqs:SendMessage on the queue.",
+  },
+  s3: {
+    title: "How to set up Amazon S3",
+    intro: "Write objects (reports/findings) to an S3 bucket.",
+    steps: [
+      <>Enter the AWS <strong>region</strong> and default <strong>bucket</strong> (+ optional key prefix).</>,
+      <>Provide IAM access keys, or <strong>Role</strong> mode with a role ARN.</>,
+    ],
+    note: "The identity needs s3:PutObject on the bucket.",
+  },
+  securityhub: {
+    title: "How to set up AWS Security Hub",
+    intro: "Import findings in ASFF format.",
+    steps: [
+      <>Enable <strong>Security Hub</strong> in the target account/region.</>,
+      <>Enter the <strong>region</strong> and <strong>AWS account ID</strong>.</>,
+      <>Provide IAM keys or <strong>Role</strong> mode.</>,
+    ],
+    note: "The identity needs securityhub:BatchImportFindings.",
+  },
+  servicebus: {
+    title: "How to set up Azure Service Bus",
+    intro: "Send messages to a Service Bus queue.",
+    steps: [
+      <>Connection-string mode: portal → your <strong>Service Bus namespace → Shared access policies</strong> → copy a connection string with <strong>Send</strong> rights.</>,
+      <>SAS mode: provide the namespace FQDN, SAS policy name, and key.</>,
+      <>Set a default queue (or pass one per message).</>,
+    ],
+  },
+};
 
 /** Modal wizard for adding/editing a connector: a 3-step flow with a left stepper
  *  (Choose a connector → Set up connector → Review + add). For edits the type is
@@ -626,26 +1046,36 @@ function ConnectorWizard({
                     className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {filteredTypes.map((ty) => (
-                    <button
-                      key={ty.id}
-                      onClick={() => pickType(ty)}
-                      className="group flex flex-col rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand hover:shadow-sm"
-                    >
-                      <div className="mb-2 flex items-start gap-2.5">
-                        <BrandIcon type={ty.id} className="h-6 w-6" />
-                        <span className="min-w-0">
-                          <span className="block font-semibold leading-tight text-gray-800">
-                            {ty.label}
-                          </span>
-                        </span>
+                <div className="space-y-5">
+                  {groupConnectorTypes(filteredTypes).map((g) => (
+                    <div key={g.label}>
+                      <div className="mb-2 flex items-baseline gap-2">
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{g.label}</h4>
+                        {g.blurb && <span className="text-[11px] text-gray-400">{g.blurb}</span>}
                       </div>
-                      <span className="text-xs text-gray-500">{ty.description}</span>
-                    </button>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {g.items.map((ty) => (
+                          <button
+                            key={ty.id}
+                            onClick={() => pickType(ty)}
+                            className="group flex flex-col rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand hover:shadow-sm"
+                          >
+                            <div className="mb-2 flex items-start gap-2.5">
+                              <BrandIcon type={ty.id} className="h-6 w-6" />
+                              <span className="min-w-0">
+                                <span className="block font-semibold leading-tight text-gray-800">
+                                  {ty.label}
+                                </span>
+                              </span>
+                            </div>
+                            <span className="text-xs text-gray-500">{ty.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                   {filteredTypes.length === 0 && (
-                    <p className="col-span-full py-6 text-center text-sm text-gray-400">
+                    <p className="py-6 text-center text-sm text-gray-400">
                       No connectors match &ldquo;{search}&rdquo;.
                     </p>
                   )}
@@ -692,6 +1122,11 @@ function ConnectorWizard({
                       </div>
                     </div>
                   )}
+                  {form.type === "outlook" && <OutlookSetupGuide mode={form.mode} />}
+                  {form.type === "logicapp" && <LogicAppSetupGuide />}
+                  {form.type === "sumologic" && <SumoLogicSetupGuide />}
+                  {form.type === "crowdstrike_ngsiem" && <CrowdStrikeSetupGuide />}
+                  {SETUP_GUIDES[form.type] && <SetupGuide def={SETUP_GUIDES[form.type]} />}
                   {fields.map((f) => (
                     <div key={f.key}>
                       <label className={label}>
@@ -2279,7 +2714,7 @@ function TasksSection() {
   );
 
   const tasks = q.data?.tasks ?? [];
-  const metrics = q.data?.metrics ?? { active: 0, total: 0, total_runs: 0 };
+  const metrics = q.data?.metrics ?? { active: 0, total: 0, total_runs: 0, failed: 0 };
   const agents = agentsQ.data?.agents ?? [];
   const archived = archivedQ.data?.tasks ?? [];
   // Connector id → {name, type} for rendering each schedule's notification methods.
@@ -2290,19 +2725,75 @@ function TasksSection() {
   }, [connectorsQ.data]);
 
   // Group-by-type / filter-by-type / status / search for the unified schedules table.
-  const [groupByType, setGroupByType] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<"all" | TargetType>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "on" | "off">("all");
+  // Persisted so the console remembers how you last arranged it.
+  const [groupByType, setGroupByType] = usePersistedState<boolean>("schedules.groupByType", true);
+  const [typeFilter, setTypeFilter] = usePersistedState<"all" | TargetType>("schedules.typeFilter", "all");
+  const [statusFilter, setStatusFilter] = usePersistedState<"all" | "on" | "off">("schedules.statusFilter", "all");
+  const [failedOnly, setFailedOnly] = useState(false);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = usePersistedState<{ key: "name" | "last" | "next" | "runs"; dir: "asc" | "desc" } | null>("schedules.sort", null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const visibleTasks = tasks.filter((t) => {
     const tt = (t.target_type ?? "agent") as TargetType;
     if (typeFilter !== "all" && tt !== typeFilter) return false;
     if (statusFilter === "on" && t.status !== "on") return false;
     if (statusFilter === "off" && t.status === "on") return false;
+    if (failedOnly && t.last_status !== "failed") return false;
     if (search.trim() && !`${t.name} ${t.target_label ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())) return false;
     return true;
   });
+  const sortedTasks = useMemo(() => {
+    if (!sort) return visibleTasks;
+    const val = (t: ScheduledTask): string | number => {
+      switch (sort.key) {
+        case "name": return t.name.toLowerCase();
+        case "last": return t.last_run_at ? Date.parse(t.last_run_at) : 0;
+        case "next": return t.status === "on" && t.next_run_at ? Date.parse(t.next_run_at) : Number.POSITIVE_INFINITY;
+        case "runs": return t.completed_runs ?? 0;
+      }
+    };
+    return [...visibleTasks].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      if (av < bv) return sort.dir === "asc" ? -1 : 1;
+      if (av > bv) return sort.dir === "asc" ? 1 : -1;
+      return 0;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTasks, sort]);
+  const toggleSort = (key: "name" | "last" | "next" | "runs") =>
+    setSort(sort?.key === key ? (sort.dir === "asc" ? { key, dir: "desc" } : null) : { key, dir: "asc" });
+  const sortArrow = (key: string) => (sort?.key === key ? (sort.dir === "asc" ? " ↑" : " ↓") : "");
+  // When grouped by type, the group header already names the type, so the per-row Type
+  // column is redundant — hide it and shrink the colSpans accordingly. +1 for the
+  // leading selection checkbox column.
+  const showTypeCol = !groupByType;
+  const colCount = (showTypeCol ? 9 : 8) + 1;
+
+  // Bulk selection over the currently-visible rows.
+  const allVisibleIds = sortedTasks.map((t) => t.id);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(allVisibleIds));
+  const toggleSelect = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  const clearSelection = () => setSelected(new Set());
+  async function bulkToggle(enable: boolean) {
+    const targets = sortedTasks.filter((t) => selected.has(t.id) && (enable ? t.status !== "on" : t.status === "on"));
+    if (targets.length === 0) { clearSelection(); return; }
+    await act(() => Promise.all(targets.map((t) => api.toggleTask(t.id))));
+    clearSelection();
+  }
+  async function bulkDelete() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (!confirm(`Archive ${ids.length} schedule(s)? They stop running but their history is preserved.`)) return;
+    await act(() => Promise.all(ids.map((id) => api.deleteTask(id))));
+    clearSelection();
+  }
   const typeCounts = tasks.reduce<Record<string, number>>((acc, t) => {
     const tt = t.target_type ?? "agent";
     acc[tt] = (acc[tt] ?? 0) + 1;
@@ -2339,15 +2830,20 @@ function TasksSection() {
     return (
       <Fragment key={t.id}>
         <tr className="border-b last:border-0 hover:bg-gray-50">
+          <td className="py-2 pl-1 pr-2">
+            <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelect(t.id)} aria-label={`Select ${t.name}`} />
+          </td>
           <td className="py-2 pr-3 font-medium text-gray-800">
             {t.name}
             {t.target_label && <div className="truncate text-[11px] font-normal text-gray-400" title={t.target_label}>{t.target_label}</div>}
           </td>
+          {showTypeCol && (
           <td className="py-2 pr-3">
             <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
               {targetMeta(tt).icon} {targetMeta(tt).label}
             </span>
           </td>
+          )}
           <td className="py-2 pr-3">
             <div className="flex items-center gap-2">
               <button
@@ -2365,30 +2861,45 @@ function TasksSection() {
           </td>
           <td className="py-2 pr-3 text-gray-600">{t.schedule_label}</td>
           <td className="py-2 pr-3"><NotifyMethods task={t} connectorById={connectorById} /></td>
-          <td className="py-2 pr-3 text-gray-500">{t.last_run_at ? formatTimestamp(t.last_run_at) : "—"}</td>
           <td className="py-2 pr-3 text-gray-500">
-            {t.next_run_at ? (
+            {t.last_run_at ? (
+              <div className="flex items-center gap-1.5" title={`${formatTimestamp(t.last_run_at)}${t.last_status ? ` · ${t.last_status}` : ""}`}>
+                {runStatusDot(t.last_status)}
+                <div className="flex flex-col">
+                  <span>{formatTimestamp(t.last_run_at)}</span>
+                  <span className="text-[11px] text-gray-400">{formatRelativeFromNow(t.last_run_at)}</span>
+                </div>
+              </div>
+            ) : (
+              "—"
+            )}
+          </td>
+          <td className="py-2 pr-3 text-gray-500">
+            {t.status === "on" && t.next_run_at ? (
               <div className="flex flex-col">
                 <span>{formatTimestamp(t.next_run_at)}</span>
                 <span className="text-[11px] text-gray-400">{formatRelativeFromNow(t.next_run_at)}</span>
               </div>
+            ) : t.status !== "on" ? (
+              <span className="text-[11px] text-gray-400">Paused</span>
             ) : (
-              "\u2014"
+              "—"
             )}
           </td>
           <td className="py-2 pr-3 text-gray-500">{t.completed_runs}</td>
           <td className="py-2 text-right">
-            <div className="flex justify-end gap-1 text-xs">
-              <button onClick={() => runNow(t.id)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Run now</button>
-              <button onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">History</button>
-              <button onClick={() => setEditing(t)} className="rounded border px-2 py-1 text-gray-600 hover:bg-gray-50">Edit</button>
-              <button onClick={() => { if (confirm("Archive this schedule? It stops running but its run history is preserved. You can restore or permanently delete it later.")) act(() => api.deleteTask(t.id)); }} className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
+            <div className="flex items-center justify-end gap-0.5 text-xs">
+              <button title="Run now" aria-label="Run now" onClick={() => runNow(t.id)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-brand">▶</button>
+              <button title="Run history" aria-label="Run history" onClick={() => setOpenRuns(openRuns === t.id ? null : t.id)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">🕒</button>
+              <button title="Edit" aria-label="Edit" onClick={() => setEditing(t)} className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700">✎</button>
+              <span className="mx-0.5 h-4 w-px bg-gray-200" />
+              <button title="Delete" aria-label="Delete" onClick={() => { if (confirm("Archive this schedule? It stops running but its run history is preserved. You can restore or permanently delete it later.")) act(() => api.deleteTask(t.id)); }} className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
             </div>
           </td>
         </tr>
         {(openRuns === t.id || runNotice?.id === t.id) && (
           <tr key={`${t.id}-runs`}>
-            <td colSpan={9} className="bg-gray-50 px-3 py-2">
+            <td colSpan={colCount} className="bg-gray-50 px-3 py-2">
               {runNotice?.id === t.id && (
                 <div
                   className={`mb-2 flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-xs ${
@@ -2417,16 +2928,23 @@ function TasksSection() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          ["Active tasks", metrics.active],
-          ["Total tasks", metrics.total],
-          ["Total runs", metrics.total_runs],
-        ].map(([k, v]) => (
-          <div key={k as string} className="rounded-lg border bg-white p-4 text-center shadow-sm">
-            <div className="text-2xl font-semibold text-gray-800">{v as number}</div>
-            <div className="text-xs text-gray-500">{k as string}</div>
-          </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {([
+          ["Active tasks", metrics.active, () => { setStatusFilter("on"); setFailedOnly(false); setTypeFilter("all"); }, statusFilter === "on" && !failedOnly, "text-gray-800"],
+          ["Total tasks", metrics.total, () => { setStatusFilter("all"); setFailedOnly(false); setTypeFilter("all"); }, statusFilter === "all" && !failedOnly && typeFilter === "all", "text-gray-800"],
+          ["Failing", metrics.failed ?? 0, () => { setFailedOnly(true); setStatusFilter("all"); setTypeFilter("all"); }, failedOnly, (metrics.failed ?? 0) > 0 ? "text-red-600" : "text-gray-800"],
+          ["Total runs", metrics.total_runs, null, false, "text-gray-800"],
+        ] as [string, number, (() => void) | null, boolean, string][]).map(([k, v, onClick, activeTile, color]) => (
+          <button
+            key={k}
+            type="button"
+            disabled={!onClick}
+            onClick={onClick ?? undefined}
+            className={`rounded-lg border bg-white p-4 text-center shadow-sm transition ${onClick ? "cursor-pointer hover:border-brand/50 hover:shadow" : "cursor-default"} ${activeTile ? "border-brand ring-1 ring-brand/30" : ""}`}
+          >
+            <div className={`text-2xl font-semibold ${color}`}>{v}</div>
+            <div className="text-xs text-gray-500">{k}</div>
+          </button>
         ))}
       </div>
 
@@ -2444,6 +2962,18 @@ function TasksSection() {
           One place for every recurring job — Sub Agents, Assessments, Workbooks, and Playbooks — on a shared cadence (daily / weekly / cron).
         </p>
         {msg && <div className="mb-2 text-xs text-red-600">{msg}</div>}
+
+        {editing && (
+          <TaskForm
+            value={editing}
+            agents={agents}
+            onCancel={() => setEditing(null)}
+            onSaved={() => {
+              setEditing(null);
+              qc.invalidateQueries({ queryKey: ["scheduledTasks"] });
+            }}
+          />
+        )}
 
         {tasks.length > 0 && !editing && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -2463,7 +2993,7 @@ function TasksSection() {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="w-40 rounded-md border px-2 py-1 text-xs" />
             <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-500">
               <span>Group by type</span>
-              <button type="button" role="switch" aria-checked={groupByType} onClick={() => setGroupByType((v) => !v)}
+              <button type="button" role="switch" aria-checked={groupByType} onClick={() => setGroupByType(!groupByType)}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${groupByType ? "bg-brand" : "bg-gray-300"}`}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${groupByType ? "translate-x-[18px]" : "translate-x-0.5"}`} />
               </button>
@@ -2476,52 +3006,53 @@ function TasksSection() {
           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-500">No schedules yet. Create one to run an agent, assessment, workbook, or playbook on a cadence.</div>
         )}
 
-        {visibleTasks.length > 0 && (
+        {selected.size > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs">
+            <span className="font-medium text-gray-700">{selected.size} selected</span>
+            <button onClick={() => void bulkToggle(true)} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Enable</button>
+            <button onClick={() => void bulkToggle(false)} className="rounded border border-gray-200 bg-white px-2 py-1 text-gray-600 hover:bg-gray-50">Disable</button>
+            <button onClick={() => void bulkDelete()} className="rounded border border-red-200 bg-white px-2 py-1 text-red-600 hover:bg-red-50">Delete</button>
+            <button onClick={clearSelection} className="ml-auto text-gray-500 hover:text-gray-700">Clear</button>
+          </div>
+        )}
+
+        {sortedTasks.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs text-gray-500">
                 <tr className="border-b">
-                  <th className="py-1.5 pr-3 font-medium">Name</th>
-                  <th className="py-1.5 pr-3 font-medium">Type</th>
+                  <th className="py-1.5 pl-1 pr-2 font-medium">
+                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="Select all" />
+                  </th>
+                  <th className="cursor-pointer select-none py-1.5 pr-3 font-medium hover:text-gray-700" onClick={() => toggleSort("name")}>Name{sortArrow("name")}</th>
+                  {showTypeCol && <th className="py-1.5 pr-3 font-medium">Type</th>}
                   <th className="py-1.5 pr-3 font-medium">Status</th>
                   <th className="py-1.5 pr-3 font-medium">Schedule</th>
                   <th className="py-1.5 pr-3 font-medium">Notify</th>
-                  <th className="py-1.5 pr-3 font-medium">Last run</th>
-                  <th className="py-1.5 pr-3 font-medium">Next run</th>
-                  <th className="py-1.5 pr-3 font-medium">Runs</th>
+                  <th className="cursor-pointer select-none py-1.5 pr-3 font-medium hover:text-gray-700" onClick={() => toggleSort("last")}>Last run{sortArrow("last")}</th>
+                  <th className="cursor-pointer select-none py-1.5 pr-3 font-medium hover:text-gray-700" onClick={() => toggleSort("next")}>Next run{sortArrow("next")}</th>
+                  <th className="cursor-pointer select-none py-1.5 pr-3 font-medium hover:text-gray-700" onClick={() => toggleSort("runs")}>Runs{sortArrow("runs")}</th>
                   <th className="py-1.5 font-medium"></th>
                 </tr>
               </thead>
               <tbody>
                 {(groupByType
                   ? DISPLAY_TYPES.flatMap((tt) => {
-                      const group = visibleTasks.filter((t) => (t.target_type ?? "agent") === tt);
+                      const group = sortedTasks.filter((t) => (t.target_type ?? "agent") === tt);
                       if (group.length === 0) return [];
                       return [
                         <tr key={`grp-${tt}`} className="bg-gray-50/70">
-                          <td colSpan={9} className="py-1.5 pl-1 text-xs font-semibold text-gray-600">
+                          <td colSpan={colCount} className="py-1.5 pl-1 text-xs font-semibold text-gray-600">
                             {targetMeta(tt).icon} {targetMeta(tt).label} <span className="font-normal text-gray-400">({group.length})</span>
                           </td>
                         </tr>,
                         ...group.map((t) => renderTaskRow(t)),
                       ];
                     })
-                  : visibleTasks.map((t) => renderTaskRow(t)))}
+                  : sortedTasks.map((t) => renderTaskRow(t)))}
               </tbody>
             </table>
           </div>
-        )}
-
-        {editing && (
-          <TaskForm
-            value={editing}
-            agents={agents}
-            onCancel={() => setEditing(null)}
-            onSaved={() => {
-              setEditing(null);
-              qc.invalidateQueries({ queryKey: ["scheduledTasks"] });
-            }}
-          />
         )}
       </Card>
 
@@ -2582,6 +3113,20 @@ function statusClass(status: string): string {
   return "bg-gray-100 text-gray-500";
 }
 
+/** A small colored dot conveying the outcome of a schedule's most recent run. */
+function runStatusDot(status?: string | null) {
+  const map: Record<string, string> = {
+    succeeded: "bg-green-500",
+    failed: "bg-red-500",
+    partial: "bg-amber-500",
+    running: "bg-blue-500 animate-pulse",
+    queued: "bg-blue-400 animate-pulse",
+    cancelled: "bg-gray-400",
+  };
+  const cls = (status && map[status]) || "bg-gray-300";
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${cls}`} />;
+}
+
 function statusLabel(status: string): string {
   if (status === "on") return "enabled";
   if (status === "off") return "disabled";
@@ -2619,6 +3164,7 @@ function NotifyMethods({ task, connectorById }: { task: ScheduledTask; connector
 }
 
 function TaskRuns({ taskId }: { taskId: string }) {
+  const mountedAt = useRef(Date.now());
   const q = useQuery({
     queryKey: ["taskRuns", taskId],
     queryFn: () => api.taskRuns(taskId),
@@ -2626,7 +3172,11 @@ function TaskRuns({ taskId }: { taskId: string }) {
     // running → succeeded/failed (and the "Open thread →" link appears) live.
     refetchInterval: (query) => {
       const runs = query.state.data?.runs ?? [];
-      return runs.some((r: TaskRunInfo) => r.status === "running") ? 3000 : false;
+      if (runs.some((r: TaskRunInfo) => r.status === "running")) return 3000;
+      // Grace window: keep polling briefly even when empty, to catch a run that was
+      // just triggered (its record lands a moment after this panel opens).
+      if (runs.length === 0 && Date.now() - mountedAt.current < 25000) return 3000;
+      return false;
     },
   });
   const runs = q.data?.runs ?? [];
@@ -2668,6 +3218,9 @@ function resultLink(r: TaskRunInfo) {
   return null;
 }
 
+// --- Advanced recurrence builder (compiles to a cron expression) ------------------
+// Extracted to a shared component so the Insight Packs scheduler reuses the same controls.
+
 function TaskForm({
   value,
   agents,
@@ -2681,10 +3234,47 @@ function TaskForm({
 }) {
   const [form, setForm] = useState<Partial<ScheduledTask>>(value);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  // Cron sub-mode: the visual "Advanced" builder vs a raw expression box (both store
+  // schedule_kind="cron"). Defaults to raw so an existing cron schedule shows its string.
+  const [cronMode, setCronMode] = useState<"builder" | "raw">("raw");
   const set = (patch: Partial<ScheduledTask>) => setForm((f) => ({ ...f, ...patch }));
   const targetType = (form.target_type ?? "agent") as TargetType;
   const cfg = (form.target_config ?? {}) as Record<string, unknown>;
   const setCfg = (patch: Record<string, unknown>) => set({ target_config: { ...cfg, ...patch } });
+
+  // On open, bring the (inline) editor into view and focus the name field — otherwise it
+  // can render far below a long table with no visible feedback.
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const id = setTimeout(() => nameRef.current?.focus(), 150);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live cadence preview: ask the backend for the next run + human label (also validates
+  // cron) whenever the schedule fields change.
+  const [preview, setPreview] = useState<{ valid: boolean; error: string | null; next_run_at: string | null; next_runs: string[]; schedule_label: string | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const r = await api.previewSchedule({
+          schedule_kind: form.schedule_kind ?? "daily",
+          cron_expr: form.cron_expr ?? null,
+          time_of_day: form.time_of_day ?? "08:00",
+          weekday: form.weekday ?? 0,
+          timezone: form.timezone ?? "UTC",
+        });
+        if (!cancelled) setPreview(r);
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [form.schedule_kind, form.cron_expr, form.time_of_day, form.weekday, form.timezone]);
 
   // Enabled connectors available as notification targets for this task.
   const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
@@ -2706,7 +3296,7 @@ function TaskForm({
   const playbooks = playbooksQ.data?.playbooks ?? [];
   const selectedWorkbook = workbooks.find((w) => w.id === cfg.workbook_id);
 
-  async function save() {
+  async function save(runAfter = false) {
     if (!form.name?.trim()) {
       setError("Give the schedule a name.");
       return;
@@ -2731,15 +3321,25 @@ function TaskForm({
       setError("Select a playbook to run.");
       return;
     }
+    if (form.schedule_kind === "cron" && preview && !preview.valid) {
+      setError(preview.error || "Invalid cron expression.");
+      return;
+    }
     setError("");
     try {
+      setSaving(true);
       // Agent schedules require non-empty instructions server-side; supply a default.
       const payload: Partial<ScheduledTask> = { ...form };
       if (targetType !== "agent" && !payload.instructions?.trim()) payload.instructions = form.name;
-      await api.upsertTask(payload);
+      const { task } = await api.upsertTask(payload);
+      if (runAfter && task?.id) {
+        try { await api.runTaskNow(task.id); } catch { /* surfaced in the table run history */ }
+      }
       onSaved();
     } catch (e) {
       setError(formatError(e));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -2748,7 +3348,7 @@ function TaskForm({
   const cfgPack = (cfg.pack as string | undefined) ?? "";
 
   return (
-    <div className="mt-4 space-y-3 rounded-lg border border-brand/30 bg-brand/5 p-4">
+    <div ref={rootRef} className="mt-4 space-y-3 rounded-lg border border-brand/30 bg-brand/5 p-4">
       <div className="text-sm font-medium text-gray-800">{form.id ? "Edit schedule" : "New schedule"}</div>
 
       {/* Target type picker */}
@@ -2783,7 +3383,25 @@ function TaskForm({
 
       <div>
         <label className={label}>Schedule name</label>
-        <input className={input} value={form.name ?? ""} onChange={(e) => set({ name: e.target.value })} placeholder="daily-health-report" />
+        <div className="flex items-center gap-2">
+          <input ref={nameRef} className={input} value={form.name ?? ""} onChange={(e) => set({ name: e.target.value })} placeholder="daily-health-report" />
+          <button
+            type="button"
+            title="Suggest a name from the target and cadence"
+            onClick={() => {
+              const base =
+                targetType === "agent" ? (agents.find((a) => a.id === form.agent_id)?.name || "Agent task")
+                : targetType === "workbook" ? (workbooks.find((w) => w.id === cfg.workbook_id)?.name || "Workbook")
+                : targetType === "playbook" ? (playbooks.find((p) => p.id === cfg.playbook_id)?.name || "Playbook")
+                : "Assessment";
+              const freq = form.schedule_kind ?? "daily";
+              set({ name: `${base} (${freq})` });
+            }}
+            className="shrink-0 rounded-lg border px-2.5 py-2 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            Suggest
+          </button>
+        </div>
       </div>
 
       {/* --- Per-type configuration --- */}
@@ -2809,6 +3427,9 @@ function TaskForm({
                 <option value="review">Review (gate writes)</option>
                 <option value="autonomous">Autonomous</option>
               </select>
+              {form.run_mode === "autonomous" && (
+                <p className="mt-1 text-[11px] text-amber-600">⚠ Autonomous runs can make changes unattended — no write approval gate.</p>
+              )}
             </div>
             <div>
               <label className={label}>Message grouping</label>
@@ -2915,10 +3536,20 @@ function TaskForm({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label className={label}>Frequency</label>
-          <select className={input} value={form.schedule_kind ?? "daily"} onChange={(e) => set({ schedule_kind: e.target.value as ScheduledTask["schedule_kind"] })}>
+          <select
+            className={input}
+            value={form.schedule_kind !== "cron" ? (form.schedule_kind ?? "daily") : cronMode}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "daily" || v === "weekly") set({ schedule_kind: v as ScheduledTask["schedule_kind"] });
+              else if (v === "builder") { setCronMode("builder"); set({ schedule_kind: "cron", cron_expr: form.cron_expr || "0 9 * * 1-5" }); }
+              else { setCronMode("raw"); set({ schedule_kind: "cron" }); }
+            }}
+          >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
-            <option value="cron">Custom (cron)</option>
+            <option value="builder">Advanced (recurrence builder)</option>
+            <option value="raw">Custom (cron expression)</option>
           </select>
         </div>
         {form.schedule_kind !== "cron" ? (
@@ -2926,12 +3557,24 @@ function TaskForm({
             <label className={label}>Time of day</label>
             <input type="time" className={input} value={form.time_of_day ?? "08:00"} onChange={(e) => set({ time_of_day: e.target.value })} />
           </div>
-        ) : (
+        ) : cronMode === "raw" ? (
           <div className="sm:col-span-2">
             <label className={label}>Cron expression</label>
             <input className={`${input} font-mono`} value={form.cron_expr ?? ""} onChange={(e) => set({ cron_expr: e.target.value })} placeholder="0 8 * * *" />
+            <div className="mt-1 flex flex-wrap gap-1">
+              {[
+                ["Hourly", "0 * * * *"],
+                ["Daily 08:00", "0 8 * * *"],
+                ["Weekdays 09:00", "0 9 * * 1-5"],
+                ["Weekly Mon", "0 9 * * 1"],
+                ["Monthly 1st", "0 9 1 * *"],
+              ].map(([lbl, expr]) => (
+                <button key={expr} type="button" onClick={() => set({ cron_expr: expr })}
+                  className="rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
+              ))}
+            </div>
           </div>
-        )}
+        ) : null}
         {form.schedule_kind === "weekly" && (
           <div>
             <label className={label}>Weekday</label>
@@ -2954,6 +3597,48 @@ function TaskForm({
           <label className={label}>Run limit (optional)</label>
           <input type="number" className={input} value={form.max_runs ?? ""} onChange={(e) => set({ max_runs: e.target.value ? Number(e.target.value) : null })} placeholder="∞" />
         </div>
+        <div>
+          <label className={label}>Start date (optional)</label>
+          <input type="date" className={input} value={(form.start_date ?? "").slice(0, 10)} onChange={(e) => set({ start_date: e.target.value || null })} />
+        </div>
+        <div>
+          <label className={label}>End date (optional)</label>
+          <input type="date" className={input} value={(form.end_date ?? "").slice(0, 10)} onChange={(e) => set({ end_date: e.target.value || null })} />
+        </div>
+      </div>
+
+      {form.schedule_kind === "cron" && cronMode === "builder" && (
+        <RecurrenceBuilder value={form.cron_expr ?? ""} onChange={(c) => set({ cron_expr: c })} />
+      )}
+
+      {/* Live cadence preview */}
+      <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs">
+        {preview === null ? (
+          <span className="text-gray-400">Computing next run…</span>
+        ) : preview.valid ? (
+          <div className="space-y-1">
+            <div className="text-gray-600">
+              <span className="font-medium text-gray-700">{preview.schedule_label}</span>
+              {preview.next_run_at && (
+                <>
+                  {" · "}Next run <span className="font-medium text-gray-800">{formatTimestamp(preview.next_run_at)}</span>{" "}
+                  <span className="text-gray-400">({formatRelativeFromNow(preview.next_run_at)})</span>
+                </>
+              )}
+              {!preview.next_run_at && " · won't run (check start/end dates)"}
+            </div>
+            {(preview.next_runs?.length ?? 0) > 1 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                <span className="text-gray-500">Upcoming:</span>
+                {preview.next_runs.slice(0, 5).map((r, i) => (
+                  <span key={i} title={formatRelativeFromNow(r)}>{formatTimestamp(r)}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-red-600">✗ {preview.error}</span>
+        )}
       </div>
 
       <div>
@@ -3001,9 +3686,10 @@ function TaskForm({
         <span className="text-xs text-gray-400">{(form.status ?? "on") === "on" ? "Runs automatically on its schedule" : "Paused — won't run until enabled"}</span>
       </label>
       {error && <div className="text-xs text-red-600">{error}</div>}
-      <div className="flex gap-2">
-        <button onClick={() => void save()} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90">{form.id ? "Save schedule" : "Create schedule"}</button>
-        <button onClick={onCancel} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+      <div className="flex flex-wrap gap-2">
+        <button disabled={saving} onClick={() => void save(false)} className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">{saving ? "Saving…" : form.id ? "Save schedule" : "Create schedule"}</button>
+        <button disabled={saving} onClick={() => void save(true)} className="rounded-lg border border-brand/40 px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/5 disabled:opacity-50">Save &amp; run now</button>
+        <button disabled={saving} onClick={onCancel} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
       </div>
     </div>
   );

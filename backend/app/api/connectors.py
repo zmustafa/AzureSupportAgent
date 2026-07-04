@@ -216,6 +216,15 @@ async def test_connector_endpoint(
             else:
                 ok = bool(conn.get("connection_string"))
             detail = "Configured" if ok else "Missing Service Bus credentials."
+        elif ctype == "logicapp":
+            ok = bool(conn.get("trigger_url"))
+            detail = "Trigger URL configured" if ok else "No HTTP trigger URL set."
+        elif ctype == "sumologic":
+            ok = bool(conn.get("source_url"))
+            detail = "Source URL configured" if ok else "No HTTP source URL set."
+        elif ctype == "crowdstrike_ngsiem":
+            ok = bool(conn.get("ingest_url") and conn.get("ingest_token"))
+            detail = "HEC URL + token configured" if ok else "Missing HEC ingest URL or token."
         else:
             ok, detail = False, "No test available."
     except Exception as exc:  # noqa: BLE001
@@ -224,3 +233,51 @@ async def test_connector_endpoint(
         ok, detail = False, format_error(exc)
     update_status(connector_id, "ok" if ok else "error", detail)
     return {"ok": ok, "detail": detail, "connector": public_connector(get_connector(connector_id) or conn)}
+
+
+# Connector types where "send test" delivers a harmless message/alert rather than
+# creating a real ticket or storage object. Kept deliberately narrow so a test can't
+# open an incident or write to a bucket/queue.
+TEST_MESSAGE_TYPES = {"teams", "slack", "email", "outlook", "webhook", "pagerduty", "splunk", "grafana", "logicapp", "sumologic", "crowdstrike_ngsiem"}
+
+
+@router.post("/{connector_id}/send-test")
+async def send_test_message_endpoint(
+    connector_id: str,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deliver a real test message through a messaging connector so admins can confirm
+    end-to-end delivery (not just that config is present)."""
+    conn = get_connector(connector_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+    ctype = conn.get("type", "")
+    if ctype not in TEST_MESSAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Send test isn't available for '{ctype}' connectors — it would create a real record.",
+        )
+    from app.connectors.notify import deliver_to_connector
+
+    ok_sent, detail = await deliver_to_connector(
+        connector_id,
+        title="Test message from Azure Support Agent",
+        message=(
+            "This is a test message confirming your connector is wired up correctly. "
+            "If you can read this, the agent can reach this destination."
+        ),
+        severity="info",
+    )
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="connector.send_test",
+            target=connector_id,
+            metadata_json={"type": ctype, "ok": ok_sent},
+        )
+    )
+    await db.commit()
+    update_status(connector_id, "ok" if ok_sent else "error", detail)
+    return {"ok": ok_sent, "detail": detail, "connector": public_connector(get_connector(connector_id) or conn)}

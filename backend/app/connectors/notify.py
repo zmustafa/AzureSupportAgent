@@ -27,6 +27,9 @@ PRIMARY_NOTIFY_TOOL: dict[str, str] = {
     "s3": "s3_put_object",
     "securityhub": "securityhub_import_finding",
     "servicebus": "servicebus_send_message",
+    "logicapp": "logicapp_trigger",
+    "sumologic": "sumologic_send_event",
+    "crowdstrike_ngsiem": "crowdstrike_ngsiem_send_event",
 }
 
 

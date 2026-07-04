@@ -44,28 +44,60 @@ def _severity(verdict: str, notified: bool) -> str:
 async def run_pack(pack: dict[str, Any], scope: dict[str, Any], *, tenant_id: str,
                    overrides: dict[str, Any] | None = None, trigger: str = "schedule",
                    notify: bool = True, notify_connector_ids: list[str] | None = None,
-                   task_id: str | None = None) -> dict[str, Any]:
-    """Execute one pack run and return the persisted digest."""
+                   task_id: str | None = None, progress: Any = None) -> dict[str, Any]:
+    """Execute one pack run and return the persisted digest.
+
+    ``progress`` (optional) is a callable ``(stage, label, detail, pct)`` used to report
+    detailed progress for a background/on-demand run; it is a no-op for scheduled runs.
+    """
+    def _emit(stage: str, label: str, detail: str = "", pct: int | None = None) -> None:
+        if progress is None:
+            return
+        try:
+            progress(stage=stage, label=label, detail=detail, pct=pct)
+        except Exception:  # noqa: BLE001 — progress reporting must never break a run
+            log.debug("progress callback failed", exc_info=True)
+
     pack = packfile.normalize(pack)
     overrides = overrides or {}
     lookback = int(overrides.get("lookback_hours") or pack["lookback_hours"])
     filters = {**pack["filters"], **(overrides.get("filters") or {})}
     scope = sources_mod.resolve_scope_names(scope)  # fill workload_names so labels show real names
     scope_label = sources_mod.scope_label(scope)
+    _emit("scope", f"Scope resolved · {scope_label}", pct=8)
 
     # 1) GATHER
+    src_labels = [sources_mod.source_label(s) for s in pack["sources"]]
+    _emit("gather", f"Gathering signals from {len(src_labels)} source(s)…",
+          detail=", ".join(src_labels), pct=15)
+
+    def _on_source(idx: int, total: int, bundle: dict[str, Any]) -> None:
+        label = sources_mod.source_label(bundle.get("source", ""))
+        cnt = (bundle.get("counts") or {}).get("total", 0)
+        if bundle.get("ok"):
+            detail = f"{cnt} item(s)" + (f" · {bundle['note']}" if bundle.get("note") else "")
+        else:
+            detail = bundle.get("note") or "unavailable"
+        span = 15 + int(45 * (idx + 1) / max(1, total))  # 15 → 60 across sources
+        _emit("gather", f"{label}", detail=detail, pct=span)
+
     bundles = await sources_mod.gather(pack["sources"], scope, tenant_id=tenant_id,
-                                       lookback_hours=lookback, filters=filters, pack_id=pack["id"])
+                                       lookback_hours=lookback, filters=filters, pack_id=pack["id"],
+                                       on_source=_on_source)
     flag_codes: set[str] = set()
     total = 0
     for b in bundles:
         flag_codes |= set(b.get("flag_codes") or set())
         total += (b.get("counts") or {}).get("total", 0)
+    _emit("gather", f"Collected {total} change(s)",
+          detail=(f"{len(flag_codes)} security flag(s)" if flag_codes else "no security flags"), pct=62)
 
     # 2) REASON
     instructions = reason_mod.fill_placeholders(pack["instructions"], scope_label=scope_label,
                                                 lookback_hours=lookback)
+    _emit("reason", "Interpreting with AI…", detail="Summarizing what matters for this scope", pct=70)
     result = await reason_mod.reason(instructions=instructions, bundles=bundles, output=pack["output"])
+    _emit("reason", f"AI verdict: {result['verdict']}", detail=result.get("headline", "")[:160], pct=86)
 
     # 3) GATE
     should_notify, gate_reason = _gate(
@@ -111,10 +143,14 @@ async def run_pack(pack: dict[str, Any], scope: dict[str, Any], *, tenant_id: st
         "status": "succeeded",
     }
     runs_store.save_run(tenant_id, digest)
+    _emit("gate", ("Notification will be sent" if notified else "No notification (below threshold)"),
+          detail=gate_reason, pct=92)
 
     # 4) DELIVER (only when gated in)
     if notified:
+        _emit("deliver", "Sending notification…", pct=96)
         await _publish(digest, connector_ids=notify_connector_ids or [])
+    _emit("done", "Digest ready", detail=result.get("headline", "")[:160], pct=100)
     return digest
 
 

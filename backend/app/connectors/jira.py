@@ -96,8 +96,11 @@ async def _search(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any
     if not jql:
         return err("jql is required.")
     async with client:
+        # Enhanced search (JQL) endpoint. The legacy /rest/api/3/search is deprecated and
+        # being removed by Atlassian (CHANGE-2046); /search/jql is its replacement. It
+        # returns {isLast, issues[]} with no `total`, and requires `fields` to be listed.
         resp = await client.post(
-            "/rest/api/3/search",
+            "/rest/api/3/search/jql",
             json={"jql": jql, "maxResults": int(args.get("max_results") or 20),
                   "fields": ["summary", "status", "assignee", "priority"]},
         )
@@ -112,7 +115,7 @@ async def _search(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any
         }
         for i in data.get("issues", [])
     ]
-    return ok(json.dumps({"total": data.get("total", 0), "issues": issues}))
+    return ok(json.dumps({"count": len(issues), "is_last": data.get("isLast", True), "issues": issues}))
 
 
 def _build_tools(config: dict[str, Any]) -> list[ConnectorTool]:

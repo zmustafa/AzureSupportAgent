@@ -14,6 +14,10 @@ ENV VITE_API_BASE=/api
 # time (the image tag); defaults to "dev" for an untagged build.
 ARG APP_VERSION=dev
 ENV VITE_APP_VERSION=$APP_VERSION
+# Sequential release number (e.g. git commit count) shown as "v1 (rel 1234)". Pass
+# --build-arg APP_RELEASE=$(git rev-list --count HEAD); empty by default (local/dev).
+ARG APP_RELEASE=
+ENV VITE_APP_RELEASE=$APP_RELEASE
 RUN npm run build
 
 # ---- Stage 2: backend + bundled SPA ------------------------------------------------
@@ -27,6 +31,9 @@ ENV PYTHONUNBUFFERED=1 \
 # builder stage's VITE_APP_VERSION). Shown in Help → About and reported by /api/meta.
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
+# Sequential release number, also exposed to the backend for /api/meta parity.
+ARG APP_RELEASE=
+ENV APP_RELEASE=$APP_RELEASE
 
 # Node.js (for `npx @azure/mcp`), the Azure CLI (DefaultAzureCredential), and the
 # networking CLIs the built-in utility tools shell out to (ping, traceroute, dig, etc.).

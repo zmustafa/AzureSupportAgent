@@ -224,6 +224,38 @@ async def generate_endpoint(payload: GenerateRequest, _: Principal = Depends(_wr
     return result
 
 
+class PreviewRequest(BaseModel):
+    goal: str = ""
+    answers: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post("/draft/preview")
+async def preview_endpoint(payload: PreviewRequest, _: Principal = Depends(_write)) -> dict[str, Any]:
+    """Fast, deterministic (no-LLM) best-guess of the pack from goal + answers so far.
+
+    Powers the wizard's live 'pack so far' pane without incurring reasoning-model latency.
+    """
+    return designer.preview_pack(payload.goal, payload.answers)
+
+
+class RefineRequest(BaseModel):
+    pack: dict[str, Any] = Field(default_factory=dict)
+    instruction: str = ""
+    mode: str = "command"
+
+
+@router.post("/draft/refine")
+async def refine_endpoint(payload: RefineRequest, _: Principal = Depends(_write)) -> dict[str, Any]:
+    """AI copilot for the pack editor: apply a natural-language edit, improve instructions,
+    suggest sources/flags, explain, critique, or synthesize an example finding. All output is
+    grounded to the real source/flag catalogs and treats the pack + instruction as untrusted data.
+    """
+    result = await designer.refine_pack(payload.pack, payload.instruction, payload.mode)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
 # --------------------------------------------------------------------------- runs
 class RunRequest(BaseModel):
     pack_id: str = ""
@@ -246,6 +278,53 @@ async def run_endpoint(payload: RunRequest, principal: Principal = Depends(_run)
         overrides=payload.overrides, trigger="manual", notify=payload.notify,
     )
     return {"run": digest}
+
+
+@router.post("/run/async")
+async def run_async_endpoint(payload: RunRequest, principal: Principal = Depends(_run)) -> dict[str, Any]:
+    """Start a pack run in the background and return a ``job_id`` to poll for detailed progress.
+
+    The run executes as a detached asyncio task so it continues even if the caller navigates
+    away; the durable result is still the persisted digest in the run history."""
+    import asyncio
+
+    from app.insights import jobs
+    from app.insights.runner import run_pack
+    from app.insights import sources as sources_mod
+
+    pack = payload.pack or registry.get_pack(payload.pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Insight pack not found.")
+
+    tenant_id = principal.tenant_id
+    scope_label = sources_mod.scope_label(sources_mod.resolve_scope_names(dict(payload.scope)))
+    job = jobs.create(tenant_id, pack_name=str(pack.get("name", "")), scope_label=scope_label)
+
+    async def _worker() -> None:
+        try:
+            digest = await run_pack(
+                pack, payload.scope, tenant_id=tenant_id,
+                overrides=payload.overrides, trigger="manual", notify=payload.notify,
+                progress=lambda **ev: jobs.progress(job, **ev),
+            )
+            jobs.finish(job, digest)
+        except Exception as exc:  # noqa: BLE001 — surface failure to the poller, never crash the loop
+            log.exception("Background insight run failed")
+            jobs.fail(job, str(exc))
+
+    asyncio.create_task(_worker())
+    return {"job_id": job["id"]}
+
+
+@router.get("/run/jobs/{job_id}")
+async def run_job_endpoint(job_id: str, principal: Principal = Depends(_read)) -> dict[str, Any]:
+    """Poll a background run job for progress and (when finished) the resulting digest."""
+    from app.insights import jobs
+
+    job = jobs.get(principal.tenant_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Run job not found.")
+    return {"job": jobs.snapshot(job)}
 
 
 @router.get("/runs")

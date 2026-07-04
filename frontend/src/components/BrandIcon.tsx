@@ -134,6 +134,33 @@ const Email = (
   </Svg>
 );
 
+// Azure Logic Apps — blue rounded tile with the workflow "connected nodes" mark.
+const LogicApps = (
+  <Svg>
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#0066FF" />
+    <circle cx="8" cy="8" r="2" fill="#fff" />
+    <circle cx="16" cy="12" r="2" fill="#fff" />
+    <circle cx="8" cy="16" r="2" fill="#fff" />
+    <path fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" d="M9.4 9l5.2 2.4M14.6 12.6L9.4 15" />
+  </Svg>
+);
+
+// Sumo Logic — brand purple tile with a monogram "S".
+const SumoLogic = (
+  <Svg>
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#000099" />
+    <text x="12" y="16.5" textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff" fontFamily="Inter, Arial, sans-serif">S</text>
+  </Svg>
+);
+
+// CrowdStrike Next-Gen SIEM — red tile with a monogram "CS".
+const CrowdStrike = (
+  <Svg>
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#E01A22" />
+    <text x="12" y="16" textAnchor="middle" fontSize="9" fontWeight="700" fill="#fff" fontFamily="Inter, Arial, sans-serif">CS</text>
+  </Svg>
+);
+
 const ICONS: Record<string, ReactNode> = {
   slack: Slack,
   teams: Teams,
@@ -150,6 +177,9 @@ const ICONS: Record<string, ReactNode> = {
   s3: Aws,
   securityhub: Aws,
   servicebus: Azure,
+  logicapp: LogicApps,
+  sumologic: SumoLogic,
+  crowdstrike_ngsiem: CrowdStrike,
 };
 
 // Brand color for the monogram fallback.

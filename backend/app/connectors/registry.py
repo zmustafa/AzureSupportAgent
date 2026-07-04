@@ -16,6 +16,7 @@ from app.connectors import (
     email,
     grafana,
     jira,
+    logicapp,
     outlook,
     pagerduty,
     s3,
@@ -29,6 +30,7 @@ from app.connectors import (
     webhook,
     xsoar,
 )
+from app.connectors import crowdstrike_ngsiem, sumologic
 from app.connectors.base import ConnectorToolset, ConnectorType
 from app.core.crypto import decrypt, encrypt
 
@@ -51,6 +53,9 @@ CONNECTOR_TYPES: dict[str, ConnectorType] = {
     s3.CONNECTOR.id: s3.CONNECTOR,
     securityhub.CONNECTOR.id: securityhub.CONNECTOR,
     servicebus.CONNECTOR.id: servicebus.CONNECTOR,
+    logicapp.CONNECTOR.id: logicapp.CONNECTOR,
+    sumologic.CONNECTOR.id: sumologic.CONNECTOR,
+    crowdstrike_ngsiem.CONNECTOR.id: crowdstrike_ngsiem.CONNECTOR,
 }
 
 

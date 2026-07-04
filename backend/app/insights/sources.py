@@ -115,12 +115,16 @@ def _iso_window(lookback_hours: int) -> tuple[str, str]:
 
 
 async def gather(sources: list[str], scope: dict[str, Any], *, tenant_id: str,
-                 lookback_hours: int, filters: dict[str, Any], pack_id: str = "") -> list[dict[str, Any]]:
+                 lookback_hours: int, filters: dict[str, Any], pack_id: str = "",
+                 on_source: Any = None) -> list[dict[str, Any]]:
     """Run every selected, supported source adapter and return their bundles.
 
     When ``pack_id`` is set, each bundle's events are diffed against the pack's previous run
     on this scope (day-over-day): new events are tagged ``new=True`` and the per-source note
     records how many are new since last time. The fresh fingerprint is then persisted.
+
+    ``on_source`` (optional) is invoked with each bundle as it completes, so a caller can
+    surface per-source progress while the gather stage runs.
     """
     from app.insights import snapshots
 
@@ -135,18 +139,24 @@ async def gather(sources: list[str], scope: dict[str, Any], *, tenant_id: str,
         "policy": _gather_policy,
     }
     bundles: list[dict[str, Any]] = []
-    for sid in sources:
+    for idx, sid in enumerate(sources):
         fn = adapters.get(sid)
         if fn is None:  # unknown id — report as an empty, non-fatal bundle
-            bundles.append({"source": sid, "ok": False, "note": f"Source '{sid}' is not available yet.",
-                            "events": [], "flag_codes": set(), "counts": {}})
-            continue
-        try:
-            bundles.append(await fn(scope, tenant_id=tenant_id, lookback_hours=lookback_hours, filters=filters))
-        except Exception as exc:  # noqa: BLE001 — one source must never crash the run
-            log.warning("Source '%s' gather failed: %s", sid, exc)
-            bundles.append({"source": sid, "ok": False, "note": f"{sid} unavailable: {exc}"[:300],
-                            "events": [], "flag_codes": set(), "counts": {}})
+            bundle = {"source": sid, "ok": False, "note": f"Source '{sid}' is not available yet.",
+                      "events": [], "flag_codes": set(), "counts": {}}
+        else:
+            try:
+                bundle = await fn(scope, tenant_id=tenant_id, lookback_hours=lookback_hours, filters=filters)
+            except Exception as exc:  # noqa: BLE001 — one source must never crash the run
+                log.warning("Source '%s' gather failed: %s", sid, exc)
+                bundle = {"source": sid, "ok": False, "note": f"{sid} unavailable: {exc}"[:300],
+                          "events": [], "flag_codes": set(), "counts": {}}
+        bundles.append(bundle)
+        if on_source is not None:
+            try:
+                on_source(idx, len(sources), bundle)
+            except Exception:  # noqa: BLE001 — progress reporting must never break a run
+                log.debug("on_source progress callback failed", exc_info=True)
 
     _apply_day_over_day(bundles, tenant_id=tenant_id, pack_id=pack_id, scope=scope, snapshots=snapshots)
     return bundles

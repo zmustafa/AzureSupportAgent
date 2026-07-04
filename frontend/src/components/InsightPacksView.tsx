@@ -8,7 +8,7 @@
 //   • Pack editor form
 //   • Run / Schedule dialog (scope picker + on-demand run + recurring schedule)
 //   • Digest viewer + run history + upcoming schedule
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,13 +21,22 @@ import {
   type InsightCoverage,
   type InsightOccurrence,
   type InsightRun,
+  type InsightRunJob,
+  type InsightRunStep,
   type InsightScope,
   type InsightVerdict,
   type InsightWatcher,
   type ChangeWorkload,
   type AgentAnswer,
-  type AgentWizardQuestion,
+  type InsightWizardQuestion,
+  type InsightPackPreview,
+  type InsightRefineMode,
+  type InsightRefineChange,
+  type InsightCritiqueFinding,
+  type InsightSampleFinding,
 } from "../api";
+import { RecurrenceBuilder } from "./RecurrenceBuilder";
+import { formatTimestamp, formatRelativeFromNow } from "../utils/format";
 
 // ---------------------------------------------------------------- shared bits
 function formatError(e: unknown): string {
@@ -68,6 +77,22 @@ function timeAgo(iso?: string | null): string {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+// Render a digest "when" value in the viewer's local timezone. Values may be full
+// ISO timestamps (e.g. 2026-07-03T15:33:25.8086355Z) or free-text the model wrote
+// (e.g. "last 24h"); non-parseable strings are returned unchanged.
+function formatWhen(raw?: string | null): string {
+  if (!raw) return "";
+  const t = new Date(raw).getTime();
+  if (Number.isNaN(t)) return raw;
+  return new Date(t).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
 const VERDICT_RANK: Record<InsightVerdict, number> = { nothing_notable: 0, notable: 1, urgent: 2 };
@@ -151,6 +176,120 @@ function CoverageDot({ status }: { status: string }) {
   return <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${m.cls}`}><span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />{m.label}</span>;
 }
 
+// ---------------------------------------------------------------- background run progress
+type RunJobRequest = {
+  pack_id?: string;
+  pack?: Partial<InsightPack>;
+  scope: InsightScope;
+  notify?: boolean;
+};
+
+// Starts an on-demand run as a background job and polls it for detailed progress. The run
+// keeps executing server-side even if the caller closes the dialog; the final digest also
+// lands in the run history regardless.
+function useRunJob(onDone?: (run: InsightRun) => void) {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState("");
+  const doneRef = useRef<string | null>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  const q = useQuery({
+    queryKey: ["insightRunJob", jobId],
+    queryFn: () => api.getInsightRunJob(jobId as string),
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const s = query.state.data?.job.status;
+      return s === "succeeded" || s === "failed" ? false : 800;
+    },
+  });
+  const job = q.data?.job ?? null;
+
+  useEffect(() => {
+    if (job && job.status === "succeeded" && job.run && doneRef.current !== job.id) {
+      doneRef.current = job.id;
+      onDoneRef.current?.(job.run);
+    }
+  }, [job]);
+
+  const start = useCallback(async (req: RunJobRequest) => {
+    setStarting(true);
+    setStartError("");
+    doneRef.current = null;
+    try {
+      const { job_id } = await api.startInsightRun(req);
+      setJobId(job_id);
+    } catch (e) {
+      setStartError(formatError(e));
+    } finally {
+      setStarting(false);
+    }
+  }, []);
+
+  const reset = useCallback(() => {
+    setJobId(null);
+    setStartError("");
+    doneRef.current = null;
+  }, []);
+
+  const isRunning = starting || (!!job && (job.status === "queued" || job.status === "running"));
+  return { start, reset, job, isRunning, starting, error: startError || job?.error || "" };
+}
+
+const RUN_STAGE_ICON: Record<string, string> = {
+  scope: "🎯", gather: "🛰️", reason: "🧠", gate: "⚖️", deliver: "📣", done: "✅", error: "⚠️", queued: "⏳",
+};
+
+// Live progress panel for a background run: an animated bar + a timeline of milestones.
+function RunProgress({ job, starting }: { job: InsightRunJob | null; starting: boolean }) {
+  const pct = job?.pct ?? (starting ? 3 : 0);
+  const failed = job?.status === "failed";
+  const done = job?.status === "succeeded";
+  const steps = job?.steps ?? [];
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
+          {!done && !failed && (
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-brand" />
+          )}
+          <span>{job?.label ?? (starting ? "Starting…" : "Preparing…")}</span>
+        </div>
+        <span className={`text-xs font-semibold tabular-nums ${failed ? "text-red-600" : "text-gray-500"}`}>{pct}%</span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${failed ? "bg-red-500" : done ? "bg-green-500" : "bg-brand"}`}
+          style={{ width: `${Math.max(3, pct)}%` }}
+        />
+      </div>
+      {steps.length > 0 && (
+        <ol className="mt-3 max-h-40 space-y-1.5 overflow-y-auto pr-1">
+          {steps.map((s: InsightRunStep, i: number) => {
+            const isLast = i === steps.length - 1;
+            const active = isLast && !done && !failed;
+            return (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                <span className="mt-0.5 w-4 shrink-0 text-center">
+                  {s.state === "error" ? "⚠️" : active ? (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-brand align-middle" />
+                  ) : (RUN_STAGE_ICON[s.stage] ?? "•")}
+                </span>
+                <span className={`${s.state === "error" ? "text-red-600" : active ? "text-gray-800" : "text-gray-500"}`}>
+                  <span className="font-medium">{s.label}</span>
+                  {s.detail && <span className="text-gray-400"> · {s.detail}</span>}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <p className="mt-3 text-[11px] text-gray-400">Runs in the background — safe to close this dialog; the digest is saved to Recent runs.</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- digest renderer
 export function DigestView({ run }: { run: InsightRun }) {
   return (
@@ -211,7 +350,7 @@ export function DigestView({ run }: { run: InsightRun }) {
             <tbody className="divide-y divide-gray-100">
               {run.table.map((r, i) => (
                 <tr key={i} className="align-top">
-                  <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500">{r.time}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-gray-500" title={r.time}>{formatWhen(r.time)}</td>
                   <td className="px-3 py-2 text-gray-800">
                     <div>{r.change}</div>
                     {r.workload && <div className="text-xs text-gray-400">{r.workload}</div>}
@@ -242,17 +381,19 @@ export function DigestView({ run }: { run: InsightRun }) {
 }
 
 // ---------------------------------------------------------------- modal shell
-function Modal({ title, subtitle, onClose, children, wide }: {
+function Modal({ title, subtitle, onClose, children, wide, size }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
+  size?: "xl" | "3xl" | "5xl";
 }) {
+  const maxW = size === "5xl" ? "max-w-5xl" : (size === "3xl" || wide) ? "max-w-3xl" : "max-w-xl";
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 p-4 sm:p-8" onClick={onClose}>
       <div
-        className={`my-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"} rounded-2xl bg-white shadow-xl`}
+        className={`my-4 w-full ${maxW} rounded-2xl bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
@@ -271,32 +412,152 @@ function Modal({ title, subtitle, onClose, children, wide }: {
 }
 
 // ---------------------------------------------------------------- generator wizard
-type WizStage = "intent" | "interview" | "generating" | "error";
+type WizStage = "intent" | "interview" | "generating" | "preview" | "error";
 
-function GeneratorWizard({ onDraft, onClose }: {
+// A resumable in-progress interview, persisted so an accidental close doesn't lose work.
+type WizSnapshot = { goal: string; answers: AgentAnswer[]; step: number };
+const WIZ_STORAGE_KEY = "insightWizard.draft.v1";
+
+// Starter goals shown on the intent screen — one click seeds a strong, specific goal.
+const WIZ_STARTERS: { icon: string; label: string; goal: string }[] = [
+  { icon: "🌐", label: "Public exposure", goal: "Alert me whenever a change exposes a workload to the public internet — new public IPs, permissive NSG rules, or storage/keyvault firewalls opened up." },
+  { icon: "🛂", label: "Privileged access", goal: "Watch for anyone being granted privileged or Owner-level access, new RBAC role assignments, and eligible PIM roles across the tenant." },
+  { icon: "💰", label: "Cost creep", goal: "Surface idle and orphaned resources and their estimated monthly waste so I can clean them up before the bill grows." },
+  { icon: "🔑", label: "Identity risk", goal: "Flag expiring secrets and certificates, privileged users without MFA, and ownerless app registrations." },
+  { icon: "📡", label: "Retirements", goal: "Tell me about upcoming Azure service retirements and breaking changes that affect my workloads." },
+  { icon: "📏", label: "Policy drift", goal: "Notify me about new non-compliant resources and policy exemptions since the last check." },
+];
+
+// Cheap fuzzy overlap of two short strings, for duplicate-pack detection.
+function _tokens(s: string): Set<string> {
+  return new Set(
+    s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3),
+  );
+}
+function _overlap(a: string, b: string): number {
+  const ta = _tokens(a), tb = _tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let hit = 0;
+  ta.forEach((t) => { if (tb.has(t)) hit++; });
+  return hit / Math.min(ta.size, tb.size);
+}
+
+function GeneratorWizard({ onDraft, onClose, library }: {
   onDraft: (draft: InsightPack, summary: string) => void;
   onClose: () => void;
+  library: InsightPackLibrary;
 }) {
   const [stage, setStage] = useState<WizStage>("intent");
   const [goal, setGoal] = useState("");
   const [step, setStep] = useState(0);
-  const [questions, setQuestions] = useState<AgentWizardQuestion[]>([]);
+  const [questions, setQuestions] = useState<InsightWizardQuestion[]>([]);
   const [note, setNote] = useState("");
   const [answers, setAnswers] = useState<AgentAnswer[]>([]);
   const [current, setCurrent] = useState<Record<string, string | string[]>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showErrors, setShowErrors] = useState(false);
+  const [offTopic, setOffTopic] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [preview, setPreview] = useState<InsightPackPreview | null>(null);
+  const [draft, setDraft] = useState<InsightPack | null>(null);
+  const [summary, setSummary] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [resumable, setResumable] = useState<WizSnapshot | null>(null);
+  // Preview-run stage
+  const [runWorkloadId, setRunWorkloadId] = useState("");
+  const [sampleRun, setSampleRun] = useState<InsightRun | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
 
-  async function start() {
-    if (!goal.trim()) { setError("Describe what the pack should watch for."); return; }
-    setError(""); setBusy(true);
+  const cancelledRef = useRef(false);
+  const previewTimer = useRef<number | null>(null);
+  const { data: wlData } = useQuery({ queryKey: ["changeWorkloads"], queryFn: () => api.changeExplorerWorkloads() });
+  const workloads: ChangeWorkload[] = wlData?.workloads ?? [];
+  const selectedWl = workloads.find((w) => w.id === runWorkloadId);
+
+  // ---- resume: read any persisted in-progress interview once on mount
+  useEffect(() => {
     try {
-      const res = await api.insightInterview(goal.trim(), [], 0);
-      if (res.done || res.questions.length === 0) { await generate([]); return; }
-      setQuestions(res.questions); setNote(res.note); setStep(1);
-      setCurrent({}); setCustom({}); setStage("interview");
-    } catch (e) { setError(formatError(e)); } finally { setBusy(false); }
+      const raw = sessionStorage.getItem(WIZ_STORAGE_KEY);
+      if (raw) {
+        const snap = JSON.parse(raw) as WizSnapshot;
+        if (snap?.goal && (snap.answers?.length || snap.step)) setResumable(snap);
+      }
+    } catch { /* ignore malformed */ }
+  }, []);
+
+  // ---- persist progress while interviewing
+  useEffect(() => {
+    if (stage === "interview" && goal.trim()) {
+      try {
+        sessionStorage.setItem(WIZ_STORAGE_KEY, JSON.stringify({ goal, answers, step } satisfies WizSnapshot));
+      } catch { /* quota / disabled */ }
+    }
+  }, [stage, goal, answers, step]);
+
+  function clearProgress() {
+    try { sessionStorage.removeItem(WIZ_STORAGE_KEY); } catch { /* ignore */ }
+  }
+
+  // ---- elapsed timer during the (slow) generate step
+  useEffect(() => {
+    if (stage !== "generating") { setElapsed(0); return; }
+    const started = Date.now();
+    const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 250);
+    return () => window.clearInterval(id);
+  }, [stage]);
+
+  // ---- live "pack so far" preview (deterministic, no LLM) — debounced
+  function schedulePreview(g: string, ans: AgentAnswer[]) {
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => {
+      api.insightPreview(g.trim(), ans).then(setPreview).catch(() => { /* preview is best-effort */ });
+    }, 350);
+  }
+  useEffect(() => () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); }, []);
+
+  // ---- duplicate detection against the existing library
+  const duplicate = useMemo(() => {
+    if (goal.trim().length < 8) return null;
+    let best: { pack: InsightPack; score: number } | null = null;
+    for (const p of library.packs) {
+      const score = Math.max(_overlap(goal, p.name), _overlap(goal, p.description));
+      if (score >= 0.6 && (!best || score > best.score)) best = { pack: p, score };
+    }
+    return best?.pack ?? null;
+  }, [goal, library.packs]);
+
+  const vague = goal.trim().length > 0 && goal.trim().length < 25;
+
+  async function beginInterview(g: string, priorAnswers: AgentAnswer[], atStep: number) {
+    setError(""); setOffTopic(false); setSuggestions([]); setBusy(true);
+    cancelledRef.current = false;
+    schedulePreview(g, priorAnswers);
+    try {
+      const res = await api.insightInterview(g.trim(), priorAnswers, atStep);
+      if (cancelledRef.current) return;
+      if (res.off_topic) {
+        setOffTopic(true); setNote(res.note); setSuggestions(res.suggestions ?? []);
+        setStage("interview"); return;
+      }
+      if (res.done || res.questions.length === 0) { await generate(g, priorAnswers); return; }
+      setQuestions(res.questions); setNote(res.note); setStep(atStep + 1);
+      setCurrent({}); setCustom({}); setShowErrors(false); setStage("interview");
+    } catch (e) { if (!cancelledRef.current) setError(formatError(e)); }
+    finally { if (!cancelledRef.current) setBusy(false); }
+  }
+
+  function start() {
+    if (!goal.trim()) { setError("Describe what the pack should watch for."); return; }
+    setAnswers([]); setStep(0); beginInterview(goal, [], 0);
+  }
+
+  function resume() {
+    if (!resumable) return;
+    setGoal(resumable.goal); setAnswers(resumable.answers); setStep(resumable.step);
+    setResumable(null);
+    beginInterview(resumable.goal, resumable.answers, resumable.step);
   }
 
   function toggleMulti(qid: string, opt: string) {
@@ -306,33 +567,169 @@ function GeneratorWizard({ onDraft, onClose }: {
     });
   }
 
-  async function submitStep() {
-    const merged: AgentAnswer[] = questions.map((q) => {
-      let value: string | string[] = current[q.id] ?? (q.kind === "multi" ? [] : "");
-      const extra = (custom[q.id] ?? "").trim();
-      if (extra) value = q.kind === "multi" ? [...(Array.isArray(value) ? value : []), extra] : extra;
-      return { id: q.id, prompt: q.prompt, answer: value };
+  function addCustomChip(qid: string) {
+    const v = (custom[qid] ?? "").trim();
+    if (!v) return;
+    setCurrent((c) => {
+      const prev = Array.isArray(c[qid]) ? (c[qid] as string[]) : [];
+      return prev.includes(v) ? c : { ...c, [qid]: [...prev, v] };
     });
-    const all = [...answers, ...merged];
-    setAnswers(all); setBusy(true); setError("");
-    try {
-      const res = await api.insightInterview(goal.trim(), all, step);
-      if (res.done || res.questions.length === 0) { await generate(all); return; }
-      setQuestions(res.questions); setNote(res.note); setStep((s) => s + 1);
-      setCurrent({}); setCustom({});
-    } catch (e) { setError(formatError(e)); } finally { setBusy(false); }
+    setCustom((c) => ({ ...c, [qid]: "" }));
   }
 
-  async function generate(all: AgentAnswer[]) {
+  function mergedForStep(): AgentAnswer[] {
+    return questions.map((q) => {
+      if (q.kind === "multi") {
+        const arr = Array.isArray(current[q.id]) ? (current[q.id] as string[]) : [];
+        return { id: q.id, prompt: q.prompt, answer: arr };
+      }
+      const cust = (custom[q.id] ?? "").trim();
+      const sel = (current[q.id] as string) ?? "";
+      return { id: q.id, prompt: q.prompt, answer: cust || sel };
+    });
+  }
+
+  function isAnswered(q: InsightWizardQuestion): boolean {
+    if (q.kind === "multi") return Array.isArray(current[q.id]) && (current[q.id] as string[]).length > 0;
+    return !!((custom[q.id] ?? "").trim() || (current[q.id] as string));
+  }
+
+  async function submitStep() {
+    const missing = questions.filter((q) => q.required && !isAnswered(q));
+    if (missing.length) { setShowErrors(true); setError("Please answer the required question(s)."); return; }
+    const all = [...answers, ...mergedForStep()];
+    setAnswers(all);
+    beginInterview(goal, all, step);
+  }
+
+  async function generate(g: string, all: AgentAnswer[]) {
     setStage("generating"); setBusy(true); setError("");
+    cancelledRef.current = false;
     try {
-      const { draft, summary } = await api.insightGenerate(goal.trim(), all);
-      onDraft(draft, summary);
-    } catch (e) { setError(formatError(e)); setStage("error"); } finally { setBusy(false); }
+      const res = await api.insightGenerate(g.trim(), all);
+      if (cancelledRef.current) return;
+      setDraft(res.draft); setSummary(res.summary); setSampleRun(null);
+      clearProgress();
+      setStage("preview");
+    } catch (e) { if (!cancelledRef.current) { setError(formatError(e)); setStage("error"); } }
+    finally { if (!cancelledRef.current) setBusy(false); }
   }
 
-  const stepLabels = ["Goal", "AI interview", "Generate", "Review & save"];
-  const activeStepIdx = stage === "intent" ? 0 : stage === "interview" ? 1 : 2;
+  function cancelThinking() {
+    cancelledRef.current = true; setBusy(false);
+    setStage(questions.length ? "interview" : "intent");
+  }
+
+  async function runSample() {
+    if (!draft || !runWorkloadId) { setError("Pick a workload to preview against."); return; }
+    setRunBusy(true); setError("");
+    const supported = draft.supported_scopes.length ? draft.supported_scopes : ["workload"];
+    const mode = (supported.includes("workload") ? "workload" : supported[0]) as InsightScope["mode"];
+    const scope: InsightScope = {
+      mode,
+      workload_ids: [runWorkloadId],
+      workload_names: selectedWl ? [selectedWl.name] : undefined,
+      connection_id: selectedWl?.connection_id,
+    };
+    try {
+      const { run } = await api.runInsightPack({ pack: draft, scope, notify: false });
+      setSampleRun(run);
+    } catch (e) { setError(formatError(e)); }
+    finally { setRunBusy(false); }
+  }
+
+  // ---- keyboard: number keys pick options (single-question steps), Enter continues, Esc closes
+  useEffect(() => {
+    if (stage !== "interview" || offTopic) return;
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA";
+      if (e.key === "Escape" && !busy) { onClose(); return; }
+      if (typing) return;
+      if (e.key === "Enter" && !busy) { e.preventDefault(); submitStep(); return; }
+      if (questions.length === 1 && /^[1-9]$/.test(e.key)) {
+        const q = questions[0];
+        const opt = q.options[Number(e.key) - 1];
+        if (!opt) return;
+        e.preventDefault();
+        if (q.kind === "multi") toggleMulti(q.id, opt.value);
+        else setCurrent((c) => ({ ...c, [q.id]: opt.value }));
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stage, offTopic, busy, questions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stepLabels = ["Goal", "AI interview", "Generate", "Preview & save"];
+  const activeStepIdx = stage === "intent" ? 0 : stage === "interview" ? 1 : stage === "generating" ? 2 : 3;
+  const completeness = Math.min(1, 0.15 + answers.length * 0.18 + (stage === "preview" ? 1 : 0));
+
+  function PreviewPane() {
+    if (!preview) {
+      return <p className="text-xs text-gray-400">Answer a question to see the pack take shape…</p>;
+    }
+    const th = preview.materiality?.notify_threshold;
+    return (
+      <div className="space-y-3 text-sm" aria-live="polite">
+        <div>
+          <div className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Working name</div>
+          <div className="font-medium text-gray-800">{preview.name || "New Insight Pack"}</div>
+        </div>
+        {preview.source_labels && preview.source_labels.length > 0 && (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Data sources</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {preview.source_labels.map((s) => (
+                <span key={s} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{s}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Notify when</div>
+            <div className="text-gray-700">{th ? (VERDICT_META[th]?.label ?? th) : "—"}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Lookback</div>
+            <div className="text-gray-700">{preview.lookback_hours ? `${preview.lookback_hours}h` : "—"}</div>
+          </div>
+        </div>
+        {preview.materiality?.always_notify_if && preview.materiality.always_notify_if.length > 0 && (
+          <div>
+            <div className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Always alert on</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {preview.materiality.always_notify_if.map((f) => (
+                <span key={f} className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">{f}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        <p className="text-[11px] text-gray-400">This is a live estimate — the AI finalizes every field when you generate.</p>
+      </div>
+    );
+  }
+
+  function AnswerSummary() {
+    if (answers.length === 0) return null;
+    return (
+      <details className="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2">
+        <summary className="cursor-pointer text-xs font-medium text-gray-500">
+          {answers.length} answer{answers.length === 1 ? "" : "s"} so far
+        </summary>
+        <ul className="mt-2 space-y-1">
+          {answers.map((a, i) => {
+            const val = Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
+            return (
+              <li key={i} className="text-xs text-gray-600">
+                <span className="text-gray-400">{a.prompt}:</span> {val || "(skipped)"}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
+    );
+  }
 
   return (
     <Modal title="Generate an insight pack with AI" subtitle="Describe what you want to watch — the AI designs the pack." onClose={onClose} wide>
@@ -342,7 +739,7 @@ function GeneratorWizard({ onDraft, onClose }: {
             <span className={`rounded-full px-2 py-0.5 ${i <= activeStepIdx ? "bg-brand/10 font-medium text-brand" : ""}`}>
               {i + 1}. {l}
             </span>
-            {i < stepLabels.length - 1 && <span>→</span>}
+            {i < stepLabels.length - 1 && <span aria-hidden>→</span>}
           </span>
         ))}
       </div>
@@ -350,15 +747,55 @@ function GeneratorWizard({ onDraft, onClose }: {
       {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
       {stage === "intent" && (
-        <div className="space-y-3">
-          <label className="block text-sm font-medium text-gray-700">What should this pack watch for?</label>
-          <textarea
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            rows={4}
-            placeholder="e.g. Watch for anything that exposes a workload to the public internet, or grants someone privileged access."
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-          />
+        <div className="space-y-4">
+          {resumable && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
+              <span className="text-gray-700">You have an unfinished pack in progress.</span>
+              <div className="flex gap-2">
+                <button onClick={() => { setResumable(null); clearProgress(); }} className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-white">Discard</button>
+                <button onClick={resume} className="rounded-lg bg-brand px-3 py-1 text-xs font-medium text-white hover:bg-brand/90">Resume</button>
+              </div>
+            </div>
+          )}
+          <div>
+            <label htmlFor="wiz-goal" className="block text-sm font-medium text-gray-700">What should this pack watch for?</label>
+            <textarea
+              id="wiz-goal"
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={4}
+              maxLength={600}
+              placeholder="e.g. Watch for anything that exposes a workload to the public internet, or grants someone privileged access."
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+            />
+            <div className="mt-1 flex items-center justify-between text-xs text-gray-400">
+              <span>{vague ? "A bit more detail will produce a sharper pack." : "The clearer the intent, the better the design."}</span>
+              <span>{goal.trim().length}/600</span>
+            </div>
+          </div>
+
+          {duplicate && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              A similar pack already exists: <span className="font-medium">{duplicate.icon} {duplicate.name}</span>. You can still create a new one.
+            </div>
+          )}
+
+          <div>
+            <div className="mb-1.5 text-xs font-medium text-gray-500">Or start from an idea</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {WIZ_STARTERS.map((s) => (
+                <button
+                  key={s.label}
+                  onClick={() => setGoal(s.goal)}
+                  className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 transition hover:border-brand hover:bg-brand/5"
+                >
+                  <span className="text-lg leading-none">{s.icon}</span>
+                  <span className="font-medium">{s.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2">
             <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
             <button onClick={start} disabled={busy} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
@@ -368,68 +805,206 @@ function GeneratorWizard({ onDraft, onClose }: {
         </div>
       )}
 
-      {stage === "interview" && (
+      {stage === "interview" && offTopic && (
         <div className="space-y-4">
-          {note && <p className="text-sm text-gray-500">{note}</p>}
-          {questions.map((q) => (
-            <div key={q.id} className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">{q.prompt}</label>
-              {q.kind === "text" ? (
-                <input
-                  value={(current[q.id] as string) ?? ""}
-                  onChange={(e) => setCurrent((c) => ({ ...c, [q.id]: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                />
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {q.options.map((opt) => {
-                    const selected = q.kind === "multi"
-                      ? Array.isArray(current[q.id]) && (current[q.id] as string[]).includes(opt)
-                      : current[q.id] === opt;
-                    return (
-                      <button
-                        key={opt}
-                        onClick={() => q.kind === "multi" ? toggleMulti(q.id, opt) : setCurrent((c) => ({ ...c, [q.id]: opt }))}
-                        className={`rounded-full border px-3 py-1.5 text-sm transition ${selected ? "border-brand bg-brand/10 text-brand" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              {q.allow_custom && q.kind !== "text" && (
-                <input
-                  value={custom[q.id] ?? ""}
-                  onChange={(e) => setCustom((c) => ({ ...c, [q.id]: e.target.value }))}
-                  placeholder="Add your own…"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
-                />
-              )}
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+            {note || "That doesn't look like an Azure monitoring goal. Try describing a change, cost, access or security signal you want to watch."}
+          </div>
+          {suggestions.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-gray-500">Try one of these</div>
+              {suggestions.map((s, i) => (
+                <button key={i} onClick={() => { setGoal(s); setOffTopic(false); setStage("intent"); }}
+                  className="block w-full rounded-lg border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 hover:border-brand hover:bg-brand/5">
+                  {s}
+                </button>
+              ))}
             </div>
-          ))}
-          <div className="flex justify-between">
-            <button onClick={() => generate(answers)} disabled={busy} className="rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100">
-              Skip & generate
-            </button>
-            <button onClick={submitStep} disabled={busy} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
-              {busy ? "Thinking…" : "Continue"}
+          )}
+          <div className="flex justify-end">
+            <button onClick={() => { setOffTopic(false); setStage("intent"); }} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90">
+              Edit goal
             </button>
           </div>
         </div>
       )}
 
+      {stage === "interview" && !offTopic && (
+        <div className="grid gap-5 md:grid-cols-[1fr_260px]">
+          <div className="space-y-4">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100" aria-hidden>
+              <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.round(completeness * 100)}%` }} />
+            </div>
+            {note && <p className="text-sm text-gray-500">{note}</p>}
+            <AnswerSummary />
+            {busy && questions.length === 0 ? (
+              <div className="space-y-3">
+                {[0, 1, 2].map((i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-gray-100" />)}
+              </div>
+            ) : (
+              questions.map((q) => (
+                <fieldset key={q.id} className="space-y-2">
+                  <legend className="text-sm font-medium text-gray-700">
+                    {q.prompt}
+                    {q.required && <span className="ml-1 text-red-500">*</span>}
+                  </legend>
+                  {q.help && <p className="text-xs text-gray-400">{q.help}</p>}
+                  {showErrors && q.required && !isAnswered(q) && (
+                    <p className="text-xs text-red-600">This question is required.</p>
+                  )}
+                  {q.kind === "text" ? (
+                    <input
+                      value={(current[q.id] as string) ?? ""}
+                      onChange={(e) => setCurrent((c) => ({ ...c, [q.id]: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    />
+                  ) : (
+                    <div role={q.kind === "multi" ? "group" : "radiogroup"} className="space-y-1.5">
+                      {q.options.map((opt) => {
+                        const selected = q.kind === "multi"
+                          ? Array.isArray(current[q.id]) && (current[q.id] as string[]).includes(opt.value)
+                          : current[q.id] === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            role={q.kind === "multi" ? "checkbox" : "radio"}
+                            aria-checked={selected}
+                            onClick={() => q.kind === "multi" ? toggleMulti(q.id, opt.value) : setCurrent((c) => ({ ...c, [q.id]: opt.value }))}
+                            className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition ${selected ? "border-brand bg-brand/5" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"}`}
+                          >
+                            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border ${q.kind === "multi" ? "rounded" : "rounded-full"} ${selected ? "border-brand bg-brand text-white" : "border-gray-300"}`}>
+                              {selected && <span className="text-[10px] leading-none">✓</span>}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="flex items-center gap-1.5">
+                                <span className={selected ? "font-medium text-brand" : "text-gray-700"}>{opt.value}</span>
+                                {opt.recommended && <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700">Recommended</span>}
+                              </span>
+                              {opt.description && <span className="block text-xs text-gray-400">{opt.description}</span>}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {q.allow_custom && q.kind === "multi" && (
+                    <div className="flex gap-2">
+                      <input
+                        value={custom[q.id] ?? ""}
+                        onChange={(e) => setCustom((c) => ({ ...c, [q.id]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomChip(q.id); } }}
+                        placeholder="Add your own…"
+                        className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                      />
+                      <button onClick={() => addCustomChip(q.id)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">Add</button>
+                    </div>
+                  )}
+                  {q.allow_custom && q.kind === "single" && (
+                    <input
+                      value={custom[q.id] ?? ""}
+                      onChange={(e) => { setCustom((c) => ({ ...c, [q.id]: e.target.value })); setCurrent((c) => ({ ...c, [q.id]: "" })); }}
+                      placeholder="Or type your own…"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none"
+                    />
+                  )}
+                </fieldset>
+              ))
+            )}
+            <div className="flex items-center justify-between pt-1">
+              <div className="flex gap-2">
+                {step > 1 && (
+                  <button onClick={() => { setGoal(goal); setStage("intent"); }} disabled={busy} className="rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+                    Back
+                  </button>
+                )}
+                <button onClick={() => generate(goal, [...answers, ...mergedForStep()])} disabled={busy} className="rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+                  Generate now
+                </button>
+              </div>
+              <button onClick={submitStep} disabled={busy} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+                {busy ? "Thinking…" : "Continue"}
+              </button>
+            </div>
+          </div>
+          <aside className="rounded-xl border border-gray-200 bg-gray-50/50 p-4">
+            <div className="mb-2 text-xs font-semibold text-gray-500">Pack so far</div>
+            <PreviewPane />
+          </aside>
+        </div>
+      )}
+
       {stage === "generating" && (
         <div className="flex flex-col items-center gap-3 py-10 text-gray-500">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-          <p className="text-sm">Designing your insight pack…</p>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent motion-reduce:animate-none" />
+          <p className="text-sm">Designing your insight pack… {elapsed > 2 ? `(${elapsed}s)` : ""}</p>
+          <p className="text-xs text-gray-400">Reasoning models can take a moment.</p>
+          <button onClick={cancelThinking} className="mt-1 rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100">Cancel</button>
+        </div>
+      )}
+
+      {stage === "preview" && draft && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-gray-200 p-4">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl leading-none">{draft.icon || "🧠"}</div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-gray-900">{draft.name}</div>
+                <div className="text-xs text-gray-500">{draft.description}</div>
+                {summary && <p className="mt-1.5 text-xs text-gray-500">{summary}</p>}
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {draft.sources.map((s) => (
+                <span key={s} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{s}</span>
+              ))}
+              <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">
+                {VERDICT_META[draft.materiality.notify_threshold]?.label ?? draft.materiality.notify_threshold}
+              </span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{draft.lookback_hours}h lookback</span>
+            </div>
+          </div>
+
+          {draft.materiality.notify_threshold === "nothing_notable" && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              This pack notifies on <span className="font-medium">everything</span> — it may be noisy. You can raise the threshold on the next screen.
+            </div>
+          )}
+
+          <div className="rounded-xl border border-gray-200 p-4">
+            <div className="text-sm font-medium text-gray-800">Preview a sample run</div>
+            <div className="text-xs text-gray-500">Test the pack against a real workload (read-only, no notification).</div>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+                <option value="">Select a workload…</option>
+                {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}{w.demo ? " (demo)" : ""}</option>)}
+              </select>
+              <button onClick={runSample} disabled={runBusy || !runWorkloadId} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+                {runBusy ? "Running…" : "Preview run"}
+              </button>
+            </div>
+            {runBusy && <div className="mt-3 h-24 animate-pulse rounded-lg bg-gray-100" />}
+            {sampleRun && !runBusy && (
+              <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                <DigestView run={sampleRun} />
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={() => generate(goal, answers)} disabled={busy} className="rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+              Regenerate
+            </button>
+            <button onClick={() => onDraft(draft, summary)} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90">
+              Continue to review &amp; save
+            </button>
+          </div>
         </div>
       )}
 
       {stage === "error" && (
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">Close</button>
-          <button onClick={() => generate(answers)} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90">Retry</button>
+          <button onClick={() => generate(goal, answers)} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90">Retry</button>
         </div>
       )}
     </Modal>
@@ -445,6 +1020,81 @@ const THRESHOLDS: { value: InsightVerdict; label: string }[] = [
   { value: "nothing_notable", label: "Everything (always notify)" },
 ];
 const SCOPES = ["tenant", "subscription", "workload", "workload_dependencies"];
+const LOOKBACK_PRESETS: { label: string; hours: number }[] = [
+  { label: "6h", hours: 6 }, { label: "24h", hours: 24 }, { label: "7d", hours: 168 }, { label: "30d", hours: 720 },
+];
+const ICON_CHOICES = ["🧠", "🕵️", "🌐", "🛂", "💰", "🔑", "📡", "📏", "🛡️", "💾", "⚠️", "🔔", "📊", "🚨", "🧭", "🩺"];
+
+// Human labels for the flattened diff fields the copilot returns.
+const EDIT_FIELD_LABELS: Record<string, string> = {
+  name: "Name", icon: "Icon", category: "Category", description: "Description",
+  sources: "Data sources", supported_scopes: "Supported scopes", lookback_hours: "Lookback (hours)",
+  min_risk: "Minimum risk", notify_threshold: "Notify threshold",
+  always_notify_if: "Always-notify flags", instructions: "AI instructions",
+};
+
+function fmtDiffVal(field: string, v: unknown): string {
+  if (v == null || v === "") return "—";
+  if (Array.isArray(v)) return v.length ? v.join(", ") : "—";
+  if (field === "instructions") {
+    const s = String(v).replace(/\s+/g, " ").trim();
+    return s.length > 70 ? s.slice(0, 70) + "…" : s || "—";
+  }
+  return String(v);
+}
+
+// Apply one flattened copilot change onto a pack (inverse of the backend _flat()).
+function applyEditChange(pack: InsightPack, ch: InsightRefineChange): InsightPack {
+  switch (ch.field) {
+    case "name": return { ...pack, name: String(ch.after ?? "") };
+    case "icon": return { ...pack, icon: String(ch.after ?? "") };
+    case "category": return { ...pack, category: String(ch.after ?? "general") };
+    case "description": return { ...pack, description: String(ch.after ?? "") };
+    case "sources": return { ...pack, sources: (ch.after as string[]) ?? [] };
+    case "supported_scopes": return { ...pack, supported_scopes: (ch.after as string[]) ?? [] };
+    case "lookback_hours": return { ...pack, lookback_hours: Number(ch.after) || 24 };
+    case "min_risk": return { ...pack, filters: { ...pack.filters, min_risk: String(ch.after ?? "low") } };
+    case "notify_threshold": return { ...pack, materiality: { ...pack.materiality, notify_threshold: ch.after as InsightVerdict } };
+    case "always_notify_if": return { ...pack, materiality: { ...pack.materiality, always_notify_if: (ch.after as string[]) ?? [] } };
+    case "instructions": return { ...pack, instructions: String(ch.after ?? "") };
+    default: return pack;
+  }
+}
+
+// Wrap an AI-synthesized sample finding as an InsightRun so DigestView can render it.
+function sampleToRun(pack: InsightPack, s: InsightSampleFinding): InsightRun {
+  return {
+    id: "ai-sample", pack_id: pack.id || "draft", pack_name: pack.name || "Untitled pack",
+    pack_icon: pack.icon || "🧠", tenant_id: "", trigger: "sample",
+    scope: { mode: "workload" }, scope_label: "example scope", lookback_hours: pack.lookback_hours,
+    verdict: s.verdict, headline: s.headline, bullets: s.bullets,
+    table: s.table.map((r) => ({ ...r, workload: "" })),
+    counts: { changes: s.table.length, flags: [] }, sources: pack.sources,
+    notified: false, gate_reason: "", status: "ok",
+  };
+}
+
+function NoiseGauge({ score }: { score: number }) {
+  const label = score <= 30 ? "Quiet" : score <= 60 ? "Balanced" : "Noisy";
+  const bar = score <= 30 ? "bg-emerald-500" : score <= 60 ? "bg-amber-500" : "bg-red-500";
+  const txt = score <= 30 ? "text-emerald-700" : score <= 60 ? "text-amber-700" : "text-red-700";
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[11px] font-medium text-gray-500">
+        <span>Noise level</span><span className={txt}>{label}</span>
+      </div>
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+        <div className={`h-full rounded-full ${bar} transition-all motion-reduce:transition-none`} style={{ width: `${score}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function toggleArr(list: string[], v: string): string[] {
+  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+}
+
+type EditorTab = "preview" | "sample" | "review";
 
 function PackForm({ initial, library, onClose, onSaved }: {
   initial: InsightPack;
@@ -454,121 +1104,486 @@ function PackForm({ initial, library, onClose, onSaved }: {
 }) {
   const [pack, setPack] = useState<InsightPack>(initial);
   const [error, setError] = useState("");
+  const [showErrors, setShowErrors] = useState(false);
   const qc = useQueryClient();
+
+  // ---- undo / redo history (discrete edits + AI applies push; free typing does not)
+  const [past, setPast] = useState<InsightPack[]>([]);
+  const [future, setFuture] = useState<InsightPack[]>([]);
+  function applyPack(next: InsightPack) { setPast((p) => [...p, pack].slice(-50)); setFuture([]); setPack(next); }
+  function setField<K extends keyof InsightPack>(k: K, v: InsightPack[K]) { setPack((p) => ({ ...p, [k]: v })); }
+  function undo() {
+    if (!past.length) return;
+    const prev = past[past.length - 1];
+    setFuture((f) => [pack, ...f]); setPack(prev); setPast((p) => p.slice(0, -1));
+  }
+  function redo() {
+    if (!future.length) return;
+    const nxt = future[0];
+    setPast((p) => [...p, pack]); setPack(nxt); setFuture((f) => f.slice(1));
+  }
+
+  // ---- AI copilot
+  const [command, setCommand] = useState("");
+  const [aiBusy, setAiBusy] = useState<InsightRefineMode | null>(null);
+  const [aiError, setAiError] = useState("");
+  const [proposal, setProposal] = useState<{ changes: InsightRefineChange[]; rationale: string } | null>(null);
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<EditorTab>("preview");
+  const [explanation, setExplanation] = useState("");
+  const [findings, setFindings] = useState<InsightCritiqueFinding[] | null>(null);
+  const [activeSample, setActiveSample] = useState<{ kind: "ai" | "real"; run: InsightRun } | null>(null);
+
+  // ---- real test run
+  const [runWorkloadId, setRunWorkloadId] = useState("");
+  const [runBusy, setRunBusy] = useState(false);
+  const { data: wlData } = useQuery({ queryKey: ["changeWorkloads"], queryFn: () => api.changeExplorerWorkloads() });
+  const workloads: ChangeWorkload[] = wlData?.workloads ?? [];
+
+  const insRef = useRef<HTMLTextAreaElement>(null);
+  const storageKey = `insightEditor.draft.${initial.id || "new"}`;
+  const [restorable, setRestorable] = useState<InsightPack | null>(null);
+
   const save = useMutation({
     mutationFn: () => api.upsertInsightPack(pack),
     onSuccess: ({ pack: saved }) => {
       qc.invalidateQueries({ queryKey: ["insightPacks"] });
+      try { sessionStorage.removeItem(storageKey); } catch { /* ignore */ }
       onSaved(saved);
     },
     onError: (e) => setError(formatError(e)),
   });
 
-  function upd<K extends keyof InsightPack>(k: K, v: InsightPack[K]) { setPack((p) => ({ ...p, [k]: v })); }
-  function toggleArr(list: string[], v: string): string[] {
-    return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+  const dirty = useMemo(() => JSON.stringify(pack) !== JSON.stringify(initial), [pack, initial]);
+
+  // ---- validation
+  const issues = useMemo(() => {
+    const list: { field: string; msg: string; level: "error" | "warn" }[] = [];
+    if (!pack.name.trim()) list.push({ field: "name", msg: "Name is required.", level: "error" });
+    if (pack.sources.length === 0) list.push({ field: "sources", msg: "Pick at least one data source.", level: "error" });
+    if (pack.instructions.trim().length < 40) list.push({ field: "instructions", msg: "Instructions look thin — describe what to prioritize and when to stay quiet.", level: "error" });
+    if (!pack.instructions.includes("{{scope_label}}")) list.push({ field: "instructions", msg: "Missing the {{scope_label}} placeholder.", level: "warn" });
+    if (!pack.instructions.includes("{{lookback_hours}}")) list.push({ field: "instructions", msg: "Missing the {{lookback_hours}} placeholder.", level: "warn" });
+    const dupe = library.packs.find((p) => p.id !== pack.id && p.name.trim().toLowerCase() === pack.name.trim().toLowerCase() && pack.name.trim());
+    if (dupe) list.push({ field: "name", msg: `Another pack is already named “${dupe.name}”.`, level: "warn" });
+    if (pack.materiality.notify_threshold === "nothing_notable") list.push({ field: "notify_threshold", msg: "This notifies on everything — expect noise.", level: "warn" });
+    return list;
+  }, [pack, library.packs]);
+  const errors = issues.filter((i) => i.level === "error");
+
+  const completeness = useMemo(() => {
+    let done = 0;
+    if (pack.name.trim()) done++;
+    if (pack.description.trim()) done++;
+    if (pack.sources.length) done++;
+    if (pack.instructions.trim().length >= 40) done++;
+    return Math.round((done / 4) * 100);
+  }, [pack]);
+
+  const noise = useMemo(() => {
+    const t = pack.materiality.notify_threshold;
+    let s = t === "nothing_notable" ? 55 : t === "notable" ? 30 : 10;
+    s += Math.min(30, pack.materiality.always_notify_if.length * 4);
+    s += pack.filters.min_risk === "low" ? 12 : pack.filters.min_risk === "medium" ? 6 : 0;
+    s += pack.lookback_hours >= 168 ? 8 : 0;
+    return Math.min(100, s);
+  }, [pack]);
+
+  const summary = useMemo(() => {
+    const srcs = pack.sources.map((id) => library.sources.find((s) => s.id === id)?.label ?? id);
+    const scopeTxt = pack.supported_scopes.length ? pack.supported_scopes.join(", ") : "any scope";
+    const thr = VERDICT_META[pack.materiality.notify_threshold]?.label ?? pack.materiality.notify_threshold;
+    const always = pack.materiality.always_notify_if.length;
+    const srcTxt = srcs.length ? srcs.join(", ") : "no data sources yet";
+    return `Watches ${srcTxt} across ${scopeTxt} over the last ${pack.lookback_hours}h. Notifies on ${thr}${always ? `, and always for ${always} critical signal${always > 1 ? "s" : ""}` : ""}.`;
+  }, [pack, library.sources]);
+
+  // ---- resume: read any persisted draft once on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) {
+        const snap = JSON.parse(raw) as InsightPack;
+        if (snap && JSON.stringify(snap) !== JSON.stringify(initial)) setRestorable(snap);
+      }
+    } catch { /* ignore malformed */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- persist while dirty
+  useEffect(() => {
+    if (!dirty) return;
+    try { sessionStorage.setItem(storageKey, JSON.stringify(pack)); } catch { /* quota / disabled */ }
+  }, [pack, dirty, storageKey]);
+
+  // ---- keyboard: Ctrl/Cmd+S save, Ctrl/Cmd+Z undo, Esc close (guarded)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); trySave(); }
+      else if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (meta && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
+  function guardedClose() {
+    if (dirty && !window.confirm("Discard unsaved changes to this pack?")) return;
+    onClose();
+  }
+  function trySave() {
+    if (errors.length) { setShowErrors(true); setTab("review"); return; }
+    save.mutate();
   }
 
+  function insertPlaceholder(text: string) {
+    const el = insRef.current;
+    const start = el?.selectionStart ?? pack.instructions.length;
+    const end = el?.selectionEnd ?? start;
+    const next = pack.instructions.slice(0, start) + text + pack.instructions.slice(end);
+    setField("instructions", next);
+    requestAnimationFrame(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = start + text.length; } });
+  }
+
+  // ---- copilot dispatch
+  async function runRefine(mode: InsightRefineMode, instruction = "") {
+    setAiBusy(mode); setAiError("");
+    try {
+      const res = await api.refineInsightPack(pack, instruction, mode);
+      if (mode === "command" || mode === "improve_instructions" || mode === "suggest") {
+        if (res.changes && res.changes.length) {
+          setProposal({ changes: res.changes, rationale: res.rationale ?? "" });
+          setAccepted(new Set(res.changes.map((c) => c.field)));
+        } else {
+          setAiError(res.rationale || "The AI didn't suggest any changes.");
+        }
+      } else if (mode === "explain") {
+        setExplanation(res.explanation ?? ""); setTab("preview");
+      } else if (mode === "critique") {
+        setFindings(res.findings ?? []); setTab("review");
+      } else if (mode === "sample" && res.sample) {
+        setActiveSample({ kind: "ai", run: sampleToRun(pack, res.sample) }); setTab("sample");
+      }
+    } catch (e) {
+      setAiError(formatError(e));
+    } finally {
+      setAiBusy(null);
+    }
+  }
+
+  function submitCommand() {
+    const q = command.trim();
+    if (!q || aiBusy) return;
+    setCommand("");
+    runRefine("command", q);
+  }
+
+  function applyProposal() {
+    if (!proposal) return;
+    let next = pack;
+    for (const ch of proposal.changes) if (accepted.has(ch.field)) next = applyEditChange(next, ch);
+    applyPack(next);
+    setProposal(null);
+  }
+
+  async function runRealSample() {
+    if (!runWorkloadId || runBusy) return;
+    setRunBusy(true); setAiError("");
+    try {
+      const { run } = await api.runInsightPack({ pack, scope: { mode: "workload", workload_ids: [runWorkloadId] }, notify: false });
+      setActiveSample({ kind: "real", run });
+    } catch (e) {
+      setAiError(formatError(e));
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
+  const inputCls = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none";
+  const errRing = (field: string) => (showErrors && errors.some((e) => e.field === field) ? "border-red-400" : "border-gray-300");
+
   return (
-    <Modal title={initial.id ? "Edit pack" : "New insight pack"} subtitle="Scope-agnostic definition. Scope and schedule are chosen when you run or schedule it." onClose={onClose} wide>
+    <Modal title={initial.id ? "Edit pack" : "New insight pack"} subtitle="Scope-agnostic definition — scope & schedule are chosen when you run it." onClose={guardedClose} size="5xl">
       {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-      <div className="space-y-4">
-        <div className="flex gap-3">
-          <div className="w-20">
-            <label className="block text-xs font-medium text-gray-500">Icon</label>
-            <input value={pack.icon} onChange={(e) => upd("icon", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-center text-lg focus:border-brand focus:outline-none" />
+      {restorable && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span>You have unsaved edits from a previous session.</span>
+          <div className="flex gap-2">
+            <button onClick={() => { setPack(restorable); setRestorable(null); }} className="rounded-md bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700">Restore</button>
+            <button onClick={() => { setRestorable(null); try { sessionStorage.removeItem(storageKey); } catch { /* ignore */ } }} className="rounded-md px-2.5 py-1 font-medium text-amber-700 hover:bg-amber-100">Dismiss</button>
           </div>
-          <div className="flex-1">
-            <label className="block text-xs font-medium text-gray-500">Name</label>
-            <input value={pack.name} onChange={(e) => upd("name", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+        </div>
+      )}
+
+      {/* completeness + undo header */}
+      <div className="mb-3 flex items-center gap-3">
+        <div className="flex-1">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+            <div className="h-full rounded-full bg-brand transition-all motion-reduce:transition-none" style={{ width: `${completeness}%` }} />
           </div>
-          <div className="w-40">
-            <label className="block text-xs font-medium text-gray-500">Category</label>
-            <select value={pack.category} onChange={(e) => upd("category", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </div>
+        <span className="text-[11px] text-gray-400">{completeness}% complete</span>
+        <div className="flex gap-1">
+          <button onClick={undo} disabled={!past.length} title="Undo (Ctrl+Z)" className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-40">↶</button>
+          <button onClick={redo} disabled={!future.length} title="Redo (Ctrl+Y)" className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-40">↷</button>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {/* ---------------------------------------------------------------- form pane */}
+        <div className="max-h-[64vh] space-y-4 overflow-y-auto pr-1">
+          <div className="flex gap-3">
+            <div className="w-16">
+              <label className="block text-xs font-medium text-gray-500">Icon</label>
+              <input value={pack.icon} onChange={(e) => setField("icon", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-center text-lg focus:border-brand focus:outline-none" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-500">Name</label>
+              <input value={pack.name} onChange={(e) => setField("name", e.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:border-brand focus:outline-none ${errRing("name")}`} />
+            </div>
+            <div className="w-36">
+              <label className="block text-xs font-medium text-gray-500">Category</label>
+              <select value={pack.category} onChange={(e) => applyPack({ ...pack, category: e.target.value })} className={inputCls}>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {ICON_CHOICES.map((ic) => (
+              <button key={ic} onClick={() => setField("icon", ic)} className={`rounded-md px-1.5 py-1 text-base hover:bg-gray-100 ${pack.icon === ic ? "bg-brand/10 ring-1 ring-brand" : ""}`}>{ic}</button>
+            ))}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500">Description</label>
+            <input value={pack.description} onChange={(e) => setField("description", e.target.value)} className={inputCls} placeholder="One sentence on what this pack watches" />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-medium text-gray-500">Data sources</label>
+              <button onClick={() => runRefine("suggest")} disabled={!!aiBusy} className="text-[11px] font-medium text-brand hover:underline disabled:opacity-50">
+                {aiBusy === "suggest" ? "Thinking…" : "✨ Suggest"}
+              </button>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {library.sources.map((s) => {
+                const on = pack.sources.includes(s.id);
+                return (
+                  <button key={s.id} title={s.description} onClick={() => applyPack({ ...pack, sources: toggleArr(pack.sources, s.id) })}
+                    className={`rounded-full border px-3 py-1.5 text-sm ${on ? "border-brand bg-brand/10 text-brand" : `${errRing("sources")} text-gray-600 hover:bg-gray-50`}`}>
+                    {s.icon} {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-500">Lookback (hours)</label>
+              <input type="number" min={1} value={pack.lookback_hours} onChange={(e) => setField("lookback_hours", Number(e.target.value) || 24)} className={inputCls} />
+              <div className="mt-1.5 flex gap-1">
+                {LOOKBACK_PRESETS.map((p) => (
+                  <button key={p.hours} onClick={() => applyPack({ ...pack, lookback_hours: p.hours })}
+                    className={`rounded-md px-2 py-0.5 text-[11px] ${pack.lookback_hours === p.hours ? "bg-brand/10 text-brand" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>{p.label}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500">Minimum risk to include</label>
+              <select value={pack.filters.min_risk ?? "low"} onChange={(e) => applyPack({ ...pack, filters: { ...pack.filters, min_risk: e.target.value } })} className={inputCls}>
+                {MIN_RISKS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500">Supported scopes</label>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {SCOPES.map((s) => {
+                const on = pack.supported_scopes.includes(s);
+                return (
+                  <button key={s} onClick={() => applyPack({ ...pack, supported_scopes: toggleArr(pack.supported_scopes, s) })}
+                    className={`rounded-full border px-3 py-1.5 text-xs ${on ? "border-brand bg-brand/10 text-brand" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500">Notify threshold</label>
+            <select value={pack.materiality.notify_threshold} onChange={(e) => applyPack({ ...pack, materiality: { ...pack.materiality, notify_threshold: e.target.value as InsightVerdict } })} className={inputCls}>
+              {THRESHOLDS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
-        </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-500">Description</label>
-          <input value={pack.description} onChange={(e) => upd("description", e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-500">Data sources</label>
-          <div className="mt-1 flex flex-wrap gap-2">
-            {library.sources.map((s) => {
-              const on = pack.sources.includes(s.id);
-              return (
-                <button key={s.id} title={s.description} onClick={() => upd("sources", toggleArr(pack.sources, s.id))}
-                  className={`rounded-full border px-3 py-1.5 text-sm ${on ? "border-brand bg-brand/10 text-brand" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
-                  {s.icon} {s.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-gray-500">Lookback (hours)</label>
-            <input type="number" min={1} value={pack.lookback_hours} onChange={(e) => upd("lookback_hours", Number(e.target.value) || 24)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+            <label className="block text-xs font-medium text-gray-500">Always notify if these are detected</label>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {library.flag_codes.map((f) => {
+                const on = pack.materiality.always_notify_if.includes(f.code);
+                return (
+                  <button key={f.code} title={f.code} onClick={() => applyPack({ ...pack, materiality: { ...pack.materiality, always_notify_if: toggleArr(pack.materiality.always_notify_if, f.code) } })}
+                    className={`rounded-full border px-2.5 py-1 text-xs ${on ? "border-red-300 bg-red-50 text-red-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
           <div>
-            <label className="block text-xs font-medium text-gray-500">Minimum risk to include</label>
-            <select value={pack.filters.min_risk ?? "low"} onChange={(e) => upd("filters", { ...pack.filters, min_risk: e.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-              {MIN_RISKS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-500">Supported scopes</label>
-          <div className="mt-1 flex flex-wrap gap-2">
-            {SCOPES.map((s) => {
-              const on = pack.supported_scopes.includes(s);
-              return (
-                <button key={s} onClick={() => upd("supported_scopes", toggleArr(pack.supported_scopes, s))}
-                  className={`rounded-full border px-3 py-1.5 text-xs ${on ? "border-brand bg-brand/10 text-brand" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
-                  {s}
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-medium text-gray-500">AI instructions</label>
+              <div className="flex items-center gap-2">
+                <button onClick={() => insertPlaceholder("{{scope_label}}")} className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-mono text-gray-600 hover:bg-gray-200">+scope_label</button>
+                <button onClick={() => insertPlaceholder("{{lookback_hours}}")} className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-mono text-gray-600 hover:bg-gray-200">+lookback_hours</button>
+                <button onClick={() => runRefine("improve_instructions")} disabled={!!aiBusy} className="text-[11px] font-medium text-brand hover:underline disabled:opacity-50">
+                  {aiBusy === "improve_instructions" ? "Improving…" : "✨ Improve"}
                 </button>
-              );
-            })}
+              </div>
+            </div>
+            <textarea ref={insRef} value={pack.instructions} onChange={(e) => setField("instructions", e.target.value)} rows={9}
+              className={`mt-1 w-full rounded-lg border px-3 py-2 font-mono text-xs focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand ${errRing("instructions")}`} />
+            <div className="mt-1 flex justify-between text-[11px] text-gray-400">
+              <span>{pack.instructions.length} chars</span>
+              <span>Use {"{{scope_label}}"} & {"{{lookback_hours}}"}</span>
+            </div>
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-500">Notify threshold</label>
-          <select value={pack.materiality.notify_threshold} onChange={(e) => upd("materiality", { ...pack.materiality, notify_threshold: e.target.value as InsightVerdict })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
-            {THRESHOLDS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-        </div>
+        {/* ---------------------------------------------------------------- copilot pane */}
+        <div className="flex max-h-[64vh] flex-col rounded-xl border border-gray-200 bg-gray-50/60">
+          <div className="flex shrink-0 border-b border-gray-200 text-xs font-medium">
+            {(["preview", "sample", "review"] as EditorTab[]).map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`flex-1 px-3 py-2 capitalize ${tab === t ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:bg-gray-100"}`}>
+                {t}{t === "review" && issues.length ? ` (${issues.length})` : ""}
+              </button>
+            ))}
+          </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-500">Always notify if these are detected</label>
-          <div className="mt-1 flex flex-wrap gap-2">
-            {library.flag_codes.map((f) => {
-              const on = pack.materiality.always_notify_if.includes(f.code);
-              return (
-                <button key={f.code} title={f.code} onClick={() => upd("materiality", { ...pack.materiality, always_notify_if: toggleArr(pack.materiality.always_notify_if, f.code) })}
-                  className={`rounded-full border px-2.5 py-1 text-xs ${on ? "border-red-300 bg-red-50 text-red-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
-                  {f.label}
+          {/* proposal diff (shown above any tab when the AI proposes changes) */}
+          {proposal && (
+            <div className="shrink-0 border-b border-brand/20 bg-brand/5 p-3">
+              <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-brand">✨ AI proposes {proposal.changes.length} change{proposal.changes.length > 1 ? "s" : ""}</div>
+              {proposal.rationale && <p className="mb-2 text-[11px] text-gray-500">{proposal.rationale}</p>}
+              <div className="space-y-1.5">
+                {proposal.changes.map((ch) => (
+                  <label key={ch.field} className="flex cursor-pointer items-start gap-2 rounded-md bg-white/70 px-2 py-1.5 text-[11px]">
+                    <input type="checkbox" checked={accepted.has(ch.field)} onChange={() => setAccepted((s) => { const n = new Set(s); n.has(ch.field) ? n.delete(ch.field) : n.add(ch.field); return n; })} className="mt-0.5" />
+                    <span className="min-w-0">
+                      <span className="font-medium text-gray-700">{EDIT_FIELD_LABELS[ch.field] ?? ch.field}</span>
+                      <span className="block text-gray-400 line-through">{fmtDiffVal(ch.field, ch.before)}</span>
+                      <span className="block text-gray-700">{fmtDiffVal(ch.field, ch.after)}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 flex justify-end gap-2">
+                <button onClick={() => setProposal(null)} className="rounded-md px-2.5 py-1 text-[11px] text-gray-500 hover:bg-gray-100">Discard</button>
+                <button onClick={applyProposal} disabled={!accepted.size} className="rounded-md bg-brand px-2.5 py-1 text-[11px] font-medium text-white hover:bg-brand/90 disabled:opacity-50">Apply {accepted.size || ""}</button>
+              </div>
+            </div>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {aiError && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">{aiError}</div>}
+
+            {tab === "preview" && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-700">{summary}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {pack.sources.map((s) => <span key={s} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200">{library.sources.find((x) => x.id === s)?.label ?? s}</span>)}
+                  <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] text-brand">{VERDICT_META[pack.materiality.notify_threshold]?.label}</span>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-gray-600 ring-1 ring-gray-200">{pack.lookback_hours}h</span>
+                </div>
+                <NoiseGauge score={noise} />
+                <button onClick={() => runRefine("explain")} disabled={!!aiBusy} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  {aiBusy === "explain" ? "Explaining…" : "✨ Explain this pack"}
                 </button>
-              );
-            })}
+                {explanation && <div className="whitespace-pre-line rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-600">{explanation}</div>}
+              </div>
+            )}
+
+            {tab === "sample" && (
+              <div className="space-y-3">
+                <button onClick={() => runRefine("sample")} disabled={!!aiBusy} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  {aiBusy === "sample" ? "Generating…" : "✨ Generate an example notification"}
+                </button>
+                <div className="rounded-lg border border-gray-200 bg-white p-3">
+                  <div className="text-[11px] font-medium text-gray-500">Real test run</div>
+                  <div className="mt-1 text-[11px] text-gray-400">Runs against a real workload, read-only, no notification.</div>
+                  <div className="mt-2 flex gap-2">
+                    <select value={runWorkloadId} onChange={(e) => setRunWorkloadId(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs focus:border-brand focus:outline-none">
+                      <option value="">Select a workload…</option>
+                      {workloads.map((w) => <option key={w.id} value={w.id}>{w.name}{w.demo ? " (demo)" : ""}</option>)}
+                    </select>
+                    <button onClick={runRealSample} disabled={runBusy || !runWorkloadId} className="rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+                      {runBusy ? "Running…" : "Run"}
+                    </button>
+                  </div>
+                </div>
+                {(aiBusy === "sample" || runBusy) && <div className="h-24 animate-pulse rounded-lg bg-gray-100 motion-reduce:animate-none" />}
+                {activeSample && !runBusy && aiBusy !== "sample" && (
+                  <div className="rounded-lg border border-gray-100 bg-white p-3">
+                    <div className="mb-1.5 text-[11px] font-medium text-gray-400">{activeSample.kind === "ai" ? "AI example (illustrative, not real data)" : "Real test run"}</div>
+                    <DigestView run={activeSample.run} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "review" && (
+              <div className="space-y-3">
+                {issues.length === 0 && <p className="text-xs text-emerald-700">No validation issues.</p>}
+                {issues.map((i, idx) => (
+                  <div key={idx} className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${i.level === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                    <span className="font-medium">{EDIT_FIELD_LABELS[i.field] ?? i.field}:</span> {i.msg}
+                  </div>
+                ))}
+                <button onClick={() => runRefine("critique")} disabled={!!aiBusy} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  {aiBusy === "critique" ? "Reviewing…" : "✨ Run AI review"}
+                </button>
+                {findings && findings.length === 0 && <p className="text-xs text-emerald-700">AI found nothing to flag. 👍</p>}
+                {findings?.map((f, idx) => (
+                  <div key={idx} className="rounded-lg border border-gray-200 bg-white p-2.5 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`rounded px-1.5 py-0.5 font-medium ${f.severity === "high" ? "bg-red-100 text-red-700" : f.severity === "medium" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>{f.severity}</span>
+                      {f.field && <span className="text-gray-400">{EDIT_FIELD_LABELS[f.field] ?? f.field}</span>}
+                    </div>
+                    <p className="mt-1 text-gray-600">{f.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* AI command bar */}
+          <div className="shrink-0 border-t border-gray-200 p-2.5">
+            <div className="flex gap-2">
+              <input value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitCommand(); }}
+                placeholder="Tell AI to change this pack…" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-brand focus:outline-none" />
+              <button onClick={submitCommand} disabled={!command.trim() || !!aiBusy} className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+                {aiBusy === "command" ? "…" : "Send"}
+              </button>
+            </div>
+            <div className="mt-1.5 text-[10px] text-gray-400">e.g. “make it quieter and only for production” · “add cost waste detection”</div>
           </div>
         </div>
+      </div>
 
-        <div>
-          <label className="block text-xs font-medium text-gray-500">AI instructions</label>
-          <p className="mb-1 text-[11px] text-gray-400">Use <code>{"{{scope_label}}"}</code> and <code>{"{{lookback_hours}}"}</code> as placeholders.</p>
-          <textarea value={pack.instructions} onChange={(e) => upd("instructions", e.target.value)} rows={8} className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand" />
-        </div>
-
-        <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
-          <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || !pack.name.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+      {/* footer */}
+      <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+        <span className="text-[11px] text-gray-400">{dirty ? "Unsaved changes" : "No changes"}</span>
+        <div className="flex gap-2">
+          <button onClick={guardedClose} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
+          <button onClick={trySave} disabled={save.isPending} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
             {save.isPending ? "Saving…" : "Save pack"}
           </button>
         </div>
@@ -579,6 +1594,18 @@ function PackForm({ initial, library, onClose, onSaved }: {
 
 // ---------------------------------------------------------------- run / schedule dialog
 type ScopeMode = InsightScope["mode"];
+
+const SCHEDULE_TIMEZONES: string[] = (() => {
+  let zones: string[] = [];
+  try {
+    const sv = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (sv) zones = sv("timeZone");
+  } catch {
+    /* older browsers */
+  }
+  if (zones.length === 0) zones = ["America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Kolkata", "Asia/Dubai", "Asia/Tokyo", "Australia/Sydney"];
+  return ["UTC", ...zones.filter((z) => z !== "UTC")];
+})();
 
 function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadName }: {
   pack: InsightPack;
@@ -598,9 +1625,33 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
   const [error, setError] = useState("");
 
   // scheduling
-  const [scheduleKind, setScheduleKind] = useState<"daily" | "weekly">("daily");
+  const [scheduleKind, setScheduleKind] = useState<"daily" | "weekly" | "cron">("daily");
+  const [cronMode, setCronMode] = useState<"builder" | "raw">("builder");
+  const [cronExpr, setCronExpr] = useState("0 9 * * 1-5");
   const [time, setTime] = useState("08:00");
   const [weekday, setWeekday] = useState(1);
+  const [timezone, setTimezone] = useState("UTC");
+  const [preview, setPreview] = useState<{ valid: boolean; error: string | null; next_run_at: string | null; next_runs: string[]; schedule_label: string | null } | null>(null);
+
+  // Live cadence preview (also validates cron), mirroring the Scheduled Tasks editor.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const r = await api.previewSchedule({
+          schedule_kind: scheduleKind,
+          cron_expr: scheduleKind === "cron" ? cronExpr : null,
+          time_of_day: time,
+          weekday: scheduleKind === "weekly" ? weekday : 0,
+          timezone,
+        });
+        if (!cancelled) setPreview(r);
+      } catch {
+        if (!cancelled) setPreview(null);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [scheduleKind, cronExpr, time, weekday, timezone]);
 
   const selectedWl = workloads.find((w) => w.id === workloadId);
 
@@ -614,19 +1665,19 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
     };
   }
 
-  const run = useMutation({
-    mutationFn: () => {
-      const scope = buildScope();
-      if (!scope) throw new Error("Pick a workload to anchor the scope.");
-      return api.runInsightPack({ pack_id: pack.id, scope, notify });
-    },
-    onSuccess: ({ run }) => {
-      setError(""); setRunResult(run);
-      qc.invalidateQueries({ queryKey: ["insightRuns"] });
-      qc.invalidateQueries({ queryKey: ["insightLatest"] });
-    },
-    onError: (e) => setError(formatError(e)),
+  const runJob = useRunJob((r) => {
+    setRunResult(r);
+    qc.invalidateQueries({ queryKey: ["insightRuns"] });
+    qc.invalidateQueries({ queryKey: ["insightLatest"] });
   });
+
+  function startRun() {
+    const scope = buildScope();
+    if (!scope) return;
+    setError("");
+    setRunResult(null);
+    runJob.start({ pack_id: pack.id, scope, notify });
+  }
 
   const schedule = useMutation({
     mutationFn: () => {
@@ -637,9 +1688,10 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
         target_type: "insight_pack",
         target_config: { pack_id: pack.id, scope },
         schedule_kind: scheduleKind,
+        cron_expr: scheduleKind === "cron" ? cronExpr : null,
         time_of_day: time,
         weekday: scheduleKind === "weekly" ? weekday : null,
-        timezone: "UTC",
+        timezone,
         run_mode: "auto",
         status: "on",
       });
@@ -695,11 +1747,16 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
                 <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
                 Send notification
               </label>
-              <button onClick={() => run.mutate()} disabled={run.isPending} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">
-                {run.isPending ? "Running…" : "Run"}
+              <button onClick={startRun} disabled={runJob.isRunning} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+                {runJob.isRunning ? "Running…" : runResult ? "Run again" : "Run"}
               </button>
             </div>
           </div>
+          {(runJob.isRunning || (runJob.job && !runResult)) && (
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <RunProgress job={runJob.job} starting={runJob.starting} />
+            </div>
+          )}
           {runResult && (
             <div className="mt-4 border-t border-gray-100 pt-4">
               <DigestView run={runResult} />
@@ -710,27 +1767,92 @@ function RunScheduleDialog({ pack, onClose, initialWorkloadId, initialWorkloadNa
         {/* Schedule */}
         <div className="rounded-xl border border-gray-200 p-4">
           <div className="text-sm font-medium text-gray-800">Schedule</div>
-          <div className="mt-2 flex flex-wrap items-end gap-3">
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
-              <label className="block text-xs text-gray-500">Cadence</label>
-              <select value={scheduleKind} onChange={(e) => setScheduleKind(e.target.value as "daily" | "weekly")} className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+              <label className="block text-xs text-gray-500">Frequency</label>
+              <select
+                value={scheduleKind !== "cron" ? scheduleKind : cronMode}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "daily" || v === "weekly") setScheduleKind(v);
+                  else if (v === "builder") { setScheduleKind("cron"); setCronMode("builder"); }
+                  else { setScheduleKind("cron"); setCronMode("raw"); }
+                }}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
+                <option value="builder">Advanced (recurrence builder)</option>
+                <option value="raw">Custom (cron expression)</option>
               </select>
             </div>
             {scheduleKind === "weekly" && (
               <div>
                 <label className="block text-xs text-gray-500">Day</label>
-                <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+                <select value={weekday} onChange={(e) => setWeekday(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
                   {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
                 </select>
               </div>
             )}
+            {scheduleKind !== "cron" && (
+              <div>
+                <label className="block text-xs text-gray-500">Time</label>
+                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+              </div>
+            )}
             <div>
-              <label className="block text-xs text-gray-500">Time (UTC)</label>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+              <label className="block text-xs text-gray-500">Timezone</label>
+              <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none">
+                {SCHEDULE_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+              </select>
             </div>
-            <button onClick={() => schedule.mutate()} disabled={schedule.isPending} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
+          </div>
+
+          {scheduleKind === "cron" && cronMode === "builder" && (
+            <div className="mt-3">
+              <RecurrenceBuilder value={cronExpr} onChange={setCronExpr} />
+            </div>
+          )}
+          {scheduleKind === "cron" && cronMode === "raw" && (
+            <div className="mt-3">
+              <label className="block text-xs text-gray-500">Cron expression</label>
+              <input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 8 * * *" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-brand focus:outline-none" />
+              <div className="mt-1 flex flex-wrap gap-1">
+                {[["Hourly","0 * * * *"],["Daily 08:00","0 8 * * *"],["Weekdays 09:00","0 9 * * 1-5"],["Weekly Mon","0 9 * * 1"],["Monthly 1st","0 9 1 * *"]].map(([lbl, expr]) => (
+                  <button key={expr} type="button" onClick={() => setCronExpr(expr)} className="rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-500 hover:bg-gray-50 hover:text-gray-700">{lbl}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Live cadence preview */}
+          <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
+            {preview === null ? (
+              <span className="text-gray-400">Computing next run…</span>
+            ) : preview.valid ? (
+              <div className="space-y-1">
+                <div className="text-gray-600">
+                  <span className="font-medium text-gray-700">{preview.schedule_label}</span>
+                  {preview.next_run_at && (
+                    <>{" · "}Next run <span className="font-medium text-gray-800">{formatTimestamp(preview.next_run_at)}</span>{" "}
+                      <span className="text-gray-400">({formatRelativeFromNow(preview.next_run_at)})</span></>
+                  )}
+                </div>
+                {(preview.next_runs?.length ?? 0) > 1 && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400">
+                    <span className="text-gray-500">Upcoming:</span>
+                    {preview.next_runs.slice(0, 5).map((r, i) => (
+                      <span key={i} title={formatRelativeFromNow(r)}>{formatTimestamp(r)}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="text-red-600">✗ {preview.error}</span>
+            )}
+          </div>
+
+          <div className="mt-3">
+            <button onClick={() => schedule.mutate()} disabled={schedule.isPending || (scheduleKind === "cron" && preview !== null && !preview.valid)} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50">
               {schedule.isPending ? "Scheduling…" : "Create schedule"}
             </button>
           </div>
@@ -1300,13 +2422,10 @@ export function InsightPacksPanel() {
       qc.invalidateQueries({ queryKey: ["insightLatest"] });
     },
   });
-  const rerun = useMutation({
-    mutationFn: (r: InsightRun) => api.runInsightPack({ pack_id: r.pack_id, scope: r.scope, notify: false }),
-    onSuccess: ({ run }) => {
-      setViewRun(run);
-      qc.invalidateQueries({ queryKey: ["insightRuns"] });
-      qc.invalidateQueries({ queryKey: ["insightLatest"] });
-    },
+  const rerun = useRunJob((run) => {
+    setViewRun(run);
+    qc.invalidateQueries({ queryKey: ["insightRuns"] });
+    qc.invalidateQueries({ queryKey: ["insightLatest"] });
   });
   const snooze = useMutation({
     mutationFn: ({ id, days }: { id: string; days: number }) => api.snoozeInsightPack(id, days),
@@ -1963,6 +3082,7 @@ export function InsightPacksPanel() {
 
       {wizardOpen && library && (
         <GeneratorWizard
+          library={library}
           onClose={() => setWizardOpen(false)}
           onDraft={(draft) => { setWizardOpen(false); setEditing(draft); }}
         />
@@ -2001,6 +3121,9 @@ export function InsightPacksPanel() {
               )}
 
               <DigestView run={viewRun} />
+              {rerun.isRunning && (
+                <RunProgress job={rerun.job} starting={rerun.starting} />
+              )}
               <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
                 {viewRun.acknowledged_at ? (
                   <span className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-3 py-1.5 text-xs text-green-700">
@@ -2016,9 +3139,9 @@ export function InsightPacksPanel() {
                   className={`rounded-lg border px-3 py-1.5 text-xs ${viewRun.false_positive ? "border-gray-400 bg-gray-100 text-gray-700" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
                   {viewRun.false_positive ? "Unflag false positive" : "Flag false positive"}
                 </button>
-                <button onClick={() => rerun.mutate(viewRun)} disabled={rerun.isPending}
+                <button onClick={() => rerun.start({ pack_id: viewRun.pack_id, scope: viewRun.scope, notify: false })} disabled={rerun.isRunning}
                   className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
-                  {rerun.isPending ? "Re-running…" : "Re-run now"}
+                  {rerun.isRunning ? "Re-running…" : "Re-run now"}
                 </button>
                 {idx >= 0 && navList.length > 1 && (
                   <div className="ml-auto flex items-center gap-1">

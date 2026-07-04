@@ -254,9 +254,8 @@ CONNECTOR = ConnectorType(
                 label="Managed identity (Azure connection)",
                 type="select",
                 help=(
-                    "The Azure connection whose identity the agent uses at runtime to reach "
-                    "Microsoft Graph — like the managed identity selected for the SRE Agent "
-                    "Outlook connector (system- or user-assigned)."
+                    "The Azure connection providing the identity the agent uses to reach "
+                    "Microsoft Graph. Choose the managed identity below."
                 ),
             ),
             FieldSpec(

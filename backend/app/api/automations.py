@@ -501,8 +501,23 @@ async def list_tasks_endpoint(
             .order_by(ScheduledTask.created_at.desc())
         )
     ).scalars().all()
+    # Latest run status per task (small N; iterate newest-first and take the first seen).
+    run_rows = (
+        await db.execute(
+            select(TaskRun.task_id, TaskRun.status)
+            .where(TaskRun.tenant_id == principal.tenant_id)
+            .order_by(TaskRun.started_at.desc())
+        )
+    ).all()
+    last_status: dict[str, str] = {}
+    for tid, st in run_rows:
+        if tid not in last_status:
+            last_status[tid] = st
     tasks = [_task_dict(t) for t in rows]
+    for d in tasks:
+        d["last_status"] = last_status.get(d["id"])
     active = sum(1 for t in rows if t.status == "on")
+    failed = sum(1 for t in rows if last_status.get(t.id) == "failed")
     total_runs = (
         await db.execute(
             select(func.count(TaskRun.id)).where(TaskRun.tenant_id == principal.tenant_id)
@@ -510,7 +525,51 @@ async def list_tasks_endpoint(
     ).scalar() or 0
     return {
         "tasks": tasks,
-        "metrics": {"active": active, "total": len(rows), "total_runs": int(total_runs)},
+        "metrics": {"active": active, "total": len(rows), "total_runs": int(total_runs), "failed": failed},
+    }
+
+
+class SchedulePreview(BaseModel):
+    schedule_kind: str = "daily"
+    cron_expr: str | None = None
+    time_of_day: str | None = "08:00"
+    weekday: int | None = 0
+    timezone: str = "UTC"
+    start_date: datetime | None = None
+
+
+@router.post("/tasks/preview")
+async def preview_schedule_endpoint(
+    payload: SchedulePreview, _: Principal = Depends(_tasks_read)
+):
+    """Compute the next run time + human label for a (possibly unsaved) schedule, so the
+    editor can preview cadence without saving. Also validates cron expressions."""
+    from app.automations.schedule import compute_next_run
+
+    task = payload.model_dump()
+    if task.get("schedule_kind") == "cron":
+        from croniter import croniter
+
+        expr = (task.get("cron_expr") or "").strip()
+        if not expr or not croniter.is_valid(expr):
+            return {"valid": False, "error": "Invalid cron expression.", "next_run_at": None, "next_runs": [], "schedule_label": None}
+    try:
+        runs: list[Any] = []
+        cursor = None
+        for _ in range(5):
+            nxt = compute_next_run(task, after=cursor)
+            if not nxt:
+                break
+            runs.append(nxt)
+            cursor = nxt
+    except Exception as exc:  # noqa: BLE001
+        return {"valid": False, "error": str(exc), "next_run_at": None, "next_runs": [], "schedule_label": None}
+    return {
+        "valid": True,
+        "error": None,
+        "next_run_at": runs[0] if runs else None,
+        "next_runs": runs,
+        "schedule_label": human_schedule(task),
     }
 
 

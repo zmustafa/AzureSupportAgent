@@ -4,6 +4,10 @@
 // stale-bundle Reload banner can still tell two builds apart (it compares the FULL string).
 // Falls back to "dev" for a local `npm run dev` where no tag is baked.
 export const APP_VERSION: string = import.meta.env.VITE_APP_VERSION || "dev";
-// Human-friendly label for the header pill / About dialog — drops the "+<gitsha>" build suffix so
-// the user just sees "v1" (e.g. "v1+a1b2c3d" -> "v1").
-export const APP_VERSION_DISPLAY: string = APP_VERSION.split("+")[0];
+// Sequential release number (git commit count), baked via VITE_APP_RELEASE. Empty for a
+// local `npm run dev` build, in which case no "(rel N)" suffix is shown.
+export const APP_RELEASE: string = import.meta.env.VITE_APP_RELEASE || "";
+// Human-friendly label for the header pill / About dialog — drops the "+<gitsha>" build suffix
+// and appends the release number when present, e.g. "v1+a1b2c3d" -> "v1 (rel 1234)".
+const _base = APP_VERSION.split("+")[0];
+export const APP_VERSION_DISPLAY: string = APP_RELEASE ? `${_base} (rel ${APP_RELEASE})` : _base;

@@ -33,12 +33,18 @@ def _version() -> str:
     return os.getenv("APP_VERSION") or "dev"
 
 
+def _release() -> str:
+    """Sequential release number (git commit count), baked via APP_RELEASE. Empty locally."""
+    return os.getenv("APP_RELEASE") or ""
+
+
 @router.get("")
 async def meta(_: Principal = Depends(get_principal)) -> dict[str, Any]:
     """App identity shown in About / Welcome. Available to any authenticated user."""
     return {
         "name": "Azure Support Agent",
         "version": _version(),
+        "release": _release(),
         "environment": get_settings().environment,
     }
 
