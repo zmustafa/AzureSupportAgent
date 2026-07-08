@@ -30,6 +30,7 @@ export function WorkloadCard({
   onDelete,
   onMission,
   onAssess,
+  onChat,
   refreshing,
   groupName,
   onOpenGroup,
@@ -44,6 +45,7 @@ export function WorkloadCard({
   onDelete: () => void;
   onMission: () => void;
   onAssess: () => void;
+  onChat: () => void;
   refreshing: boolean;
   // When the workload belongs to a group and we're NOT already inside that group's section,
   // show a chip linking to the group's command-center page.
@@ -169,6 +171,7 @@ export function WorkloadCard({
           <span className={refreshing ? "inline-block animate-spin" : ""}>↻</span>
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
+        <button onClick={onChat} title="Open a chat scoped to this workload" className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">💬 Chat</button>
         <button onClick={onMission} title="Open Workload Mission Control" className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">🚀 Mission</button>
         <button onClick={onAssess} title="Run a Well-Architected assessment" className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">✓ Assess</button>
         <button onClick={onEdit} className="rounded-lg border px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50">Edit</button>

@@ -1094,8 +1094,9 @@ export default function ChatView() {
 
   // Keep the latest content in view ONLY when the user is pinned to the bottom.
   // If they've scrolled up to read, new streamed content must not yank the viewport;
-  // instead we show a "New messages" pill (handled below). Depend on message count
-  // and streamed text length so it fires when content actually changes.
+  // instead we show a "New messages" pill (handled below). Depend on message count,
+  // streamed text length, and the live progress-feed length so it also follows the
+  // "Working on your request…" status lines as they stream in (not just final tokens).
   useEffect(() => {
     if (atBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
@@ -1105,7 +1106,7 @@ export default function ChatView() {
       setShowNewMessages(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, streamText.length, streaming, pendingClarify, pendingPropose]);
+  }, [messages.length, streamText.length, liveLog.length, streaming, pendingClarify, pendingPropose]);
 
   // Track whether the message list is scrolled to (near) the bottom.
   function handleMessagesScroll() {
@@ -1459,6 +1460,12 @@ export default function ChatView() {
     } else {
       setMessages((m) => [...m, userMsg]);
     }
+    // Pin to the bottom so the just-sent message (and the incoming reply) are in view,
+    // regardless of where the user had scrolled while typing. rAF waits for the appended
+    // message to commit to the DOM before scrolling.
+    atBottomRef.current = true;
+    setShowNewMessages(false);
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
     // Move this chat to the top of Recents now (on send/retry), not after the reply.
     bumpChatToTop(streamChatId);
     setInputSynced("");
@@ -2074,6 +2081,21 @@ export default function ChatView() {
     setThinkingLevel("deep");
     if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
     if (scope.memoryArchId) setDeepMemorySel(scope.memoryArchId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
+
+  // Handoff from a Workload card's "Chat" button: scope a fresh chat to the workload
+  // (normal mode). One-shot via sessionStorage, applied on the new-chat composer; sending
+  // the first message creates the chat with this workload scope (the proven path).
+  useEffect(() => {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem("azsup.chatHandoff"); } catch { /* ignore */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem("azsup.chatHandoff"); } catch { /* ignore */ }
+    let scope: { workloadId?: string };
+    try { scope = JSON.parse(raw); } catch { return; }
+    syncedChatRef.current = activeChat?.id ?? null;
+    if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
 
@@ -5028,36 +5050,38 @@ function WorkloadPicker({
           <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
             Scope to workload
           </div>
-          <button
-            onClick={() => {
-              onChange(null);
-              setOpen(false);
-            }}
-            className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-gray-100 ${
-              !selectedId ? "bg-brand/5 text-brand" : "text-gray-700"
-            }`}
-          >
-            No workload (full tenant)
-          </button>
-          {workloads.map((w) => (
+          <div className="max-h-72 overflow-y-auto">
             <button
-              key={w.id}
               onClick={() => {
-                onChange(w.id);
+                onChange(null);
                 setOpen(false);
               }}
-              className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-gray-100 ${
-                w.id === selectedId ? "bg-brand/5 text-brand" : "text-gray-700"
+              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-gray-100 ${
+                !selectedId ? "bg-brand/5 text-brand" : "text-gray-700"
               }`}
             >
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{w.name}</span>
-                <span className="block truncate text-[11px] text-gray-400">
-                  {w.nodes.length} scope node{w.nodes.length === 1 ? "" : "s"}
-                </span>
-              </span>
+              No workload (full tenant)
             </button>
-          ))}
+            {workloads.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => {
+                  onChange(w.id);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-gray-100 ${
+                  w.id === selectedId ? "bg-brand/5 text-brand" : "text-gray-700"
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{w.name}</span>
+                  <span className="block truncate text-[11px] text-gray-400">
+                    {w.nodes.length} scope node{w.nodes.length === 1 ? "" : "s"}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -5149,10 +5173,16 @@ function TenantPicker({
 
 /** Live or collapsed timeline of the agent's reasoning + tool calls. */
 const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]; live: boolean }) {
-  // Keep the pane expanded by default — both while live and after completion — so the
-  // agent's thinking and tool steps persist instead of vanishing the moment the turn
-  // ends. The user can collapse it manually via the header.
-  const [open, setOpen] = useState(true);
+  // Expanded while the turn is live so the agent's thinking is visible as it works, then
+  // auto-collapsed once the response completes to keep the transcript scannable. The user
+  // can still expand it manually via the header (and a manual toggle is respected).
+  const [open, setOpen] = useState(live);
+  const userToggledRef = useRef(false);
+  const prevLiveRef = useRef(live);
+  useEffect(() => {
+    if (prevLiveRef.current && !live && !userToggledRef.current) setOpen(false);
+    prevLiveRef.current = live;
+  }, [live]);
 
   const toolCount = steps.filter((s) => s.kind === "tool").length;
   const errorSteps = steps.filter(
@@ -5183,7 +5213,10 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
         </div>
       )}
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setOpen((o) => !o);
+        }}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-600"
       >
         {live ? (
@@ -5815,9 +5848,10 @@ function LiveProgress({
 }
 
 /** Collapsible historical progress feed: the exact detailed lines that were shown
- *  live, persisted so the full work performed for a request stays visible. */
+ *  live, persisted so the full work performed for a request stays visible. Auto-collapsed
+ *  once the response is complete; expand via the header to review the full trace. */
 function ProgressPane({ log, level = "detailed" }: { log: LogLine[]; level?: ProgressLevel }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const toolCount = log.filter((l) => l.kind === "tool").length;
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/70">

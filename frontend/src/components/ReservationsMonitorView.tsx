@@ -150,21 +150,190 @@ export function ReservationsMonitorPanel() {
   // RU5 — KPI drill-through: clicking a tile toggles the matching filter.
   const toggle = <T,>(cur: T, set: (v: T) => void, val: T, reset: T) => set(cur === val ? reset : val);
 
-  // RU6 — CSV export of the current (filtered) table + a confirmation toast.
-  function exportCsv() {
-    const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const head = ["Reservation", "SKU", "Term", "Created", "Expires", "Days", "Renew", "Utilization%", "Scope", "Status"];
-    const lines = sorted.map((r) => [
-      r.display_name || r.id, r.sku || r.reserved_resource_type, r.term, (r.created_date || "").slice(0, 10),
-      (r.expiry_date || "").slice(0, 10), r.days_until ?? "", r.renew === true ? "auto" : r.renew === false ? "no" : "",
-      r.utilization_pct ?? "", r.applied_scope_type, r.provisioning_state,
-    ].map(esc).join(","));
-    const blob = new Blob([[head.join(","), ...lines].join("\n")], { type: "text/csv" });
+  // RU6 — rich export mechanism: CSV, JSON, a standalone HTML report, and Markdown-to-clipboard,
+  // all over the current (filtered) view. Everything is generated client-side from loaded data.
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [exportOpen]);
+
+  const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const scopeLabel = demo ? "Demo data" : connId ? `Connection ${connId}` : "Default connection";
+  const filterLabel = () => {
+    const parts: string[] = [];
+    if (statusF !== "all") parts.push(`status=${statusF}`);
+    if (renewF !== "all") parts.push(`renew=${renewF}`);
+    if (utilF === "low") parts.push("utilization=low");
+    if (dQ.trim()) parts.push(`search="${dQ.trim()}"`);
+    return parts.length ? parts.join(", ") : "none";
+  };
+
+  function download(filename: string, mime: string, content: string | Blob) {
+    const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `reservations-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.href = url;
+    a.download = filename;
+    a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function exportCsv() {
+    const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const head = ["Reservation", "SKU", "Resource type", "Term", "Billing plan", "Quantity", "Created", "Expires", "Days until", "Bucket", "Renew", "Utilization%", "Scope", "Status", "Order ID"];
+    const lines = sorted.map((r) => [
+      r.display_name || r.id, r.sku, r.reserved_resource_type, r.term, r.billing_plan, r.quantity ?? "",
+      (r.created_date || "").slice(0, 10), (r.expiry_date || "").slice(0, 10), r.days_until ?? "", r.bucket,
+      r.renew === true ? "auto" : r.renew === false ? "no" : "", r.utilization_pct ?? "",
+      r.applied_scope_type, r.provisioning_state, r.order_id,
+    ].map(esc).join(","));
+    // Prepend a UTF-8 BOM so Excel opens accented names correctly.
+    download(`reservations-${stamp()}.csv`, "text/csv;charset=utf-8", "\uFEFF" + [head.join(","), ...lines].join("\r\n"));
     setMsg({ text: `Exported ${sorted.length} reservation${sorted.length === 1 ? "" : "s"} to CSV`, ok: true });
+  }
+
+  function exportJson() {
+    const payload = {
+      report: "Azure Reservations Monitor",
+      generated_at: new Date().toISOString(),
+      scope: scopeLabel,
+      window_days: data?.window_days ?? 60,
+      snapshot_generated_at: data?.generated_at ?? null,
+      filters: filterLabel(),
+      count: sorted.length,
+      counts: counts ?? null,
+      items: sorted,
+    };
+    download(`reservations-${stamp()}.json`, "application/json", JSON.stringify(payload, null, 2));
+    setMsg({ text: `Exported ${sorted.length} reservation${sorted.length === 1 ? "" : "s"} to JSON`, ok: true });
+  }
+
+  function buildMarkdown(): string {
+    const cell = (v: unknown) => String(v ?? "—").replace(/\|/g, "\\|");
+    const rows = sorted.map((r) => `| ${cell(r.display_name || r.id)} | ${cell(r.sku || r.reserved_resource_type)} | ${cell(r.term)} | ${cell((r.expiry_date || "").slice(0, 10))} | ${cell(daysLabel(r.days_until))} | ${r.renew === true ? "auto" : r.renew === false ? "no" : "—"} | ${r.utilization_pct ?? "—"}${typeof r.utilization_pct === "number" ? "%" : ""} | ${cell(r.provisioning_state)} |`);
+    return [
+      `# Azure Reservations Report`,
+      "",
+      `- **Scope:** ${scopeLabel}`,
+      `- **Generated:** ${new Date().toLocaleString()}`,
+      `- **Window:** ±${data?.window_days ?? 60} days`,
+      `- **Filters:** ${filterLabel()}`,
+      `- **Reservations:** ${sorted.length}${counts ? ` of ${counts.total}` : ""}`,
+      counts ? `- **Urgent / Not renewing / Low utilization:** ${counts.red} / ${counts.non_renew} / ${counts.low_utilization}` : "",
+      "",
+      `| Reservation | SKU | Term | Expires | Countdown | Renew | Utilization | Status |`,
+      `| --- | --- | --- | --- | --- | --- | --- | --- |`,
+      ...rows,
+      "",
+    ].filter(Boolean).join("\n");
+  }
+
+  async function copyMarkdown() {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown());
+      setMsg({ text: `Copied ${sorted.length} reservation${sorted.length === 1 ? "" : "s"} as Markdown`, ok: true });
+    } catch {
+      // Clipboard unavailable (e.g. non-secure context) — fall back to a file download.
+      download(`reservations-${stamp()}.md`, "text/markdown", buildMarkdown());
+      setMsg({ text: "Clipboard blocked — downloaded Markdown instead", ok: true });
+    }
+  }
+
+  function exportHtml() {
+    const esc = (v: unknown) =>
+      String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+    const badge = (r: ReservationItem) => {
+      const color = r.severity === "red" ? "#dc2626" : r.severity === "amber" ? "#d97706" : "#6b7280";
+      return `<span style="color:${color};font-weight:600">${esc(daysLabel(r.days_until))}</span>`;
+    };
+    const renew = (v: boolean | null) =>
+      v === true ? `<span class="pill pill-green">Auto-renew</span>` : v === false ? `<span class="pill pill-red">No renew</span>` : "—";
+    const util = (v: number | null) =>
+      v == null ? "—" : `<span style="${v < 25 ? "color:#d97706;font-weight:600" : ""}">${v}%${v < 25 ? " ⚠" : ""}</span>`;
+    const rowBg = (s: string) => (s === "red" ? "background:#fef2f2" : s === "amber" ? "background:#fffbeb" : "");
+    const rows = sorted
+      .map(
+        (r) => `<tr style="${rowBg(r.severity)}">
+        <td><div class="name">${esc(r.display_name || r.id)}</div><div class="sub">${esc(r.sku || r.reserved_resource_type)}${r.quantity ? ` ×${r.quantity}` : ""}</div></td>
+        <td>${esc(r.term || "—")}</td>
+        <td>${esc((r.created_date || "").slice(0, 10) || "—")}</td>
+        <td>${esc((r.expiry_date || "").slice(0, 10) || "—")}</td>
+        <td>${badge(r)}</td>
+        <td>${renew(r.renew)}</td>
+        <td>${util(r.utilization_pct)}</td>
+        <td>${esc(r.applied_scope_type || "—")}</td>
+        <td>${esc(r.provisioning_state || "—")}</td>
+      </tr>`,
+      )
+      .join("");
+    const kpi = (label: string, value: number | string, color?: string) =>
+      `<div class="kpi"><div class="kpi-val" style="${color ? `color:${color}` : ""}">${value}</div><div class="kpi-lbl">${label}</div></div>`;
+    const kpis = counts
+      ? [
+          kpi("Reservations", counts.total),
+          kpi(`Expiring ≤${data?.window_days ?? 60}d`, counts.expiring_soon, "#d97706"),
+          kpi("Recently expired", counts.recently_expired, "#dc2626"),
+          kpi("Urgent", counts.red, "#dc2626"),
+          kpi("Not renewing", counts.non_renew, counts.non_renew ? "#dc2626" : undefined),
+          kpi("Low utilization", counts.low_utilization, counts.low_utilization ? "#d97706" : undefined),
+        ].join("")
+      : "";
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Azure Reservations Report — ${esc(new Date().toISOString().slice(0, 10))}</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#111827; margin:0; padding:32px; background:#f9fafb; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .meta { color:#6b7280; font-size:12px; margin-bottom:20px; }
+  .meta b { color:#374151; }
+  .kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-bottom:20px; }
+  @media (max-width:720px){ .kpis{ grid-template-columns:repeat(2,1fr);} }
+  .kpi { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; }
+  .kpi-val { font-size:20px; font-weight:700; }
+  .kpi-lbl { font-size:11px; color:#6b7280; margin-top:2px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; font-size:13px; }
+  thead th { text-align:left; background:#f3f4f6; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:8px 10px; }
+  td { padding:8px 10px; border-top:1px solid #f0f0f0; vertical-align:top; }
+  .name { font-weight:600; }
+  .sub { color:#6b7280; font-size:11px; }
+  .pill { display:inline-block; padding:1px 6px; border-radius:4px; font-size:11px; font-weight:600; }
+  .pill-green { background:#dcfce7; color:#15803d; }
+  .pill-red { background:#fee2e2; color:#b91c1c; }
+  footer { margin-top:16px; color:#9ca3af; font-size:11px; }
+  @media print { body{ background:#fff; padding:0; } .kpi, table { border-color:#d1d5db; } }
+</style></head>
+<body><div class="wrap">
+  <h1>Azure Reservations Report</h1>
+  <div class="meta">
+    <b>Scope:</b> ${esc(scopeLabel)} &nbsp;·&nbsp;
+    <b>Generated:</b> ${esc(new Date().toLocaleString())} &nbsp;·&nbsp;
+    <b>Window:</b> ±${data?.window_days ?? 60} days &nbsp;·&nbsp;
+    <b>Filters:</b> ${esc(filterLabel())} &nbsp;·&nbsp;
+    <b>Showing:</b> ${sorted.length}${counts ? ` of ${counts.total}` : ""}
+  </div>
+  <div class="kpis">${kpis}</div>
+  <table>
+    <thead><tr><th>Reservation</th><th>Term</th><th>Created</th><th>Expires</th><th>Countdown</th><th>Renew</th><th>Utilization</th><th>Scope</th><th>Status</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:24px">No reservations match the current filters.</td></tr>`}</tbody>
+  </table>
+  <footer>Generated by Azure Support Agent — Reservations Monitor. Countdown colors: red = urgent (≤30d or recently expired), amber = within window, grey = healthy.</footer>
+</div></body></html>`;
+    download(`reservations-report-${stamp()}.html`, "text/html;charset=utf-8", html);
+    setMsg({ text: `Exported rich HTML report (${sorted.length} reservation${sorted.length === 1 ? "" : "s"})`, ok: true });
+  }
+
+  function runExport(fn: () => void | Promise<void>) {
+    setExportOpen(false);
+    void fn();
   }
 
   async function doRefresh() {
@@ -308,7 +477,36 @@ export function ReservationsMonitorPanel() {
                   <option value="utilization">Sort: Utilization</option>
                   <option value="name">Sort: Name</option>
                 </select>
-                <button onClick={exportCsv} disabled={sorted.length === 0} title="Export current view to CSV" className="rounded-md border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">⬇ CSV</button>
+                <div ref={exportRef} className="relative">
+                  <button
+                    onClick={() => setExportOpen((o) => !o)}
+                    disabled={sorted.length === 0}
+                    title="Export the current view"
+                    className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    ⬇ Export
+                    <svg className="h-3 w-3 text-gray-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 8l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                  {exportOpen && (
+                    <div className="absolute right-0 z-20 mt-1 w-56 rounded-lg border bg-white p-1 shadow-lg">
+                      <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-gray-400">
+                        Export {sorted.length} reservation{sorted.length === 1 ? "" : "s"}
+                      </div>
+                      <button onClick={() => runExport(exportHtml)} className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-100">
+                        <span>📄</span><span><span className="block font-medium text-gray-800">Rich HTML report</span><span className="block text-[10px] text-gray-400">Styled, printable · Save as PDF</span></span>
+                      </button>
+                      <button onClick={() => runExport(exportCsv)} className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-100">
+                        <span>📊</span><span><span className="block font-medium text-gray-800">CSV (Excel)</span><span className="block text-[10px] text-gray-400">Full columns · UTF-8</span></span>
+                      </button>
+                      <button onClick={() => runExport(exportJson)} className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-100">
+                        <span>🧩</span><span><span className="block font-medium text-gray-800">JSON</span><span className="block text-[10px] text-gray-400">Raw data + summary counts</span></span>
+                      </button>
+                      <button onClick={() => runExport(copyMarkdown)} className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-gray-100">
+                        <span>📋</span><span><span className="block font-medium text-gray-800">Copy as Markdown</span><span className="block text-[10px] text-gray-400">Paste into tickets / wikis</span></span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               {/* RU2 — active filter chips. */}
               {chips.length > 0 && (

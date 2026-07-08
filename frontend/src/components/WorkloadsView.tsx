@@ -898,6 +898,7 @@ export function WorkloadsPanel() {
       onDelete={() => void remove(w.id)}
       onMission={() => navigate(`/mission-control/${w.id}`)}
       onAssess={() => { sessionStorage.setItem("azsup.assessWorkload", w.id); navigate("/assessments"); }}
+      onChat={() => { sessionStorage.setItem("azsup.chatHandoff", JSON.stringify({ workloadId: w.id })); navigate("/chat"); }}
       refreshing={refreshing === w.id}
       groupName={grouped ? undefined : groupNameOf(w)}
       onOpenGroup={w.group_id ? () => navigate(`/workloads/groups/${w.group_id}`) : undefined}
