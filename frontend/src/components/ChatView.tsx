@@ -298,6 +298,9 @@ type Step =
       status: "running" | "done" | "error";
       summary?: string;
       duration?: number;
+      // Internal two-phase "learn" discovery call (fetches a service's command list).
+      // Rendered muted and excluded from the step count so it doesn't clutter the trace.
+      discovery?: boolean;
     };
 
 // A single line in the live progress feed shown while the agent works.
@@ -310,6 +313,13 @@ type LogLine = {
   // Transient "thinking" placeholder (Brainstorming…/Formulating…/etc.). Only the
   // newest one is kept while working, and all are removed once the turn finishes.
   thinking?: boolean;
+  // Internal two-phase "learn" discovery line — rendered muted and hidden below the
+  // "detailed" verbosity level (it's plumbing, not a real diagnostic step).
+  discovery?: boolean;
+  // Specialist war-room agent that ran this tool call, shown as an icon+name badge so
+  // the feed reads e.g. "🌐 Networking · monitor · Found 2 workspaces".
+  agentIcon?: string;
+  agentName?: string;
 };
 
 // Lets fenced code blocks (rendered deep in markdown) know whether the host "Run"
@@ -420,8 +430,11 @@ function argsPreview(args: unknown): string | undefined {
   if (!args || typeof args !== "object") return undefined;
   const entries = Object.entries(args as Record<string, unknown>);
   if (entries.length === 0) return undefined;
+  // Cap each individual value so a long arg (e.g. a full KQL query) doesn't flood the
+  // feed line, then bound the whole preview as a backstop.
+  const cap = (val: string) => (val.length > 120 ? val.slice(0, 120) + "…" : val);
   const s = entries
-    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .map(([k, v]) => `${k}: ${cap(typeof v === "string" ? v : JSON.stringify(v))}`)
     .join(", ");
   return s.length > 600 ? s.slice(0, 600) + "…" : s;
 }
@@ -1573,13 +1586,20 @@ export default function ChatView() {
             name: d.tool_name,
             args: d.arguments,
             status: "running",
+            discovery: d.discovery,
           });
-          log({
-            kind: "tool",
-            text: d.tool_name,
-            pending: true,
-            detail: argsPreview(d.arguments),
-          });
+          // Discovery ("learn") calls are internal two-phase plumbing. Don't add a
+          // prominent start line for them — a single muted line is emitted on result.
+          if (!d.discovery) {
+            log({
+              kind: "tool",
+              text: d.tool_name,
+              pending: true,
+              detail: argsPreview(d.arguments),
+              agentIcon: d.agent_icon,
+              agentName: d.agent_name,
+            });
+          }
           // War room: attribute this live tool call to its specialist agent.
           if (d.agent && stream.investigation) {
             const act = (stream.investigation.agentActivity ??= {});
@@ -1606,11 +1626,19 @@ export default function ChatView() {
               break;
             }
           }
-          log({
-            kind: "result",
-            text: isErr ? `⚠ ${d.tool_name} failed — ${d.summary || "error"}` : (d.summary || "Done"),
-            detail: formatDuration(d.duration_ms),
-          });
+          if (d.discovery && !isErr) {
+            // Collapse the internal "learn" discovery call into a single muted line
+            // (hidden below "detailed" verbosity) instead of the verbose command dump.
+            log({ kind: "result", text: d.summary || `Loaded ${d.tool_name} commands`, discovery: true, agentIcon: d.agent_icon, agentName: d.agent_name });
+          } else {
+            log({
+              kind: "result",
+              text: isErr ? `⚠ ${d.tool_name} failed — ${d.summary || "error"}` : (d.summary || "Done"),
+              detail: formatDuration(d.duration_ms),
+              agentIcon: d.agent_icon,
+              agentName: d.agent_name,
+            });
+          }
           // War room: tally the agent's completed tool call.
           if (d.agent && stream.investigation) {
             const act = (stream.investigation.agentActivity ??= {});
@@ -4443,10 +4471,10 @@ function HypothesisTreeNode({
             </span>
           </span>
           {node.description && (
-            <span className="mt-0.5 block text-[11px] text-gray-500">{node.description}</span>
+            <span className="mt-0.5 block break-words text-[11px] text-gray-500">{node.description}</span>
           )}
           {open && node.evidence && (
-            <span className="mt-1.5 block rounded-md bg-gray-50 px-2 py-1.5 text-[11px] leading-relaxed text-gray-600">
+            <span className="mt-1.5 block break-words rounded-md bg-gray-50 px-2 py-1.5 text-[11px] leading-relaxed text-gray-600">
               <span className="font-medium text-gray-500">Evidence: </span>
               {node.evidence}
             </span>
@@ -4901,7 +4929,7 @@ function InvestigationPanel({
             <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-gray-400">
               Research findings
             </summary>
-            <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-600">
+            <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-gray-600">
               {researchSummary}
             </p>
           </details>
@@ -4962,14 +4990,14 @@ function InvestigationPanel({
                 );
               })()}
             </div>
-            <div className="text-sm font-semibold text-gray-800">{conclusion.root_cause}</div>
+            <div className="text-sm font-semibold break-words text-gray-800">{conclusion.root_cause}</div>
             {conclusion.summary && (
-              <p className="mt-1 text-[12px] leading-relaxed text-gray-600">{conclusion.summary}</p>
+              <p className="mt-1 break-words text-[12px] leading-relaxed text-gray-600">{conclusion.summary}</p>
             )}
             {conclusion.evidence?.length > 0 && (
               <div className="mt-2">
                 <div className="text-[11px] font-medium text-gray-500">Evidence</div>
-                <ul className="mt-0.5 list-disc pl-4 text-[12px] text-gray-600">
+                <ul className="mt-0.5 list-disc break-words pl-4 text-[12px] text-gray-600">
                   {conclusion.evidence.map((e, i) => (
                     <li key={i}>{e}</li>
                   ))}
@@ -4979,7 +5007,7 @@ function InvestigationPanel({
             {conclusion.actions?.length > 0 && (
               <div className="mt-2">
                 <div className="text-[11px] font-medium text-gray-500">Recommended actions</div>
-                <ul className="mt-0.5 list-disc pl-4 text-[12px] text-gray-600">
+                <ul className="mt-0.5 list-disc break-words pl-4 text-[12px] text-gray-600">
                   {conclusion.actions.map((a, i) => (
                     <li key={i}>{a}</li>
                   ))}
@@ -5184,7 +5212,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
     prevLiveRef.current = live;
   }, [live]);
 
-  const toolCount = steps.filter((s) => s.kind === "tool").length;
+  const toolCount = steps.filter((s) => s.kind === "tool" && !s.discovery).length;
   const errorSteps = steps.filter(
     (s): s is Extract<Step, { kind: "tool" }> => s.kind === "tool" && s.status === "error",
   );
@@ -5236,8 +5264,8 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
         <div className="space-y-2 px-3 pb-3">
           {steps.map((s, i) =>
             s.kind === "reasoning" ? (
-              <div key={i} className="border-l-2 border-gray-300 pl-3 text-xs text-gray-600">
-                <div className="prose-chat">
+              <div key={i} className="border-l-2 border-gray-200 pl-3 text-gray-500">
+                <div className="prose-chat !text-[11px] !leading-relaxed !text-gray-500">
                   <Markdown>{s.text}</Markdown>
                 </div>
               </div>
@@ -5261,7 +5289,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
                     <span className="text-gray-400">{formatDuration(s.duration)}</span>
                   )}
                 </div>
-                {s.args != null && Object.keys(s.args as object).length > 0 && (
+                {s.args != null && !s.discovery && Object.keys(s.args as object).length > 0 && (
                   <pre className="mt-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-500">
                     {JSON.stringify(s.args)}
                   </pre>
@@ -5630,10 +5658,10 @@ function filterProgress(log: LogLine[], level: ProgressLevel): LogLine[] {
     // shows while work is in flight.
     return log.filter((l) => l.kind === "info");
   }
-  // normal: phases + tool calls + results, but drop reasoning blocks and the verbose
-  // parameter detail on tool lines.
+  // normal: phases + tool calls + results, but drop reasoning blocks, discovery
+  // ("learn") plumbing lines, and the verbose parameter detail on tool lines.
   return log
-    .filter((l) => l.kind !== "reason")
+    .filter((l) => l.kind !== "reason" && !l.discovery)
     .map((l) => (l.kind === "tool" && l.detail ? { ...l, detail: undefined } : l));
 }
 
@@ -5706,12 +5734,33 @@ function ProgressLines({
     }
   }
   const animates = (i: number) => live && (i === lastIdx || i === lastSettledIdx);
+  // While the turn is live, ALWAYS end the feed with a spinning "Working…" row so the
+  // user can see it's still busy — even between steps (e.g. after a tool result settles
+  // while the model decides its next move) when there's no pending placeholder line.
+  // Skipped when the last line is already a live pending spinner (avoids a double one).
+  const lastLine = lines[lines.length - 1];
+  const showWorking = live && !(lastLine && lastLine.pending);
+  // Per-agent stats rollup for the war room: count completed steps attributed to each
+  // specialist so the feed shows who did how much. Derived from the lines themselves so
+  // it works live and in the persisted feed alike.
+  const agentStats = new Map<string, { icon: string; name: string; count: number }>();
+  for (const l of lines) {
+    if (l.agentName && l.kind === "result") {
+      const cur = agentStats.get(l.agentName) ?? { icon: l.agentIcon || "", name: l.agentName, count: 0 };
+      cur.count += 1;
+      agentStats.set(l.agentName, cur);
+    }
+  }
+  const stats = [...agentStats.values()].sort((a, b) => b.count - a.count);
   const icon = (l: LogLine) => {
     // Only spin while a turn is actually live. In a historical/persisted feed a
     // still-"pending" line means the turn ended before that step completed (e.g. it
     // errored) — show a neutral marker instead of an eternal spinner.
     if (l.pending && live) return <Spinner />;
     if (l.pending) return <span className="text-gray-300">◦</span>;
+    // Discovery ("learn") plumbing lines get a muted magnifier so they read as
+    // background activity rather than a real diagnostic result.
+    if (l.discovery) return <span className="text-gray-300">🔍</span>;
     if (l.kind === "tool") return <span className="text-gray-400">🔧</span>;
     if (l.kind === "result") return <span className="text-green-600">✓</span>;
     if (l.kind === "reason") return <span className="text-gray-400">💭</span>;
@@ -5719,18 +5768,33 @@ function ProgressLines({
   };
   return (
     <>
+      {stats.length >= 2 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1.5 border-b border-gray-100 pb-1.5 text-[10px] text-gray-500">
+          <span className="font-medium text-gray-600">War room</span>
+          {stats.map((s) => (
+            <span
+              key={s.name}
+              className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5"
+              title={`${s.name}: ${s.count} tool call${s.count === 1 ? "" : "s"}`}
+            >
+              <span aria-hidden>{s.icon}</span>
+              <span className="max-w-[8rem] truncate">{s.name}</span>
+              <span className="text-gray-400">{s.count}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {lines.map((l, i) =>
         l.kind === "reason" ? (
-          // The model's thinking (what it understood + its plan). Rendered as a
-          // distinct block so it stands out from the tool steps.
+          // The model's thinking (what it understood + its plan). Kept small and muted
+          // (a subtle left accent, not a card) so it reads as a quiet aside rather than
+          // standing out from — or dwarfing — the tool steps.
           <div key={i} className="flex items-start gap-2 text-xs">
             <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
               {icon(l)}
             </span>
-            <div className="min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 py-1.5">
-              <div className="prose-chat text-xs text-gray-700">
-                <TypedMarkdown text={l.text} live={animates(i)} />
-              </div>
+            <div className="prose-chat min-w-0 flex-1 border-l-2 border-gray-200 pl-2 !text-[11px] !leading-relaxed !text-gray-500">
+              <TypedMarkdown text={l.text} live={animates(i)} />
             </div>
           </div>
         ) : (
@@ -5739,13 +5803,24 @@ function ProgressLines({
               {icon(l)}
             </span>
             <div className="min-w-0">
+              {l.agentIcon && (
+                <span
+                  className="mr-1.5 inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 align-middle text-[10px] font-medium text-gray-600"
+                  title={l.agentName ? `${l.agentName} agent` : undefined}
+                >
+                  <span aria-hidden>{l.agentIcon}</span>
+                  {l.agentName && <span className="max-w-[7rem] truncate">{l.agentName}</span>}
+                </span>
+              )}
               <span
                 className={
-                  l.kind === "tool"
-                    ? "font-mono text-gray-800"
-                    : l.pending
-                      ? "text-gray-700"
-                      : "text-gray-600"
+                  l.discovery
+                    ? "text-[11px] text-gray-400"
+                    : l.kind === "tool"
+                      ? "font-mono text-gray-800"
+                      : l.pending
+                        ? "text-gray-700"
+                        : "text-gray-600"
                 }
               >
                 <TypedText text={l.text} live={animates(i)} />
@@ -5758,6 +5833,16 @@ function ProgressLines({
             </div>
           </div>
         ),
+      )}
+      {showWorking && (
+        <div className="flex items-start gap-2 text-xs">
+          <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+            <Spinner />
+          </span>
+          <div className="min-w-0">
+            <span className="text-gray-500">Working…</span>
+          </div>
+        </div>
       )}
     </>
   );
@@ -5792,6 +5877,9 @@ function LiveProgress({
   const [, force] = useState(0);
   const [open, setOpen] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the feed is "stuck" to the bottom. Stays true unless the user scrolls up to
+  // read earlier steps, in which case we stop auto-scrolling until they return.
+  const stickRef = useRef(true);
 
   // Tick once a second so the elapsed timer updates while waiting.
   useEffect(() => {
@@ -5799,10 +5887,22 @@ function LiveProgress({
     return () => clearInterval(id);
   }, []);
 
-  // Keep the newest line in view.
+  // Keep the newest content in view. This runs after EVERY render — not just when a new
+  // log line is added — because tool results update the last line in place (running →
+  // "Found N …") and the answer streams token-by-token, neither of which changes
+  // log.length. Pinning on every render keeps the feed glued to the bottom as it grows.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [log.length]);
+    if (!open || !stickRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Re-stick once the user scrolls back within ~48px of the bottom.
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
 
   const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
   const elapsedLabel = formatElapsed(elapsed);
@@ -5828,6 +5928,7 @@ function LiveProgress({
         <>
           <div
             ref={scrollRef}
+            onScroll={onScroll}
             className="max-h-[70vh] space-y-1 overflow-y-auto border-t border-brand/10 px-3 py-2"
           >
             <ProgressLines log={log} level={level} live />

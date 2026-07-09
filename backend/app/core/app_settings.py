@@ -580,6 +580,24 @@ def deep_parallelism() -> int:
     return max(1, min(12, int(s.get("deep_parallel_count", 12))))
 
 
+def deep_fast_model() -> tuple[str | None, str | None]:
+    """Optional 'fast tier' provider+model for a deep investigation's intermediate
+    phases (research + hypothesis validation). The final conclusion always uses the
+    primary model for answer quality.
+
+    Returns (provider, model). Both None when unset — callers then reuse the primary
+    provider, so this is a no-op until an admin configures a fast model. Read at run
+    time so dashboard changes apply without a restart.
+    """
+    s = load_settings()
+    provider = (s.get("deep_fast_provider") or "").strip() or None
+    model = (s.get("deep_fast_model") or "").strip() or None
+    # A model without a provider is ambiguous (which endpoint?), so require both.
+    if not (provider and model):
+        return None, None
+    return provider, model
+
+
 def assessment_weights() -> dict[str, int]:
     """Live per-severity scoring weights (admin-tunable, merged onto defaults).
 

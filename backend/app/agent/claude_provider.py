@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSpec
+from app.agent.tool_protocol import FN_MARKER_HOLDBACK, find_function_call_marker
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -195,6 +196,12 @@ class ClaudeProvider(LLMProvider):
         # Accumulate streamed content blocks (text + tool_use).
         blocks: dict[int, dict[str, Any]] = {}
         completion_tokens = 0
+        # Holdback state for Claude-Code XML tool calls emitted as TEXT (see
+        # tool_protocol): once a `<function_calls>`/`<invoke name=` marker appears we stop
+        # streaming tokens and buffer the rest, so the raw XML never leaks into the answer.
+        full_text = ""
+        emitted_len = 0
+        marker_idx = -1
 
         from app.core.app_settings import request_timeout_seconds
 
@@ -209,6 +216,9 @@ class ClaudeProvider(LLMProvider):
                 retry = False
                 blocks.clear()
                 completion_tokens = 0
+                full_text = ""
+                emitted_len = 0
+                marker_idx = -1
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code == 401 and self._use_oauth and attempt == 0:
                         retry = True
@@ -252,7 +262,21 @@ class ClaudeProvider(LLMProvider):
                                     text = delta.get("text", "")
                                     if text:
                                         blk["text"] += text
-                                        yield StreamEvent(type="token", text=text)
+                                        # Stream via the function-call holdback so raw
+                                        # Claude-Code tool XML is never emitted as answer
+                                        # text. Once the marker is seen, suppress the rest.
+                                        full_text += text
+                                        if marker_idx == -1:
+                                            marker_idx = find_function_call_marker(full_text)
+                                        if marker_idx != -1:
+                                            if marker_idx > emitted_len:
+                                                yield StreamEvent(type="token", text=full_text[emitted_len:marker_idx])
+                                                emitted_len = marker_idx
+                                        else:
+                                            safe = len(full_text) - FN_MARKER_HOLDBACK
+                                            if safe > emitted_len:
+                                                yield StreamEvent(type="token", text=full_text[emitted_len:safe])
+                                                emitted_len = safe
                                 elif delta.get("type") == "input_json_delta":
                                     blk["json"] += delta.get("partial_json", "")
                             elif etype == "message_delta":
@@ -273,7 +297,12 @@ class ClaudeProvider(LLMProvider):
                     continue
                 break
 
-        # Collect any tool_use blocks into tool calls.
+        # Flush any held-back trailing text that wasn't part of a function-call marker.
+        if marker_idx == -1 and len(full_text) > emitted_len:
+            yield StreamEvent(type="token", text=full_text[emitted_len:])
+            emitted_len = len(full_text)
+
+        # Collect any native tool_use blocks into tool calls.
         calls: list[ToolCallRequest] = []
         for _idx, blk in sorted(blocks.items()):
             if blk.get("type") == "tool_use":
@@ -284,6 +313,18 @@ class ClaudeProvider(LLMProvider):
                 calls.append(
                     ToolCallRequest(id=blk.get("id", ""), name=blk.get("name", ""), arguments=args)
                 )
+        # Fallback: Claude (especially Haiku under the Claude Code OAuth identity) often
+        # emits tool calls as `<function_calls>`/`<invoke>` XML *text* instead of native
+        # tool_use blocks. Parse the held-back XML into real tool calls so they execute.
+        if not calls and marker_idx != -1:
+            from app.agent.tool_protocol import parse_anthropic_function_calls
+
+            calls = parse_anthropic_function_calls(full_text[marker_idx:])
+            if not calls and len(full_text) > emitted_len:
+                # Marker was a false positive (prose merely mentioning it) — don't swallow
+                # the text; surface what was held back.
+                yield StreamEvent(type="token", text=full_text[emitted_len:])
+                emitted_len = len(full_text)
         if calls:
             yield StreamEvent(type="tool_calls", tool_calls=calls)
 

@@ -11,6 +11,7 @@ approval-gate infrastructure (classification, approvals) is already in place.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import re as _re
@@ -172,6 +173,23 @@ async def _consent_elicitation_callback(context: Any, params: Any):
     return mcp_types.ElicitResult(action="accept", content=content or None)
 
 
+# Sentinel enqueued to tell the pooled-session owner task to shut down cleanly.
+_POOL_STOP = object()
+
+
+def _extract_call_content(result: Any) -> list[Any]:
+    """Flatten an MCP CallToolResult's content blocks into JSON-serializable values
+    (text blocks become their string; other blocks are model_dump()'d or stringified)."""
+    content: list[Any] = []
+    for block in result.content:
+        if getattr(block, "type", None) == "text":
+            content.append(block.text)
+        else:
+            dump = getattr(block, "model_dump", None)
+            content.append(dump() if dump else str(block))
+    return content
+
+
 class MCPClient:
     """Spawns the Azure MCP server over stdio per operation. Simple and robust for
     local dev; a pooled long-lived session can replace this later for performance."""
@@ -216,6 +234,18 @@ class MCPClient:
                 if v:
                     env[k] = v
         self._params = StdioServerParameters(command=command, args=full_args, env=env)
+        # --- Pooled session state --------------------------------------------------
+        # Reuse ONE long-lived stdio session for call_tool so back-to-back and parallel
+        # tool calls in a single turn don't each spawn a fresh `npx @azure/mcp` (node
+        # startup + package resolve). Lazily started on first call_tool; torn down by
+        # close(). Disable with MCP_POOL=0 to fall back to the per-call session path.
+        self._closed = False
+        self._pool_enabled = os.getenv("MCP_POOL", "1").strip().lower() not in ("0", "false", "no")
+        self._pool_queue: asyncio.Queue[Any] | None = None
+        self._pool_task: asyncio.Task[None] | None = None
+        self._pool_lock: asyncio.Lock | None = None
+        self._pool_ready: asyncio.Event | None = None
+        self._pool_start_error: BaseException | None = None
 
     def _cleanup(self) -> None:
         for path in self._cleanup_paths:
@@ -237,7 +267,33 @@ class MCPClient:
 
         Safe to call multiple times; a no-op when there's nothing to clean up. The
         connection's identity files must outlive every spawned MCP child process, so
-        cleanup happens once when the owning turn/operation is finished."""
+        cleanup happens once when the owning turn/operation is finished. Cancelling the
+        pooled-session owner task unwinds its ``async with`` blocks, which closes the
+        stdio transport and terminates the spawned ``npx`` child."""
+        self._closed = True
+        task = self._pool_task
+        if task is not None and not task.done():
+            try:
+                task.cancel()
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
+        self._pool_task = None
+        self._cleanup()
+
+    async def aclose(self) -> None:
+        """Async teardown: stop the pooled owner task and await its cleanup, then
+        release identity files. Preferred over close() when an event loop is available
+        (e.g. tests) because it deterministically waits for the child to exit."""
+        self._closed = True
+        task = self._pool_task
+        self._pool_task = None
+        if task is not None and not task.done():
+            if self._pool_queue is not None:
+                with contextlib.suppress(Exception):
+                    self._pool_queue.put_nowait(_POOL_STOP)
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
         self._cleanup()
 
     def __del__(self) -> None:  # best-effort safety net
@@ -288,16 +344,134 @@ class MCPClient:
             return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        # Preferred path: dispatch onto the pooled long-lived session so we don't spawn
+        # a fresh `npx @azure/mcp` per call. Falls back to a one-shot session when
+        # pooling is disabled, the pool can't start, or the session broke mid-call.
+        if self._pool_enabled and not self._closed and await self._ensure_pool():
+            queue = self._pool_queue
+            assert queue is not None
+            fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+            await queue.put((name, arguments, fut))
+            try:
+                return await fut
+            except asyncio.CancelledError:
+                raise
+            except BaseException:  # noqa: BLE001 - transport broke; retry one-shot below
+                pass
         async with self._session() as session:
             result = await session.call_tool(name, arguments)
-            content: list[Any] = []
-            for block in result.content:
-                if getattr(block, "type", None) == "text":
-                    content.append(block.text)
-                else:
-                    dump = getattr(block, "model_dump", None)
-                    content.append(dump() if dump else str(block))
-            return {"isError": result.isError, "content": content}
+            return {"isError": result.isError, "content": _extract_call_content(result)}
+
+    # ------------------------------------------------------------------ pooling
+    async def _ensure_pool(self) -> bool:
+        """Ensure the pooled-session owner task is running. Returns True when the pool
+        is usable, False when it couldn't start a session (caller then falls back to a
+        one-shot session). Safe under concurrent callers (parallel validators share one
+        MCPClient)."""
+        if self._closed:
+            return False
+        ready = self._pool_ready
+        task = self._pool_task
+        if (
+            task is not None
+            and not task.done()
+            and ready is not None
+            and ready.is_set()
+            and self._pool_start_error is None
+        ):
+            return True
+        if self._pool_lock is None:
+            self._pool_lock = asyncio.Lock()
+        async with self._pool_lock:
+            if self._closed:
+                return False
+            # A previously-running owner that has since exited (session died) is stale.
+            if self._pool_task is not None and self._pool_task.done():
+                self._pool_task = None
+            if self._pool_task is None:
+                self._pool_queue = asyncio.Queue()
+                self._pool_ready = asyncio.Event()
+                self._pool_start_error = None
+                self._pool_task = asyncio.create_task(self._pool_owner())
+            assert self._pool_ready is not None
+            await self._pool_ready.wait()
+            if self._pool_start_error is not None:
+                # The owner couldn't open a session; disable the fast path for now and
+                # let the caller use a one-shot session. A later call retries the pool.
+                self._pool_task = None
+                return False
+            return True
+
+    async def _pool_owner(self) -> None:
+        """Owns ONE long-lived MCP session and dispatches queued tool calls onto it.
+
+        Calls run concurrently — the MCP session multiplexes requests by id — so
+        parallel in-turn tool calls and parallel hypothesis validators overlap on a
+        single spawned server. Any transport-level failure tears the session down; the
+        next call_tool lazily restarts a fresh owner (self-healing)."""
+        queue = self._pool_queue
+        ready = self._pool_ready
+        assert queue is not None and ready is not None
+        inflight: set[asyncio.Task[None]] = set()
+        try:
+            async with self._session() as session:
+                ready.set()
+                while True:
+                    req = await queue.get()
+                    if req is _POOL_STOP:
+                        break
+                    name, arguments, fut = req
+                    t = asyncio.create_task(self._pool_dispatch(session, name, arguments, fut))
+                    inflight.add(t)
+                    t.add_done_callback(inflight.discard)
+        except BaseException as exc:  # noqa: BLE001 - surface to waiters, then self-heal
+            # If we never became ready, record the start error so _ensure_pool can fall
+            # back to one-shot sessions instead of hanging.
+            if not ready.is_set():
+                self._pool_start_error = exc
+                ready.set()
+        finally:
+            for t in list(inflight):
+                t.cancel()
+            if inflight:
+                await asyncio.gather(*inflight, return_exceptions=True)
+            # Fail any still-queued requests so their callers don't hang forever.
+            self._drain_pool_queue(RuntimeError("MCP pooled session closed"))
+
+    async def _pool_dispatch(
+        self,
+        session: Any,
+        name: str,
+        arguments: dict[str, Any],
+        fut: asyncio.Future[dict[str, Any]],
+    ) -> None:
+        try:
+            result = await session.call_tool(name, arguments)
+            if not fut.done():
+                fut.set_result({"isError": result.isError, "content": _extract_call_content(result)})
+        except asyncio.CancelledError:
+            if not fut.done():
+                fut.cancel()
+            raise
+        except BaseException as exc:  # noqa: BLE001 - deliver the failure to the caller
+            if not fut.done():
+                fut.set_exception(exc)
+
+    def _drain_pool_queue(self, exc: BaseException) -> None:
+        queue = self._pool_queue
+        if queue is None:
+            return
+        while not queue.empty():
+            try:
+                req = queue.get_nowait()
+            except Exception:  # noqa: BLE001
+                break
+            if req is _POOL_STOP:
+                continue
+            _name, _args, fut = req
+            if not fut.done():
+                fut.set_exception(exc)
+
 
     @staticmethod
     def to_tool_specs(tools: list[DiscoveredTool]) -> list[ToolSpec]:

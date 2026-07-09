@@ -56,9 +56,16 @@ class ConnectorType:
     build_tools: Callable[[dict[str, Any]], list[ConnectorTool]]
 
 
-def ok(text: str) -> dict[str, Any]:
-    """A successful tool result in the shared MCP-compatible shape."""
-    return {"isError": False, "content": [text]}
+def ok(text: str, display_summary: str | None = None) -> dict[str, Any]:
+    """A successful tool result in the shared MCP-compatible shape.
+
+    ``display_summary`` is an optional concise, human-facing one-liner for the live
+    progress feed — use it when ``text`` is verbose model-facing content (e.g. long
+    instructions) that would read as noise in the timeline."""
+    result: dict[str, Any] = {"isError": False, "content": [text]}
+    if display_summary and display_summary.strip():
+        result["display_summary"] = display_summary.strip()
+    return result
 
 
 def err(text: str) -> dict[str, Any]:

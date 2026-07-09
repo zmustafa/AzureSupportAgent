@@ -10974,8 +10974,8 @@ export interface DeepInvestigationSummary {
 export interface StreamHandlers {
   onToken: (text: string) => void;
   onStatus?: (data: { phase: string; message: string }) => void;
-  onToolStart?: (data: { tool_name: string; arguments: unknown; agent?: string; node_id?: string }) => void;
-  onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; is_error?: boolean; agent?: string; node_id?: string }) => void;
+  onToolStart?: (data: { tool_name: string; arguments: unknown; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean }) => void;
+  onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; is_error?: boolean; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean }) => void;
   onApprovalRequired?: (data: { tool_name: string; arguments: unknown }) => void;
   onPhase?: (data: { phase: string; label: string; summary: string | null }) => void;
   onHypothesis?: (data: HypothesisNode) => void;

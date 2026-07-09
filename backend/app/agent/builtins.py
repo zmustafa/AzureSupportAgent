@@ -729,6 +729,8 @@ async def _azure_metrics(_config: dict[str, Any], args: dict[str, Any]) -> dict[
         {"chart_id": chart_id, "title": title, "type": chart_type, "unit": unit},
         ensure_ascii=False,
     )
+    _metric_label = ", ".join(metrics[:3]) + (f" +{len(metrics) - 3} more" if len(metrics) > 3 else "")
+    _display = f"📊 Built chart: {_metric_label} ({len(rows)} datapoint{'' if len(rows) == 1 else 's'})"
     return ok(
         f"DONE — the interactive chart is built and the metrics are already fetched "
         f"({len(rows)} datapoints for {', '.join(metrics)} on {resource_ids[0].rsplit('/', 1)[-1]}; "
@@ -738,7 +740,8 @@ async def _azure_metrics(_config: dict[str, Any], args: dict[str, Any]) -> dict[
         "metrics tool (e.g. monitor / monitor_metrics_query / metrics list); that data is "
         "already captured here. Your ONLY remaining step is to write your reply and include "
         "EXACTLY this fenced block verbatim (keep chart_id unchanged) so the user sees the graph:\n"
-        f"```azchart\n{block}\n```"
+        f"```azchart\n{block}\n```",
+        display_summary=_display,
     )
 
 

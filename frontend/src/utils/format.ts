@@ -36,7 +36,15 @@ export function formatDuration(ms?: number | null): string | undefined {
   if (ms == null) return undefined;
   if (ms < 1000) return `${ms} ms`;
   const sec = ms / 1000;
-  return sec < 60 ? `${sec.toFixed(1)} sec` : `${Math.round(sec)} sec`;
+  if (sec < 60) return `${sec.toFixed(1)} sec`;
+  // A minute or more reads better as minutes than a large second count (e.g. 237 sec).
+  let m = Math.floor(sec / 60);
+  let s = Math.round(sec % 60);
+  if (s === 60) {
+    m += 1;
+    s = 0;
+  }
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 /** Compact relative time until/since an ISO timestamp, e.g. "in 3d 4h", "in 5m", "now", "2h ago". */

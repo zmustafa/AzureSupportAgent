@@ -23,7 +23,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from app.agent.factory import build_provider_for
-from app.agent.orchestrator import AgentEvent, _summarize_result
+from app.agent.orchestrator import AgentEvent, _is_command_catalog, _summarize_result
 from app.agent.provider import ToolSpec
 from app.connectors.base import ConnectorToolset
 from app.core.ai_prompts import get_full_prompt, get_guidance
@@ -46,6 +46,10 @@ VALIDATE_BUDGET_S = 40.0
 # Max chars of the research summary fed into later phases (smaller prompts = faster
 # completions on slow reasoning models).
 RESEARCH_SUMMARY_CAP = 1500
+# Max tool calls executed concurrently within a single agent turn. Investigations are
+# read-only, so parallel execution has no write-ordering hazard; the bound keeps a turn
+# that asks for many tools from over-spawning work on the shared pooled MCP session.
+TOOL_FANOUT = 6
 
 # --- Admin-editable phase guidance ------------------------------------------
 # Only the human-tunable prose lives here; each phase's strict JSON output contract
@@ -94,6 +98,17 @@ class DeepInvestigator:
     ) -> None:
         self._settings = settings
         self._provider = build_provider_for(provider, model)
+        # Optional 'fast tier' provider for the many intermediate completions (research
+        # + hypothesis validation). Falls back to the primary provider when unset, so
+        # this is a no-op until an admin configures a fast model. The conclusion always
+        # uses the primary (strong) provider for answer quality.
+        try:
+            from app.core.app_settings import deep_fast_model
+
+            _fp, _fm = deep_fast_model()
+            self._fast_provider = build_provider_for(_fp, _fm) if (_fp and _fm) else self._provider
+        except Exception:  # noqa: BLE001 - fall back to the primary provider
+            self._fast_provider = self._provider
         # Optional architecture "memory" (intended design, security model, known gaps,
         # diagnostic hints) injected into every phase's system prompt as expert context.
         self._architecture_memory = (architecture_memory or "").strip()
@@ -105,6 +120,9 @@ class DeepInvestigator:
         from app.agent.deep_agents import get_agents
 
         self._focus = get_agents(focus or [])
+        # id -> catalog entry (name/icon/domain) so tool events can be attributed to the
+        # specialist that made them (shown as a badge in the live feed).
+        self._agent_by_id = {a["id"]: a for a in self._focus}
         # How many hypothesis sub-agents may validate at once (from dashboard setting).
         try:
             from app.core.app_settings import deep_parallelism
@@ -199,14 +217,16 @@ class DeepInvestigator:
                     t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _complete(self, system: str, user: str) -> str:
-        """One no-tool LLM completion; returns the full text."""
+    async def _complete(self, system: str, user: str, provider: Any = None) -> str:
+        """One no-tool LLM completion; returns the full text. Uses ``provider`` when
+        given, else the primary provider."""
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
+        prov = provider or self._provider
         text = ""
-        async for ev in self._provider.stream(messages, None):
+        async for ev in prov.stream(messages, None):
             if ev.type == "token":
                 text += ev.text
         return text
@@ -221,6 +241,7 @@ class DeepInvestigator:
         stream_answer: bool = False,
         budget_s: float | None = None,
         tag: dict[str, Any] | None = None,
+        provider: Any = None,
     ) -> AsyncIterator[AgentEvent]:
         """A bounded READ-ONLY tool-calling loop. Yields feed events (token/tool_start/
         tool_result). Writes the final assistant text and collected evidence into
@@ -235,6 +256,7 @@ class DeepInvestigator:
         data_cap = rt["tool_result_limit"]
         discovery_cap = rt["tool_discovery_limit"]
         started_loop = time.perf_counter()
+        prov = provider or self._provider
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
@@ -248,16 +270,44 @@ class DeepInvestigator:
         for _ in range(max_iters):
             text = ""
             pending = []
-            async for ev in self._provider.stream(messages, self._tool_specs):
+            async for ev in prov.stream(messages, self._tool_specs):
                 if ev.type == "token":
                     text += ev.text
                     if stream_answer:
                         yield AgentEvent(type="token", data={"text": ev.text})
                 elif ev.type == "tool_calls":
                     pending = ev.tool_calls
+                elif ev.type == "status":
+                    # Surface connection milestones (sending request / awaiting / responding)
+                    # so the feed shows live progress during a phase's model call instead of
+                    # a dead gap before the first tool call (e.g. at research start).
+                    yield AgentEvent(type="status", data={"phase": ev.phase, "message": ev.text})
                 elif ev.type == "done":
                     p_tok += ev.prompt_tokens
                     c_tok += ev.completion_tokens
+
+            # Recovery: some models (e.g. Claude Haiku under the Claude Code OAuth
+            # identity) emit tool calls as `<function_calls>` XML — or a JSON directive —
+            # in TEXT rather than as structured tool_calls. Parse them so they execute
+            # instead of leaking into the answer body. (The Claude provider already does
+            # this at the source; this is a defense-in-depth net for any provider.)
+            if not pending and text:
+                from app.agent.tool_protocol import (
+                    find_function_call_marker,
+                    parse_anthropic_function_calls,
+                    parse_tool_calls,
+                )
+
+                xml_calls = parse_anthropic_function_calls(text)
+                if xml_calls:
+                    pending = xml_calls
+                    _m = find_function_call_marker(text)
+                    text = (text[:_m] if _m != -1 else "").rstrip()
+                else:
+                    json_calls = parse_tool_calls(text)
+                    if json_calls:
+                        pending = json_calls
+                        text = ""
 
             if not pending:
                 result["text"] = text
@@ -288,15 +338,45 @@ class DeepInvestigator:
             for call in pending:
                 yield AgentEvent(
                     type="tool_start",
-                    data={"tool_name": call.name, "arguments": call.arguments, **(tag or {})},
+                    data={
+                        "tool_name": call.name,
+                        "arguments": call.arguments,
+                        "discovery": bool((call.arguments or {}).get("learn")),
+                        **(tag or {}),
+                    },
                 )
+
+            # Execute this turn's tool calls CONCURRENTLY (investigations are read-only,
+            # so there's no write-ordering hazard) on the shared pooled MCP session, then
+            # emit results + append tool messages in the ORIGINAL order so each
+            # tool_call_id lines up with its result.
+            sem = asyncio.Semaphore(max(1, TOOL_FANOUT))
+
+            async def _run_one(call: Any) -> tuple[dict[str, Any], int]:
                 started = time.perf_counter()
-                try:
-                    res = await self._call_tool(call.name, call.arguments)
-                except Exception as exc:  # noqa: BLE001 - surface to the model
-                    res = {"isError": True, "content": [str(exc)]}
-                duration_ms = int((time.perf_counter() - started) * 1000)
-                summary = _summarize_result(res)
+                async with sem:
+                    try:
+                        res = await self._call_tool(call.name, call.arguments)
+                    except Exception as exc:  # noqa: BLE001 - surface to the model
+                        res = {"isError": True, "content": [str(exc)]}
+                return res, int((time.perf_counter() - started) * 1000)
+
+            outcomes = await asyncio.gather(*(_run_one(c) for c in pending))
+
+            for call, (res, duration_ms) in zip(pending, outcomes):
+                # Discovery calls are internal two-phase plumbing: an explicit `learn:
+                # true`, OR any call whose result is the command catalog (missing/unknown
+                # command). Give them a concise summary + `discovery` flag so the feed
+                # collapses them instead of dumping "Here are the available command…".
+                _errored = bool(res.get("isError"))
+                is_learn = bool((call.arguments or {}).get("learn")) or (
+                    not _errored and _is_command_catalog(res)
+                )
+                summary = (
+                    f"Loaded {call.name} commands"
+                    if is_learn and not _errored
+                    else _summarize_result(res)
+                )
                 yield AgentEvent(
                     type="tool_result",
                     data={
@@ -304,11 +384,11 @@ class DeepInvestigator:
                         "result": res,
                         "summary": summary,
                         "duration_ms": duration_ms,
+                        "discovery": is_learn,
                         **(tag or {}),
                     },
                 )
                 evidence.append({"tool": call.name, "summary": summary})
-                is_learn = bool((call.arguments or {}).get("learn"))
                 if is_learn:
                     from app.agent.tool_protocol import compact_learn_result
 
@@ -337,7 +417,7 @@ class DeepInvestigator:
             }
         )
         forced = ""
-        async for ev in self._provider.stream(messages, None):
+        async for ev in prov.stream(messages, None):
             if ev.type == "token":
                 forced += ev.text
                 if stream_answer:
@@ -359,6 +439,20 @@ class DeepInvestigator:
         if v in valid:
             return v
         return self._focus[0]["id"]
+
+    def _agent_tag(self, agent_id: str, **extra: Any) -> dict[str, Any]:
+        """Build a tool-event tag that attributes the call to a specialist agent (its
+        name + icon) so the live feed can badge each line with who ran it."""
+        meta = self._agent_by_id.get(agent_id)
+        if meta is None and agent_id == "lead":
+            # The research phase is the lead/coordinator (no specialist assigned yet).
+            meta = {"name": "Lead", "icon": "🧭"}
+        tag: dict[str, Any] = {"agent": agent_id}
+        if meta:
+            tag["agent_name"] = meta.get("name", "")
+            tag["agent_icon"] = meta.get("icon", "")
+        tag.update(extra)
+        return tag
 
     @staticmethod
     def _parse_json(text: str) -> Any:
@@ -449,7 +543,8 @@ class DeepInvestigator:
         )
         r: dict[str, Any] = {}
         async for ev in self._tool_loop(
-            research_sys, research_user, RESEARCH_ITERS, r, budget_s=RESEARCH_BUDGET_S
+            research_sys, research_user, RESEARCH_ITERS, r, budget_s=RESEARCH_BUDGET_S,
+            provider=self._fast_provider, tag=self._agent_tag("lead"),
         ):
             yield ev
         total_p += r.get("prompt_tokens", 0)
@@ -496,7 +591,7 @@ class DeepInvestigator:
             hypo_user = (
                 f"Problem:\n{question}\n\nResearch findings:\n{research_summary or '(limited data gathered)'}"
             )
-            raw = await self._complete(hypo_sys, hypo_user)
+            raw = await self._complete(hypo_sys, hypo_user, provider=self._fast_provider)
             parsed = self._parse_json(raw)
             hypotheses = parsed if isinstance(parsed, list) else []
             for h in hypotheses[:MAX_HYPOTHESES]:
@@ -716,7 +811,8 @@ class DeepInvestigator:
         vr: dict[str, Any] = {}
         async for ev in self._tool_loop(
             val_sys, val_user, VALIDATE_ITERS, vr, budget_s=VALIDATE_BUDGET_S,
-            tag={"node_id": node["id"], "agent": node.get("agent", "")},
+            tag=self._agent_tag(node.get("agent", ""), node_id=node["id"]),
+            provider=self._fast_provider,
         ):
             yield ev
         parsed = self._parse_json(vr.get("text", ""))

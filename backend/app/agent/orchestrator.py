@@ -5,6 +5,7 @@ through the approval gate. Emits a stream of typed events the API turns into SSE
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -20,6 +21,10 @@ from app.mcp.client import DiscoveredTool, MCPClient, build_mcp_client
 # Fallback tool-iteration budget; the live value comes from the dashboard setting
 # `max_tool_iterations` (see app_settings.agent_runtime_params).
 MAX_TOOL_ITERATIONS = 16
+# Max READ tool calls executed concurrently within a single model turn. Reads run on
+# the shared pooled MCP session; write tools are never parallelized (they stay gated
+# and are surfaced for approval in the original call order).
+TOOL_FANOUT = 6
 
 
 def _is_blank_answer(text: str | None) -> bool:
@@ -33,29 +38,139 @@ def _is_blank_answer(text: str | None) -> bool:
 
 
 def _summarize_result(result: dict[str, Any]) -> str:
-    """Produce a short, human-readable summary of a tool result for the live
-    progress timeline (e.g. 'Found 5 items', 'Error: ...')."""
+    """Produce a short, human-readable summary of a tool result for the live progress
+    timeline. Beyond the bare count ('Found 5 items') it surfaces item names, a status
+    chip for single items, and truncation/total awareness — e.g.
+    'Found 1 containerApps: azsupagent (Succeeded)' or
+    'Found 5 resources: a, b, c +2 more · 5 of 143'. Never raises: any unexpected shape
+    falls back to the count or a short snippet."""
     if result.get("isError"):
         content = result.get("content") or []
         first = str(content[0]) if content else "unknown error"
         return f"Error: {first[:140]}"
+    # A tool may provide its own concise, human-facing line (e.g. builtins whose raw
+    # result is verbose model-facing instructions). Prefer it when present.
+    ds = result.get("display_summary")
+    if isinstance(ds, str) and ds.strip():
+        return ds.strip()[:160]
     content = result.get("content") or []
     text = str(content[0]) if content else ""
-    # Many Azure MCP tools return JSON like {"results": {"<key>": [ ... ]}}.
+    # The Azure MCP server returns a command CATALOG ("Here are the available command…")
+    # both for explicit learn calls and when a namespace tool is called with a missing/
+    # unrecognized command. Collapse either way instead of dumping the verbose blob.
+    if _is_command_catalog(result):
+        return "Loaded tool commands"
     try:
         parsed = json.loads(text)
-        results = parsed.get("results") if isinstance(parsed, dict) else None
-        if isinstance(results, dict):
-            for key, val in results.items():
-                if isinstance(val, list):
-                    return f"Found {len(val)} {key}"
-            return "Success"
-        if isinstance(results, list):
-            return f"Found {len(results)} items"
-        return "Success"
-    except (json.JSONDecodeError, AttributeError, TypeError):
+    except (json.JSONDecodeError, TypeError):
         snippet = text.strip().replace("\n", " ")
         return (snippet[:120] + "…") if len(snippet) > 120 else (snippet or "Done")
+    try:
+        return _summarize_parsed(parsed)
+    except Exception:  # noqa: BLE001 - summary is cosmetic; never break the turn
+        return "Success"
+
+
+# Signature of the Azure MCP two-phase command catalog (returned by `learn: true` AND by
+# calls with a missing/unrecognized command). Matched case-insensitively on the result's
+# leading text so both cases collapse to a concise "Loaded X commands" in the feed.
+_COMMAND_CATALOG_SIG = "here are the available command"
+
+
+def _is_command_catalog(result: dict[str, Any]) -> bool:
+    """True when a (successful) tool result is the Azure MCP command catalog blob."""
+    if result.get("isError"):
+        return False
+    content = result.get("content") or []
+    if not content:
+        return False
+    return str(content[0]).lstrip().lower().startswith(_COMMAND_CATALOG_SIG)
+
+
+
+# Whitelisted, non-sensitive fields surfaced in progress summaries (never whole objects).
+_NAME_FIELDS = ("name", "displayName", "resourceName", "title", "id", "resourceId")
+_STATUS_FIELDS = (
+    "provisioningState", "status", "state", "availabilityState",
+    "powerState", "health", "healthState", "sku",
+)
+# Friendlier labels for a few generic result keys.
+_KEY_LABELS = {"data": "resources", "value": "items"}
+
+
+def _item_name(item: dict[str, Any]) -> str | None:
+    for f in _NAME_FIELDS:
+        v = item.get(f)
+        if isinstance(v, str) and v.strip():
+            # For id/resourceId, use the trailing segment (the resource's own name).
+            return v.rstrip("/").split("/")[-1] if f in ("id", "resourceId") else v.strip()
+    return None
+
+
+def _item_status(item: dict[str, Any]) -> str | None:
+    for f in _STATUS_FIELDS:
+        v = item.get(f)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _summarize_parsed(parsed: Any) -> str:
+    # Locate the first list of items (and its key), or a scalar string to surface.
+    items: list[Any] | None = None
+    key = "items"
+    results = parsed.get("results") if isinstance(parsed, dict) else None
+    if isinstance(results, dict):
+        for k, val in results.items():
+            if isinstance(val, list):
+                items, key = val, k
+                break
+        if items is None:
+            # No list under results — surface the first scalar string value if present.
+            for val in results.values():
+                if isinstance(val, str) and val.strip():
+                    line = val.strip().splitlines()[0]
+                    return (line[:120] + "…") if len(line) > 120 else line
+            return "Success"
+    elif isinstance(results, list):
+        items = results
+    elif isinstance(parsed, list):
+        items = parsed
+    else:
+        return "Success"
+
+    n = len(items)
+    base = f"Found {n} {_KEY_LABELS.get(key, key)}"
+
+    # Up to 3 item names; a status chip for a single item; "+N more" otherwise.
+    names = [nm for it in items[:3] if isinstance(it, dict) and (nm := _item_name(it))]
+    detail = ""
+    if names:
+        shown = ", ".join(names)
+        if n == 1 and isinstance(items[0], dict):
+            st = _item_status(items[0])
+            if st:
+                shown = f"{shown} ({st})"
+        elif n > len(names):
+            shown = f"{shown} +{n - len(names)} more"
+        detail = f": {shown}"
+
+    # Truncation / total awareness (flags live at the top level or inside `results`).
+    trunc = ""
+    scopes = [parsed]
+    if isinstance(results, dict):
+        scopes.append(results)
+    total = next((s.get("totalRecords") or s.get("totalCount") for s in scopes
+                  if isinstance(s, dict) and (s.get("totalRecords") or s.get("totalCount"))), None)
+    truncated = any(isinstance(s, dict) and (s.get("resultTruncated") or s.get("areResultsTruncated"))
+                    for s in scopes)
+    if isinstance(total, int) and total > n:
+        trunc = f" · {n} of {total}"
+    elif truncated:
+        trunc = " · truncated"
+
+    return (base + detail + trunc)[:160]
+
 
 
 @dataclass
@@ -238,18 +353,30 @@ class Orchestrator:
                 # the JSON), recover it here so the tool actually runs instead of the
                 # model hallucinating an answer with no data. Only when tools are enabled.
                 if tool_specs:
-                    from app.agent.tool_protocol import parse_tool_calls
+                    from app.agent.tool_protocol import (
+                        find_function_call_marker,
+                        parse_anthropic_function_calls,
+                        parse_tool_calls,
+                    )
 
-                    recovered = parse_tool_calls(assistant_text)
-                    if recovered:
-                        pending_calls = recovered
-                        # Keep only the prose BEFORE the directive as the message content
-                        # (the directive itself is carried structurally as tool_calls).
-                        cut = min(
-                            [i for i in (assistant_text.find("{"), assistant_text.find("[")) if i != -1]
-                            or [len(assistant_text)]
-                        )
-                        assistant_text = assistant_text[:cut]
+                    # Claude-Code `<function_calls>` XML emitted as text (e.g. Haiku under
+                    # the OAuth identity) takes precedence, then a JSON directive.
+                    xml_recovered = parse_anthropic_function_calls(assistant_text)
+                    if xml_recovered:
+                        pending_calls = xml_recovered
+                        _m = find_function_call_marker(assistant_text)
+                        assistant_text = (assistant_text[:_m] if _m != -1 else "").rstrip()
+                    else:
+                        recovered = parse_tool_calls(assistant_text)
+                        if recovered:
+                            pending_calls = recovered
+                            # Keep only the prose BEFORE the directive as the message
+                            # content (the directive is carried structurally as tool_calls).
+                            cut = min(
+                                [i for i in (assistant_text.find("{"), assistant_text.find("[")) if i != -1]
+                                or [len(assistant_text)]
+                            )
+                            assistant_text = assistant_text[:cut]
                         # Fall through to the tool-execution path below.
 
             if not pending_calls:
@@ -320,14 +447,20 @@ class Orchestrator:
                 }
             )
 
+            # Classify every requested call first (cheap, no I/O), splitting gated
+            # writes from executable reads. Reads then run CONCURRENTLY on the shared
+            # pooled MCP session; approvals + results + tool messages are emitted and
+            # appended in the ORIGINAL order so each tool_call_id lines up and the
+            # write-approval gate behaves exactly as before.
+            from app.mcp.client import classify_call
+
+            plan: list[tuple[Any, bool, bool]] = []  # (call, is_connector, gated)
             for call in pending_calls:
                 tool = tool_index.get(call.name)
                 is_connector = self._connectors is not None and self._connectors.has(call.name)
                 # Refine the coarse name-based kind by inspecting the call's command/
                 # intent argument, so namespace tools (sql, role, …) only gate on actual
                 # writes and reads run freely.
-                from app.mcp.client import classify_call
-
                 if is_connector:
                     kind = self._connectors.kind(call.name) if self._connectors else "write"
                 else:
@@ -335,8 +468,46 @@ class Orchestrator:
                     if tool is not None and tool.kind == "read":
                         # Read-only server guarantees every tool is read; trust that.
                         kind = "read"
+                gated = kind == "write" and write_policy_mode != "off"
+                plan.append((call, is_connector, gated))
 
-                if kind == "write" and write_policy_mode != "off":
+            # Announce the executable (non-gated) calls up front.
+            for call, _is_conn, gated in plan:
+                if not gated:
+                    yield AgentEvent(
+                        type="tool_start",
+                        data={
+                            "tool_name": call.name,
+                            "arguments": call.arguments,
+                            "discovery": bool((call.arguments or {}).get("learn")),
+                        },
+                    )
+
+            # Kick off all executable (read) calls concurrently, bounded by TOOL_FANOUT.
+            sem = asyncio.Semaphore(max(1, TOOL_FANOUT))
+
+            async def _exec_call(call: Any, is_connector: bool) -> tuple[dict[str, Any], int]:
+                started = time.perf_counter()
+                async with sem:
+                    try:
+                        if is_connector and self._connectors is not None:
+                            result = await self._connectors.call(call.name, call.arguments)
+                        elif call.name in self._entra_tool_names and self._entra is not None:
+                            result = await self._entra.call_tool(call.name, call.arguments)
+                        else:
+                            result = await self._mcp.call_tool(call.name, call.arguments)
+                    except Exception as exc:  # surface tool failures to the model
+                        result = {"isError": True, "content": [str(exc)]}
+                return result, int((time.perf_counter() - started) * 1000)
+
+            exec_tasks: dict[str, asyncio.Task[tuple[dict[str, Any], int]]] = {
+                call.id: asyncio.create_task(_exec_call(call, is_connector))
+                for call, is_connector, gated in plan
+                if not gated
+            }
+
+            for call, _is_conn, gated in plan:
+                if gated:
                     # Gated: do not execute. Surface an approval requirement.
                     yield AgentEvent(
                         type="approval_required",
@@ -364,31 +535,30 @@ class Orchestrator:
                     )
                     continue
 
-                # Read tool: execute immediately.
-                yield AgentEvent(
-                    type="tool_start",
-                    data={"tool_name": call.name, "arguments": call.arguments},
-                )
-                started = time.perf_counter()
-                try:
-                    if is_connector and self._connectors is not None:
-                        result = await self._connectors.call(call.name, call.arguments)
-                    elif call.name in self._entra_tool_names and self._entra is not None:
-                        result = await self._entra.call_tool(call.name, call.arguments)
-                    else:
-                        result = await self._mcp.call_tool(call.name, call.arguments)
-                except Exception as exc:  # surface tool failures to the model
-                    result = {"isError": True, "content": [str(exc)]}
-                duration_ms = int((time.perf_counter() - started) * 1000)
+                # Read tool: its concurrent execution was kicked off above.
+                result, duration_ms = await exec_tasks[call.id]
 
+                # Discovery calls are internal two-phase plumbing: an explicit `learn:
+                # true`, OR any call whose result is the command catalog (a missing/
+                # unrecognized command). Give them a concise summary + `discovery` flag so
+                # the feed collapses them instead of dumping "Here are the available…".
+                _errored = bool(result.get("isError"))
+                is_learn = bool((call.arguments or {}).get("learn")) or (
+                    not _errored and _is_command_catalog(result)
+                )
                 yield AgentEvent(
                     type="tool_result",
                     data={
                         "tool_name": call.name,
                         "result": result,
-                        "summary": _summarize_result(result),
+                        "summary": (
+                            f"Loaded {call.name} commands"
+                            if is_learn and not _errored
+                            else _summarize_result(result)
+                        ),
                         "duration_ms": duration_ms,
-                        "is_error": bool(result.get("isError")),
+                        "is_error": _errored,
+                        "discovery": is_learn,
                     },
                 )
                 # Feed the tool result back to the model. Discovery ("learn") outputs
@@ -398,7 +568,6 @@ class Orchestrator:
                 # while cutting ~85% so the transcript stays within request-size limits
                 # (critical for GitHub Copilot's small thread-API budget). Normal data
                 # results keep a tighter char bound to protect the context budget.
-                is_learn = bool((call.arguments or {}).get("learn"))
                 if is_learn:
                     from app.agent.tool_protocol import compact_learn_result
 

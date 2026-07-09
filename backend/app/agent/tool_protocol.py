@@ -355,6 +355,72 @@ def parse_tool_calls(text: str) -> list[ToolCallRequest]:
     return calls
 
 
+# Anthropic/Claude-Code XML tool-call format. Claude models running under the Claude
+# Code identity (required for `claude_oauth` inference) frequently emit tool calls as
+# this XML *text* instead of native `tool_use` blocks, e.g.:
+#   <function_calls><invoke name="containerapp">
+#     <parameter name="command">containerapp_list</parameter>
+#   </invoke></function_calls>
+# We detect the marker to hold it back from the visible answer and parse it into real
+# tool calls. Kept lenient: matches individual <invoke> blocks even when the wrapping
+# <function_calls> tags are missing, duplicated, or malformed.
+_FN_MARKERS = ("<function_calls>", "<function_call>", "<invoke name=", "<invoke name =")
+_INVOKE_RE = re.compile(r'<invoke\s+name\s*=\s*"([^"]+)"\s*>(.*?)</invoke>', re.DOTALL | re.IGNORECASE)
+_PARAM_RE = re.compile(r'<parameter\s+name\s*=\s*"([^"]+)"\s*>(.*?)</parameter>', re.DOTALL | re.IGNORECASE)
+# Longest marker minus one: how much trailing text to hold back so a marker split across
+# stream chunks is never emitted before we can detect it.
+FN_MARKER_HOLDBACK = max(len(m) for m in _FN_MARKERS) - 1
+
+
+def find_function_call_marker(text: str) -> int:
+    """Index of the earliest Anthropic function-call marker in ``text``, or -1."""
+    lowered = text.lower()
+    best = -1
+    for m in _FN_MARKERS:
+        i = lowered.find(m)
+        if i != -1 and (best == -1 or i < best):
+            best = i
+    return best
+
+
+def _coerce_param_value(raw: str) -> Any:
+    """Coerce a <parameter> body to a JSON scalar/collection when it clearly is one,
+    otherwise keep it as a (HTML-unescaped) string — resource ids, GUIDs, KQL, etc."""
+    import html
+
+    val = html.unescape(raw).strip()
+    try:
+        parsed = json.loads(val)
+    except (json.JSONDecodeError, ValueError):
+        return val
+    # Only accept non-string JSON types; a bare word like `learn` must stay a string.
+    if isinstance(parsed, (int, float, bool, list, dict)) or parsed is None:
+        return parsed
+    return val
+
+
+def parse_anthropic_function_calls(text: str) -> list[ToolCallRequest]:
+    """Parse Claude-Code-style ``<invoke name="…"><parameter …></invoke>`` XML that a
+    model emitted as text into structured tool calls. Returns [] when none are present.
+    Tolerant of malformed/duplicated ``<function_calls>`` wrappers."""
+    if not text or "<invoke" not in text.lower():
+        return []
+    calls: list[ToolCallRequest] = []
+    for m in _INVOKE_RE.finditer(text):
+        name = (m.group(1) or "").strip()
+        if not name:
+            continue
+        args: dict[str, Any] = {}
+        for pm in _PARAM_RE.finditer(m.group(2) or ""):
+            key = (pm.group(1) or "").strip()
+            if key:
+                args[key] = _coerce_param_value(pm.group(2) or "")
+        calls.append(
+            ToolCallRequest(id=f"call_{uuid.uuid4().hex[:12]}", name=name, arguments=args)
+        )
+    return calls
+
+
 def extract_thought(text: str) -> str:
     """Pull the model's "thought" (its restated understanding + plan) out of a
     tool-call JSON directive, if present. Returns "" when there is none."""
