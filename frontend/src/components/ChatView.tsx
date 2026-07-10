@@ -630,6 +630,13 @@ export default function ChatView() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  // A one-shot handoff message that should be submitted after its workload and thinking
+  // mode have committed. Used by workload Deep review so the user lands directly on the
+  // agent-selection gate, without dispatching any agents until they click Launch.
+  const [pendingHandoffSend, setPendingHandoffSend] = useState<{
+    prompt: string;
+    workloadId?: string;
+  } | null>(null);
   // Per-chat composer drafts. The `input` state is a single global value, so without
   // this a half-typed message would follow the user into whatever chat they switch to.
   // We stash the outgoing chat's draft here (keyed by chat id; "" = the new-chat view)
@@ -2140,20 +2147,45 @@ export default function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
 
-  // Handoff from a Workload card's "Chat" button: scope a fresh chat to the workload
-  // (normal mode). One-shot via sessionStorage, applied on the new-chat composer; sending
-  // the first message creates the chat with this workload scope (the proven path).
+  // Handoff from a Workload card: scope a fresh chat to the workload. The regular Chat
+  // action supplies only the workload; Deep review additionally supplies deep mode and
+  // a message to submit automatically. Submission stops at the existing agent-selection
+  // gate and never dispatches specialists until the user explicitly clicks Launch.
   useEffect(() => {
     let raw: string | null = null;
     try { raw = sessionStorage.getItem("azsup.chatHandoff"); } catch { /* ignore */ }
     if (!raw) return;
     try { sessionStorage.removeItem("azsup.chatHandoff"); } catch { /* ignore */ }
-    let scope: { workloadId?: string };
+    let scope: {
+      workloadId?: string;
+      prompt?: string;
+      thinkingLevel?: "normal" | "deep";
+      autoSend?: boolean;
+    };
     try { scope = JSON.parse(raw); } catch { return; }
     syncedChatRef.current = activeChat?.id ?? null;
+    if (scope.thinkingLevel) setThinkingLevel(scope.thinkingLevel);
     if (scope.workloadId) setSelectedWorkloadId(scope.workloadId);
+    if (scope.prompt && scope.autoSend) {
+      setPendingHandoffSend({ prompt: scope.prompt, workloadId: scope.workloadId });
+    } else if (scope.prompt) {
+      setInputSynced(scope.prompt);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
+
+  // Wait one render for the handoff's deep mode and workload scope to commit, then use
+  // the normal send path. That path creates the chat and loads agent recommendations,
+  // but returns at pendingDeepAuth; only the launch button can start the investigation.
+  useEffect(() => {
+    if (!pendingHandoffSend) return;
+    if (thinkingLevel !== "deep") return;
+    if (pendingHandoffSend.workloadId && selectedWorkloadId !== pendingHandoffSend.workloadId) return;
+    const { prompt } = pendingHandoffSend;
+    setPendingHandoffSend(null);
+    void send(prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingHandoffSend, thinkingLevel, selectedWorkloadId]);
 
   // Handoff from the Identity dashboard: "Investigate" stores a one-shot scope (optional
   // owning workload + a prefilled prompt) in sessionStorage and navigates to /chat. We

@@ -2298,6 +2298,22 @@ export const api = {
   deleteCase: (id: string) =>
     http<{ deleted: boolean }>(`/cases/${id}`, { method: "DELETE" }),
   createChat: () => http<Chat>("/chats", { method: "POST", body: "{}" }),
+  deepReviewFleet: (workloadIds: string[]) =>
+    http<{
+      launched: number;
+      agent_count: number;
+      chats: Array<{
+        chat_id: string;
+        workload_id: string;
+        workload_name: string;
+        title: string;
+        status: "running" | "error";
+        error?: string | null;
+      }>;
+    }>("/chats/deep-reviews/fleet", {
+      method: "POST",
+      body: JSON.stringify({ workload_ids: workloadIds }),
+    }),
   deleteChat: (id: string) => http<{ ok: boolean }>(`/chats/${id}`, { method: "DELETE" }),
   deleteAllChats: () => http<{ ok: boolean; deleted: number }>("/chats", { method: "DELETE" }),
   // Trash (soft-deleted / archived chats).

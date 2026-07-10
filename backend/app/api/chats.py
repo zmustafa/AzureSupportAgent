@@ -29,6 +29,17 @@ logger = logging.getLogger("app.chats")
 router = APIRouter(prefix="/chats", tags=["chats"])
 settings = get_settings()
 
+# Bulk workload reviews create every durable chat immediately, but only this many reviews
+# may execute at once. The remaining TurnRuns stay registered/visible in the sidebar and
+# enter the investigation automatically as slots open, avoiding an 8-agents × N-workloads
+# burst against the model provider, MCP sessions, and Azure APIs.
+_DEEP_REVIEW_FLEET_CONCURRENCY = 2
+_deep_review_fleet_gate = asyncio.Semaphore(_DEEP_REVIEW_FLEET_CONCURRENCY)
+DEEP_RELIABILITY_REVIEW_PROMPT = (
+    "Do a full reliability review of the workload across networking, identity, compute, "
+    "storage, security, monitoring and cost, and name the top risk."
+)
+
 
 def _active_provider() -> str:
     """The globally-active provider id (for new chats / fallback)."""
@@ -1165,18 +1176,18 @@ async def deep_suggest_agents(
     return {"agents": agents}
 
 
-@router.post("/{chat_id}/messages/stream")
-async def stream_message(
+async def _start_message_turn(
     chat_id: str,
     payload: MessageCreate,
-    principal: Principal = Depends(get_principal),
-    db: AsyncSession = Depends(get_db),
+    principal: Principal,
+    db: AsyncSession,
+    *,
+    worker_gate: asyncio.Semaphore | None = None,
 ):
-    """Append a user message and stream the agent's response over SSE.
+    """Append a user message and start its disconnect-resilient background turn.
 
-    The agent work runs in a background task (see turn_runner) that is NOT tied to
-    this SSE connection, so navigating away / disconnecting never stops the turn —
-    it runs to completion and persists. Reconnect via GET /{chat_id}/stream.
+    The caller may subscribe to the returned TurnRun, or leave it running without an
+    SSE connection (the bulk-review path). In either case it persists to completion.
     """
     from app.agent.turn_runner import TurnRun, registry
 
@@ -1187,7 +1198,7 @@ async def stream_message(
     if registry.is_active(chat_id):
         run = registry.get(chat_id)
         assert run is not None
-        return EventSourceResponse(_sse_from_run(run))
+        return run
 
     if payload.regenerate:
         # Regenerate in place: drop the trailing assistant message (and any trailing
@@ -1766,8 +1777,149 @@ async def stream_message(
                 # Always release the per-turn MCP client (temp cert file, etc.).
                 orchestrator.close()
 
-    run = registry.start(chat_id, assistant_id, worker)
+    if worker_gate is not None:
+        async def gated_worker(gated_run: "TurnRun") -> None:
+            async with worker_gate:
+                await worker(gated_run)
+
+        turn_worker = gated_worker
+    else:
+        turn_worker = worker
+
+    run = registry.start(chat_id, assistant_id, turn_worker)
+    return run
+
+
+@router.post("/{chat_id}/messages/stream")
+async def stream_message(
+    chat_id: str,
+    payload: MessageCreate,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    run = await _start_message_turn(chat_id, payload, principal, db)
     return EventSourceResponse(_sse_from_run(run))
+
+
+class DeepReviewFleetRequest(BaseModel):
+    workload_ids: list[str]
+
+
+def _resolve_deep_review_workloads(workload_ids: list[str]) -> list[dict[str, Any]]:
+    """Validate and de-duplicate a fleet request before creating any chats."""
+    from app.workloads import registry as workload_registry
+
+    unique_ids = list(dict.fromkeys(wid.strip() for wid in workload_ids if wid.strip()))
+    if not unique_ids:
+        raise HTTPException(status_code=422, detail="Select at least one workload.")
+    if len(unique_ids) > 20:
+        raise HTTPException(status_code=422, detail="Deep review supports at most 20 workloads per launch.")
+
+    workloads: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for workload_id in unique_ids:
+        workload = workload_registry.get_workload(workload_id)
+        if workload is None:
+            missing.append(workload_id)
+        else:
+            workloads.append(workload)
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workload{'s' if len(missing) != 1 else ''} not found: {', '.join(missing)}",
+        )
+    return workloads
+
+
+@router.post("/deep-reviews/fleet")
+async def launch_deep_review_fleet(
+    payload: DeepReviewFleetRequest,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create and start one all-specialist deep review per selected workload."""
+    from app.agent.deep_agents import public_catalog
+    from app.core.azure_connections import connection_for_workload
+
+    workloads = _resolve_deep_review_workloads(payload.workload_ids)
+    agent_ids = [agent["id"] for agent in public_catalog()]
+    if len(agent_ids) != 8:  # Guard the product contract if the catalog changes later.
+        raise HTTPException(status_code=500, detail="The eight-agent deep-review roster is unavailable.")
+
+    launches: list[tuple[Chat, dict[str, Any], str | None]] = []
+    for workload in workloads:
+        workload_name = str(workload.get("name") or workload.get("id") or "Workload")
+        connection = connection_for_workload(workload)
+        connection_id = str(connection.get("id")) if connection and connection.get("id") else None
+        chat = Chat(
+            tenant_id=principal.tenant_id,
+            user_id=principal.subject,
+            title=f"Deep review: {workload_name}"[:256],
+            provider=_active_provider(),
+            model=active_model() or settings.llm_model,
+            connection_id=connection_id,
+            thinking_level="deep",
+            workload_id=str(workload["id"]),
+        )
+        db.add(chat)
+        launches.append((chat, workload, connection_id))
+
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="chats.deep_review_fleet",
+            target=None,
+            metadata_json={"workload_ids": [str(w["id"]) for w in workloads], "agent_count": 8},
+        )
+    )
+    await db.commit()
+    for chat, _, _ in launches:
+        await db.refresh(chat)
+
+    results: list[dict[str, Any]] = []
+    launched = 0
+    for chat, workload, connection_id in launches:
+        status = "running"
+        error = ""
+        try:
+            await _start_message_turn(
+                chat.id,
+                MessageCreate(
+                    content=DEEP_RELIABILITY_REVIEW_PROMPT,
+                    thinking_level="deep",
+                    deep_agents=agent_ids,
+                    workload_id=str(workload["id"]),
+                    connection_id=connection_id,
+                ),
+                principal,
+                db,
+                worker_gate=_deep_review_fleet_gate,
+            )
+            launched += 1
+        except Exception as exc:  # noqa: BLE001 - preserve other fleet launches
+            status = "error"
+            error = format_error(exc, max_len=500)
+            db.add(
+                Message(
+                    chat_id=chat.id,
+                    role="assistant",
+                    content=f"⚠️ The deep review could not start: {error}",
+                )
+            )
+            await db.commit()
+        results.append(
+            {
+                "chat_id": chat.id,
+                "workload_id": str(workload["id"]),
+                "workload_name": str(workload.get("name") or workload["id"]),
+                "title": chat.title,
+                "status": status,
+                "error": error or None,
+            }
+        )
+
+    return {"launched": launched, "agent_count": len(agent_ids), "chats": results}
 
 
 async def _sse_from_run(run) -> Any:

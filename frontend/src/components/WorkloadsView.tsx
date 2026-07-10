@@ -14,6 +14,8 @@ import { ConstellationMap } from "./workloads/ConstellationMap";
 const input =
   "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
 const label = "mb-1 block text-xs font-medium text-gray-600";
+const DEEP_RELIABILITY_REVIEW_PROMPT =
+  "Do a full reliability review of the workload across networking, identity, compute, storage, security, monitoring and cost, and name the top risk.";
 
 function countByKind(nodes: WorkloadNode[]): string {
   const c: Record<string, number> = {};
@@ -799,6 +801,7 @@ export function WorkloadsPanel() {
 
   // Fleet mission selection.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [launchingDeepReviews, setLaunchingDeepReviews] = useState(false);
   const toggleSelected = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -817,6 +820,35 @@ export function WorkloadsPanel() {
       setSelected(new Set());
     } catch (e) {
       setMsg(formatError(e));
+    }
+  }
+
+  async function launchDeepReviewFleet() {
+    if (selected.size === 0 || launchingDeepReviews) return;
+    setLaunchingDeepReviews(true);
+    setMsg("");
+    setNotice("");
+    try {
+      const result = await api.deepReviewFleet(Array.from(selected));
+      const started = result.chats.filter((chat) => chat.status === "running");
+      const failed = result.chats.length - started.length;
+      setSelected(new Set());
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["chats"] }),
+        qc.invalidateQueries({ queryKey: ["activeTurns"] }),
+      ]);
+      if (started.length > 0) {
+        navigate(`/c/${started[0].chat_id}`);
+      } else {
+        setMsg(result.chats[0]?.error || "The selected deep reviews could not be started.");
+      }
+      if (failed > 0 && started.length > 0) {
+        setNotice(`Started ${started.length} deep review${started.length === 1 ? "" : "s"}; ${failed} failed to start.`);
+      }
+    } catch (e) {
+      setMsg(formatError(e));
+    } finally {
+      setLaunchingDeepReviews(false);
     }
   }
 
@@ -899,6 +931,18 @@ export function WorkloadsPanel() {
       onMission={() => navigate(`/mission-control/${w.id}`)}
       onAssess={() => { sessionStorage.setItem("azsup.assessWorkload", w.id); navigate("/assessments"); }}
       onChat={() => { sessionStorage.setItem("azsup.chatHandoff", JSON.stringify({ workloadId: w.id })); navigate("/chat"); }}
+      onDeepReview={() => {
+        sessionStorage.setItem(
+          "azsup.chatHandoff",
+          JSON.stringify({
+            workloadId: w.id,
+            prompt: DEEP_RELIABILITY_REVIEW_PROMPT,
+            thinkingLevel: "deep",
+            autoSend: true,
+          }),
+        );
+        navigate("/chat");
+      }}
       refreshing={refreshing === w.id}
       groupName={grouped ? undefined : groupNameOf(w)}
       onOpenGroup={w.group_id ? () => navigate(`/workloads/groups/${w.group_id}`) : undefined}
@@ -1032,6 +1076,14 @@ export function WorkloadsPanel() {
             <span className="font-medium text-brand">{selected.size} selected</span>
             <button onClick={launchFleet} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">
               🚀 Launch missions
+            </button>
+            <button
+              onClick={() => void launchDeepReviewFleet()}
+              disabled={launchingDeepReviews}
+              title="Launch an eight-agent deep reliability review for every selected workload"
+              className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 disabled:cursor-wait disabled:opacity-60"
+            >
+              {launchingDeepReviews ? "Launching deep reviews…" : "✨ Deep review"}
             </button>
             {selected.size >= 2 && (
               <button onClick={mergeSelected} className="rounded-lg border border-brand/40 bg-white px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5" title="Merge the selected workloads into one new workload (originals move to Trash)">
