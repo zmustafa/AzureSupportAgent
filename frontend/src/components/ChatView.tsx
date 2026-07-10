@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo, createContext, useContext, useCallback, useMemo, Children, isValidElement, lazy, Suspense } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, memo, createContext, useContext, useCallback, useMemo, Children, isValidElement, lazy, Suspense } from "react";
 import { flushSync } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation, Link } from "react-router-dom";
@@ -800,6 +800,7 @@ export default function ChatView() {
   // already pinned to the bottom; otherwise we surface a "New messages" pill so a
   // streaming response never yanks the viewport away from what they're reading.
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messageContentRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const [showNewMessages, setShowNewMessages] = useState(false);
   // Command/query editor panel (right drawer). Open when a code block's "Edit" button
@@ -1108,18 +1109,25 @@ export default function ChatView() {
   // Keep the latest content in view ONLY when the user is pinned to the bottom.
   // If they've scrolled up to read, new streamed content must not yank the viewport;
   // instead we show a "New messages" pill (handled below). Depend on message count,
-  // streamed text length, and the live progress-feed length so it also follows the
-  // "Working on your request…" status lines as they stream in (not just final tokens).
-  useEffect(() => {
+  // streamed text length, the live progress-feed length, and pending prompt content so
+  // it also follows status lines and asynchronously populated launcher cards.
+  useLayoutEffect(() => {
     if (atBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
+      // The deep launcher can grow substantially when its agent roster arrives. Scroll
+      // immediately while it is open so intermediate smooth-scroll events cannot mark
+      // the viewport as unpinned before the roster finishes rendering.
+      const container = scrollContainerRef.current;
+      container?.scrollTo({
+        top: container.scrollHeight,
+        behavior: streaming || pendingDeepAuth ? "auto" : "smooth",
+      });
       setShowNewMessages(false);
     } else if (streaming || messages.length) {
       // Content arrived while scrolled up — invite the user to jump down.
       setShowNewMessages(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, streamText.length, liveLog.length, streaming, pendingClarify, pendingPropose]);
+  }, [messages.length, streamText.length, liveLog.length, streaming, pendingClarify, pendingPropose, pendingDeepAuth, deepAgentOptions]);
 
   // Track whether the message list is scrolled to (near) the bottom.
   function handleMessagesScroll() {
@@ -1242,6 +1250,10 @@ export default function ChatView() {
     // running the long, multi-phase investigation. The first-time notice is shown when
     // the user enables deep mode from the dropdown, not here.
     if (thinkingLevel === "deep" && !hasImages) {
+      // Chat creation and responsive panel layout may have occurred since send() first
+      // pinned the viewport. Reassert the pin immediately before the launcher renders.
+      atBottomRef.current = true;
+      setShowNewMessages(false);
       setPendingDeepAuth({ chatId, content: effectiveContent, hasImages });
       // Load the specialist-agent suggestions (AI pre-selects the relevant ones) so the
       // launch popup can show a "war room roster" picker.
@@ -2064,6 +2076,22 @@ export default function ChatView() {
 
   const showWelcome =
     displayMessages.length === 0 && !streamText && !streaming && !pendingClarify && !pendingPropose && !pendingDeepAuth;
+
+  // Pending cards can keep growing after their state commits (for example, the deep
+  // agent roster arrives asynchronously or reflows while its side panel opens). Keep
+  // following that layout growth only while the user remains pinned to the bottom.
+  useEffect(() => {
+    if (showWelcome) return;
+    const content = messageContentRef.current;
+    const container = scrollContainerRef.current;
+    if (!content || !container) return;
+
+    const observer = new ResizeObserver(() => {
+      if (atBottomRef.current) container.scrollTop = container.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [showWelcome]);
 
   // Model picker reflects the ACTIVE CHAT's saved provider/model (each chat keeps its
   // own), falling back to the global active provider for a new/unsaved chat.
@@ -3279,6 +3307,7 @@ export default function ChatView() {
       <main className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto px-6 py-4">
           <div
+            ref={messageContentRef}
             className={`mx-auto space-y-4 ${
               showWelcome
                 ? "max-w-3xl"
