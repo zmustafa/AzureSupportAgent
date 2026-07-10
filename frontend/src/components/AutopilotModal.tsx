@@ -245,6 +245,12 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Free-text filter over the discovered candidates (name / description / type / RG / class).
   const [search, setSearch] = useState("");
+  // Review ordering is client-side and never changes candidate identity: selection and
+  // edits remain keyed by the original discovery index even while this list is sorted.
+  const [candidateSort, setCandidateSort] = useState<
+    "resources" | "confidence" | "name" | "environment" | "criticality" | "resource_groups"
+  >("resources");
+  const [candidateSortDirection, setCandidateSortDirection] = useState<"asc" | "desc">("desc");
   // Per-candidate inline edits (rename + criticality) the user makes while reviewing —
   // applied on save AND recorded into grouping memory so the next run learns from them.
   const [edits, setEdits] = useState<Record<number, { name?: string; criticality?: string }>>({});
@@ -525,14 +531,12 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
     }
   }
 
-  // Free-text filter — matches name, description, reasoning, workload type/environment, resource
-  // groups and the resource-type labels. Keeps each candidate's ORIGINAL index so selection,
-  // edits and save (which key off the index) stay correct while filtered.
+  // Free-text filter + review ordering. Keep each candidate's ORIGINAL index so selection,
+  // inline edits and save stay correct while the visible list is filtered or reordered.
   const visibleCandidates = useMemo(() => {
     const q = search.trim().toLowerCase();
     const indexed = candidates.map((c, i) => ({ c, i }));
-    if (!q) return indexed;
-    return indexed.filter(({ c }) => {
+    const filtered = q ? indexed.filter(({ c }) => {
       const hay = [
         c.name, c.description, c.reasoning, c.workload_type, c.environment, c.criticality,
         ...(c.resource_groups || []),
@@ -540,8 +544,37 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
         ...(c.evidence || []).map((e) => e.detail),
       ].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
-    });
-  }, [candidates, search]);
+    }) : indexed;
+
+    const criticalityRank: Record<string, number> = {
+      critical: 4,
+      high: 3,
+      medium: 2,
+      low: 1,
+    };
+    const compare = (a: (typeof indexed)[number], b: (typeof indexed)[number]) => {
+      let result = 0;
+      if (candidateSort === "resources") {
+        result = (a.c.resource_count ?? 0) - (b.c.resource_count ?? 0);
+      } else if (candidateSort === "confidence") {
+        result = (a.c.confidence ?? 0) - (b.c.confidence ?? 0);
+      } else if (candidateSort === "name") {
+        result = (edits[a.i]?.name ?? a.c.name).localeCompare(edits[b.i]?.name ?? b.c.name);
+      } else if (candidateSort === "environment") {
+        result = (a.c.environment ?? "").localeCompare(b.c.environment ?? "");
+      } else if (candidateSort === "criticality") {
+        const aCriticality = edits[a.i]?.criticality ?? a.c.criticality ?? "";
+        const bCriticality = edits[b.i]?.criticality ?? b.c.criticality ?? "";
+        result = (criticalityRank[aCriticality.toLowerCase()] ?? 0) -
+          (criticalityRank[bCriticality.toLowerCase()] ?? 0);
+      } else {
+        result = (a.c.resource_groups?.length ?? 0) - (b.c.resource_groups?.length ?? 0);
+      }
+      if (result === 0) result = a.c.name.localeCompare(b.c.name) || a.i - b.i;
+      return candidateSortDirection === "asc" ? result : -result;
+    };
+    return [...filtered].sort(compare);
+  }, [candidates, search, candidateSort, candidateSortDirection, edits]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={cancel}>
@@ -872,6 +905,30 @@ export function AutopilotModal({ onClose, onSaved }: { onClose: () => void; onSa
                         : `${candidates.length} candidate workload${candidates.length === 1 ? "" : "s"}`}
                     </span>
                     <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <select
+                          value={candidateSort}
+                          onChange={(e) => setCandidateSort(e.target.value as typeof candidateSort)}
+                          title="Sort candidate workloads"
+                          aria-label="Sort candidate workloads by"
+                          className="rounded-md border bg-white px-2 py-1 text-xs text-gray-600"
+                        >
+                          <option value="resources">Resources</option>
+                          <option value="confidence">Confidence</option>
+                          <option value="name">Name</option>
+                          <option value="environment">Environment</option>
+                          <option value="criticality">Criticality</option>
+                          <option value="resource_groups">Resource groups</option>
+                        </select>
+                        <button
+                          onClick={() => setCandidateSortDirection((d) => d === "asc" ? "desc" : "asc")}
+                          title={candidateSortDirection === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+                          aria-label={`Sort ${candidateSortDirection === "asc" ? "ascending" : "descending"}`}
+                          className="rounded-md border bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                        >
+                          {candidateSortDirection === "asc" ? "↑" : "↓"}
+                        </button>
+                      </div>
                       <div className="relative">
                         <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">⌕</span>
                         <input
