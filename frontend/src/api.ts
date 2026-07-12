@@ -974,10 +974,16 @@ export type NotificationSimulation = {
 
 export type BulkNotificationSimulation = {
   summary: { rules: number; resources: number; action_groups: number; receiver_paths: number; would_deliver: number; blocked: number; diagnostics: number };
+  facets?: { families: Partial<Record<ManagedAlertRule["family"], number>>; severities: Partial<Record<0 | 1 | 2 | 3 | 4, number>>; total_rules: number };
   nodes: { id: string; name: string; kind: "resource" | "alert" | "action_group" | "receiver" | "outcome"; status: string; resource_id?: string; family?: string; severity?: number; receiver_type?: string; fingerprint?: string }[];
   links: { source: string; target: string; value: number; status: string; receiver_type?: string }[];
   routes: { resource_ids: string[]; rule_id: string; rule_name: string; family: string; severity: number | null; rule_enabled: boolean; action_group_id: string; action_group_name: string; action_group_enabled?: boolean; receiver_type: string; receiver_name: string; receiver_destination?: string; receiver_masked: string; receiver_fingerprint?: string; receiver_enabled?: boolean; payload_schema?: string; outcome: string; would_run?: boolean; issues: string[] }[];
   diagnostics: { code: string; severity: string; rule_id?: string; rule_name?: string; action_group_id?: string; receiver?: string; message: string }[];
+  scope?: { kind: "workload" | "subscription" | "management_group"; id: string; name?: string };
+  resources?: { id: string; name?: string; type?: string; resource_type?: string; resource_group?: string; subscription_id?: string; subscription_name?: string; workload_ids?: string[]; alert_rule_ids?: string[]; accessible?: boolean }[];
+  workloads?: { id: string; name: string; resource_ids?: string[]; subscription_ids?: string[]; accessible?: boolean }[];
+  subscriptions?: { id: string; name?: string; accessible?: boolean; partial?: boolean }[];
+  completeness?: { complete?: boolean; partial?: boolean; inaccessible_subscription_ids?: string[]; warnings?: string[] };
   warning: string;
 };
 
@@ -4990,8 +4996,8 @@ export const api = {
     http<NoiseGuardResult>("/alerts-manager/alert-rules/noise-guard", { method: "POST", body: JSON.stringify(body) }),
   simulateNotificationPath: (body: { connection_id?: string; rule_id?: string; rule_name?: string; family?: ManagedAlertRule["family"]; resource_id?: string; severity?: number; timestamp?: string; description?: string; action_group_ids?: string[]; selected_action_group_ids?: string[]; use_selected_only?: boolean; monitor_condition?: "Fired" | "Resolved" }) =>
     http<NotificationSimulation>("/alerts-manager/notifications/simulate", { method: "POST", body: JSON.stringify(body) }),
-  bulkSimulateNotificationPaths: (body: AlertsManagerScopeContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }) =>
-    http<BulkNotificationSimulation>("/alerts-manager/notifications/bulk-simulate", { method: "POST", body: JSON.stringify(body) }),
+  bulkSimulateNotificationPaths: (body: AlertsManagerScopeContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }, signal?: AbortSignal) =>
+    http<BulkNotificationSimulation>("/alerts-manager/notifications/bulk-simulate", { method: "POST", body: JSON.stringify(body), signal }),
   actionGroupSuggestions: (params: { connection_id?: string; workload_id?: string; subject_kind: "resource" | "workload"; subject_id: string }) => {
     const q = new URLSearchParams({ subject_kind: params.subject_kind, subject_id: params.subject_id });
     if (params.connection_id) q.set("connection_id", params.connection_id);

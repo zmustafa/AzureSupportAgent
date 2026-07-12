@@ -65,12 +65,12 @@ const COST_FAMILY_LABELS: Record<string, string> = {
   unknown: "Unknown",
 };
 
-type Tab = "overview" | "inbox" | "overlaps" | "gaps" | "rules" | "manage-rules" | "action-groups" | "deployment-plans" | "simulator" | "changes";
+type Tab = "overview" | "inbox" | "overlaps" | "gaps" | "rules" | "manage-rules" | "action-groups" | "deployment-plans" | "visualize" | "changes";
 const PAGE_SIZE = 100;
 const CHANGES_PAGE_SIZE = 100;
 type ChangesView = "all" | "action_required" | "archived";
 type ChangesSort = "newest" | "oldest" | "status" | "risk" | "change";
-const VALID_TABS = new Set<Tab>(["overview", "inbox", "overlaps", "gaps", "rules", "manage-rules", "action-groups", "deployment-plans", "simulator", "changes"]);
+const VALID_TABS = new Set<Tab>(["overview", "inbox", "overlaps", "gaps", "rules", "manage-rules", "action-groups", "deployment-plans", "visualize", "changes"]);
 type ChangesPage = { changes: AlertsManagerChange[]; total: number; page: number; page_size: number; pending_count: number; approved_count: number; actionable_count: number };
 
 function PagedView<T>({ rows, page, onPage, children }: { rows: T[]; page: number; onPage: (page: number) => void; children: (rows: T[]) => ReactNode }) {
@@ -667,8 +667,11 @@ export function AlertsManagerPanel() {
 
   const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const workloads = workloadsQ.data?.workloads ?? [];
+  const connectionWorkloads = workloads.filter((workload) => !connId || !workload.connection_id || workload.connection_id === connId);
   const effectiveWorkloadId = scopeKind === "workload"
-    ? workloadId || workloads.find((workload) => workload.id === "demo-amba-coverage")?.id || workloads[0]?.id || ""
+    ? connectionWorkloads.some((workload) => workload.id === workloadId)
+      ? workloadId
+      : connectionWorkloads.find((workload) => workload.id === "demo-amba-coverage")?.id || connectionWorkloads[0]?.id || ""
     : "";
   const params = scopeKind === "workload"
     ? { workload_id: effectiveWorkloadId, connection_id: connId }
@@ -695,11 +698,12 @@ export function AlertsManagerPanel() {
   });
   const refreshJob = jobQ.data?.job;
   const refreshing = refreshJob?.status === "running";
-  const handledJobRef = useRef("");
+  const handledJobsRef = useRef(new Set<string>());
+  const activeJobsRef = useRef(new Set<string>());
   const trendQ = useQuery({
     queryKey: ["alert-analysis-trend", scopeKind, effectiveWorkloadId, subId, mgId],
     queryFn: () => api.alertAnalysisTrend(params),
-    enabled: ready,
+    enabled: ready && !!data?.report_exists,
     staleTime: 5 * 60 * 1000,
   });
   const managementParams = scopeKind === "workload"
@@ -714,15 +718,21 @@ export function AlertsManagerPanel() {
     staleTime: 2 * 60_000,
   });
   const managedGroupsQ = useQuery({
-    queryKey: queryKeys.alertsManager.actionGroups({ ...managementParams, ...(tab === "manage-rules" || !!ruleEditor ? { all_visible: true } : {}) }),
-    queryFn: () => api.managedActionGroups({ ...managementParams, ...(tab === "manage-rules" || !!ruleEditor ? { all_visible: true } : {}) }),
-    enabled: ready && !!data && !data.demo && (tab === "action-groups" || tab === "manage-rules" || !!ruleEditor || gapPlannerOpen || activityLogWizardOpen),
+    queryKey: queryKeys.alertsManager.actionGroups(managementParams),
+    queryFn: () => api.managedActionGroups(managementParams),
+    enabled: ready && !!data && !data.demo && (tab === "action-groups" || gapPlannerOpen || activityLogWizardOpen),
+    staleTime: 5 * 60_000,
+  });
+  const ruleActionGroupsQ = useQuery({
+    queryKey: queryKeys.alertsManager.actionGroups({ ...managementParams, all_visible: true }),
+    queryFn: () => api.managedActionGroups({ ...managementParams, all_visible: true }),
+    enabled: ready && !!data && !data.demo,
     staleTime: 5 * 60_000,
   });
   const managedRulesQ = useQuery({
     queryKey: queryKeys.alertsManager.rules(managementParams),
     queryFn: () => api.managedAlertRules(managementParams),
-    enabled: ready && !!data && !data.demo && tab === "manage-rules",
+    enabled: ready && !!data && !data.demo,
     staleTime: 5 * 60_000,
   });
   const summaryQ = useQuery({
@@ -751,8 +761,15 @@ export function AlertsManagerPanel() {
   const changesQueryKey = queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE, changesView, changesSort);
   useEffect(() => {
     const state = jobQ.data;
-    if (!state?.job || state.job.status === "running" || handledJobRef.current === state.job.id) return;
-    handledJobRef.current = state.job.id;
+    if (!state?.job) return;
+    const identity = `${scopeKind}:${effectiveWorkloadId || subId || mgId}:${connId}:${state.job.id}`;
+    if (state.job.status === "running") {
+      activeJobsRef.current.add(identity);
+      return;
+    }
+    if (handledJobsRef.current.has(identity)) return;
+    handledJobsRef.current.add(identity);
+    if (!activeJobsRef.current.delete(identity)) return;
     if (state.job.status === "done" && state.result) {
       qc.setQueryData(queryKey, state.result);
       setAnalysisNeedsRefresh(false);
@@ -766,7 +783,7 @@ export function AlertsManagerPanel() {
     } else if (state.job.status === "error") {
       setError(state.job.error || "Alert analysis failed.");
     }
-  }, [jobQ.data, qc, queryKey]);
+  }, [jobQ.data, qc, queryKey, scopeKind, effectiveWorkloadId, subId, mgId, connId]);
 
   const query = useDeferredValue(search.trim().toLowerCase());
   const searchableRules = useMemo(() => (data?.rules ?? []).map((rule) => ({ rule, text: `${rule.name} ${rule.type} ${rule.resource_group} ${rule.conditions.map((item) => item.signal_name).join(" ")} ${rule.action_group_names.join(" ")}`.toLowerCase() })), [data?.rules]);
@@ -801,12 +818,14 @@ export function AlertsManagerPanel() {
     const analysisKey = ["alert-analysis", scopeKind, effectiveWorkloadId, subId, mgId, connId];
     const rulesKey = queryKeys.alertsManager.rules(managementParams);
     const groupsKey = queryKeys.alertsManager.actionGroups(managementParams);
+    const allVisibleGroupsKey = queryKeys.alertsManager.actionGroups({ ...managementParams, all_visible: true });
     const inboxKey = queryKeys.alertsManager.inbox(managementParams, 30);
     return () => {
       void Promise.all([
         qc.cancelQueries({ queryKey: analysisKey, exact: true }),
         qc.cancelQueries({ queryKey: rulesKey, exact: true }),
         qc.cancelQueries({ queryKey: groupsKey, exact: true }),
+        qc.cancelQueries({ queryKey: allVisibleGroupsKey, exact: true }),
         qc.cancelQueries({ queryKey: inboxKey, exact: true }),
         qc.cancelQueries({ queryKey: queryKeys.alertsManager.activityLogCoverage(managementParams), exact: true }),
       ]);
@@ -841,7 +860,11 @@ export function AlertsManagerPanel() {
     setError("");
     try {
       const state = await api.startAlertAnalysisRefresh(params);
-      handledJobRef.current = "";
+      if (state.job) {
+        const identity = `${scopeKind}:${effectiveWorkloadId || subId || mgId}:${connId}:${state.job.id}`;
+        activeJobsRef.current.add(identity);
+        handledJobsRef.current.delete(identity);
+      }
       qc.setQueryData(jobKey, state);
     } catch (cause) {
       setError(formatError(cause));
@@ -1141,16 +1164,16 @@ export function AlertsManagerPanel() {
   const tabs: { id: Tab; label: string; count?: number; urgent?: boolean }[] = [
     { id: "overview", label: "Overview" },
     { id: "inbox", label: "Alert instances", count: firedQ.data?.count },
-    { id: "simulator", label: "Path simulator" },
+    { id: "visualize", label: "Visualize" },
     { id: "overlaps", label: "Overlaps", count: data?.overlaps.length },
     { id: "gaps", label: "Gaps", count: data?.gaps.length },
     { id: "rules", label: "Rule analysis", count: data?.rules.length },
     { id: "manage-rules", label: "Rule management", count: managedRulesQ.data?.count },
-    { id: "action-groups", label: "Action groups", count: data?.demo ? data.action_groups.length : managedGroupsQ.data?.count },
+    { id: "action-groups", label: "Action groups", count: data?.action_groups.length ?? managedGroupsQ.data?.count },
     { id: "deployment-plans", label: "Deployment plans" },
     { id: "changes", label: "Managed changes", count: summaryQ.data?.actionable_count ?? changesQ.data?.actionable_count, urgent: (summaryQ.data?.actionable_count ?? changesQ.data?.actionable_count ?? 0) > 0 },
   ];
-  const managementTab = tab === "inbox" || tab === "manage-rules" || tab === "action-groups" || tab === "deployment-plans" || tab === "simulator" || tab === "changes";
+  const managementTab = tab === "inbox" || tab === "manage-rules" || tab === "action-groups" || tab === "deployment-plans" || tab === "visualize" || tab === "changes";
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -1168,7 +1191,13 @@ export function AlertsManagerPanel() {
             {data?.report_exists && <div className="mt-2 lg:absolute lg:left-20 lg:top-[66px] lg:mt-0 lg:origin-left lg:scale-[0.6]"><TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} deltaLabel="score vs last scan" /></div>}
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
+            <ConnectionScopePicker value={connId} onChange={(id) => {
+              if (id === connId) return;
+              setConnId(id);
+              setWorkloadId("");
+              setSubId(""); setSubName("");
+              setMgId(""); setMgName("");
+            }} />
             <div className="flex items-center gap-2">
               <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
                 {(["workload", "subscription", "management_group"] as const).map((kind) => (
@@ -1183,7 +1212,7 @@ export function AlertsManagerPanel() {
                 <ScopePicker
                   scopeKind={scopeKind}
                   onScopeKindChange={() => {}}
-                  workloads={workloads}
+                  workloads={connectionWorkloads}
                   workloadId={effectiveWorkloadId}
                   onWorkloadChange={setWorkloadId}
                   subId={subId}
@@ -1241,7 +1270,7 @@ export function AlertsManagerPanel() {
         {reportQ.isLoading ? <Skeleton rows={8} /> : reportQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(reportQ.error)}</div>
         ) : !ready ? (
-          <div className="py-20 text-center text-sm text-gray-400">Select a workload or subscription to begin.</div>
+          <div className="py-20 text-center text-sm text-gray-400">Select a workload, subscription, or management group to begin.</div>
         ) : !data?.report_exists && !managementTab ? (
           <div className="mx-auto mt-12 max-w-xl rounded-2xl border border-dashed bg-white p-10 text-center">
             <div className="text-4xl">🔔</div><h2 className="mt-3 text-base font-semibold text-gray-800">No alert analysis yet for this scope</h2><p className="mt-1 text-sm text-gray-500">Run a read-only scan of Azure Monitor rules, action groups, recipient paths, and AMBA baseline gaps.</p><button onClick={() => void refresh()} disabled={refreshing} className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{refreshing ? "Analyzing…" : "Analyze alerts"}</button>
@@ -1253,7 +1282,9 @@ export function AlertsManagerPanel() {
           : tab === "manage-rules" ? data?.demo ? <div className="rounded-xl border bg-white p-10 text-center text-sm text-gray-500">Azure alert-rule management is unavailable for demo data.</div>
             : managedRulesQ.isLoading ? <Skeleton rows={8} />
               : managedRulesQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(managedRulesQ.error)}</div>
-                    : <PagedView rows={managedRulesQ.data?.rules ?? []} page={page} onPage={goPage}>{(pageRows) => <ManagedAlertRulesTable rows={pageRows} caps={capabilities} busy={managementBusy} actionGroups={managedGroupsQ.data?.action_groups ?? []} onCreate={createManagedRule} onEdit={(row) => void editManagedRule(row)} onClone={(row) => void cloneManagedRule(row)} onToggle={(row) => void toggleManagedRule(row)} onDelete={(row) => void deleteManagedRule(row)} onBulk={(rows, action, groupId) => void bulkManagedRules(rows, action, groupId)} />}</PagedView>
+                    : ruleActionGroupsQ.isLoading ? <Skeleton rows={8} />
+                      : ruleActionGroupsQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(ruleActionGroupsQ.error)}</div>
+                      : <PagedView rows={managedRulesQ.data?.rules ?? []} page={page} onPage={goPage}>{(pageRows) => <ManagedAlertRulesTable rows={pageRows} caps={capabilities} busy={managementBusy} actionGroups={ruleActionGroupsQ.data?.action_groups ?? []} onCreate={createManagedRule} onEdit={(row) => void editManagedRule(row)} onClone={(row) => void cloneManagedRule(row)} onToggle={(row) => void toggleManagedRule(row)} onDelete={(row) => void deleteManagedRule(row)} onBulk={(rows, action, groupId) => void bulkManagedRules(rows, action, groupId)} />}</PagedView>
                   : tab === "action-groups" ? data?.demo ? <PagedView rows={data.action_groups} page={page} onPage={goPage}>{(pageRows) => <ActionGroupsTable rows={pageRows} />}</PagedView>
             : managedGroupsQ.isLoading ? <Skeleton rows={8} />
               : managedGroupsQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(managedGroupsQ.error)}</div>
@@ -1290,11 +1321,11 @@ export function AlertsManagerPanel() {
           : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
           : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onExempt={(row, index) => void recordDecision("gap", gapIdentity(row, index), "dismiss_finding")} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
           : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
-          : tab === "simulator" ? <NotificationSimulatorPanel params={managementParams} />
+          : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} />
           : null}
       </main>
       {editor && <ActionGroupEditor initial={editor} connectionId={connId} busy={managementBusy === "save"} saveError={actionGroupEditorError} onClose={() => { setActionGroupEditorError(""); setEditor(null); }} onSave={(value, reason) => void saveActionGroup(value, reason)} />}
-      {ruleEditor && <AlertRuleEditor initial={ruleEditor} connectionId={connId} workloadId={scopeKind === "workload" ? effectiveWorkloadId : ""} actionGroups={managedGroupsQ.data?.action_groups ?? []} canPreview={!!capabilitiesQ.data?.can_preview_queries} busy={managementBusy === "rule-save"} onClose={() => setRuleEditor(null)} onSave={saveManagedRule} />}
+      {ruleEditor && <AlertRuleEditor initial={ruleEditor} connectionId={connId} workloadId={scopeKind === "workload" ? effectiveWorkloadId : ""} actionGroups={ruleActionGroupsQ.data?.action_groups ?? []} canPreview={!!capabilitiesQ.data?.can_preview_queries} busy={managementBusy === "rule-save"} onClose={() => setRuleEditor(null)} onSave={saveManagedRule} />}
       {gapPlannerOpen && selectedGaps.length > 0 && <GapRemediationPlanner gaps={selectedGaps} scopeParams={managementParams} liveActionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilitiesQ.data} onClose={() => setGapPlannerOpen(false)} onOpenPlan={(planId) => { setGapPlannerOpen(false); setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onSubmitted={(plan) => { setGapPlannerOpen(false); setSelectedGapIds(new Set()); setFocusedDeploymentPlanId(plan.id); goTab("deployment-plans"); void Promise.all([qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans"] }), qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans-by-gap"] }), invalidateManagedChanges()]); }} />}
       {activityLogWizardOpen && activityLogCoverageQ.data && <ActivityLogSetupWizard coverage={activityLogCoverageQ.data.coverage} scopeParams={managementParams} actionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilities} onClose={() => setActivityLogWizardOpen(false)} onOpenDiagnostics={() => { setActivityLogWizardOpen(false); setActivityLogDiagnosticsOpen(true); }} onSubmitted={() => { setActivityLogWizardOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot })]); }} />}
       {activityLogDiagnosticsOpen && <ActivityLogDiagnosticsWizard scopeParams={managementParams} capabilities={capabilities} onBack={() => { setActivityLogDiagnosticsOpen(false); setActivityLogWizardOpen(true); }} onClose={() => setActivityLogDiagnosticsOpen(false)} onSubmitted={() => { setActivityLogDiagnosticsOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot })]); }} />}

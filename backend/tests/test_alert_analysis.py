@@ -319,6 +319,7 @@ async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(monk
     monkeypatch.setattr(alert_analysis_api, "_effective_connection_id", lambda *_args: "conn1")
     release = __import__("asyncio").Event()
     persisted: list[dict] = []
+    invalidated: list[tuple[str, str, str | None]] = []
 
     async def snapshot(_principal, scope_kind, scope_id, *, force, connection_id, progress=None):
         assert force and scope_kind == "subscription" and scope_id == "sub1" and connection_id == "conn1"
@@ -345,8 +346,12 @@ async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(monk
         if progress:
             await progress("save", "Saved snapshot, run, trend, and audit record.")
 
+    async def invalidate(_principal, scope_kind, scope_id, connection_id):
+        invalidated.append((scope_kind, scope_id, connection_id))
+
     monkeypatch.setattr(alert_analysis_api, "_snapshot", snapshot)
     monkeypatch.setattr(alert_analysis_api, "_persist_refresh", persist)
+    monkeypatch.setattr(alert_analysis_api, "_invalidate_live_inventory", invalidate)
     monkeypatch.setattr(alert_analysis_api, "SessionLocal", FakeSession)
     principal = Principal(
         subject="operator", email="operator@example.com", tenant_id="tenant1", role="operator",
@@ -387,6 +392,7 @@ async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(monk
     assert completed["job"]["status"] == "done"
     assert completed["result"]["rationalization_score"] == 90
     assert persisted == [completed["result"]]
+    assert invalidated == [("subscription", "sub1", "conn1")]
     assert any(line["phase"] == "done" for line in completed["progress"])
 
 

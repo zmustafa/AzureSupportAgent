@@ -150,6 +150,19 @@ def _refresh_job_key(tenant_id: str, connection_id: str, scope_kind: str, scope_
     return "|".join((tenant_id or "default", connection_id or "default", scope_kind, scope_id))
 
 
+async def _invalidate_live_inventory(
+    principal: Principal, scope_kind: str, scope_id: str, connection_id: str | None,
+) -> None:
+    """Discard inventories that may have been populated before the forced ARG refresh completed."""
+    from app.alerts_manager import cache as inventory_cache
+
+    await inventory_cache.invalidate(
+        kinds={"rules", "action_groups"},
+        tenant_id=principal.tenant_id or "default",
+        connection_id=_effective_connection_id(scope_kind, scope_id, connection_id),
+    )
+
+
 async def _persist_refresh(
     snapshot: dict[str, Any], principal: Principal, scope_kind: str, scope_id: str,
     db: AsyncSession, progress: ProgressFn | None = None,
@@ -222,6 +235,7 @@ async def refresh(
     snapshot = await asyncio.shield(
         _snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id)
     )
+    await _invalidate_live_inventory(principal, scope_kind, scope_id, connection_id)
     await _persist_refresh(snapshot, principal, scope_kind, scope_id, db)
     return snapshot
 
@@ -246,6 +260,8 @@ async def refresh_start(
             principal, scope_kind, scope_id, force=True,
             connection_id=connection_id, progress=progress,
         )
+        await progress("refresh", "Refreshing Rule Management inventory from the analyzed Azure state…")
+        await _invalidate_live_inventory(principal, scope_kind, scope_id, connection_id)
         async with SessionLocal() as db:
             await _persist_refresh(snapshot, principal, scope_kind, scope_id, db, progress)
         await progress(

@@ -11,6 +11,150 @@ from typing import Any
 from app.alerts_manager import rules, service
 
 
+_MONITORING_CONTROL_PLANE_RESOURCE_TYPES = frozenset({
+    *(resource_type for resource_type, _api_version in rules.RULE_APIS.values()),
+    "microsoft.insights/actiongroups",
+})
+
+
+def _normalized_id(value: Any) -> str:
+    return str(value or "").strip().rstrip("/").lower()
+
+
+def _is_monitored_resource(raw: dict[str, Any]) -> bool:
+    """Return false for alert-routing control-plane objects loaded in later graph stages."""
+    resource_type = str(raw.get("type") or raw.get("resource_type") or "").strip().lower()
+    return resource_type not in _MONITORING_CONTROL_PLANE_RESOURCE_TYPES
+
+
+def _resource_record(raw: dict[str, Any], memberships: list[str], subscription_names: dict[str, str]) -> dict[str, Any]:
+    resource_id = str(raw.get("id") or "")
+    subscription_id = str(raw.get("subscriptionId") or raw.get("subscription_id") or service._subscription_from_id(resource_id))
+    return {
+        "id": resource_id,
+        "name": str(raw.get("name") or service._name_from_id(resource_id)),
+        "resource_type": str(raw.get("type") or raw.get("resource_type") or "").lower(),
+        "resource_group": str(raw.get("resourceGroup") or raw.get("resource_group") or service._resource_group_from_id(resource_id)),
+        "subscription_id": subscription_id,
+        "subscription_name": subscription_names.get(subscription_id.lower(), subscription_id),
+        "workload_ids": memberships,
+        "membership_status": "shared" if len(memberships) > 1 else "single" if memberships else "unmapped",
+        "accessible": True,
+    }
+
+
+async def _scope_resource_context(
+    connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
+    management_group_id: str | None,
+) -> dict[str, Any]:
+    """Load the complete resource universe and workload membership without per-resource ARM calls."""
+    from app.amba.collector import _query_resources
+    from app.assessments.runner import _resolve_scope, scope_predicate_batches
+    from app.azure.arm import list_subscriptions
+    from app.workloads.discovery import subscriptions_under_mg
+    from app.workloads.registry import get_workload, list_workloads
+
+    warnings: list[str] = []
+    selected_workload = get_workload(workload_id) if workload_id else None
+    if workload_id:
+        if not selected_workload:
+            return {"scope": {"kind": "workload", "id": workload_id, "name": workload_id}, "resources": [], "workloads": [], "subscriptions": [], "completeness": {"complete": False, "partial": True, "warnings": ["Selected workload was not found."]}}
+        resolved = await _resolve_scope(selected_workload, connection)
+        if resolved.get("error") and not resolved.get("predicate"):
+            return {"scope": {"kind": "workload", "id": workload_id, "name": selected_workload.get("name") or workload_id}, "resources": [], "workloads": [], "subscriptions": [], "completeness": {"complete": False, "partial": True, "warnings": [str(resolved["error"])]}}
+        predicates = scope_predicate_batches(resolved)
+        subscription_ids = list(resolved.get("effective_subscriptions") or resolved.get("subscriptions") or [])
+        scope = {"kind": "workload", "id": workload_id, "name": str(selected_workload.get("name") or workload_id)}
+    elif subscription_id:
+        predicates = [f"subscriptionId =~ '{subscription_id.replace(chr(39), chr(39) * 2)}'"]
+        subscription_ids = [subscription_id]
+        scope = {"kind": "subscription", "id": subscription_id, "name": subscription_id}
+    elif management_group_id:
+        subscription_ids = await subscriptions_under_mg(connection, management_group_id)
+        predicates = [
+            "subscriptionId in~ (" + ", ".join(f"'{value.replace(chr(39), chr(39) * 2)}'" for value in subscription_ids[index:index + 100]) + ")"
+            for index in range(0, len(subscription_ids), 100)
+        ]
+        scope = {"kind": "management_group", "id": management_group_id, "name": management_group_id}
+        if not subscription_ids:
+            warnings.append("No visible subscriptions were found under the selected management group.")
+    else:
+        return {"scope": {"kind": "subscription", "id": "", "name": ""}, "resources": [], "workloads": [], "subscriptions": [], "completeness": {"complete": False, "partial": True, "warnings": ["No supported scope was selected."]}}
+
+    resources = await _query_resources(predicates, connection) if predicates else []
+    resources = [resource for resource in resources if _is_monitored_resource(resource)]
+    visible_workloads = [
+        workload for workload in list_workloads()
+        if not connection.get("id") or not workload.get("connection_id") or workload.get("connection_id") == connection.get("id")
+    ]
+    mg_subscription_cache: dict[str, set[str]] = {}
+    mg_ids = {
+        str(node.get("id") or "")
+        for workload in visible_workloads for node in workload.get("nodes") or []
+        if node.get("kind") == "mg" and node.get("id")
+    }
+    for mg_id in mg_ids:
+        try:
+            mg_subscription_cache[mg_id.lower()] = {value.lower() for value in await subscriptions_under_mg(connection, mg_id)}
+        except Exception:
+            mg_subscription_cache[mg_id.lower()] = set()
+
+    def belongs(resource: dict[str, Any], workload: dict[str, Any]) -> bool:
+        resource_id = _normalized_id(resource.get("id"))
+        resource_subscription = str(resource.get("subscriptionId") or service._subscription_from_id(resource_id)).lower()
+        for node in workload.get("nodes") or []:
+            node_id = _normalized_id(node.get("id"))
+            if not node_id:
+                continue
+            excluded = any(_scope_matches(str(value), resource_id) for value in node.get("excludes") or [])
+            if excluded:
+                continue
+            kind = str(node.get("kind") or "resource")
+            if kind == "resource" and node_id == resource_id:
+                return True
+            if kind in {"resource_group", "subscription"} and _scope_matches(node_id, resource_id):
+                return True
+            if kind == "mg" and resource_subscription in mg_subscription_cache.get(node_id, set()):
+                return True
+        return False
+
+    try:
+        token = await service._token(connection)
+        subscription_rows, subscription_error = await list_subscriptions(token)
+        if subscription_error:
+            warnings.append(service.safe_error(subscription_error))
+    except Exception as exc:
+        subscription_rows = []
+        warnings.append(f"Subscription names could not be loaded: {service.safe_error(str(exc))}")
+    subscription_names = {str(item.get("id") or "").lower(): str(item.get("name") or item.get("id") or "") for item in subscription_rows}
+    membership_by_resource: dict[str, list[str]] = {}
+    for resource in resources:
+        membership_by_resource[_normalized_id(resource.get("id"))] = [
+            str(workload.get("id") or "") for workload in visible_workloads if belongs(resource, workload)
+        ]
+    enriched_resources = [
+        _resource_record(resource, membership_by_resource.get(_normalized_id(resource.get("id")), []), subscription_names)
+        for resource in resources if resource.get("id")
+    ]
+    represented_workload_ids = {value for resource in enriched_resources for value in resource["workload_ids"]}
+    workload_rows = [{
+        "id": str(workload.get("id") or ""), "name": str(workload.get("name") or workload.get("id") or ""),
+        "resource_ids": [resource["id"] for resource in enriched_resources if str(workload.get("id") or "") in resource["workload_ids"]],
+        "subscription_ids": sorted({resource["subscription_id"] for resource in enriched_resources if str(workload.get("id") or "") in resource["workload_ids"]}),
+        "accessible": True,
+    } for workload in visible_workloads if workload.get("id") in represented_workload_ids or workload.get("id") == workload_id]
+    subscriptions = [{
+        "id": value, "name": subscription_names.get(value.lower(), value), "accessible": True, "partial": False,
+    } for value in sorted(set(subscription_ids), key=str.lower)]
+    if scope["kind"] == "subscription":
+        scope["name"] = subscription_names.get(str(scope["id"]).lower(), scope["id"])
+    return {
+        "scope": scope, "resources": enriched_resources, "workloads": workload_rows,
+        "subscriptions": subscriptions,
+        "completeness": {"complete": not warnings, "partial": bool(warnings), "inaccessible_subscription_ids": [], "warnings": warnings},
+    }
+
+
 def _scope_matches(scope: str, target: str) -> bool:
     left = str(scope or "").lower().rstrip("/")
     right = str(target or "").lower().rstrip("/")
@@ -163,7 +307,7 @@ def build_bulk_notification_simulation(
         if len(group_ids) > 1:
             diagnostics.append({"code": "duplicate_receiver_path", "severity": "medium", "receiver": receiver_key, "action_group_ids": sorted(group_ids), "message": f"Receiver is reachable through {len(group_ids)} Action Groups."})
     summary = {
-        "rules": len(filtered), "resources": len({scope for rule in filtered for scope in (rule.get("scopes") or [])}),
+        "rules": len(filtered), "resources": len({str(scope).lower().rstrip("/") for rule in filtered for scope in (rule.get("scopes") or [])}),
         "action_groups": len({route["action_group_id"] for route in routes if route["action_group_id"]}),
         "receiver_paths": sum(1 for route in routes if route.get("receiver_type")),
         "would_deliver": sum(1 for route in routes if route.get("would_run")),
@@ -178,14 +322,83 @@ async def bulk_simulate_notification_paths(
     management_group_id: str | None = None, monitor_condition: str = "Fired",
     include_disabled: bool = True, families: set[str] | None = None, severities: set[int] | None = None,
 ) -> dict[str, Any]:
-    inventory, groups = await asyncio.gather(
-        rules.list_rules(connection, workload_id=workload_id, subscription_id=subscription_id, management_group_id=management_group_id),
+    inventory_result, groups_result, context = await asyncio.gather(
+        rules.list_rules(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id, with_metadata=True,
+        ),
         service.list_action_groups(
             connection, workload_id=workload_id, subscription_id=subscription_id,
-            management_group_id=management_group_id, all_visible=True,
+            management_group_id=management_group_id, all_visible=True, with_metadata=True,
+        ),
+        _scope_resource_context(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id,
         ),
     )
-    return build_bulk_notification_simulation(inventory, groups, monitor_condition=monitor_condition, include_disabled=include_disabled, families=families, severities=severities)
+    inventory, rule_metadata = inventory_result if isinstance(inventory_result, tuple) else (inventory_result, {})
+    groups, group_metadata = groups_result if isinstance(groups_result, tuple) else (groups_result, {})
+    enabled_inventory = [rule for rule in inventory if include_disabled or rule.get("enabled")]
+    family_counts = {
+        family: sum(rule.get("family") == family for rule in enabled_inventory)
+        for family in rules.RULE_APIS
+    }
+    severity_inventory = [
+        rule for rule in enabled_inventory
+        if not families or rule.get("family") in families
+    ]
+    severity_counts = {
+        severity: sum(rule.get("severity") == severity for rule in severity_inventory)
+        for severity in range(5)
+    }
+    result = build_bulk_notification_simulation(
+        inventory, groups, monitor_condition=monitor_condition, include_disabled=include_disabled,
+        families=families, severities=severities,
+    )
+    for resource in context["resources"]:
+        matching_rules = [
+            rule for rule in inventory
+            if any(_scope_matches(scope, resource["id"]) for scope in rule.get("scopes") or [])
+            and (include_disabled or rule.get("enabled"))
+            and (not families or rule.get("family") in families)
+            and (not severities or rule.get("severity") in severities)
+        ]
+        rule_ids = {str(rule.get("id") or "") for rule in matching_rules if rule.get("id")}
+        matching_routes = [
+            route for route in result["routes"]
+            if str(route.get("rule_id") or "") in rule_ids
+            and any(_scope_matches(scope, resource["id"]) for scope in route.get("resource_ids") or [])
+        ]
+        resource["alert_rule_ids"] = sorted(rule_ids)
+        resource["coverage_state"] = "alerted" if rule_ids else "no_alert"
+        resource["delivery_state"] = (
+            "healthy" if any(route.get("would_run") or route.get("outcome") == "deliver" for route in matching_routes)
+            else "gap" if rule_ids else "no_alert"
+        )
+    metadata_partial = bool(
+        rule_metadata.get("partial") or rule_metadata.get("truncated")
+        or group_metadata.get("partial") or group_metadata.get("truncated")
+    )
+    if metadata_partial:
+        context["completeness"]["complete"] = False
+        context["completeness"]["partial"] = True
+        context["completeness"]["warnings"].append("Alert-rule or Action Group inventory reached its configured result limit.")
+    result.update(context)
+    result["facets"] = {
+        "families": family_counts,
+        "severities": severity_counts,
+        "total_rules": len(enabled_inventory),
+    }
+    result["summary"].update({
+        "resources": len(context["resources"]),
+        "mapped_resources": sum(bool(item["workload_ids"]) for item in context["resources"]),
+        "unmapped_resources": sum(not item["workload_ids"] for item in context["resources"]),
+        "alerted_resources": sum(item["coverage_state"] == "alerted" for item in context["resources"]),
+        "no_alert_resources": sum(item["coverage_state"] == "no_alert" for item in context["resources"]),
+        "healthy_resources": sum(item["delivery_state"] == "healthy" for item in context["resources"]),
+        "gap_resources": sum(item["delivery_state"] != "healthy" for item in context["resources"]),
+    })
+    return result
 
 
 async def simulate_notification_path(connection: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
