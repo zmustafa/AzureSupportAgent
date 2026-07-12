@@ -40,6 +40,17 @@ export function isRefreshing(key: string): boolean {
   return _running.has(key);
 }
 
+export function subscribeBackgroundRefresh(cb: () => void): () => void {
+  _listeners.add(cb);
+  return () => {
+    _listeners.delete(cb);
+  };
+}
+
+export function peekRefreshError(key: string): string | undefined {
+  return _errors.get(key);
+}
+
 // Pull (and clear) the last error recorded for a key, so the originating screen can show
 // it once even if the failure happened while it was unmounted.
 export function takeRefreshError(key: string): string | null {

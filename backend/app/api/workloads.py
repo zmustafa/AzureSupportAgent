@@ -5,6 +5,7 @@ Discovery (tree/search/facets) is read-only Azure data via ARM + Resource Graph.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -29,6 +30,9 @@ router = APIRouter(prefix="/workloads", tags=["workloads"])
 get_principal = require_permission("workloads.read")
 _write = require_permission("workloads.write")
 logger = logging.getLogger("app.api.workloads")
+
+_RG_PREFETCH_CONCURRENCY = 4
+_rg_prefetch_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 class WorkloadNode(BaseModel):
@@ -334,6 +338,113 @@ class TreeRequest(BaseModel):
     refresh: bool = False  # bypass + overwrite the cache for this node
 
 
+async def _prefetch_missing_resource_groups(
+    cache_connection_id: str, conn: dict, subscription_nodes: list[dict]
+) -> None:
+    """Warm missing subscription→resource-group cache entries with four async workers.
+
+    This intentionally fetches only resource-group lists, not resources. It runs detached
+    from the top-level tree response, so opening the picker stays fast while likely user
+    expansions become cache hits. ``get_or_compute`` supplies per-key single-flight safety
+    if a user expands a subscription before its background worker finishes.
+    """
+    from app.exec.command_runner import close_sp_session, open_sp_session
+
+    missing = [
+        node for node in subscription_nodes
+        if node.get("kind") == "subscription"
+        and node.get("id")
+        and not discovery_cache.has_fresh(
+            discovery_cache.key(cache_connection_id, "tree:subscription", str(node["id"]))
+        )
+    ]
+    if not missing:
+        return
+
+    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    for node in missing:
+        queue.put_nowait(node)
+    for _ in range(min(_RG_PREFETCH_CONCURRENCY, len(missing))):
+        queue.put_nowait(None)
+
+    session_dir: str | None = None
+    try:
+        session_dir, session_error = await open_sp_session(conn)
+        if session_error:
+            logger.debug("Background RG prefetch will use per-call authentication: %s", session_error)
+            session_dir = None
+
+        async def worker() -> None:
+            while True:
+                node = await queue.get()
+                try:
+                    if node is None:
+                        return
+                    subscription_id = str(node["id"])
+                    key = discovery_cache.key(
+                        cache_connection_id, "tree:subscription", subscription_id
+                    )
+                    await discovery_cache.get_or_compute(
+                        key,
+                        lambda sid=subscription_id: discovery.expand_node(
+                            conn, "subscription", sid, session_config_dir=session_dir
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 - best-effort background optimization
+                    logger.debug(
+                        "Background resource-group prefetch failed for %s",
+                        (node or {}).get("id", ""),
+                        exc_info=True,
+                    )
+                finally:
+                    queue.task_done()
+
+        workers = [
+            asyncio.create_task(worker(), name=f"rg-prefetch-{index + 1}")
+            for index in range(min(_RG_PREFETCH_CONCURRENCY, len(missing)))
+        ]
+        await queue.join()
+        await asyncio.gather(*workers, return_exceptions=True)
+        logger.debug("Background resource-group prefetch completed for %d subscriptions", len(missing))
+    finally:
+        close_sp_session(session_dir)
+
+
+def _schedule_resource_group_prefetch(
+    cache_connection_id: str, conn: dict, subscription_nodes: list[dict]
+) -> None:
+    missing = any(
+        node.get("kind") == "subscription"
+        and node.get("id")
+        and not discovery_cache.has_fresh(
+            discovery_cache.key(cache_connection_id, "tree:subscription", str(node["id"]))
+        )
+        for node in subscription_nodes
+    )
+    if not missing:
+        return
+    existing = _rg_prefetch_tasks.get(cache_connection_id)
+    if existing and not existing.done():
+        return
+    task = asyncio.create_task(
+        _prefetch_missing_resource_groups(cache_connection_id, conn, subscription_nodes),
+        name=f"rg-prefetch:{cache_connection_id or 'default'}",
+    )
+    _rg_prefetch_tasks[cache_connection_id] = task
+
+    def done(completed: asyncio.Task[None]) -> None:
+        if _rg_prefetch_tasks.get(cache_connection_id) is completed:
+            _rg_prefetch_tasks.pop(cache_connection_id, None)
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("Background resource-group prefetch task failed", exc_info=True)
+
+    task.add_done_callback(done)
+
+
 @router.post("/tree")
 async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_principal)):
     conn = resolve_connection(payload.connection_id or None)
@@ -375,6 +486,8 @@ async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_princip
     nodes, cached_at, from_cache = await discovery_cache.get_or_compute(
         key, _compute, force=payload.refresh
     )
+    if not payload.kind and payload.group_by == "subscription":
+        _schedule_resource_group_prefetch(payload.connection_id, conn, nodes)
     return {"nodes": nodes, **_cache_meta(cached_at, from_cache)}
 
 

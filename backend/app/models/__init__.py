@@ -9,9 +9,11 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -133,6 +135,47 @@ class AuditLog(Base):
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AlertManagerChange(Base):
+    """Approval-gated Azure Monitor mutation with encrypted before/desired state.
+
+    Receiver destinations and callback URLs never enter ordinary JSON columns.  The public
+    summary is deliberately non-sensitive; complete rollback material is Fernet-encrypted.
+    """
+
+    __tablename__ = "alert_manager_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    connection_id: Mapped[str] = mapped_column(String(36), index=True)
+    target_type: Mapped[str] = mapped_column(String(32), default="action_group")
+    target_id: Mapped[str] = mapped_column(String(512), index=True)
+    operation: Mapped[str] = mapped_column(String(16))  # create|update|delete
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    risk: Mapped[str] = mapped_column(String(16), default="medium")
+    summary_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    desired_encrypted: Mapped[str] = mapped_column(Text, default="")
+    before_encrypted: Mapped[str] = mapped_column(Text, default="")
+    after_encrypted: Mapped[str] = mapped_column(Text, default="")
+    expected_state_hash: Mapped[str] = mapped_column(String(64), default="")
+    requested_by: Mapped[str] = mapped_column(String(128))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    applied_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rollback_of: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    evidence_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    auto_apply: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (
+        Index("ix_alert_changes_tenant_requested", "tenant_id", "requested_at"),
+        Index("ix_alert_changes_tenant_status", "tenant_id", "status"),
+    )
 
 
 class Usage(Base):

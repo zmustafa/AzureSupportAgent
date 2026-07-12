@@ -83,6 +83,11 @@ DEFAULTS: dict[str, Any] = {
     # Opt-in: defaults off.
     "propose_problems": False,
     "suggestions": True,
+    # Alerts Manager snapshots are point-in-time Resource Graph scans. Cache them for
+    # six hours by default and use the AMBA-style threshold tolerance for near-overlap and
+    # baseline comparisons. Recipient destinations are always masked/fingerprinted.
+    "alert_analysis_cache_ttl_s": 21600,
+    "alert_analysis_threshold_tolerance_pct": 10,
     # --- Deep investigation -------------------------------------------------------
     # Run multiple hypothesis sub-agents at once (parallel validation), then combine
     # their evidence at the conclusion. Speeds up deep investigations significantly.

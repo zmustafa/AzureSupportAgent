@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
+import { queryKeys } from "./queryKeys";
 
 // Shared singleton QueryClient. Lives in its own module (no component imports) so that
 // non-component modules — e.g. the Performance Profiler's background-run registry — can
@@ -25,7 +26,7 @@ const TEN_MIN = 10 * 60_000;
 const LOW_CHURN_FIVE_MIN: readonly (readonly unknown[])[] = [
   ["workloads"],
   ["connectors"],
-  ["azureConnections"],
+  queryKeys.azureConnections,
   ["adminConnections"],
   ["llmConfig"],
   ["activeLlm"],

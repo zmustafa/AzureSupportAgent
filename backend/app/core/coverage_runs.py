@@ -21,7 +21,7 @@ _PATH = Path(__file__).resolve().parents[2] / ".data" / "coverage_runs.json"
 _MAX_PER_SCOPE = 30
 
 # Features that record run history (used for validation + demo purge enumeration).
-FEATURES = ("amba", "telemetry", "backupdr")
+FEATURES = ("amba", "telemetry", "backupdr", "alert_analysis")
 
 
 def _now() -> str:

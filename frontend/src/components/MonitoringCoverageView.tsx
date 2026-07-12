@@ -23,6 +23,8 @@ import { PageIntro } from "./PageIntro";
 import { PAGE_INTROS } from "../help/content";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { Skeleton, useDebounced } from "../utils/perf";
+import { MonitoringCoverageFleet } from "./coverage/MonitoringCoverageFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
 
 const SEV_CLS: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -72,6 +74,16 @@ function Donut({ pct }: { pct: number }) {
       </text>
     </svg>
   );
+}
+
+type CoverageMainView = "coverage" | "fleet" | "cleanup";
+
+function CoverageViewTabs({ value, onChange }: { value: CoverageMainView; onChange: (value: CoverageMainView) => void }) {
+  return <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+    <button onClick={() => onChange("coverage")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "coverage" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>📡 Coverage</button>
+    <button onClick={() => onChange("fleet")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "fleet" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🚀 Fleet</button>
+    <button onClick={() => onChange("cleanup")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "cleanup" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🧹 Cleanup</button>
+  </div>;
 }
 
 // MP1 — per-group coverage matrix body. Small groups render inline (full inline-expand detail).
@@ -184,6 +196,8 @@ function AmbaMatrixBody({ group, expandedRow, setExpandedRow, setDrawer }: {
 
 export function MonitoringCoveragePanel() {
   const qc = useQueryClient();
+  const [storedMainView, setMainView] = usePersistedState<CoverageMainView | "overview">("azsup.amba.view", "coverage");
+  const mainView: CoverageMainView = storedMainView === "overview" ? "coverage" : storedMainView;
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.amba.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState<string>("azsup.amba.workloadId", "");
   useWorkloadDeepLink(setScopeKind, setWorkloadId);
@@ -452,8 +466,35 @@ export function MonitoringCoveragePanel() {
     return out;
   }, [catFilter, sevFilter, statusFilter, query]);
 
+  if (mainView === "fleet") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <MonitoringCoverageFleet onOpenWorkload={(id, connectionId) => {
+        setScopeKind("workload");
+        setWorkloadId(id);
+        setConnId(connectionId);
+        setLoadedScope(`workload:${id}:${connectionId}`);
+        setMainView("coverage");
+      }} />
+    </div>;
+  }
+
+  if (mainView === "cleanup") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <RunCleanup
+        prefix="/amba"
+        queryKey={["ambaCleanup"]}
+        invalidateKeys={[["ambaFleet"]]}
+        isEmptyRun={(run) => (run.resource_count ?? 0) === 0}
+        renderMeta={(run) => <span className="text-gray-700">{run.scope_name}{typeof run.headline === "number" ? <span className="ml-2 text-gray-400">{run.headline}% covered</span> : null}</span>}
+      />
+    </div>;
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
       {/* Header */}
       <div className="border-b bg-white px-6 py-3">
         <div className="flex flex-wrap items-center gap-4">

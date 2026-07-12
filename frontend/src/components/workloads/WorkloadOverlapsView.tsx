@@ -29,7 +29,7 @@ export function WorkloadOverlapsView() {
   const qc = useQueryClient();
 
   // Connection scope: default to the configured DEFAULT connection; "" = all connections.
-  const connQ = useQuery({ queryKey: ["azure-connections"], queryFn: api.azureConnections, retry: false });
+  const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
   const conns: TenantOption[] = connQ.data?.connections ?? [];
   const defaultConn = conns.find((c) => c.is_default)?.id ?? "";
   // null = not yet initialised (fall back to default once connections load).

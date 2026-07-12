@@ -79,7 +79,7 @@ _OVERLAY: dict[tuple[str, str], dict[str, Any]] = {
     # Cosmos: NormalizedRUConsumption is the MAX across partitions; TotalRequests is a COUNT
     # split by StatusCode (429); ServerSideLatency is server processing time.
     ("microsoft.documentdb/databaseaccounts", "NormalizedRUConsumption"): {"aggregation": "Maximum", "ceiling": 100},
-    ("microsoft.documentdb/databaseaccounts", "TotalRequests"): {"aggregation": "Total", "ceiling": None},
+    ("microsoft.documentdb/databaseaccounts", "TotalRequests"): {"aggregation": "Count", "ceiling": None},
     ("microsoft.documentdb/databaseaccounts", "ServerSideLatency"): {"aggregation": "Average", "ceiling": None},
     ("microsoft.documentdb/databaseaccounts", "TotalRequestUnits"): {"aggregation": "Total", "ceiling": None},
     # Container Apps: Requests is a COUNT split by statusCodeCategory (5xx); CPU/Mem are %s;

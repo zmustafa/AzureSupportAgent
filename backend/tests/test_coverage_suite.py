@@ -36,7 +36,9 @@ def test_amba_demo_internal_consistency():
 def test_amba_all_resources_flags():
     snap = amba_demo.build_demo_snapshot(misconfig_counts_as_gap=True, tolerance_pct=0.0)
     ar = snap["all_resources"]
-    assert len(ar) == snap["kpis"]["total_resources_in_baseline"]
+    # All Resources may include reference-covered types whose recommendations are profiler
+    # composites rather than deployable Azure Monitor alerts (for example managed disks).
+    assert len(ar) >= snap["kpis"]["total_resources_in_baseline"]
     # Demo resources are all baseline-covered types.
     assert all(r["in_reference"] for r in ar)
 
@@ -69,6 +71,90 @@ def test_amba_misconfig_toggle_changes_gaps():
     off = amba_col.compute_coverage(res, alerts, misconfig_counts_as_gap=False, tolerance_pct=0.0)
     # Excluding misconfigured from gaps should never produce MORE gaps.
     assert len(off["gaps"]) <= len(on["gaps"])
+
+
+def test_amba_thresholdless_metric_is_guidance_not_missing_alert():
+    resource = {
+        "id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Test/widgets/one",
+        "name": "one", "type": "microsoft.test/widgets", "resourceGroup": "rg",
+        "subscriptionId": "s", "location": "eastus", "tags": {},
+    }
+    reference = {"types": {"microsoft.test/widgets": {
+        "display": "Widget", "category": "test", "alerts": [{
+            "key": "observe_capacity", "name": "Observe capacity", "amba_category": "performance",
+            "signal": "metric", "metric": "Capacity", "operator": "GreaterThan",
+            "threshold": None, "severity": "info", "requires_action_group": True,
+        }],
+    }}}
+    snap = amba_col.compute_coverage([resource], [], misconfig_counts_as_gap=True, tolerance_pct=0, reference=reference)
+    assert snap["groups"] == []
+    assert snap["gaps"] == []
+    assert snap["kpis"]["recommended_total"] == 0
+
+
+def test_amba_dimension_specific_alert_only_matches_same_dimension():
+    resource_id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/one"
+    resource = {
+        "id": resource_id, "name": "one", "type": "microsoft.storage/storageaccounts",
+        "resourceGroup": "rg", "subscriptionId": "s", "location": "eastus", "tags": {},
+    }
+    reference = {"types": {"microsoft.storage/storageaccounts": {
+        "display": "Storage", "category": "data", "alerts": [{
+            "key": "auth", "name": "Authorization failures", "amba_category": "security",
+            "signal": "metric", "metric": "Transactions", "operator": "GreaterThan",
+            "threshold": 0, "severity": "error", "requires_action_group": True,
+            "dimension_filter": "ResponseType eq 'AuthorizationError'",
+        }],
+    }}}
+    wrong_dimension_alert = {
+        "id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Insights/metricAlerts/wrong",
+        "name": "wrong", "type": "microsoft.insights/metricalerts", "properties": {
+            "enabled": True, "scopes": [resource_id], "actions": [{"actionGroupId": "/ag"}],
+            "criteria": {"allOf": [{
+                "metricName": "Transactions", "threshold": 0,
+                "dimensions": [{"name": "ResponseType", "operator": "Include", "values": ["AuthenticationError"]}],
+            }]},
+        },
+    }
+    snap = amba_col.compute_coverage([resource], [wrong_dimension_alert], misconfig_counts_as_gap=True, tolerance_pct=0, reference=reference)
+    assert snap["gaps"][0]["status"] == "missing"
+    assert snap["gaps"][0]["recommended"]["aggregation"] == "Total"
+    assert snap["gaps"][0]["recommended"]["dimensions"][0]["values"] == ["AuthorizationError"]
+
+
+def test_amba_synthetic_managed_disk_metrics_are_not_deployment_gaps():
+    resource = {
+        "id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Compute/disks/orphan",
+        "name": "orphan", "type": "microsoft.compute/disks", "resourceGroup": "rg",
+        "subscriptionId": "s", "location": "eastus", "tags": {},
+    }
+    snap = amba_col.compute_coverage([resource], [], misconfig_counts_as_gap=True, tolerance_pct=0)
+    assert snap["gaps"] == []
+    assert snap["kpis"]["recommended_total"] == 0
+
+
+def test_amba_aggregation_comes_from_shared_metric_semantics():
+    cases = [
+        ("microsoft.logic/workflows", "RunsThrottled", "Total"),
+        ("microsoft.appconfiguration/configurationstores", "RequestQuotaUsage", "Maximum"),
+        ("microsoft.documentdb/databaseaccounts", "TotalRequests", "Count"),
+    ]
+    for resource_type, metric, expected in cases:
+        resource = {
+            "id": f"/subscriptions/s/resourceGroups/rg/providers/{resource_type}/one",
+            "name": "one", "type": resource_type, "resourceGroup": "rg",
+            "subscriptionId": "s", "location": "eastus", "tags": {},
+        }
+        reference = {"types": {resource_type: {
+            "display": "Test", "category": "test", "alerts": [{
+                "key": "metric", "name": "Metric", "amba_category": "performance",
+                "signal": "metric", "metric": metric, "operator": "GreaterThan",
+                "threshold": 1, "unit": "count", "severity": "warning",
+                "requires_action_group": True,
+            }],
+        }}}
+        snap = amba_col.compute_coverage([resource], [], misconfig_counts_as_gap=True, tolerance_pct=0, reference=reference)
+        assert snap["gaps"][0]["recommended"]["aggregation"] == expected
 
 
 # --------------------------------------------------------------------------- Telemetry

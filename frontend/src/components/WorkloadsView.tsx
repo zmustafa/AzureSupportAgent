@@ -72,7 +72,7 @@ function buildResourceTree(nodes: WorkloadNode[]): ResourceTree {
       continue;
     }
     const parsed = armScope(n.id);
-    const sub = n.subscription_id || parsed.sub || "(unknown subscription)";
+    const sub = n.subscription_id || parsed.sub || n.subscription_name || "Unscoped resources";
     if (n.kind === "subscription") {
       ensureSub(sub).scope = n;
       continue;

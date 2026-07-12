@@ -48,6 +48,9 @@ function blankAlert(existing: Set<string>): AmbaAlertRef {
     window: "PT5M",
     severity: "warning",
     requires_action_group: true,
+    dimension_filter: "",
+    aggregation: "",
+    deployable: true,
     why: "",
   };
 }
@@ -65,6 +68,9 @@ function fromCatalog(c: CatalogMetric, existing: Set<string>): AmbaAlertRef {
     window: c.window,
     severity: "warning",
     requires_action_group: true,
+    dimension_filter: "",
+    aggregation: "",
+    deployable: true,
     why: c.why || "",
   };
 }
@@ -579,6 +585,13 @@ function AlertCard({
             </select>
           </label>
           <label>
+            <span className="text-gray-500">Aggregation</span>
+            <select value={alert.aggregation || ""} onChange={(e) => onChange({ aggregation: e.target.value })} className="mt-0.5 w-full rounded border px-2 py-1">
+              <option value="">automatic</option>
+              {['Average', 'Minimum', 'Maximum', 'Total', 'Count'].map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label>
             <span className="text-gray-500">Category</span>
             <select value={alert.amba_category} onChange={(e) => onChange({ amba_category: e.target.value as AmbaAlertRef["amba_category"] })} className="mt-0.5 w-full rounded border px-2 py-1">
               {AMBA_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -595,6 +608,14 @@ function AlertCard({
           <label className="col-span-2 flex items-center gap-2 sm:col-span-3">
             <input type="checkbox" checked={alert.requires_action_group} onChange={(e) => onChange({ requires_action_group: e.target.checked })} />
             <span className="text-gray-600">Requires a wired action group to count as "present"</span>
+          </label>
+          <label className="col-span-2 flex items-center gap-2 sm:col-span-3">
+            <input type="checkbox" checked={alert.deployable !== false} onChange={(e) => onChange({ deployable: e.target.checked })} />
+            <span className="text-gray-600">Deployable as a native Azure Monitor alert</span>
+          </label>
+          <label className="col-span-2 sm:col-span-3">
+            <span className="text-gray-500">Dimension filter</span>
+            <input value={alert.dimension_filter || ""} onChange={(e) => onChange({ dimension_filter: e.target.value })} placeholder="StatusCode eq '429'" className="mt-0.5 w-full rounded border px-2 py-1 font-mono" />
           </label>
           <label className="col-span-2 sm:col-span-3">
             <span className="text-gray-500">Why it matters</span>

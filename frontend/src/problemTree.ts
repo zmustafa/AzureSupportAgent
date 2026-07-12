@@ -747,7 +747,6 @@ export const PROBLEM_TREE: ProblemNode[] = [
           { label: "Alert not fired when it should have" },
           { label: "Log search alert rule issue" },
           { label: "Action group not notifying (email / SMS / webhook)" },
-          { label: "Alert processing rules / suppression" },
           { label: "Dynamic threshold issues" },
         ],
       },

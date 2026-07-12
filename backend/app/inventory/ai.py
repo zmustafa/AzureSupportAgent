@@ -351,7 +351,7 @@ Reply with ONLY a JSON object:
 }
 Cover, where the data supports it: concentration risk (one region/sub holding most resources), \
 tag-governance gaps, cleanup/orphan opportunities, unassigned resources that should be put in \
-workloads, and sprawl. 4-7 insights. Be specific with numbers from the data. No code fences."""
+workloads, and proliferation. 4-7 insights. Be specific with numbers from the data. No code fences."""
 
 
 async def estate_insights(summary: dict[str, Any], facets: dict[str, Any]) -> dict[str, Any]:

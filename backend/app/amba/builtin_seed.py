@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 # Bumped whenever the seed below changes so the registry can offer "reset to builtin vN".
-BUILTIN_SEED_VERSION = 7
+BUILTIN_SEED_VERSION = 8
 
 
 def _a(
@@ -41,6 +41,8 @@ def _a(
     severity: str = "warning",
     requires_action_group: bool = True,
     dimension_filter: str = "",
+   aggregation: str = "",
+   deployable: bool = True,
     why: str = "",
 ) -> dict[str, Any]:
     return {
@@ -58,6 +60,8 @@ def _a(
         # Optional Azure Monitor metric dimension filter (e.g. "StatusCode eq '403'"),
         # so one metric (ServiceApiResult) can be split into distinct signals.
         "dimension_filter": dimension_filter,
+      "aggregation": aggregation,
+      "deployable": deployable,
         "why": why,
     }
 
@@ -207,14 +211,14 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
         "alerts": [
             _a("disk_iops_saturation", "Disk IOPS saturation high", "performance",
                metric="Disk IOPS saturation", operator="GreaterThan", threshold=80, unit="%",
-               window="PT5M", severity="warning",
+               window="PT5M", severity="warning", deployable=False,
                why="Total disk IOPS (read+write) as a percentage of the disk's provisioned IOPS. Sustained "
                    "high IOPS saturation means the disk — not the CPU — is the bottleneck: reads/writes queue "
                    "and every dependent app (DB, app server) slows down. Once burst credits are exhausted the "
                    "disk is capped at its baseline IOPS. Bump the disk tier/size or enable on-demand bursting."),
             _a("disk_throughput_saturation", "Disk throughput saturation high", "performance",
                metric="Disk throughput saturation", operator="GreaterThan", threshold=80, unit="%",
-               window="PT5M", severity="warning",
+               window="PT5M", severity="warning", deployable=False,
                why="Total disk throughput (read+write MB/s) as a percentage of the disk's provisioned "
                    "bandwidth. High throughput saturation throttles large sequential I/O — backups, ETL, log "
                    "flushes, restores — long before IOPS run out. Move to a higher tier or stripe the load "
@@ -322,7 +326,7 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
                    "should watch server-side latency and 429s instead."),
             _a("cosmos_429", "Rate-limited requests (429)", "availability", metric="TotalRequests",
                operator="GreaterThan", threshold=0, unit="count", window="PT5M", severity="error",
-               dimension_filter="StatusCode eq '429'",
+               dimension_filter="StatusCode eq '429'", aggregation="Count",
                why="A 429 means Cosmos rejected the request for exceeding the provisioned RU/s for that "
                    "partition (or the serverless ceiling). The SDK retries with backoff, but sustained 429s "
                    "surface to the app as added latency and eventually failures — the direct signal that the "
@@ -585,6 +589,7 @@ BUILTIN_TYPES: dict[str, dict[str, Any]] = {
                why="Failed runs mean the workflow's business process isn't completing."),
             _a("logic_runs_throttled", "Runs throttled", "availability", metric="RunsThrottled",
                operator="GreaterThan", threshold=0, unit="count", window="PT15M", severity="warning",
+               deployable=False,
                why="Throttled runs are delayed or dropped under load."),
             _a("logic_action_latency", "Action latency high", "performance", metric="ActionLatency",
                operator="GreaterThan", threshold=None, unit="ms", window="PT15M", severity="info",

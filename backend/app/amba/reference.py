@@ -98,6 +98,11 @@ def load_reference() -> dict[str, Any]:
                 if a.get("key") == key and a.get("threshold") == old:
                     a["threshold"] = new
                     changed = True
+        for t, key, field, old, new in _ALERT_FIELD_RECONCILE:
+            for a in types.get(t, {}).get("alerts", []) or []:
+                if a.get("key") == key and a.get(field) == old:
+                    a[field] = new
+                    changed = True
         doc["builtin_seed_version"] = BUILTIN_SEED_VERSION
         if changed:
             _write(doc)
@@ -109,6 +114,15 @@ def load_reference() -> dict[str, Any]:
 _THRESHOLD_RECONCILE: tuple[tuple[str, str, float, float], ...] = (
     ("microsoft.network/loadbalancers", "lb_health_probe", 100.0, 90.0),
     ("microsoft.network/loadbalancers", "lb_data_path", 100.0, 90.0),
+)
+
+# Live Azure metricDefinitions reconciliation (v8). Missing fields are represented by None;
+# only untouched v7 definitions are changed, preserving explicit administrator overrides.
+_ALERT_FIELD_RECONCILE: tuple[tuple[str, str, str, Any, Any], ...] = (
+    ("microsoft.compute/disks", "disk_iops_saturation", "deployable", None, False),
+    ("microsoft.compute/disks", "disk_throughput_saturation", "deployable", None, False),
+    ("microsoft.logic/workflows", "logic_runs_throttled", "deployable", None, False),
+    ("microsoft.documentdb/databaseaccounts", "cosmos_429", "aggregation", None, "Count"),
 )
 
 
@@ -138,6 +152,8 @@ def _sanitize_alert(raw: dict[str, Any]) -> dict[str, Any] | None:
         "severity": sev if sev in _SEVERITIES else "warning",
         "requires_action_group": bool(raw.get("requires_action_group", True)),
         "dimension_filter": str(raw.get("dimension_filter", "") or "")[:200],
+        "aggregation": str(raw.get("aggregation", "") or "")[:16],
+        "deployable": bool(raw.get("deployable", True)),
         "why": str(raw.get("why", "") or "")[:600],
     }
 

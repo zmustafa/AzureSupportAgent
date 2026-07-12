@@ -111,6 +111,8 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const body = await res.json();
       if (body && typeof body.detail === "string") detail = body.detail;
+      else if (Array.isArray(body?.detail)) detail = body.detail.map((item: unknown) => typeof item === "string" ? item : JSON.stringify(item)).join("\n");
+      else if (body?.detail && typeof body.detail === "object") detail = typeof body.detail.message === "string" ? body.detail.message : JSON.stringify(body.detail);
     } catch {
       /* non-JSON error body */
     }
@@ -451,6 +453,782 @@ export type AmbaCoverage = {
   report_exists?: boolean;
 };
 
+export type AmbaCoverageFleetRow = {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  criticality: string;
+  environment: string;
+  has_scan: boolean;
+  run_at: string;
+  coverage_pct: number | null;
+  resources: number;
+  recommended: number;
+  present: number;
+  missing: number;
+  misconfigured: number;
+  gaps: number;
+  demo: boolean;
+  age_seconds: number | null;
+  stale: boolean;
+  error: string;
+};
+
+export type AmbaCoverageFleet = {
+  workloads: AmbaCoverageFleetRow[];
+  ttl_s: number;
+  total: number;
+  scanned: number;
+};
+
+export type AlertAnalysisCondition = {
+  signal_type: string;
+  signal_name: string;
+  operator: string;
+  threshold: number | string | null;
+  aggregation: string;
+  window: string;
+  frequency: string;
+  dynamic: boolean;
+  dimensions?: string[];
+  query_fingerprint: string;
+};
+
+export type AlertAnalysisCostTotal = {
+  monthly_usd: number;
+  monthly_min_usd: number;
+  monthly_max_usd: number | null;
+};
+
+export type AlertAnalysisRuleCost = {
+  family: "metric" | "log" | "activity_log" | "smart_detector" | "prometheus" | "unknown";
+  status: "estimated" | "range_estimate" | "partial_estimate" | "direct_free" | "unknown";
+  confidence: "high" | "medium" | "low" | "none";
+  currency: string;
+  period: string;
+  catalog_version: string;
+  enabled: boolean;
+  monthly_usd: number | null;
+  monthly_min_usd: number | null;
+  monthly_max_usd: number | null;
+  assumptions: string[];
+  components: Array<{
+    name: string;
+    status: string;
+    monthly_usd: number | null;
+    monthly_min_usd: number | null;
+    monthly_max_usd: number | null;
+    quantity: number | null;
+    quantity_min?: number;
+    quantity_max?: number;
+    unit: string;
+    unit_price_usd: number | null;
+    notes?: string[];
+  }>;
+};
+
+export type AlertAnalysisRule = {
+  id: string;
+  name: string;
+  type: string;
+  subscription_id: string;
+  resource_group: string;
+  enabled: boolean;
+  severity: number;
+  severity_label: string;
+  scopes: string[];
+  effective_targets: { id: string; name: string; type: string }[];
+  effective_target_count: number;
+  conditions: AlertAnalysisCondition[];
+  action_group_ids: string[];
+  action_group_names: string[];
+  missing_action_group_ids: string[];
+  receiver_fingerprints: string[];
+  receiver_count: number;
+  overlap_group_ids: string[];
+  finding_status: "ok" | "gap" | "overlap" | "accepted";
+  issues: string[];
+  firing_7d?: number;
+  firing_30d?: number;
+  last_fired?: string;
+  decision?: AlertAnalysisDecision | null;
+  cost?: AlertAnalysisRuleCost;
+};
+
+export type AlertAnalysisDecision = {
+  id: string;
+  target_type: "rule" | "overlap" | "gap";
+  target_id: string;
+  action: "keep_rule" | "exempt_rule" | "consolidate_to" | "dismiss_finding";
+  consolidate_to?: string;
+  reason: string;
+  decided_by: string;
+  decided_at: string;
+};
+
+export type AlertAnalysisPlan = {
+  id: string;
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  status: "pending" | "approved" | "rejected";
+  requested_by: string;
+  requested_at: string;
+  decided_by: string;
+  decided_at: string;
+  reason: string;
+  artifact_format: "bicep";
+  artifact: string;
+  actions: Record<string, unknown>[];
+  safety: string;
+};
+
+export type AlertAnalysisOverlap = {
+  id: string;
+  type: "exact" | "near" | "notification";
+  confidence: "high" | "medium";
+  target_id: string;
+  signal_type: string;
+  signal_name: string;
+  rule_ids: string[];
+  rule_names: string[];
+  shared_recipient_count: number;
+  notification_overlap: boolean;
+  explanation: string;
+  recommendation: string;
+};
+
+export type AlertAnalysisGap = {
+  type: string;
+  risk: string;
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  subscription_id?: string;
+  resource_group?: string;
+  location?: string;
+  alert_key?: string;
+  rule_id: string;
+  rule_name: string;
+  action_group_id: string;
+  signal: string;
+  amba_category?: string;
+  status?: string;
+  recommended?: { signal?: string; metric?: string; operator?: string; threshold?: number | null; aggregation?: string; dimensions?: Record<string, unknown>[]; unit?: string; window?: string; requires_action_group?: boolean };
+  explanation: string;
+  recommendation: string;
+  decision_key?: string;
+  accepted?: boolean;
+};
+
+export type AlertAnalysisActionGroup = {
+  id: string;
+  name: string;
+  subscription_id: string;
+  resource_group: string;
+  enabled: boolean;
+  receiver_count: number;
+  active_receiver_count: number;
+  receivers: { type: string; name: string; destination?: string; masked: string; fingerprint: string; enabled: boolean }[];
+};
+
+export type AlertsManagerCapabilities = {
+  connection_id: string;
+  connection_name: string;
+  auth_method: string;
+  read_only: boolean;
+  auto_execute_writes: boolean;
+  can_manage_alert_state: boolean;
+  can_manage_action_groups: boolean;
+  can_manage_rules: boolean;
+  can_manage_advanced_rules: boolean;
+  can_bulk_manage: boolean;
+  can_preview_queries: boolean;
+  can_test_notifications: boolean;
+  can_delete: boolean;
+  can_approve: boolean;
+  can_manage_amba_blueprints: boolean;
+  can_submit_deployment_plans: boolean;
+};
+
+export type ActivityLogCategory = "ServiceHealth" | "ResourceHealth" | "Security" | "Recommendation";
+export type ActivityLogCoverageStatus = "covered" | "partial" | "missing" | "disabled" | "no_routing" | "unknown";
+export type ActivityLogCondition = { field: string; equals?: string; containsAny?: string[]; anyOf?: ActivityLogCondition[] };
+export type ActivityLogSubscriptionMetadata = { id?: string; subscription_id?: string; name?: string; display_name?: string; state?: string; status?: string; environment?: string; tags?: Record<string, string> };
+export type ActivityLogCoverageRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  routing: { action_group_ids: string[]; configured_count: number; existing_count: number; healthy_count: number; missing_action_group_ids: string[]; action_groups: Array<{ id: string; name: string; enabled: boolean; active_receiver_count: number }>; active: boolean };
+};
+export type ActivityLogCategoryCoverage = {
+  category: ActivityLogCategory;
+  status: ActivityLogCoverageStatus;
+  rule_count: number;
+  enabled_rule_count: number;
+  rules: ActivityLogCoverageRule[];
+  remediation_required: boolean;
+};
+export type ActivityLogSubscriptionCoverage = {
+  scope_id: string;
+  scope_type: "subscription";
+  subscription_id: string;
+  subscription_name?: string;
+  subscription_display_name?: string;
+  subscription_state?: string;
+  categories: ActivityLogCategoryCoverage[];
+  counts: Record<ActivityLogCoverageStatus, number>;
+  covered: boolean;
+};
+export type ActivityLogCoverage = {
+  essential_categories: ActivityLogCategory[];
+  recognized_optional_categories: string[];
+  scopes: ActivityLogSubscriptionCoverage[];
+  categories: Array<{ category: ActivityLogCategory; status: ActivityLogCoverageStatus; covered_subscriptions: number; subscription_count: number }>;
+  counts: Record<ActivityLogCoverageStatus | "total" | "gaps", number>;
+  coverage_percent: number;
+  complete: boolean;
+  partial: boolean;
+  metadata: {
+    partial?: boolean;
+    truncated?: boolean;
+    subscriptions?: ActivityLogSubscriptionMetadata[];
+    subscription_names?: Record<string, string>;
+    subscription_states?: Record<string, string>;
+    [key: string]: unknown;
+  };
+  security_guidance: string;
+};
+export type ActivityLogPlanRequest = AlertRoutingContext & {
+  subscription_ids: string[];
+  categories: ActivityLogCategory[];
+  resource_group: string;
+  routing_mode: "common" | "per_category";
+  common_action_group_id: string;
+  action_group_ids_by_category: Partial<Record<ActivityLogCategory, string[]>>;
+  name_prefix: string;
+  conditions_by_category?: Partial<Record<ActivityLogCategory, ActivityLogCondition[]>>;
+};
+export type ActivityLogPlanOperation = {
+  order: number;
+  key: string;
+  category: ActivityLogCategory;
+  category_label: string;
+  subscription_id: string;
+  scope_id: string;
+  classification: "create" | "update" | "enable" | "equivalent" | "blocked" | "invalid";
+  operation: "create" | "update" | "none";
+  actionable: boolean;
+  target_id: string;
+  desired: Record<string, unknown> & { name?: string; action_group_ids?: string[]; activity_conditions?: ActivityLogCondition[] };
+  body: Record<string, unknown>;
+  errors: string[];
+  validation_status: "valid" | "invalid" | "blocked";
+  reason: string;
+  risk: "low" | "medium" | "high" | string;
+  cost: { classification: string; estimated_monthly_cost: number; currency: string };
+  receiver_count: number;
+  selected_action_groups: Array<{ id: string; name: string; enabled: boolean; receiver_count: number; active_receiver_count: number }>;
+  issues: Array<{ type: string; severity: string; message: string; rule_ids: string[] }>;
+  existing_rule_details: Array<{ id: string; name: string; enabled: boolean; action_group_ids: string[]; activity_conditions: ActivityLogCondition[]; reason: string }>;
+  equivalent_rules: Array<{ id: string; name: string; enabled: boolean }>;
+  blocker: { change_id: string; status: string; target_id: string } | null;
+};
+export type ActivityLogPlanPreview = {
+  plan_version: number;
+  plan_token: string;
+  inputs: ActivityLogPlanRequest;
+  items: ActivityLogPlanOperation[];
+  counts: Record<ActivityLogPlanOperation["classification"] | "total" | "actionable", number>;
+  valid: boolean;
+  warnings: string[];
+};
+export type ActivityLogPlanValidation = {
+  valid: boolean;
+  errors: string[];
+  plan: ActivityLogPlanPreview;
+};
+export type ActivityLogPlanSubmission = {
+  status: "pending";
+  batch_id: string;
+  change_count: number;
+  changes: AlertsManagerChange[];
+  azure_writes_performed: false;
+};
+export type ActivityLogCoverageResponse = { connection_id: string; scope: { kind: "workload" | "subscription" | "management_group"; id: string }; coverage: ActivityLogCoverage };
+export type ActivityLogDiagnosticCategory = "Administrative" | "Alert" | "Policy" | "Security";
+export type ActivityLogDiagnosticDestinationKind = "workspace" | "event_hub" | "storage";
+export type ActivityLogDiagnosticDestination = {
+  kind: ActivityLogDiagnosticDestinationKind;
+  resource_id: string;
+  event_hub_name: string;
+};
+export type ActivityLogDiagnosticSetting = {
+  id: string;
+  name: string;
+  categories: ActivityLogDiagnosticCategory[];
+  destinations: ActivityLogDiagnosticDestination[];
+  properties: Record<string, unknown>;
+  state_hash: string;
+};
+export type ActivityLogDiagnosticSubscription = {
+  subscription_id: string;
+  status: "covered" | "partial" | "missing" | "unknown";
+  complete: boolean;
+  error: string;
+  settings: ActivityLogDiagnosticSetting[];
+  categories: Record<ActivityLogDiagnosticCategory, "covered" | "missing" | "unknown">;
+  destinations: Record<ActivityLogDiagnosticDestinationKind, "configured" | "missing" | "unknown">;
+};
+export type ActivityLogDiagnosticInventory = {
+  connection_id: string;
+  scope: { kind: "workload" | "subscription" | "management_group"; id: string };
+  selected_subscription_ids: string[];
+  api_version: string;
+  subscriptions: ActivityLogDiagnosticSubscription[];
+  counts: Record<"covered" | "partial" | "missing" | "unknown", number>;
+  partial: boolean;
+};
+export type ActivityLogDiagnosticDestinationOption = {
+  id: string;
+  name: string;
+  subscription_id?: string;
+  resource_group?: string;
+  location?: string;
+  state?: string;
+  depth?: number;
+};
+export type ActivityLogDiagnosticDestinationOptions = {
+  connection_id: string;
+  management_groups: ActivityLogDiagnosticDestinationOption[];
+  subscriptions: ActivityLogDiagnosticDestinationOption[];
+  resource_groups: ActivityLogDiagnosticDestinationOption[];
+  resources: ActivityLogDiagnosticDestinationOption[];
+  event_hubs: ActivityLogDiagnosticDestinationOption[];
+  authorization_rules: ActivityLogDiagnosticDestinationOption[];
+  authorization_rules_complete: boolean;
+  authorization_rule_error: string;
+};
+export type ActivityLogDiagnosticPlanRequest = AlertRoutingContext & {
+  subscription_ids: string[];
+  categories: ActivityLogDiagnosticCategory[];
+  destination: ActivityLogDiagnosticDestination;
+  setting_name: string;
+};
+export type ActivityLogDiagnosticPlanItem = {
+  order: number;
+  subscription_id: string;
+  classification: "create" | "update" | "equivalent" | "blocked";
+  operation: "create" | "update" | "none";
+  actionable: boolean;
+  target_id: string;
+  setting_name: string;
+  categories: ActivityLogDiagnosticCategory[];
+  destination: ActivityLogDiagnosticDestination;
+  before: Partial<ActivityLogDiagnosticSetting>;
+  desired: { properties: Record<string, unknown> };
+  errors: string[];
+  blocker: { change_id: string; status: string; operation: string } | null;
+};
+export type ActivityLogDiagnosticPlan = {
+  plan_version: number;
+  plan_token: string;
+  inputs: ActivityLogDiagnosticPlanRequest & { inventory_hashes: Record<string, string> };
+  items: ActivityLogDiagnosticPlanItem[];
+  counts: Record<ActivityLogDiagnosticPlanItem["classification"] | "total" | "actionable", number>;
+  valid: boolean;
+};
+export type ActivityLogDiagnosticValidation = {
+  valid: boolean;
+  errors: string[];
+  plan: ActivityLogDiagnosticPlan;
+  azure_writes_performed: false;
+};
+export type ActivityLogDiagnosticSubmission = ActivityLogPlanSubmission;
+export type ActionGroupSuggestions = {
+  subject_kind: string;
+  subject_id: string;
+  ownership_source: string;
+  owners: Array<{ display_name: string; role: string; primary: boolean }>;
+  suggestions: Array<{ action_group_id: string; name: string; confidence: number; reason: string; receiver_count: number }>;
+  count: number;
+};
+
+export type AlertRoutingRule = { id: string; name: string; order: number; enabled: boolean; fallback: boolean; severities: number[]; categories: string[]; environments: string[]; scopes: string[]; action_group_ids: string[]; migration_diagnostics?: string[]; created_at: string; created_by: string; updated_at: string; updated_by: string };
+export type AlertRoutingRuleInput = Pick<AlertRoutingRule, "name" | "order" | "enabled" | "fallback" | "severities" | "categories" | "environments" | "scopes" | "action_group_ids">;
+export type AlertRoutingContext = { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string };
+export type AlertRouteResolution = { matched: boolean; rule: AlertRoutingRule | null; action_group_ids: string[]; action_groups: Array<{ id: string; name: string }>; diagnostics: string[]; explanation: string; trace: Array<{ rule_id: string; name: string; order: number; fallback: boolean; matched: boolean; checks: Record<string, boolean> }> };
+export type AmbaBlueprint = { id: string; blueprint_id: string; version: number; name: string; description: string; amba_version: string; included_resource_types: string[]; severity_overrides: Record<string, number>; default_disabled: boolean; created_at: string; created_by: string };
+export type AmbaBlueprintInput = Pick<AmbaBlueprint, "name" | "description" | "amba_version" | "included_resource_types" | "severity_overrides" | "default_disabled">;
+export type AmbaBlueprintAssignment = { id: string; blueprint_id: string; blueprint_version: number; scope_kind: "subscription" | "workload" | "workload_group"; scope_id: string; connection_id: string; environment: string; monitoring_resource_group: string; enabled: boolean; created_at: string; created_by: string; updated_at: string; updated_by: string };
+export type AmbaBlueprintAssignmentInput = Pick<AmbaBlueprintAssignment, "blueprint_id" | "blueprint_version" | "scope_kind" | "scope_id" | "connection_id" | "environment" | "monitoring_resource_group" | "enabled">;
+export type DeploymentPlanItem = { id: string; source_gap_id?: string; classification: "covered" | "equivalent" | "drifted" | "missing" | "blocked"; actionable: boolean; included: boolean; resource_id: string; resource_name: string; resource_type: string; alert_key: string; alert_name: string; category: string; severity: number; source_status: string; reasons: string[]; routing: { mode?: "common" | "rules"; rule_id: string; rule_name: string; action_group_ids: string[]; action_groups: Array<{ id: string; name: string }>; diagnostics: string[]; explanation: string } | null; proposal: { family: "metric"; operation: "create"; target_id: string; desired: Record<string, unknown>; body: Record<string, unknown> } | null };
+export type DeploymentPlan = { id: string; assignment_id: string; source?: "selected_gaps"; source_gap_ids?: string[]; routing_mode?: "common" | "rules"; common_action_group_id?: string; blueprint_id: string; blueprint_version: number; amba_version: string; connection_id: string; scope_kind: AmbaBlueprintAssignment["scope_kind"] | "management_group"; scope_id: string; workload_id?: string; subscription_id?: string; management_group_id?: string; environment?: string; monitoring_resource_group?: string; status: "draft" | "pending" | "approved" | "rejected"; counts: Record<DeploymentPlanItem["classification"], number>; items?: DeploymentPlanItem[]; item_count?: number; coverage_sources: string[]; created_at: string; created_by: string; updated_at: string; updated_by: string; validated_at: string; submitted_at: string; submitted_by: string; batch_id: string; change_ids: string[]; decided_at: string; decided_by: string; decision_reason: string };
+export type DeploymentPlanValidation = { valid: boolean; included_count: number; errors: Array<{ item_id: string; errors: string[] }> };
+export type SelectedGapDeploymentPlanRequest = AlertRoutingContext & { environment: string; monitoring_resource_group: string; gaps: AlertAnalysisGap[]; routing_mode: "common" | "rules"; common_action_group_id?: string };
+export type GapDeploymentPlanStatus = { gap_id: string; status: "none" | "draft" | "pending" | "approved" | "rejected" | "applied" | "failed" | "stale"; plan_id: string; change_ids: string[]; updated_at: string };
+
+export type ManagedAlertRule = {
+  id: string;
+  name: string;
+  type: string;
+  family: "metric" | "log" | "activity" | "smart" | "prometheus";
+  category?: string;
+  subscription_id: string;
+  resource_group: string;
+  location: string;
+  enabled: boolean;
+  severity: number | null;
+  description: string;
+  scopes: string[];
+  action_group_ids: string[];
+  condition_count: number;
+  evaluation_frequency: string;
+  window_size: string;
+  state_hash: string;
+  tags: Record<string, string>;
+};
+
+export type AlertRuleDimension = { name: string; operator: "Include" | "Exclude"; values: string[] };
+export type EditableAlertRule = ManagedAlertRule & {
+  auto_mitigate: boolean;
+  target_resource_type: string;
+  target_resource_region: string;
+  identity: Record<string, unknown>;
+  display_name?: string;
+  conditions: Array<{
+    name?: string;
+    metric_name?: string;
+    metric_namespace?: string;
+    threshold_type?: "static" | "dynamic";
+    operator: string;
+    threshold: number | null;
+    aggregation: string;
+    sensitivity?: string;
+    min_failing_periods: number;
+    evaluation_periods: number;
+    dimensions: AlertRuleDimension[];
+    skip_metric_validation?: boolean;
+    query?: string;
+    metric_measure_column?: string;
+    resource_id_column?: string;
+  }>;
+  activity_conditions?: Array<Record<string, unknown>>;
+  mute_actions_duration?: string;
+  override_query_time_range?: string;
+  target_resource_types?: string[];
+  skip_query_validation?: boolean;
+  detector_id?: string;
+  detector_parameters?: Record<string, unknown>;
+  frequency?: string;
+  throttling_duration?: string;
+  interval?: string;
+  cluster_name?: string;
+  prometheus_rules?: Array<{
+    alert?: string;
+    record?: string;
+    expression: string;
+    enabled?: boolean;
+    for?: string;
+    severity?: number;
+    labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+    actions?: Array<string | { actionGroupId: string; actionProperties?: Record<string, string> }>;
+    resolveConfiguration?: Record<string, unknown>;
+  }>;
+};
+
+export type AlertsAuthoringOptions = {
+  subscriptions: { id: string; name: string; state?: string; is_default?: boolean }[];
+  subscription_error: string;
+  resource_groups: { id: string; name: string; subscription_id: string; location: string }[];
+  resources: { id: string; name: string; type: string; kind: string; subscription_id: string; resource_group: string; location: string; workspace_id: string }[];
+};
+
+export type ResolvedAlertScope = {
+  kind: WorkloadNodeKind;
+  id: string;
+  name: string;
+  subscription_id: string;
+  subscription_name: string;
+  resource_group: string;
+  resource_type: string;
+  location: string;
+};
+
+export type NotificationSimulation = {
+  event: { id: string; name: string; family: string; severity: number; scopes: string[]; timestamp: string };
+  base_action_group_ids: string[];
+  final_action_group_ids: string[];
+  inherited_action_group_ids: string[];
+  selected_action_group_ids: string[];
+  paths: { action_group_id: string; name: string; enabled: boolean; missing: boolean; receivers: { type: string; name: string; destination?: string; masked: string; enabled: boolean; would_run: boolean; blocked_reason: string; use_common_alert_schema: boolean; channel: string; constraints: string[]; supports_common_schema: boolean; payload_schema: string; payload_preview: Record<string, unknown> }[] }[];
+  duplicate_paths: { receiver: string; action_group_ids: string[]; count: number }[];
+  receiver_count: number;
+  would_run_count: number;
+  monitor_condition: "Fired" | "Resolved";
+  resolved_notification_expected: boolean;
+  mute_or_throttle_duration: string;
+  muted_or_throttled: boolean;
+  history: { fired_30d: number; resolved_30d: number; last_fired: string; test_deliveries: { action_group_id: string; tested_at: string; state: string; details: { mechanism: string; name: string; status: string; detail: string }[] }[] };
+  warning: string;
+};
+
+export type BulkNotificationSimulation = {
+  summary: { rules: number; resources: number; action_groups: number; receiver_paths: number; would_deliver: number; blocked: number; diagnostics: number };
+  nodes: { id: string; name: string; kind: "resource" | "alert" | "action_group" | "receiver" | "outcome"; status: string; resource_id?: string; family?: string; severity?: number; receiver_type?: string; fingerprint?: string }[];
+  links: { source: string; target: string; value: number; status: string; receiver_type?: string }[];
+  routes: { resource_ids: string[]; rule_id: string; rule_name: string; family: string; severity: number | null; rule_enabled: boolean; action_group_id: string; action_group_name: string; action_group_enabled?: boolean; receiver_type: string; receiver_name: string; receiver_destination?: string; receiver_masked: string; receiver_fingerprint?: string; receiver_enabled?: boolean; payload_schema?: string; outcome: string; would_run?: boolean; issues: string[] }[];
+  diagnostics: { code: string; severity: string; rule_id?: string; rule_name?: string; action_group_id?: string; receiver?: string; message: string }[];
+  warning: string;
+};
+
+export type NoiseGuardResult = {
+  overlap: boolean;
+  count: number;
+  layered_count: number;
+  projected_duplicate_notifications_30d: number;
+  findings: { rule_id: string; rule_name: string; type: "exact" | "near" | "layered"; risk: "high" | "medium" | "low" | "informational"; same_signal: boolean; shared_action_group_count: number; shared_receiver_count: number; dimension_overlap: "exact" | "partial" | "disjoint"; threshold_delta_pct: number | null; threshold_tolerance_pct: number; historical_firings_30d: number; projected_duplicate_notifications_30d: number; explanation: string }[];
+  warning: string;
+};
+
+export type MetricDefinition = {
+  name: string;
+  display_name: string;
+  namespace: string;
+  unit: string;
+  primary_aggregation: string;
+  supported_aggregations: string[];
+  time_grains: string[];
+  dimensions: { name: string; display_name: string }[];
+};
+
+export type FiredAlertInstance = {
+  id: string;
+  name: string;
+  rule_id: string;
+  rule_name: string;
+  severity: string;
+  state: "New" | "Acknowledged" | "Closed" | string;
+  monitor_condition: string;
+  monitor_service: string;
+  signal_type: string;
+  fired_at: string;
+  last_modified_at: string;
+  description: string;
+  target_ids: string[];
+  subscription_id: string;
+};
+
+export type ManagedActionGroup = AlertAnalysisActionGroup & {
+  location: string;
+  short_name: string;
+  dependencies: { id: string; name: string; type: string }[];
+  dependency_count: number;
+  state_hash: string;
+  tags: Record<string, string>;
+};
+
+export type EditableActionGroup = {
+  id?: string;
+  clone_source_id?: string;
+  name: string;
+  subscription_id: string;
+  resource_group: string;
+  location: string;
+  short_name: string;
+  enabled: boolean;
+  email_receivers: { name: string; email_address: string; use_common_alert_schema: boolean }[];
+  sms_receivers: { name: string; country_code: string; phone_number: string }[];
+  webhook_receivers: { name: string; service_uri: string; preserve_secret?: boolean; use_common_alert_schema: boolean; use_aad_auth?: boolean; object_id?: string; identifier_uri?: string; tenant_id?: string }[];
+  arm_role_receivers: { name: string; role_id: string; use_common_alert_schema: boolean }[];
+  voice_receivers: { name: string; country_code: string; phone_number: string }[];
+  azure_app_push_receivers: { name: string; email_address: string }[];
+  azure_function_receivers: { name: string; function_app_resource_id: string; function_name: string; endpoint: string; preserve_secret?: boolean; use_common_alert_schema: boolean }[];
+  logic_app_receivers: { name: string; resource_id: string; endpoint: string; preserve_secret?: boolean; use_common_alert_schema: boolean }[];
+  event_hub_receivers: { name: string; subscription_id: string; resource_group: string; tenant_id: string; namespace_name: string; event_hub_name: string; use_common_alert_schema: boolean }[];
+  automation_runbook_receivers: { name: string; automation_account_id: string; runbook_name: string; webhook_resource_id: string; endpoint: string; preserve_secret?: boolean; is_global_runbook: boolean; use_common_alert_schema: boolean }[];
+  itsm_receivers: { name: string; workspace_id: string; connection_id: string; region: string; ticket_configuration: string; preserve_configuration?: boolean }[];
+  tags: Record<string, string>;
+  state_hash?: string;
+  advanced_receiver_count?: number;
+};
+
+export type AlertsManagerChange = {
+  id: string;
+  connection_id: string;
+  target_type: string;
+  target_id: string;
+  target_name: string;
+  operation: "create" | "update" | "delete";
+  status: "pending" | "approved" | "rejected" | "applied" | "failed" | "stale";
+  risk: string;
+  summary: { reason?: string; before?: Record<string, unknown>; desired?: Record<string, unknown>; clone_source_id?: string; clone_source_name?: string };
+  requested_by: string;
+  requested_at: string;
+  decided_by: string;
+  decided_at: string;
+  decision_reason: string;
+  applied_by: string;
+  applied_at: string;
+  error_code: string;
+  error_message: string;
+  rollback_of: string;
+  evidence_id: string;
+  can_retry?: boolean;
+};
+
+export type AlertsManagerChangeDetails = {
+  change: AlertsManagerChange;
+  execution: {
+    operation: AlertsManagerChange["operation"];
+    target_type: string;
+    target_id: string;
+    approval_required: boolean;
+    ready_to_apply: boolean;
+    azure_method: "PUT" | "DELETE";
+    expected_state_hash: string;
+  };
+  before: Record<string, unknown>;
+  desired_payload: Record<string, unknown>;
+  azure_body: Record<string, unknown>;
+  redaction_notice: string;
+};
+
+export type AlertsManagerSummary = {
+  connection_id?: string;
+  pending_count: number;
+  approved_count: number;
+  actionable_count: number;
+  latest_applied_at?: string;
+  deployment_plan_count?: number;
+  routing_rule_count?: number;
+  capabilities?: AlertsManagerCapabilities;
+  total_changes?: number;
+  rule_count?: number;
+  action_group_count?: number;
+};
+
+export type AlertAnalysisRecipient = {
+  fingerprint: string;
+  type: string;
+  destination?: string;
+  masked: string;
+  action_group_ids: string[];
+  action_group_names: string[];
+  rule_ids: string[];
+  action_group_count: number;
+  rule_count: number;
+  proliferation: boolean;
+};
+
+export type AlertAnalysisSnapshot = {
+  generated_at: string;
+  scope_kind: string;
+  scope_id: string;
+  scope_name: string;
+  source: string;
+  demo: boolean;
+  error: string;
+  partial: boolean;
+  report_exists: boolean;
+  rationalization_score: number;
+  cost_summary?: {
+    currency: string;
+    period: string;
+    catalog_version: string;
+    catalog_effective_date: string;
+    catalog_source: string;
+    catalog_scope: string;
+    monthly_usd: number;
+    monthly_min_usd: number;
+    monthly_max_usd: number | null;
+    current: AlertAnalysisCostTotal;
+    potential_disabled_monthly: number;
+    potential_disabled_monthly_min: number;
+    potential_disabled_monthly_max: number | null;
+    disabled: AlertAnalysisCostTotal;
+    priced_count: number;
+    unknown_count: number;
+    by_family: Record<string, {
+      rule_count: number;
+      priced_count: number;
+      unknown_count: number;
+      current: AlertAnalysisCostTotal;
+      disabled: AlertAnalysisCostTotal;
+    }>;
+    top_rules: Array<{
+      rule_id: string;
+      rule_name: string;
+      family: string;
+      enabled: boolean;
+      status: AlertAnalysisRuleCost["status"];
+      confidence: AlertAnalysisRuleCost["confidence"];
+      monthly_usd: number;
+      monthly_min_usd: number | null;
+      monthly_max_usd: number | null;
+    }>;
+    assumptions: string[];
+  };
+  stale: boolean;
+  ttl_s: number;
+  age_seconds: number | null;
+  connection_configured: boolean;
+  kpis: {
+    total_rules: number;
+    enabled_rules: number;
+    disabled_rules: number;
+    overlap_groups: number;
+    overlapping_rules: number;
+    notification_overlaps: number;
+    gap_count: number;
+    action_groups: number;
+    unique_recipients: number;
+    recipient_proliferation: number;
+    resources_evaluated: number;
+    smart_detector_rules: number;
+    prometheus_rules: number;
+    firings_7d: number;
+    firings_30d: number;
+    accepted_findings?: number;
+    actionable_overlap_groups?: number;
+    actionable_gap_count?: number;
+  };
+  rules: AlertAnalysisRule[];
+  overlaps: AlertAnalysisOverlap[];
+  gaps: AlertAnalysisGap[];
+  action_groups: AlertAnalysisActionGroup[];
+  recipients: AlertAnalysisRecipient[];
+  decisions?: AlertAnalysisDecision[];
+  active_overlaps?: AlertAnalysisOverlap[];
+  active_gaps?: AlertAnalysisGap[];
+};
+
+export type AlertAnalysisRefreshProgress = {
+  seq: number;
+  ts: string;
+  level: string;
+  phase: string;
+  message: string;
+};
+
+export type AlertAnalysisRefreshJob = {
+  id: string;
+  key: string;
+  status: "running" | "done" | "error";
+  started_at: string;
+  finished_at: string | null;
+  progress_count: number;
+  last_message: string;
+  error: string;
+};
+
+export type AlertAnalysisRefreshJobResponse = {
+  job: AlertAnalysisRefreshJob | null;
+  progress: AlertAnalysisRefreshProgress[];
+  result: AlertAnalysisSnapshot | null;
+};
+
 export type AmbaAlertRef = {
   key: string;
   name: string;
@@ -463,6 +1241,9 @@ export type AmbaAlertRef = {
   window: string;
   severity: string;
   requires_action_group: boolean;
+  dimension_filter: string;
+  aggregation: string;
+  deployable: boolean;
   why: string;
 };
 
@@ -3943,6 +4724,7 @@ export const api = {
     if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<AmbaCoverage>(`/amba/coverage?${q.toString()}`);
   },
+  ambaCoverageFleet: () => http<AmbaCoverageFleet>("/amba/fleet"),
   refreshAmba: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -3950,6 +4732,284 @@ export const api = {
     if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<AmbaCoverage>(`/amba/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
+  alertAnalysis: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return http<AlertAnalysisSnapshot>(`/alert-analysis?${q.toString()}`);
+  },
+  refreshAlertAnalysis: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return http<AlertAnalysisSnapshot>(`/alert-analysis/refresh?${q.toString()}`, { method: "POST", body: "{}" });
+  },
+  startAlertAnalysisRefresh: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return http<AlertAnalysisRefreshJobResponse>(`/alert-analysis/refresh/start?${q.toString()}`, { method: "POST", body: "{}" });
+  },
+  alertAnalysisRefreshJob: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return http<AlertAnalysisRefreshJobResponse>(`/alert-analysis/refresh/job?${q.toString()}`);
+  },
+  exportAlertAnalysis: (
+    params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string },
+    format: "csv" | "json" | "xlsx",
+  ) => {
+    const q = new URLSearchParams({ format });
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return httpBlob(`/alert-analysis/export?${q.toString()}`);
+  },
+  alertAnalysisTrend: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return http<CoverageTrend>(`/alert-analysis/trend?${q.toString()}`);
+  },
+  alertAnalysisRuns: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return http<{ runs: CoverageRunSummary[] }>(`/alert-analysis/runs?${q.toString()}`);
+  },
+  alertAnalysisRun: (runId: string) =>
+    http<{ run: AlertAnalysisSnapshot }>(`/alert-analysis/runs/${encodeURIComponent(runId)}`),
+  captureAlertAnalysisEvidence: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    return http<{ ok: boolean; snapshot: { id: string; name: string; sha256: string } }>(`/alert-analysis/evidence?${q.toString()}`, { method: "POST", body: "{}" });
+  },
+  alertAnalysisDecisions: (connectionId = "") => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ decisions: AlertAnalysisDecision[] }>(`/alert-analysis/decisions?${q.toString()}`);
+  },
+  recordAlertAnalysisDecision: (
+    connectionId: string,
+    body: { target_type: string; target_id: string; action: string; reason?: string; consolidate_to?: string },
+  ) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ decision: AlertAnalysisDecision }>(`/alert-analysis/decisions?${q.toString()}`, { method: "POST", body: JSON.stringify(body) });
+  },
+  deleteAlertAnalysisDecision: (connectionId: string, targetType: string, targetId: string) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ ok: boolean }>(`/alert-analysis/decisions/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}?${q.toString()}`, { method: "DELETE" });
+  },
+  createAlertAnalysisPlan: (body: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) =>
+    http<{ plan: AlertAnalysisPlan }>("/alert-analysis/plans", { method: "POST", body: JSON.stringify(body) }),
+  alertAnalysisPlans: () => http<{ plans: AlertAnalysisPlan[] }>("/alert-analysis/plans"),
+  decideAlertAnalysisPlan: (planId: string, decision: "approved" | "rejected", reason = "") =>
+    http<{ plan: AlertAnalysisPlan }>(`/alert-analysis/plans/${encodeURIComponent(planId)}/decision`, { method: "POST", body: JSON.stringify({ decision, reason }) }),
+  deleteAlertAnalysisPlan: (planId: string) =>
+    http<{ ok: boolean }>(`/alert-analysis/plans/${encodeURIComponent(planId)}`, { method: "DELETE" }),
+  alertsManagerCapabilities: (params: { connection_id?: string; workload_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    return http<AlertsManagerCapabilities>(`/alerts-manager/capabilities?${q.toString()}`);
+  },
+  alertsAuthoringOptions: (params: { connection_id?: string; subscription_id?: string; resource_group?: string }) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.resource_group) q.set("resource_group", params.resource_group);
+    return http<AlertsAuthoringOptions>(`/alerts-manager/authoring/options?${q.toString()}`);
+  },
+  resolveAlertsAuthoringScopes: (connectionId: string, resourceIds: string[]) =>
+    http<{ resources: ResolvedAlertScope[] }>("/alerts-manager/authoring/resolve", {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connectionId, resource_ids: resourceIds }),
+    }),
+  firedAlertInstances: (params: { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string; days?: number; states?: string }) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.days) q.set("days", String(params.days));
+    if (params.states) q.set("states", params.states);
+    return http<{ alerts: FiredAlertInstance[]; count: number; days: number }>(`/alerts-manager/alert-instances?${q.toString()}`);
+  },
+  firedAlertHistory: (connectionId: string, alertId: string) =>
+    http<{ history: Record<string, unknown> }>("/alerts-manager/alert-instances/history", { method: "POST", body: JSON.stringify({ connection_id: connectionId, alert_id: alertId }) }),
+  changeFiredAlertState: (connectionId: string, alertId: string, state: "New" | "Acknowledged" | "Closed") =>
+    http<{ new_state: string }>("/alerts-manager/alert-instances/state", { method: "POST", body: JSON.stringify({ connection_id: connectionId, alert_id: alertId, state }) }),
+  managedActionGroups: (params: { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return http<{ action_groups: ManagedActionGroup[]; count: number }>(`/alerts-manager/action-groups?${q.toString()}`);
+  },
+  activityLogCoverage: (params: AlertRoutingContext) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return http<ActivityLogCoverageResponse>(`/alerts-manager/activity-log-coverage?${q.toString()}`);
+  },
+  exportActivityLogCoverage: (params: AlertRoutingContext, format: "csv" | "json") => {
+    const q = new URLSearchParams({ format });
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return httpBlob(`/alerts-manager/activity-log-coverage/export?${q.toString()}`);
+  },
+  previewActivityLogPlan: (body: ActivityLogPlanRequest) =>
+    http<{ plan: ActivityLogPlanPreview }>("/alerts-manager/activity-log-plan/preview", { method: "POST", body: JSON.stringify(body) }),
+  validateActivityLogPlan: (body: ActivityLogPlanRequest & { plan_token: string }) =>
+    http<ActivityLogPlanValidation>("/alerts-manager/activity-log-plan/validate", { method: "POST", body: JSON.stringify(body) }),
+  submitActivityLogPlan: (body: ActivityLogPlanRequest & { plan_token: string; reason: string }) =>
+    http<ActivityLogPlanSubmission>("/alerts-manager/activity-log-plan/submit", { method: "POST", body: JSON.stringify(body) }),
+  activityLogDiagnosticInventory: (params: AlertRoutingContext) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    return http<ActivityLogDiagnosticInventory>(`/alerts-manager/activity-log-diagnostic-settings/inventory?${q.toString()}`);
+  },
+  activityLogDiagnosticDestinationOptions: (params: AlertRoutingContext & { resource_group?: string; kind: ActivityLogDiagnosticDestinationKind; namespace_id?: string }) => {
+    const q = new URLSearchParams({ kind: params.kind });
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.resource_group) q.set("resource_group", params.resource_group);
+    if (params.namespace_id) q.set("namespace_id", params.namespace_id);
+    return http<ActivityLogDiagnosticDestinationOptions>(`/alerts-manager/activity-log-diagnostic-settings/destination-options?${q.toString()}`);
+  },
+  previewActivityLogDiagnosticPlan: (body: ActivityLogDiagnosticPlanRequest) =>
+    http<{ plan: ActivityLogDiagnosticPlan; azure_writes_performed: false }>("/alerts-manager/activity-log-diagnostic-settings/plan/preview", { method: "POST", body: JSON.stringify(body) }),
+  validateActivityLogDiagnosticPlan: (body: ActivityLogDiagnosticPlanRequest & { plan_token: string }) =>
+    http<ActivityLogDiagnosticValidation>("/alerts-manager/activity-log-diagnostic-settings/plan/validate", { method: "POST", body: JSON.stringify(body) }),
+  submitActivityLogDiagnosticPlan: (body: ActivityLogDiagnosticPlanRequest & { plan_token: string; reason: string }) =>
+    http<ActivityLogDiagnosticSubmission>("/alerts-manager/activity-log-diagnostic-settings/plan/submit", { method: "POST", body: JSON.stringify(body) }),
+  alertRoutingRules: () => http<{ routing_rules: AlertRoutingRule[]; count: number }>("/alerts-manager/routing-rules"),
+  saveAlertRoutingRule: (body: AlertRoutingRuleInput & AlertRoutingContext, ruleId = "") => http<{ routing_rule: AlertRoutingRule; warnings: string[] }>(ruleId ? `/alerts-manager/routing-rules/${encodeURIComponent(ruleId)}` : "/alerts-manager/routing-rules", { method: ruleId ? "PUT" : "POST", body: JSON.stringify(body) }),
+  deleteAlertRoutingRule: (ruleId: string) => http<{ deleted: boolean }>(`/alerts-manager/routing-rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" }),
+  resolveAlertRoute: (body: AlertRoutingContext & { severity?: number | string; category?: string; environment?: string; scope?: string; resource_id?: string }) => http<AlertRouteResolution>("/alerts-manager/routing-rules/resolve", { method: "POST", body: JSON.stringify(body) }),
+  ambaBlueprints: () => http<{ blueprints: AmbaBlueprint[]; count: number }>("/alerts-manager/amba-blueprints"),
+  ambaBlueprint: (blueprintId: string, version?: number) => http<{ blueprint: AmbaBlueprint; versions: AmbaBlueprint[] }>(`/alerts-manager/amba-blueprints/${encodeURIComponent(blueprintId)}${version ? `?version=${version}` : ""}`),
+  createAmbaBlueprintVersion: (body: AmbaBlueprintInput, blueprintId = "") => http<{ blueprint: AmbaBlueprint }>(blueprintId ? `/alerts-manager/amba-blueprints/${encodeURIComponent(blueprintId)}/versions` : "/alerts-manager/amba-blueprints", { method: "POST", body: JSON.stringify(body) }),
+  deleteAmbaBlueprintVersion: (blueprintId: string, version: number) => http<{ deleted: boolean }>(`/alerts-manager/amba-blueprints/${encodeURIComponent(blueprintId)}/versions/${version}`, { method: "DELETE" }),
+  ambaBlueprintAssignments: () => http<{ assignments: AmbaBlueprintAssignment[]; count: number }>("/alerts-manager/amba-blueprint-assignments"),
+  saveAmbaBlueprintAssignment: (body: AmbaBlueprintAssignmentInput, assignmentId = "") => http<{ assignment: AmbaBlueprintAssignment }>(assignmentId ? `/alerts-manager/amba-blueprint-assignments/${encodeURIComponent(assignmentId)}` : "/alerts-manager/amba-blueprint-assignments", { method: assignmentId ? "PUT" : "POST", body: JSON.stringify(body) }),
+  deleteAmbaBlueprintAssignment: (assignmentId: string) => http<{ deleted: boolean }>(`/alerts-manager/amba-blueprint-assignments/${encodeURIComponent(assignmentId)}`, { method: "DELETE" }),
+  previewDeploymentPlan: (assignmentId: string) => http<{ plan: DeploymentPlan }>("/alerts-manager/deployment-plans/preview", { method: "POST", body: JSON.stringify({ assignment_id: assignmentId }) }),
+  previewGapsDeploymentPlan: (body: SelectedGapDeploymentPlanRequest) => http<{ plan: DeploymentPlan }>("/alerts-manager/deployment-plans/from-gaps/preview", { method: "POST", body: JSON.stringify(body) }),
+  deploymentPlansByGap: (gapIds: string[]) => {
+    const q = new URLSearchParams();
+    gapIds.forEach((gapId) => q.append("gap_ids", gapId));
+    return http<{ gaps: GapDeploymentPlanStatus[]; by_gap: Record<string, GapDeploymentPlanStatus> }>(`/alerts-manager/deployment-plans/by-gap?${q.toString()}`);
+  },
+  deploymentPlans: (status = "") => http<{ plans: DeploymentPlan[]; count: number }>(`/alerts-manager/deployment-plans${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  deploymentPlan: (planId: string) => http<{ plan: DeploymentPlan }>(`/alerts-manager/deployment-plans/${encodeURIComponent(planId)}`),
+  updateDeploymentPlanItems: (planId: string, items: Array<{ item_id: string; included: boolean }>) => http<{ plan: DeploymentPlan }>(`/alerts-manager/deployment-plans/${encodeURIComponent(planId)}/items`, { method: "PATCH", body: JSON.stringify({ items }) }),
+  validateDeploymentPlan: (planId: string) => http<DeploymentPlanValidation>(`/alerts-manager/deployment-plans/${encodeURIComponent(planId)}/validate`, { method: "POST", body: "{}" }),
+  submitDeploymentPlan: (planId: string) => http<{ plan: DeploymentPlan; batch_id: string; changes: AlertsManagerChange[] }>(`/alerts-manager/deployment-plans/${encodeURIComponent(planId)}/submit`, { method: "POST", body: "{}" }),
+  decideDeploymentPlan: (planId: string, decision: "approved" | "rejected", reason: string) => http<{ plan: DeploymentPlan; changes: AlertsManagerChange[] }>(`/alerts-manager/deployment-plans/${encodeURIComponent(planId)}/decision`, { method: "POST", body: JSON.stringify({ decision, reason }) }),
+  managedActionGroupDetails: (connectionId: string, actionGroupId: string) => {
+    const q = new URLSearchParams({ action_group_id: actionGroupId });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ action_group: EditableActionGroup }>(`/alerts-manager/action-groups/details?${q.toString()}`);
+  },
+  requestActionGroupChange: (body: { connection_id?: string; operation: "create" | "update" | "delete"; target_id?: string; clone_source_id?: string; desired?: Partial<EditableActionGroup>; reason?: string }) =>
+    http<{ change: AlertsManagerChange }>("/alerts-manager/action-groups/changes", { method: "POST", body: JSON.stringify(body) }),
+  alertsManagerChanges: (connectionId = "", page = 1, pageSize = 100) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    q.set("page", String(page));
+    q.set("page_size", String(pageSize));
+    return http<{ changes: AlertsManagerChange[]; total: number; page: number; page_size: number; pending_count: number; approved_count: number; actionable_count: number }>(`/alerts-manager/changes?${q.toString()}`);
+  },
+  alertsManagerChangeDetails: (changeId: string) =>
+    http<AlertsManagerChangeDetails>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/details`),
+  alertsManagerSummary: (connectionId = "") => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    const qs = q.toString();
+    return http<AlertsManagerSummary>(`/alerts-manager/summary${qs ? `?${qs}` : ""}`);
+  },
+  decideAlertsManagerChange: (changeId: string, decision: "approved" | "rejected", reason: string) =>
+    http<{ change: AlertsManagerChange }>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/decision`, { method: "POST", body: JSON.stringify({ decision, reason }) }),
+  applyAlertsManagerChange: (changeId: string) =>
+    http<{ change: AlertsManagerChange }>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/apply`, { method: "POST", body: "{}" }),
+  rollbackAlertsManagerChange: (changeId: string) =>
+    http<{ change: AlertsManagerChange }>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/rollback`, { method: "POST", body: "{}" }),
+  testManagedActionGroup: (connectionId: string, actionGroupId: string, alertType: string, confirmation: string) =>
+    http<{ state: string; details: { mechanism: string; name: string; status: string; sub_state: string; detail: string }[] }>("/alerts-manager/action-groups/test", { method: "POST", body: JSON.stringify({ connection_id: connectionId, action_group_id: actionGroupId, alert_type: alertType, confirmation }) }),
+  managedAlertRules: (params: { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string; family?: string }) => {
+    const q = new URLSearchParams();
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.family) q.set("family", params.family);
+    return http<{ rules: ManagedAlertRule[]; count: number }>(`/alerts-manager/alert-rules?${q.toString()}`);
+  },
+  managedAlertRuleDetails: (connectionId: string, ruleId: string, family: ManagedAlertRule["family"]) => {
+    const q = new URLSearchParams({ rule_id: ruleId, family });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ rule: EditableAlertRule }>(`/alerts-manager/alert-rules/details?${q.toString()}`);
+  },
+  metricDefinitions: (connectionId: string, resourceId: string) => {
+    const q = new URLSearchParams({ resource_id: resourceId });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<{ metrics: MetricDefinition[]; count: number }>(`/alerts-manager/metrics/definitions?${q.toString()}`);
+  },
+  previewMetricSignal: (body: { connection_id?: string; resource_id: string; metric_name: string; aggregation: string; interval: string }) =>
+    http<{ points: { time: string; value: number | null }[]; count: number; minimum: number | null; maximum: number | null; average: number | null }>("/alerts-manager/metrics/preview", { method: "POST", body: JSON.stringify(body) }),
+  previewLogAlertQuery: (body: { connection_id?: string; workspace_id: string; query: string; timespan: string }) =>
+    http<{ rows: unknown[]; row_count: number; truncated: boolean; timespan: string }>("/alerts-manager/logs/preview", { method: "POST", body: JSON.stringify(body) }),
+  validateManagedAlertRule: (family: ManagedAlertRule["family"], desired: Partial<EditableAlertRule>, create = true) =>
+    http<{ valid: boolean; errors: string[]; cost: { evaluations_per_day: number; relative_evaluation_units: number; warnings: string[] } }>("/alerts-manager/alert-rules/validate", { method: "POST", body: JSON.stringify({ family, desired, create }) }),
+  requestAlertRuleChange: (body: { connection_id?: string; family: ManagedAlertRule["family"]; operation: "create" | "update" | "delete"; target_id?: string; desired?: Partial<EditableAlertRule>; reason?: string }) =>
+    http<{ change: AlertsManagerChange }>("/alerts-manager/alert-rules/changes", { method: "POST", body: JSON.stringify(body) }),
+  alertRuleNoiseGuard: (body: { connection_id?: string; workload_id?: string; family: ManagedAlertRule["family"]; desired: Partial<EditableAlertRule> }) =>
+    http<NoiseGuardResult>("/alerts-manager/alert-rules/noise-guard", { method: "POST", body: JSON.stringify(body) }),
+  simulateNotificationPath: (body: { connection_id?: string; rule_id?: string; rule_name?: string; family?: ManagedAlertRule["family"]; resource_id?: string; severity?: number; timestamp?: string; description?: string; action_group_ids?: string[]; selected_action_group_ids?: string[]; use_selected_only?: boolean; monitor_condition?: "Fired" | "Resolved" }) =>
+    http<NotificationSimulation>("/alerts-manager/notifications/simulate", { method: "POST", body: JSON.stringify(body) }),
+  bulkSimulateNotificationPaths: (body: AlertRoutingContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }) =>
+    http<BulkNotificationSimulation>("/alerts-manager/notifications/bulk-simulate", { method: "POST", body: JSON.stringify(body) }),
+  actionGroupSuggestions: (params: { connection_id?: string; workload_id?: string; subject_kind: "resource" | "workload"; subject_id: string }) => {
+    const q = new URLSearchParams({ subject_kind: params.subject_kind, subject_id: params.subject_id });
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    return http<ActionGroupSuggestions>(`/alerts-manager/action-groups/suggestions?${q.toString()}`);
+  },
+  suggestActionGroups: (params: { connection_id?: string; workload_id?: string; subject_kind: "resource" | "workload"; subject_id: string }) => {
+    const q = new URLSearchParams({ subject_kind: params.subject_kind, subject_id: params.subject_id });
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    return http<ActionGroupSuggestions>(`/alerts-manager/action-groups/suggestions?${q.toString()}`);
+  },
+  bulkAlertRuleChanges: (body: { connection_id?: string; action: "enable" | "disable" | "delete" | "add_action_group"; targets: { target_id: string; family: ManagedAlertRule["family"] }[]; action_group_id?: string; reason: string }) =>
+    http<{ batch_id: string; atomic: false; count: number; changes: AlertsManagerChange[] }>("/alerts-manager/alert-rules/bulk-changes", { method: "POST", body: JSON.stringify(body) }),
   ambaIac: (body: { gaps: AmbaGap[]; format: "bicep" | "terraform" }) =>
     http<{ format: string; iac: string; gap_count: number }>("/amba/iac", {
       method: "POST",
@@ -8448,6 +9508,7 @@ export interface WorkloadNode {
   id: string;
   name: string;
   subscription_id?: string | null;
+  subscription_name?: string | null;
   resource_group?: string | null;
   resource_type?: string | null;
   location?: string | null;

@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from app.api import (
     admin,
     admin_demo,
+    alert_analysis,
+    alerts_manager,
     amba,
     architectures,
     assessments,
@@ -465,6 +467,8 @@ api.include_router(inventory.router)
 api.include_router(tagintel.router)
 api.include_router(changeexplorer.router)
 api.include_router(identity.router)
+api.include_router(alert_analysis.router)
+api.include_router(alerts_manager.router)
 api.include_router(amba.router)
 api.include_router(telemetry.router)
 api.include_router(backupdr.router)

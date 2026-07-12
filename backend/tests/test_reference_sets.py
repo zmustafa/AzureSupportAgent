@@ -25,6 +25,11 @@ def test_typed_reference_roundtrip(monkeypatch, tmp_path, mod):
     ref = mod.load_reference()
     assert ref["version"] == 0  # fresh seed = builtin, unsaved
     assert ref["types"], "seed must include types"
+    if mod is amba_ref:
+        disks = {item["key"]: item for item in ref["types"]["microsoft.compute/disks"]["alerts"]}
+        cosmos = {item["key"]: item for item in ref["types"]["microsoft.documentdb/databaseaccounts"]["alerts"]}
+        assert disks["disk_iops_saturation"]["deployable"] is False
+        assert cosmos["cosmos_429"]["aggregation"] == "Count"
     n_types = len(ref["types"])
 
     # Save an edit (drop one type) → version bumps, revision recorded.

@@ -160,6 +160,9 @@ const IdentityPanel = lazy(() =>
 const MonitoringCoveragePanel = lazy(() =>
   import("./MonitoringCoverageView").then((m) => ({ default: m.MonitoringCoveragePanel })),
 );
+const AlertsManagerPanel = lazy(() =>
+  import("./AlertsManagerView").then((m) => ({ default: m.AlertsManagerPanel })),
+);
 const TelemetryCoveragePanel = lazy(() =>
   import("./TelemetryCoverageView").then((m) => ({ default: m.TelemetryCoveragePanel })),
 );
@@ -592,6 +595,8 @@ export default function ChatView() {
   })();
   // Monitoring Coverage (AMBA) dashboard (admin-only).
   const inCoverage = location.pathname.startsWith("/coverage");
+  // Alerts Manager — Azure Monitor rule overlap, routing-proliferation, and gap analysis.
+  const inAlertsManager = location.pathname.startsWith("/alerts-manager");
   // Telemetry Coverage (diagnostic settings) dashboard (admin-only).
   const inTelemetry = location.pathname.startsWith("/telemetry") && !location.pathname.startsWith("/telemetry-intel");
   // Backup & DR Coverage dashboard (admin-only).
@@ -709,7 +714,7 @@ export default function ChatView() {
   // Ownership, Architectures and Estate Graph now live UNDER Proactive Support, so opening
   // any of them (or the /proactive landing) keeps the group expanded.
   const inAnyProactive = inInventory || inPolicy || inAssessments || inRbac || inIdentity
-    || inCoverage || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
+    || inCoverage || inAlertsManager || inTelemetry || inBackupDr || inEvidence || inRadar || inReservations
     || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
     || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota || inCapability || inCases || inInsights;
   useEffect(() => {
@@ -2593,7 +2598,7 @@ export default function ChatView() {
             insights: SparkleIcon,
             architectures: ArchitectureIcon, knowme: KnowMeIcon, fmea: FmeaIcon, ownership: OwnershipIcon, graph: GraphIcon,
             assessments: AssessmentIcon, performance: PerformanceIcon,
-            coverage: CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
+            coverage: CoverageIcon, "alerts-manager": CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
             capability: CoverageIcon,
             inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
             policy: PolicyIcon, identity: IdentityIcon, rbac: RbacIcon,
@@ -2606,7 +2611,7 @@ export default function ChatView() {
             insights: inInsights,
             architectures: inArchitectures, knowme: inKnowMe, fmea: inFmea, ownership: inOwnership, graph: inGraph,
             assessments: inAssessments, performance: inPerformance,
-            coverage: inCoverage, telemetry: inTelemetry, backupdr: inBackupDr,
+            coverage: inCoverage, "alerts-manager": inAlertsManager, telemetry: inTelemetry, backupdr: inBackupDr,
             capability: inCapability,
             inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
             policy: inPolicy, identity: inIdentity, rbac: inRbac,
@@ -3200,16 +3205,15 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Monitoring Coverage">
             <Suspense fallback={<PanelLoading />}>
-              <CleanupTabShell
-                storageKey="azsup.amba.view"
-                overviewLabel="🩺 Coverage"
-                prefix="/amba"
-                queryKey={["ambaCleanup"]}
-                isEmptyRun={(r) => (r.resource_count ?? 0) === 0}
-                renderMeta={(r) => <span className="text-gray-700">{r.scope_name}{typeof r.headline === "number" ? <span className="ml-2 text-gray-400">{r.headline}% covered</span> : null}</span>}
-              >
-                <MonitoringCoveragePanel />
-              </CleanupTabShell>
+              <MonitoringCoveragePanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inAlertsManager ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Alerts Manager">
+            <Suspense fallback={<PanelLoading />}>
+              <AlertsManagerPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>

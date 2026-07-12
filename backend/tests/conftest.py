@@ -4,6 +4,8 @@ import sys
 
 import pytest
 
+from app.alerts_manager import cache as alerts_manager_cache
+
 # backend/ (the dir that contains the `app` package) — one level up from tests/.
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
@@ -35,6 +37,13 @@ _SLOW_TEST_FILES: set[str] = {
     "test_perfprofile_tool.py", "test_missions.py", "test_teleintel.py",
     "test_reservations.py", "test_radar.py", "test_pricing.py",
 }
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alerts_manager_cache():
+    alerts_manager_cache.reset_for_tests()
+    yield
+    alerts_manager_cache.reset_for_tests()
 
 
 def pytest_collection_modifyitems(config, items):  # noqa: ARG001

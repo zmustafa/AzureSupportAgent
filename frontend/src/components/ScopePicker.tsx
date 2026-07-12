@@ -20,6 +20,7 @@ export function ScopePicker({
   subName,
   onSubPick,
   workloadOnly = false,
+  hideKindToggle = false,
   workloadPlaceholder,
   connectionId,
 }: {
@@ -33,6 +34,8 @@ export function ScopePicker({
   onSubPick: (id: string, name: string) => void;
   /** Hide the Subscription option (a couple of views are workload-only). */
   workloadOnly?: boolean;
+  /** Parent already renders a richer scope-kind selector (for example Workload/Sub/MG). */
+  hideKindToggle?: boolean;
   /** Leading empty option label (for views that must not auto-select a workload). */
   workloadPlaceholder?: string;
   /** Enumerate subscriptions from THIS connection/tenant (defaults to the default connection). */
@@ -40,7 +43,7 @@ export function ScopePicker({
 }) {
   return (
     <div className="flex items-center gap-2">
-      {!workloadOnly && (
+      {!workloadOnly && !hideKindToggle && (
         <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
           <button
             onClick={() => onScopeKindChange("workload")}

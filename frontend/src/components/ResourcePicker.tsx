@@ -67,6 +67,26 @@ interface RowState {
   parentId: string | null;
 }
 
+function hydrateNodeFromArmId(node: WorkloadNode): WorkloadNode {
+  const parts = node.id.split("/").filter(Boolean);
+  const lower = parts.map((part) => part.toLowerCase());
+  const subscriptionIndex = lower.indexOf("subscriptions");
+  const groupIndex = lower.indexOf("resourcegroups");
+  const providerIndex = lower.indexOf("providers");
+  const subscriptionId = subscriptionIndex >= 0 ? parts[subscriptionIndex + 1] || "" : "";
+  const resourceGroup = groupIndex >= 0 ? parts[groupIndex + 1] || "" : "";
+  const inferredType = providerIndex >= 0
+    ? [parts[providerIndex + 1], parts[providerIndex + 2]].filter(Boolean).join("/")
+    : "";
+  return {
+    ...node,
+    name: node.name || parts.at(-1) || node.id,
+    subscription_id: node.subscription_id || subscriptionId || null,
+    resource_group: node.resource_group || resourceGroup || null,
+    resource_type: node.resource_type || inferredType || null,
+  };
+}
+
 /**
  * Azure-portal-style resource/scope picker. Browse an expandable MG ▸ Sub ▸ RG ▸
  * Resource tree (lazy-loaded), filter by subscription/type/location, search, and
@@ -89,7 +109,7 @@ export function ResourcePicker({
   const [tab, setTab] = useState<"browse" | "search">("browse");
   // Selected nodes keyed by ARM id.
   const [selected, setSelected] = useState<Map<string, WorkloadNode>>(
-    () => new Map(initialNodes.map((n) => [n.id, n])),
+    () => new Map(initialNodes.map((n) => [n.id, hydrateNodeFromArmId(n)])),
   );
   // Exclusions: childId -> parentId (a deselected descendant of a checked parent).
   const [excluded, setExcluded] = useState<Map<string, string>>(new Map());
@@ -149,7 +169,7 @@ export function ResourcePicker({
       noteCachedAt(r.cached_at);
       return r;
     },
-    enabled: !!connectionId,
+    enabled: true,
   });
   // Subscriptions for the filter dropdown (top-level, group_by=subscription).
   const subsQ = useQuery({
@@ -159,12 +179,11 @@ export function ResourcePicker({
       noteCachedAt(r.cached_at);
       return r;
     },
-    enabled: !!connectionId,
+    enabled: true,
   });
 
   // Load the top level when group-by changes.
   useEffect(() => {
-    if (!connectionId) return;
     let cancelled = false;
     setTopLoading(true);
     setError("");
@@ -189,7 +208,7 @@ export function ResourcePicker({
   // Prefetch: walk subscriptions → RGs → resources, warming the server cache, with live
   // progress. After it completes, expanding any node in the tree is instant.
   async function prefetchAll() {
-    if (!connectionId || prefetching) return;
+    if (prefetching) return;
     setPrefetching(true);
     setError("");
     setPrefetchCounts({ subs: 0, rgs: 0, resources: 0 });
@@ -262,7 +281,7 @@ export function ResourcePicker({
   // Refresh: invalidate the server cache for this connection, then re-pull the top level
   // and every currently-expanded node from Azure (force-refresh). Keeps the tree open.
   async function refreshAll() {
-    if (!connectionId || refreshing) return;
+    if (refreshing) return;
     setRefreshing(true);
     setError("");
     try {
@@ -332,10 +351,32 @@ export function ResourcePicker({
     return null;
   }
 
+  function subscriptionKey(value: string | null | undefined): string {
+    return (value || "").replace(/^\/subscriptions\//i, "").replace(/\/$/, "").toLowerCase();
+  }
+
+  function isSelectedDescendant(selection: WorkloadNode, parent: TreeNode): boolean {
+    if (selection.id === parent.id) return false;
+    if (selection.id.toLowerCase().startsWith(parent.id.toLowerCase().replace(/\/$/, "") + "/")) return true;
+    if (parent.kind === "subscription") {
+      const childSubscription = subscriptionKey(selection.subscription_id || (selection.kind === "subscription" ? selection.id : ""));
+      return !!childSubscription && childSubscription === subscriptionKey(parent.id);
+    }
+    if (parent.kind === "resource_group" && selection.kind === "resource") {
+      const childSubscription = subscriptionKey(selection.subscription_id);
+      return !!childSubscription && childSubscription === subscriptionKey(parent.subscription_id)
+        && (selection.resource_group || "").toLowerCase() === parent.name.toLowerCase();
+    }
+    return false;
+  }
+
   function isChecked(node: TreeNode): boolean | "indeterminate" {
-    if (selected.has(node.id)) return true;
+    if (selected.has(node.id)) {
+      return [...excluded.values()].some((parentId) => parentId === node.id) ? "indeterminate" : true;
+    }
     const anc = coveringAncestor(node);
     if (anc) return excluded.get(node.id) === anc.id ? false : true;
+    if ([...selected.values()].some((selection) => isSelectedDescendant(selection, node))) return "indeterminate";
     return false;
   }
 
@@ -361,7 +402,14 @@ export function ResourcePicker({
       return;
     }
     // Plain select.
-    setSelected((m) => new Map(m).set(node.id, nodeFrom(node)));
+    setSelected((m) => {
+      const next = new Map(m);
+      for (const [id, selection] of next) {
+        if (isSelectedDescendant(selection, node)) next.delete(id);
+      }
+      next.set(node.id, nodeFrom(node));
+      return next;
+    });
   }
 
   function removeSelected(id: string) {
@@ -379,7 +427,6 @@ export function ResourcePicker({
   }
 
   async function runSearch() {
-    if (!connectionId) return;
     setSearching(true);
     setError("");
     try {
@@ -579,7 +626,7 @@ export function ResourcePicker({
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               onClick={() => void prefetchAll()}
-              disabled={!connectionId || prefetching || refreshing}
+              disabled={prefetching || refreshing}
               title="Pre-load the whole tree from Azure now, so expanding is instant"
               className="flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] text-gray-600 transition hover:bg-white disabled:opacity-60"
             >
@@ -588,7 +635,7 @@ export function ResourcePicker({
             </button>
             <button
               onClick={() => void refreshAll()}
-              disabled={!connectionId || refreshing || prefetching}
+              disabled={refreshing || prefetching}
               title="Re-pull the resource tree from Azure (bypasses the cache)"
               className="flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] text-gray-600 transition hover:bg-white disabled:opacity-60"
             >
@@ -599,13 +646,13 @@ export function ResourcePicker({
         </div>
 
         {/* Table */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <table className="w-full text-sm">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+          <table className="w-full table-fixed text-sm">
             <thead className="sticky top-0 bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-400">
               <tr>
-                <th className="px-6 py-2 font-medium">Resource</th>
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium">Location</th>
+                <th className="w-[58%] px-6 py-2 font-medium">Resource</th>
+                <th className="w-[25%] px-3 py-2 font-medium">Type</th>
+                <th className="w-[17%] whitespace-nowrap px-3 py-2 font-medium">Location</th>
               </tr>
             </thead>
             <tbody>
@@ -613,7 +660,7 @@ export function ResourcePicker({
                 topLoading ? (
                   <tr><td colSpan={3} className="px-6 py-6 text-center text-gray-400">Loading…</td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={3} className="px-6 py-6 text-center text-gray-400">No items. Pick a connection.</td></tr>
+                  <tr><td colSpan={3} className="px-6 py-6 text-center text-gray-400">No Azure resources were found for the selected connection.</td></tr>
                 ) : (
                   rows.map(({ node, depth }) => {
                     // A node we've already expanded that returned no children is a leaf:
@@ -732,7 +779,7 @@ function BrowseRow({
   const showRg = !!query && node.kind === "resource" && !!node.resource_group;
   return (
     <tr className="border-b hover:bg-gray-50">
-      <td className="px-6 py-1.5">
+      <td className="overflow-hidden px-6 py-1.5">
         <div className="flex items-center gap-1.5" style={{ paddingLeft: depth * 18 }}>
           {hasChevron ? (
             <button onClick={onToggleExpand} className="text-gray-400 hover:text-gray-600">
@@ -746,11 +793,11 @@ function BrowseRow({
             type="checkbox"
             checked={checkState === true}
             onChange={onToggleSelect}
-            className="h-3.5 w-3.5"
+            className={`h-3.5 w-3.5 ${checkState === "indeterminate" ? "opacity-50" : ""}`}
           />
           <AzureIcon kind={node.kind} type={node.resource_type} className="h-4 w-4" />
           <div className="min-w-0">
-            <span className="block truncate text-gray-800">{query ? highlight(node.name || node.id, query) : (node.name || node.id)}</span>
+            <span className="block truncate text-gray-800" title={node.name || node.id}>{query ? highlight(node.name || node.id, query) : (node.name || node.id)}</span>
             {showRg && (
               <span className="block truncate text-[11px] text-gray-400">
                 RG: {highlight(node.resource_group as string, query)}
@@ -759,12 +806,12 @@ function BrowseRow({
           </div>
         </div>
       </td>
-      <td className="px-3 py-1.5 text-xs text-gray-500">
+      <td className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1.5 text-xs text-gray-500">
         {node.kind === "resource"
           ? (query ? highlight(friendlyResourceType(node.resource_type), query) : friendlyResourceType(node.resource_type))
           : KIND_LABEL[node.kind]}
       </td>
-      <td className="px-3 py-1.5 text-xs text-gray-500">{node.location ? friendlyLocation(node.location) : "-"}</td>
+      <td className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1.5 text-xs text-gray-500" title={node.location ? friendlyLocation(node.location) : undefined}>{node.location ? friendlyLocation(node.location) : "-"}</td>
     </tr>
   );
 }
@@ -792,7 +839,7 @@ function SelectedTree({
   }
   function subLabel(n: WorkloadNode): string {
     if (n.kind === "subscription") return n.name || n.id;
-    return n.subscription_id ? subName(n.subscription_id) : "(unknown subscription)";
+    return n.subscription_name || (n.subscription_id ? subName(n.subscription_id) : "Unscoped resources");
   }
 
   const subs = new Map<

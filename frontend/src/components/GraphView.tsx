@@ -127,7 +127,7 @@ export function GraphPanel() {
   const [layout, setLayout] = useState<GLayout>("organic");
   const layoutRef = useRef<GLayout>("organic");
 
-  const connQ = useQuery({ queryKey: ["azure-connections"], queryFn: api.azureConnections, staleTime: 60_000 });
+  const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, staleTime: 60_000 });
   const effectiveConn = useMemo(() => {
     const conns = connQ.data?.connections || [];
     if (connectionId && conns.some((c) => c.id === connectionId)) return connectionId;

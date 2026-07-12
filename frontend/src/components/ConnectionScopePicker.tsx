@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TenantOption } from "../api";
+import { queryKeys } from "../queryKeys";
 
 /**
  * A top-right Azure tenant / connection picker for the directory-wide scans (Identity, RBAC)
@@ -36,7 +37,7 @@ export function ConnectionScopePicker({
   // default right-alignment would extend the menu leftward under the sidebar).
   const [placement, setPlacement] = useState<"left" | "right">(align);
 
-  const connQ = useQuery({ queryKey: ["azure-connections"], queryFn: api.azureConnections, retry: false });
+  const connQ = useQuery({ queryKey: queryKeys.azureConnections, queryFn: api.azureConnections, retry: false });
   const conns: TenantOption[] = connQ.data?.connections ?? [];
 
   useEffect(() => {

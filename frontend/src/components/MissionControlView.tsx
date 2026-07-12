@@ -157,7 +157,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
   const abortRef = useRef<AbortController | null>(null);
 
   // Connection display name for the header pill.
-  const connQ = useQuery({ queryKey: ["azure-connections"], queryFn: api.azureConnections });
+  const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections });
   // Initial board from cached last-runs (never scans Azure).
   const stateQ = useQuery({
     queryKey: ["mission-state", workloadId],

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -85,6 +86,57 @@ def _alert_thresholds(props: dict[str, Any]) -> list[float]:
     return out
 
 
+def _alert_dimensions(props: dict[str, Any]) -> set[tuple[str, str]]:
+    """Dimension name/value pairs referenced by metric alert criteria."""
+    out: set[tuple[str, str]] = set()
+    crit = props.get("criteria") or {}
+    if isinstance(crit, dict):
+        for clause in crit.get("allOf") or []:
+            if not isinstance(clause, dict):
+                continue
+            for dimension in clause.get("dimensions") or []:
+                if not isinstance(dimension, dict):
+                    continue
+                name = str(dimension.get("name") or "").strip().lower()
+                for value in dimension.get("values") or []:
+                    if name and str(value).strip():
+                        out.add((name, str(value).strip().lower()))
+    return out
+
+
+def _recommended_dimensions(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert the simple built-in `name eq 'value'` filter to ARM dimensions."""
+    expression = str(rec.get("dimension_filter") or "").strip()
+    match = re.fullmatch(r"\s*([\w.]+)\s+eq\s+'([^']+)'\s*", expression, re.IGNORECASE)
+    if not match:
+        return []
+    return [{"name": match.group(1), "operator": "Include", "values": [match.group(2)]}]
+
+
+def _recommended_aggregation(resource_type: str, rec: dict[str, Any]) -> str:
+    if rec.get("aggregation"):
+        return str(rec["aggregation"])
+    from app.perfprofile.metrics_map import metric_semantics
+
+    return str(metric_semantics(resource_type, str(rec.get("metric") or ""), str(rec.get("unit") or ""))["aggregation"])
+
+
+def _is_deployable_metric(rec: dict[str, Any]) -> bool:
+    """Return whether a recommendation maps to one real static Azure Monitor metric.
+
+    Managed-disk saturation entries are profiler-derived composite percentages, not metric
+    definition names, and therefore must never become Azure metric-alert proposals.
+    """
+    if str(rec.get("signal") or "metric").lower() != "metric":
+        return True
+    if rec.get("deployable") is False:
+        return False
+    metric = str(rec.get("metric") or "").strip().lower()
+    return rec.get("threshold") is not None and metric not in {
+        "disk iops saturation", "disk throughput saturation",
+    }
+
+
 def _index_alerts(alerts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Map a lowercased target resource id → list of normalized alert descriptors."""
     index: dict[str, list[dict[str, Any]]] = {}
@@ -104,6 +156,7 @@ def _index_alerts(alerts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]
             "enabled": enabled,
             "metric_names": _alert_metric_names(props),
             "thresholds": _alert_thresholds(props),
+            "dimensions": _alert_dimensions(props),
             "has_action_group": _alert_has_action_group(props),
         }
         for sc in scopes:
@@ -125,6 +178,14 @@ def _match_status(
         candidates = [a for a in targeting if metric in a["metric_names"]]
     else:
         candidates = list(targeting)
+
+    recommended_dimensions = _recommended_dimensions(rec)
+    for dimension in recommended_dimensions:
+        required = {
+            (str(dimension["name"]).lower(), str(value).lower())
+            for value in dimension.get("values") or []
+        }
+        candidates = [candidate for candidate in candidates if required.issubset(candidate["dimensions"])]
 
     if not candidates:
         return STATUS_MISSING, {}
@@ -222,7 +283,11 @@ def compute_coverage(
             continue  # type not in the baseline reference — not scored
         rid = str(res.get("id", "")).lower()
         targeting = alert_index.get(rid, [])
-        rec_alerts = spec.get("alerts", []) or []
+        # A static metric alert cannot be deployed without a numeric threshold. Keep
+        # thresholdless metrics as reference guidance, but do not score them as missing.
+        rec_alerts = [rec for rec in (spec.get("alerts", []) or []) if _is_deployable_metric(rec)]
+        if not rec_alerts:
+            continue
 
         cells: list[dict[str, Any]] = []
         for rec in rec_alerts:
@@ -249,6 +314,8 @@ def compute_coverage(
                     "threshold": rec.get("threshold"),
                     "unit": rec.get("unit", ""),
                     "window": rec.get("window", ""),
+                    "aggregation": _recommended_aggregation(rtype, rec),
+                    "dimensions": _recommended_dimensions(rec),
                     "requires_action_group": rec.get("requires_action_group", True),
                 },
                 "observed": observed,

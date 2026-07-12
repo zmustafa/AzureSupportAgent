@@ -21,7 +21,7 @@ from typing import Any
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "coverage_trends.json"
 
 # Features that record trend points (used for validation + demo purge enumeration).
-FEATURES = ("amba", "telemetry", "backupdr", "performance", "ownership", "workload")
+FEATURES = ("amba", "telemetry", "backupdr", "performance", "ownership", "workload", "alert_analysis")
 
 # Max points kept per series (oldest evicted). ~3 months of daily scans.
 _MAX_POINTS = 90

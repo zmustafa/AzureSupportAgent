@@ -112,6 +112,15 @@ class DiscoveryCache:
         self._evict_if_needed()
         return cached_at
 
+    def has_fresh(self, key: str) -> bool:
+        """Return whether ``key`` has an unexpired entry without changing its LRU order.
+
+        Background warmers use this cheap probe to avoid scheduling Azure calls for scopes
+        that are already ready for an instant picker expansion.
+        """
+        entry = self._store.get(key)
+        return entry is not None and entry.expires_at > time.time()
+
     def invalidate_connection(self, connection_id: str) -> int:
         """Drop all cached entries for one connection. Returns the count removed."""
         prefix = f"{connection_id}\x1f"

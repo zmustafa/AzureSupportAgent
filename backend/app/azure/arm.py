@@ -625,7 +625,7 @@ def is_arm_url(url: str) -> bool:
 
 async def arm_write(
     token: str, method: str, path: str, *, body: dict[str, Any] | None = None,
-    api_version: str = "",
+    api_version: str = "", query: dict[str, str] | None = None,
 ) -> tuple[Any, str | None, int]:
     """ARM REST mutation (PUT/PATCH/DELETE). Returns ``(json_or_none, error, status_code)``.
 
@@ -636,10 +636,12 @@ async def arm_write(
     headers = {"Authorization": f"Bearer {token}"}
     if body is not None:
         headers["Content-Type"] = "application/json"
-    params = {"api-version": api_version} if api_version else None
+    params = dict(query or {})
+    if api_version:
+        params["api-version"] = api_version
     try:
         async with httpx.AsyncClient(timeout=60, base_url=_ARM) as client:
-            resp = await client.request(method.upper(), path, headers=headers, params=params, json=body)
+            resp = await client.request(method.upper(), path, headers=headers, params=params or None, json=body)
         if resp.status_code not in (200, 201, 202, 204):
             try:
                 detail = resp.json().get("error", {}).get("message", resp.text)

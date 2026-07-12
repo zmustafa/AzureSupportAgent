@@ -30,7 +30,7 @@ _CATEGORY_META: dict[str, dict[str, str]] = {
     "orphaned_nic": {
         "label": "Orphaned network interfaces",
         "reason": "Network interface is not attached to a VM or private endpoint.",
-        "remediation": "Delete the NIC if the parent resource is gone; usually free but signals leftover sprawl.",
+        "remediation": "Delete the NIC if the parent resource is gone; usually free but signals leftover proliferation.",
         "severity": "info",
     },
 }
