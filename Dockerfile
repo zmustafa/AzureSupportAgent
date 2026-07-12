@@ -15,7 +15,7 @@ ENV VITE_API_BASE=/api
 ARG APP_VERSION=dev
 ENV VITE_APP_VERSION=$APP_VERSION
 # Sequential release number (e.g. git commit count) shown as "v1 (rel 1234)". Pass
-# --build-arg APP_RELEASE=$(git rev-list --count HEAD); empty by default (local/dev).
+# --build-arg APP_RELEASE=$(Get-Content RELEASE); empty by default (local/dev).
 ARG APP_RELEASE=
 ENV VITE_APP_RELEASE=$APP_RELEASE
 RUN npm run build

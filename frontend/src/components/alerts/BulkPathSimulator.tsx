@@ -236,11 +236,13 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
   const [sankeyBaseSize, setSankeyBaseSize] = useState({ width: 0, height: 0 });
   const [sankeyFullscreen, setSankeyFullscreen] = useState(false);
   const [sankeyPanning, setSankeyPanning] = useState(false);
+  const [sankeyPanOffset, setSankeyPanOffset] = useState({ x: 0, y: 0 });
   const [sankeyFitRequest, setSankeyFitRequest] = useState(0);
   const tooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sankeySectionRef = useRef<HTMLElement | null>(null);
   const sankeyViewportRef = useRef<HTMLDivElement | null>(null);
-  const sankeyPanRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const sankeyPanRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number; offsetX: number; offsetY: number; moved: boolean } | null>(null);
+  const sankeySuppressClickRef = useRef(false);
   const simulationRequest = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const simulationSequence = useRef(0);
 
@@ -335,6 +337,7 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
 
   const fitSankeyChart = () => {
     clearPathTooltip();
+    setSankeyPanOffset({ x: 0, y: 0 });
     setSankeyFitRequest((value) => value + 1);
   };
 
@@ -358,6 +361,7 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
     const viewport = sankeyViewportRef.current;
     if (!viewport) return;
     const handleWheel = (event: WheelEvent) => {
+      if ((event.deltaY > 0 && sankeyZoom <= SANKEY_ZOOM_MIN) || (event.deltaY < 0 && sankeyZoom >= SANKEY_ZOOM_MAX)) return;
       event.preventDefault();
       const bounds = viewport.getBoundingClientRect();
       changeSankeyZoom(sankeyZoom + (event.deltaY < 0 ? SANKEY_ZOOM_STEP : -SANKEY_ZOOM_STEP), event.clientX - bounds.left, event.clientY - bounds.top);
@@ -376,7 +380,7 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
         y: Math.max(8, Math.min(y + 12, window.innerHeight - 220)),
       });
       tooltipTimer.current = null;
-    }, 2000);
+    }, 1000);
   };
 
   async function run() {
@@ -401,7 +405,11 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
     simulationSequence.current += 1;
     simulationRequest.current?.controller.abort();
     simulationRequest.current = null;
-    setResult(null);
+    // Removing the fullscreen element from the DOM forces the browser to exit fullscreen.
+    // Keep the current graph mounted until the replacement result arrives when this section
+    // owns fullscreen; outside fullscreen, continue hiding stale results immediately.
+    if (document.fullscreenElement !== sankeySectionRef.current) setResult(null);
+    setBusy(true);
     setError("");
     setDisplayMode("all");
     setSelectedWorkloads([]);
@@ -674,6 +682,8 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
     for (const node of sankeyData.nodes) { const depth = depthOf(node.id); columns.set(depth, (columns.get(depth) || 0) + 1); }
     return Math.max(580, Math.max(...columns.values(), 1) * 34 + 40);
   }, [sankeyData]);
+  const sankeyCanPan = sankeyBaseSize.width * sankeyZoom / 100 > sankeyBaseSize.width + 1
+    || sankeyRequiredHeight * sankeyZoom / 100 > sankeyBaseSize.height + 1;
   useEffect(() => {
     if (!sankeyFitRequest) return;
     const viewport = sankeyViewportRef.current;
@@ -805,16 +815,17 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
         <div
           ref={sankeyViewportRef}
           tabIndex={0}
-          aria-label={`Notification flow chart, zoom ${sankeyZoom}%. Drag empty chart space to pan. Use the mouse wheel, plus, minus, or zero to change zoom.`}
+          aria-label={`Notification flow chart, zoom ${sankeyZoom}%. Drag anywhere on the chart to pan. Use the mouse wheel, plus, minus, or zero to change zoom.`}
           onPointerDownCapture={(event) => {
             if (event.button !== 0) return;
             const viewport = sankeyViewportRef.current;
             if (!viewport) return;
             const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest("button, a, input, select, textarea, summary, [role='button'], [role='link'], [role='tooltip']")) return;
+            const insideChart = !!target?.closest(".recharts-wrapper");
+            if (!insideChart && target?.closest("button, a, input, select, textarea, summary, [role='button'], [role='link'], [role='tooltip']")) return;
             clearPathTooltip();
-            viewport.setPointerCapture(event.pointerId);
-            sankeyPanRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, moved: false };
+            sankeySuppressClickRef.current = false;
+            sankeyPanRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, offsetX: sankeyPanOffset.x, offsetY: sankeyPanOffset.y, moved: false };
           }}
           onPointerMoveCapture={(event) => {
             const origin = sankeyPanRef.current;
@@ -823,11 +834,25 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
             const deltaX = event.clientX - origin.x;
             const deltaY = event.clientY - origin.y;
             if (!origin.moved && Math.hypot(deltaX, deltaY) < 4) return;
-            if (!origin.moved) { origin.moved = true; setSankeyPanning(true); }
+            if (!origin.moved) {
+              origin.moved = true;
+              sankeySuppressClickRef.current = true;
+              viewport.setPointerCapture(event.pointerId);
+              setSankeyPanning(true);
+            }
             event.preventDefault();
             event.stopPropagation();
-            viewport.scrollLeft = origin.left - deltaX;
-            viewport.scrollTop = origin.top - deltaY;
+            if (sankeyCanPan) {
+              viewport.scrollLeft = origin.left - deltaX;
+              viewport.scrollTop = origin.top - deltaY;
+            } else {
+              const maxX = viewport.clientWidth * 0.45;
+              const maxY = viewport.clientHeight * 0.45;
+              setSankeyPanOffset({
+                x: Math.max(-maxX, Math.min(maxX, origin.offsetX + deltaX)),
+                y: Math.max(-maxY, Math.min(maxY, origin.offsetY + deltaY)),
+              });
+            }
           }}
           onPointerUpCapture={(event) => {
             const origin = sankeyPanRef.current;
@@ -839,16 +864,23 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
             setSankeyPanning(false);
           }}
           onPointerCancelCapture={() => { sankeyPanRef.current = null; setSankeyPanning(false); }}
+          onLostPointerCapture={() => { sankeyPanRef.current = null; setSankeyPanning(false); }}
+          onClickCapture={(event) => {
+            if (!sankeySuppressClickRef.current) return;
+            sankeySuppressClickRef.current = false;
+            event.preventDefault();
+            event.stopPropagation();
+          }}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
             if (["+", "=", "Add"].includes(event.key)) { event.preventDefault(); changeSankeyZoom(sankeyZoom + SANKEY_ZOOM_STEP); }
             else if (["-", "_", "Subtract"].includes(event.key)) { event.preventDefault(); changeSankeyZoom(sankeyZoom - SANKEY_ZOOM_STEP); }
             else if (event.key === "0") { event.preventDefault(); changeSankeyZoom(100); }
           }}
-          className={`${sankeyFullscreen ? "min-h-0 flex-1" : "h-[580px]"} min-w-0 overflow-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${sankeyPanning ? "cursor-grabbing select-none" : "cursor-grab"}`}
+          className={`${sankeyFullscreen ? "min-h-0 flex-1" : "h-[580px]"} min-w-0 ${sankeyCanPan ? "overflow-auto" : "overflow-hidden"} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${sankeyPanning ? "cursor-grabbing select-none" : "cursor-grab"}`}
         >
           {sankeyData.nodes.length ? sankeyBaseSize.width > 0 && sankeyBaseSize.height > 0 && <div className="relative" style={{ width: Math.max(sankeyBaseSize.width, sankeyBaseSize.width * sankeyZoom / 100), height: Math.max(sankeyBaseSize.height, sankeyRequiredHeight * sankeyZoom / 100) }}>
-            <div className="absolute left-1/2 top-1/2" style={{ width: sankeyBaseSize.width, height: sankeyRequiredHeight, transform: `translate(-50%, -50%) scale(${sankeyZoom / 100})`, transformOrigin: "center" }}>
+            <div className="absolute left-1/2 top-1/2" style={{ width: sankeyBaseSize.width, height: sankeyRequiredHeight, transform: `translate(calc(-50% + ${sankeyPanOffset.x}px), calc(-50% + ${sankeyPanOffset.y}px)) scale(${sankeyZoom / 100})`, transformOrigin: "center" }}>
               <Sankey width={sankeyBaseSize.width} height={sankeyRequiredHeight} data={sankeyData} node={<SankeyNode selectedKey={selectedLink} highlightedNodeIds={highlightedNodeIds} onSelect={setSelectedLink} onHover={showPathTooltip} />} nodePadding={18} nodeWidth={12} margin={{ top: 12, right: 36, bottom: 12, left: 36 }} link={<SankeyLink selectedKey={selectedLink} highlightedKeys={highlightedLinkKeys} onSelect={setSelectedLink} onHover={showPathTooltip} />} />
             </div>
           </div> : <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-gray-500"><div>{flowQuery ? `No notification paths match “${flowQuery}”.` : "No resources match the selected graph filters."}</div><button type="button" onClick={clearGraphFilters} className="rounded border px-3 py-1 text-xs text-blue-700">Clear filters</button></div>}
