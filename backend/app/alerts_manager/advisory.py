@@ -89,7 +89,7 @@ def build_bulk_notification_simulation(
         current["value"] += 1
 
     def outcome_node(status: str) -> str:
-        labels = {"deliver": "Expected delivery", "disabled": "Disabled", "missing_group": "Missing Action Group", "no_receiver": "No active receiver", "blocked": "Blocked"}
+        labels = {"deliver": "Expected delivery", "disabled": "Disabled", "missing_group": "Missing Action Group", "unresolved_group": "Cross-subscription Action Group (not visible)", "no_receiver": "No active receiver", "blocked": "Blocked"}
         node_id = f"outcome:{status}"
         node(node_id, labels.get(status, status.replace("_", " ").title()), "outcome", "ok" if status == "deliver" else "error" if status in {"missing_group", "no_receiver"} else "warning")
         return node_id
@@ -115,11 +115,16 @@ def build_bulk_notification_simulation(
             group = groups_by_id.get(group_id.lower())
             group_node = f"group:{group_id.lower()}"
             if not group:
-                node(group_node, service._name_from_id(group_id), "action_group", "error", resource_id=group_id)
-                link(rule_node, group_node, "error")
-                link(group_node, outcome_node("missing_group"), "error")
-                diagnostics.append({"code": "missing_action_group", "severity": "high", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": "Referenced Action Group was not found."})
-                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": service._name_from_id(group_id), "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": "missing_group", "issues": ["missing Action Group"]})
+                rule_subscription = service._subscription_from_id(rule_id)
+                group_subscription = service._subscription_from_id(group_id)
+                cross_subscription = bool(group_subscription and rule_subscription and group_subscription.lower() != rule_subscription.lower())
+                outcome = "unresolved_group" if cross_subscription else "missing_group"
+                issue = "cross-subscription Action Group is outside the readable scope" if cross_subscription else "missing Action Group"
+                node(group_node, service._name_from_id(group_id), "action_group", "warning" if cross_subscription else "error", resource_id=group_id)
+                link(rule_node, group_node, "warning" if cross_subscription else "error")
+                link(group_node, outcome_node(outcome), "warning" if cross_subscription else "error")
+                diagnostics.append({"code": "unresolved_action_group_access" if cross_subscription else "missing_action_group", "severity": "medium" if cross_subscription else "high", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": "Referenced Action Group is in another subscription that this connection did not return." if cross_subscription else "Referenced Action Group was not found."})
+                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": service._name_from_id(group_id), "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": outcome, "issues": [issue]})
                 continue
             group_enabled = bool(group.get("enabled", True))
             node(group_node, str(group.get("name") or service._name_from_id(group_id)), "action_group", "ok" if group_enabled else "disabled", resource_id=group_id)
@@ -175,7 +180,10 @@ async def bulk_simulate_notification_paths(
 ) -> dict[str, Any]:
     inventory, groups = await asyncio.gather(
         rules.list_rules(connection, workload_id=workload_id, subscription_id=subscription_id, management_group_id=management_group_id),
-        service.list_action_groups(connection, workload_id=workload_id, subscription_id=subscription_id, management_group_id=management_group_id),
+        service.list_action_groups(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id, all_visible=True,
+        ),
     )
     return build_bulk_notification_simulation(inventory, groups, monitor_condition=monitor_condition, include_disabled=include_disabled, families=families, severities=severities)
 
@@ -230,14 +238,20 @@ async def simulate_notification_path(connection: dict[str, Any], event: dict[str
     if editable.get("family") == "activity":
         resolved_expected = False
     resolved_blocked = monitor_condition == "Resolved" and not resolved_expected
-    groups = await service.list_action_groups(connection, subscription_id=service._subscription_from_id(resource_id or rule_id) or None)
+    groups = await service.list_action_groups(
+        connection, subscription_id=service._subscription_from_id(resource_id or rule_id) or None,
+        all_visible=True,
+    )
     by_id = {str(group["id"]).lower(): group for group in groups}
     paths: list[dict[str, Any]] = []
     receiver_occurrences: dict[str, list[str]] = {}
     for group_id in final_groups:
         group = by_id.get(group_id.lower())
         if not group:
-            paths.append({"action_group_id": group_id, "name": service._name_from_id(group_id), "enabled": False, "missing": True, "receivers": []})
+            rule_subscription = service._subscription_from_id(rule_id)
+            group_subscription = service._subscription_from_id(group_id)
+            cross_subscription = bool(group_subscription and rule_subscription and group_subscription.lower() != rule_subscription.lower())
+            paths.append({"action_group_id": group_id, "name": service._name_from_id(group_id), "enabled": False, "missing": not cross_subscription, "inaccessible": cross_subscription, "status": "unresolved_cross_subscription" if cross_subscription else "missing", "receivers": []})
             continue
         receivers = []
         for receiver in group.get("receivers") or []:
@@ -254,7 +268,7 @@ async def simulate_notification_path(connection: dict[str, Any], event: dict[str
                 "would_run": bool((selected or {}).get("enabled", True) and group.get("enabled") and receiver.get("enabled") and not muted and not resolved_blocked),
                 "blocked_reason": "alert rule disabled" if selected and not selected.get("enabled") else f"muted/throttled for {mute_duration}" if muted else "resolved notifications disabled" if resolved_blocked else "action group disabled" if not group.get("enabled") else "receiver disabled" if not receiver.get("enabled") else "",
             })
-        paths.append({"action_group_id": group_id, "name": group.get("name"), "enabled": group.get("enabled"), "missing": False, "receivers": receivers})
+        paths.append({"action_group_id": group_id, "name": group.get("name"), "enabled": group.get("enabled"), "missing": False, "inaccessible": False, "status": "resolved", "receivers": receivers})
     duplicate_paths = [
         {"receiver": key, "action_group_ids": ids, "count": len(ids)}
         for key, ids in receiver_occurrences.items() if len(set(ids)) > 1

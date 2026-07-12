@@ -3,6 +3,7 @@ export type AlertsManagerScopeParams = {
   workload_id?: string;
   subscription_id?: string;
   management_group_id?: string;
+  all_visible?: boolean;
 };
 
 function alertsManagerScope(params: AlertsManagerScopeParams) {
@@ -11,6 +12,7 @@ function alertsManagerScope(params: AlertsManagerScopeParams) {
     workload_id: params.workload_id ?? "",
     subscription_id: params.subscription_id ?? "",
     management_group_id: params.management_group_id ?? "",
+    all_visible: params.all_visible ?? false,
   } as const;
 }
 

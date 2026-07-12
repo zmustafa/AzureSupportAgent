@@ -409,16 +409,18 @@ async def change_fired_alert_state(connection: dict[str, Any], alert_id: str, ne
 async def list_action_groups(
     connection: dict[str, Any], *, workload_id: str | None = None, subscription_id: str | None = None,
     management_group_id: str | None = None, tenant_id: str = "", with_metadata: bool = False,
+    all_visible: bool = False,
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
     key = inventory_cache.inventory_key(
         "action_groups", connection, tenant_id=tenant_id, workload_id=workload_id,
         subscription_id=subscription_id, management_group_id=management_group_id,
+        dimensions=("all_visible",) if all_visible else (),
     )
 
     async def load() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return await _list_action_groups_uncached(
             connection, workload_id=workload_id, subscription_id=subscription_id,
-            management_group_id=management_group_id,
+            management_group_id=management_group_id, all_visible=all_visible,
         )
 
     rows, metadata = await inventory_cache.get_or_create(key, load)
@@ -427,10 +429,12 @@ async def list_action_groups(
 
 async def _list_action_groups_uncached(
     connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
-    management_group_id: str | None,
+    management_group_id: str | None, all_visible: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     _workload, workload_ids, workload_subs = _workload_context(workload_id)
     subscriptions = {subscription_id} if subscription_id else workload_subs
+    if all_visible:
+        subscriptions = set()
     if management_group_id:
         from app.workloads.discovery import subscriptions_under_mg
 

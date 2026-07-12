@@ -543,6 +543,7 @@ export type AlertAnalysisRule = {
   action_group_ids: string[];
   action_group_names: string[];
   missing_action_group_ids: string[];
+  cross_subscription_action_group_ids?: string[];
   receiver_fingerprints: string[];
   receiver_count: number;
   overlap_group_ids: string[];
@@ -699,7 +700,7 @@ export type ActivityLogCoverage = {
   };
   security_guidance: string;
 };
-export type ActivityLogPlanRequest = AlertRoutingContext & {
+export type ActivityLogPlanRequest = AlertsManagerScopeContext & {
   subscription_ids: string[];
   categories: ActivityLogCategory[];
   resource_group: string;
@@ -809,7 +810,7 @@ export type ActivityLogDiagnosticDestinationOptions = {
   authorization_rules_complete: boolean;
   authorization_rule_error: string;
 };
-export type ActivityLogDiagnosticPlanRequest = AlertRoutingContext & {
+export type ActivityLogDiagnosticPlanRequest = AlertsManagerScopeContext & {
   subscription_ids: string[];
   categories: ActivityLogDiagnosticCategory[];
   destination: ActivityLogDiagnosticDestination;
@@ -854,18 +855,15 @@ export type ActionGroupSuggestions = {
   count: number;
 };
 
-export type AlertRoutingRule = { id: string; name: string; order: number; enabled: boolean; fallback: boolean; severities: number[]; categories: string[]; environments: string[]; scopes: string[]; action_group_ids: string[]; migration_diagnostics?: string[]; created_at: string; created_by: string; updated_at: string; updated_by: string };
-export type AlertRoutingRuleInput = Pick<AlertRoutingRule, "name" | "order" | "enabled" | "fallback" | "severities" | "categories" | "environments" | "scopes" | "action_group_ids">;
-export type AlertRoutingContext = { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string };
-export type AlertRouteResolution = { matched: boolean; rule: AlertRoutingRule | null; action_group_ids: string[]; action_groups: Array<{ id: string; name: string }>; diagnostics: string[]; explanation: string; trace: Array<{ rule_id: string; name: string; order: number; fallback: boolean; matched: boolean; checks: Record<string, boolean> }> };
+export type AlertsManagerScopeContext = { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string };
 export type AmbaBlueprint = { id: string; blueprint_id: string; version: number; name: string; description: string; amba_version: string; included_resource_types: string[]; severity_overrides: Record<string, number>; default_disabled: boolean; created_at: string; created_by: string };
 export type AmbaBlueprintInput = Pick<AmbaBlueprint, "name" | "description" | "amba_version" | "included_resource_types" | "severity_overrides" | "default_disabled">;
 export type AmbaBlueprintAssignment = { id: string; blueprint_id: string; blueprint_version: number; scope_kind: "subscription" | "workload" | "workload_group"; scope_id: string; connection_id: string; environment: string; monitoring_resource_group: string; enabled: boolean; created_at: string; created_by: string; updated_at: string; updated_by: string };
 export type AmbaBlueprintAssignmentInput = Pick<AmbaBlueprintAssignment, "blueprint_id" | "blueprint_version" | "scope_kind" | "scope_id" | "connection_id" | "environment" | "monitoring_resource_group" | "enabled">;
-export type DeploymentPlanItem = { id: string; source_gap_id?: string; classification: "covered" | "equivalent" | "drifted" | "missing" | "blocked"; actionable: boolean; included: boolean; resource_id: string; resource_name: string; resource_type: string; alert_key: string; alert_name: string; category: string; severity: number; source_status: string; reasons: string[]; routing: { mode?: "common" | "rules"; rule_id: string; rule_name: string; action_group_ids: string[]; action_groups: Array<{ id: string; name: string }>; diagnostics: string[]; explanation: string } | null; proposal: { family: "metric"; operation: "create"; target_id: string; desired: Record<string, unknown>; body: Record<string, unknown> } | null };
-export type DeploymentPlan = { id: string; assignment_id: string; source?: "selected_gaps"; source_gap_ids?: string[]; routing_mode?: "common" | "rules"; common_action_group_id?: string; blueprint_id: string; blueprint_version: number; amba_version: string; connection_id: string; scope_kind: AmbaBlueprintAssignment["scope_kind"] | "management_group"; scope_id: string; workload_id?: string; subscription_id?: string; management_group_id?: string; environment?: string; monitoring_resource_group?: string; status: "draft" | "pending" | "approved" | "rejected"; counts: Record<DeploymentPlanItem["classification"], number>; items?: DeploymentPlanItem[]; item_count?: number; coverage_sources: string[]; created_at: string; created_by: string; updated_at: string; updated_by: string; validated_at: string; submitted_at: string; submitted_by: string; batch_id: string; change_ids: string[]; decided_at: string; decided_by: string; decision_reason: string };
+export type DeploymentPlanItem = { id: string; source_gap_id?: string; classification: "covered" | "equivalent" | "drifted" | "missing" | "blocked"; actionable: boolean; included: boolean; resource_id: string; resource_name: string; resource_type: string; alert_key: string; alert_name: string; category: string; severity: number; source_status: string; reasons: string[]; routing: { action_group_ids: string[]; action_groups: Array<{ id: string; name: string }>; diagnostics: string[]; explanation: string } | null; proposal: { family: "metric"; operation: "create"; target_id: string; desired: Record<string, unknown>; body: Record<string, unknown> } | null };
+export type DeploymentPlan = { id: string; assignment_id: string; source?: "selected_gaps"; source_gap_ids?: string[]; common_action_group_id?: string; blueprint_id: string; blueprint_version: number; amba_version: string; connection_id: string; scope_kind: AmbaBlueprintAssignment["scope_kind"] | "management_group"; scope_id: string; workload_id?: string; subscription_id?: string; management_group_id?: string; environment?: string; monitoring_resource_group?: string; status: "draft" | "pending" | "approved" | "rejected"; counts: Record<DeploymentPlanItem["classification"], number>; items?: DeploymentPlanItem[]; item_count?: number; coverage_sources: string[]; created_at: string; created_by: string; updated_at: string; updated_by: string; validated_at: string; submitted_at: string; submitted_by: string; batch_id: string; change_ids: string[]; decided_at: string; decided_by: string; decision_reason: string };
 export type DeploymentPlanValidation = { valid: boolean; included_count: number; errors: Array<{ item_id: string; errors: string[] }> };
-export type SelectedGapDeploymentPlanRequest = AlertRoutingContext & { environment: string; monitoring_resource_group: string; gaps: AlertAnalysisGap[]; routing_mode: "common" | "rules"; common_action_group_id?: string };
+export type SelectedGapDeploymentPlanRequest = AlertsManagerScopeContext & { monitoring_resource_group: string; gaps: AlertAnalysisGap[]; common_action_group_id: string };
 export type GapDeploymentPlanStatus = { gap_id: string; status: "none" | "draft" | "pending" | "approved" | "rejected" | "applied" | "failed" | "stale"; plan_id: string; change_ids: string[]; updated_at: string };
 
 export type ManagedAlertRule = {
@@ -962,7 +960,7 @@ export type NotificationSimulation = {
   final_action_group_ids: string[];
   inherited_action_group_ids: string[];
   selected_action_group_ids: string[];
-  paths: { action_group_id: string; name: string; enabled: boolean; missing: boolean; receivers: { type: string; name: string; destination?: string; masked: string; enabled: boolean; would_run: boolean; blocked_reason: string; use_common_alert_schema: boolean; channel: string; constraints: string[]; supports_common_schema: boolean; payload_schema: string; payload_preview: Record<string, unknown> }[] }[];
+  paths: { action_group_id: string; name: string; enabled: boolean; missing: boolean; inaccessible?: boolean; status?: "resolved" | "missing" | "unresolved_cross_subscription"; receivers: { type: string; name: string; destination?: string; masked: string; enabled: boolean; would_run: boolean; blocked_reason: string; use_common_alert_schema: boolean; channel: string; constraints: string[]; supports_common_schema: boolean; payload_schema: string; payload_preview: Record<string, unknown> }[] }[];
   duplicate_paths: { receiver: string; action_group_ids: string[]; count: number }[];
   receiver_count: number;
   would_run_count: number;
@@ -1102,7 +1100,6 @@ export type AlertsManagerSummary = {
   actionable_count: number;
   latest_applied_at?: string;
   deployment_plan_count?: number;
-  routing_rule_count?: number;
   capabilities?: AlertsManagerCapabilities;
   total_changes?: number;
   rule_count?: number;
@@ -4856,15 +4853,16 @@ export const api = {
     http<{ history: Record<string, unknown> }>("/alerts-manager/alert-instances/history", { method: "POST", body: JSON.stringify({ connection_id: connectionId, alert_id: alertId }) }),
   changeFiredAlertState: (connectionId: string, alertId: string, state: "New" | "Acknowledged" | "Closed") =>
     http<{ new_state: string }>("/alerts-manager/alert-instances/state", { method: "POST", body: JSON.stringify({ connection_id: connectionId, alert_id: alertId, state }) }),
-  managedActionGroups: (params: { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string }) => {
+  managedActionGroups: (params: { connection_id?: string; workload_id?: string; subscription_id?: string; management_group_id?: string; all_visible?: boolean }) => {
     const q = new URLSearchParams();
     if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.all_visible) q.set("all_visible", "true");
     return http<{ action_groups: ManagedActionGroup[]; count: number }>(`/alerts-manager/action-groups?${q.toString()}`);
   },
-  activityLogCoverage: (params: AlertRoutingContext) => {
+  activityLogCoverage: (params: AlertsManagerScopeContext) => {
     const q = new URLSearchParams();
     if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -4872,7 +4870,7 @@ export const api = {
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
     return http<ActivityLogCoverageResponse>(`/alerts-manager/activity-log-coverage?${q.toString()}`);
   },
-  exportActivityLogCoverage: (params: AlertRoutingContext, format: "csv" | "json") => {
+  exportActivityLogCoverage: (params: AlertsManagerScopeContext, format: "csv" | "json") => {
     const q = new URLSearchParams({ format });
     if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -4886,7 +4884,7 @@ export const api = {
     http<ActivityLogPlanValidation>("/alerts-manager/activity-log-plan/validate", { method: "POST", body: JSON.stringify(body) }),
   submitActivityLogPlan: (body: ActivityLogPlanRequest & { plan_token: string; reason: string }) =>
     http<ActivityLogPlanSubmission>("/alerts-manager/activity-log-plan/submit", { method: "POST", body: JSON.stringify(body) }),
-  activityLogDiagnosticInventory: (params: AlertRoutingContext) => {
+  activityLogDiagnosticInventory: (params: AlertsManagerScopeContext) => {
     const q = new URLSearchParams();
     if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -4894,7 +4892,7 @@ export const api = {
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
     return http<ActivityLogDiagnosticInventory>(`/alerts-manager/activity-log-diagnostic-settings/inventory?${q.toString()}`);
   },
-  activityLogDiagnosticDestinationOptions: (params: AlertRoutingContext & { resource_group?: string; kind: ActivityLogDiagnosticDestinationKind; namespace_id?: string }) => {
+  activityLogDiagnosticDestinationOptions: (params: AlertsManagerScopeContext & { resource_group?: string; kind: ActivityLogDiagnosticDestinationKind; namespace_id?: string }) => {
     const q = new URLSearchParams({ kind: params.kind });
     if (params.connection_id) q.set("connection_id", params.connection_id);
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
@@ -4909,10 +4907,6 @@ export const api = {
     http<ActivityLogDiagnosticValidation>("/alerts-manager/activity-log-diagnostic-settings/plan/validate", { method: "POST", body: JSON.stringify(body) }),
   submitActivityLogDiagnosticPlan: (body: ActivityLogDiagnosticPlanRequest & { plan_token: string; reason: string }) =>
     http<ActivityLogDiagnosticSubmission>("/alerts-manager/activity-log-diagnostic-settings/plan/submit", { method: "POST", body: JSON.stringify(body) }),
-  alertRoutingRules: () => http<{ routing_rules: AlertRoutingRule[]; count: number }>("/alerts-manager/routing-rules"),
-  saveAlertRoutingRule: (body: AlertRoutingRuleInput & AlertRoutingContext, ruleId = "") => http<{ routing_rule: AlertRoutingRule; warnings: string[] }>(ruleId ? `/alerts-manager/routing-rules/${encodeURIComponent(ruleId)}` : "/alerts-manager/routing-rules", { method: ruleId ? "PUT" : "POST", body: JSON.stringify(body) }),
-  deleteAlertRoutingRule: (ruleId: string) => http<{ deleted: boolean }>(`/alerts-manager/routing-rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" }),
-  resolveAlertRoute: (body: AlertRoutingContext & { severity?: number | string; category?: string; environment?: string; scope?: string; resource_id?: string }) => http<AlertRouteResolution>("/alerts-manager/routing-rules/resolve", { method: "POST", body: JSON.stringify(body) }),
   ambaBlueprints: () => http<{ blueprints: AmbaBlueprint[]; count: number }>("/alerts-manager/amba-blueprints"),
   ambaBlueprint: (blueprintId: string, version?: number) => http<{ blueprint: AmbaBlueprint; versions: AmbaBlueprint[] }>(`/alerts-manager/amba-blueprints/${encodeURIComponent(blueprintId)}${version ? `?version=${version}` : ""}`),
   createAmbaBlueprintVersion: (body: AmbaBlueprintInput, blueprintId = "") => http<{ blueprint: AmbaBlueprint }>(blueprintId ? `/alerts-manager/amba-blueprints/${encodeURIComponent(blueprintId)}/versions` : "/alerts-manager/amba-blueprints", { method: "POST", body: JSON.stringify(body) }),
@@ -4920,7 +4914,7 @@ export const api = {
   ambaBlueprintAssignments: () => http<{ assignments: AmbaBlueprintAssignment[]; count: number }>("/alerts-manager/amba-blueprint-assignments"),
   saveAmbaBlueprintAssignment: (body: AmbaBlueprintAssignmentInput, assignmentId = "") => http<{ assignment: AmbaBlueprintAssignment }>(assignmentId ? `/alerts-manager/amba-blueprint-assignments/${encodeURIComponent(assignmentId)}` : "/alerts-manager/amba-blueprint-assignments", { method: assignmentId ? "PUT" : "POST", body: JSON.stringify(body) }),
   deleteAmbaBlueprintAssignment: (assignmentId: string) => http<{ deleted: boolean }>(`/alerts-manager/amba-blueprint-assignments/${encodeURIComponent(assignmentId)}`, { method: "DELETE" }),
-  previewDeploymentPlan: (assignmentId: string) => http<{ plan: DeploymentPlan }>("/alerts-manager/deployment-plans/preview", { method: "POST", body: JSON.stringify({ assignment_id: assignmentId }) }),
+  previewDeploymentPlan: (assignmentId: string, commonActionGroupId: string) => http<{ plan: DeploymentPlan }>("/alerts-manager/deployment-plans/preview", { method: "POST", body: JSON.stringify({ assignment_id: assignmentId, common_action_group_id: commonActionGroupId }) }),
   previewGapsDeploymentPlan: (body: SelectedGapDeploymentPlanRequest) => http<{ plan: DeploymentPlan }>("/alerts-manager/deployment-plans/from-gaps/preview", { method: "POST", body: JSON.stringify(body) }),
   deploymentPlansByGap: (gapIds: string[]) => {
     const q = new URLSearchParams();
@@ -4994,7 +4988,7 @@ export const api = {
     http<NoiseGuardResult>("/alerts-manager/alert-rules/noise-guard", { method: "POST", body: JSON.stringify(body) }),
   simulateNotificationPath: (body: { connection_id?: string; rule_id?: string; rule_name?: string; family?: ManagedAlertRule["family"]; resource_id?: string; severity?: number; timestamp?: string; description?: string; action_group_ids?: string[]; selected_action_group_ids?: string[]; use_selected_only?: boolean; monitor_condition?: "Fired" | "Resolved" }) =>
     http<NotificationSimulation>("/alerts-manager/notifications/simulate", { method: "POST", body: JSON.stringify(body) }),
-  bulkSimulateNotificationPaths: (body: AlertRoutingContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }) =>
+  bulkSimulateNotificationPaths: (body: AlertsManagerScopeContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }) =>
     http<BulkNotificationSimulation>("/alerts-manager/notifications/bulk-simulate", { method: "POST", body: JSON.stringify(body) }),
   actionGroupSuggestions: (params: { connection_id?: string; workload_id?: string; subject_kind: "resource" | "workload"; subject_id: string }) => {
     const q = new URLSearchParams({ subject_kind: params.subject_kind, subject_id: params.subject_id });

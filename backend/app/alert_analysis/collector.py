@@ -61,6 +61,11 @@ def _norm_id(value: Any) -> str:
     return str(value or "").strip().rstrip("/").lower()
 
 
+def _subscription_from_resource_id(value: Any) -> str:
+    parts = str(value or "").strip("/").split("/")
+    return parts[1].lower() if len(parts) > 1 and parts[0].lower() == "subscriptions" else ""
+
+
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
     from app.exec.command_runner import parse_kql_rows
 
@@ -363,9 +368,14 @@ def _refresh_rule_routing(rule: dict[str, Any], action_group_index: dict[str, di
     for path in receiver_paths:
         receiver_path_counts[path["fingerprint"]] += 1
     rule["action_group_names"] = [group["name"] for group in groups]
-    rule["missing_action_group_ids"] = [
-        group_id for group_id in rule["action_group_ids"] if group_id not in action_group_index
+    rule_subscription = str(rule.get("subscription_id") or _subscription_from_resource_id(rule.get("id"))).lower()
+    unresolved = [group_id for group_id in rule["action_group_ids"] if group_id not in action_group_index]
+    rule["cross_subscription_action_group_ids"] = [
+        group_id for group_id in unresolved
+        if _subscription_from_resource_id(group_id) and _subscription_from_resource_id(group_id) != rule_subscription
     ]
+    cross_subscription = set(rule["cross_subscription_action_group_ids"])
+    rule["missing_action_group_ids"] = [group_id for group_id in unresolved if group_id not in cross_subscription]
     rule["receiver_fingerprints"] = sorted(receiver_path_counts)
     rule["receiver_count"] = len(receiver_path_counts)
     rule["duplicate_receiver_fingerprints"] = sorted(
@@ -426,6 +436,7 @@ def _normalize_rules(
                 "action_group_ids": action_group_ids,
                 "action_group_names": [],
                 "missing_action_group_ids": [],
+                "cross_subscription_action_group_ids": [],
                 "receiver_fingerprints": [],
                 "receiver_count": 0,
                 "duplicate_receiver_fingerprints": [],
@@ -630,6 +641,8 @@ def _gaps(
             issues.append(("no_action_group", "error", "Connect the rule to an action group with an owned response path."))
         if rule["missing_action_group_ids"]:
             issues.append(("missing_action_group", "error", "Replace the missing action-group reference."))
+        if rule["cross_subscription_action_group_ids"]:
+            issues.append(("unresolved_action_group_access", "warning", "Inspect the referenced Action Group with a connection that can read its subscription."))
         linked = [action_group_index[group_id] for group_id in rule["action_group_ids"] if group_id in action_group_index]
         if linked and sum(group["active_receiver_count"] for group in linked) == 0:
             issues.append(("no_active_receivers", "error", "Enable at least one receiver in the linked action group."))
@@ -646,7 +659,9 @@ def _gaps(
                     "resource_type": rule["effective_targets"][0]["type"] if rule["effective_targets"] else "",
                     "rule_id": rule["id"],
                     "rule_name": rule["name"],
-                    "action_group_id": "; ".join(rule["missing_action_group_ids"]),
+                    "action_group_id": "; ".join(
+                        rule["missing_action_group_ids"] or rule["cross_subscription_action_group_ids"]
+                    ),
                     "signal": rule["conditions"][0]["signal_name"] if rule["conditions"] else "",
                     "explanation": issue.replace("_", " ").capitalize(),
                     "recommendation": recommendation,
@@ -952,6 +967,25 @@ async def collect_analysis(
         resources, alerts, action_groups, firings = await asyncio.gather(
             resources_task, alerts_task, groups_task, firings_task
         )
+        referenced_group_subscriptions = {
+            _subscription_from_resource_id(group_id)
+            for alert in alerts
+            for group_id in _action_group_ids(_dict(alert.get("properties")))
+            if _subscription_from_resource_id(group_id)
+        }
+        missing_group_subscriptions = sorted(referenced_group_subscriptions - {value.lower() for value in subscriptions})
+        if missing_group_subscriptions:
+            await emit(
+                "query",
+                f"Resolving referenced Action Groups across {len(missing_group_subscriptions)} additional subscription(s)…",
+            )
+            try:
+                extra_groups = await _query_action_groups(missing_group_subscriptions, connection)
+                known = {_norm_id(item.get("id")) for item in action_groups}
+                action_groups.extend(item for item in extra_groups if _norm_id(item.get("id")) not in known)
+                await emit("query", f"Resolved {len(extra_groups):,} cross-subscription Action Group row(s).")
+            except Exception as exc:  # fail soft: inaccessible remains unresolved, never falsely missing
+                await emit("query", f"Cross-subscription Action Groups were not readable: {str(exc)[:180]}")
         await emit(
             "normalize",
             f"Normalizing {len(alerts):,} alert rows, routes, recipients, overlaps, gaps, and costs…",

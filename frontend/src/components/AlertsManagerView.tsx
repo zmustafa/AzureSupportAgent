@@ -467,6 +467,10 @@ function FiredAlertsTable({ rows, canManage, busy, onState }: { rows: FiredAlert
 }
 
 function ManagedActionGroupsTable({ rows, caps, busy, refreshing, onRefresh, onCreate, onEdit, onClone, onToggle, onDelete, onTest }: { rows: ManagedActionGroup[]; caps?: AlertsManagerCapabilities; busy: string; refreshing: boolean; onRefresh: () => void; onCreate: () => void; onEdit: (row: ManagedActionGroup) => void; onClone: (row: ManagedActionGroup) => void; onToggle: (row: ManagedActionGroup) => void; onDelete: (row: ManagedActionGroup) => void; onTest: (row: ManagedActionGroup) => void }) {
+  const azureRows = rows.map((group) => {
+    const dependencies = group.dependencies;
+    return { ...group, dependencies, dependency_count: dependencies.length };
+  });
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between rounded-xl border bg-white px-4 py-3">
@@ -478,14 +482,14 @@ function ManagedActionGroupsTable({ rows, caps, busy, refreshing, onRefresh, onC
         <table className="w-full min-w-[1050px] text-left text-xs">
           <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Action group</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Receivers</th><th className="px-3 py-2">Dependencies</th><th className="px-3 py-2">Destinations</th><th className="px-3 py-2">Actions</th></tr></thead>
           <tbody className="divide-y">
-            {rows.map((group) => (
+            {azureRows.map((group) => (
               <tr key={group.id} className="align-top hover:bg-gray-50">
                 <td className="px-3 py-3"><div className="font-medium text-gray-800">{group.name}</div><div className="text-[10px] text-gray-400">{group.resource_group} · {group.location} · {group.short_name}</div></td>
                 <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 ${group.enabled ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"}`}>{group.enabled ? "enabled" : "disabled"}</span></td>
                 <td className="px-3 py-3 text-gray-600">{group.active_receiver_count} active / {group.receiver_count} total</td>
-                <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 ${group.dependency_count ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{group.dependency_count} rule{group.dependency_count === 1 ? "" : "s"}</span>{group.dependencies.slice(0, 3).map((dep) => <div key={`${dep.type}:${dep.id}`} className="mt-1 max-w-[220px] truncate text-[10px] text-gray-400" title={`${dep.type}: ${dep.id}`}>{dep.type === "alerts_manager/routing_rule" ? "Routing: " : "Azure: "}{dep.name}</div>)}</td>
+                <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 ${group.dependency_count ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{group.dependency_count} Azure alert rule{group.dependency_count === 1 ? "" : "s"}</span>{group.dependencies.slice(0, 3).map((dep) => <div key={`${dep.type}:${dep.id}`} className="mt-1 max-w-[220px] truncate text-[10px] text-gray-400" title={`${dep.type}: ${dep.id}`}>{dep.name}</div>)}</td>
                 <td className="px-3 py-3"><div className="flex max-w-sm flex-wrap gap-1">{group.receivers.map((receiver) => <span key={`${receiver.type}:${receiver.fingerprint}`} className="rounded bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600">{receiver.type} · {receiver.destination || receiver.masked}</span>)}</div></td>
-                <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><PortalLink id={group.id} />{caps?.can_manage_action_groups && !caps.read_only && <><button disabled={!!busy} onClick={() => onEdit(group)} className="rounded border px-2 py-1 text-[10px] text-indigo-700 disabled:opacity-50">Edit</button><button disabled={!!busy} onClick={() => onClone(group)} className="rounded border px-2 py-1 text-[10px] text-indigo-700 disabled:opacity-50">Clone</button><button disabled={!!busy} onClick={() => onToggle(group)} className="rounded border px-2 py-1 text-[10px] text-gray-700 disabled:opacity-50">{group.enabled ? "Disable" : "Enable"}</button></>}{caps?.can_test_notifications && !caps.read_only && group.receiver_count > 0 && <button disabled={!!busy} onClick={() => onTest(group)} className="rounded border px-2 py-1 text-[10px] text-amber-700 disabled:opacity-50">Test</button>}{caps?.can_delete && !caps.read_only && <button disabled={!!busy || group.dependency_count > 0} title={group.dependency_count ? "Detach this action group from all rules before deleting it." : "Request deletion"} onClick={() => onDelete(group)} className="rounded border px-2 py-1 text-[10px] text-red-700 disabled:opacity-40">Delete</button>}</div></td>
+                <td className="px-3 py-3"><div className="flex flex-wrap gap-1"><PortalLink id={group.id} />{caps?.can_manage_action_groups && !caps.read_only && <><button disabled={!!busy} onClick={() => onEdit(group)} className="rounded border px-2 py-1 text-[10px] text-indigo-700 disabled:opacity-50">Edit</button><button disabled={!!busy} onClick={() => onClone(group)} className="rounded border px-2 py-1 text-[10px] text-indigo-700 disabled:opacity-50">Clone</button><button disabled={!!busy} onClick={() => onToggle(group)} className="rounded border px-2 py-1 text-[10px] text-gray-700 disabled:opacity-50">{group.enabled ? "Disable" : "Enable"}</button></>}{caps?.can_test_notifications && !caps.read_only && group.receiver_count > 0 && <button disabled={!!busy} onClick={() => onTest(group)} className="rounded border px-2 py-1 text-[10px] text-amber-700 disabled:opacity-50">Test</button>}{caps?.can_delete && !caps.read_only && <button disabled={!!busy || group.dependency_count > 0} title={group.dependency_count ? "Detach this Action Group from all Azure alert rules before deleting it." : "Request deletion"} onClick={() => onDelete(group)} className="rounded border px-2 py-1 text-[10px] text-red-700 disabled:opacity-40">Delete</button>}</div></td>
               </tr>
             ))}
           </tbody>
@@ -706,8 +710,8 @@ export function AlertsManagerPanel() {
     staleTime: 2 * 60_000,
   });
   const managedGroupsQ = useQuery({
-    queryKey: queryKeys.alertsManager.actionGroups(managementParams),
-    queryFn: () => api.managedActionGroups(managementParams),
+    queryKey: queryKeys.alertsManager.actionGroups({ ...managementParams, ...(tab === "manage-rules" || !!ruleEditor ? { all_visible: true } : {}) }),
+    queryFn: () => api.managedActionGroups({ ...managementParams, ...(tab === "manage-rules" || !!ruleEditor ? { all_visible: true } : {}) }),
     enabled: ready && !!data && !data.demo && (tab === "action-groups" || tab === "manage-rules" || !!ruleEditor || gapPlannerOpen || activityLogWizardOpen),
     staleTime: 5 * 60_000,
   });
@@ -821,7 +825,6 @@ export function AlertsManagerPanel() {
     }
     return [...unique.values()];
   }, [allGaps, selectedGapIds]);
-  const currentWorkload = workloads.find((workload) => workload.id === effectiveWorkloadId);
   const canPlanGaps = !!capabilities?.can_submit_deployment_plans && !capabilities.read_only && !data?.demo;
   const invalidateManagedChanges = () => Promise.all([
     qc.invalidateQueries({ queryKey: queryKeys.alertsManager.changesRoot }),
@@ -1253,7 +1256,6 @@ export function AlertsManagerPanel() {
             <AlertBlueprintPlanner
               mode="plans"
               connectionId={connId}
-              scopeParams={managementParams}
               capabilities={capabilities}
               liveActionGroups={managedGroupsQ.data?.action_groups ?? []}
               workloads={workloads}
@@ -1276,7 +1278,7 @@ export function AlertsManagerPanel() {
       </main>
       {editor && <ActionGroupEditor initial={editor} connectionId={connId} busy={managementBusy === "save"} saveError={actionGroupEditorError} onClose={() => { setActionGroupEditorError(""); setEditor(null); }} onSave={(value, reason) => void saveActionGroup(value, reason)} />}
       {ruleEditor && <AlertRuleEditor initial={ruleEditor} connectionId={connId} workloadId={scopeKind === "workload" ? effectiveWorkloadId : ""} actionGroups={managedGroupsQ.data?.action_groups ?? []} canPreview={!!capabilitiesQ.data?.can_preview_queries} busy={managementBusy === "rule-save"} onClose={() => setRuleEditor(null)} onSave={saveManagedRule} />}
-      {gapPlannerOpen && selectedGaps.length > 0 && <GapRemediationPlanner gaps={selectedGaps} scopeParams={managementParams} environment={currentWorkload?.environment ?? ""} liveActionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilitiesQ.data} onClose={() => setGapPlannerOpen(false)} onOpenPlan={(planId) => { setGapPlannerOpen(false); setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onSubmitted={(plan) => { setGapPlannerOpen(false); setSelectedGapIds(new Set()); setFocusedDeploymentPlanId(plan.id); goTab("deployment-plans"); void Promise.all([qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans"] }), qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans-by-gap"] }), invalidateManagedChanges()]); }} />}
+      {gapPlannerOpen && selectedGaps.length > 0 && <GapRemediationPlanner gaps={selectedGaps} scopeParams={managementParams} liveActionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilitiesQ.data} onClose={() => setGapPlannerOpen(false)} onOpenPlan={(planId) => { setGapPlannerOpen(false); setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onSubmitted={(plan) => { setGapPlannerOpen(false); setSelectedGapIds(new Set()); setFocusedDeploymentPlanId(plan.id); goTab("deployment-plans"); void Promise.all([qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans"] }), qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans-by-gap"] }), invalidateManagedChanges()]); }} />}
       {activityLogWizardOpen && activityLogCoverageQ.data && <ActivityLogSetupWizard coverage={activityLogCoverageQ.data.coverage} scopeParams={managementParams} actionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilities} onClose={() => setActivityLogWizardOpen(false)} onOpenDiagnostics={() => { setActivityLogWizardOpen(false); setActivityLogDiagnosticsOpen(true); }} onSubmitted={() => { setActivityLogWizardOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot })]); }} />}
       {activityLogDiagnosticsOpen && <ActivityLogDiagnosticsWizard scopeParams={managementParams} capabilities={capabilities} onBack={() => { setActivityLogDiagnosticsOpen(false); setActivityLogWizardOpen(true); }} onClose={() => setActivityLogDiagnosticsOpen(false)} onSubmitted={() => { setActivityLogDiagnosticsOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot })]); }} />}
     </div>

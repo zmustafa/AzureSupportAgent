@@ -12,7 +12,6 @@ from app.alerts_manager import planner, service
 from app.alerts_manager import rules
 from app.api import alerts_manager as api
 from app.core.db import Base
-from app.core import jsonstore
 from app.core.security import Principal
 from app.models import AlertManagerChange
 
@@ -30,19 +29,6 @@ def isolated_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         return [{"id": ACTION_GROUP_ID, "name": "Platform on-call", "enabled": True, "receiver_count": 1, "active_receiver_count": 1}]
     monkeypatch.setattr(service, "list_action_groups", live_action_groups)
     return path
-
-
-def _routing(*, name: str = "Production performance", order: int = 10, fallback: bool = False) -> dict:
-    return planner.save_routing_rule(TENANT, {
-        "name": name,
-        "order": order,
-        "fallback": fallback,
-        "severities": [] if fallback else [2],
-        "categories": [] if fallback else ["performance"],
-        "environments": [] if fallback else ["production"],
-        "scopes": [],
-        "action_group_ids": [ACTION_GROUP_ID],
-    }, actor="alice")
 
 
 def _blueprint_assignment() -> tuple[dict, dict]:
@@ -108,65 +94,7 @@ def _analysis_gap(*, decision_key: str = "baseline_missing:vm-one:vm_cpu", gap_t
     }
 
 
-def test_direct_routing_is_encrypted_and_deterministic(isolated_registry: Path) -> None:
-    fallback = _routing(name="Fallback", order=0, fallback=True)
-    exact = _routing(order=50)
-
-    raw = isolated_registry.read_text(encoding="utf-8")
-    assert ACTION_GROUP_ID not in raw
-    assert "Production performance" not in raw
-    assert planner.list_routing_rules("other-tenant") == []
-
-    resolved = planner.resolve_route(TENANT, {
-        "severity": 2,
-        "category": "performance",
-        "environment": "production",
-        "scope": RESOURCE_ID,
-    })
-    assert resolved["matched"] is True
-    assert resolved["rule"]["id"] == exact["id"]
-    assert "order 50" in resolved["explanation"]
-    assert resolved["action_group_ids"] == [ACTION_GROUP_ID]
-    assert resolved["action_groups"] == [{"id": ACTION_GROUP_ID, "name": "platform"}]
-
-    fallback_result = planner.resolve_route(TENANT, {
-        "severity": 0,
-        "category": "security",
-        "environment": "development",
-        "scope": RESOURCE_ID,
-    })
-    assert fallback_result["rule"]["id"] == fallback["id"]
-    assert "fallback" in fallback_result["explanation"]
-
-
-def test_legacy_catalog_data_migrates_with_backup_and_diagnostics(isolated_registry: Path) -> None:
-    catalog_id = "legacy-catalog-entry"
-    unresolved_id = "missing-catalog-entry"
-    legacy_rule = {
-        "name": "Legacy route", "order": 1, "enabled": True, "fallback": False,
-        "severities": [], "categories": [], "environments": [], "scopes": [],
-        "catalog_entry_ids": [catalog_id, unresolved_id],
-    }
-    jsonstore.write_json(isolated_registry, {
-        "version": 1,
-        "tenants": {TENANT: {
-            "catalog": {catalog_id: service.encrypted_json({"name": "Platform", "action_group_id": ACTION_GROUP_ID})},
-            "routing_rules": {"legacy-rule": service.encrypted_json(legacy_rule)},
-            "blueprints": {}, "assignments": {}, "plans": {},
-        }},
-    })
-
-    migrated = planner.list_routing_rules(TENANT)[0]
-    assert migrated["action_group_ids"] == [ACTION_GROUP_ID]
-    assert "catalog_entry_ids" not in migrated
-    assert unresolved_id in migrated["migration_diagnostics"][0]
-    assert isolated_registry.with_name(f"{isolated_registry.name}.catalog-backup").exists()
-    stored = jsonstore.read_json(isolated_registry, {})
-    assert "catalog" not in stored["tenants"][TENANT]
-
-
 def test_immutable_blueprints_assignments_and_manual_preview_classifications() -> None:
-    _routing()
     blueprint, assignment = _blueprint_assignment()
     second = planner.create_blueprint_version(TENANT, {
         "name": "Compute baseline v2",
@@ -178,7 +106,7 @@ def test_immutable_blueprints_assignments_and_manual_preview_classifications() -
     assert second["amba_version"] == "7"
     assert planner.get_blueprint(TENANT, blueprint["blueprint_id"], 1)["created_by"] == "alice"
 
-    plan = planner.preview_plan(TENANT, assignment["id"], actor="alice", coverage_items=[
+    plan = planner.preview_plan(TENANT, assignment["id"], actor="alice", common_action_group_id=ACTION_GROUP_ID, coverage_items=[
         _gap(status="present"),
         {**_gap(status="equivalent"), "alert_key": "vm_cpu_equivalent"},
         {**_gap(status="misconfigured"), "alert_key": "vm_cpu_drift"},
@@ -190,8 +118,8 @@ def test_immutable_blueprints_assignments_and_manual_preview_classifications() -
     assert len(actionable) == 2
     assert all(item["proposal"]["desired"]["enabled"] is True for item in actionable)
     assert all(item["proposal"]["desired"]["action_group_ids"] == [ACTION_GROUP_ID] for item in actionable)
-    assert all(item["routing"]["action_group_ids"] == [ACTION_GROUP_ID] for item in actionable)
-    assert all("resolved 1 direct Action Group ID" in item["routing"]["explanation"] for item in actionable)
+    assert all(item["action_group"]["id"] == ACTION_GROUP_ID for item in actionable)
+    assert plan["common_action_group_id"] == ACTION_GROUP_ID
     assert planner.validate_plan(TENANT, plan["id"], actor="alice")["valid"] is True
 
     planner.update_plan_items(TENANT, plan["id"], [{"item_id": actionable[0]["id"], "included": False}], actor="alice")
@@ -201,9 +129,8 @@ def test_immutable_blueprints_assignments_and_manual_preview_classifications() -
 
 @pytest.mark.asyncio
 async def test_submit_and_plan_decision_create_only_approval_ledger_rows(tmp_path: Path) -> None:
-    _routing()
     _blueprint, assignment = _blueprint_assignment()
-    plan = planner.preview_plan(TENANT, assignment["id"], actor="requester", coverage_items=[_gap()])
+    plan = planner.preview_plan(TENANT, assignment["id"], actor="requester", common_action_group_id=ACTION_GROUP_ID, coverage_items=[_gap()])
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'planner.db'}")
     async with engine.begin() as connection:
@@ -251,9 +178,8 @@ async def test_submit_and_plan_decision_create_only_approval_ledger_rows(tmp_pat
 
 @pytest.mark.asyncio
 async def test_plan_decision_rejects_child_from_different_connection(tmp_path: Path) -> None:
-    _routing()
     _blueprint, assignment = _blueprint_assignment()
-    plan = planner.preview_plan(TENANT, assignment["id"], actor="requester", coverage_items=[_gap()])
+    plan = planner.preview_plan(TENANT, assignment["id"], actor="requester", common_action_group_id=ACTION_GROUP_ID, coverage_items=[_gap()])
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'planner-connection.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -280,7 +206,6 @@ async def test_plan_decision_rejects_child_from_different_connection(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_selected_gap_plan_is_server_built_approval_gated_and_status_is_ledger_aware(tmp_path: Path) -> None:
-    _routing()
     context = {"connection_id": "connection-1", "subscription_id": "sub-1", "environment": "production"}
     selected = _analysis_gap()
     assert planner.gap_identity({key: value for key, value in selected.items() if key != "decision_key"}) == planner.gap_identity(
@@ -289,7 +214,7 @@ async def test_selected_gap_plan_is_server_built_approval_gated_and_status_is_le
 
     plan = planner.preview_gap_plan(
         TENANT, context, [selected, _analysis_gap(decision_key="unsupported:vm-one", gap_type="disabled_rule")],
-        actor="requester", routing_mode="common", common_action_group_id=ACTION_GROUP_ID,
+        actor="requester", common_action_group_id=ACTION_GROUP_ID,
         live_action_groups=[{"id": ACTION_GROUP_ID, "name": "Platform on-call", "enabled": True, "active_receiver_count": 1}],
     )
     assert plan["source_gap_ids"] == [selected["decision_key"], "unsupported:vm-one"]
@@ -297,21 +222,15 @@ async def test_selected_gap_plan_is_server_built_approval_gated_and_status_is_le
     actionable = next(item for item in plan["items"] if item["actionable"])
     blocked = next(item for item in plan["items"] if not item["actionable"])
     assert actionable["source_gap_id"] == selected["decision_key"]
-    assert actionable["routing"]["mode"] == "common"
+    assert "routing_mode" not in plan
+    assert "routing" not in actionable
+    assert actionable["action_group"]["id"] == ACTION_GROUP_ID
     assert actionable["proposal"]["desired"]["enabled"] is True
     assert actionable["proposal"]["desired"]["action_group_ids"] == [ACTION_GROUP_ID]
     assert "unsupported" in blocked["reasons"][0]
 
-    rules_plan = planner.preview_gap_plan(
-        TENANT, context, [{**selected, "decision_key": "baseline_missing:vm-one:vm_cpu:rules"}],
-        actor="requester", routing_mode="rules",
-        live_action_groups=[{"id": ACTION_GROUP_ID, "name": "Platform on-call", "enabled": True, "active_receiver_count": 1}],
-    )
-    assert rules_plan["items"][0]["routing"]["mode"] == "rules"
-    assert rules_plan["items"][0]["routing"]["rule_name"] == "Production performance"
-
     unusable = planner.preview_gap_plan(
-        "other-tenant", context, [selected], actor="requester", routing_mode="common",
+        "other-tenant", context, [selected], actor="requester",
         common_action_group_id=ACTION_GROUP_ID,
         live_action_groups=[{"id": ACTION_GROUP_ID, "name": "Disabled", "enabled": False, "active_receiver_count": 1}],
     )
@@ -350,7 +269,7 @@ async def test_selected_gap_plan_is_server_built_approval_gated_and_status_is_le
             assert status["by_gap"][selected["decision_key"]]["status"] == "failed"
 
         retry = planner.preview_gap_plan(
-            TENANT, context, [selected], actor="requester", routing_mode="common",
+            TENANT, context, [selected], actor="requester",
             common_action_group_id=ACTION_GROUP_ID,
             live_action_groups=[{"id": ACTION_GROUP_ID, "name": "Platform on-call", "enabled": True, "active_receiver_count": 1}],
             active_gap_ids=set(), pending_target_ids=set(),
@@ -364,7 +283,7 @@ async def test_selected_gap_plan_is_server_built_approval_gated_and_status_is_le
 def test_planner_routes_are_registered() -> None:
     paths = {route.path for route in api.router.routes}
     assert not any("action-group-catalog" in path for path in paths)
-    assert "/alerts-manager/routing-rules/resolve" in paths
+    assert not any("routing-rules" in path for path in paths)
     assert "/alerts-manager/amba-blueprints/{blueprint_id}/versions" in paths
     assert "/alerts-manager/amba-blueprint-assignments" in paths
     assert "/alerts-manager/deployment-plans/preview" in paths
@@ -374,6 +293,18 @@ def test_planner_routes_are_registered() -> None:
     assert "/alerts-manager/deployment-plans/{plan_id}/validate" in paths
     assert "/alerts-manager/deployment-plans/{plan_id}/submit" in paths
     assert "/alerts-manager/deployment-plans/{plan_id}/decision" in paths
+
+
+def test_gap_preview_contract_only_accepts_a_direct_action_group() -> None:
+    fields = api.GapsDeploymentPlanPreviewRequest.model_fields
+    assert "common_action_group_id" in fields
+    assert fields["common_action_group_id"].is_required()
+    assert "routing_mode" not in fields
+    with pytest.raises(ValueError):
+        api.GapsDeploymentPlanPreviewRequest(
+            subscription_id="sub-1", gaps=[_analysis_gap()],
+            common_action_group_id=ACTION_GROUP_ID, routing_mode="rules",
+        )
 
 
 @pytest.mark.asyncio

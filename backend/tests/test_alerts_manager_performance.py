@@ -109,6 +109,7 @@ async def test_summary_is_connection_and_tenant_scoped_without_azure_calls(
         assert result["approved_count"] == 1
         assert result["actionable_count"] == 2
         assert result["latest_applied_at"]
+        assert "routing_rule_count" not in result
         assert result["capabilities"]["connection_id"] == "conn-1"
         assert result["capabilities"]["read_only"] is True
     finally:

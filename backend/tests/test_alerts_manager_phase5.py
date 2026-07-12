@@ -264,6 +264,47 @@ def test_bulk_notification_simulator_builds_sankey_routes_and_diagnostics() -> N
     assert any(item["code"] == "duplicate_receiver_path" for item in result["diagnostics"])
     assert any(route["outcome"] == "disabled" for route in result["routes"])
 
+    remote_group = "/subscriptions/other/resourceGroups/rg/providers/Microsoft.Insights/actionGroups/remote"
+    cross_subscription = advisory.build_bulk_notification_simulation([{
+        "id": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Insights/metricAlerts/remote",
+        "name": "remote", "family": "metric", "severity": 2, "enabled": True,
+        "scopes": [resource], "action_group_ids": [remote_group],
+    }], [])
+    assert cross_subscription["routes"][0]["outcome"] == "unresolved_group"
+    assert cross_subscription["routes"][0]["issues"] == ["cross-subscription Action Group is outside the readable scope"]
+    assert not any(item["code"] == "missing_action_group" for item in cross_subscription["diagnostics"])
+
+
+@pytest.mark.asyncio
+async def test_bulk_simulator_resolves_visible_cross_subscription_group(monkeypatch) -> None:
+    rule_id = "/subscriptions/source/resourceGroups/rg/providers/Microsoft.Insights/metricAlerts/cpu"
+    group_id = "/subscriptions/destination/resourceGroups/rg/providers/Microsoft.Insights/actionGroups/team"
+
+    async def list_rules(*_args, **_kwargs):
+        return [{
+            "id": rule_id, "name": "cpu", "family": "metric", "severity": 2,
+            "enabled": True, "scopes": ["/subscriptions/source/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm"],
+            "action_group_ids": [group_id],
+        }]
+
+    async def list_groups(*_args, **kwargs):
+        assert kwargs.get("all_visible") is True
+        return [{
+            "id": group_id, "name": "team", "enabled": True,
+            "receivers": [{
+                "type": "email", "name": "on-call", "destination": "team@example.com",
+                "masked": "team@example.com", "fingerprint": "mail", "enabled": True,
+                "use_common_alert_schema": True,
+            }],
+        }]
+
+    monkeypatch.setattr(rules, "list_rules", list_rules)
+    monkeypatch.setattr(service, "list_action_groups", list_groups)
+    result = await advisory.bulk_simulate_notification_paths({}, subscription_id="source")
+    assert result["routes"][0]["outcome"] == "deliver"
+    assert result["routes"][0]["action_group_name"] == "team"
+    assert result["routes"][0]["receiver_destination"] == "team@example.com"
+
 
 @pytest.mark.asyncio
 async def test_noise_guard_detects_exact_overlap(monkeypatch) -> None:

@@ -1,7 +1,7 @@
-"""Tenant-scoped Action Group routing and AMBA blueprint deployment planning.
+"""Tenant-scoped AMBA blueprint deployment planning.
 
-This module is deliberately control-plane only: it stores direct routing rules, immutable
-blueprints, assignments, and draft plans.  Submitting a plan creates approval-ledger rows;
+This module is deliberately control-plane only: it stores immutable blueprints,
+assignments, and draft plans. Submitting a plan creates approval-ledger rows;
 it never writes to Azure or applies a change.
 """
 from __future__ import annotations
@@ -10,7 +10,6 @@ import copy
 import hashlib
 import json
 import re
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +19,7 @@ from app.alerts_manager import service
 from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "alerts_manager_planner.json"
-_COLLECTIONS = ("routing_rules", "blueprints", "assignments", "plans")
+_COLLECTIONS = ("blueprints", "assignments", "plans")
 _SCOPE_KINDS = {"subscription", "workload", "workload_group"}
 _CLASSIFICATIONS = {"covered", "equivalent", "drifted", "missing", "blocked"}
 _SEVERITY = {"critical": 0, "error": 1, "warning": 2, "info": 3}
@@ -38,54 +37,11 @@ def _now() -> str:
 
 def _read() -> dict[str, Any]:
     data = jsonstore.read_json(_PATH, {"version": 1, "tenants": {}})
-    data = data if isinstance(data, dict) else {"version": 1, "tenants": {}}
-    return _migrate_legacy_catalog(data)
+    return data if isinstance(data, dict) else {"version": 1, "tenants": {}}
 
 
 def _write(data: dict[str, Any]) -> None:
     jsonstore.write_json(_PATH, data)
-
-
-def _migrate_legacy_catalog(data: dict[str, Any]) -> dict[str, Any]:
-    """Resolve legacy catalog references once, preserve diagnostics, then remove catalog data."""
-    changed = False
-    for bucket in (data.get("tenants") or {}).values():
-        if not isinstance(bucket, dict) or "catalog" not in bucket:
-            continue
-        catalog = {
-            entry_id: entry
-            for entry_id, encrypted in (bucket.get("catalog") or {}).items()
-            if (entry := _decode(encrypted))
-        }
-        for rule_id, encrypted in list((bucket.get("routing_rules") or {}).items()):
-            rule = _decode(encrypted)
-            if not rule or "catalog_entry_ids" not in rule:
-                continue
-            resolved: list[str] = []
-            unresolved: list[str] = []
-            for entry_id in _string_list(rule.pop("catalog_entry_ids"), limit=10):
-                action_group_id = str((catalog.get(entry_id) or {}).get("action_group_id") or "").strip()
-                if is_action_group_id(action_group_id):
-                    if action_group_id.lower() not in {value.lower() for value in resolved}:
-                        resolved.append(action_group_id)
-                else:
-                    unresolved.append(entry_id)
-            rule["action_group_ids"] = resolved
-            if unresolved:
-                rule["migration_diagnostics"] = [
-                    f"Legacy routing destination '{entry_id}' could not be resolved to an Action Group resource ID."
-                    for entry_id in unresolved
-                ]
-            bucket["routing_rules"][rule_id] = service.encrypted_json(rule)
-        del bucket["catalog"]
-        changed = True
-    if changed:
-        if _PATH.exists():
-            backup = _PATH.with_name(f"{_PATH.name}.catalog-backup")
-            if not backup.exists():
-                shutil.copy2(_PATH, backup)
-        _write(data)
-    return data
 
 
 def _bucket(data: dict[str, Any], tenant_id: str) -> dict[str, Any]:
@@ -182,121 +138,6 @@ def validate_action_group_ids(
             elif int(item.get("active_receiver_count", item.get("receiver_count", 0)) or 0) <= 0:
                 warnings.append(f"Action Group has no active receivers: {item.get('name') or value}")
     return {"errors": errors, "warnings": warnings}
-
-
-# ------------------------------------------------------------------------ Routing matrix
-def list_routing_rules(tenant_id: str) -> list[dict[str, Any]]:
-    return sorted(_items(tenant_id, "routing_rules"), key=lambda item: (int(item.get("order", 0)), item["id"]))
-
-
-def get_routing_rule(tenant_id: str, rule_id: str) -> dict[str, Any] | None:
-    return _get(tenant_id, "routing_rules", rule_id)
-
-
-def save_routing_rule(
-    tenant_id: str, payload: dict[str, Any], *, actor: str, rule_id: str = "",
-) -> dict[str, Any]:
-    existing = _get(tenant_id, "routing_rules", rule_id) if rule_id else None
-    if rule_id and not existing:
-        raise KeyError("Routing rule not found.")
-    action_group_ids = _string_list(payload.get("action_group_ids"), limit=10)
-    if not action_group_ids:
-        raise ValueError("At least one Action Group resource ID is required.")
-    validation = validate_action_group_ids(action_group_ids)
-    if validation["errors"]:
-        raise ValueError(validation["errors"][0])
-    severities: list[int] = []
-    for value in payload.get("severities") or []:
-        try:
-            severity = int(value)
-        except (TypeError, ValueError):
-            continue
-        if 0 <= severity <= 4 and severity not in severities:
-            severities.append(severity)
-    now = _now()
-    item = {
-        "id": rule_id or str(uuid.uuid4()),
-        "name": _text(payload.get("name"), 160),
-        "order": max(0, min(10000, int(payload.get("order") or 0))),
-        "enabled": bool(payload.get("enabled", True)),
-        "fallback": bool(payload.get("fallback", False)),
-        "severities": severities,
-        "categories": _string_list(payload.get("categories"), lower=True),
-        "environments": _string_list(payload.get("environments"), lower=True),
-        "scopes": _string_list(payload.get("scopes")),
-        "action_group_ids": action_group_ids,
-        "created_at": (existing or {}).get("created_at") or now,
-        "created_by": (existing or {}).get("created_by") or actor,
-        "updated_at": now,
-        "updated_by": actor,
-    }
-    if not item["name"]:
-        raise ValueError("Routing rule name is required.")
-    return _put(tenant_id, "routing_rules", item)
-
-
-def delete_routing_rule(tenant_id: str, rule_id: str) -> bool:
-    return _delete(tenant_id, "routing_rules", rule_id)
-
-
-def _scope_matches(configured: list[str], actual: str) -> bool:
-    if not configured:
-        return True
-    candidate = actual.lower().rstrip("/")
-    return any(candidate == value.lower().rstrip("/") or candidate.startswith(value.lower().rstrip("/") + "/") for value in configured)
-
-
-def resolve_route(
-    tenant_id: str, event: dict[str, Any], *, live_action_groups: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    severity = event.get("severity")
-    if isinstance(severity, str) and not severity.isdigit():
-        severity = _SEVERITY.get(severity.lower())
-    try:
-        severity = int(severity)
-    except (TypeError, ValueError):
-        severity = None
-    category = str(event.get("category") or "").lower()
-    environment = str(event.get("environment") or "").lower()
-    scope = str(event.get("scope") or event.get("resource_id") or "")
-    rules = [rule for rule in list_routing_rules(tenant_id) if rule.get("enabled", True)]
-    trace: list[dict[str, Any]] = []
-    selected: dict[str, Any] | None = None
-    for fallback_pass in (False, True):
-        for rule in rules:
-            if bool(rule.get("fallback")) != fallback_pass:
-                continue
-            checks = {
-                "severity": not rule.get("severities") or severity in rule["severities"],
-                "category": not rule.get("categories") or category in rule["categories"],
-                "environment": not rule.get("environments") or environment in rule["environments"],
-                "scope": _scope_matches(rule.get("scopes") or [], scope),
-            }
-            matched = all(checks.values())
-            trace.append({"rule_id": rule["id"], "name": rule["name"], "order": rule["order"], "fallback": fallback_pass, "matched": matched, "checks": checks})
-            if matched:
-                selected = rule
-                break
-        if selected:
-            break
-    if not selected:
-        return {"matched": False, "rule": None, "action_group_ids": [], "action_groups": [], "diagnostics": [], "explanation": "No enabled routing rule or fallback matched.", "trace": trace}
-    action_group_ids = list(selected.get("action_group_ids") or [])
-    validation = validate_action_group_ids(action_group_ids, live_action_groups)
-    live = {str(item.get("id") or "").lower().rstrip("/"): item for item in (live_action_groups or [])}
-    entries = [{
-        "id": action_group_id,
-        "name": str((live.get(action_group_id.lower().rstrip("/")) or {}).get("name") or action_group_id.rstrip("/").rsplit("/", 1)[-1]),
-    } for action_group_id in action_group_ids]
-    diagnostics = [*selected.get("migration_diagnostics", []), *validation["errors"], *validation["warnings"]]
-    usable = not validation["errors"] and not validation["warnings"] and bool(action_group_ids)
-    explanation = (
-        f"Matched {'fallback ' if selected.get('fallback') else ''}rule '{selected['name']}' at order {selected['order']}; "
-        f"resolved {len(action_group_ids)} direct Action Group ID{'s' if len(action_group_ids) != 1 else ''}."
-    )
-    if diagnostics:
-        explanation += " " + " ".join(diagnostics)
-    return {"matched": usable, "rule": selected, "action_group_ids": action_group_ids, "action_groups": entries, "diagnostics": diagnostics, "explanation": explanation, "trace": trace}
 
 
 # ------------------------------------------------------------------- Immutable blueprints
@@ -581,6 +422,7 @@ def _proposal(assignment: dict[str, Any], blueprint: dict[str, Any], gap: dict[s
 
 def preview_plan(
     tenant_id: str, assignment_id: str, *, actor: str,
+    common_action_group_id: str,
     coverage_items: list[dict[str, Any]] | None = None,
     live_action_groups: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -594,29 +436,35 @@ def preview_plan(
         coverage_items, sources = derive_coverage_items(tenant_id, assignment)
     else:
         sources = ["request"]
+    common_id = _text(common_action_group_id, 1000).rstrip("/")
+    if not common_id:
+        raise ValueError("A common Action Group resource ID is required.")
+    common_validation = validate_action_group_ids([common_id], live_action_groups)
+    live_by_id = {str(item.get("id") or "").lower().rstrip("/"): item for item in (live_action_groups or [])}
+    live_group = live_by_id.get(common_id.lower()) or {}
+    action_group = {
+        "id": common_id,
+        "name": str(live_group.get("name") or common_id.rsplit("/", 1)[-1]),
+        "diagnostics": [*common_validation["errors"], *common_validation["warnings"]],
+    }
     items: list[dict[str, Any]] = []
     counts = {key: 0 for key in _CLASSIFICATIONS}
     included_types = set(blueprint.get("included_resource_types") or [])
     for gap in coverage_items:
         classification = _classification(gap)
         reasons: list[str] = []
-        route: dict[str, Any] | None = None
         proposal: dict[str, Any] | None = None
         resource_type = str(gap.get("resource_type") or "").lower()
         if resource_type not in included_types:
             classification = "blocked"
             reasons.append("Resource type is not included in this blueprint version.")
         elif classification in {"missing", "drifted"}:
-            route = resolve_route(tenant_id, {
-                "severity": _severity_for(blueprint, gap), "category": gap.get("amba_category"),
-                "environment": assignment.get("environment"), "scope": gap.get("resource_id"),
-            }, live_action_groups=live_action_groups)
-            if not route["matched"]:
+            if action_group["diagnostics"]:
                 classification = "blocked"
-                reasons.append(route["explanation"])
+                reasons.extend(action_group["diagnostics"])
             else:
                 proposal, proposal_errors = _proposal(
-                    assignment, blueprint, gap, route["action_group_ids"],
+                    assignment, blueprint, gap, [common_id],
                 )
                 if proposal_errors:
                     classification = "blocked"
@@ -630,7 +478,7 @@ def preview_plan(
             "alert_key": gap.get("alert_key", ""), "alert_name": gap.get("alert_name", ""),
             "category": gap.get("amba_category", ""), "severity": _severity_for(blueprint, gap),
             "source_status": gap.get("status", ""), "reasons": reasons,
-            "routing": ({"rule_id": route["rule"]["id"], "rule_name": route["rule"]["name"], "action_group_ids": route["action_group_ids"], "action_groups": route["action_groups"], "diagnostics": route["diagnostics"], "explanation": route["explanation"]} if route and route.get("rule") else None),
+            "action_group": action_group if classification in {"missing", "drifted", "blocked"} else None,
             "proposal": proposal,
         })
     plan = {
@@ -639,6 +487,7 @@ def preview_plan(
         "amba_version": blueprint["amba_version"], "connection_id": assignment.get("connection_id", ""),
         "scope_kind": assignment["scope_kind"], "scope_id": assignment["scope_id"],
         "status": "draft", "counts": counts, "items": items, "coverage_sources": sources,
+        "common_action_group_id": common_id,
         "created_at": _now(), "created_by": actor, "updated_at": _now(), "updated_by": actor,
         "validated_at": "", "submitted_at": "", "submitted_by": "", "batch_id": "", "change_ids": [],
         "decided_at": "", "decided_by": "", "decision_reason": "",
@@ -648,7 +497,7 @@ def preview_plan(
 
 def preview_gap_plan(
     tenant_id: str, context: dict[str, Any], gaps: list[dict[str, Any]], *, actor: str,
-    routing_mode: str, common_action_group_id: str = "",
+    common_action_group_id: str,
     live_action_groups: list[dict[str, Any]] | None = None,
     pending_target_ids: set[str] | None = None,
     active_gap_ids: set[str] | None = None,
@@ -656,8 +505,6 @@ def preview_gap_plan(
     """Persist an enabled-by-default draft generated only from selected, sanitized analysis gaps."""
     if not gaps:
         raise ValueError("Select at least one gap.")
-    if routing_mode not in {"common", "rules"}:
-        raise ValueError("Routing mode must be common or rules.")
     scope_kind, scope_id = _gap_plan_scope(context)
     selected_by_id: dict[str, dict[str, Any]] = {}
     for raw_gap in gaps:
@@ -668,10 +515,9 @@ def preview_gap_plan(
 
     common_id = _text(common_action_group_id, 1000).rstrip("/")
     common_validation = {"errors": [], "warnings": []}
-    if routing_mode == "common":
-        if not common_id:
-            raise ValueError("A common Action Group resource ID is required.")
-        common_validation = validate_action_group_ids([common_id], live_action_groups)
+    if not common_id:
+        raise ValueError("A common Action Group resource ID is required.")
+    common_validation = validate_action_group_ids([common_id], live_action_groups)
 
     active_plans = [plan for plan in _items(tenant_id, "plans") if plan.get("status") in {"pending", "approved"}]
     registry_active_gap_ids = {
@@ -713,22 +559,15 @@ def preview_gap_plan(
             classification = "blocked"
             reasons.append("This gap already belongs to a pending or approved deployment plan.")
         else:
-            if routing_mode == "common":
-                live_group = live_by_id.get(common_id.lower()) or {}
-                diagnostics = [*common_validation["errors"], *common_validation["warnings"]]
-                route = {
-                    "matched": not diagnostics,
-                    "rule": None,
-                    "action_group_ids": [common_id],
-                    "action_groups": [{"id": common_id, "name": str(live_group.get("name") or common_id.rsplit("/", 1)[-1])}],
-                    "diagnostics": diagnostics,
-                    "explanation": "Using the common live Azure Action Group selected for this gap batch." + (" " + " ".join(diagnostics) if diagnostics else ""),
-                }
-            else:
-                route = resolve_route(tenant_id, {
-                    "severity": _severity_for(blueprint, gap), "category": gap.get("amba_category"),
-                    "environment": assignment.get("environment"), "scope": gap.get("resource_id"),
-                }, live_action_groups=live_action_groups)
+            live_group = live_by_id.get(common_id.lower()) or {}
+            diagnostics = [*common_validation["errors"], *common_validation["warnings"]]
+            route = {
+                "matched": not diagnostics,
+                "action_group_ids": [common_id],
+                "action_groups": [{"id": common_id, "name": str(live_group.get("name") or common_id.rsplit("/", 1)[-1])}],
+                "diagnostics": diagnostics,
+                "explanation": "Using the common live Azure Action Group selected for this gap batch." + (" " + " ".join(diagnostics) if diagnostics else ""),
+            }
             if not route["matched"]:
                 classification = "blocked"
                 reasons.append(route["explanation"])
@@ -752,13 +591,11 @@ def preview_gap_plan(
             "resource_type": gap["resource_type"], "alert_key": gap["alert_key"],
             "alert_name": gap["alert_name"], "category": gap["amba_category"],
             "severity": _severity_for(blueprint, gap), "source_status": gap["status"], "reasons": reasons,
-            "routing": ({
-                "mode": routing_mode,
-                "rule_id": str((route.get("rule") or {}).get("id") or ""),
-                "rule_name": str((route.get("rule") or {}).get("name") or ("Common Action Group" if routing_mode == "common" else "No matching routing rule")),
-                "action_group_ids": route.get("action_group_ids") or [],
-                "action_groups": route.get("action_groups") or [],
-                "diagnostics": route.get("diagnostics") or [], "explanation": route.get("explanation") or "",
+            "action_group": ({
+                "id": common_id,
+                "name": str(((route.get("action_groups") or [{}])[0]).get("name") or common_id.rsplit("/", 1)[-1]),
+                "diagnostics": route.get("diagnostics") or [],
+                "explanation": route.get("explanation") or "",
             } if route else None),
             "proposal": proposal,
         })
@@ -766,8 +603,7 @@ def preview_gap_plan(
     now = _now()
     plan = {
         "id": str(uuid.uuid4()), "assignment_id": "", "source": "selected_gaps",
-        "source_gap_ids": source_gap_ids, "routing_mode": routing_mode,
-        "common_action_group_id": common_id if routing_mode == "common" else "",
+        "source_gap_ids": source_gap_ids, "common_action_group_id": common_id,
         "blueprint_id": "", "blueprint_version": 0, "amba_version": "",
         "connection_id": assignment["connection_id"], "scope_kind": scope_kind, "scope_id": scope_id,
         "workload_id": _text(context.get("workload_id"), 1000),

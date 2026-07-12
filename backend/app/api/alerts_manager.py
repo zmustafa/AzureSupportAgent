@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,34 +150,6 @@ class AuthoringResolveRequest(BaseModel):
     resource_ids: list[str] = Field(min_length=1, max_length=100)
 
 
-class RoutingRuleRequest(BaseModel):
-    connection_id: str = ""
-    workload_id: str | None = None
-    subscription_id: str | None = None
-    management_group_id: str | None = None
-    name: str = Field(min_length=1, max_length=160)
-    order: int = Field(default=0, ge=0, le=10000)
-    enabled: bool = True
-    fallback: bool = False
-    severities: list[int] = Field(default_factory=list, max_length=5)
-    categories: list[str] = Field(default_factory=list, max_length=50)
-    environments: list[str] = Field(default_factory=list, max_length=50)
-    scopes: list[str] = Field(default_factory=list, max_length=50)
-    action_group_ids: list[str] = Field(min_length=1, max_length=10)
-
-
-class RoutingResolveRequest(BaseModel):
-    connection_id: str = ""
-    workload_id: str | None = None
-    subscription_id: str | None = None
-    management_group_id: str | None = None
-    severity: int | str | None = None
-    category: str = Field(default="", max_length=128)
-    environment: str = Field(default="", max_length=64)
-    scope: str = Field(default="", max_length=1000)
-    resource_id: str = Field(default="", max_length=1000)
-
-
 class BlueprintVersionRequest(BaseModel):
     name: str = Field(default="", max_length=160)
     description: str = Field(default="", max_length=1000)
@@ -200,6 +172,7 @@ class BlueprintAssignmentRequest(BaseModel):
 
 class DeploymentPlanPreviewRequest(BaseModel):
     assignment_id: str = Field(min_length=1, max_length=64)
+    common_action_group_id: str = Field(min_length=1, max_length=1000)
     coverage_items: list[dict[str, Any]] | None = Field(default=None, max_length=5000)
 
 
@@ -234,6 +207,8 @@ class SelectedGapPayload(BaseModel):
 
 
 class GapsDeploymentPlanPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     connection_id: str = Field(default="", max_length=128)
     workload_id: str | None = Field(default=None, max_length=1000)
     subscription_id: str | None = Field(default=None, max_length=1000)
@@ -241,8 +216,7 @@ class GapsDeploymentPlanPreviewRequest(BaseModel):
     environment: str = Field(default="", max_length=64)
     monitoring_resource_group: str = Field(default="", max_length=90)
     gaps: list[SelectedGapPayload] = Field(min_length=1, max_length=5000)
-    routing_mode: Literal["common", "rules"]
-    common_action_group_id: str = Field(default="", max_length=1000)
+    common_action_group_id: str = Field(min_length=1, max_length=1000)
 
 
 class DeploymentPlanItemSelection(BaseModel):
@@ -1060,7 +1034,6 @@ async def summary(
         "actionable_count": pending + approved,
         "latest_applied_at": latest_applied_at.isoformat() if latest_applied_at else "",
         "deployment_plan_count": len(planner.list_plans(_tenant(principal))),
-        "routing_rule_count": len(planner.list_routing_rules(_tenant(principal))),
         "capabilities": _capability_payload(connection, connection_id, principal),
     }
 
@@ -1255,6 +1228,7 @@ async def action_groups(
     management_group_id: str | None = Query(default=None),
     page: int | None = Query(default=None, ge=1),
     page_size: int | None = Query(default=None, ge=1, le=250),
+    all_visible: bool = Query(default=False),
     principal: Principal = Depends(_read),
 ) -> dict[str, Any]:
     connection = _connection(connection_id, workload_id)
@@ -1262,24 +1236,10 @@ async def action_groups(
         rows, metadata = await service.list_action_groups(
             connection, workload_id=workload_id, subscription_id=subscription_id,
             management_group_id=management_group_id, tenant_id=_tenant(principal), with_metadata=True,
+            all_visible=all_visible,
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    from app.alerts_manager import planner
-
-    routing_dependencies: dict[str, list[dict[str, str]]] = {}
-    for rule in planner.list_routing_rules(_tenant(principal)):
-        for action_group_id in rule.get("action_group_ids") or []:
-            routing_dependencies.setdefault(str(action_group_id).lower().rstrip("/"), []).append({
-                "id": str(rule.get("id") or ""), "name": str(rule.get("name") or ""),
-                "type": "alerts_manager/routing_rule",
-            })
-    for row in rows:
-        extra = routing_dependencies.get(str(row.get("id") or "").lower().rstrip("/"), [])
-        row["dependencies"] = [*(row.get("dependencies") or []), *extra]
-        row["dependency_count"] = len(row["dependencies"])
-        row["routing_dependencies"] = extra
-        row["routing_dependency_count"] = len(extra)
     visible, effective_page, effective_size, paginated = _paged_rows(rows, page, page_size)
     return {
         "action_groups": visible, "count": len(rows), "total": len(rows),
@@ -1299,107 +1259,6 @@ async def action_group_details(
     if error or not resource:
         raise HTTPException(status_code=404 if status == 404 else 502, detail=error or "Action group not found.")
     return {"action_group": service.editable_action_group(resource)}
-
-
-@router.get("/routing-rules")
-async def routing_rules(principal: Principal = Depends(_read)) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    rows = planner.list_routing_rules(_tenant(principal))
-    return {"routing_rules": rows, "count": len(rows)}
-
-
-@router.get("/routing-rules/{rule_id}")
-async def get_routing_rule(rule_id: str, principal: Principal = Depends(_read)) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    rule = planner.get_routing_rule(_tenant(principal), rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="Routing rule not found.")
-    return {"routing_rule": rule}
-
-
-@router.post("/routing-rules")
-async def create_routing_rule(
-    payload: RoutingRuleRequest,
-    principal: Principal = Depends(_ag_write),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    try:
-        live = await service.list_action_groups(
-            _connection(payload.connection_id, payload.workload_id), workload_id=payload.workload_id,
-            subscription_id=payload.subscription_id, management_group_id=payload.management_group_id,
-        )
-        validation = planner.validate_action_group_ids(payload.action_group_ids, live)
-        if validation["errors"]:
-            raise ValueError(validation["errors"][0])
-        item = planner.save_routing_rule(_tenant(principal), payload.model_dump(), actor=principal.subject)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    db.add(_audit(principal, "alerts_manager.routing_rule.created", item["id"], {"order": item["order"], "fallback": item["fallback"]}))
-    await db.commit()
-    return {"routing_rule": item, "warnings": validation["warnings"]}
-
-
-@router.put("/routing-rules/{rule_id}")
-async def update_routing_rule(
-    rule_id: str,
-    payload: RoutingRuleRequest,
-    principal: Principal = Depends(_ag_write),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    try:
-        live = await service.list_action_groups(
-            _connection(payload.connection_id, payload.workload_id), workload_id=payload.workload_id,
-            subscription_id=payload.subscription_id, management_group_id=payload.management_group_id,
-        )
-        validation = planner.validate_action_group_ids(payload.action_group_ids, live)
-        if validation["errors"]:
-            raise ValueError(validation["errors"][0])
-        item = planner.save_routing_rule(_tenant(principal), payload.model_dump(), actor=principal.subject, rule_id=rule_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    db.add(_audit(principal, "alerts_manager.routing_rule.updated", rule_id, {"order": item["order"], "fallback": item["fallback"]}))
-    await db.commit()
-    return {"routing_rule": item, "warnings": validation["warnings"]}
-
-
-@router.delete("/routing-rules/{rule_id}")
-async def delete_routing_rule(
-    rule_id: str,
-    principal: Principal = Depends(_ag_write),
-    db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    if not planner.delete_routing_rule(_tenant(principal), rule_id):
-        raise HTTPException(status_code=404, detail="Routing rule not found.")
-    db.add(_audit(principal, "alerts_manager.routing_rule.deleted", rule_id, {}))
-    await db.commit()
-    return {"deleted": True}
-
-
-@router.post("/routing-rules/resolve")
-async def resolve_routing_rule(
-    payload: RoutingResolveRequest,
-    principal: Principal = Depends(_read),
-) -> dict[str, Any]:
-    from app.alerts_manager import planner
-
-    try:
-        live = await service.list_action_groups(
-            _connection(payload.connection_id, payload.workload_id), workload_id=payload.workload_id,
-            subscription_id=payload.subscription_id, management_group_id=payload.management_group_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return planner.resolve_route(_tenant(principal), payload.model_dump(), live_action_groups=live)
 
 
 @router.get("/alert-rules")
@@ -1943,6 +1802,7 @@ async def preview_deployment_plan(
         live = await _planner_action_groups(assignment)
         plan = planner.preview_plan(
             _tenant(principal), payload.assignment_id, actor=principal.subject,
+            common_action_group_id=payload.common_action_group_id,
             coverage_items=payload.coverage_items, live_action_groups=live,
         )
     except ValueError as exc:
@@ -1987,8 +1847,7 @@ async def preview_gaps_deployment_plan(
         validated_gaps = await _validate_selected_gap_metrics(connection, [gap.model_dump() for gap in payload.gaps])
         plan = planner.preview_gap_plan(
             _tenant(principal), context, validated_gaps,
-            actor=principal.subject, routing_mode=payload.routing_mode,
-            common_action_group_id=payload.common_action_group_id,
+            actor=principal.subject, common_action_group_id=payload.common_action_group_id,
             live_action_groups=live,
             pending_target_ids={str(change.target_id or "") for change in active_changes},
             active_gap_ids={
@@ -2001,7 +1860,7 @@ async def preview_gaps_deployment_plan(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.add(_audit(principal, "alerts_manager.deployment_plan.gaps_previewed", plan["id"], {
         "source_gap_count": len(plan["source_gap_ids"]), "counts": plan["counts"],
-        "routing_mode": plan["routing_mode"],
+        "common_action_group_id": plan["common_action_group_id"],
     }))
     await db.commit()
     return {"plan": plan}

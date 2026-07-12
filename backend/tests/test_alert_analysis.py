@@ -81,12 +81,25 @@ def _analyze(rules: list[dict], groups: list[dict] | None = None) -> dict:
     return compute_analysis(
         [_resource()],
         rules,
-        groups or [_group("ag1")],
+        groups if groups is not None else [_group("ag1")],
         scope_kind="workload",
         scope_id="wl1",
         scope_name="Workload One",
         tolerance_pct=10,
     )
+
+
+def test_cross_subscription_action_group_is_unresolved_not_missing() -> None:
+    rule = _rule("cross-sub")
+    remote = "/subscriptions/sub2/resourceGroups/remote/providers/microsoft.insights/actionGroups/remote-ag"
+    rule["properties"]["actions"] = [{"actionGroupId": remote}]
+    snapshot = _analyze([rule], [])
+    analyzed = snapshot["rules"][0]
+    assert analyzed["missing_action_group_ids"] == []
+    assert analyzed["cross_subscription_action_group_ids"] == [remote.lower()]
+    assert "missing_action_group" not in analyzed["issues"]
+    assert "unresolved_action_group_access" in analyzed["issues"]
+    assert any(gap["type"] == "unresolved_action_group_access" for gap in snapshot["gaps"])
 
 
 def test_exact_duplicate_and_shared_recipient_are_flagged() -> None:
