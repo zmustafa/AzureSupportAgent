@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alerts_manager import service
@@ -2115,17 +2115,25 @@ async def decide_deployment_plan(
 async def list_changes(
     connection_id: str = Query(default=""),
     status: str = Query(default=""),
+    view: Literal["all", "action_required", "archived"] = Query(default="all"),
+    sort: Literal["newest", "oldest", "status", "risk", "change"] = Query(default="newest"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=100),
     principal: Principal = Depends(_read),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    view = view if view in {"all", "action_required", "archived"} else "all"
+    sort = sort if sort in {"newest", "oldest", "status", "risk", "change"} else "newest"
     base_filters = [AlertManagerChange.tenant_id == _tenant(principal)]
     if connection_id:
         base_filters.append(AlertManagerChange.connection_id == connection_id)
     stmt = select(AlertManagerChange).where(*base_filters)
     if status:
         stmt = stmt.where(AlertManagerChange.status == status)
+    if view == "action_required":
+        stmt = stmt.where(AlertManagerChange.status.in_(["pending", "approved"]))
+    elif view == "archived":
+        stmt = stmt.where(~AlertManagerChange.status.in_(["pending", "approved"]))
     count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
     total = int((await db.execute(count_stmt)).scalar_one())
     actionable_counts = dict((await db.execute(
@@ -2133,7 +2141,28 @@ async def list_changes(
         .where(*base_filters, AlertManagerChange.status.in_(["pending", "approved"]))
         .group_by(AlertManagerChange.status)
     )).all())
-    stmt = stmt.order_by(AlertManagerChange.requested_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    order = {
+        "newest": (AlertManagerChange.requested_at.desc(),),
+        "oldest": (AlertManagerChange.requested_at.asc(),),
+        "status": (case(
+            (AlertManagerChange.status == "pending", 0),
+            (AlertManagerChange.status == "approved", 1),
+            (AlertManagerChange.status == "failed", 2),
+            (AlertManagerChange.status == "stale", 3),
+            (AlertManagerChange.status == "applied", 4),
+            (AlertManagerChange.status == "rejected", 5),
+            else_=6,
+        ), AlertManagerChange.requested_at.desc()),
+        "risk": (case(
+            (AlertManagerChange.risk == "critical", 0),
+            (AlertManagerChange.risk == "high", 1),
+            (AlertManagerChange.risk == "medium", 2),
+            (AlertManagerChange.risk == "low", 3),
+            else_=4,
+        ), AlertManagerChange.requested_at.desc()),
+        "change": (AlertManagerChange.target_type.asc(), AlertManagerChange.target_id.asc()),
+    }[sort]
+    stmt = stmt.order_by(*order).offset((page - 1) * page_size).limit(page_size)
     rows = (await db.execute(stmt)).scalars().all()
     pending = int(actionable_counts.get("pending", 0))
     approved = int(actionable_counts.get("approved", 0))

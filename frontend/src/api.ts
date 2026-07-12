@@ -4934,11 +4934,13 @@ export const api = {
   },
   requestActionGroupChange: (body: { connection_id?: string; operation: "create" | "update" | "delete"; target_id?: string; clone_source_id?: string; desired?: Partial<EditableActionGroup>; reason?: string }) =>
     http<{ change: AlertsManagerChange }>("/alerts-manager/action-groups/changes", { method: "POST", body: JSON.stringify(body) }),
-  alertsManagerChanges: (connectionId = "", page = 1, pageSize = 100) => {
+  alertsManagerChanges: (connectionId = "", page = 1, pageSize = 100, view: "all" | "action_required" | "archived" = "action_required", sort: "newest" | "oldest" | "status" | "risk" | "change" = "newest") => {
     const q = new URLSearchParams();
     if (connectionId) q.set("connection_id", connectionId);
     q.set("page", String(page));
     q.set("page_size", String(pageSize));
+    q.set("view", view);
+    q.set("sort", sort);
     return http<{ changes: AlertsManagerChange[]; total: number; page: number; page_size: number; pending_count: number; approved_count: number; actionable_count: number }>(`/alerts-manager/changes?${q.toString()}`);
   },
   alertsManagerChangeDetails: (changeId: string) =>

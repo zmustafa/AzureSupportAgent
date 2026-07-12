@@ -67,7 +67,9 @@ const COST_FAMILY_LABELS: Record<string, string> = {
 
 type Tab = "overview" | "inbox" | "overlaps" | "gaps" | "rules" | "manage-rules" | "action-groups" | "deployment-plans" | "simulator" | "changes";
 const PAGE_SIZE = 100;
-const CHANGES_PAGE_SIZE = 50;
+const CHANGES_PAGE_SIZE = 100;
+type ChangesView = "all" | "action_required" | "archived";
+type ChangesSort = "newest" | "oldest" | "status" | "risk" | "change";
 const VALID_TABS = new Set<Tab>(["overview", "inbox", "overlaps", "gaps", "rules", "manage-rules", "action-groups", "deployment-plans", "simulator", "changes"]);
 type ChangesPage = { changes: AlertsManagerChange[]; total: number; page: number; page_size: number; pending_count: number; approved_count: number; actionable_count: number };
 
@@ -628,6 +630,8 @@ export function AlertsManagerPanel() {
   const tab: Tab = routeTab && VALID_TABS.has(routeTab as Tab) ? routeTab as Tab : "overview";
   const contentScrollRef = useRef<HTMLElement>(null);
   const page = Math.max(1, Number.parseInt(routeSearch.get("page") || "1", 10) || 1);
+  const [changesView, setChangesView] = useState<ChangesView>("action_required");
+  const [changesSort, setChangesSort] = useState<ChangesSort>("newest");
   function goTab(next: Tab) {
     navigate(`/alerts-manager/${next}`);
     if (next === "changes") requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" }));
@@ -739,11 +743,12 @@ export function AlertsManagerPanel() {
   const analysisGeneratedAt = data?.generated_at ? Date.parse(ensureUtc(data.generated_at)) : Number.NaN;
   const analysisIsStaleAfterApply = analysisNeedsRefresh || (Number.isFinite(latestAppliedAt) && Number.isFinite(analysisGeneratedAt) && latestAppliedAt > analysisGeneratedAt);
   const changesQ = useQuery({
-    queryKey: queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE),
-    queryFn: () => api.alertsManagerChanges(connId, page, CHANGES_PAGE_SIZE),
+    queryKey: queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE, changesView, changesSort),
+    queryFn: () => api.alertsManagerChanges(connId, page, CHANGES_PAGE_SIZE, changesView, changesSort),
     enabled: ready && !!data && !data.demo && tab === "changes",
     staleTime: 15_000,
   });
+  const changesQueryKey = queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE, changesView, changesSort);
   useEffect(() => {
     const state = jobQ.data;
     if (!state?.job || state.job.status === "running" || handledJobRef.current === state.job.id) return;
@@ -1009,7 +1014,7 @@ export function AlertsManagerPanel() {
     try {
       const result = await api.applyAlertsManagerChange(row.id);
       setAnalysisNeedsRefresh(true);
-      qc.setQueryData<ChangesPage>(queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE), (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
+      qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
       await changesQ.refetch();
       void Promise.all([qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.actionGroupsRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot })]);
       if (row.target_type === "action_group") {
@@ -1034,7 +1039,7 @@ export function AlertsManagerPanel() {
           try {
             const result = await api.applyAlertsManagerChange(row.id);
             appliedCount += 1;
-            qc.setQueryData<ChangesPage>(queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE), (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
+            qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
           } catch (cause) {
             failures.push(`${row.target_name}: ${formatError(cause)}`);
           } finally {
@@ -1044,13 +1049,14 @@ export function AlertsManagerPanel() {
       }
       await Promise.all(Array.from({ length: Math.min(6, rows.length) }, () => worker()));
       if (appliedCount > 0) setAnalysisNeedsRefresh(true);
-      await changesQ.refetch();
-      void Promise.all([
+      await Promise.all([
+        invalidateManagedChanges(),
         qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }),
         qc.invalidateQueries({ queryKey: queryKeys.alertsManager.actionGroupsRoot }),
         qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }),
         qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }),
       ]);
+      if (page !== 1) goPage(1); else await changesQ.refetch();
       if (failures.length) setError(`${rows.length - failures.length} of ${rows.length} changes were applied. ${failures.join(" · ")}`);
     } finally { setApplyingChangeIds(new Set()); setManagementBusy(""); }
   }
@@ -1265,7 +1271,18 @@ export function AlertsManagerPanel() {
           : tab === "changes" ? data?.demo ? <div className="rounded-xl border bg-white p-10 text-center text-sm text-gray-500">Managed Azure changes are unavailable for demo data.</div>
             : changesQ.isLoading ? <Skeleton rows={8} />
               : changesQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(changesQ.error)}</div>
-                : <div className="space-y-2"><ChangesTable rows={changesQ.data?.changes ?? []} caps={capabilities} busy={managementBusy} applyingIds={applyingChangeIds} preparingCount={bulkPreparingCount} onDecision={(row, decision) => void decideManagedChange(row, decision)} onApply={(row) => void applyManagedChange(row)} onBulkDecision={bulkDecideManagedChanges} onBulkApply={bulkApplyManagedChanges} onRollback={(row) => void rollbackManagedChange(row)} /><PageBar total={changesQ.data?.total ?? 0} page={page} pageSize={CHANGES_PAGE_SIZE} onPage={goPage} /></div>
+                : <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-3 text-xs">
+                      <span className="font-medium text-gray-600">Show:</span>
+                      <div className="inline-flex overflow-hidden rounded-md border" role="group" aria-label="Filter managed changes">
+                        {(["all", "action_required", "archived"] as const).map((value) => <button key={value} type="button" aria-pressed={changesView === value} onClick={() => { setChangesView(value); goPage(1); }} className={`px-3 py-1.5 transition ${changesView === value ? "bg-gray-900 font-medium text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>{value === "all" ? "All" : value === "action_required" ? "Action Required" : "Archived"}{value === "action_required" && <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] ${changesView === value ? "bg-white/20" : "bg-red-50 text-red-700"}`}>{changesQ.data?.actionable_count ?? 0}</span>}</button>)}
+                      </div>
+                      <label className="ml-auto flex items-center gap-2 text-gray-600">Sort by<select aria-label="Sort managed changes" value={changesSort} onChange={(event) => { setChangesSort(event.target.value as ChangesSort); goPage(1); }} className="rounded-md border px-2.5 py-1.5 text-xs text-gray-700"><option value="newest">Newest requested</option><option value="oldest">Oldest requested</option><option value="status">Status</option><option value="risk">Risk</option><option value="change">Change</option></select></label>
+                      <span className="text-[10px] text-gray-400">{CHANGES_PAGE_SIZE} per page</span>
+                    </div>
+                    <ChangesTable rows={changesQ.data?.changes ?? []} caps={capabilities} busy={managementBusy} applyingIds={applyingChangeIds} preparingCount={bulkPreparingCount} onDecision={(row, decision) => void decideManagedChange(row, decision)} onApply={(row) => void applyManagedChange(row)} onBulkDecision={bulkDecideManagedChanges} onBulkApply={bulkApplyManagedChanges} onRollback={(row) => void rollbackManagedChange(row)} />
+                    <PageBar total={changesQ.data?.total ?? 0} page={page} pageSize={CHANGES_PAGE_SIZE} onPage={goPage} />
+                  </div>
           : !data ? <div className="py-20 text-center text-sm text-gray-400">No analysis snapshot is available.</div>
           : data.error && !data.rules.length ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">{data.error}</div>

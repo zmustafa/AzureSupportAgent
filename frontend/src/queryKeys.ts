@@ -28,7 +28,7 @@ export const queryKeys = {
     inboxRoot: ["alerts-manager-inbox"] as const,
     inbox: (params: AlertsManagerScopeParams, days: number) => ["alerts-manager-inbox", alertsManagerScope(params), days] as const,
     changesRoot: ["alerts-manager-changes"] as const,
-    changes: (connectionId: string, page: number, pageSize: number) => ["alerts-manager-changes", connectionId, page, pageSize] as const,
+    changes: (connectionId: string, page: number, pageSize: number, view = "action_required", sort = "newest") => ["alerts-manager-changes", connectionId, page, pageSize, view, sort] as const,
     summaryRoot: ["alerts-manager-summary"] as const,
     summary: (connectionId: string) => ["alerts-manager-summary", connectionId] as const,
   },

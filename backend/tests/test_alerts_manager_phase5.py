@@ -140,6 +140,18 @@ async def test_bulk_rule_preparation_reuses_token_caps_six_and_preserves_order(m
         assert second_page["pending_count"] == 12
         assert second_page["approved_count"] == 0
         assert second_page["actionable_count"] == 12
+        async with Session() as db:
+            action_required = await alerts_api.list_changes(
+                connection_id="connection-1", status="", view="action_required", sort="oldest",
+                page=1, page_size=100, principal=principal, db=db,
+            )
+            archived = await alerts_api.list_changes(
+                connection_id="connection-1", status="", view="archived", sort="newest",
+                page=1, page_size=100, principal=principal, db=db,
+            )
+        assert action_required["total"] == 12
+        assert {change["status"] for change in action_required["changes"]} == {"pending"}
+        assert archived["total"] == 0
     finally:
         await engine.dispose()
 
