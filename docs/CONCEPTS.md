@@ -1,3 +1,9 @@
+---
+layout: default
+title: Concepts & Glossary
+nav_exclude: true
+---
+
 # Concepts & Glossary
 
 A plain-English reference for every concept and piece of vocabulary you'll meet in Azure

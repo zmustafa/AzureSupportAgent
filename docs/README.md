@@ -1,3 +1,9 @@
+---
+layout: default
+title: Documentation Overview
+nav_exclude: true
+---
+
 # Azure Support Agent — Documentation
 
 Everything you need to deploy, understand, operate, and extend Azure Support Agent.
@@ -11,7 +17,7 @@ Everything you need to deploy, understand, operate, and extend Azure Support Age
 | **Understand the concepts** & vocabulary (AMBA, War Room, Evidence Locker…) | [CONCEPTS.md](CONCEPTS.md) |
 | **Use the product** feature-by-feature | [USER_GUIDE.md](USER_GUIDE.md) |
 | Wire up **Entra ID (SSO / Microsoft Graph)** | [ENTRA_SETUP.md](ENTRA_SETUP.md) |
-| **Contribute** or understand the codebase | [ARCHITECTURE.md](ARCHITECTURE.md) · [../CONTRIBUTING.md](../CONTRIBUTING.md) |
+| **Understand the codebase** | [Architecture]({{ site.baseurl }}/ARCHITECTURE/) · [Technical documentation]({{ site.baseurl }}/technical/) |
 | See the deep **technical spec** | [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md) |
 
 ## 🧭 The 5-minute mental model

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Technical Specification
+nav_exclude: true
+---
+
 # Azure Support Agent - Technical Specification
 
 > Status: Implementation-current specification

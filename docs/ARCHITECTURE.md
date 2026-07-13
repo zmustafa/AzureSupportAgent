@@ -1,3 +1,9 @@
+---
+layout: default
+title: Architecture
+nav_exclude: true
+---
+
 # Architecture (for contributors)
 
 How Azure Support Agent is put together, so you can find your way around and extend it. For

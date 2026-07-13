@@ -1,3 +1,9 @@
+---
+layout: default
+title: Installation Guide
+nav_exclude: true
+---
+
 # Installation Guide
 
 Deploy **Azure Support Agent** to your own Azure subscription in about 10 minutes — no
@@ -27,7 +33,7 @@ ongoing cost. You can delete everything in one click when you're done (see
 
 ## Step 1 — Click "Deploy to Azure"
 
-From the [README](../README.md#-deploy-to-azure-one-click), click the button:
+From the [one-click installation guide]({{ site.baseurl }}/getting-started/one-click-install/), use the deployment button:
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
@@ -164,7 +170,7 @@ Back in the app, click **Test** on the connection — it should list your subscr
 - Generate an **Architecture** diagram from a workload.
 - Run an **Assessment** or check **Monitoring / Backup coverage**.
 
-See the [feature overview](../README.md#-features) for the full picture.
+See the [user guide]({{ site.baseurl }}/user-guide/) for the current feature overview.
 
 ## Troubleshooting
 

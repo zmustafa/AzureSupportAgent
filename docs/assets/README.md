@@ -1,8 +1,13 @@
+---
+layout: default
+title: README screenshots
+nav_exclude: true
+---
+
 # README screenshots
 
-Screenshots used by the top-level [`README.md`](../../README.md) (and reused by the blog-series
-drafts under `docs/improvement-plans/`). Filenames **must match exactly** — the README
-references each by name.
+Sanitized screenshots used by the repository overview and public documentation. Filenames
+**must match exactly** because public pages reference each by name.
 
 ### Hero
 

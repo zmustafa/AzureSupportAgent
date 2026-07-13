@@ -1,3 +1,9 @@
+---
+layout: default
+title: EntraID Setup
+nav_exclude: true
+---
+
 # EntraID (Microsoft Graph) MCP Server
 
 In addition to the Azure MCP server, the app integrates the **EntraID MCP Server**. It

@@ -139,3 +139,12 @@ docs/_journey_render/
 
 # --- Per-section performance/UX improvement plans (review scratch, not shipped) ---
 docs/improvement-plans/
+
+# --- Documentation regeneration agent scratch/build output ------------------
+# Public documentation remains tracked; workspace agent customization stays local.
+.github/
+.docs-work/
+docs/.jekyll-cache/
+docs/.sass-cache/
+docs/_site/
+docs/.bundle/

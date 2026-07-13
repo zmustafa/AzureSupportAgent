@@ -1,3 +1,9 @@
+---
+layout: default
+title: Legacy User Guide
+nav_exclude: true
+---
+
 # User Guide
 
 A task-oriented tour of Azure Support Agent: what each area is for, when to use it, and how

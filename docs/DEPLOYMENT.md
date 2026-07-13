@@ -1,6 +1,12 @@
+---
+layout: default
+title: Manual Deployment Guide
+nav_exclude: true
+---
+
 # Manual Deployment Guide (Azure Container Apps)
 
-> Prefer the one-click button? See **[Deploy to Azure](../README.md#-deploy-to-azure-one-click)**
+> Prefer the guided path? See **[One-click installation]({{ site.baseurl }}/getting-started/one-click-install/)**.
 > in the README. This guide is for deploying from the CLI with full control.
 
 The whole app — FastAPI **API + the built React SPA + the in-process MCP servers** —
@@ -9,16 +15,16 @@ Postgres, or Redis containers are required.
 
 ## How it fits in one container
 
-- **SPA**: built by the multi-stage [`Dockerfile`](../Dockerfile) (`VITE_API_BASE=/api`) and
+- **SPA**: built by the repository's multi-stage Dockerfile (`VITE_API_BASE=/api`) and
   copied into `app/static`. FastAPI serves `/assets/*` and falls back to `index.html` for
-  any non-`/api` path, so deep links and refresh work ([app/main.py](../backend/app/main.py)).
+  any non-`/api` path, so deep links and refresh work.
 - **Database**: SQLite (`DATABASE_URL=sqlite+aiosqlite:///./.data/app.db`). Put `./.data`
   on an Azure Files volume to persist across revisions. Postgres is still supported by
   pointing `DATABASE_URL` at it.
 - **Redis**: not on the request path; omit it.
 - **MCP servers**: spawned in-process over stdio (`npx @azure/mcp`, EntraID FastMCP) — the
   image already includes Node 20 + Azure CLI.
-- **Dependencies**: pinned in [`backend/requirements.txt`](../backend/requirements.txt)
+- **Dependencies**: pinned in the backend requirements file
   (frozen from a working environment, Windows-only packages removed) and installed before
   `pip install --no-deps .` so every runtime import resolves.
 
