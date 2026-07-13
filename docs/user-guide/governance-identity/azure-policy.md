@@ -6,17 +6,17 @@ grand_parent: User guide
 nav_order: 1
 description: Inventory and analyze policy, compliance, exemptions, effective rules, advisors, safe rollout simulations, AI tools, and IaC drift.
 permalink: /user-guide/governance-identity/azure-policy/
-feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:overview]
+feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:advisors, POLICY_NAV:ai, POLICY_NAV:assignments, POLICY_NAV:byperson, POLICY_NAV:bysubscription, POLICY_NAV:drift, POLICY_NAV:effective, POLICY_NAV:exemptions, POLICY_NAV:governance, POLICY_NAV:history, POLICY_NAV:inventory, POLICY_NAV:overview, POLICY_NAV:pivot, POLICY_NAV:rollout, POLICY_NAV:timeline]
 ---
 
 # Azure Policy
 
-**Product permissions:** `policy.read`; saving drafts, simulations, snapshots, enforcement links, and IaC source requires `policy.write`.
+**Product permissions:** `policy.read`; saving drafts, simulations, snapshots, enforcement links, and IaC source requires `policy.write`. The same write permission gates exemption create, update, and delete operations against Azure.
 
 ## Purpose
 
 **App routes:** `/policy` and `/policy/:tab`
-Azure Policy provides governance inventory and analysis. It can author proposals, resolve effective policy, estimate blast radius, and build staged rollout plans, but it does not assign or deploy policy to Azure.
+Azure Policy provides governance inventory and analysis. It can author proposals, resolve effective policy, estimate blast radius, and build staged rollout plans, but it does not assign or deploy policy definitions or assignments to Azure. The Exemptions tab is the exception to the otherwise analytical workflow: with `policy.write` and a write-enabled connection, it can create, update, or delete Azure policy exemptions.
 
 ## Prerequisites and data sources
 
@@ -26,7 +26,7 @@ Azure Policy provides governance inventory and analysis. It can author proposals
 - Policy Insights read access for compliance summaries.
 - A workload definition when filtering policy inventory to workload scopes.
 - A configured AI provider for AI author/explain/triage and AI-assisted simulation phases.
-- `policy.write` for local persistence actions; those actions still do not deploy Azure policy.
+- `policy.write` for local persistence actions and exemption mutations. Local saves do not deploy Azure policy; exemption apply/remove uses ARM against Azure and also requires a write-enabled connection and Azure rights at the target scope.
 
 ## Tabs and actions
 
@@ -48,6 +48,8 @@ Azure Policy provides governance inventory and analysis. It can author proposals
 - **Drift & IaC**: compares stored source-of-truth material with observed policy and proposes reconciliation.
 - **History**: saved simulations and coverage runs.
 
+Within **Exemptions**, the **Table** and **Pivot** nested views support scope/group/column filters, saved perspectives, CSV/Excel export, and drill-down. **Pivot builder** also supports reorderable row dimensions, presets, saved local perspectives, date granularity, expand/collapse, CSV, and Excel.
+
 ## Freshness and scope behavior
 
 ### Collection and freshness
@@ -57,6 +59,12 @@ Policy inventory is cached persistently by tenant, connection, workload, and whe
 Because the cache has no automatic expiry, always inspect `fetched_at`/age. Resource Graph result-size limits can truncate large policy sets. Compliance is slower and permission-dependent; unavailable compliance does not mean compliant.
 
 ## Workflow overview
+
+### Implementation-grounded usage scenarios
+
+1. **Explain an unexpected deny:** open `/policy/effective` at the failing resource scope, trace inherited assignments, `notScopes`, and exemptions, then use `/policy/ai` **Triage** only as a hypothesis and verify the blocking assignment in Azure.
+2. **Review an expiring waiver:** open `/policy/exemptions`, filter expiring records, inspect assignment and scope, run **Preview & validate**, and either copy the generated CLI on a read-only connection or apply the approved update with `policy.write` on a write-enabled connection.
+3. **Plan audit-to-deny promotion:** refresh compliance, open `/policy/rollout`, choose **Promote an existing policy**, stream the bounded impact simulation, save the local plan if required, and deploy externally only after representative audit testing.
 
 ### Simulate a rollout
 
@@ -70,7 +78,7 @@ A 100% compliant audit assignment is not automatically safe to deny: sample limi
 
 ## Interpretation of results
 
-
+An effective-policy result is calculated from the loaded assignment/exemption snapshot; it is not a live Azure evaluation trace. Advisor labels such as **safe to promote** are leads derived from available compliance and can be unsafe when the collection is stale, partial, or unrepresentative. Missing compliance is unknown, and a saved simulation is a local point-in-time analysis rather than deployment evidence.
 
 ## Exports, history, scheduling, and integrations
 
@@ -96,7 +104,8 @@ DeployIfNotExists and Modify remediation require assignment identity, location w
    - baseline coverage identifies missing governance areas.
 7. Capture a snapshot or save analysis only when the record is needed.
 
-- Policy analysis and simulation are read-only with respect to Azure.
+- Policy analysis, simulation, and local saves are read-only with respect to Azure. Exemption apply/remove is not: it performs audited ARM create, update, or delete operations after preview and connection/write checks.
+- Removing an exemption can immediately restore enforcement. Recreate the previously approved values to recover an accidental update or removal; remove an accidentally created exemption only after checking impact.
 - What-if translates only supported policy-rule patterns into Resource Graph predicates; unsupported results require external testing.
 - Match samples are limited and Resource Graph itself is eventually consistent.
 - Compliance can be absent due to permission/API failure.

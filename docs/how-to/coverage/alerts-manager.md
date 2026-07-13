@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 2
 description: Triage alerts and safely author, approve, apply, verify, and roll back Azure Monitor changes.
 permalink: /how-to/coverage/alerts-manager/
-feature_ids: [ALERTS_MANAGER_NAV:rules]
+feature_ids: [PROACTIVE_NAV:alerts-manager, ALERTS_MANAGER_NAV:action-groups, ALERTS_MANAGER_NAV:changes, ALERTS_MANAGER_NAV:deployment-plans, ALERTS_MANAGER_NAV:gaps, ALERTS_MANAGER_NAV:inbox, ALERTS_MANAGER_NAV:manage-rules, ALERTS_MANAGER_NAV:overlaps, ALERTS_MANAGER_NAV:overview, ALERTS_MANAGER_NAV:rules, ALERTS_MANAGER_NAV:visualize]
 ---
 
 # Operate Alerts Manager
@@ -32,8 +32,9 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 2. Check **Updated**, **stale**, and **cached**. Opening the page can show the prior report.
 3. Select **Analyze alerts** or **Analyze again** and monitor the background job.
 4. Review Overview, activity-log coverage, overlaps, gaps, Rule analysis, cost estimates, and trend.
-5. Export the loaded analysis as CSV, XLSX, or JSON, or select **Evidence** to preserve it.
-6. After any managed apply, respond to **Data stale — Analyze again**; the refresh also reconciles the managed-rule inventory.
+5. If the report is marked `partial` or `truncated`, narrow scope or restore collector visibility before using absence as evidence.
+6. Export the loaded analysis as CSV, XLSX, or JSON, or select **Evidence** to preserve it.
+7. After any managed apply, respond to **Data stale — Analyze again**; the refresh also reconciles the managed-rule inventory.
 
 **Expected result:** A connection/scope-specific report is cached with a generated time and exportable evidence.
 
@@ -53,15 +54,15 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 
 **Verification:** Refresh the Inbox and confirm the state and timestamp. Acknowledge/close does not fix the resource, edit the rule, or suppress future firings.
 
-## How to visualize bursts and separate them from overlaps
+## How to visualize notification paths and separate them from overlaps
 
-1. Open `/alerts-manager/visualize` and review alert frequency, severity, resource, and time patterns.
-2. Hover high-density periods to identify bursts and top-firing resources.
+1. Open `/alerts-manager/visualize` and run the notification simulation for the selected scope.
+2. Trace the rendered resources and rules through Action Groups to receivers; inspect duplicate or missing route edges.
 3. Open `/alerts-manager/overlaps` to find rules sharing a signal/target or notification path.
 4. Expand a group and compare scopes, conditions, severities, Action Groups, and receiver paths.
-5. Decide whether the pattern is intentional escalation, correlated environmental failure, or unintended duplication.
+5. Decide whether the repeated path is intentional escalation or unintended duplicate delivery; use firing history separately to judge noisy behavior.
 
-**Expected result:** Burst evidence and structural overlap evidence are evaluated separately.
+**Expected result:** Simulated notification topology and structural overlap evidence are evaluated separately from firing frequency.
 
 **Verification:** Trace each suspected duplicate from rule to Action Group to receiver. An overlap is a review signal, not automatically an error.
 

@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Audit tag usage, hygiene, compliance, cost allocation, and drift, then preview, export, approve, apply, and revert controlled changes.
 permalink: /user-guide/estate-intelligence/tag-intelligence/
-feature_ids: [TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
+feature_ids: [PROACTIVE_NAV:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
 ---
 
 # Tag Intelligence
@@ -51,6 +51,12 @@ Census and dependent analyses use cached estate data. The UI warns when data is 
 A remediation preview can become stale between preview and apply. The server validates against current known inventory, but concurrent Azure changes are still possible; keep the approval window short and re-preview material batches.
 
 ## Workflow overview
+
+### Implementation-grounded usage scenarios
+
+1. **Normalize a casing variant:** open `/tagintel/hygiene`, confirm that two discovered keys are semantically equivalent, add the canonical key to the catalog, queue a `rename_key` operation, and inspect the exact per-resource diff in `/tagintel/remediate` before approval.
+2. **Close a required-tag gap:** open `/tagintel/coverage`, select a resource from **Missing only one tag**, provide the reviewed value, send it to Remediate, apply only the approved targets, and verify the new required-tag coverage after refreshing Census.
+3. **Recover a partially successful campaign:** open `/tagintel/drift` after a streamed apply, compare applied and failed resource results, inspect the saved revision, and either re-preview only unresolved resources or perform an approved revision revert after checking for later legitimate tag changes.
 
 ### Analyze tags
 
@@ -98,7 +104,7 @@ Saved change sets can be grouped, duplicated, imported, and exported as JSON. In
 - Azure tag limits, reserved prefixes, unsupported resource types, locks, policy denies, and inheritance can block updates.
 - Apply/revert is atomic per resource, not across the entire batch.
 - Generated scripts can contain resource identifiers; store exports as operational data and never add credentials.
-- Estate caps can truncate analysis; check result metadata before bulk remediation.
+- Analysis is capped at 5,000 resources (`estate_cap`); when `truncated` is true, narrow the scope before drawing coverage conclusions or building bulk remediation.
 
 ## Troubleshooting
 

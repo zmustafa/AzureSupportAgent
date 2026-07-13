@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 12
 description: Use every tag-analysis tab and safely preview, apply, verify, export, import, and revert tag changes.
 permalink: /how-to/estate-intelligence/tag-intelligence/
-feature_ids: [TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
+feature_ids: [PROACTIVE_NAV:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
 ---
 
 # Operate Tag Intelligence
@@ -29,9 +29,10 @@ Open `/tagintel` or a tab route: **Census**, **Hygiene**, **Coverage**, **Cost**
 
 1. Open `/tagintel/census`, select scope, and check the freshness warning.
 2. Load from cache for the current Inventory state or refresh from Azure; a background refresh survives navigation.
-3. Drill from key to value, subscription, resource type, and resource. Drill requests use cached resources and do not call Azure.
-4. Use the question console for tag questions and inspect its explanation, Resource Graph query, and matching rows.
-5. Use the key search or `?key=` deep link to share a focused drill view.
+3. If the response reports `truncated`, narrow the scope: analysis is capped at 5,000 resources.
+4. Drill from key to value, subscription, resource type, and resource. Drill requests use cached resources and do not call Azure.
+5. Use the question console for tag questions and inspect its explanation, Resource Graph query, and matching rows.
+6. Use the key search or `?key=` deep link to share a focused drill view.
 
 **Expected result:** Every observed key/value and untagged resource can be traced to concrete cached resources.
 

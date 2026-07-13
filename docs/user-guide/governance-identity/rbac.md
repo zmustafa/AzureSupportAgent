@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Review effective Azure and Entra access, privileged/data-plane exposure, scope hierarchy, roles, insights, and collection diagnostics.
 permalink: /user-guide/governance-identity/rbac/
-feature_ids: [PROACTIVE_NAV:rbac, RBAC_NAV:overview]
+feature_ids: [PROACTIVE_NAV:rbac, RBAC_NAV:diagnostics, RBAC_NAV:effective, RBAC_NAV:insights, RBAC_NAV:overview, RBAC_NAV:privileged, RBAC_NAV:roles, RBAC_NAV:scopes]
 ---
 
 # RBAC

@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Search and export Azure resources, understand distribution and cost, identify optimization candidates, and capture inventory snapshots.
 permalink: /user-guide/estate-intelligence/inventory/
+feature_ids: [PROACTIVE_NAV:inventory, INVENTORY_NAV:changes, INVENTORY_NAV:cost, INVENTORY_NAV:grid, INVENTORY_NAV:location, INVENTORY_NAV:optimization, INVENTORY_NAV:overview]
 ---
 
 # Inventory

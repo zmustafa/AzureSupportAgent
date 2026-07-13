@@ -6,13 +6,14 @@ grand_parent: How-to guides
 nav_order: 3
 description: Maintain the owner directory, import records, assign scopes, review suggestions, attest ownership, and apply approved tags.
 permalink: /how-to/design-assessment/ownership/
+feature_ids: [PROACTIVE_NAV:ownership, OWNERSHIP_NAV:assignments, OWNERSHIP_NAV:attestation, OWNERSHIP_NAV:coverage, OWNERSHIP_NAV:directory, OWNERSHIP_NAV:estate, OWNERSHIP_NAV:suggestions]
 ---
 
 # Operate ownership records and attestations
 
 ## Prerequisites
 
-- `ownership.read`; `ownership.write` for directory, assignment, refresh, suggestion acceptance, attestation, import, and tag changes.
+- `ownership.read` for directory, assignment, coverage refresh, suggestions, estate, export, import preview, and tag preview; `ownership.write` for record mutations, confirmed import, suggestion acceptance, attestation, tag apply, and revert.
 - Identity/Graph access for federated search and a readable Azure connection for scoped subjects/coverage.
 - Azure tag write permission only for **Apply tags**.
 
@@ -25,8 +26,9 @@ Open `/ownership`; tabs are `/ownership/directory`, `/ownership/assignments`, `/
 1. Open **Directory** and create a person, team, or service owner manually, or search the federated directory.
 2. Use stable identity links and a valid organizational contact; do not create duplicates for aliases.
 3. For bulk load, select **Import**, upload the supported CSV/Excel input, and inspect preview errors/warnings.
-4. Validate a small sample, confirm the import, then search the resulting directory.
-5. Export the directory when an offline review is required.
+4. For a multi-sheet workbook, choose the intended sheet; check the inferred mapping and ensure **Display name** is mapped. Files over 8 MB are rejected.
+5. Validate a small sample, confirm the import of at most 10,000 mapped rows, then search the resulting directory.
+6. Export the directory as CSV or Excel when an offline review is required.
 
 **Expected result:** Tenant-wide owner records have stable identity, kind, contact, source, and optional team/delegation metadata.
 
@@ -62,9 +64,9 @@ Open `/ownership`; tabs are `/ownership/directory`, `/ownership/assignments`, `/
 1. Open **My Estate** and select yourself or an owner to inspect attributed subjects.
 2. Correct stale directory or assignment records before sign-off.
 3. Open **Attestation**, select the intended scope, and review evidence, status, and due information.
-4. Record the available attest/defer/escalate decision with appropriate notes.
+4. Select **Attest** for each assignment that has been confirmed; the current UI does not implement defer, escalation, or bulk attestation.
 
-**Expected result:** A timestamped actor decision is recorded against the reviewed scope.
+**Expected result:** A timestamped attestation is recorded against each confirmed assignment; items become stale again after 90 days.
 
 **Verification:** Reload Attestation and confirm actor/time/decision; remember that attestation is historical, not continuous compliance.
 

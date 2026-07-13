@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Triage Entra and Key Vault security findings, PIM/JIT posture, and application-registration credentials, permissions, and ownership.
 permalink: /user-guide/governance-identity/identity/
-feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:overview]
+feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:app-registrations, IDENTITY_NAV:overview, IDENTITY_NAV:pim]
 ---
 
 # Identity

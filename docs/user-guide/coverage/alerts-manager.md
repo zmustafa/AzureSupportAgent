@@ -6,12 +6,12 @@ grand_parent: User guide
 nav_order: 2
 description: Triage alert instances and govern alert rules, action groups, AMBA gaps, and approval-gated changes.
 permalink: /user-guide/coverage/alerts-manager/
-feature_ids: [ALERTS_MANAGER_NAV:rules]
+feature_ids: [PROACTIVE_NAV:alerts-manager, ALERTS_MANAGER_NAV:action-groups, ALERTS_MANAGER_NAV:changes, ALERTS_MANAGER_NAV:deployment-plans, ALERTS_MANAGER_NAV:gaps, ALERTS_MANAGER_NAV:inbox, ALERTS_MANAGER_NAV:manage-rules, ALERTS_MANAGER_NAV:overlaps, ALERTS_MANAGER_NAV:overview, ALERTS_MANAGER_NAV:rules, ALERTS_MANAGER_NAV:visualize]
 ---
 
 # Alerts Manager
 
-**Product permissions:** `alerts_manager.read`, plus action-specific permissions for alert state, rules, action groups, advanced authoring, bulk changes, notification tests, and approvals.
+**Product permissions:** `alerts_manager.read`; mutations and privileged previews use `alerts_manager.alert_state_write`, `alerts_manager.action_group_write`, `alerts_manager.rule_write`, `alerts_manager.advanced_rule_write`, `alerts_manager.bulk_write`, `alerts_manager.amba_blueprint_write`, `alerts_manager.query_preview`, `alerts_manager.test_notifications`, `alerts_manager.delete`, and `alerts_manager.approve` according to the action.
 
 ## Purpose
 
@@ -35,7 +35,7 @@ Alerts Manager combines current alert operations with rule authoring and governe
 
 - **Overview** summarizes gaps, overlaps, ineffective/clean rules, activity-log coverage, and reference cost estimates.
 - **Alert instances** lists fired alerts and state history; permitted users can acknowledge or close an instance.
-- **Visualize** summarizes frequency and severity patterns to expose bursts and noisy resources.
+- **Visualize** runs the notification-path simulator and renders resources/rules through action groups to receivers so duplicate and missing routes can be inspected.
 - **Overlaps** shows rules monitoring the same signal/target and their notification impact.
 - **Gaps** shows missing, disabled, or ineffective baseline coverage and can create reviewed rules or deployment plans for supported gaps.
 - **Rule analysis** evaluates observed conditions, targets, action groups, firings, status, recommendations, and estimated cost.
@@ -59,6 +59,12 @@ The Inbox is queried from Azure when fetched. Rules and action groups may be cac
 
 ## Workflow overview
 
+### Implementation-grounded usage scenarios
+
+1. **Close selected AMBA gaps:** open `/alerts-manager/gaps`, select supported actionable rows, preview and validate a deployment plan against a live Action Group, submit child changes, then approve and apply them from `/alerts-manager/changes`.
+2. **Remove duplicate receiver delivery:** open `/alerts-manager/visualize`, trace duplicated rule-to-Action-Group-to-receiver paths, confirm the overlap in `/alerts-manager/overlaps`, and submit the smallest rule or routing change through the managed ledger.
+3. **Recover from an out-of-band conflict:** open `/alerts-manager/changes`, inspect a **Stale** row whose concurrency hash no longer matches Azure, refresh live inventory, create a new request instead of forcing the old payload, and run **Analyze again** after apply.
+
 ### Operational workflows
 
 ### Triage an alert
@@ -67,7 +73,7 @@ The Inbox is queried from Azure when fetched. Rules and action groups may be cac
 2. Filter by severity, state, resource, or time.
 3. Open an alert and inspect fired time, monitor condition, target, and history.
 4. Acknowledge only when ownership is clear; close only after resolution or accepted disposition.
-5. Use Visualize to determine whether the instance belongs to a larger burst or recurring noise pattern.
+5. Use Rule analysis and firing history for recurrence; use Visualize separately to trace its notification route and detect duplicate deliveries.
 
 State changes affect the Azure alert instance; they do not fix the monitored condition or modify the rule.
 
@@ -85,11 +91,11 @@ Connections configured for automatic writes may bypass the normal pending step. 
 
 ### Reduce noise safely
 
-Start with visualization and overlap evidence. Prefer a narrowly scoped suppression window or threshold proposal over disabling a rule. Test notification routing where supported, document the reason, and monitor incident detection after the change.
+Start with notification-path visualization, overlap evidence, and firing history. Prefer a narrowly scoped threshold, dimension, window, or evaluation-frequency proposal over disabling a rule. Current Alerts Manager does not implement Alert Processing Rule suppression windows. Test notification routing where supported, document the reason, and monitor incident detection after the change.
 
 ## Interpretation of results
 
-
+Treat overlap, gap, cost, and simulator output as decision support. An overlap may be intentional layered escalation; a gap is relative to the selected AMBA baseline; cost is a reference estimate rather than a bill; and simulated notification edges show configured paths, not guaranteed downstream processing. **Applied** means the request completed, but only refreshed Azure inventory and a new analysis verify convergence.
 
 ## Exports, history, scheduling, and integrations
 
@@ -104,6 +110,7 @@ Gap and deployment-plan flows produce reviewable change plans for supported rule
 - Closing an alert does not suppress future firings.
 - Suppression and dynamic tuning can hide real incidents; keep narrow scope, expiry, ownership, and an audit rationale.
 - Portal/IaC changes made outside the app may remain invisible until refresh.
+- Inventory collectors can return `partial` or `truncated` metadata; do not treat absent rules, action groups, or paths as proof of absence when either flag is set.
 - Never include webhook URLs, tokens, email addresses, tenant IDs, or other live identifiers in exported examples.
 
 ## Troubleshooting
