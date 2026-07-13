@@ -334,7 +334,7 @@ function isActiveGapPlanStatus(status?: GapDeploymentPlanStatus["status"]): bool
   return status === "pending" || status === "approved";
 }
 
-function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSelectionChange, onCreatePlan, onOpenPlan, onExempt, onCreateRule }: {
+function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSelectionChange, onCreatePlan, onOpenPlan, onCreateRule }: {
   rows: AlertAnalysisGap[];
   selectedRows: AlertAnalysisGap[];
   selectedIds: Set<string>;
@@ -343,7 +343,6 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSel
   onSelectionChange: (ids: Set<string>) => void;
   onCreatePlan: () => void;
   onOpenPlan: (planId: string) => void;
-  onExempt: (row: AlertAnalysisGap, index: number) => void;
   onCreateRule?: (row: AlertAnalysisGap) => void;
 }) {
   const selectable = rows.filter((row, index) => {
@@ -380,7 +379,7 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSel
               <td className="max-w-xs px-3 py-3"><div className="font-medium text-gray-800">{row.rule_name || row.resource_name || "—"}</div><div className="mt-0.5 break-all text-[10px] text-gray-400">{row.rule_id || row.resource_id}</div></td>
               <td className="px-3 py-3 text-gray-600">{row.signal || "—"}</td>
               <td className="max-w-sm px-3 py-3 text-gray-600">{row.recommendation}</td>
-              <td className="px-3 py-3"><div className="flex items-center gap-2"><PortalLink id={row.rule_id || row.resource_id} />{onCreateRule && row.resource_id && row.signal && <button disabled={activePlan} title={activePlan ? "An active deployment plan already covers this gap." : "Create a separate reviewed alert-rule change"} onClick={() => onCreateRule(row)} className="whitespace-nowrap rounded border px-2 py-1 text-[10px] text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40">Create reviewed rule</button>}<button onClick={() => onExempt(row, index)} className="whitespace-nowrap rounded border px-2 py-1 text-[10px] text-indigo-600 hover:bg-indigo-50">Exempt</button></div></td>
+              <td className="px-3 py-3"><div className="flex items-center gap-2"><PortalLink id={row.rule_id || row.resource_id} />{onCreateRule && row.resource_id && row.signal && <button disabled={activePlan} title={activePlan ? "An active deployment plan already covers this gap." : "Create a separate reviewed alert-rule change"} onClick={() => onCreateRule(row)} className="whitespace-nowrap rounded border px-2 py-1 text-[10px] text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40">Create reviewed rule</button>}</div></td>
             </tr>
           );})}
         </tbody>
@@ -1327,7 +1326,7 @@ export function AlertsManagerPanel() {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">{data.error}</div>
         ) : tab === "overview" ? <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
           : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
-          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onExempt={(row, index) => void recordDecision("gap", gapIdentity(row, index), "dismiss_finding")} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
+          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
           : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
           : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} />
           : null}

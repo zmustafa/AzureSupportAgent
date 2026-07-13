@@ -8,7 +8,7 @@ import {
   type MissionLog,
   type MissionSystem,
 } from "../api";
-import { formatError } from "../utils/format";
+import { ensureUtc, formatError } from "../utils/format";
 
 /** A small spinning ring used wherever something is actively running. */
 function Spinner({ className = "h-3 w-3" }: { className?: string }) {
@@ -92,6 +92,12 @@ function ageLabel(seconds?: number | null): string {
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
   return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function localLogTime(timestamp: string): string {
+  const value = new Date(ensureUtc(timestamp));
+  if (Number.isNaN(value.getTime())) return "";
+  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
 }
 
 function SystemTile({ system, onRun, busy }: { system: MissionSystem; onRun: (key: string) => void; busy: boolean }) {
@@ -455,7 +461,7 @@ function MissionBoard({ workloadId, initialMissionId = "" }: { workloadId: strin
               ) : (
                 log.slice(-80).map((l, i) => (
                   <div key={i} className="py-0.5">
-                    <span className="text-gray-400">{new Date(l.ts).toLocaleTimeString()}</span> {l.message}
+                    <span className="text-gray-400" title={`${localLogTime(l.ts)} · ${Intl.DateTimeFormat().resolvedOptions().timeZone || "local time"}`}>{localLogTime(l.ts)}</span> {l.message}
                   </div>
                 ))
               )}
