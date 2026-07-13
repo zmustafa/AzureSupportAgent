@@ -16,7 +16,7 @@ investigate, monitor, and remediate.
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Deploy](#-deploy-to-azure-one-click) · [Install guide](docs/INSTALLATION.md) · [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start-local) · [Architecture](#-how-it-works) · [Docs](#-documentation)
+[Deploy](#-deploy-to-azure-one-click) · [Install guide](https://zmustafa.github.io/AzureSupportAgent/getting-started/one-click-install/) · [User guide](https://zmustafa.github.io/AzureSupportAgent/user-guide/) · [How-to guides](https://zmustafa.github.io/AzureSupportAgent/how-to/) · [Administration](https://zmustafa.github.io/AzureSupportAgent/admin/) · [Connectors](https://zmustafa.github.io/AzureSupportAgent/connectors/) · [Docs](https://zmustafa.github.io/AzureSupportAgent/)
 
 </div>
 
@@ -51,7 +51,12 @@ ServiceNow, PagerDuty, your SIEM, or Azure Logic Apps before they bite.
 - [Features](#-features)
 - [Screenshots](#-screenshots)
 - [Deploy to Azure (one-click)](#-deploy-to-azure-one-click)
-- [Installation guide](docs/INSTALLATION.md)
+- [Documentation portal](https://zmustafa.github.io/AzureSupportAgent/)
+- [Installation guide](https://zmustafa.github.io/AzureSupportAgent/getting-started/one-click-install/)
+- [User guide](https://zmustafa.github.io/AzureSupportAgent/user-guide/)
+- [How-to guides](https://zmustafa.github.io/AzureSupportAgent/how-to/)
+- [Administration](https://zmustafa.github.io/AzureSupportAgent/admin/)
+- [Connectors](https://zmustafa.github.io/AzureSupportAgent/connectors/)
 - [Quick start (local)](#-quick-start-local)
 - [How it works](#-how-it-works)
 - [Tech stack](#-tech-stack)
@@ -266,10 +271,10 @@ connect your Azure tenant and an LLM from **Settings** — the AI does the rest 
 discovery, architectures, coverage scans, assessments, retirement radar, performance
 profiling). Defaults to **West US 3** (validated for Container Apps + PostgreSQL B1ms).
 
-📖 New here? Follow the **[step-by-step installation guide](docs/INSTALLATION.md)** — from
+📖 New here? Follow the **[step-by-step installation guide](https://zmustafa.github.io/AzureSupportAgent/getting-started/one-click-install/)** — from
 clicking the button to onboarding your first workload.
 
-Prefer the CLI or want full control? See the **[manual deployment guide](docs/DEPLOYMENT.md)**.
+Prefer the CLI or want full control? See the **[manual deployment guide](https://zmustafa.github.io/AzureSupportAgent/getting-started/manual-deployment/)**.
 
 ## ⚡ Quick start (local)
 
@@ -341,12 +346,23 @@ For local dev nothing is deployed to Azure — the MCP server reaches your real 
 
 ## 📚 Documentation
 
-| Doc | What's inside |
+The complete documentation is published at **[zmustafa.github.io/AzureSupportAgent](https://zmustafa.github.io/AzureSupportAgent/)**. Every major application screen includes a contextual **Help** link to its owning guide.
+
+| Public documentation | What's inside |
 | --- | --- |
-| [docs/INSTALLATION.md](docs/INSTALLATION.md) | Step-by-step one-click install: deploy, first login, connect an LLM & tenant, onboard a workload |
-| [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) | Full architecture & feature specification |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Manual Azure Container Apps deploy, env vars, cost/scaling, gotchas |
-| [docs/ENTRA_SETUP.md](docs/ENTRA_SETUP.md) | EntraID (Microsoft Graph) MCP setup + required permissions |
+| [Getting started](https://zmustafa.github.io/AzureSupportAgent/getting-started/) | Installation, first-run configuration, Azure tenant setup, and deployment |
+| [User guide](https://zmustafa.github.io/AzureSupportAgent/user-guide/) | Feature-by-feature product reference |
+| [How-to guides](https://zmustafa.github.io/AzureSupportAgent/how-to/) | Task-oriented operational procedures and verification steps |
+| [Administration](https://zmustafa.github.io/AzureSupportAgent/admin/) | Providers, tenants, access, security, reference sets, usage, audit, and backup |
+| [Connectors](https://zmustafa.github.io/AzureSupportAgent/connectors/) | Setup guides for messaging, ticketing, SIEM, webhooks, queues, and storage |
+| [Security](https://zmustafa.github.io/AzureSupportAgent/security/) | Security model, credentials, approval controls, and deployment posture |
+| [Permissions reference](https://zmustafa.github.io/AzureSupportAgent/reference/permissions/) | Product and Azure/Graph permissions by workflow |
+| [Troubleshooting](https://zmustafa.github.io/AzureSupportAgent/reference/troubleshooting/) | Common failures, diagnostics, and recovery |
+| [Concepts and glossary](https://zmustafa.github.io/AzureSupportAgent/reference/glossary/) | Product vocabulary and operating concepts |
+| [Technical documentation](https://zmustafa.github.io/AzureSupportAgent/technical/) | Architecture, implementation, APIs, and deployment internals |
+
+| Repository guide | Purpose |
+| --- | --- |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Local dev, tests, type-check, PR guidelines |
 | [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community guidelines |

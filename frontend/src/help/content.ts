@@ -1,15 +1,24 @@
 // Centralized in-app help content: command-palette destinations, the glossary (mirrors
 // docs/CONCEPTS.md), per-page intros, keyboard shortcuts, and the Trust & Security points.
 // Pure data + types — no React — so it can be imported anywhere cheaply.
-
-const DOCS_BASE = "https://github.com/zmustafa/AzureSupportAgent/blob/main/docs";
+import { docsUrl } from "./docsRegistry";
 
 export const DOCS_LINKS = {
-  index: `${DOCS_BASE}/README.md`,
-  concepts: `${DOCS_BASE}/CONCEPTS.md`,
-  userGuide: `${DOCS_BASE}/USER_GUIDE.md`,
-  installation: `${DOCS_BASE}/INSTALLATION.md`,
-  architecture: `${DOCS_BASE}/ARCHITECTURE.md`,
+  index: docsUrl("/"),
+  gettingStarted: docsUrl("/getting-started"),
+  concepts: docsUrl("/reference/glossary"),
+  userGuide: docsUrl("/user-guide"),
+  howTo: docsUrl("/how-to"),
+  administration: docsUrl("/admin"),
+  connectors: docsUrl("/connectors"),
+  installation: docsUrl("/getting-started/one-click-install"),
+  deployment: docsUrl("/getting-started/manual-deployment"),
+  entraSetup: docsUrl("/getting-started/entra-setup"),
+  architecture: docsUrl("/ARCHITECTURE"),
+  technical: docsUrl("/technical"),
+  security: docsUrl("/security"),
+  permissions: docsUrl("/reference/permissions"),
+  troubleshooting: docsUrl("/reference/troubleshooting"),
 } as const;
 
 // ---- Command palette destinations ----------------------------------------------
@@ -114,13 +123,13 @@ export const GLOSSARY: GlossaryTerm[] = [
 export type PageIntroCopy = { title: string; blurb: string; learnMoreHref?: string };
 
 export const PAGE_INTROS: Record<string, PageIntroCopy> = {
-  "/coverage": { title: "Monitoring Coverage", blurb: "Audit which recommended Azure Monitor baseline alerts (AMBA) are present, missing, or misconfigured for a scope. Pick a workload and run a scan to start.", learnMoreHref: DOCS_LINKS.concepts },
-  "/telemetry": { title: "Telemetry Coverage", blurb: "Audit each resource's diagnostic settings against the recommended log/metric categories and whether logs reach an approved workspace.", learnMoreHref: DOCS_LINKS.concepts },
-  "/backupdr": { title: "Backup & DR Coverage", blurb: "Audit backup and disaster-recovery posture — protection, retention, recent jobs, offsite copies, and DR drills — against a reference baseline.", learnMoreHref: DOCS_LINKS.concepts },
-  "/performance": { title: "Performance Profiler", blurb: "Find bottlenecks on a resource × metric heatmap — which resources run hottest against their baseline thresholds.", learnMoreHref: DOCS_LINKS.userGuide },
-  "/radar": { title: "Retirement Radar", blurb: "Track Azure service retirements and breaking changes, mapped to the workloads, owners, and deadlines they affect.", learnMoreHref: DOCS_LINKS.concepts },
-  "/evidence": { title: "Evidence Locker", blurb: "Capture tamper-evident, hash-stamped point-in-time snapshots for forensics and audit.", learnMoreHref: DOCS_LINKS.concepts },
-  "/assessments": { title: "Assessments", blurb: "Score a workload against the Azure Well-Architected Framework, with findings mapped to CIS / NIST / ISO and a branded PDF export.", learnMoreHref: DOCS_LINKS.userGuide },
+  "/coverage": { title: "Monitoring Coverage", blurb: "Audit which recommended Azure Monitor baseline alerts (AMBA) are present, missing, or misconfigured for a scope. Pick a workload and run a scan to start.", learnMoreHref: docsUrl("/user-guide/coverage/monitoring-coverage") },
+  "/telemetry": { title: "Telemetry Coverage", blurb: "Audit each resource's diagnostic settings against the recommended log/metric categories and whether logs reach an approved workspace.", learnMoreHref: docsUrl("/user-guide/coverage/telemetry-coverage") },
+  "/backupdr": { title: "Backup & DR Coverage", blurb: "Audit backup and disaster-recovery posture — protection, retention, recent jobs, offsite copies, and DR drills — against a reference baseline.", learnMoreHref: docsUrl("/user-guide/coverage/backup-dr-coverage") },
+  "/performance": { title: "Performance Profiler", blurb: "Find bottlenecks on a resource × metric heatmap — which resources run hottest against their baseline thresholds.", learnMoreHref: docsUrl("/user-guide/assessment-performance/performance-profiler") },
+  "/radar": { title: "Retirement Radar", blurb: "Track Azure service retirements and breaking changes, mapped to the workloads, owners, and deadlines they affect.", learnMoreHref: docsUrl("/user-guide/lifecycle-investigation/retirement-radar") },
+  "/evidence": { title: "Evidence Locker", blurb: "Capture tamper-evident, hash-stamped point-in-time snapshots for forensics and audit.", learnMoreHref: docsUrl("/user-guide/lifecycle-investigation/evidence-locker") },
+  "/assessments": { title: "Assessments", blurb: "Score a workload against the Azure Well-Architected Framework, with findings mapped to CIS / NIST / ISO and a branded PDF export.", learnMoreHref: docsUrl("/user-guide/assessment-performance/assessments") },
 };
 
 // ---- Keyboard shortcuts ---------------------------------------------------------

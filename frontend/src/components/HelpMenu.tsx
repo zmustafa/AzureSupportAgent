@@ -58,8 +58,12 @@ export function HelpMenu() {
           <MenuItem icon="⌨️" label="Keyboard shortcuts" onClick={() => pick("shortcuts")} />
           <MenuItem icon="🔒" label="Trust & Security" onClick={() => pick("trust")} />
           <div className="my-1 border-t" />
-          <MenuLink icon="🚀" label="Getting started" href={DOCS_LINKS.userGuide} />
+          <MenuLink icon="🚀" label="Getting started" href={DOCS_LINKS.gettingStarted} />
           <MenuLink icon="📚" label="Documentation" href={DOCS_LINKS.index} />
+          <MenuLink icon="📖" label="User guide" href={DOCS_LINKS.userGuide} />
+          <MenuLink icon="🧭" label="How-to guides" href={DOCS_LINKS.howTo} />
+          <MenuLink icon="⚙️" label="Administration" href={DOCS_LINKS.administration} />
+          <MenuLink icon="🔌" label="Connectors" href={DOCS_LINKS.connectors} />
           <div className="my-1 border-t" />
           <MenuItem icon="ℹ️" label="About" onClick={() => pick("about")} />
         </div>
