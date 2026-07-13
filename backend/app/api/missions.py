@@ -58,17 +58,28 @@ async def _audit(db: AsyncSession, principal: Principal, action: str, target: st
 def _resolve(workload_id: str, connection_id: str | None):
     """Resolve the workload + the connection id a mission should run under (the workload's
     own connection unless explicitly overridden)."""
-    from app.core.azure_connections import connection_for_workload, resolve_connection
+    from app.core.azure_connections import connection_for_workload, get_connection
     from app.workloads.registry import get_workload
 
     wl = get_workload(workload_id)
     if wl is None:
-        return None, ""
+        return None, None
     if connection_id:
-        conn = resolve_connection(connection_id)
+        conn = get_connection(connection_id)
+        if conn is None or conn.get("disabled"):
+            return wl, None
     else:
         conn = connection_for_workload(wl)
     return wl, (connection_id or (conn or {}).get("id", ""))
+
+
+def _validate_systems(requested: list[str] | None) -> None:
+    if not requested:
+        return
+    known = set(systems.all_system_keys())
+    unknown = sorted({key for key in requested if key not in known})
+    if unknown:
+        raise HTTPException(status_code=422, detail={"message": "Unknown mission system key(s).", "unknown": unknown})
 
 
 @router.get("/systems")
@@ -89,9 +100,12 @@ async def run_mission(
     db: AsyncSession = Depends(get_db),
 ):
     """Launch a mission for one workload; returns the mission immediately (status running)."""
+    _validate_systems(payload.systems)
     wl, conn_id = _resolve(payload.workload_id, payload.connection_id)
     if wl is None:
         raise HTTPException(status_code=404, detail="Workload not found.")
+    if payload.connection_id and conn_id is None:
+        raise HTTPException(status_code=404, detail="Azure connection not found.")
     mission = orchestrator.manager.create(
         tenant_id=principal.tenant_id,
         workload_id=payload.workload_id,
@@ -115,8 +129,15 @@ async def run_fleet(
     """Launch missions for several workloads at once (fleet sweep)."""
     if not payload.workload_ids:
         raise HTTPException(status_code=400, detail="Select at least one workload.")
+    _validate_systems(payload.systems)
+    if payload.connection_id:
+        from app.core.azure_connections import get_connection
+
+        connection = get_connection(payload.connection_id)
+        if connection is None or connection.get("disabled"):
+            raise HTTPException(status_code=404, detail="Azure connection not found.")
     launched = []
-    for wid in payload.workload_ids:
+    for wid in dict.fromkeys(payload.workload_ids):
         wl, conn_id = _resolve(wid, payload.connection_id)
         if wl is None:
             continue
@@ -134,7 +155,13 @@ async def run_fleet(
     if not launched:
         raise HTTPException(status_code=404, detail="None of the selected workloads were found.")
     await _audit(db, principal, "mission.fleet", ",".join(payload.workload_ids)[:128], count=len(launched), force=payload.force)
-    return {"missions": launched, "launched": len(launched)}
+    return {"missions": launched, "launched": len(launched), "queued": len(launched)}
+
+
+@router.get("/queue")
+async def queue_status(principal: Principal = Depends(require_admin)):
+    """Tenant-isolated central mission queue depth and pending positions."""
+    return orchestrator.manager.queue_state(principal.tenant_id)
 
 
 @router.get("/state")
@@ -156,6 +183,12 @@ async def list_missions(
 ):
     """Mission history (newest first), optionally filtered to one workload."""
     return {"missions": await orchestrator.list_missions(principal.tenant_id, workload_id, limit)}
+
+
+@router.get("/latest")
+async def latest_missions(principal: Principal = Depends(require_admin)):
+    """Newest mission per workload for the landing page; not truncated globally."""
+    return {"missions": await orchestrator.latest_missions_by_workload(principal.tenant_id)}
 
 
 @router.get("/{mission_id}")
@@ -186,6 +219,9 @@ async def delete_mission(
     principal: Principal = Depends(_run),
     db: AsyncSession = Depends(get_db),
 ):
+    live = orchestrator.manager.get_live(mission_id, principal.tenant_id)
+    if live is not None and live.status in ("queued", "running"):
+        raise HTTPException(status_code=409, detail="Cancel the running mission before deleting it.")
     ok = await orchestrator.delete_mission(mission_id, principal.tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Mission not found.")

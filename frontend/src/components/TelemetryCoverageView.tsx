@@ -25,6 +25,18 @@ import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PageIntro } from "./PageIntro";
 import { PAGE_INTROS } from "../help/content";
+import { TelemetryCoverageFleet } from "./coverage/TelemetryCoverageFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
+
+type CoverageMainView = "coverage" | "fleet" | "cleanup";
+
+function CoverageViewTabs({ value, onChange }: { value: CoverageMainView; onChange: (value: CoverageMainView) => void }) {
+  return <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+    <button onClick={() => onChange("coverage")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "coverage" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>📡 Coverage</button>
+    <button onClick={() => onChange("fleet")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "fleet" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🚀 Fleet</button>
+    <button onClick={() => onChange("cleanup")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "cleanup" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🧹 Cleanup</button>
+  </div>;
+}
 
 const STATUS_META: Record<string, { label: string; dot: string; cls: string }> = {
   none: { label: "No diagnostics", dot: "bg-red-500", cls: "text-red-600" },
@@ -202,6 +214,7 @@ function TelemetryMatrixBody({ group, expandedRow, setExpandedRow, setDrawer }: 
 export function TelemetryCoveragePanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [mainView, setMainView] = usePersistedState<CoverageMainView>("azsup.telemetry.view", "coverage");
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.telemetry.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.telemetry.workloadId", "");
   useWorkloadDeepLink(setScopeKind, setWorkloadId);
@@ -464,8 +477,35 @@ export function TelemetryCoveragePanel() {
     return out;
   }, [statusFilter, query]);
 
+  if (mainView === "fleet") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <TelemetryCoverageFleet onOpenWorkload={(id, connectionId) => {
+        setScopeKind("workload");
+        setWorkloadId(id);
+        setConnId(connectionId);
+        setLoadedScope(`workload:${id}:${connectionId}`);
+        setMainView("coverage");
+      }} />
+    </div>;
+  }
+
+  if (mainView === "cleanup") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <RunCleanup
+        prefix="/telemetry"
+        queryKey={["telemetryCleanup"]}
+        invalidateKeys={[["telemetryFleet"]]}
+        isEmptyRun={(run) => (run.resource_count ?? 0) === 0}
+        renderMeta={(run) => <span className="text-gray-700">{run.scope_name}{typeof run.headline === "number" ? <span className="ml-2 text-gray-400">{run.headline}% covered</span> : null}</span>}
+      />
+    </div>;
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
       {/* Header */}
       <div className="border-b bg-white px-6 py-3">
         <div className="flex flex-wrap items-center gap-4">

@@ -801,6 +801,7 @@ export function WorkloadsPanel() {
 
   // Fleet mission selection.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [launchingMissions, setLaunchingMissions] = useState(false);
   const [launchingDeepReviews, setLaunchingDeepReviews] = useState(false);
   const toggleSelected = (id: string) =>
     setSelected((s) => {
@@ -811,15 +812,18 @@ export function WorkloadsPanel() {
     });
 
   async function launchFleet() {
-    if (selected.size === 0) return;
+    if (selected.size === 0 || launchingMissions) return;
+    setLaunchingMissions(true);
     setMsg("");
     setNotice("");
     try {
       const r = await api.runFleet({ workload_ids: Array.from(selected) });
-      setNotice(`🚀 Launched ${r.launched} mission${r.launched === 1 ? "" : "s"}. Open a workload's Mission Control to watch progress.`);
+      setNotice(`⏳ Queued ${r.queued} mission${r.queued === 1 ? "" : "s"}. Central Azure admission runs one mission per connection at a time to prevent throttling.`);
       setSelected(new Set());
     } catch (e) {
       setMsg(formatError(e));
+    } finally {
+      setLaunchingMissions(false);
     }
   }
 
@@ -1074,8 +1078,8 @@ export function WorkloadsPanel() {
         {selected.size > 0 && (
           <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
             <span className="font-medium text-brand">{selected.size} selected</span>
-            <button onClick={launchFleet} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">
-              🚀 Launch missions
+            <button onClick={launchFleet} disabled={launchingMissions} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
+              {launchingMissions ? "Queuing missions…" : "🚀 Launch missions"}
             </button>
             <button
               onClick={() => void launchDeepReviewFleet()}

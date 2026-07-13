@@ -49,7 +49,6 @@ import {
   type IdentityTab,
 } from "./navConfig";
 import { useAuth } from "./AuthContext";
-import { CleanupTabShell } from "./cleanup/CleanupTabShell";
 import { formatDuration, formatTimestamp } from "../utils/format";
 import {
   ComposeIcon,
@@ -3140,16 +3139,7 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Assessments">
             <Suspense fallback={<PanelLoading />}>
-              <CleanupTabShell
-                storageKey="azsup.assessments.view"
-                overviewLabel="📋 Assessments"
-                prefix="/assessments"
-                queryKey={["assessmentCleanup"]}
-                isEmptyRun={(r) => !!r.status && !["succeeded", "complete", "completed"].includes(r.status)}
-                renderMeta={(r) => <span className="text-gray-700">{r.scope_name}{typeof r.score === "number" ? <span className="ml-2 text-gray-400">score {r.score}</span> : null}{r.status ? <span className={`ml-2 ${r.status === "succeeded" ? "text-green-600" : "text-amber-600"}`}>{r.status}</span> : null}</span>}
-              >
-                <AssessmentsPanel />
-              </CleanupTabShell>
+              <AssessmentsPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>
@@ -3221,16 +3211,7 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Telemetry Coverage">
             <Suspense fallback={<PanelLoading />}>
-              <CleanupTabShell
-                storageKey="azsup.telemetry.view"
-                overviewLabel="📡 Coverage"
-                prefix="/telemetry"
-                queryKey={["telemetryCleanup"]}
-                isEmptyRun={(r) => (r.resource_count ?? 0) === 0}
-                renderMeta={(r) => <span className="text-gray-700">{r.scope_name}{typeof r.headline === "number" ? <span className="ml-2 text-gray-400">{r.headline}% covered</span> : null}</span>}
-              >
-                <TelemetryCoveragePanel />
-              </CleanupTabShell>
+              <TelemetryCoveragePanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>
@@ -3238,16 +3219,7 @@ export default function ChatView() {
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Backup & DR Coverage">
             <Suspense fallback={<PanelLoading />}>
-              <CleanupTabShell
-                storageKey="azsup.backupdr.view"
-                overviewLabel="🛟 Backup & DR"
-                prefix="/backupdr"
-                queryKey={["backupdrCleanup"]}
-                isEmptyRun={(r) => (r.resource_count ?? 0) === 0}
-                renderMeta={(r) => <span className="text-gray-700">{r.scope_name}{typeof r.headline === "number" ? <span className="ml-2 text-gray-400">{r.headline}% protected</span> : null}</span>}
-              >
-                <BackupDrCoveragePanel />
-              </CleanupTabShell>
+              <BackupDrCoveragePanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>

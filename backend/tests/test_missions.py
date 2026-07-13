@@ -3,7 +3,10 @@ freshness-skip, and the scheduler mission target."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.core.db as dbmod
@@ -32,6 +35,160 @@ def test_headline_extractors():
     assert "clear" in h3 and a3 is False
     h4, _s4, a4 = sysreg._h_radar({"counts": {"total": 4, "red": 2, "retirement": 1}})
     assert "4 item" in h4 and a4 is True
+
+
+def test_alerts_manager_registered_after_monitoring_and_headlines():
+    keys = sysreg.all_system_keys()
+    assert keys[keys.index("monitoring") + 1] == "alerts_manager"
+    system = sysreg.get_system("alerts_manager")
+    assert system is not None and system.label == "Alerts Manager" and system.informational is False
+
+    clean, score, attention = sysreg._h_alerts_manager({
+        "rationalization_score": 100,
+        "kpis": {"total_rules": 24, "overlap_groups": 0, "gap_count": 0},
+    })
+    assert clean == "100/100 · 24 rules · no overlaps or gaps"
+    assert score == 100 and attention is False
+
+    partial, score, attention = sysreg._h_alerts_manager({
+        "rationalization_score": 82,
+        "partial": True,
+        "kpis": {"total_rules": 47, "overlap_groups": 3, "gap_count": 6},
+    })
+    assert partial == "Partial · 82/100 · 47 rules · 3 overlaps · 6 gaps"
+    assert score == 82 and attention is True
+
+
+def _alerts_context():
+    return sysreg.MissionContext(
+        tenant_id="mission-alerts-tenant",
+        actor="mission-test",
+        workload_id="w-alerts",
+        workload={"id": "w-alerts", "connection_id": "c-alerts"},
+        connection={"id": "c-alerts", "tenant_id": "azure-tenant"},
+        connection_id="c-alerts",
+    )
+
+
+def test_alerts_manager_cached_state_is_scope_isolated_and_read_only(monkeypatch, tmp_path):
+    from app.alert_analysis import cache
+    from app.api import alert_analysis
+
+    monkeypatch.setattr(cache, "_PATH", tmp_path / "alert-analysis-cache.json")
+    monkeypatch.setattr(alert_analysis, "_effective_connection_id", lambda *_args: "c-alerts")
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "report_exists": True,
+        "rationalization_score": 74,
+        "kpis": {"total_rules": 12, "overlap_groups": 1, "gap_count": 2},
+    }
+    cache.write_snapshot("another-tenant", "c-alerts", "workload", "w-alerts", snapshot)
+    assert asyncio.run(sysreg._state_alerts_manager(_alerts_context())) is None
+
+    cache.write_snapshot("mission-alerts-tenant", "wrong-connection", "workload", "w-alerts", snapshot)
+    assert asyncio.run(sysreg._state_alerts_manager(_alerts_context())) is None
+
+    cache.write_snapshot("mission-alerts-tenant", "c-alerts", "workload", "w-alerts", snapshot)
+    state = asyncio.run(sysreg._state_alerts_manager(_alerts_context()))
+    assert state is not None
+    assert state["status"] == "done" and state["score"] == 74 and state["attention"] is True
+    assert "workload_id=w-alerts" in state["link"] and "connection_id=c-alerts" in state["link"]
+    assert state["age_seconds"] is not None
+
+
+def test_alerts_manager_run_reuses_refresh_persistence_and_progress(monkeypatch):
+    from app.api import alert_analysis
+    import app.core.db as core_db
+
+    calls: list[tuple] = []
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "report_exists": True,
+        "partial": True,
+        "error": "Result cap reached; findings may be partial.",
+        "rationalization_score": 81,
+        "kpis": {"total_rules": 33, "overlap_groups": 0, "gap_count": 1},
+    }
+
+    async def fake_snapshot(principal, scope_kind, scope_id, **kwargs):
+        calls.append(("snapshot", principal.tenant_id, scope_kind, scope_id, kwargs["force"], kwargs["connection_id"]))
+        await kwargs["progress"]("query", "Loaded alert rules")
+        return snapshot
+
+    async def fake_invalidate(principal, scope_kind, scope_id, connection_id):
+        calls.append(("invalidate", principal.tenant_id, scope_kind, scope_id, connection_id))
+
+    async def fake_persist(value, principal, scope_kind, scope_id, db, progress):
+        calls.append(("persist", value is snapshot, principal.tenant_id, scope_kind, scope_id, db))
+        await progress("save", "Saved trend and history")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(alert_analysis, "_snapshot", fake_snapshot)
+    monkeypatch.setattr(alert_analysis, "_invalidate_live_inventory", fake_invalidate)
+    monkeypatch.setattr(alert_analysis, "_persist_refresh", fake_persist)
+    monkeypatch.setattr(core_db, "SessionLocal", FakeSession)
+    messages: list[str] = []
+
+    async def progress(message: str):
+        messages.append(message)
+
+    result = asyncio.run(sysreg._run_alerts_manager(_alerts_context(), force=False, progress=progress))
+    assert result.status == "done" and result.attention is True and result.score == 81
+    assert calls[0] == ("snapshot", "mission-alerts-tenant", "workload", "w-alerts", True, "c-alerts")
+    assert [call[0] for call in calls] == ["snapshot", "invalidate", "persist"]
+    assert messages == ["Loaded alert rules", "Saved trend and history"]
+
+
+def test_alerts_manager_unusable_error_is_failure(monkeypatch):
+    from app.api import alert_analysis
+
+    async def failed_snapshot(*_args, **_kwargs):
+        return {"report_exists": False, "error": "Azure authentication failed", "kpis": {}}
+
+    monkeypatch.setattr(alert_analysis, "_snapshot", failed_snapshot)
+    result = asyncio.run(sysreg._run_alerts_manager(_alerts_context(), force=True))
+    assert result.status == "fail" and result.attention is True
+    assert result.error == "Azure authentication failed"
+
+
+def test_unknown_system_keys_are_rejected():
+    from app.api.missions import _validate_systems
+
+    _validate_systems(None)
+    _validate_systems([])
+    _validate_systems(["monitoring", "alerts_manager"])
+    with pytest.raises(HTTPException) as exc:
+        _validate_systems(["monitoring", "typo-system"])
+    assert exc.value.status_code == 422
+    assert exc.value.detail["unknown"] == ["typo-system"]
+
+
+def test_explicit_unknown_connection_is_not_accepted(monkeypatch):
+    from app.api.missions import _resolve
+
+    monkeypatch.setattr("app.workloads.registry.get_workload", lambda _wid: {"id": "w1"})
+    monkeypatch.setattr("app.core.azure_connections.get_connection", lambda _cid: None)
+    workload, connection_id = _resolve("w1", "missing-connection")
+    assert workload == {"id": "w1"}
+    assert connection_id is None
+
+
+def test_cancelled_rollup_is_never_all_systems_go():
+    mission = orch._Mission(
+        id="cancelled", tenant_id="t1", workload_id="w1", workload_name="WL",
+        connection_id="c1", actor="tester", force=False, trigger="manual",
+        system_keys=["monitoring"], cancel_requested=True,
+        systems={"monitoring": {"status": "done", "attention": False}},
+    )
+    orch.manager._rollup(mission)
+    assert mission.status == "cancelled"
+    assert mission.readiness == "cancelled"
 
 
 def test_fmea_system_registered_and_headline():
@@ -206,6 +363,127 @@ def test_delete_missions_for_workload(tmp_path, monkeypatch):
     assert deleted == 2  # both t1/w1 rows, hard-deleted
     assert {m["id"] for m in remaining} == {"w2-a"}  # w1 gone, w2 kept
     assert other is not None  # cross-tenant isolation
+
+
+def test_latest_missions_returns_one_per_workload_without_global_limit(tmp_path, monkeypatch):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'latest.db'}")
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(dbmod, "SessionLocal", Session)
+
+    async def seed_and_read():
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with Session() as db:
+            for index in range(205):
+                db.add(MissionRun(
+                    id=f"w1-{index}", tenant_id="t1", workload_id="w1",
+                    workload_name="One", status="succeeded",
+                    started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ))
+            db.add(MissionRun(
+                id="w2-only", tenant_id="t1", workload_id="w2",
+                workload_name="Two", status="succeeded",
+                started_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ))
+            db.add(MissionRun(id="other-tenant", tenant_id="t2", workload_id="w3", status="succeeded"))
+            await db.commit()
+        result = await orch.latest_missions_by_workload("t1")
+        await engine.dispose()
+        return result
+
+    latest = asyncio.run(seed_and_read())
+    assert {mission["workload_id"] for mission in latest} == {"w1", "w2"}
+
+
+def test_central_queue_limits_global_and_per_connection(tmp_path, monkeypatch):
+    running = 0
+    max_running = 0
+    lane_running: dict[str, int] = {}
+    max_lane: dict[str, int] = {}
+
+    async def run(ctx, *, force, progress=None):  # noqa: ARG001
+        nonlocal running, max_running
+        lane = ctx.connection_id
+        running += 1
+        lane_running[lane] = lane_running.get(lane, 0) + 1
+        max_running = max(max_running, running)
+        max_lane[lane] = max(max_lane.get(lane, 0), lane_running[lane])
+        await asyncio.sleep(0.04)
+        lane_running[lane] -= 1
+        running -= 1
+        return sysreg.SystemResult(status="done", headline="ok")
+
+    async def state(_ctx):
+        return None
+
+    fake = sysreg.SystemDef(key="azure", label="Azure", icon="A", run=run, last_state=state)
+    _patch_env(monkeypatch, tmp_path, [fake])
+    async def no_db(_mission):
+        return None
+    monkeypatch.setattr(orch.manager, "_create_row", no_db)
+    monkeypatch.setattr(orch.manager, "_persist", no_db)
+    monkeypatch.setattr(orch, "_admission", orch._AdmissionQueue())
+    monkeypatch.setattr(orch, "_MAX_ACTIVE_MISSIONS_GLOBAL", 2)
+    monkeypatch.setattr(orch, "_MAX_ACTIVE_MISSIONS_PER_CONNECTION", 1)
+    monkeypatch.setattr(orch, "_MISSION_START_STAGGER_S", 0)
+
+    async def launch():
+        missions = []
+        for index, connection_id in enumerate(("c1", "c1", "c1", "c2", "c2")):
+            public = orch.manager.create(
+                tenant_id="queue-tenant", workload_id=f"w{index}", workload_name=f"W{index}",
+                connection_id=connection_id, actor="tester", force=True, trigger="fleet",
+                system_keys=["azure"],
+            )
+            missions.append(orch.manager.get_live(public["id"], "queue-tenant"))
+        await asyncio.gather(*(mission.task for mission in missions if mission and mission.task))
+        return [mission.public() for mission in missions if mission]
+
+    results = asyncio.run(launch())
+    assert max_running == 2
+    assert max_lane == {"c1": 1, "c2": 1}
+    assert all(result["status"] == "succeeded" for result in results)
+
+
+def test_central_queue_cancel_waiting_mission_never_runs(tmp_path, monkeypatch):
+    gate = asyncio.Event()
+    started: list[str] = []
+
+    async def run(ctx, *, force, progress=None):  # noqa: ARG001
+        started.append(ctx.workload_id)
+        await gate.wait()
+        return sysreg.SystemResult(status="done", headline="ok")
+
+    async def state(_ctx):
+        return None
+
+    fake = sysreg.SystemDef(key="azure", label="Azure", icon="A", run=run, last_state=state)
+    _patch_env(monkeypatch, tmp_path, [fake])
+    async def no_db(_mission):
+        return None
+    monkeypatch.setattr(orch.manager, "_create_row", no_db)
+    monkeypatch.setattr(orch.manager, "_persist", no_db)
+    monkeypatch.setattr(orch, "_admission", orch._AdmissionQueue())
+    monkeypatch.setattr(orch, "_MAX_ACTIVE_MISSIONS_GLOBAL", 1)
+    monkeypatch.setattr(orch, "_MAX_ACTIVE_MISSIONS_PER_CONNECTION", 1)
+    monkeypatch.setattr(orch, "_MISSION_START_STAGGER_S", 0)
+
+    async def launch_and_cancel():
+        first = orch.manager.create(tenant_id="cancel-queue", workload_id="first", workload_name="First", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
+        second = orch.manager.create(tenant_id="cancel-queue", workload_id="second", workload_name="Second", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
+        await asyncio.sleep(0.03)
+        second_live = orch.manager.get_live(second["id"], "cancel-queue")
+        assert second_live is not None and second_live.status == "queued" and second_live.queue_position == 1
+        assert orch.manager.cancel(second["id"], "cancel-queue") is True
+        await second_live.task
+        gate.set()
+        first_live = orch.manager.get_live(first["id"], "cancel-queue")
+        await first_live.task
+        return second_live.public()
+
+    cancelled = asyncio.run(launch_and_cancel())
+    assert started == ["first"]
+    assert cancelled["status"] == "cancelled"
 
 
 def test_stream_falls_back_to_db_when_not_live(tmp_path, monkeypatch):

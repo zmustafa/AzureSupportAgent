@@ -201,6 +201,107 @@ def _h_amba(s: dict[str, Any]) -> tuple[str, int | None, bool]:
     return f"{pct}% coverage · {missing} missing", pct, pct < 80
 
 
+def _h_alerts_manager(s: dict[str, Any]) -> tuple[str, int, bool]:
+    """Summarize alert rationalization without treating findings as run failures."""
+    kpis = s.get("kpis") or {}
+    score = int(round(float(s.get("rationalization_score") or 0)))
+    rules = int(kpis.get("total_rules") or 0)
+    overlaps = int(kpis.get("overlap_groups") or 0)
+    gaps = int(kpis.get("gap_count") or 0)
+    prefix = "Partial · " if s.get("partial") else ""
+    if overlaps == 0 and gaps == 0:
+        headline = f"{prefix}{score}/100 · {rules} rules · no overlaps or gaps"
+    else:
+        headline = f"{prefix}{score}/100 · {rules} rules · {overlaps} overlaps · {gaps} gaps"
+    return headline, score, bool(score < 80 or overlaps or gaps or s.get("partial"))
+
+
+def _alerts_manager_link(ctx: MissionContext) -> str:
+    from urllib.parse import urlencode
+
+    query = urlencode({"workload_id": ctx.workload_id, "connection_id": ctx.connection_id})
+    return f"/alerts-manager/overview?{query}"
+
+
+async def _run_alerts_manager(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
+    """Run the same workload analysis and persistence flow as Alerts Manager's refresh."""
+    from app.api.alert_analysis import _invalidate_live_inventory, _persist_refresh, _snapshot
+    from app.core.db import SessionLocal
+
+    link = _alerts_manager_link(ctx)
+    if ctx.connection is None:
+        return SystemResult(status="skipped", headline="No Azure connection", link=link)
+
+    async def report(phase: str, message: str) -> None:  # noqa: ARG001
+        if progress:
+            await progress(message)
+
+    principal = _admin_principal(ctx.tenant_id, ctx.actor)
+    snapshot = await _snapshot(
+        principal,
+        "workload",
+        ctx.workload_id,
+        force=True,
+        connection_id=ctx.connection_id,
+        progress=report,
+    )
+    # Partial inventories are still usable and should produce WARN, not NOGO. An empty
+    # error snapshot, however, represents an execution failure rather than alert findings.
+    error = str(snapshot.get("error") or "")
+    if error and not snapshot.get("report_exists"):
+        return SystemResult(status="fail", headline=error[:140], error=error, attention=True, link=link)
+
+    await _invalidate_live_inventory(principal, "workload", ctx.workload_id, ctx.connection_id)
+    async with SessionLocal() as db:
+        await _persist_refresh(snapshot, principal, "workload", ctx.workload_id, db, report)
+
+    headline, score, attention = _h_alerts_manager(snapshot)
+    return SystemResult(
+        status="done",
+        headline=headline,
+        score=score,
+        attention=attention,
+        link=link,
+        result_ref={
+            "kind": "alerts_manager",
+            "workload_id": ctx.workload_id,
+            "connection_id": ctx.connection_id,
+        },
+    )
+
+
+async def _state_alerts_manager(ctx: MissionContext) -> dict[str, Any] | None:
+    """Read the persistent Alerts Manager snapshot only; never invoke Azure collection."""
+    from app.alert_analysis import cache
+    from app.api.alert_analysis import _effective_connection_id
+
+    connection_id = _effective_connection_id("workload", ctx.workload_id, ctx.connection_id)
+    snapshot = cache.read_snapshot(
+        ctx.tenant_id or "default", connection_id, "workload", ctx.workload_id,
+    )
+    if not snapshot:
+        return None
+    link = _alerts_manager_link(ctx)
+    error = str(snapshot.get("error") or "")
+    if error and not snapshot.get("report_exists", True):
+        return {
+            "status": "fail",
+            "headline": error[:140],
+            "attention": True,
+            "age_seconds": _age_seconds(snapshot),
+            "link": link,
+        }
+    headline, score, attention = _h_alerts_manager(snapshot)
+    return {
+        "status": "done",
+        "headline": headline,
+        "score": score,
+        "attention": attention,
+        "age_seconds": _age_seconds(snapshot),
+        "link": link,
+    }
+
+
 def _h_telemetry(s: dict[str, Any]) -> tuple[str, int | None, bool]:
     pct = int(round(float(s.get("coverage_pct") or 0)))
     return f"{pct}% with diagnostics", pct, pct < 80
@@ -949,6 +1050,7 @@ SYSTEMS: list[SystemDef] = [
     SystemDef(key="memory", label="AI Memory", icon="🧠", run=_run_memory, last_state=_state_memory, informational=True, ai_heavy=True, depends_on=("architecture",)),
     SystemDef(key="assessment", label="Azure Well-Architected Assessments (WARA, WASA)", icon="✓", run=_run_assessment, last_state=_state_assessment, ai_heavy=True),
     _coverage_system(key="monitoring", label="Monitoring Coverage Scanning (AMBA)", icon="📈", module="app.api.amba", cache_module="app.amba.cache", headline=_h_amba, link_path="/coverage?workload_id={wid}", recorder=_rec_amba),
+    SystemDef(key="alerts_manager", label="Alerts Manager", icon="🔔", run=_run_alerts_manager, last_state=_state_alerts_manager),
     _coverage_system(key="telemetry", label="Telemetry Coverage Scanning", icon="📡", module="app.api.telemetry", cache_module="app.telemetry.cache", headline=_h_telemetry, link_path="/telemetry?workload_id={wid}", recorder=_rec_telemetry),
     _coverage_system(key="backupdr", label="Backup & DR Coverage Scanning", icon="💾", module="app.api.backupdr", cache_module="app.backupdr.cache", headline=_h_backupdr, link_path="/backupdr?workload_id={wid}", recorder=_rec_backupdr),
     SystemDef(key="performance", label="Performance Profiling", icon="⚡", run=_run_performance, last_state=_state_performance),

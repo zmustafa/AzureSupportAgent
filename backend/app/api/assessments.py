@@ -37,6 +37,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _utc(dt: datetime | None) -> datetime | None:
+    """Normalize SQLite's occasionally-naive datetimes before age comparisons."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 async def _audit(db: AsyncSession, principal: Principal, action: str, target: str, **meta) -> None:
     db.add(
         AuditLog(
@@ -588,6 +595,102 @@ async def portfolio_endpoint(principal: Principal = Depends(read_dep), db: Async
         )
     items.sort(key=lambda x: (x["overall_score"] if x["overall_score"] is not None else 999))
     return {"workloads": items}
+
+
+@router.get("/fleet")
+async def fleet_endpoint(principal: Principal = Depends(read_dep), db: AsyncSession = Depends(get_db)):
+    """Latest persisted assessment posture for every active workload.
+
+    This endpoint is deliberately database-only: opening Fleet never starts an Azure
+    query or assessment. A newer queued/running/failed run is shown independently while
+    the most recent successful run remains the source of the last known score.
+    """
+    from app.workloads.registry import list_workloads
+
+    workloads = list_workloads()
+    workload_ids = {str(w.get("id") or "") for w in workloads}
+    rows = (
+        await db.execute(
+            select(AssessmentRun)
+            .where(
+                AssessmentRun.tenant_id == principal.tenant_id,
+                AssessmentRun.deleted_at.is_(None),
+                AssessmentRun.workload_id.in_(workload_ids),
+            )
+            .order_by(desc(AssessmentRun.started_at))
+        )
+    ).scalars().all() if workload_ids else []
+
+    latest_any: dict[str, AssessmentRun] = {}
+    latest_success: dict[str, AssessmentRun] = {}
+    for run in rows:
+        latest_any.setdefault(run.workload_id, run)
+        if run.status == "succeeded":
+            latest_success.setdefault(run.workload_id, run)
+
+    now = _now()
+    items: list[dict] = []
+    for workload in workloads:
+        workload_id = str(workload.get("id") or "")
+        current = latest_any.get(workload_id)
+        successful = latest_success.get(workload_id)
+        started = _utc(current.started_at) if current else None
+        age_seconds = max(0, int((now - started).total_seconds())) if started else None
+        totals = dict(successful.totals_json or {}) if successful else {}
+        by_severity = totals.get("by_severity")
+        if not isinstance(by_severity, dict):
+            by_severity = {}
+        pillar_scores = {
+            pillar: values.get("score") if isinstance(values, dict) else None
+            for pillar, values in (successful.scores_json or {}).items()
+        } if successful else {}
+        items.append(
+            {
+                "workload_id": workload_id,
+                "name": str(workload.get("name") or ""),
+                "connection_id": str(workload.get("connection_id") or (current.connection_id if current else "") or ""),
+                "criticality": str(workload.get("criticality") or ""),
+                "environment": str(workload.get("environment") or ""),
+                "has_scan": current is not None,
+                "run_id": successful.id if successful else "",
+                "run_at": successful.started_at.isoformat() if successful and successful.started_at else "",
+                "current_run_id": current.id if current else "",
+                "current_run_at": current.started_at.isoformat() if current and current.started_at else "",
+                "current_status": current.status if current else "never",
+                "overall_score": successful.overall_score if successful else None,
+                "pillar_scores": pillar_scores,
+                "resources": successful.resource_count if successful else None,
+                "passed": totals.get("passed") if successful else None,
+                "failed": totals.get("failed") if successful else None,
+                "not_applicable": totals.get("na") if successful else None,
+                "findings_by_severity": {
+                    severity: int(by_severity.get(severity) or 0)
+                    for severity in ("critical", "error", "warning", "info")
+                } if successful else {},
+                "completeness_pct": successful.completeness_pct if successful else None,
+                "confidence": successful.confidence if successful else None,
+                "is_baseline": bool(successful and successful.is_baseline),
+                "age_seconds": age_seconds,
+                "stale": age_seconds is None or age_seconds > 30 * 86400,
+                "error": str(current.error or "") if current and current.status == "failed" else "",
+            }
+        )
+
+    status_rank = {"failed": 0, "cancelled": 1, "succeeded": 2, "running": 3, "queued": 4, "never": 5}
+    items.sort(
+        key=lambda item: (
+            status_rank.get(item["current_status"], 5),
+            item["overall_score"] if item["overall_score"] is not None else 101,
+            -int(item["failed"] or 0),
+            item["name"].casefold(),
+            item["workload_id"],
+        )
+    )
+    return {
+        "workloads": items,
+        "total": len(items),
+        "scanned": sum(1 for item in items if item["has_scan"]),
+    }
 
 
 # ============================ Waivers ============================

@@ -1379,6 +1379,34 @@ export type TelemetryCoverage = {
   report_exists?: boolean;
 };
 
+export type TelemetryCoverageFleetRow = {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  criticality: string;
+  environment: string;
+  has_scan: boolean;
+  run_at: string;
+  coverage_pct: number | null;
+  resources: number;
+  with_any_diag: number;
+  with_all_categories: number;
+  unknown_destinations: number;
+  unreadable: number;
+  gaps: number;
+  demo: boolean;
+  age_seconds: number | null;
+  stale: boolean;
+  error: string;
+};
+
+export type TelemetryCoverageFleet = {
+  workloads: TelemetryCoverageFleetRow[];
+  ttl_s: number;
+  total: number;
+  scanned: number;
+};
+
 export type TelemetryReference = {
   version: number;
   updated_at: string;
@@ -1495,6 +1523,37 @@ export type BackupDrCoverage = {
   stale_cache: boolean;
   all_resources: CoverageResource[];
   report_exists?: boolean;
+};
+
+export type BackupDrCoverageFleetRow = {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  criticality: string;
+  environment: string;
+  has_scan: boolean;
+  run_at: string;
+  pct_protected: number | null;
+  total: number;
+  protected: number;
+  unprotected: number;
+  pct_offsite: number | null;
+  pct_recent_job: number | null;
+  dr_pairs: number;
+  dr_pairs_stale: number;
+  dr_pairs_unhealthy: number;
+  gaps: number;
+  demo: boolean;
+  age_seconds: number | null;
+  stale: boolean;
+  error: string;
+};
+
+export type BackupDrCoverageFleet = {
+  workloads: BackupDrCoverageFleetRow[];
+  ttl_s: number;
+  total: number;
+  scanned: number;
 };
 
 export type BackupDrReference = {
@@ -1651,6 +1710,9 @@ export type Mission = {
   log?: MissionLog[];
   error?: string;
   created_at: string;
+  queued_at?: string;
+  queue_position?: number | null;
+  queue_lane?: string;
   started_at: string;
   ended_at: string;
   duration_ms?: number | null;
@@ -4260,6 +4322,7 @@ export const api = {
     http<{ runs: AssessmentRunSummary[] }>(
       `/assessments/runs${workloadId ? `?workload_id=${encodeURIComponent(workloadId)}` : ""}`,
     ),
+  assessmentFleet: () => http<AssessmentFleet>("/assessments/fleet"),
   assessmentRun: (id: string) => http<{ run: AssessmentRunDetail }>(`/assessments/runs/${id}`),
   enqueueAssessments: (body: {
     workload_ids: string[];
@@ -5065,6 +5128,7 @@ export const api = {
     if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<TelemetryCoverage>(`/telemetry/coverage?${q.toString()}`);
   },
+  telemetryCoverageFleet: () => http<TelemetryCoverageFleet>("/telemetry/fleet"),
   refreshTelemetry: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -5130,6 +5194,7 @@ export const api = {
     if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<BackupDrCoverage>(`/backupdr/coverage?${q.toString()}`);
   },
+  backupDrCoverageFleet: () => http<BackupDrCoverageFleet>("/backupdr/fleet"),
   refreshBackupDr: (params: { workload_id?: string; subscription_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
     if (params.workload_id) q.set("workload_id", params.workload_id);
@@ -5274,13 +5339,15 @@ export const api = {
   runMission: (body: { workload_id: string; systems?: string[]; force?: boolean; connection_id?: string | null }) =>
     http<{ mission: Mission }>("/missions/run", { method: "POST", body: JSON.stringify(body) }),
   runFleet: (body: { workload_ids: string[]; systems?: string[]; force?: boolean; connection_id?: string | null }) =>
-    http<{ missions: Mission[]; launched: number }>("/missions/fleet", { method: "POST", body: JSON.stringify(body) }),
+    http<{ missions: Mission[]; launched: number; queued: number }>("/missions/fleet", { method: "POST", body: JSON.stringify(body) }),
+  missionQueue: () => http<{ pending: number; active: number; max_global: number; max_per_connection: number; missions: Array<{ id: string; workload_id: string; connection_id: string; position: number | null }> }>("/missions/queue"),
   listMissions: (workloadId?: string, limit = 50) => {
     const q = new URLSearchParams();
     if (workloadId) q.set("workload_id", workloadId);
     q.set("limit", String(limit));
     return http<{ missions: Mission[] }>(`/missions?${q.toString()}`);
   },
+  latestMissions: () => http<{ missions: Mission[] }>("/missions/latest"),
   getMission: (id: string) => http<{ mission: Mission }>(`/missions/${encodeURIComponent(id)}`),
   cancelMission: (id: string) =>
     http<{ ok: boolean }>(`/missions/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
@@ -7801,11 +7868,17 @@ export async function streamMission(
   },
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/missions/${encodeURIComponent(missionId)}/stream`, {
-    method: "GET",
-    credentials: "include",
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/missions/${encodeURIComponent(missionId)}/stream`, {
+      method: "GET",
+      credentials: "include",
+      signal,
+    });
+  } catch (err) {
+    if ((err as Error)?.name !== "AbortError") handlers.onError?.(err instanceof Error ? err.message : String(err));
+    return;
+  }
   if (!res.ok || !res.body) {
     let detail = `${res.status} ${res.statusText}`;
     try {
@@ -7820,6 +7893,7 @@ export async function streamMission(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let terminal = false;
   while (true) {
     let value: Uint8Array | undefined;
     let done = false;
@@ -7827,7 +7901,8 @@ export async function streamMission(
       ({ value, done } = await reader.read());
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return;
-      throw err;
+      handlers.onError?.(err instanceof Error ? err.message : String(err));
+      return;
     }
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -7850,10 +7925,11 @@ export async function streamMission(
       if (event === "snapshot") handlers.onSnapshot?.(parsed as unknown as Mission);
       else if (event === "system") handlers.onSystem?.(parsed as unknown as MissionSystem);
       else if (event === "log") handlers.onLog?.(parsed as unknown as MissionLog);
-      else if (event === "done") handlers.onDone?.(parsed as unknown as Mission);
+      else if (event === "done") { terminal = true; handlers.onDone?.(parsed as unknown as Mission); }
       else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Mission failed.");
     }
   }
+  if (!terminal && !signal?.aborted) handlers.onError?.("Mission stream disconnected before completion.");
 }
 
 // ---- RBAC per-scope refresh (SSE) ----------------------------------------------
@@ -11243,6 +11319,39 @@ export interface AssessmentRunSummary {
   ended_at: string | null;
   deleted_at?: string | null;
   resource_count?: number | null;
+}
+
+export interface AssessmentFleetRow {
+  workload_id: string;
+  name: string;
+  connection_id: string;
+  criticality: string;
+  environment: string;
+  has_scan: boolean;
+  run_id: string;
+  run_at: string;
+  current_run_id: string;
+  current_run_at: string;
+  current_status: string;
+  overall_score: number | null;
+  pillar_scores: Record<string, number | null>;
+  resources: number | null;
+  passed: number | null;
+  failed: number | null;
+  not_applicable: number | null;
+  findings_by_severity: Record<string, number>;
+  completeness_pct: number | null;
+  confidence: string | null;
+  is_baseline: boolean;
+  age_seconds: number | null;
+  stale: boolean;
+  error: string;
+}
+
+export interface AssessmentFleet {
+  workloads: AssessmentFleetRow[];
+  total: number;
+  scanned: number;
 }
 
 export interface AssessmentScannedResource {

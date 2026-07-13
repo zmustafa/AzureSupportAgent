@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -56,18 +56,21 @@ const READINESS_META: Record<string, { label: string; ring: string; text: string
   go: { label: "All systems go", ring: "#16a34a", text: "text-green-700" },
   warn: { label: "Go with warnings", ring: "#d97706", text: "text-amber-700" },
   nogo: { label: "No-go", ring: "#dc2626", text: "text-red-700" },
+  cancelled: { label: "Cancelled", ring: "#64748b", text: "text-slate-600" },
   unknown: { label: "Not assessed", ring: "#9ca3af", text: "text-gray-500" },
 };
 
-function ReadinessRing({ systems }: { systems: MissionSystem[] }) {
-  const { readiness, done, total, attention } = rollup(systems);
+function ReadinessRing({ systems, missionStatus }: { systems: MissionSystem[]; missionStatus?: string }) {
+  const rolled = rollup(systems);
+  const readiness = missionStatus === "cancelled" ? "cancelled" : rolled.readiness;
+  const { done, total, attention } = rolled;
   const meta = READINESS_META[readiness] ?? READINESS_META.unknown;
   const frac = total > 0 ? done / total : 0;
   const r = 26;
   const c = 2 * Math.PI * r;
   return (
     <div className="flex items-center gap-3">
-      <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0">
+      <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0" role="img" aria-label={`${meta.label}: ${done} of ${total} systems complete; ${attention} need attention`}>
         <circle cx="32" cy="32" r={r} fill="none" stroke="#e5e7eb" strokeWidth="6" />
         <circle
           cx="32" cy="32" r={r} fill="none" stroke={meta.ring} strokeWidth="6" strokeLinecap="round"
@@ -109,7 +112,7 @@ function SystemTile({ system, onRun, busy }: { system: MissionSystem; onRun: (ke
             <span className="text-[10px] text-gray-400">{ageLabel(system.age_seconds)}</span>
           )}
         </div>
-        <div className="truncate text-xs text-gray-500" title={system.detail || system.headline}>
+        <div className="truncate text-xs text-gray-500" title={system.detail || system.headline} aria-live="polite">
           {system.headline || (system.status === "idle" ? "Not run yet" : "")}
           {system.error ? <span className="text-red-600"> · {system.error}</span> : null}
         </div>
@@ -139,7 +142,7 @@ function SystemTile({ system, onRun, busy }: { system: MissionSystem; onRun: (ke
   );
 }
 
-function MissionBoard({ workloadId }: { workloadId: string }) {
+function MissionBoard({ workloadId, initialMissionId = "" }: { workloadId: string; initialMissionId?: string }) {
   const navigate = useNavigate();
   const [systems, setSystems] = useState<MissionSystem[]>([]);
   const [log, setLog] = useState<MissionLog[]>([]);
@@ -154,6 +157,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
   const [force, setForce] = useState(false);
   const [err, setErr] = useState("");
   const [confirmDelete, setConfirmDelete] = useState("");   // mission id pending delete confirm
+  const [mobilePane, setMobilePane] = useState<"board" | "log" | "history">("board");
   const abortRef = useRef<AbortController | null>(null);
 
   // Connection display name for the header pill.
@@ -219,9 +223,10 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
       abortRef.current = ctrl;
       setRunning(true);
       setLog([]);
-      await streamMission(
-        missionId,
-        {
+      let lastProblem = "Mission stream disconnected before completion.";
+      for (let attempt = 0; attempt < 4 && !ctrl.signal.aborted; attempt += 1) {
+        let completed = false;
+        await streamMission(missionId, {
           onSnapshot: (m) => {
             setActive(m);
             mergeMissionSystems(m.systems);
@@ -230,21 +235,34 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
           onSystem: (s) => applySystem(s),
           onLog: (d) => setLog((l) => [...l, d]),
           onDone: (m) => {
+            completed = true;
             setActive(m);
             mergeMissionSystems(m.systems);
             setRunning(false);
-            historyQ.refetch();
+            void historyQ.refetch();
           },
-          onError: (msg) => {
-            // A reconnect is best-effort: if the mission can no longer be streamed (it
-            // finished and aged out, or was reaped after a restart) just stop quietly —
-            // don't flash a scary "Mission not found." banner over a healthy board.
-            if (!quiet) setErr(msg);
+          onError: (msg) => { lastProblem = msg; },
+        }, ctrl.signal);
+        if (completed || ctrl.signal.aborted) return;
+        try {
+          const { mission } = await api.getMission(missionId);
+          setActive(mission);
+          mergeMissionSystems(mission.systems);
+          if (mission.log?.length) setLog(mission.log);
+          if (mission.status !== "running" && mission.status !== "queued") {
             setRunning(false);
-          },
-        },
-        ctrl.signal,
-      );
+            void historyQ.refetch();
+            return;
+          }
+        } catch (e) {
+          lastProblem = formatError(e);
+        }
+        if (attempt < 3) await new Promise((resolve) => window.setTimeout(resolve, 500 * (2 ** attempt)));
+      }
+      if (!ctrl.signal.aborted) {
+        if (!quiet) setErr(lastProblem);
+        setRunning(false);
+      }
     },
     [applySystem, mergeMissionSystems, historyQ],
   );
@@ -290,8 +308,8 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
     if (!active?.id) return;
     try {
       await api.cancelMission(active.id);
-    } catch {
-      /* the stream's done/abort will settle the UI regardless */
+    } catch (e) {
+      setErr(formatError(e));
     }
   }, [active]);
 
@@ -318,6 +336,10 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
   useEffect(() => {
     if (!workloadId) return;
     let cancelled = false;
+    if (initialMissionId) {
+      void openMission(initialMissionId, true);
+      return () => { cancelled = true; };
+    }
     api
       .listMissions(workloadId, 1)
       .then((r) => {
@@ -337,12 +359,13 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workloadId]);
+  }, [workloadId, initialMissionId]);
 
   // The board is always the full set of systems (merged with any active mission deltas), so
   // the readiness ring reflects the whole workload — not just the systems of the last run.
   const board = systems;
   const wlName = stateQ.data?.workload_name || active?.workload_name || "Workload";
+  const invalidWorkload = !!stateQ.data?.error;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
@@ -365,7 +388,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
             <p className="text-xs text-gray-500">Run every analysis for this workload, then dive into any system.</p>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <ReadinessRing systems={board} />
+            <ReadinessRing systems={board} missionStatus={active?.status} />
             <div className="flex flex-col items-end gap-1.5">
               <div className="flex items-center gap-2">
                 {running && (
@@ -378,14 +401,14 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
                 )}
                 <button
                   onClick={() => launch()}
-                  disabled={running}
+                  disabled={running || stateQ.isLoading || invalidWorkload}
                   className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
                 >
                   {running ? <><Spinner className="h-4 w-4" /> Mission in progress…</> : "🚀 Launch full sweep"}
                 </button>
               </div>
               <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+                <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} disabled={invalidWorkload} />
                 Force re-run (ignore fresh)
               </label>
             </div>
@@ -393,14 +416,29 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
         </div>
       </div>
 
-      {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700">{err}</div>}
+      {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">{err}</div>}
+      {active?.status === "queued" && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800" aria-live="polite">
+          ⏳ Waiting for central Azure capacity
+          {active.queue_position ? ` · queue position ${active.queue_position}` : ""}
+          {active.queue_lane ? ` · connection ${connName || active.queue_lane}` : ""}.
+          Missions sharing a connection run one at a time to prevent Azure throttling.
+        </div>
+      )}
+
+      <div className="flex border-b bg-white px-4 lg:hidden">
+        {(["board", "log", "history"] as const).map((pane) => (
+          <button key={pane} onClick={() => setMobilePane(pane)} className={`border-b-2 px-3 py-2 text-xs font-medium ${mobilePane === pane ? "border-brand text-brand" : "border-transparent text-gray-500"}`}>{pane[0].toUpperCase() + pane.slice(1)}</button>
+        ))}
+      </div>
 
       <div className="flex min-h-0 flex-1 gap-4 overflow-auto p-4">
         {/* Systems board */}
-        <div className="min-w-0 flex-1 space-y-2">
+        <div className={`${mobilePane === "board" ? "block" : "hidden"} min-w-0 flex-1 space-y-2 lg:block`}>
           {board.length === 0 ? (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">
-              {stateQ.isLoading ? "Loading…" : stateQ.data?.error || "No systems to show."}
+              <div>{stateQ.isLoading ? "Loading…" : stateQ.isError ? formatError(stateQ.error) : stateQ.data?.error || "No systems to show."}</div>
+              {invalidWorkload && <button onClick={() => navigate("/mission-control")} className="mt-3 rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/5">Return to Mission Control</button>}
             </div>
           ) : (
             board.map((s) => <SystemTile key={s.key} system={s} onRun={(key) => launch([key])} busy={running} />)
@@ -408,8 +446,8 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
         </div>
 
         {/* Side rail: log + history */}
-        <div className="hidden w-80 shrink-0 space-y-4 lg:block">
-          <div className="rounded-xl border bg-white">
+        <div className={`${mobilePane === "board" ? "hidden" : "block"} w-full shrink-0 space-y-4 lg:block lg:w-80`}>
+          <div className={`${mobilePane === "history" ? "hidden" : "block"} rounded-xl border bg-white lg:block`}>
             <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Mission log</div>
             <div ref={logRef} className="max-h-64 overflow-auto p-2 font-mono text-[11px] text-gray-600">
               {log.length === 0 ? (
@@ -424,14 +462,14 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
             </div>
           </div>
 
-          <div className="rounded-xl border bg-white">
+          <div className={`${mobilePane === "log" ? "hidden" : "block"} rounded-xl border bg-white lg:block`}>
             <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Mission history</div>
             <div className="max-h-72 overflow-auto">
               {(historyQ.data?.missions ?? []).length === 0 ? (
                 <div className="px-3 py-3 text-xs text-gray-400">No past missions.</div>
               ) : (
                 (historyQ.data?.missions ?? []).map((m) => {
-                  const meta = READINESS_META[m.readiness] ?? READINESS_META.unknown;
+                  const meta = m.status === "cancelled" ? READINESS_META.cancelled : READINESS_META[m.readiness] ?? READINESS_META.unknown;
                   const live = m.status === "running" || m.status === "queued";
                   return (
                     <div key={m.id} className={`group flex items-center gap-2 border-b px-3 py-2 last:border-0 ${active?.id === m.id ? "bg-brand/5" : ""}`}>
@@ -465,6 +503,7 @@ function MissionBoard({ workloadId }: { workloadId: string }) {
                           disabled={live}
                           className="shrink-0 rounded px-1 py-0.5 text-[11px] text-gray-300 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 group-hover:text-gray-400"
                           title={live ? "Cancel the mission before deleting" : "Delete this mission from history"}
+                          aria-label={`Delete mission from ${m.started_at ? new Date(m.started_at).toLocaleString() : "history"}`}
                         >✕</button>
                       )}
                     </div>
@@ -485,7 +524,7 @@ function MissionLanding() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
-  const missionsQ = useQuery({ queryKey: ["missions", "all"], queryFn: () => api.listMissions(undefined, 200) });
+  const missionsQ = useQuery({ queryKey: ["missions", "latest"], queryFn: api.latestMissions });
   const workloads = wlQ.data?.workloads ?? [];
   const [launchingId, setLaunchingId] = useState("");
   const [deletingId, setDeletingId] = useState("");
@@ -505,8 +544,8 @@ function MissionLanding() {
     if (launchingId) return;
     setErr(""); setLaunchingId(id);
     try {
-      await api.runMission({ workload_id: id });
-      navigate(`/mission-control/${id}`);
+      const { mission } = await api.runMission({ workload_id: id });
+      navigate(`/mission-control/${id}`, { state: { missionId: mission.id } });
     } catch (e) {
       setErr(formatError(e));
       setLaunchingId("");
@@ -520,7 +559,7 @@ function MissionLanding() {
     setErr(""); setDeletingId(id);
     try {
       await api.deleteWorkloadMissions(id);
-      await qc.invalidateQueries({ queryKey: ["missions", "all"] });
+      await qc.invalidateQueries({ queryKey: ["missions", "latest"] });
     } catch (e) {
       setErr(formatError(e));
     } finally {
@@ -540,14 +579,16 @@ function MissionLanding() {
           <h1 className="text-lg font-semibold text-gray-900">Mission Control</h1>
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          Pick a workload to run every analysis for it — architecture, assessment, monitoring,
-          telemetry, backup, performance and retirement — then dive into any system.
+          Pick a workload to coordinate architecture, assessment, monitoring, alerts, telemetry,
+          resilience, performance, governance, inventory, access and identity analysis.
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-6">
-        {err && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
-        {wlQ.isLoading ? (
+        {(err || wlQ.isError || missionsQ.isError) && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err || (wlQ.isError ? formatError(wlQ.error) : formatError(missionsQ.error))}</div>}
+        {wlQ.isLoading || missionsQ.isLoading ? (
           <div className="text-sm text-gray-500">Loading…</div>
+        ) : wlQ.isError || missionsQ.isError ? (
+          <button onClick={() => { void wlQ.refetch(); void missionsQ.refetch(); }} className="rounded-lg border bg-white px-3 py-2 text-sm font-medium text-brand hover:bg-brand/5">Retry</button>
         ) : workloads.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">
             No workloads yet. Create one under{" "}
@@ -572,7 +613,7 @@ function MissionLanding() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {withMC.map((w) => {
                     const mi = latestByWorkload.get(w.id);
-                    const meta = mi ? READINESS_META[mi.readiness] ?? READINESS_META.unknown : null;
+                    const meta = mi ? (mi.status === "cancelled" ? READINESS_META.cancelled : READINESS_META[mi.readiness] ?? READINESS_META.unknown) : null;
                     const count = w.summary?.total_resources ?? w.nodes?.length ?? 0;
                     const launching = launchingId === w.id;
                     const deleting = deletingId === w.id;
@@ -680,6 +721,8 @@ function MissionLanding() {
 // Route entry: /mission-control = landing (workload picker), /mission-control/:id = the board.
 export function MissionControlPanel() {
   const { id } = useParams<{ id: string }>();
-  return id ? <MissionBoard workloadId={id} /> : <MissionLanding />;
+  const location = useLocation();
+  const missionId = (location.state as { missionId?: string } | null)?.missionId || "";
+  return id ? <MissionBoard key={id} workloadId={id} initialMissionId={missionId} /> : <MissionLanding />;
 }
 

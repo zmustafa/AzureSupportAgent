@@ -162,9 +162,9 @@ function Kpi({ label, value, tone = "gray", hint }: { label: string; value: numb
     green: "border-emerald-200 bg-emerald-50 text-emerald-700",
   };
   return (
-    <div className={`h-9 min-w-16 w-max flex-none rounded-lg border px-2 py-0.5 ${colors[tone] ?? colors.gray}`} title={hint ?? label}>
-      <div className="text-base font-semibold leading-4 tabular-nums">{value}</div>
-      <div className="whitespace-nowrap text-[8px] font-medium uppercase leading-3 tracking-wide opacity-70">{label}</div>
+    <div className={`flex h-11 min-w-0 flex-col justify-center rounded-lg border px-2.5 py-1 ${colors[tone] ?? colors.gray}`} title={hint ?? label}>
+      <div className="text-base font-semibold leading-5 tabular-nums">{value}</div>
+      <div className="truncate whitespace-nowrap text-[9px] font-medium uppercase leading-3 tracking-wide opacity-70" title={label}>{label}</div>
     </div>
   );
 }
@@ -644,6 +644,10 @@ export function AlertsManagerPanel() {
   useEffect(() => {
     if (!routeTab || !VALID_TABS.has(routeTab as Tab)) navigate("/alerts-manager/overview", { replace: true });
   }, [navigate, routeTab]);
+  useEffect(() => {
+    const linkedConnectionId = routeSearch.get("connection_id");
+    if (linkedConnectionId && linkedConnectionId !== connId) setConnId(linkedConnectionId);
+  }, [connId, routeSearch, setConnId]);
   useEffect(() => {
     if (tab === "changes") contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [tab]);
@@ -1177,20 +1181,20 @@ export function AlertsManagerPanel() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
-      <header className="relative border-b bg-white px-6 py-4">
-        <div className="flex flex-wrap items-start gap-4">
+      <header className="border-b bg-white px-4 py-4 sm:px-6">
+        <div className="flex flex-wrap items-start gap-3 sm:gap-4">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-amber-100 to-orange-50 text-2xl">🔔</div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
+          <div className="min-w-0 basis-[220px] flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h1 className="text-lg font-semibold text-gray-900">Alerts Manager</h1>
               {data?.demo && <span className="rounded bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-700">demo data</span>}
               {data?.partial && <span className="rounded bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">partial result</span>}
               {data?.report_exists && <span className="text-[10px] font-normal text-gray-400">Updated {ageText(data.age_seconds)}{data.stale && <span className="text-amber-600"> · stale</span>} · cached</span>}
             </div>
-            <p className="mt-0.5 max-w-2xl text-xs text-gray-500">Find overlapping Azure Monitor rules, duplicate notification paths, and AMBA baseline coverage gaps. Recipient destinations are shown in full.</p>
-            {data?.report_exists && <div className="mt-2 lg:absolute lg:left-20 lg:top-[66px] lg:mt-0 lg:origin-left lg:scale-[0.6]"><TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} deltaLabel="score vs last scan" /></div>}
+            <p className="mt-0.5 max-w-3xl text-xs leading-4 text-gray-500">Find overlapping Azure Monitor rules, duplicate notification paths, and AMBA baseline coverage gaps. Recipient destinations are shown in full.</p>
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          {data?.report_exists && <div className="hidden w-full flex-none pl-14 sm:block sm:w-auto sm:pl-0"><TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} deltaLabel="score vs last scan" /></div>}
+          <div className="flex w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 xl:ml-auto xl:w-auto xl:flex-wrap xl:overflow-visible xl:pb-0">
             <ConnectionScopePicker value={connId} onChange={(id) => {
               if (id === connId) return;
               setConnId(id);
@@ -1224,31 +1228,35 @@ export function AlertsManagerPanel() {
                 />
               )}
             </div>
-            <button onClick={() => void refresh()} disabled={!ready || refreshing} title={analysisIsStaleAfterApply ? "Azure was changed after this analysis. Analyze again to refresh findings, costs, coverage, and counts." : undefined} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${analysisIsStaleAfterApply ? "animate-pulse bg-red-600 ring-2 ring-red-200 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-700"}`}>{refreshing ? "Analyzing…" : analysisIsStaleAfterApply ? "⚠ Data stale — Analyze again" : data?.report_exists ? "↻ Analyze again" : "Analyze alerts"}</button>
-            {analysisIsStaleAfterApply && <span role="status" className="max-w-44 text-[10px] font-medium leading-tight text-red-600">Azure changed. Refresh this analysis for current data.</span>}
-            <button onClick={() => void download("csv")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "csv" ? "Exporting…" : "⬇ CSV"}</button>
-            <button onClick={() => void download("xlsx")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "xlsx" ? "Exporting…" : "📊 XLSX"}</button>
-            <button onClick={() => void download("json")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">JSON</button>
-            <button onClick={() => void saveEvidence()} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "evidence" ? "Saving…" : "🗄 Evidence"}</button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => void refresh()} disabled={!ready || refreshing} title={analysisIsStaleAfterApply ? "Azure was changed after this analysis. Analyze again to refresh findings, costs, coverage, and counts." : undefined} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${analysisIsStaleAfterApply ? "animate-pulse bg-red-600 ring-2 ring-red-200 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-700"}`}>{refreshing ? "Analyzing…" : analysisIsStaleAfterApply ? "⚠ Data stale — Analyze again" : data?.report_exists ? "↻ Analyze again" : "Analyze alerts"}</button>
+              {analysisIsStaleAfterApply && <span role="status" className="max-w-44 text-[10px] font-medium leading-tight text-red-600">Azure changed. Refresh this analysis for current data.</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => void download("csv")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "csv" ? "Exporting…" : "⬇ CSV"}</button>
+              <button onClick={() => void download("xlsx")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "xlsx" ? "Exporting…" : "📊 XLSX"}</button>
+              <button onClick={() => void download("json")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">JSON</button>
+              <button onClick={() => void saveEvidence()} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "evidence" ? "Saving…" : "🗄 Evidence"}</button>
+            </div>
           </div>
         </div>
-              {data?.report_exists && (
-          <div className="mt-2 flex flex-wrap gap-1">
+        {data?.report_exists && (
+          <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(92px,100%),1fr))] gap-2">
             <Kpi label="Score" value={data.rationalization_score} tone={data.rationalization_score >= 80 ? "green" : data.rationalization_score >= 50 ? "amber" : "red"} hint="Higher means fewer overlap and gap findings relative to this scope." />
             <Kpi label="Rules" value={data.kpis.total_rules} />
-            <Kpi label="Overlap groups" value={data.kpis.overlap_groups} tone="amber" />
-            <Kpi label="Duplicate paths" value={data.kpis.notification_overlaps} tone="red" />
-            <Kpi label="Gaps" value={data.kpis.gap_count} tone="red" />
-            <Kpi label="Action groups" value={data.kpis.action_groups} tone="blue" />
-            <Kpi label="Recipients" value={data.kpis.unique_recipients} tone="blue" />
-            <Kpi label="Recipient proliferation" value={data.kpis.recipient_proliferation} tone="amber" />
-            <Kpi label="Resources" value={data.kpis.resources_evaluated} tone="green" />
-            <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone="amber" />
-            <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone="blue" />
+            <Kpi label="Overlap groups" value={data.kpis.overlap_groups} tone={data.kpis.overlap_groups > 0 ? "amber" : "gray"} />
+            <Kpi label="Duplicate paths" value={data.kpis.notification_overlaps} tone={data.kpis.notification_overlaps > 0 ? "red" : "gray"} />
+            <Kpi label="Gaps" value={data.kpis.gap_count} tone={data.kpis.gap_count > 0 ? "red" : "gray"} />
+            <Kpi label="Action groups" value={data.kpis.action_groups} />
+            <Kpi label="Recipients" value={data.kpis.unique_recipients} />
+            <Kpi label="Recipient proliferation" value={data.kpis.recipient_proliferation} tone={data.kpis.recipient_proliferation > 0 ? "amber" : "gray"} />
+            <Kpi label="Resources" value={data.kpis.resources_evaluated} />
+            <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone={data.kpis.firings_7d > 0 ? "amber" : "gray"} />
+            <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone={data.kpis.firings_30d > 0 ? "blue" : "gray"} />
           </div>
         )}
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-          <div className="flex items-center gap-1">
+        <div className="mt-3 overflow-x-auto border-t pt-3">
+          <div className="flex w-max min-w-full items-center gap-1 pb-1">
             {tabs.map((item) => (
               <button key={item.id} onClick={() => goTab(item.id)} className={`rounded-lg px-3 py-1.5 text-xs font-medium ${item.urgent ? (tab === item.id ? "bg-red-600 text-white ring-2 ring-red-200" : "bg-red-50 text-red-700 ring-1 ring-red-300 hover:bg-red-100") : tab === item.id ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`}>{item.label}{item.urgent && <span className="ml-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-current" title={`${summaryQ.data?.actionable_count ?? changesQ.data?.actionable_count ?? 0} changes require action`} />}{typeof item.count === "number" && <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] ${item.urgent ? (tab === item.id ? "bg-white/20" : "bg-red-100") : tab === item.id ? "bg-white/20" : "bg-gray-100"}`}>{item.count}</span>}</button>
             ))}

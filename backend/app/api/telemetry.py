@@ -181,6 +181,55 @@ async def coverage(
     return await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False, connection_id=connection_id)
 
 
+@router.get("/fleet")
+async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """Latest cached telemetry coverage for every active workload; never scans Azure."""
+    from app.workloads.registry import list_workloads
+
+    ttl, _approved, _cap = _settings()
+    tenant_id = principal.tenant_id or "default"
+    rows: list[dict[str, Any]] = []
+    for workload in list_workloads():
+        snapshot = cache.read_snapshot(tenant_id, "workload", workload["id"])
+        age = cache.age_seconds(snapshot) if snapshot else None
+        kpis = (snapshot or {}).get("kpis") or {}
+        resources = int(kpis.get("total_resources_in_reference", 0) or 0)
+        rows.append({
+            "workload_id": workload["id"],
+            "name": workload.get("name", ""),
+            "connection_id": workload.get("connection_id", ""),
+            "criticality": workload.get("criticality", ""),
+            "environment": workload.get("environment", ""),
+            "has_scan": snapshot is not None,
+            "run_at": (snapshot or {}).get("generated_at", ""),
+            "coverage_pct": (snapshot or {}).get("coverage_pct") if resources > 0 else None,
+            "resources": resources,
+            "with_any_diag": int(kpis.get("with_any_diag", 0) or 0),
+            "with_all_categories": int(kpis.get("with_all_categories", 0) or 0),
+            "unknown_destinations": int(kpis.get("unknown_destinations", 0) or 0),
+            "unreadable": int(kpis.get("unreadable", 0) or 0),
+            "gaps": len((snapshot or {}).get("gaps") or []),
+            "demo": bool((snapshot or {}).get("demo", False)),
+            "age_seconds": int(age) if age is not None else None,
+            "stale": snapshot is None or age is None or age >= ttl,
+            "error": str((snapshot or {}).get("error") or ""),
+        })
+    rows.sort(key=lambda row: (
+        not row["has_scan"],
+        row["coverage_pct"] is None,
+        row["coverage_pct"] if row["coverage_pct"] is not None else 999,
+        -row["gaps"],
+        row["name"].lower(),
+        row["workload_id"],
+    ))
+    return {
+        "workloads": rows,
+        "ttl_s": ttl,
+        "total": len(rows),
+        "scanned": sum(1 for row in rows if row["has_scan"]),
+    }
+
+
 @router.post("/refresh")
 async def refresh(
     workload_id: str | None = Query(default=None),

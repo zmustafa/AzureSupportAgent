@@ -169,6 +169,60 @@ async def coverage(
     return await _get_snapshot(principal, scope_kind, scope_id, force=False, compute=False, connection_id=connection_id)
 
 
+@router.get("/fleet")
+async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
+    """Latest cached backup/DR coverage for every active workload; never scans Azure."""
+    from app.workloads.registry import list_workloads
+
+    ttl, _stale, _sla, _cap = _settings()
+    tenant_id = principal.tenant_id or "default"
+    rows: list[dict[str, Any]] = []
+    for workload in list_workloads():
+        snapshot = cache.read_snapshot(tenant_id, "workload", workload["id"])
+        age = cache.age_seconds(snapshot) if snapshot else None
+        scorecard = (snapshot or {}).get("scorecard") or {}
+        total = int(scorecard.get("total", 0) or 0)
+        protected = int(scorecard.get("protected", 0) or 0)
+        rows.append({
+            "workload_id": workload["id"],
+            "name": workload.get("name", ""),
+            "connection_id": workload.get("connection_id", ""),
+            "criticality": workload.get("criticality", ""),
+            "environment": workload.get("environment", ""),
+            "has_scan": snapshot is not None,
+            "run_at": (snapshot or {}).get("generated_at", ""),
+            "pct_protected": scorecard.get("pct_protected") if total > 0 else None,
+            "total": total,
+            "protected": protected,
+            "unprotected": max(0, total - protected),
+            "pct_offsite": scorecard.get("pct_offsite"),
+            "pct_recent_job": scorecard.get("pct_recent_job"),
+            "dr_pairs": int(scorecard.get("dr_pairs", 0) or 0),
+            "dr_pairs_stale": int(scorecard.get("dr_pairs_stale", 0) or 0),
+            "dr_pairs_unhealthy": int(scorecard.get("dr_pairs_unhealthy", 0) or 0),
+            "gaps": len((snapshot or {}).get("gaps") or []),
+            "demo": bool((snapshot or {}).get("demo", False)),
+            "age_seconds": int(age) if age is not None else None,
+            "stale": snapshot is None or age is None or age >= ttl,
+            "error": str((snapshot or {}).get("error") or ""),
+        })
+    rows.sort(key=lambda row: (
+        not row["has_scan"],
+        row["pct_protected"] is None,
+        row["pct_protected"] if row["pct_protected"] is not None else 999,
+        -row["unprotected"],
+        -row["gaps"],
+        row["name"].lower(),
+        row["workload_id"],
+    ))
+    return {
+        "workloads": rows,
+        "ttl_s": ttl,
+        "total": len(rows),
+        "scanned": sum(1 for row in rows if row["has_scan"]),
+    }
+
+
 @router.post("/refresh")
 async def refresh(
     workload_id: str | None = Query(default=None),

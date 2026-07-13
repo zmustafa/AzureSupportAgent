@@ -18,9 +18,12 @@ import {
 } from "../api";
 import { formatError, formatTimestamp } from "../utils/format";
 import { useDebounced, Skeleton, VirtualList } from "../utils/perf";
+import { usePersistedState } from "../utils/persistedState";
 import { CopyButton } from "./CopyButton";
 import { AzureIcon, friendlyResourceType } from "./AzureIcon";
 import { PillarRadar } from "./PillarRadar";
+import { AssessmentFleet } from "./assessments/AssessmentFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
 
 // Render AI-authored text (executive summary, per-finding impact) as Markdown so **bold**,
 // lists, etc. display formatted instead of raw. Styling is via arbitrary variants (this app
@@ -1425,7 +1428,7 @@ function RunHistory({ runs, onOpen, onDelete, onCancel }: { runs: AssessmentRunS
     () => (localStorage.getItem("azsup.assessments.groupBy") as "none" | "workload" | "status") || "workload");
   // "all" = full grouped history; "latest" = one row per workload (its newest run).
   const [view, setView] = useState<"all" | "latest">(
-    () => (localStorage.getItem("azsup.assessments.view") as "all" | "latest") || "all");
+    () => (localStorage.getItem("azsup.assessments.historyView") as "all" | "latest") || "all");
   // Recency window in days (0 = all time). Active runs are always kept regardless.
   const [windowDays, setWindowDays] = useState<0 | 7 | 30 | 90>(() => {
     const v = Number(localStorage.getItem("azsup.assessments.windowDays"));
@@ -1433,7 +1436,7 @@ function RunHistory({ runs, onOpen, onDelete, onCancel }: { runs: AssessmentRunS
   });
   // Persist the history toolbar preferences (window / view / group by) across sessions.
   useEffect(() => { localStorage.setItem("azsup.assessments.groupBy", groupBy); }, [groupBy]);
-  useEffect(() => { localStorage.setItem("azsup.assessments.view", view); }, [view]);
+  useEffect(() => { localStorage.setItem("azsup.assessments.historyView", view); }, [view]);
   useEffect(() => { localStorage.setItem("azsup.assessments.windowDays", String(windowDays)); }, [windowDays]);
   // Per-group open/closed override (key → bool). Unset keys fall back to the busy heuristic.
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
@@ -1866,11 +1869,28 @@ function CustomCheckEditor({ draft, setDraft, onSave, onCancel }: { draft: Parti
 }
 
 // ---------------- Panel ----------------
+type AssessmentMainView = "assessments" | "fleet" | "cleanup";
 type Tab = "run" | "portfolio" | "custom" | "trash";
+
+function AssessmentViewTabs({ value, onChange }: { value: AssessmentMainView; onChange: (value: AssessmentMainView) => void }) {
+  return <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+    <button onClick={() => onChange("assessments")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "assessments" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>📋 Assessments</button>
+    <button onClick={() => onChange("fleet")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "fleet" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🚀 Fleet</button>
+    <button onClick={() => onChange("cleanup")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "cleanup" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🧹 Cleanup</button>
+  </div>;
+}
+
 export function AssessmentsPanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const [storedMainView, setMainView] = usePersistedState<AssessmentMainView>("azsup.assessments.view", "assessments");
+  // Older builds used this key for the History "all/latest" preference. Treat those
+  // legacy values as the primary Assessments mode; History now has its own key.
+  const mainView: AssessmentMainView = (["assessments", "fleet", "cleanup"] as string[]).includes(storedMainView)
+    ? storedMainView
+    : "assessments";
+  useEffect(() => { if (mainView !== storedMainView) setMainView(mainView); }, [mainView, setMainView, storedMainView]);
   const [tab, setTab] = useState<Tab>("run");
   // Refresh the admin-tunable score color bands (Settings → Assessments & Architecture).
   const catalogQ = useQuery({ queryKey: ["assessmentCatalog"], queryFn: api.assessmentCatalog, staleTime: 60_000 });
@@ -1913,8 +1933,32 @@ export function AssessmentsPanel() {
     return <div className="h-full overflow-y-auto bg-gray-50"><RunDetail key={id} runId={id} onBack={() => navigate("/assessments")} /></div>;
   }
 
+  if (mainView === "fleet") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <AssessmentViewTabs value={mainView} onChange={setMainView} />
+      <AssessmentFleet
+        onOpenReport={(runId) => navigate(`/assessments/${runId}`)}
+        onOpenWorkload={(workloadId) => { setWorkloadFilter(workloadId); setTab("run"); setMainView("assessments"); }}
+      />
+    </div>;
+  }
+
+  if (mainView === "cleanup") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <AssessmentViewTabs value={mainView} onChange={setMainView} />
+      <RunCleanup
+        prefix="/assessments"
+        queryKey={["assessmentCleanup"]}
+        invalidateKeys={[["assessmentFleet"], ["assessmentRuns"], ["assessmentPortfolio"], ["assessmentTrash"]]}
+        isEmptyRun={(run) => !!run.status && !["succeeded", "complete", "completed"].includes(run.status)}
+        renderMeta={(run) => <span className="text-gray-700">{run.scope_name}{typeof run.score === "number" ? <span className="ml-2 text-gray-400">score {run.score}</span> : null}{run.status ? <span className={`ml-2 ${run.status === "succeeded" ? "text-green-600" : "text-amber-600"}`}>{run.status}</span> : null}</span>}
+      />
+    </div>;
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
+      <AssessmentViewTabs value={mainView} onChange={setMainView} />
       <div className="mx-auto max-w-7xl space-y-5 p-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-800">Assessments</h1>

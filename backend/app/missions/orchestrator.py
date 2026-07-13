@@ -5,16 +5,16 @@ selected systems, streams live progress to SSE subscribers, and persists a ``Mis
 row incrementally so partial progress + history survive a crash. Mirrors the
 ``architectures.jobs`` manager pattern (in-memory live state; DB is the durable record).
 
-Concurrency: every system is scheduled at once and runs under a small semaphore (so ≥3 are
-in flight from the start). Systems declare ``depends_on`` (Memory → Architecture) and a
-dependent simply waits for its prerequisites to finish first. Heavy-LLM systems share a
-smaller AI semaphore and retry on provider rate-limits (HTTP 429) with exponential backoff,
-so a fan-out of AI work overlaps without tripping the model's per-minute quota.
+Concurrency: systems run serially inside a mission, while a central FIFO admission queue
+limits how many missions may run globally and against one Azure connection. Systems declare
+``depends_on`` (Memory → Architecture), and heavy-LLM systems retain a separate guard and
+bounded provider-rate-limit retries.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import time
 import uuid
@@ -36,6 +36,14 @@ _AI_MAX_RETRIES = 3           # retry a rate-limited (429) AI system this many t
 _AI_BACKOFF_BASE = 4.0        # seconds; exponential backoff base for 429 retries
 _RETAIN_SECONDS = 1800  # keep finished missions in memory briefly for live SSE replay
 _TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
+
+# Mission-wide Azure admission limits. Systems are already serial inside each mission;
+# this second, CENTRAL layer prevents a fleet launch from running many independent serial
+# chains against the same Azure connection at once. Conservative defaults can be tuned
+# without redeploying code.
+_MAX_ACTIVE_MISSIONS_GLOBAL = max(1, int(os.getenv("MISSION_QUEUE_MAX_GLOBAL", "2")))
+_MAX_ACTIVE_MISSIONS_PER_CONNECTION = max(1, int(os.getenv("MISSION_QUEUE_MAX_PER_CONNECTION", "1")))
+_MISSION_START_STAGGER_S = max(0.0, float(os.getenv("MISSION_QUEUE_START_STAGGER_MS", "750")) / 1000.0)
 
 # Substrings that mark an exception as a provider rate-limit (HTTP 429) we should back off on.
 _THROTTLE_MARKERS = ("429", "rate limit", "rate_limit", "too many requests", "toomanyrequests", "throttl")
@@ -71,6 +79,9 @@ class _Mission:
     task: asyncio.Task | None = field(default=None, repr=False)
     cancel_requested: bool = field(default=False, repr=False)
     subscribers: set[asyncio.Queue] = field(default_factory=set, repr=False)
+    queued_at: float = field(default_factory=time.time)
+    queue_position: int | None = None
+    queue_lane: str = ""
 
     def public(self) -> dict[str, Any]:
         systems = [self.systems[k] for k in self.system_keys if k in self.systems]
@@ -92,9 +103,108 @@ class _Mission:
             "log": self.log[-50:],
             "error": self.error,
             "created_at": _iso(self.created_at),
+            "queued_at": _iso(self.queued_at),
+            "queue_position": self.queue_position,
+            "queue_lane": self.queue_lane,
             "started_at": _iso(self.started_at),
             "ended_at": _iso(self.ended_at),
         }
+
+
+class _AdmissionQueue:
+    """Process-wide FIFO admission control for Azure-heavy missions.
+
+    A lane is application tenant + Azure connection. Only one mission per lane runs by
+    default, while a small global cap allows truly independent connections to progress.
+    """
+
+    def __init__(self) -> None:
+        self._pending: list[tuple[_Mission, asyncio.Future[None]]] = []
+        self._active: dict[str, tuple[str, str]] = {}
+        self._lane_counts: dict[tuple[str, str], int] = {}
+        self._lock = asyncio.Lock()
+        self._last_start = 0.0
+
+    @staticmethod
+    def lane(mission: _Mission) -> tuple[str, str]:
+        return (mission.tenant_id or "default", mission.connection_id or "no-connection")
+
+    async def acquire(self, mission: _Mission) -> None:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
+        mission.queue_lane = self.lane(mission)[1]
+        async with self._lock:
+            self._pending.append((mission, future))
+            self._refresh_positions()
+            self._dispatch_locked()
+        try:
+            await future
+            # Spread admissions so two independent connection lanes do not burst at the
+            # exact same instant. The slot is already reserved while this short delay runs.
+            wait = self._last_start + _MISSION_START_STAGGER_S - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_start = time.monotonic()
+        except BaseException:
+            async with self._lock:
+                self._pending = [(m, f) for m, f in self._pending if m.id != mission.id]
+                if mission.id in self._active:
+                    self._release_locked(mission.id)
+                self._refresh_positions()
+                self._dispatch_locked()
+            raise
+
+    async def release(self, mission_id: str) -> None:
+        async with self._lock:
+            self._release_locked(mission_id)
+            self._refresh_positions()
+            self._dispatch_locked()
+
+    def _release_locked(self, mission_id: str) -> None:
+        lane = self._active.pop(mission_id, None)
+        if lane is None:
+            return
+        remaining = self._lane_counts.get(lane, 0) - 1
+        if remaining > 0:
+            self._lane_counts[lane] = remaining
+        else:
+            self._lane_counts.pop(lane, None)
+
+    def _dispatch_locked(self) -> None:
+        while len(self._active) < _MAX_ACTIVE_MISSIONS_GLOBAL:
+            eligible = next((i for i, (mission, _future) in enumerate(self._pending)
+                             if self._lane_counts.get(self.lane(mission), 0) < _MAX_ACTIVE_MISSIONS_PER_CONNECTION), None)
+            if eligible is None:
+                break
+            mission, future = self._pending.pop(eligible)
+            lane = self.lane(mission)
+            self._active[mission.id] = lane
+            self._lane_counts[lane] = self._lane_counts.get(lane, 0) + 1
+            mission.queue_position = None
+            if not future.done():
+                future.set_result(None)
+            self._refresh_positions()
+
+    def _refresh_positions(self) -> None:
+        for position, (mission, _future) in enumerate(self._pending, start=1):
+            mission.queue_position = position
+
+    def snapshot(self, tenant_id: str) -> dict[str, Any]:
+        tenant = tenant_id or "default"
+        pending = [mission for mission, _future in self._pending if self.lane(mission)[0] == tenant]
+        active = [mission_id for mission_id, lane in self._active.items() if lane[0] == tenant]
+        return {
+            "pending": len(pending),
+            "active": len(active),
+            "max_global": _MAX_ACTIVE_MISSIONS_GLOBAL,
+            "max_per_connection": _MAX_ACTIVE_MISSIONS_PER_CONNECTION,
+            "missions": [{"id": mission.id, "workload_id": mission.workload_id,
+                          "connection_id": mission.connection_id, "position": mission.queue_position}
+                         for mission in pending],
+        }
+
+
+_admission = _AdmissionQueue()
 
 
 class _Manager:
@@ -166,6 +276,9 @@ class _Manager:
         if m.task is not None:
             m.task.cancel()
         return True
+
+    def queue_state(self, tenant_id: str) -> dict[str, Any]:
+        return _admission.snapshot(tenant_id)
 
     async def stream(self, mission_id: str, tenant_id: str):
         """SSE generator: emit a snapshot then live deltas until the mission ends."""
@@ -277,6 +390,8 @@ class _Manager:
                 row.systems_json = pub["systems"]
                 row.log_json = mission.log  # persist the full activity log so it reloads on reopen
                 row.error = mission.error or None
+                if mission.started_at:
+                    row.started_at = datetime.fromtimestamp(mission.started_at, tz=timezone.utc)
                 if mission.status in _TERMINAL and row.ended_at is None:
                     row.ended_at = _now()
                     if mission.started_at:
@@ -298,7 +413,7 @@ class _Manager:
                         workload_id=mission.workload_id,
                         workload_name=mission.workload_name,
                         connection_id=mission.connection_id or None,
-                        status="running",
+                        status="queued",
                         readiness="unknown",
                         systems_total=len(mission.system_keys),
                         systems_json=[mission.systems[k] for k in mission.system_keys],
@@ -411,7 +526,9 @@ class _Manager:
         hard_fail = any(s["status"] in ("fail", "error") for s in systems)
         attention = any(s.get("attention") or s["status"] in ("fail", "error") for s in systems)
         ran = [s for s in systems if s["status"] in ("done", "fail", "error")]
-        if hard_fail:
+        if mission.cancel_requested:
+            mission.readiness = "cancelled"
+        elif hard_fail:
             mission.readiness = "nogo"
         elif attention:
             mission.readiness = "warn"
@@ -430,12 +547,22 @@ class _Manager:
         from app.core.azure_connections import connection_for_workload, resolve_connection
         from app.workloads.registry import get_workload
 
-        mission.status = "running"
-        mission.started_at = time.time()
+        mission.status = "queued"
         await self._create_row(mission)
-        self._log(mission, f"Mission launched for '{mission.workload_name}' ({len(mission.system_keys)} systems)")
+        self._log(mission, f"Mission queued for '{mission.workload_name}' ({len(mission.system_keys)} systems) · lane {mission.connection_id or 'no-connection'}")
+        await self._persist(mission)
+        admitted = False
 
         try:
+            await _admission.acquire(mission)
+            admitted = True
+            if mission.cancel_requested:
+                raise asyncio.CancelledError
+            mission.status = "running"
+            mission.started_at = time.time()
+            self._log(mission, "Central Azure capacity acquired — mission started")
+            self._emit(mission, "snapshot", mission.public())
+            await self._persist(mission)
             wl = get_workload(mission.workload_id)
             if wl is None:
                 mission.error = "Workload not found."
@@ -495,6 +622,8 @@ class _Manager:
         finally:
             await self._persist(mission)
             self._emit(mission, "done", mission.public())
+            if admitted:
+                await _admission.release(mission.id)
 
     def _prune(self) -> None:
         now = time.time()
@@ -555,6 +684,27 @@ async def list_missions(tenant_id: str, workload_id: str | None = None, limit: i
         stmt = stmt.order_by(MissionRun.started_at.desc()).limit(limit)
         rows = (await db.execute(stmt)).scalars().all()
     return [_row_public(r, include_log=False) for r in rows]
+
+
+async def latest_missions_by_workload(tenant_id: str) -> list[dict[str, Any]]:
+    """Return one newest visible mission per workload without a global row cap."""
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.models import MissionRun
+
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(MissionRun)
+                .where(MissionRun.tenant_id == tenant_id, MissionRun.deleted_at.is_(None))
+                .order_by(MissionRun.started_at.desc())
+            )
+        ).scalars().all()
+    latest: dict[str, Any] = {}
+    for row in rows:
+        latest.setdefault(row.workload_id, row)
+    return [_row_public(row, include_log=False) for row in latest.values()]
 
 
 async def reap_orphaned_missions() -> int:
@@ -662,6 +812,9 @@ def _row_public(row: Any, *, include_log: bool = True) -> dict[str, Any]:
         "log": (row.log_json or []) if include_log else [],
         "error": row.error or "",
         "created_at": row.started_at.isoformat() if row.started_at else "",
+        "queued_at": row.started_at.isoformat() if row.started_at else "",
+        "queue_position": None,
+        "queue_lane": row.connection_id or "no-connection",
         "started_at": row.started_at.isoformat() if row.started_at else "",
         "ended_at": row.ended_at.isoformat() if row.ended_at else "",
         "duration_ms": row.duration_ms,

@@ -23,6 +23,18 @@ import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PageIntro } from "./PageIntro";
 import { PAGE_INTROS } from "../help/content";
+import { BackupDrCoverageFleet } from "./coverage/BackupDrCoverageFleet";
+import { RunCleanup } from "./cleanup/RunCleanup";
+
+type CoverageMainView = "coverage" | "fleet" | "cleanup";
+
+function CoverageViewTabs({ value, onChange }: { value: CoverageMainView; onChange: (value: CoverageMainView) => void }) {
+  return <div className="flex items-center gap-1 border-b bg-white px-5 pt-2">
+    <button onClick={() => onChange("coverage")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "coverage" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🛡️ Coverage</button>
+    <button onClick={() => onChange("fleet")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "fleet" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🚀 Fleet</button>
+    <button onClick={() => onChange("cleanup")} className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${value === "cleanup" ? "border-brand font-medium text-brand" : "border-transparent text-gray-500 hover:text-gray-700"}`}>🧹 Cleanup</button>
+  </div>;
+}
 
 const CELL_CLS: Record<string, string> = {
   green: "text-green-600",
@@ -162,6 +174,7 @@ function BackupMatrixBody({ group, openDrawer }: { group: BackupDrGroup; openDra
 export function BackupDrCoveragePanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [mainView, setMainView] = usePersistedState<CoverageMainView>("azsup.backupdr.view", "coverage");
   const bp0 = useRef(new URLSearchParams(window.location.search)).current;
   const [tab, setTab] = useState<"backup" | "dr" | "all">((bp0.get("tab") as "backup" | "dr" | "all") || "backup");
   const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.backupdr.scopeKind", "workload");
@@ -407,8 +420,35 @@ export function BackupDrCoveragePanel() {
     setDrawerTab("details");
   }
 
+  if (mainView === "fleet") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <BackupDrCoverageFleet onOpenWorkload={(id, connectionId) => {
+        setScopeKind("workload");
+        setWorkloadId(id);
+        setConnId(connectionId);
+        setLoadedScope(`workload:${id}:${connectionId}`);
+        setMainView("coverage");
+      }} />
+    </div>;
+  }
+
+  if (mainView === "cleanup") {
+    return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
+      <RunCleanup
+        prefix="/backupdr"
+        queryKey={["backupdrCleanup"]}
+        invalidateKeys={[["backupdrFleet"]]}
+        isEmptyRun={(run) => (run.resource_count ?? 0) === 0}
+        renderMeta={(run) => <span className="text-gray-700">{run.scope_name}{typeof run.headline === "number" ? <span className="ml-2 text-gray-400">{run.headline}% protected</span> : null}</span>}
+      />
+    </div>;
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
+      <CoverageViewTabs value={mainView} onChange={setMainView} />
       {/* Header */}
       <div className="border-b bg-white px-6 py-3">
         <div className="flex flex-wrap items-center gap-4">
