@@ -99,7 +99,11 @@ function SankeyNode(props: SankeyNodeProps) {
   const dimmed = !!selectedKey && !selected;
   const label = String(payload.name || "Unnamed node");
   const short = label.length > 38 ? `${label.slice(0, 35)}…` : label;
-  const onRight = ["resource", "alert", "action_group"].includes(payload.kind || "");
+  // Workload nodes occupy the far-left Sankey column. Drawing their labels outward with
+  // textAnchor="end" lets Recharts' SVG clipping remove the beginning of the name (for
+  // example ShoppingSite appeared only as "ngSite"). Keep workload labels on the inward
+  // side of the node; all other column placement remains unchanged.
+  const onRight = ["scope", "workload", "resource", "alert", "action_group"].includes(payload.kind || "");
   const showAzureIcon = ["resource", "alert", "action_group"].includes(payload.kind || "");
   const iconX = onRight ? x + width + 6 : x - 22;
   const labelX = onRight ? x + width + (showAzureIcon ? 27 : 7) : x - (showAzureIcon ? 27 : 7);
