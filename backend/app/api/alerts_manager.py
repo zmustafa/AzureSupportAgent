@@ -235,10 +235,19 @@ class ActivityLogPlanRequest(BaseModel):
     management_group_id: str | None = Field(default=None, max_length=1000)
     subscription_ids: list[str] = Field(default_factory=list, max_length=5000)
     categories: list[str] = Field(default_factory=list, max_length=5)
-    resource_group: str = Field(min_length=1, max_length=90)
-    routing_mode: Literal["common", "per_category"] = "common"
+    resource_group: str | None = Field(default=None, max_length=90)
+    resource_groups_by_subscription: dict[str, str] = Field(default_factory=dict)
+    create_missing_resource_groups: bool = False
+    resource_group_locations_by_subscription: dict[str, str] = Field(default_factory=dict)
+    routing_mode: Literal["common", "per_category", "hybrid"] = "common"
     common_action_group_id: str = Field(default="", max_length=1000)
     action_group_ids_by_category: dict[str, list[str]] = Field(default_factory=dict)
+    central_action_group_id: str = Field(default="", max_length=1000)
+    action_group_overrides_by_subscription: dict[str, str] = Field(default_factory=dict)
+    subscriptions_requiring_action_group_clone: list[str] = Field(default_factory=list, max_length=5000)
+    create_missing_action_groups: bool = False
+    clone_source_action_group_id: str = Field(default="", max_length=1000)
+    clone_action_group_name_prefix: str = Field(default="essential-activity", max_length=120)
     conditions_by_category: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     name_prefix: str = Field(default="essential-activity", max_length=120)
 
@@ -249,6 +258,15 @@ class ActivityLogPlanValidationRequest(ActivityLogPlanRequest):
 
 class ActivityLogPlanSubmitRequest(ActivityLogPlanValidationRequest):
     reason: str = Field(min_length=1, max_length=1000)
+
+
+class ActivityLogDestinationPolicyRequest(BaseModel):
+    connection_id: str = Field(default="", max_length=128)
+    preferred_resource_group_name: str = Field(default="", max_length=90)
+    default_location: str = Field(default="", max_length=128)
+    resource_groups_by_subscription: dict[str, str] = Field(default_factory=dict)
+    preferred_action_group_id: str = Field(default="", max_length=1000)
+    action_groups_by_subscription: dict[str, str] = Field(default_factory=dict)
 
 
 class ActivityLogDiagnosticDestination(BaseModel):
@@ -565,40 +583,182 @@ async def _build_activity_plan(
         resolved_connection_id = str(connection.get("id") or payload.connection_id)
         inputs = payload.model_dump(exclude={"plan_token", "reason"})
         inputs["connection_id"] = resolved_connection_id
+        from app.alerts_manager import activity_destination_policy
+
+        selected_scope_subscriptions = {
+            str(value).strip().lower() for value in (payload.subscription_ids or subscriptions) if str(value).strip()
+        }
+        for field in (
+            "resource_groups_by_subscription", "resource_group_locations_by_subscription",
+            "action_group_overrides_by_subscription",
+        ):
+            normalized: dict[str, str] = {}
+            for raw_subscription, raw_value in inputs.get(field, {}).items():
+                subscription = str(raw_subscription).strip().lower()
+                if not subscription or len(subscription) > 128 or "/" in subscription or "\x00" in subscription:
+                    raise ValueError(f"{field} contains an invalid subscription ID.")
+                if subscription not in selected_scope_subscriptions:
+                    raise ValueError(f"{field} contains a subscription outside the selected scope: {raw_subscription}")
+                value = (
+                    activity_destination_policy.validate_resource_group(str(raw_value), required=True)
+                    if field == "resource_groups_by_subscription"
+                    else activity_destination_policy.validate_location(str(raw_value), required=True)
+                    if field == "resource_group_locations_by_subscription"
+                    else activity_destination_policy.validate_action_group_id(str(raw_value), required=True)
+                )
+                if subscription in normalized and normalized[subscription] != value:
+                    raise ValueError(f"{field} contains conflicting duplicate subscription IDs.")
+                normalized[subscription] = value
+            inputs[field] = normalized
+        clone_subscriptions: list[str] = []
+        for raw_subscription in inputs.get("subscriptions_requiring_action_group_clone") or []:
+            subscription = str(raw_subscription).strip().lower()
+            if subscription not in selected_scope_subscriptions:
+                raise ValueError(
+                    "subscriptions_requiring_action_group_clone contains a subscription outside the selected scope: "
+                    f"{raw_subscription}"
+                )
+            if subscription not in clone_subscriptions:
+                clone_subscriptions.append(subscription)
+        inputs["subscriptions_requiring_action_group_clone"] = sorted(clone_subscriptions)
+        if inputs.get("resource_group"):
+            inputs["resource_group"] = activity_destination_policy.validate_resource_group(
+                str(inputs["resource_group"]), required=True,
+            )
+        action_group_changes: list[dict[str, Any]] = []
+        existing_clone_subscriptions: list[str] = []
+        if inputs.get("routing_mode") == "hybrid" and clone_subscriptions:
+            source_id = activity_destination_policy.validate_action_group_id(
+                str(inputs.get("clone_source_action_group_id") or ""), required=True,
+            )
+            source = next((
+                item for item in action_groups
+                if str(item.get("id") or "").lower().rstrip("/") == source_id.lower().rstrip("/")
+            ), None)
+            source_errors: list[str] = []
+            if not source:
+                source_errors.append("Clone source Action Group is not visible in the selected connection inventory.")
+            elif not bool(source.get("enabled", True)):
+                source_errors.append("Clone source Action Group is disabled.")
+            elif int(source.get("active_receiver_count") or 0) < 1:
+                source_errors.append("Clone source Action Group has no active receivers.")
+            prefix = activity_destination_policy.validate_action_group_name_prefix(
+                str(inputs.get("clone_action_group_name_prefix") or "essential-activity")
+            )
+            for subscription in clone_subscriptions:
+                resource_group = (
+                    inputs.get("resource_groups_by_subscription", {}).get(subscription)
+                    or str(inputs.get("resource_group") or "")
+                )
+                name = activity_destination_policy.clone_action_group_name(prefix, subscription)
+                target_id = (
+                    f"/subscriptions/{subscription}/resourceGroups/{resource_group}"
+                    f"/providers/Microsoft.Insights/actionGroups/{name}"
+                )
+                errors = list(source_errors)
+                if not inputs.get("create_missing_action_groups"):
+                    errors.append("Action Group clone creation was not explicitly enabled.")
+                live, status, error = await service.get_arm_resource(connection, target_id)
+                live_props = live.get("properties") if live and isinstance(live.get("properties"), dict) else {}
+                receiver_count = activity_destination_policy.receiver_count(live or source or {})
+                if live:
+                    healthy = bool(live_props.get("enabled", True)) and receiver_count > 0
+                    classification, actionable = ("existing", False) if healthy else ("invalid", False)
+                    if not healthy:
+                        errors.append("An Action Group already exists at the clone target but is disabled or has no receivers.")
+                    else:
+                        existing_clone_subscriptions.append(subscription)
+                        action_groups.append({
+                            "id": target_id, "name": name, "subscription_id": subscription,
+                            "resource_group": resource_group, "enabled": True,
+                            "receiver_count": receiver_count, "active_receiver_count": receiver_count,
+                            "tags": live.get("tags") or {},
+                        })
+                elif status == 404 and not errors:
+                    classification, actionable = "create", True
+                else:
+                    classification, actionable = "invalid", False
+                    if status != 404:
+                        errors.append(f"Could not verify clone target availability: {error or f'ARM status {status}'}.")
+                action_group_changes.append({
+                    "subscription_id": subscription, "resource_group": resource_group,
+                    "name": name, "source_id": source_id, "target_id": target_id,
+                    "classification": classification, "actionable": actionable,
+                    "relationship": "local" if classification == "existing" else "planned_clone",
+                    "receiver_count": receiver_count, "errors": errors,
+                })
+        inputs["_existing_clone_subscriptions"] = existing_clone_subscriptions
         plan = activity_planner.preview_plan(
             inputs, subscription_ids=subscriptions, rules_inventory=rule_rows,
             action_groups=action_groups,
             blockers=await _activity_blockers(db, _tenant(principal), resolved_connection_id),
         )
-        create_items = [item for item in plan["items"] if item["classification"] == "create"]
-        if create_items:
-            resource_group = str(inputs.get("resource_group") or "")
-            checks: dict[str, tuple[dict[str, Any] | None, int, str]] = {}
-            for subscription in sorted({str(item["subscription_id"]) for item in create_items}):
-                checks[subscription] = await service.get_arm_resource(
-                    connection,
-                    f"/subscriptions/{subscription}/resourceGroups/{resource_group}",
-                    "2021-04-01",
-                )
-            for item in create_items:
-                live, status, error = checks[str(item["subscription_id"])]
-                if live:
-                    continue
-                detail = (
-                    f"Monitoring resource group '{resource_group}' does not exist in subscription {item['subscription_id']}."
-                    if status == 404 else
-                    f"Could not verify monitoring resource group '{resource_group}': {error or f'ARM status {status}'}."
-                )
-                item["classification"] = "invalid"
-                item["operation"] = "none"
-                item["actionable"] = False
-                item["validation_status"] = "invalid"
-                item["errors"].append(detail)
-                item["reason"] = detail
-                plan["counts"]["create"] -= 1
-                plan["counts"]["invalid"] += 1
-            plan["counts"]["actionable"] = sum(1 for item in plan["items"] if item["actionable"])
-            plan["valid"] = all(not item["errors"] for item in plan["items"] if item["actionable"]) and bool(plan["counts"]["actionable"])
+        pairs = sorted({(str(item["subscription_id"]), str(item["resource_group"])) for item in plan["items"]})
+        locations = {
+            str(key).strip().lower(): activity_destination_policy.validate_location(str(value))
+            for key, value in inputs.get("resource_group_locations_by_subscription", {}).items()
+        }
+        resource_group_changes: list[dict[str, Any]] = []
+        invalid_pairs: dict[tuple[str, str], str] = {}
+        for subscription, resource_group in pairs:
+            activity_destination_policy.validate_resource_group(resource_group, required=True)
+            target = f"/subscriptions/{subscription}/resourceGroups/{resource_group}"
+            location = locations.get(subscription.lower(), "")
+            errors: list[str] = []
+            live, status, error = await service.get_arm_resource(connection, target, "2021-04-01")
+            if live:
+                classification, actionable = "existing", False
+                location = str(live.get("location") or location)
+            elif status == 404 and inputs.get("create_missing_resource_groups") and location:
+                classification, actionable = "create", True
+            else:
+                classification, actionable = "invalid", False
+                if status == 404 and not inputs.get("create_missing_resource_groups"):
+                    errors.append(f"Monitoring resource group '{resource_group}' does not exist in subscription {subscription}.")
+                elif status == 404:
+                    errors.append(f"A location is required to create monitoring resource group '{resource_group}' in subscription {subscription}.")
+                else:
+                    errors.append(f"Could not verify monitoring resource group '{resource_group}': {error or f'ARM status {status}' }.")
+                invalid_pairs[(subscription.lower(), resource_group.lower())] = errors[0]
+            resource_group_changes.append({
+                "subscription_id": subscription, "resource_group": resource_group,
+                "location": location, "target_id": target, "classification": classification,
+                "actionable": actionable, "errors": errors,
+            })
+        for item in plan["items"]:
+            detail = invalid_pairs.get((str(item["subscription_id"]).lower(), str(item["resource_group"]).lower()))
+            if not detail:
+                continue
+            previous = item["classification"]
+            if previous in plan["counts"]:
+                plan["counts"][previous] -= 1
+            plan["counts"]["invalid"] += 1
+            item.update(classification="invalid", operation="none", actionable=False, validation_status="invalid", reason=detail)
+            item["errors"].append(detail)
+        resource_group_classifications = {
+            (str(item["subscription_id"]).lower(), str(item["resource_group"]).lower()): item["classification"]
+            for item in resource_group_changes
+        }
+        for item in action_group_changes:
+            item["resource_group_relationship"] = resource_group_classifications.get(
+                (str(item["subscription_id"]).lower(), str(item["resource_group"]).lower()), "invalid",
+            )
+        plan["resource_group_changes"] = resource_group_changes
+        plan["action_group_changes"] = action_group_changes
+        plan["counts"]["resource_group_create"] = sum(1 for item in resource_group_changes if item["classification"] == "create")
+        plan["counts"]["action_group_create"] = sum(1 for item in action_group_changes if item["classification"] == "create")
+        plan["counts"]["total"] = len(plan["items"]) + len(resource_group_changes) + len(action_group_changes)
+        plan["counts"]["actionable"] = (
+            sum(1 for item in plan["items"] if item["actionable"])
+            + plan["counts"]["resource_group_create"]
+            + plan["counts"]["action_group_create"]
+        )
+        plan["valid"] = (
+            not any(item["classification"] == "invalid" for item in resource_group_changes)
+            and not any(item["classification"] == "invalid" for item in action_group_changes)
+            and all(not item["errors"] for item in plan["items"] if item["actionable"])
+            and bool(plan["counts"]["actionable"])
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return connection, plan
@@ -650,6 +810,41 @@ async def activity_log_coverage(
         connection_id=connection_id, workload_id=workload_id, subscription_id=subscription_id,
         management_group_id=management_group_id, principal=principal, db=db,
     )
+
+
+@router.get("/activity-log-destination-policy")
+async def activity_log_destination_policy(
+    connection_id: str = Query(default=""),
+    principal: Principal = Depends(_rule_write),
+) -> dict[str, Any]:
+    from app.alerts_manager import activity_destination_policy as policies
+
+    connection = _connection(connection_id)
+    resolved = str(connection.get("id") or connection_id)
+    return policies.get_policy(_tenant(principal), resolved)
+
+
+@router.put("/activity-log-destination-policy")
+async def put_activity_log_destination_policy(
+    payload: ActivityLogDestinationPolicyRequest,
+    principal: Principal = Depends(_rule_write),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.alerts_manager import activity_destination_policy as policies
+
+    connection = _connection(payload.connection_id)
+    resolved = str(connection.get("id") or payload.connection_id)
+    try:
+        policy = policies.put_policy(
+            _tenant(principal), resolved, payload.model_dump(exclude={"connection_id"}),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.add(_audit(principal, "alerts_manager.activity_log_destination_policy.updated", resolved, {
+        "connection_id": resolved, "mapped_subscription_count": len(policy["resource_groups_by_subscription"]),
+    }))
+    await db.commit()
+    return policy
 
 
 @router.get("/activity-log-coverage/export")
@@ -709,6 +904,16 @@ async def validate_activity_log_plan(
         f"{item['category']} ({item['subscription_id']}): {error}"
         for item in plan["items"] if item["classification"] in {"invalid", "blocked"} for error in item["errors"]
     )
+    errors.extend(
+        f"Resource group {item['resource_group']} ({item['subscription_id']}): {error}"
+        for item in plan.get("resource_group_changes") or [] if item["classification"] == "invalid"
+        for error in item["errors"]
+    )
+    errors.extend(
+        f"Action Group {item['name']} ({item['subscription_id']}): {error}"
+        for item in plan.get("action_group_changes") or [] if item["classification"] == "invalid"
+        for error in item["errors"]
+    )
     if not plan["counts"]["actionable"]:
         errors.append("The plan has no new Activity Log rules to submit.")
     return {"valid": not errors, "errors": errors, "plan": plan}
@@ -726,8 +931,19 @@ async def submit_activity_log_plan(
     if payload.plan_token != plan["plan_token"]:
         raise HTTPException(status_code=409, detail="The plan inputs changed after preview. Preview the plan again.")
     actionable = [item for item in plan["items"] if item["actionable"]]
-    validation_errors = [error for item in actionable for error in item["errors"]]
-    if validation_errors or not actionable:
+    prerequisite_actionable = [item for item in plan.get("resource_group_changes") or [] if item["actionable"]]
+    action_group_actionable = [item for item in plan.get("action_group_changes") or [] if item["actionable"]]
+    validation_errors = [
+        error for item in plan["items"] if item["classification"] in {"invalid", "blocked"}
+        for error in item["errors"]
+    ]
+    validation_errors.extend(
+        error for item in plan.get("resource_group_changes") or [] for error in item["errors"]
+    )
+    validation_errors.extend(
+        error for item in plan.get("action_group_changes") or [] for error in item["errors"]
+    )
+    if validation_errors or not (actionable or prerequisite_actionable or action_group_actionable):
         raise HTTPException(status_code=422, detail={"message": "Activity Log plan is not submittable.", "errors": validation_errors})
     try:
         service.assert_writable(connection)
@@ -735,6 +951,93 @@ async def submit_activity_log_plan(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     batch_id = str(uuid.uuid4())
     changes: list[AlertManagerChange] = []
+    prerequisite_ids: dict[tuple[str, str], str] = {}
+    action_group_prerequisite_ids: dict[str, str] = {}
+    for prerequisite in plan.get("resource_group_changes") or []:
+        if not prerequisite.get("actionable"):
+            continue
+        change = AlertManagerChange(
+            id=str(uuid.uuid4()), tenant_id=_tenant(principal),
+            connection_id=str(connection.get("id") or payload.connection_id),
+            target_type="resource_group", target_id=prerequisite["target_id"], operation="create",
+            status="pending", risk="medium",
+            summary_json={
+                "reason": payload.reason, "batch_id": batch_id, "batch_order": len(changes) + 1,
+                "source": "essential_activity_log_wizard", "subscription_id": prerequisite["subscription_id"],
+                "resource_group": prerequisite["resource_group"], "location": prerequisite["location"],
+                "classification": "create", "approval_required": True,
+                "azure_writes_performed": False,
+            },
+            desired_encrypted=service.encrypted_json({
+                "payload": {"location": prerequisite["location"], "tags": {}},
+                "body": {"location": prerequisite["location"], "tags": {}},
+            }),
+            before_encrypted=service.encrypted_json({}), after_encrypted="", expected_state_hash="",
+            requested_by=principal.subject, requested_at=service.now(), auto_apply=False,
+        )
+        prerequisite_ids[(prerequisite["subscription_id"].lower(), prerequisite["resource_group"].lower())] = change.id
+        changes.append(change)
+        db.add(change)
+        db.add(_audit(principal, "alerts_manager.activity_log_resource_group_change.requested", change.target_id, {
+            "change_id": change.id, "batch_id": batch_id, "batch_order": change.summary_json["batch_order"],
+            "operation": "create", "approval_required": True, "azure_writes_performed": False,
+        }))
+    for prerequisite in plan.get("action_group_changes") or []:
+        if not prerequisite.get("actionable"):
+            continue
+        source, source_status, source_error = await service.get_arm_resource(connection, prerequisite["source_id"])
+        if source_error or not source:
+            raise HTTPException(
+                status_code=404 if source_status == 404 else 502,
+                detail=source_error or "Clone source Action Group was not found.",
+            )
+        editable = service.editable_action_group(source)
+        editable.update({
+            "id": "", "name": prerequisite["name"],
+            "subscription_id": prerequisite["subscription_id"],
+            "resource_group": prerequisite["resource_group"],
+            "short_name": re.sub(r"[^A-Za-z0-9]", "", prerequisite["name"])[:12] or "activityag",
+            "clone_source_id": prerequisite["source_id"],
+        })
+        clone_errors = service.validate_action_group_payload(editable, create=True)
+        if clone_errors:
+            raise HTTPException(status_code=422, detail=clone_errors)
+        body = service.build_action_group_body(editable, source)
+        rg_prerequisite_id = prerequisite_ids.get((
+            str(prerequisite["subscription_id"]).lower(), str(prerequisite["resource_group"]).lower(),
+        ), "")
+        prerequisite_change_ids = [rg_prerequisite_id] if rg_prerequisite_id else []
+        change = AlertManagerChange(
+            id=str(uuid.uuid4()), tenant_id=_tenant(principal),
+            connection_id=str(connection.get("id") or payload.connection_id),
+            target_type="action_group", target_id=prerequisite["target_id"], operation="create",
+            status="pending", risk="high",
+            summary_json={
+                "reason": payload.reason, "batch_id": batch_id, "batch_order": len(changes) + 1,
+                "source": "essential_activity_log_wizard", "wizard_created_clone": True,
+                "subscription_id": prerequisite["subscription_id"],
+                "resource_group": prerequisite["resource_group"],
+                "clone_source_id": prerequisite["source_id"],
+                "clone_source_name": service._name_from_id(prerequisite["source_id"]),
+                "resource_group_prerequisite_change_id": rg_prerequisite_id,
+                "prerequisite_change_ids": prerequisite_change_ids,
+                "receiver_count": prerequisite["receiver_count"],
+                "classification": "create", "approval_required": True,
+                "azure_writes_performed": False,
+                "desired": service.summarize_action_group_body(body),
+            },
+            desired_encrypted=service.encrypted_json({"payload": editable, "body": body}),
+            before_encrypted=service.encrypted_json({}), after_encrypted="", expected_state_hash="",
+            requested_by=principal.subject, requested_at=service.now(), auto_apply=False,
+        )
+        action_group_prerequisite_ids[str(prerequisite["subscription_id"]).lower()] = change.id
+        changes.append(change)
+        db.add(change)
+        db.add(_audit(principal, "alerts_manager.activity_log_action_group_change.requested", change.target_id, {
+            "change_id": change.id, "batch_id": batch_id, "batch_order": change.summary_json["batch_order"],
+            "operation": "create", "receiver_count": prerequisite["receiver_count"],
+            "approval_required": True, "azure_writes_performed": False,
+        }))
     for item in actionable:
         operation = str(item.get("operation") or "create")
         before: dict[str, Any] = {}
@@ -757,6 +1060,16 @@ async def submit_activity_log_plan(
                 raise HTTPException(status_code=422, detail=errors)
             desired = merged
             body = rules.build_rule_body("activity", merged, before)
+        rg_prerequisite_id = prerequisite_ids.get(
+            (str(item["subscription_id"]).lower(), str(item["resource_group"]).lower()), "",
+        )
+        action_group_prerequisite_id = (
+            action_group_prerequisite_ids.get(str(item["subscription_id"]).lower(), "")
+            if item.get("routing_relationship") == "planned_clone" else ""
+        )
+        prerequisite_change_ids = [
+            value for value in (rg_prerequisite_id, action_group_prerequisite_id) if value
+        ]
         change = AlertManagerChange(
             id=str(uuid.uuid4()),
             tenant_id=_tenant(principal),
@@ -764,9 +1077,15 @@ async def submit_activity_log_plan(
             target_type="activity_rule", target_id=item["target_id"], operation=operation,
             status="pending", risk="medium",
             summary_json={
-                "reason": payload.reason, "batch_id": batch_id, "batch_order": item["order"],
+                "reason": payload.reason, "batch_id": batch_id, "batch_order": len(changes) + 1,
                 "source": "essential_activity_log_wizard", "category": item["category"],
                 "subscription_id": item["subscription_id"],
+                "resource_group": item["resource_group"],
+                "prerequisite_change_id": rg_prerequisite_id,
+                "resource_group_prerequisite_change_id": rg_prerequisite_id,
+                "action_group_prerequisite_change_id": action_group_prerequisite_id,
+                "prerequisite_change_ids": prerequisite_change_ids,
+                "routing_relationship": item.get("routing_relationship") or "local",
                 "reason_detail": item["reason"], "validation_status": item["validation_status"],
                 "receiver_count": item["receiver_count"], "cost": item["cost"],
                 "existing_rule_details": item["existing_rule_details"], "issues": item["issues"],
@@ -787,7 +1106,7 @@ async def submit_activity_log_plan(
         changes.append(change)
         db.add(change)
         db.add(_audit(principal, "alerts_manager.activity_log_change.requested", item["target_id"], {
-            "change_id": change.id, "batch_id": batch_id, "batch_order": item["order"],
+            "change_id": change.id, "batch_id": batch_id, "batch_order": change.summary_json["batch_order"],
             "category": item["category"], "operation": operation,
             "evidence_summary": {
                 "classification": item["classification"], "validation_status": item["validation_status"],
@@ -2343,6 +2662,29 @@ async def apply_change(
     if change.status != "approved" and not retrying_failed_clone:
         raise HTTPException(status_code=409, detail="The change must be approved before it can be applied.")
     connection = _connection(change.connection_id)
+    summary = change.summary_json or {}
+    prerequisite_ids = [str(value) for value in summary.get("prerequisite_change_ids") or [] if str(value)]
+    legacy_prerequisite = str(summary.get("prerequisite_change_id") or "")
+    if legacy_prerequisite and legacy_prerequisite not in prerequisite_ids:
+        prerequisite_ids.append(legacy_prerequisite)
+    expected_types = {
+        str(summary.get("resource_group_prerequisite_change_id") or legacy_prerequisite): "resource_group",
+        str(summary.get("action_group_prerequisite_change_id") or ""): "action_group",
+    }
+    expected_types.pop("", None)
+    if prerequisite_ids:
+        for prerequisite_id in prerequisite_ids:
+            prerequisite = await db.get(AlertManagerChange, prerequisite_id)
+            if (
+                not prerequisite or prerequisite.tenant_id != change.tenant_id
+                or prerequisite.connection_id != change.connection_id
+                or prerequisite.status != "applied"
+                or (expected_types.get(prerequisite_id) and prerequisite.target_type != expected_types[prerequisite_id])
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="All prerequisite changes must be applied before this managed change.",
+                )
     if change.target_type == "action_group" and change.operation == "delete":
         groups = await service.list_action_groups(
             connection, subscription_id=service._subscription_from_id(change.target_id)
@@ -2352,6 +2694,8 @@ async def apply_change(
             raise HTTPException(status_code=409, detail="Action group gained references after approval; delete was blocked.")
     if change.target_type == "action_group":
         data, status, error = await service.apply_action_group_change(connection, change)
+    elif change.target_type == "resource_group":
+        data, status, error = await service.apply_resource_group_change(connection, change)
     elif change.target_type in {"metric_rule", "log_rule", "activity_rule", "smart_rule", "prometheus_rule"}:
         from app.alerts_manager import rules
 
@@ -2396,6 +2740,7 @@ async def apply_change(
 
     affected = (
         {"action_groups"} if change.target_type == "action_group"
+        else {"rules", "action_groups"} if change.target_type == "resource_group"
         else {"activity_log_diagnostic_settings"} if change.target_type == "activity_log_diagnostic_setting"
         else {"rules", "action_groups"}
     )
@@ -2427,6 +2772,25 @@ async def rollback_change(
         raise HTTPException(status_code=404, detail="Change request not found.")
     if original.status != "applied":
         raise HTTPException(status_code=409, detail="Only applied changes can be rolled back.")
+    if original.target_type == "resource_group":
+        raise HTTPException(
+            status_code=409,
+            detail="Automatic resource group rollback is not supported because deleting a group may delete unrelated resources.",
+        )
+    if (
+        original.target_type == "action_group" and original.operation == "create"
+        and bool((original.summary_json or {}).get("wizard_created_clone"))
+    ):
+        connection = _connection(original.connection_id)
+        groups = await service.list_action_groups(
+            connection, subscription_id=service._subscription_from_id(original.target_id),
+        )
+        match = next((item for item in groups if item["id"].lower() == original.target_id.lower()), None)
+        if match and match["dependency_count"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Automatic rollback of the wizard-created Action Group clone was blocked because it has dependencies.",
+            )
     before = service.decrypted_json(original.before_encrypted)
     after = service.decrypted_json(original.after_encrypted)
     if original.operation == "create":

@@ -109,6 +109,57 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 
 **Verification:** Preview where supported, inspect the resulting ARM body in **Details**, and verify after apply in Azure and refreshed inventory.
 
+## How to set up Essential Activity Log alerts across a management group
+
+1. Open `/alerts-manager/overview`, select the Azure connection, choose **Management group**, and select the intended management group.
+2. Run **Analyze alerts** if the page has no current report. In **Essential Activity Log coverage**, check for `partial` or `truncated` warnings before treating a missing row as a gap.
+3. Select **Set up missing alerts**. In **Categories**, choose Service Health, Resource Health, Security, and/or Recommendation. Missing and unhealthy categories are preselected.
+4. In **Subscriptions**, search, filter, group, and page through the resolved subscriptions. Select every intended subscription explicitly; unlisted subscriptions are never inferred.
+5. In **Conditions & naming**, map every selected subscription to a destination resource group. Existing update/enable operations retain their existing destination.
+6. To reuse a name where it already exists, enter **Preferred resource-group name** and select **Use where available**. If a destination does not exist, enable **Create missing resource groups**, provide a default or row-specific location, and select **Copy name** or type an explicit name.
+7. Optionally select **Save as connection default** after all rows resolve. This stores the preferred name, default location, and per-subscription mappings in tenant/connection-scoped application state; it does not create Azure resources.
+8. Set the rule-name prefix and review category conditions. Service Health requires at least one incident type; Resource Health requires at least one current status. Optional comma-separated filters are de-duplicated and bounded by the server allowlist.
+9. In **Routing**, choose only enabled Action Groups with active receivers. For a multi-subscription scope, prefer **Hybrid central + local routing**: select one healthy visible central Action Group, use matching-name or explicit healthy same-subscription overrides where available, and leave the central group as the supported cross-subscription fallback elsewhere.
+10. If a subscription requires a local route and has no healthy local group, explicitly enable local Action Group creation, select **Create local clone** for that row, choose a healthy visible clone source, and enter an Azure-safe prefix. The clone is an approval-gated prerequisite, not an immediate Azure write.
+11. Treat **Suggest from ownership** as ranking evidence, not an approval. Inspect full destinations for existing groups and verify any **SIEM-capable route?** hint. Use the separate diagnostic-settings flow for Activity Log ingestion.
+12. Select **Review plan**. Inspect resource-group prerequisites first, Action Group prerequisites second, and rules third. Confirm every `local`, `cross subscription`, or `planned clone` relationship. Clone preview intentionally shows IDs and receiver counts without exposing endpoints or secrets.
+13. Select **Validate**. If inputs or live inventory changed, rebuild the preview. Submit only after validation passes.
+14. Optionally save the resolved resource-group and Action Group preferences as the connection default. This writes tenant-and-connection-scoped application state and performs no Azure write.
+15. Select **Submit pending changes**. The result is an ordered batch of pending application records; no Azure write occurs.
+
+**Expected result:** Missing resource groups become pending prerequisites, explicitly selected local clones become pending Action Group prerequisites, and actionable Activity Log rule creates/updates/enables follow them. Equivalent, blocked, and invalid rows are not submitted as Azure changes.
+
+**Verification:** Open `/alerts-manager/changes`, filter to **Action Required**, and compare the batch order, target subscription, destination resource group, clone source/target IDs, prerequisite linkage, routing relationship, category, and sanitized ARM details with the reviewed preview.
+
+## How to approve and bulk-apply Activity Log prerequisites and rules
+
+1. In `/alerts-manager/changes`, select the pending rows from the reviewed Activity Log batch.
+2. Open **Details** for representative and high-risk rows. Confirm resource-group create/PUT requests, high-risk Action Group clone requests, and rule requests target the intended subscription, retained or mapped group, conditions, and routes. Secret-bearing receiver fields are redacted in this view.
+3. Approve or reject pending rows with a reason. Approval changes only application state.
+4. Select all approved rows in the batch and choose **Apply to Azure**.
+5. Confirm the prompt. Bulk apply runs resource-group prerequisites serially, then Action Group prerequisites serially, and then remaining rows with at most six workers. Each row can independently succeed, fail, or become stale.
+6. If applying individually, apply each `resource_group` row before its dependent `action_group`, then apply that clone before dependent `activity_rule` rows. The API validates tenant, connection, expected prerequisite type, and applied status.
+7. Return to Overview, select **Data stale — Analyze again**, and refresh Essential Activity Log coverage.
+8. Verify the created resource groups, enabled rules, exact Activity Log conditions, subscription scopes, and Action Group routes in live inventory or Azure.
+
+**Expected result:** Approved prerequisites and then rules are written to Azure, each applied row receives evidence, and failed siblings remain visible without hiding successful operations.
+
+**Verification:** Confirm every intended category reports covered after a fresh analysis. For any failed/stale row, compare its error and current Azure state rather than reapplying the old payload blindly.
+
+## How to recover or roll back an Essential Activity Log batch
+
+1. For a failed resource-group create, correct location, Azure authorization, or name conflict and build a new wizard preview. Do not make the dependent rule bypass the prerequisite.
+2. For a stale Activity Log update, refresh coverage and submit a new request from live state; the old concurrency hash cannot be forced.
+3. For an applied Activity Log rule, select **Prepare rollback** with `alerts_manager.delete`, review the inverse pending request, then approve and apply it through the normal flow.
+4. For a wizard-created clone, detach every dependent rule before preparing rollback. Dependency checks run again at apply time and block deletion if a reference reappears.
+5. Do not expect **Prepare rollback** for a resource-group prerequisite. Automatic deletion is blocked because the group may contain unrelated resources.
+6. If a newly created resource group is genuinely unused, inspect its contents and dependencies in Azure and use a separately authorized, reviewed removal process.
+7. Run **Analyze again** and verify that the intended prior rule state is restored without reopening a required coverage gap.
+
+**Expected result:** Supported rule rollback is a separately audited pending change; unsafe automatic resource-group deletion never occurs.
+
+**Verification:** Confirm the rollback linkage and fresh Azure rule state. If removal of a prerequisite was separately approved, verify that no unrelated resources were deleted.
+
 ## How to tune noise without hiding incidents
 
 1. Begin with **Visualize**, **Overlaps**, firing history, Rule analysis recommendations, and estimated cost.
@@ -167,7 +218,7 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 1. Open `/alerts-manager/changes`; the red pulsing badge reports pending plus approved items across all server-side pages.
 2. Open **Details** and compare current Azure state, validated desired configuration, resulting ARM body, method, target, and concurrency hash. Signed URL query strings and secret-bearing fields are redacted.
 3. For pending rows, provide a reason and select **Approve** or **Reject**. Bulk decision uses one reason for selected pending rows.
-4. For approved rows, select **Apply to Azure**. Bulk apply uses up to six concurrent workers; each row remains independently audited.
+4. For approved rows, select **Apply to Azure**. Bulk apply runs resource groups serially, Action Groups serially, and only then uses up to six concurrent workers for remaining rows; each row remains independently audited.
 5. Watch each row become applied, failed, or stale. Successful siblings are not hidden by failures.
 6. Refresh Rule management/Action groups, then select **Data stale — Analyze again**.
 7. Verify exact enabled state, condition, scope, and Action Group routing in the refreshed app or Azure.
@@ -223,6 +274,8 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 - Dynamic thresholds require sufficient representative history; verify their behavior after deployment.
 - Keep receiver secrets out of exports and documentation. The managed ledger encrypts stored payloads and redacts displayed secret-bearing values.
 - Rollback is a new pending request and can itself be unsafe if Azure changed afterward.
+- Essential Activity Log destination defaults are local tenant/connection configuration. Saving them is not an Azure change and preview always revalidates the mapped groups.
+- Activity Log resource-group prerequisites cannot be automatically rolled back.
 
 ## Troubleshooting
 
@@ -235,6 +288,14 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 | Apply is stale | Azure changed after the snapshot. Refresh and create a new request. |
 | Duplicate notifications remain | Trace all rule-to-Action-Group receiver paths and refresh out-of-band changes. |
 | Test reports success but receiver did not process | Inspect the downstream mailbox, endpoint, schema, filtering, and automation logs. |
+| Destination mapping stays unresolved | Select an existing group, or enable missing-group creation and provide a valid location for the proposed group. |
+| Local Action Group override fails preview | Choose a healthy group in the rule subscription, clear the override to use the healthy central fallback, or explicitly plan a local clone. |
+| Hybrid routing leaves subscriptions unresolved | Select a healthy visible central Action Group, a healthy local override, or an explicitly enabled clone with a healthy source and safe prefix. |
+| Planned clone is invalid | Resolve its resource group/location, enable clone creation, select a visible enabled source with an active receiver, and use an Azure-safe prefix. |
+| Approved Activity Log rule returns a prerequisite conflict | Apply resource-group prerequisites, then Action Group prerequisites, then rules; or bulk-apply the complete approved batch to enforce tier order. |
+| Clone details omit receiver endpoints | This is the secret-safe design. Preview and audit details expose IDs and counts; encrypted source values are restored only for apply or eligible retry. |
+| Prepare rollback is unavailable for the resource group | Automatic group deletion is intentionally blocked; inspect the group and use a separately reviewed Azure removal process only if it is empty and unshared. |
+| Wizard-created clone rollback is blocked | Detach all dependent alert rules and refresh. Deletion is guarded both when rollback is prepared and when it is applied. |
 
 ## Related docs
 

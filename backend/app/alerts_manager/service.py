@@ -901,6 +901,31 @@ async def apply_action_group_change(connection: dict[str, Any], change: Any) -> 
     return (data if isinstance(data, dict) else {} if not error else None), status, safe_error(error)
 
 
+async def apply_resource_group_change(connection: dict[str, Any], change: Any) -> tuple[dict[str, Any] | None, int, str]:
+    """Create an approved resource-group prerequisite without overwriting an existing group."""
+    from app.azure.arm import arm_write
+
+    assert_writable(connection)
+    if change.operation != "create":
+        return None, 422, "Resource group managed changes only support explicit creation."
+    live, status, error = await get_arm_resource(connection, change.target_id, "2021-04-01")
+    if live:
+        return None, 409, "The resource group already exists; refresh and preview the Activity Log plan again."
+    if status not in (0, 404):
+        return None, status, error or "Could not verify that the resource group name is available."
+    desired = decrypted_json(change.desired_encrypted)
+    body = desired.get("body") if isinstance(desired.get("body"), dict) else {}
+    location = str(body.get("location") or "").strip()
+    if not location:
+        return None, 422, "A location is required to create a resource group."
+    body = {"location": location, "tags": body.get("tags") if isinstance(body.get("tags"), dict) else {}}
+    token = await _token(connection)
+    data, error, status = await arm_write(
+        token, "PUT", change.target_id, body=body, api_version="2021-04-01",
+    )
+    return (data if isinstance(data, dict) else {} if not error else None), status, safe_error(error)
+
+
 async def test_action_group(connection: dict[str, Any], action_group_id: str, alert_type: str) -> dict[str, Any]:
     assert_writable(connection)
     resource, _status, error = await get_arm_resource(connection, action_group_id)

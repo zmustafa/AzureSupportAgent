@@ -1052,28 +1052,36 @@ export function AlertsManagerPanel() {
   }
 
   async function bulkApplyManagedChanges(rows: AlertsManagerChange[]) {
-    if (!rows.length || !window.confirm(`Apply ${rows.length} approved changes to Azure with up to 6 concurrent workers? Each change remains independently audited and failures will not hide successful applications.`)) return;
+    if (!rows.length || !window.confirm(`Apply ${rows.length} approved changes to Azure? Resource groups run first, then Action Groups, then remaining changes use up to 6 concurrent workers. Each prerequisite tier must finish before the next starts.`)) return;
     setManagementBusy("bulk-apply"); setError("");
     const failures: string[] = [];
     let appliedCount = 0;
     try {
-      let cursor = 0;
-      async function worker() {
-        while (cursor < rows.length) {
-          const row = rows[cursor++];
-          setApplyingChangeIds((current) => new Set(current).add(row.id));
-          try {
-            const result = await api.applyAlertsManagerChange(row.id);
-            appliedCount += 1;
-            qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
-          } catch (cause) {
-            failures.push(`${row.target_name}: ${formatError(cause)}`);
-          } finally {
-            setApplyingChangeIds((current) => { const next = new Set(current); next.delete(row.id); return next; });
-          }
+      const resourceGroupRows = rows.filter((row) => row.target_type === "resource_group");
+      const actionGroupRows = rows.filter((row) => row.target_type === "action_group");
+      const remainingRows = rows.filter((row) => row.target_type !== "resource_group" && row.target_type !== "action_group");
+      async function applyRow(row: AlertsManagerChange) {
+        setApplyingChangeIds((current) => new Set(current).add(row.id));
+        try {
+          const result = await api.applyAlertsManagerChange(row.id);
+          appliedCount += 1;
+          qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
+        } catch (cause) {
+          failures.push(`${row.target_name}: ${formatError(cause)}`);
+        } finally {
+          setApplyingChangeIds((current) => { const next = new Set(current); next.delete(row.id); return next; });
         }
       }
-      await Promise.all(Array.from({ length: Math.min(6, rows.length) }, () => worker()));
+      for (const row of resourceGroupRows) await applyRow(row);
+      for (const row of actionGroupRows) await applyRow(row);
+      let cursor = 0;
+      async function worker() {
+        while (cursor < remainingRows.length) {
+          const row = remainingRows[cursor++];
+          await applyRow(row);
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(6, remainingRows.length) }, () => worker()));
       if (appliedCount > 0) setAnalysisNeedsRefresh(true);
       await Promise.all([
         invalidateManagedChanges(),
@@ -1229,7 +1237,6 @@ export function AlertsManagerPanel() {
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => void refresh()} disabled={!ready || refreshing} title={analysisIsStaleAfterApply ? "Azure was changed after this analysis. Analyze again to refresh findings, costs, coverage, and counts." : undefined} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${analysisIsStaleAfterApply ? "animate-pulse bg-red-600 ring-2 ring-red-200 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-700"}`}>{refreshing ? "Analyzing…" : analysisIsStaleAfterApply ? "⚠ Data stale — Analyze again" : data?.report_exists ? "↻ Analyze again" : "Analyze alerts"}</button>
-              {analysisIsStaleAfterApply && <span role="status" className="max-w-44 text-[10px] font-medium leading-tight text-red-600">Azure changed. Refresh this analysis for current data.</span>}
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => void download("csv")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "csv" ? "Exporting…" : "⬇ CSV"}</button>
@@ -1239,21 +1246,6 @@ export function AlertsManagerPanel() {
             </div>
           </div>
         </div>
-        {data?.report_exists && (
-          <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(92px,100%),1fr))] gap-2">
-            <Kpi label="Score" value={data.rationalization_score} tone={data.rationalization_score >= 80 ? "green" : data.rationalization_score >= 50 ? "amber" : "red"} hint="Higher means fewer overlap and gap findings relative to this scope." />
-            <Kpi label="Rules" value={data.kpis.total_rules} />
-            <Kpi label="Overlap groups" value={data.kpis.overlap_groups} tone={data.kpis.overlap_groups > 0 ? "amber" : "gray"} />
-            <Kpi label="Duplicate paths" value={data.kpis.notification_overlaps} tone={data.kpis.notification_overlaps > 0 ? "red" : "gray"} />
-            <Kpi label="Gaps" value={data.kpis.gap_count} tone={data.kpis.gap_count > 0 ? "red" : "gray"} />
-            <Kpi label="Action groups" value={data.kpis.action_groups} />
-            <Kpi label="Recipients" value={data.kpis.unique_recipients} />
-            <Kpi label="Recipient proliferation" value={data.kpis.recipient_proliferation} tone={data.kpis.recipient_proliferation > 0 ? "amber" : "gray"} />
-            <Kpi label="Resources" value={data.kpis.resources_evaluated} />
-            <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone={data.kpis.firings_7d > 0 ? "amber" : "gray"} />
-            <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone={data.kpis.firings_30d > 0 ? "blue" : "gray"} />
-          </div>
-        )}
         <div className="mt-3 overflow-x-auto border-t pt-3">
           <div className="flex w-max min-w-full items-center gap-1 pb-1">
             {tabs.map((item) => (
@@ -1272,7 +1264,7 @@ export function AlertsManagerPanel() {
         <AnalysisProgress state={jobQ.data} compact />
       </header>
 
-      <main ref={contentScrollRef} className="min-h-0 flex-1 overflow-auto px-6 py-4">
+      <main ref={contentScrollRef} className={`min-h-0 flex-1 overflow-auto px-6 pb-4 ${tab === "visualize" ? "pt-0" : "pt-4"}`}>
         {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {reportQ.isLoading ? <Skeleton rows={8} /> : reportQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(reportQ.error)}</div>
@@ -1324,7 +1316,22 @@ export function AlertsManagerPanel() {
           : !data ? <div className="py-20 text-center text-sm text-gray-400">No analysis snapshot is available.</div>
           : data.error && !data.rules.length ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">{data.error}</div>
-        ) : tab === "overview" ? <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
+        ) : tab === "overview" ? <div className="space-y-4">
+            {data.report_exists && <div className="grid grid-cols-[repeat(auto-fit,minmax(min(92px,100%),1fr))] gap-2">
+              <Kpi label="Score" value={data.rationalization_score} tone={data.rationalization_score >= 80 ? "green" : data.rationalization_score >= 50 ? "amber" : "red"} hint="Higher means fewer overlap and gap findings relative to this scope." />
+              <Kpi label="Rules" value={data.kpis.total_rules} />
+              <Kpi label="Overlap groups" value={data.kpis.overlap_groups} tone={data.kpis.overlap_groups > 0 ? "amber" : "gray"} />
+              <Kpi label="Duplicate paths" value={data.kpis.notification_overlaps} tone={data.kpis.notification_overlaps > 0 ? "red" : "gray"} />
+              <Kpi label="Gaps" value={data.kpis.gap_count} tone={data.kpis.gap_count > 0 ? "red" : "gray"} />
+              <Kpi label="Action groups" value={data.kpis.action_groups} />
+              <Kpi label="Recipients" value={data.kpis.unique_recipients} />
+              <Kpi label="Recipient proliferation" value={data.kpis.recipient_proliferation} tone={data.kpis.recipient_proliferation > 0 ? "amber" : "gray"} />
+              <Kpi label="Resources" value={data.kpis.resources_evaluated} />
+              <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone={data.kpis.firings_7d > 0 ? "amber" : "gray"} />
+              <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone={data.kpis.firings_30d > 0 ? "blue" : "gray"} />
+            </div>}
+            <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
+          </div>
           : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
           : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
           : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>

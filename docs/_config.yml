@@ -68,5 +68,8 @@ exclude:
   - INVENTORY_TEST_PLAN.md
   - UI_TEST_PLAN.md
   - UX_ADVANCED_PLAN.md
+  - "*.pptx"
+  - "*.xlsx"
+  - "~$*"
   - Gemfile
   - Gemfile.lock

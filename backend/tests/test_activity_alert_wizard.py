@@ -11,7 +11,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.alerts_manager import activity_coverage, activity_export, activity_planner, rules, service
+from app.alerts_manager import (
+    activity_coverage, activity_destination_policy, activity_export, activity_planner, rules, service,
+)
 from app.api import alerts_manager as api
 from app.core.db import Base
 from app.core.security import Principal
@@ -253,14 +255,85 @@ def test_custom_conditions_are_allowlisted_and_category_is_mandatory() -> None:
             )
 
 
-def test_cross_subscription_action_group_is_rejected() -> None:
+def test_common_cross_subscription_action_group_is_valid_and_annotated() -> None:
     other = _other_subscription_group()
     plan = activity_planner.preview_plan(
         _request(categories=["Security"], common_action_group_id=other["id"]),
         subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[other],
     )
-    assert plan["items"][0]["classification"] == "invalid"
-    assert "must be in subscription sub-1" in plan["items"][0]["errors"][0]
+    assert plan["items"][0]["classification"] == "create"
+    assert plan["items"][0]["routing_relationship"] == "cross_subscription"
+
+
+def test_hybrid_prefers_local_override_and_rejects_cross_subscription_override() -> None:
+    other = _other_subscription_group()
+    local = _group()
+    valid = activity_planner.preview_plan(
+        _request(
+            categories=["Security"], routing_mode="hybrid", central_action_group_id=other["id"],
+            action_group_overrides_by_subscription={"sub-1": local["id"]},
+        ),
+        subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[local, other],
+    )
+    assert valid["items"][0]["desired"]["action_group_ids"] == [local["id"]]
+    assert valid["items"][0]["routing_relationship"] == "local"
+
+    invalid = activity_planner.preview_plan(
+        _request(
+            categories=["Security"], routing_mode="hybrid", central_action_group_id=local["id"],
+            action_group_overrides_by_subscription={"sub-1": other["id"]},
+        ),
+        subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[local, other],
+    )
+    assert invalid["items"][0]["classification"] == "invalid"
+    assert "must be in subscription sub-1" in invalid["items"][0]["errors"][0]
+
+
+def test_hybrid_routing_inputs_are_fingerprinted() -> None:
+    other = _other_subscription_group()
+    base = _request(
+        categories=["Security"], routing_mode="hybrid", central_action_group_id=other["id"],
+    )
+    first = activity_planner.preview_plan(
+        base, subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[other],
+    )
+    second = activity_planner.preview_plan(
+        {**base, "clone_action_group_name_prefix": "different"},
+        subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[other],
+    )
+    assert first["plan_token"] != second["plan_token"]
+
+
+def test_plan_uses_per_subscription_resource_groups_with_legacy_fallback_and_retains_existing() -> None:
+    second_group = _other_subscription_group()
+    plan = activity_planner.preview_plan(
+        _request(
+            subscription_ids=["sub-1", "sub-2"], categories=["Security"],
+            resource_group="rg-legacy",
+            resource_groups_by_subscription={"SUB-1": "rg-one", "sub-2": "rg-two"},
+            routing_mode="per_category", common_action_group_id="",
+            action_group_ids_by_category={"Security": [AG_ID, second_group["id"]]},
+        ),
+        subscription_ids={"sub-1", "sub-2"}, rules_inventory=[], action_groups=[_group(), second_group],
+    )
+    assert {item["subscription_id"]: item["resource_group"] for item in plan["items"]} == {
+        "sub-1": "rg-one", "sub-2": "rg-two",
+    }
+
+    legacy = activity_planner.preview_plan(
+        _request(categories=["Security"], resource_group="rg-legacy"),
+        subscription_ids={"sub-1"}, rules_inventory=[], action_groups=[_group()],
+    )
+    assert legacy["items"][0]["resource_group"] == "rg-legacy"
+
+    existing = _rule("Security")
+    existing["action_group_ids"] = []
+    retained = activity_planner.preview_plan(
+        _request(categories=["Security"], resource_group="rg-new"),
+        subscription_ids={"sub-1"}, rules_inventory=[existing], action_groups=[_group()],
+    )
+    assert retained["items"][0]["classification"] == "update"
+    assert retained["items"][0]["resource_group"] == "rg-monitor"
 
 
 def test_preview_detects_equivalent_disabled_routing_and_approval_conflicts() -> None:
@@ -389,6 +462,9 @@ async def test_submit_update_fetches_live_state_and_preserves_before_evidence(da
 
     monkeypatch.setattr(api, "_activity_scope_inventory", inventory)
     monkeypatch.setattr(rules, "get_rule", get_rule)
+    async def existing_resource_group(*_args, **_kwargs):
+        return {"id": "/subscriptions/sub-1/resourceGroups/rg-monitor"}, 200, ""
+    monkeypatch.setattr(service, "get_arm_resource", existing_resource_group)
     request_data = _request(categories=["Security"])
     principal = _principal()
     async with database() as db:
@@ -406,6 +482,256 @@ async def test_submit_update_fetches_live_state_and_preserves_before_evidence(da
         assert change.operation == "update"
         assert change.expected_state_hash
         assert service.decrypted_json(change.before_encrypted)["properties"]["description"] == "old"
+
+
+@pytest.mark.asyncio
+async def test_missing_resource_group_preflight_and_prerequisite_submission(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def inventory(*_args, **_kwargs):
+        return CONNECTION, {"sub-1"}, [], [_group()], {"partial": False}
+
+    async def missing(*_args, **_kwargs):
+        return None, 404, "not found"
+
+    monkeypatch.setattr(api, "_activity_scope_inventory", inventory)
+    monkeypatch.setattr(service, "get_arm_resource", missing)
+    principal = _principal()
+    async with database() as db:
+        invalid = await api.preview_activity_log_plan(
+            api.ActivityLogPlanRequest(**_request(categories=["Security"])), principal, db,
+        )
+        assert invalid["plan"]["resource_group_changes"][0]["classification"] == "invalid"
+        assert invalid["plan"]["items"][0]["classification"] == "invalid"
+
+        request = _request(
+            categories=["Security"], create_missing_resource_groups=True,
+            resource_group_locations_by_subscription={"sub-1": "eastus"},
+        )
+        preview = await api.preview_activity_log_plan(api.ActivityLogPlanRequest(**request), principal, db)
+        assert preview["plan"]["resource_group_changes"][0]["classification"] == "create"
+        assert preview["plan"]["counts"]["resource_group_create"] == 1
+        assert preview["plan"]["counts"]["actionable"] == 2
+        submitted = await api.submit_activity_log_plan(
+            api.ActivityLogPlanSubmitRequest(
+                **request, plan_token=preview["plan"]["plan_token"], reason="Create destination safely",
+            ), principal, db,
+        )
+        assert submitted["change_count"] == 2
+        rows = (await db.execute(select(AlertManagerChange).order_by(AlertManagerChange.requested_at, AlertManagerChange.id))).scalars().all()
+        resource_group_change = next(row for row in rows if row.target_type == "resource_group")
+        rule_change = next(row for row in rows if row.target_type == "activity_rule")
+        assert resource_group_change.summary_json["batch_order"] == 1
+        assert rule_change.summary_json["batch_order"] == 2
+        assert rule_change.summary_json["prerequisite_change_id"] == resource_group_change.id
+
+
+@pytest.mark.asyncio
+async def test_hybrid_clone_preview_submission_is_secret_safe_and_ordered(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    source_group = _group()
+    source_live = {
+        "id": AG_ID, "name": "on-call", "location": "Global", "tags": {"owner": "platform"},
+        "properties": {
+            "enabled": True, "groupShortName": "oncall",
+            "emailReceivers": [{"name": "mail", "emailAddress": "ops@example.test"}],
+            "webhookReceivers": [{
+                "name": "hook", "serviceUri": "https://hooks.example.test/notify?sig=super-secret",
+                "useCommonAlertSchema": True,
+            }],
+        },
+    }
+
+    async def inventory(*_args, **_kwargs):
+        return CONNECTION, {"sub-2"}, [], [source_group], {"partial": False}
+
+    async def arm_get(_connection, resource_id, *_args, **_kwargs):
+        if resource_id.lower() == AG_ID.lower():
+            return source_live, 200, ""
+        return None, 404, "not found"
+
+    monkeypatch.setattr(api, "_activity_scope_inventory", inventory)
+    monkeypatch.setattr(service, "get_arm_resource", arm_get)
+    request = _request(
+        subscription_id="sub-2", subscription_ids=["sub-2"], categories=["Security"],
+        routing_mode="hybrid", common_action_group_id="", central_action_group_id=AG_ID,
+        subscriptions_requiring_action_group_clone=["SUB-2"], create_missing_action_groups=True,
+        clone_source_action_group_id=AG_ID, clone_action_group_name_prefix="essential-clone",
+        create_missing_resource_groups=True, resource_group_locations_by_subscription={"sub-2": "eastus"},
+    )
+    principal = _principal()
+    async with database() as db:
+        preview = await api.preview_activity_log_plan(api.ActivityLogPlanRequest(**request), principal, db)
+        plan = preview["plan"]
+        action_group = plan["action_group_changes"][0]
+        assert action_group["classification"] == "create"
+        assert action_group["relationship"] == "planned_clone"
+        assert action_group["resource_group_relationship"] == "create"
+        assert action_group["receiver_count"] == 1
+        assert plan["items"][0]["routing_relationship"] == "planned_clone"
+        serialized = json.dumps(plan)
+        assert "super-secret" not in serialized
+        assert "serviceUri" not in serialized
+
+        submitted = await api.submit_activity_log_plan(
+            api.ActivityLogPlanSubmitRequest(
+                **request, plan_token=plan["plan_token"], reason="Clone routing securely",
+            ), principal, db,
+        )
+        assert submitted["change_count"] == 3
+        rows = (await db.execute(
+            select(AlertManagerChange).order_by(AlertManagerChange.requested_at, AlertManagerChange.id)
+        )).scalars().all()
+        clone = next(row for row in rows if row.target_type == "action_group")
+        resource_group = next(row for row in rows if row.target_type == "resource_group")
+        rule = next(row for row in rows if row.target_type == "activity_rule")
+        assert resource_group.summary_json["batch_order"] == 1
+        assert clone.summary_json["batch_order"] == 2
+        assert rule.summary_json["batch_order"] == 3
+        assert clone.summary_json["resource_group_prerequisite_change_id"] == resource_group.id
+        assert clone.summary_json["prerequisite_change_ids"] == [resource_group.id]
+        assert rule.summary_json["action_group_prerequisite_change_id"] == clone.id
+        assert rule.summary_json["resource_group_prerequisite_change_id"] == resource_group.id
+        assert rule.summary_json["prerequisite_change_ids"] == [resource_group.id, clone.id]
+        assert "super-secret" not in json.dumps(clone.summary_json)
+        assert "super-secret" in json.dumps(service.decrypted_json(clone.desired_encrypted))
+
+
+@pytest.mark.asyncio
+async def test_apply_dependency_guard_and_resource_group_dispatch(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    prerequisite = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="resource_group",
+        target_id="/subscriptions/sub-1/resourceGroups/rg-new", operation="create", status="approved",
+        risk="medium", summary_json={},
+        desired_encrypted=service.encrypted_json({"body": {"location": "eastus", "tags": {"owner": "platform"}}}),
+        before_encrypted=service.encrypted_json({}), after_encrypted="", expected_state_hash="",
+        requested_by="requester", auto_apply=False,
+    )
+    rule_change = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="activity_rule",
+        target_id=_rule("Security")["id"], operation="create", status="approved", risk="medium",
+        summary_json={}, desired_encrypted=service.encrypted_json({}), before_encrypted=service.encrypted_json({}),
+        after_encrypted="", expected_state_hash="", requested_by="requester", auto_apply=False,
+    )
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    invalidated = []
+
+    async def invalidate(**kwargs):
+        invalidated.append(kwargs)
+
+    monkeypatch.setattr("app.alerts_manager.cache.invalidate", invalidate)
+    calls = []
+
+    async def apply_rg(_connection, change):
+        calls.append(change.id)
+        return {"id": change.target_id, "location": "eastus", "tags": {"owner": "platform"}}, 201, ""
+
+    monkeypatch.setattr(service, "apply_resource_group_change", apply_rg)
+    async with database() as db:
+        db.add_all([prerequisite, rule_change])
+        await db.commit()
+        rule_change.summary_json = {"prerequisite_change_id": prerequisite.id}
+        await db.commit()
+        with pytest.raises(HTTPException) as blocked:
+            await api.apply_change(rule_change.id, _principal(), db)
+        assert blocked.value.status_code == 409
+        assert rule_change.status == "approved"
+
+        applied = await api.apply_change(prerequisite.id, _principal(), db)
+        assert applied["change"]["status"] == "applied"
+        assert calls == [prerequisite.id]
+        assert invalidated
+
+
+@pytest.mark.asyncio
+async def test_apply_guard_requires_all_rg_and_action_group_prerequisites(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    resource_group = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="resource_group",
+        target_id="/subscriptions/sub-1/resourceGroups/rg-new", operation="create", status="applied",
+        risk="medium", summary_json={}, desired_encrypted="", before_encrypted="", after_encrypted="",
+        expected_state_hash="", requested_by="requester", auto_apply=False,
+    )
+    action_group = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="action_group",
+        target_id=AG_ID, operation="create", status="approved", risk="medium", summary_json={},
+        desired_encrypted="", before_encrypted="", after_encrypted="", expected_state_hash="",
+        requested_by="requester", auto_apply=False,
+    )
+    rule = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="activity_rule",
+        target_id=_rule("Security")["id"], operation="create", status="approved", risk="medium",
+        summary_json={}, desired_encrypted=service.encrypted_json({}), before_encrypted="", after_encrypted="",
+        expected_state_hash="", requested_by="requester", auto_apply=False,
+    )
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    async with database() as db:
+        db.add_all([resource_group, action_group, rule])
+        await db.commit()
+        rule.summary_json = {
+            "resource_group_prerequisite_change_id": resource_group.id,
+            "action_group_prerequisite_change_id": action_group.id,
+            "prerequisite_change_ids": [resource_group.id, action_group.id],
+        }
+        await db.commit()
+        with pytest.raises(HTTPException) as blocked:
+            await api.apply_change(rule.id, _principal(), db)
+        assert blocked.value.status_code == 409
+        await db.refresh(rule)
+        assert rule.status == "approved"
+        assert rule.applied_at is None
+
+
+@pytest.mark.asyncio
+async def test_resource_group_apply_uses_arm_put_with_required_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    change = AlertManagerChange(
+        tenant_id=TENANT, connection_id=CONNECTION["id"], target_type="resource_group",
+        target_id="/subscriptions/sub-1/resourceGroups/rg-new", operation="create", status="approved",
+        risk="medium", summary_json={},
+        desired_encrypted=service.encrypted_json({
+            "body": {"location": "eastus", "tags": {"owner": "platform"}, "ignored": "value"},
+        }),
+        before_encrypted=service.encrypted_json({}), after_encrypted="", expected_state_hash="",
+        requested_by="requester", auto_apply=False,
+    )
+
+    async def missing(*_args, **_kwargs):
+        return None, 404, "not found"
+
+    async def token(*_args, **_kwargs):
+        return "arm-token"
+
+    arm_calls = []
+
+    async def arm_write(token_value, method, path, *, body=None, api_version=""):
+        arm_calls.append((token_value, method, path, body, api_version))
+        return {"id": path, **body}, "", 201
+
+    monkeypatch.setattr(service, "get_arm_resource", missing)
+    monkeypatch.setattr(service, "_token", token)
+    monkeypatch.setattr("app.azure.arm.arm_write", arm_write)
+    data, status, error = await service.apply_resource_group_change(CONNECTION, change)
+    assert status == 201 and error == ""
+    assert data["location"] == "eastus"
+    assert arm_calls == [(
+        "arm-token", "PUT", change.target_id,
+        {"location": "eastus", "tags": {"owner": "platform"}}, "2021-04-01",
+    )]
+
+
+def test_destination_policy_is_tenant_connection_isolated_and_persistent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "activity-policies.json"
+    monkeypatch.setattr(activity_destination_policy, "_PATH", path)
+    saved = activity_destination_policy.put_policy(TENANT, "connection-a", {
+        "preferred_resource_group_name": "rg-monitor",
+        "default_location": "eastus",
+        "resource_groups_by_subscription": {"SUB-1": "rg-one"},
+        "preferred_action_group_id": AG_ID,
+        "action_groups_by_subscription": {"SUB-1": AG_ID},
+    })
+    assert saved["resource_groups_by_subscription"] == {"sub-1": "rg-one"}
+    assert saved["preferred_action_group_id"] == AG_ID
+    assert saved["action_groups_by_subscription"] == {"sub-1": AG_ID}
+    assert activity_destination_policy.get_policy(TENANT, "connection-a")["default_location"] == "eastus"
+    assert activity_destination_policy.get_policy(TENANT, "connection-b")["updated_at"] == ""
+    assert activity_destination_policy.get_policy("other-tenant", "connection-a")["updated_at"] == ""
+    assert json.loads(path.read_text(encoding="utf-8"))["tenants"][TENANT]["connections"]["connection-a"]
 
 
 @pytest.mark.asyncio
@@ -453,3 +779,4 @@ def test_endpoint_contracts_are_registered() -> None:
     assert "/alerts-manager/activity-log-plan/preview" in paths
     assert "/alerts-manager/activity-log-plan/validate" in paths
     assert "/alerts-manager/activity-log-plan/submit" in paths
+    assert "/alerts-manager/activity-log-destination-policy" in paths

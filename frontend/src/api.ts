@@ -703,19 +703,47 @@ export type ActivityLogCoverage = {
 export type ActivityLogPlanRequest = AlertsManagerScopeContext & {
   subscription_ids: string[];
   categories: ActivityLogCategory[];
-  resource_group: string;
-  routing_mode: "common" | "per_category";
+  resource_group?: string;
+  resource_groups_by_subscription: Record<string, string>;
+  create_missing_resource_groups: boolean;
+  resource_group_locations_by_subscription: Record<string, string>;
+  routing_mode: "common" | "per_category" | "hybrid";
   common_action_group_id: string;
+  central_action_group_id: string;
+  action_group_overrides_by_subscription: Record<string, string>;
+  subscriptions_requiring_action_group_clone: string[];
+  create_missing_action_groups: boolean;
+  clone_source_action_group_id: string;
+  clone_action_group_name_prefix: string;
   action_group_ids_by_category: Partial<Record<ActivityLogCategory, string[]>>;
   name_prefix: string;
   conditions_by_category?: Partial<Record<ActivityLogCategory, ActivityLogCondition[]>>;
 };
+export type ActivityLogResourceGroupChange = {
+  subscription_id: string;
+  resource_group: string;
+  location: string;
+  target_id: string;
+  classification: "existing" | "create" | "invalid";
+  actionable: boolean;
+  errors: string[];
+};
+export type ActivityLogDestinationPolicy = {
+  preferred_resource_group_name: string;
+  default_location: string;
+  resource_groups_by_subscription: Record<string, string>;
+  preferred_action_group_id: string;
+  action_groups_by_subscription: Record<string, string>;
+  updated_at: string;
+};
+export type ActivityLogDestinationPolicyInput = Omit<ActivityLogDestinationPolicy, "updated_at"> & { connection_id: string };
 export type ActivityLogPlanOperation = {
   order: number;
   key: string;
   category: ActivityLogCategory;
   category_label: string;
   subscription_id: string;
+  resource_group: string;
   scope_id: string;
   classification: "create" | "update" | "enable" | "equivalent" | "blocked" | "invalid";
   operation: "create" | "update" | "none";
@@ -734,13 +762,28 @@ export type ActivityLogPlanOperation = {
   existing_rule_details: Array<{ id: string; name: string; enabled: boolean; action_group_ids: string[]; activity_conditions: ActivityLogCondition[]; reason: string }>;
   equivalent_rules: Array<{ id: string; name: string; enabled: boolean }>;
   blocker: { change_id: string; status: string; target_id: string } | null;
+  routing_relationship?: "local" | "cross_subscription" | "planned_clone";
+};
+export type ActivityLogActionGroupChange = {
+  subscription_id: string;
+  resource_group: string;
+  source_action_group_id: string;
+  target_action_group_id: string;
+  target_name: string;
+  relationship: "local" | "cross_subscription" | "planned_clone";
+  classification: "existing" | "create" | "invalid";
+  actionable: boolean;
+  receiver_count: number;
+  errors: string[];
 };
 export type ActivityLogPlanPreview = {
   plan_version: number;
   plan_token: string;
   inputs: ActivityLogPlanRequest;
+  resource_group_changes: ActivityLogResourceGroupChange[];
+  action_group_changes: ActivityLogActionGroupChange[];
   items: ActivityLogPlanOperation[];
-  counts: Record<ActivityLogPlanOperation["classification"] | "total" | "actionable", number>;
+  counts: Record<ActivityLogPlanOperation["classification"] | "resource_group_create" | "action_group_create" | "total" | "actionable", number>;
   valid: boolean;
   warnings: string[];
 };
@@ -4947,6 +4990,13 @@ export const api = {
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
     return httpBlob(`/alerts-manager/activity-log-coverage/export?${q.toString()}`);
   },
+  activityLogDestinationPolicy: (connectionId = "") => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<ActivityLogDestinationPolicy>(`/alerts-manager/activity-log-destination-policy?${q.toString()}`);
+  },
+  saveActivityLogDestinationPolicy: (body: ActivityLogDestinationPolicyInput) =>
+    http<ActivityLogDestinationPolicy>("/alerts-manager/activity-log-destination-policy", { method: "PUT", body: JSON.stringify(body) }),
   previewActivityLogPlan: (body: ActivityLogPlanRequest) =>
     http<{ plan: ActivityLogPlanPreview }>("/alerts-manager/activity-log-plan/preview", { method: "POST", body: JSON.stringify(body) }),
   validateActivityLogPlan: (body: ActivityLogPlanRequest & { plan_token: string }) =>
