@@ -1,0 +1,51 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.iml
+
+# MacOS
+.DS_Store
+
+# Logs and coverage
+*.log
+htmlcov/
+.coverage
+.cache/
+
+# Test & local databases
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+
+# Secret / configuration files
+*.env
+config/.env
+*.pem
+*.key
+*.pfx
+
+# Git
+*.orig
+
+# Lock files (optional – uncomment if you don't commit lock files)
+# uv.lock
+# poetry.lock
+# Pipenv.lock 
+permissions-reference.md

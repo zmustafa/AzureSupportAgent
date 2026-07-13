@@ -1,0 +1,13 @@
+[project]
+name = "entraid-mcp-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "azure-core>=1.33.0",
+    "azure-identity>=1.21.0",
+    "mcp[cli]>=1.6.0",
+    "msgraph-core>=1.3.3",
+    "msgraph-sdk>=1.28.0",
+]
