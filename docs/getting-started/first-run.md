@@ -49,7 +49,7 @@ A provider that has not been configured remains disabled. Local Ollama or LM Stu
 
 Return to `/dashboard`. The setup guide should recognize the configured provider and Azure connection. Some Dashboard cards are role-gated or cache-backed; an empty coverage or posture card does not necessarily mean a zero score. It often means that no scan has run for the selected workload.
 
-![Azure Support Agent dashboard with guided onboarding cards]({{ site.baseurl }}/usecase-assets/dashboard.png)
+![Azure Support Agent dashboard with guided onboarding cards]({{ site.baseurl }}/assets/proactive-support.png)
 
 ## 5. Discover the first workload
 

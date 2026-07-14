@@ -12,7 +12,7 @@ permalink: /how-to/lifecycle-investigation/reservations-monitor/
 
 **Exact route:** `/reservations`.
 
-![Reservations Monitor expiry and utilization view]({{ site.baseurl }}/usecase-assets/reservations.png)
+![Reservations Monitor expiry and utilization view]({{ site.baseurl }}/assets/proactive-support.png)
 
 ## Prerequisites
 

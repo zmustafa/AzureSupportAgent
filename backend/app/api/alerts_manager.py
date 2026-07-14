@@ -58,6 +58,21 @@ class ChangeDecisionRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class ChangeSelectionRequest(BaseModel):
+    connection_id: str = Field(default="", max_length=128)
+    change_ids: list[str] = Field(min_length=1, max_length=5000)
+
+
+class BulkChangeDecisionRequest(ChangeSelectionRequest):
+    decision: Literal["approved", "rejected"]
+    reason: str = Field(min_length=1, max_length=1000)
+    include_prerequisites: bool = True
+
+
+class BulkChangeApplyRequest(ChangeSelectionRequest):
+    include_prerequisites: bool = True
+
+
 class ActionGroupTestRequest(BaseModel):
     connection_id: str = ""
     action_group_id: str = Field(min_length=1, max_length=1000)
@@ -433,6 +448,149 @@ def _change_dict(change: AlertManagerChange) -> dict[str, Any]:
         "error_message": service.safe_error(change.error_message),
         "rollback_of": change.rollback_of or "",
         "evidence_id": change.evidence_id or "",
+    }
+
+
+def _prerequisite_ids(change: AlertManagerChange) -> list[str]:
+    summary = change.summary_json or {}
+    values = [str(value) for value in summary.get("prerequisite_change_ids") or [] if str(value)]
+    for key in (
+        "prerequisite_change_id",
+        "resource_group_prerequisite_change_id",
+        "action_group_prerequisite_change_id",
+    ):
+        value = str(summary.get(key) or "")
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def _expected_prerequisite_types(change: AlertManagerChange) -> dict[str, str]:
+    summary = change.summary_json or {}
+    legacy = str(summary.get("prerequisite_change_id") or "")
+    expected = {
+        str(summary.get("resource_group_prerequisite_change_id") or legacy): "resource_group",
+        str(summary.get("action_group_prerequisite_change_id") or ""): "action_group",
+    }
+    expected.pop("", None)
+    return expected
+
+
+def _safe_change_metadata(change: AlertManagerChange, *, selected: bool = False) -> dict[str, Any]:
+    """Return only ordinary, intentionally public change metadata."""
+    return {
+        "id": change.id,
+        "selected": selected,
+        "connection_id": change.connection_id,
+        "target_type": change.target_type,
+        "target_id": change.target_id,
+        "target_name": change.target_id.rstrip("/").rsplit("/", 1)[-1],
+        "operation": change.operation,
+        "status": change.status,
+        "risk": change.risk,
+        "summary": dict(change.summary_json or {}),
+        "requested_at": change.requested_at.isoformat() if change.requested_at else "",
+    }
+
+
+async def _resolve_change_dependencies(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    connection_id: str,
+    selected_ids: list[str],
+    include_prerequisites: bool = True,
+) -> dict[str, Any]:
+    selected_ids = list(dict.fromkeys(selected_ids))
+    rows: dict[str, AlertManagerChange] = {}
+    edges: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    async def visit(change_id: str, *, referenced_by: str = "", expected_type: str = "") -> None:
+        if change_id in visiting:
+            cycle = visiting[visiting.index(change_id):] + [change_id]
+            error = {
+                "type": "cycle", "change_ids": cycle, "dependent_id": referenced_by,
+                "message": "Managed-change prerequisite cycle detected.",
+            }
+            if error not in errors:
+                errors.append(error)
+            return
+        if change_id in visited:
+            return
+        row = await db.get(AlertManagerChange, change_id)
+        if not row:
+            errors.append({"type": "missing", "change_id": change_id, "dependent_id": referenced_by, "message": "Managed change was not found."})
+            visited.add(change_id)
+            return
+        if row.tenant_id != tenant_id:
+            errors.append({"type": "cross_tenant", "change_id": change_id, "dependent_id": referenced_by, "message": "Managed change belongs to another tenant."})
+            visited.add(change_id)
+            return
+        if row.connection_id != connection_id:
+            errors.append({"type": "cross_connection", "change_id": change_id, "dependent_id": referenced_by, "message": "Managed change belongs to another Azure connection."})
+            visited.add(change_id)
+            return
+        rows[change_id] = row
+        if expected_type and row.target_type != expected_type:
+            errors.append({
+                "type": "type_mismatch", "change_id": change_id, "dependent_id": referenced_by,
+                "expected_type": expected_type, "actual_type": row.target_type,
+                "message": "Managed-change prerequisite type does not match its compatibility field.",
+            })
+        visiting.append(change_id)
+        if include_prerequisites:
+            expected_types = _expected_prerequisite_types(row)
+            for prerequisite_id in _prerequisite_ids(row):
+                edge = {"prerequisite_id": prerequisite_id, "dependent_id": change_id}
+                if expected_types.get(prerequisite_id):
+                    edge["expected_type"] = expected_types[prerequisite_id]
+                edges.append(edge)
+                await visit(
+                    prerequisite_id, referenced_by=change_id,
+                    expected_type=expected_types.get(prerequisite_id, ""),
+                )
+        visiting.pop()
+        visited.add(change_id)
+
+    for selected_id in selected_ids:
+        await visit(selected_id)
+
+    indegree = {change_id: 0 for change_id in rows}
+    dependents: dict[str, list[str]] = {change_id: [] for change_id in rows}
+    for edge in edges:
+        prerequisite_id, dependent_id = edge["prerequisite_id"], edge["dependent_id"]
+        if prerequisite_id in rows and dependent_id in rows:
+            indegree[dependent_id] += 1
+            dependents[prerequisite_id].append(dependent_id)
+    priority = {"resource_group": 0, "action_group": 1}
+    ready = sorted(
+        (change_id for change_id, degree in indegree.items() if degree == 0),
+        key=lambda item: (priority.get(rows[item].target_type, 2), rows[item].requested_at, item),
+    )
+    order: list[str] = []
+    while ready:
+        change_id = ready.pop(0)
+        order.append(change_id)
+        for dependent_id in dependents[change_id]:
+            indegree[dependent_id] -= 1
+            if indegree[dependent_id] == 0:
+                ready.append(dependent_id)
+                ready.sort(key=lambda item: (priority.get(rows[item].target_type, 2), rows[item].requested_at, item))
+    if len(order) != len(rows) and not any(error["type"] == "cycle" for error in errors):
+        errors.append({
+            "type": "cycle", "change_ids": sorted(set(rows) - set(order)),
+            "message": "Managed-change prerequisite cycle detected.",
+        })
+    return {
+        "selected_ids": selected_ids,
+        "rows": rows,
+        "edges": edges,
+        "errors": errors,
+        "order": order,
+        "dependents": dependents,
     }
 
 
@@ -2635,8 +2793,10 @@ async def decide_change(
     change = await db.get(AlertManagerChange, change_id)
     if not change or change.tenant_id != _tenant(principal):
         raise HTTPException(status_code=404, detail="Change request not found.")
-    if change.status != "pending":
-        raise HTTPException(status_code=409, detail="Only pending changes can be decided.")
+    allowed_statuses = {"pending"} if payload.decision == "approved" else {"pending", "approved"}
+    if change.status not in allowed_statuses:
+        detail = "Only pending changes can be approved." if payload.decision == "approved" else "Only pending or approved unapplied changes can be rejected."
+        raise HTTPException(status_code=409, detail=detail)
     change.status = payload.decision
     change.decided_by = principal.subject
     change.decided_at = service.now()
@@ -2646,15 +2806,15 @@ async def decide_change(
     return {"change": _change_dict(change)}
 
 
-@router.post("/changes/{change_id}/apply")
-async def apply_change(
-    change_id: str,
-    principal: Principal = Depends(_approve),
-    db: AsyncSession = Depends(get_db),
+async def _execute_change(
+    change: AlertManagerChange,
+    *,
+    principal: Principal,
+    db: AsyncSession,
+    check_prerequisites: bool = True,
+    commit: bool = True,
+    invalidate: bool = True,
 ) -> dict[str, Any]:
-    change = await db.get(AlertManagerChange, change_id)
-    if not change or change.tenant_id != _tenant(principal):
-        raise HTTPException(status_code=404, detail="Change request not found.")
     desired = service.decrypted_json(change.desired_encrypted)
     desired_payload = desired.get("payload") if isinstance(desired.get("payload"), dict) else {}
     clone_source_id = str(desired_payload.get("clone_source_id") or (change.summary_json or {}).get("clone_source_id") or "")
@@ -2662,18 +2822,14 @@ async def apply_change(
     if change.status != "approved" and not retrying_failed_clone:
         raise HTTPException(status_code=409, detail="The change must be approved before it can be applied.")
     connection = _connection(change.connection_id)
-    summary = change.summary_json or {}
-    prerequisite_ids = [str(value) for value in summary.get("prerequisite_change_ids") or [] if str(value)]
-    legacy_prerequisite = str(summary.get("prerequisite_change_id") or "")
-    if legacy_prerequisite and legacy_prerequisite not in prerequisite_ids:
-        prerequisite_ids.append(legacy_prerequisite)
-    expected_types = {
-        str(summary.get("resource_group_prerequisite_change_id") or legacy_prerequisite): "resource_group",
-        str(summary.get("action_group_prerequisite_change_id") or ""): "action_group",
-    }
-    expected_types.pop("", None)
-    if prerequisite_ids:
-        for prerequisite_id in prerequisite_ids:
+    if check_prerequisites:
+        summary = change.summary_json or {}
+        expected_types = {
+            str(summary.get("resource_group_prerequisite_change_id") or summary.get("prerequisite_change_id") or ""): "resource_group",
+            str(summary.get("action_group_prerequisite_change_id") or ""): "action_group",
+        }
+        expected_types.pop("", None)
+        for prerequisite_id in _prerequisite_ids(change):
             prerequisite = await db.get(AlertManagerChange, prerequisite_id)
             if (
                 not prerequisite or prerequisite.tenant_id != change.tenant_id
@@ -2713,7 +2869,8 @@ async def apply_change(
         change.error_code = f"ARM_{status}" if status else "ARM_ERROR"
         change.error_message = service.safe_error(error)
         db.add(_audit(principal, "alerts_manager.change.failed", change.target_id, {"change_id": change.id, "operation": change.operation, "status": status}))
-        await db.commit()
+        if commit:
+            await db.commit()
         raise HTTPException(status_code=409 if status == 409 else 502, detail=change.error_message)
 
     after = data or {}
@@ -2735,19 +2892,21 @@ async def apply_change(
     )
     change.evidence_id = evidence["id"]
     db.add(_audit(principal, "alerts_manager.change.applied", change.target_id, {"change_id": change.id, "operation": change.operation, "status": status, "evidence_id": evidence["id"]}))
-    await db.commit()
-    from app.alerts_manager import cache as inventory_cache
+    if commit:
+        await db.commit()
+    if invalidate:
+        from app.alerts_manager import cache as inventory_cache
 
-    affected = (
-        {"action_groups"} if change.target_type == "action_group"
-        else {"rules", "action_groups"} if change.target_type == "resource_group"
-        else {"activity_log_diagnostic_settings"} if change.target_type == "activity_log_diagnostic_setting"
-        else {"rules", "action_groups"}
-    )
-    await inventory_cache.invalidate(
-        kinds=affected,
-        connection_id=str(connection.get("id") or change.connection_id),
-    )
+        affected = (
+            {"action_groups"} if change.target_type == "action_group"
+            else {"rules", "action_groups"} if change.target_type == "resource_group"
+            else {"activity_log_diagnostic_settings"} if change.target_type == "activity_log_diagnostic_setting"
+            else {"rules", "action_groups"}
+        )
+        await inventory_cache.invalidate(
+            kinds=affected,
+            connection_id=str(connection.get("id") or change.connection_id),
+        )
     resource: dict[str, Any] | None = None
     if after:
         if change.target_type == "action_group":
@@ -2759,6 +2918,197 @@ async def apply_change(
         elif change.target_type == "activity_log_diagnostic_setting":
             resource = after
     return {"change": _change_dict(change), "resource": resource}
+
+
+def _dependency_response(graph: dict[str, Any]) -> dict[str, Any]:
+    selected = set(graph["selected_ids"])
+    rows = graph["rows"]
+    changes = [_safe_change_metadata(rows[change_id], selected=change_id in selected) for change_id in graph["order"]]
+    prerequisite_ids = [change_id for change_id in graph["order"] if change_id not in selected]
+    counts: dict[str, int] = {
+        "selected": len(graph["selected_ids"]), "resolved": len(rows), "total": len(rows),
+        "prerequisites": len(prerequisite_ids), "blocked": len(graph["errors"]),
+    }
+    for row in rows.values():
+        counts[row.status] = counts.get(row.status, 0) + 1
+    ready = not graph["errors"] and all(row.status in {"pending", "approved", "applied"} for row in rows.values())
+    return {
+        "changes": changes, "selected_ids": graph["selected_ids"],
+        "prerequisite_ids": prerequisite_ids, "edges": graph["edges"],
+        "dependency_edges": graph["edges"], "errors": graph["errors"],
+        "counts": counts, "ready": ready, "topological_order": graph["order"],
+    }
+
+
+async def _resolved_connection_id(payload: ChangeSelectionRequest) -> str:
+    connection = _connection(payload.connection_id)
+    return str(connection.get("id") or payload.connection_id)
+
+
+@router.post("/changes/resolve-dependencies")
+async def resolve_change_dependencies(
+    payload: ChangeSelectionRequest,
+    principal: Principal = Depends(_read),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    graph = await _resolve_change_dependencies(
+        db, tenant_id=_tenant(principal), connection_id=await _resolved_connection_id(payload),
+        selected_ids=payload.change_ids,
+    )
+    return _dependency_response(graph)
+
+
+@router.post("/changes/bulk-decision")
+async def bulk_decide_changes(
+    payload: BulkChangeDecisionRequest,
+    principal: Principal = Depends(_approve),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    graph = await _resolve_change_dependencies(
+        db, tenant_id=_tenant(principal), connection_id=await _resolved_connection_id(payload),
+        selected_ids=payload.change_ids, include_prerequisites=payload.include_prerequisites,
+    )
+    results: list[dict[str, Any]] = []
+    errors = list(graph["errors"])
+    if errors:
+        return {"results": results, "errors": errors, "counts": {"approved": 0, "rejected": 0, "retained": 0, "failed": len(errors)}}
+    order = graph["order"] if payload.decision == "approved" else list(reversed(graph["order"]))
+    mutable_ids = set(graph["selected_ids"])
+    if payload.decision == "approved" and payload.include_prerequisites:
+        mutable_ids.update(graph["rows"])
+    if payload.decision == "rejected" and payload.include_prerequisites:
+        active = (await db.execute(select(AlertManagerChange).where(
+            AlertManagerChange.tenant_id == _tenant(principal),
+            AlertManagerChange.connection_id == await _resolved_connection_id(payload),
+            AlertManagerChange.status.in_(["pending", "approved"]),
+        ))).scalars().all()
+        selected = set(graph["selected_ids"])
+        shared = {
+            prerequisite_id
+            for dependent in active if dependent.id not in selected
+            for prerequisite_id in _prerequisite_ids(dependent)
+        }
+        blocked = (set(graph["rows"]) - selected) & shared
+        if blocked:
+            errors.append({
+                "type": "shared_prerequisite", "change_ids": sorted(blocked),
+                "message": "Prerequisites shared by unselected active dependents were not rejected.",
+            })
+        mutable_ids.update(set(graph["rows"]) - blocked)
+    changed = 0
+    retained = 0
+    for change_id in order:
+        row = graph["rows"][change_id]
+        if change_id not in mutable_ids:
+            continue
+        can_decide = row.status == "pending" or (payload.decision == "rejected" and row.status == "approved")
+        if can_decide:
+            row.status = payload.decision
+            row.decided_by = principal.subject
+            row.decided_at = service.now()
+            row.decision_reason = payload.reason
+            db.add(_audit(principal, f"alerts_manager.change.{payload.decision}", row.target_id, {"change_id": row.id, "operation": row.operation, "bulk": True}))
+            changed += 1
+            outcome = payload.decision
+        elif payload.decision == "approved" and row.status in {"approved", "applied"}:
+            retained += 1
+            outcome = "retained"
+        else:
+            errors.append({"type": "invalid_status", "change_id": row.id, "status": row.status, "message": "Change is not pending."})
+            outcome = "error"
+        results.append({"id": row.id, "status": row.status, "outcome": outcome, "error": ""})
+    db.add(_audit(principal, f"alerts_manager.changes.bulk_{payload.decision}", "managed-changes", {"selected_count": len(graph["selected_ids"]), "resolved_count": len(graph["rows"]), "changed_count": changed, "reason": payload.reason}))
+    await db.commit()
+    return {
+        "changes": [_safe_change_metadata(graph["rows"][change_id]) for change_id in graph["order"]],
+        "results": results, "errors": errors,
+        "counts": {payload.decision: changed, "retained": retained, "failed": len(errors)},
+    }
+
+
+@router.post("/changes/bulk-apply")
+async def bulk_apply_changes(
+    payload: BulkChangeApplyRequest,
+    principal: Principal = Depends(_approve),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    graph = await _resolve_change_dependencies(
+        db, tenant_id=_tenant(principal), connection_id=await _resolved_connection_id(payload),
+        selected_ids=payload.change_ids, include_prerequisites=True,
+    )
+    results: list[dict[str, Any]] = []
+    prerequisite_errors: list[dict[str, Any]] = list(graph["errors"])
+    failed_roots: dict[str, str] = {}
+    structurally_blocked: dict[str, str] = {}
+    for error in graph["errors"]:
+        root = str(error.get("change_id") or next(iter(error.get("change_ids") or []), ""))
+        dependent_id = str(error.get("dependent_id") or "")
+        if dependent_id:
+            structurally_blocked[dependent_id] = root or dependent_id
+        elif root in graph["rows"]:
+            structurally_blocked[root] = root
+    for change_id in graph["order"]:
+        row = graph["rows"][change_id]
+        if change_id in structurally_blocked:
+            root = structurally_blocked[change_id]
+            result = {
+                "id": row.id, "status": row.status, "outcome": "skipped",
+                "error": f"Blocked by invalid prerequisite branch: {root}",
+            }
+            results.append(result)
+            failed_roots[row.id] = root
+            continue
+        blockers = [edge["prerequisite_id"] for edge in graph["edges"] if edge["dependent_id"] == change_id and edge["prerequisite_id"] in failed_roots]
+        if blockers:
+            roots = sorted({failed_roots[item] for item in blockers})
+            error = "Blocked by failed prerequisite branch: " + ", ".join(roots)
+            result = {"id": row.id, "status": row.status, "outcome": "skipped", "error": error}
+            results.append(result)
+            failed_roots[row.id] = roots[0]
+            continue
+        if row.status == "applied":
+            result = {"id": row.id, "status": row.status, "outcome": "already_applied", "error": ""}
+        elif row.status != "approved":
+            message = f"Prerequisite/change status is {row.status}; approved or applied is required."
+            result = {"id": row.id, "status": row.status, "outcome": "failed", "error": message}
+            failed_roots[row.id] = row.id
+            prerequisite_errors.append({"type": "invalid_status", "change_id": row.id, "status": row.status, "affected_change_ids": [], "message": message})
+        else:
+            try:
+                await _execute_change(row, principal=principal, db=db, check_prerequisites=False, commit=False, invalidate=False)
+                result = {"id": row.id, "status": row.status, "outcome": "applied", "error": ""}
+            except HTTPException as exc:
+                message = service.safe_error(str(exc.detail))
+                result = {"id": row.id, "status": row.status, "outcome": "failed", "error": message}
+                failed_roots[row.id] = row.id
+                prerequisite_errors.append({"type": "apply_failed", "change_id": row.id, "affected_change_ids": [], "message": message})
+        results.append(result)
+    for error in prerequisite_errors:
+        root = str(error.get("change_id") or next(iter(error.get("change_ids") or []), ""))
+        if root:
+            error["affected_change_ids"] = [item["id"] for item in results if item["outcome"] == "skipped" and failed_roots.get(item["id"]) == root]
+    db.add(_audit(principal, "alerts_manager.changes.bulk_applied", "managed-changes", {"selected_count": len(graph["selected_ids"]), "resolved_count": len(graph["rows"]), "result_counts": {outcome: sum(1 for item in results if item["outcome"] == outcome) for outcome in {item["outcome"] for item in results}}}))
+    await db.commit()
+    from app.alerts_manager import cache as inventory_cache
+    if any(item["outcome"] == "applied" for item in results):
+        await inventory_cache.invalidate(kinds={"rules", "action_groups", "activity_log_diagnostic_settings"}, connection_id=await _resolved_connection_id(payload))
+    return {
+        "results": results,
+        "prerequisite_errors": prerequisite_errors,
+        "counts": {key: sum(1 for item in results if item["outcome"] == key) for key in ("applied", "already_applied", "skipped", "failed")},
+    }
+
+
+@router.post("/changes/{change_id}/apply")
+async def apply_change(
+    change_id: str,
+    principal: Principal = Depends(_approve),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    change = await db.get(AlertManagerChange, change_id)
+    if not change or change.tenant_id != _tenant(principal):
+        raise HTTPException(status_code=404, detail="Change request not found.")
+    return await _execute_change(change, principal=principal, db=db)
 
 
 @router.post("/changes/{change_id}/rollback")

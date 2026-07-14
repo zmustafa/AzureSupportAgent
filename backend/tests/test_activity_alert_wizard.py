@@ -678,6 +678,168 @@ async def test_apply_guard_requires_all_rg_and_action_group_prerequisites(databa
         assert rule.applied_at is None
 
 
+def _managed_change(
+    target_type: str,
+    status: str = "pending",
+    *,
+    tenant: str = TENANT,
+    connection_id: str = CONNECTION["id"],
+) -> AlertManagerChange:
+    return AlertManagerChange(
+        tenant_id=tenant, connection_id=connection_id, target_type=target_type,
+        target_id=f"/subscriptions/sub-1/resourceGroups/rg/providers/test/{target_type}/{target_type}-{status}",
+        operation="create", status=status, risk="medium", summary_json={},
+        desired_encrypted=service.encrypted_json({"body": {}}),
+        before_encrypted=service.encrypted_json({}), after_encrypted="", expected_state_hash="",
+        requested_by="requester", auto_apply=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_dependency_closure_is_transitive_and_reports_isolation_and_cycles(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    resource_group = _managed_change("resource_group")
+    action_group = _managed_change("action_group")
+    rule = _managed_change("activity_rule")
+    other_tenant = _managed_change("resource_group", tenant="other-tenant")
+    other_connection = _managed_change("resource_group", connection_id="other-connection")
+    async with database() as db:
+        db.add_all([resource_group, action_group, rule, other_tenant, other_connection])
+        await db.commit()
+        action_group.summary_json = {"prerequisite_change_ids": [resource_group.id]}
+        rule.summary_json = {"prerequisite_change_ids": [action_group.id]}
+        await db.commit()
+        resolved = await api.resolve_change_dependencies(
+            api.ChangeSelectionRequest(connection_id=CONNECTION["id"], change_ids=[rule.id]), _principal(), db,
+        )
+        assert resolved["topological_order"] == [resource_group.id, action_group.id, rule.id]
+        assert resolved["counts"] == {
+            "selected": 1, "resolved": 3, "total": 3, "prerequisites": 2,
+            "blocked": 0, "pending": 3,
+        }
+        assert resolved["ready"] is True
+        assert all("desired_encrypted" not in row and "before_encrypted" not in row for row in resolved["changes"])
+
+        action_group.summary_json = {"prerequisite_change_ids": [rule.id]}
+        await db.commit()
+        cycle = await api.resolve_change_dependencies(
+            api.ChangeSelectionRequest(connection_id=CONNECTION["id"], change_ids=[rule.id]), _principal(), db,
+        )
+        assert cycle["ready"] is False
+        assert {error["type"] for error in cycle["errors"]} == {"cycle"}
+
+        isolated = await api.resolve_change_dependencies(
+            api.ChangeSelectionRequest(
+                connection_id=CONNECTION["id"], change_ids=["missing", other_tenant.id, other_connection.id],
+            ), _principal(), db,
+        )
+        assert {error["type"] for error in isolated["errors"]} == {"missing", "cross_tenant", "cross_connection"}
+        assert isolated["changes"] == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_approval_expands_prerequisites_in_order(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    resource_group = _managed_change("resource_group")
+    action_group = _managed_change("action_group", "approved")
+    rule = _managed_change("activity_rule")
+    async with database() as db:
+        db.add_all([resource_group, action_group, rule])
+        await db.commit()
+        action_group.summary_json = {"prerequisite_change_ids": [resource_group.id]}
+        rule.summary_json = {"prerequisite_change_ids": [action_group.id]}
+        await db.commit()
+        result = await api.bulk_decide_changes(
+            api.BulkChangeDecisionRequest(
+                connection_id=CONNECTION["id"], change_ids=[rule.id], decision="approved", reason="Approve branch",
+            ), _principal(), db,
+        )
+        assert [item["id"] for item in result["results"]] == [resource_group.id, action_group.id, rule.id]
+        assert result["counts"] == {"approved": 2, "retained": 1, "failed": 0}
+        assert resource_group.status == rule.status == action_group.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_approved_unapplied_changes_can_be_rejected_individually_and_in_bulk(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    individual = _managed_change("activity_rule", "approved")
+    prerequisite = _managed_change("resource_group", "approved")
+    dependent = _managed_change("activity_rule", "approved")
+    async with database() as db:
+        db.add_all([individual, prerequisite, dependent])
+        await db.commit()
+        dependent.summary_json = {"prerequisite_change_ids": [prerequisite.id]}
+        await db.commit()
+        await api.decide_change(
+            individual.id, api.ChangeDecisionRequest(decision="rejected", reason="Cancel before apply"),
+            _principal(), db,
+        )
+        assert individual.status == "rejected"
+        result = await api.bulk_decide_changes(
+            api.BulkChangeDecisionRequest(
+                connection_id=CONNECTION["id"], change_ids=[dependent.id],
+                decision="rejected", reason="Cancel approved branch", include_prerequisites=True,
+            ), _principal(), db,
+        )
+        assert result["counts"]["rejected"] == 2
+        assert prerequisite.status == dependent.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_bulk_apply_orders_dependencies_isolates_branches_and_retries(database, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
+    monkeypatch.setattr("app.evidence.registry.create_snapshot", lambda **_kwargs: {"id": "evidence"})
+    async def invalidate(**_kwargs):
+        return None
+    monkeypatch.setattr("app.alerts_manager.cache.invalidate", invalidate)
+    resource_group = _managed_change("resource_group", "applied")
+    action_group = _managed_change("action_group", "approved")
+    blocked_rule = _managed_change("activity_rule", "approved")
+    independent_rule = _managed_change("activity_rule", "approved")
+    calls: list[str] = []
+    fail_action_group = True
+
+    async def apply_action_group(_connection, change):
+        calls.append(change.target_type)
+        return ({}, 500, "temporary failure") if fail_action_group else ({"id": change.target_id}, 200, "")
+
+    async def apply_rule(_connection, change):
+        calls.append(change.target_type)
+        return {"id": change.target_id, "properties": {}}, 200, ""
+
+    monkeypatch.setattr(service, "apply_action_group_change", apply_action_group)
+    monkeypatch.setattr(rules, "apply_rule_change", apply_rule)
+    async with database() as db:
+        db.add_all([resource_group, action_group, blocked_rule, independent_rule])
+        await db.commit()
+        action_group.summary_json = {"prerequisite_change_ids": [resource_group.id]}
+        blocked_rule.summary_json = {"prerequisite_change_ids": [action_group.id]}
+        await db.commit()
+        first = await api.bulk_apply_changes(
+            api.BulkChangeApplyRequest(
+                connection_id=CONNECTION["id"], change_ids=[blocked_rule.id, independent_rule.id],
+            ), _principal(), db,
+        )
+        assert first["counts"] == {"applied": 1, "already_applied": 1, "skipped": 1, "failed": 1}
+        assert blocked_rule.status == "approved"
+        assert independent_rule.status == "applied"
+        assert len(first["prerequisite_errors"]) == 1
+        assert first["prerequisite_errors"][0]["affected_change_ids"] == [blocked_rule.id]
+
+        fail_action_group = False
+        action_group.status = "approved"
+        action_group.error_code = None
+        action_group.error_message = None
+        await db.commit()
+        second = await api.bulk_apply_changes(
+            api.BulkChangeApplyRequest(connection_id=CONNECTION["id"], change_ids=[blocked_rule.id]),
+            _principal(), db,
+        )
+        assert second["counts"] == {"applied": 2, "already_applied": 1, "skipped": 0, "failed": 0}
+        assert action_group.status == blocked_rule.status == "applied"
+        assert calls == ["action_group", "activity_rule", "action_group", "activity_rule"]
+
+
 @pytest.mark.asyncio
 async def test_resource_group_apply_uses_arm_put_with_required_api(monkeypatch: pytest.MonkeyPatch) -> None:
     change = AlertManagerChange(

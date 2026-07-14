@@ -121,6 +121,22 @@ def test_public_rule_exposes_activity_category_only_for_activity_rules() -> None
     assert metric["category"] == ""
 
 
+def test_rule_action_group_ids_are_canonical_and_deduplicated_for_editing() -> None:
+    group = "/subscriptions/SUB-1/resourceGroups/MyRG/providers/Microsoft.Insights/actionGroups/OnCall"
+    resource = {
+        "id": "/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.Insights/metricAlerts/cpu",
+        "name": "cpu", "type": "microsoft.insights/metricalerts", "location": "Global",
+        "properties": {
+            "enabled": True, "severity": 2, "scopes": METRIC["scopes"],
+            "actions": [{"actionGroupId": group + "/"}, {"actionGroupId": group.lower()}],
+            "criteria": {"allOf": []},
+        },
+    }
+    expected = group.lower()
+    assert rules.public_rule(resource)["action_group_ids"] == [expected]
+    assert rules.editable_rule(resource)["action_group_ids"] == [expected]
+
+
 def test_multi_resource_metric_requires_type_and_region() -> None:
     payload = json.loads(json.dumps(METRIC))
     payload["scopes"].append("/subscriptions/sub-1/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm2")

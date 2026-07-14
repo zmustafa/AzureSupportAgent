@@ -204,9 +204,19 @@ function csv(result: BulkNotificationSimulation): string {
   return [columns.join(","), ...result.routes.map((row) => columns.map((key) => quote(key === "resource_ids" ? row.resource_ids.join(" | ") : key === "issues" ? row.issues.join(" | ") : key === "receiver_destination" ? row.receiver_destination || row.receiver_masked : row[key as keyof typeof row])).join(","))].join("\n");
 }
 
+function elapsedLabel(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function BulkPathSimulator({ params }: { params: ScopeParams }) {
   const [result, setResult] = useState<BulkNotificationSimulation | null>(null);
   const [busy, setBusy] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState("");
   const [family, setFamily] = useState<"all" | ManagedAlertRule["family"]>("all");
   const [severity, setSeverity] = useState("all");
@@ -249,6 +259,15 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
   const sankeySuppressClickRef = useRef(false);
   const simulationRequest = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const simulationSequence = useRef(0);
+  const simulationStartedAt = useRef(0);
+
+  useEffect(() => {
+    if (!busy || !simulationStartedAt.current) return;
+    const update = () => setElapsedSeconds(Math.floor((Date.now() - simulationStartedAt.current) / 1000));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   useEffect(() => () => {
     if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
@@ -391,6 +410,8 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
     simulationRequest.current?.controller.abort();
     const request = { sequence: ++simulationSequence.current, controller: new AbortController() };
     simulationRequest.current = request;
+    simulationStartedAt.current = Date.now();
+    setElapsedSeconds(0);
     setBusy(true); setError(""); setPage(1); setSelectedLink("");
     try {
       const next = await api.bulkSimulateNotificationPaths({ ...params, monitor_condition: condition, include_disabled: includeDisabled, families: family === "all" ? [] : [family], severities: severity === "all" ? [] : [Number(severity)] }, request.controller.signal);
@@ -777,7 +798,7 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
         <label className="flex h-7 flex-none items-center gap-1.5 whitespace-nowrap text-xs"><input type="checkbox" checked={includeDisabled} onChange={(event) => { invalidateSimulationForFilterChange(); setIncludeDisabled(event.target.checked); }} /> Include disabled rules</label>
       </div>
       <div className="flex flex-wrap items-center gap-1 border-b px-4 py-2">{["Total", "Mapped", "Unmapped", "Alerted", "No alert", "Healthy", "Flow gaps"].map((label) => <div key={label} className="h-8 min-w-16 rounded-lg border bg-gray-50 px-2 py-px"><div className="h-4 w-6 animate-pulse rounded bg-gray-200" /><div className="mt-0.5 text-[8px] font-medium uppercase tracking-wide text-gray-400">{label}</div></div>)}</div>
-      <div className="flex h-[580px] flex-col items-center justify-center gap-3 text-sm text-gray-500"><div className="h-7 w-7 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" /><div>Building the notification flow…</div><div className="text-xs text-gray-400">Loading resources, alert rules, Action Groups, and receivers.</div></div>
+      <div className="flex h-[580px] flex-col items-center justify-center gap-3 text-sm text-gray-500"><div className="h-7 w-7 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" /><div>Building the notification flow…</div><div className="text-xs tabular-nums text-gray-500" role="timer" aria-live="off">Elapsed {elapsedLabel(elapsedSeconds)}</div><div className="text-xs text-gray-400">Loading resources, alert rules, Action Groups, and receivers.</div></div>
     </section>}
 
     {result && <>

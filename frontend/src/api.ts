@@ -1125,6 +1125,49 @@ export type AlertsManagerChange = {
   can_retry?: boolean;
 };
 
+export type AlertsManagerDependencyCounts = {
+  selected: number;
+  prerequisites: number;
+  total: number;
+  pending: number;
+  approved: number;
+  applied: number;
+  blocked: number;
+};
+
+export type AlertsManagerDependencyResolution = {
+  changes: AlertsManagerChange[];
+  selected_ids: string[];
+  prerequisite_ids: string[];
+  edges: Array<{ dependent_id: string; prerequisite_id: string; expected_type?: string }>;
+  errors: AlertsManagerDependencyError[];
+  counts: AlertsManagerDependencyCounts;
+  ready: boolean;
+};
+
+export type AlertsManagerDependencyError = {
+  type: string;
+  message: string;
+  change_id?: string;
+  change_ids?: string[];
+  dependent_id?: string;
+  affected_change_ids?: string[];
+  status?: string;
+};
+
+export type AlertsManagerBulkDecisionResult = {
+  changes: AlertsManagerChange[];
+  results?: Array<{ id: string; status: string; outcome?: string; error?: string }>;
+  counts: Record<string, number>;
+  errors: AlertsManagerDependencyError[];
+};
+
+export type AlertsManagerBulkApplyResult = {
+  results: Array<{ id: string; status: string; outcome: string; error: string }>;
+  counts: Record<string, number>;
+  prerequisite_errors: AlertsManagerDependencyError[];
+};
+
 export type AlertsManagerChangeDetails = {
   change: AlertsManagerChange;
   execution: {
@@ -5072,6 +5115,12 @@ export const api = {
   },
   decideAlertsManagerChange: (changeId: string, decision: "approved" | "rejected", reason: string) =>
     http<{ change: AlertsManagerChange }>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/decision`, { method: "POST", body: JSON.stringify({ decision, reason }) }),
+  resolveAlertsManagerChangeDependencies: (body: { connection_id?: string; change_ids: string[]; include_prerequisites: true }) =>
+    http<AlertsManagerDependencyResolution>("/alerts-manager/changes/resolve-dependencies", { method: "POST", body: JSON.stringify(body) }),
+  bulkDecideAlertsManagerChanges: (body: { connection_id?: string; change_ids: string[]; decision: "approved" | "rejected"; reason: string; include_prerequisites: true }) =>
+    http<AlertsManagerBulkDecisionResult>("/alerts-manager/changes/bulk-decision", { method: "POST", body: JSON.stringify(body) }),
+  bulkApplyAlertsManagerChanges: (body: { connection_id?: string; change_ids: string[]; include_prerequisites: true }) =>
+    http<AlertsManagerBulkApplyResult>("/alerts-manager/changes/bulk-apply", { method: "POST", body: JSON.stringify(body) }),
   applyAlertsManagerChange: (changeId: string) =>
     http<{ change: AlertsManagerChange }>(`/alerts-manager/changes/${encodeURIComponent(changeId)}/apply`, { method: "POST", body: "{}" }),
   rollbackAlertsManagerChange: (changeId: string) =>

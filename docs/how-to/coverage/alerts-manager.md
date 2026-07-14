@@ -135,12 +135,14 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 
 1. In `/alerts-manager/changes`, select the pending rows from the reviewed Activity Log batch.
 2. Open **Details** for representative and high-risk rows. Confirm resource-group create/PUT requests, high-risk Action Group clone requests, and rule requests target the intended subscription, retained or mapped group, conditions, and routes. Secret-bearing receiver fields are redacted in this view.
-3. Approve or reject pending rows with a reason. Approval changes only application state.
-4. Select all approved rows in the batch and choose **Apply to Azure**.
-5. Confirm the prompt. Bulk apply runs resource-group prerequisites serially, then Action Group prerequisites serially, and then remaining rows with at most six workers. Each row can independently succeed, fail, or become stale.
-6. If applying individually, apply each `resource_group` row before its dependent `action_group`, then apply that clone before dependent `activity_rule` rows. The API validates tenant, connection, expected prerequisite type, and applied status.
-7. Return to Overview, select **Data stale — Analyze again**, and refresh Essential Activity Log coverage.
-8. Verify the created resource groups, enabled rules, exact Activity Log conditions, subscription scopes, and Action Group routes in live inventory or Azure.
+3. Select a pending rule or clone. Wait while the backend expands its transitive prerequisites, including prerequisites on other server-side pages, and review the **requested**, **prerequisites added**, and total counts. Use **Select all** only when the intention is to load every actionable page and resolve the combined closure.
+4. Approve or reject pending rows with a reason. Bulk approval includes pending prerequisites returned by the backend. To cancel an already approved but unapplied row, use its **Reject** control or include it in a bulk **Reject** decision. Approval and rejection change only application state and audit history.
+5. Select the approved closure and choose **Apply to Azure**.
+6. Confirm the prompt. The backend recomputes dependencies and applies topologically: resource group, then Action Group, then dependent rule. A failed branch skips only its descendants; independent branches continue.
+7. A row-level **Apply to Azure** request also uses the dependency-aware bulk-apply endpoint with that row as the requested selection. It expands and applies approved prerequisites in topological order; it does not require manually applying each ancestor first.
+8. If a branch fails, review the grouped prerequisite error and affected descendant IDs. Correct or retry the failed prerequisite; skipped descendants remain approved. Select the failed root or an approved descendant and apply again so the server recomputes the closure, retains already-applied ancestors, and resumes eligible descendants.
+9. Return to Overview, select **Data stale — Analyze again**, and refresh Essential Activity Log coverage.
+10. Verify the created resource groups, enabled rules, exact Activity Log conditions, subscription scopes, and Action Group routes in live inventory or Azure.
 
 **Expected result:** Approved prerequisites and then rules are written to Azure, each applied row receives evidence, and failed siblings remain visible without hiding successful operations.
 
@@ -206,7 +208,7 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 1. Open the focused plan and inspect source, assignment, Action Group, validations, item classifications, and desired payloads.
 2. Approve only a pending plan; provide a review reason.
 3. Reject a pending plan when it should not proceed.
-4. Cancel an approved-but-unapplied plan by rejecting its remaining pending/approved children.
+4. The plan detail currently exposes whole-plan **Approve** and **Reject** only while the plan is pending. To cancel an approved-but-unapplied plan in the UI, open `/alerts-manager/changes`, select its remaining approved children, review the dependency closure, and use bulk **Reject**. The backend plan-decision contract also accepts rejection of an approved plan, but the current plan-detail view does not expose that control.
 5. Recreate the plan if approved content must change; do not edit approved payloads in place.
 
 **Expected result:** The plan and child statuses reflect the decision while preserving audit history.
@@ -217,25 +219,41 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 
 1. Open `/alerts-manager/changes`; the red pulsing badge reports pending plus approved items across all server-side pages.
 2. Open **Details** and compare current Azure state, validated desired configuration, resulting ARM body, method, target, and concurrency hash. Signed URL query strings and secret-bearing fields are redacted.
-3. For pending rows, provide a reason and select **Approve** or **Reject**. Bulk decision uses one reason for selected pending rows.
-4. For approved rows, select **Apply to Azure**. Bulk apply runs resource groups serially, Action Groups serially, and only then uses up to six concurrent workers for remaining rows; each row remains independently audited.
-5. Watch each row become applied, failed, or stale. Successful siblings are not hidden by failures.
-6. Refresh Rule management/Action groups, then select **Data stale — Analyze again**.
-7. Verify exact enabled state, condition, scope, and Action Group routing in the refreshed app or Azure.
+3. Select any actionable rows and wait for `POST /api/alerts-manager/changes/resolve-dependencies` to expand transitive prerequisites. Review requested versus added prerequisite counts and resolve any missing, cross-connection, type, or cycle error.
+4. For pending rows, provide a reason and select **Approve** or **Reject**. For one approved-but-unapplied row, use its row-level **Reject** control. For multiple pending and/or approved-but-unapplied rows, select them and use bulk **Reject**. `POST /api/alerts-manager/changes/bulk-decision` uses one reason, resolves the branch, rejects dependents before prerequisites, and retains prerequisites shared by unselected active dependents.
+5. For approved rows, select **Apply to Azure**. `POST /api/alerts-manager/changes/bulk-apply` recomputes the closure and executes its topological order, including RG → Action Group → rule where those dependencies exist.
+6. Watch each row become applied, already applied, failed, or skipped. A failed branch skips its descendants while independent branches continue; errors are grouped by failed prerequisite and list affected descendants.
+7. Refresh Rule management/Action groups, then select **Data stale — Analyze again**.
+8. Verify exact enabled state, condition, scope, and Action Group routing in the refreshed app or Azure.
 
 **Expected result:** Only approved changes are sent to Azure, and terminal state plus evidence/error is retained.
 
 **Verification:** Treat **Applied** as an execution result, then independently confirm live Azure state and fresh analysis convergence.
 
+## How to cancel approved changes individually or in bulk
+
+1. Open `/alerts-manager/changes`, choose **Action Required**, and identify rows that are `approved` but have not been applied.
+2. For one row, open **Details**, verify the target and desired ARM body, select **Reject**, and enter a cancellation reason. This calls the individual decision endpoint and changes only the ledger and audit history.
+3. For a dependency branch, select the approved dependent row and wait for the server to add its transitive prerequisites. Review the **requested**, **prerequisites added**, and total counts before continuing.
+4. For several branches or every actionable row, select the intended rows or use **Select all**. **Select all** fetches all server-side pages before dependency resolution; it is not limited to the visible 100-row page.
+5. Select bulk **Reject** and enter one reason. The backend processes the closure in reverse topological order so dependents are rejected before their prerequisites.
+6. If the result reports `shared_prerequisite`, leave that prerequisite active: an unselected pending or approved dependent still requires it. Either keep the shared prerequisite or separately review and select every active dependent before retrying.
+7. Refresh **Action Required** and verify the cancelled rows are absent there and visible as `rejected` under **Archived** or **All**.
+
+**Expected result:** Pending and approved-but-unapplied selections become rejected without an Azure call; shared prerequisites needed by unselected active branches are retained.
+
+**Verification:** Confirm the decision reason and rejected status in **All** or **Archived**, confirm the actionable badge/count decreased, and refresh Azure inventory only to verify that no Azure resource changed. If a row is already `applied`, stop: it cannot be rejected and requires **Prepare rollback** where supported.
+
 ## How to handle failure, stale state, retry, and rollback
 
 1. For **Failed**, read the error and correct permission, validation, conflict, region, metric, query, or receiver issues before creating a corrected request.
 2. Use **Retry clone** only where the row explicitly permits it; the retry restores encrypted source receiver endpoints before applying.
-3. For **Stale**, do not force the old payload. Refresh inventory and create a new request because the optimistic-concurrency hash no longer matches Azure.
-4. For an applied change, select **Prepare rollback** when `alerts_manager.delete` is available.
-5. Review the inverse pending request; rollback is not automatic.
-6. Approve and apply the rollback through the same managed flow.
-7. Refresh and analyze again to verify restoration.
+3. After a failed prerequisite, leave skipped descendants approved. Retry or correct the root, then select the root or a skipped descendant and apply again. Dependency resolution retains already-applied ancestors and resumes the approved descendants; it does not require reapproval of skipped rows.
+4. For **Stale**, do not force the old payload. Refresh inventory and create a new request because the optimistic-concurrency hash no longer matches Azure.
+5. For an applied change, select **Prepare rollback** when `alerts_manager.delete` is available.
+6. Review the inverse pending request; rollback is not automatic.
+7. Approve and apply the rollback through the same managed flow.
+8. Refresh and analyze again to verify restoration.
 
 **Expected result:** Failure history remains intact, and rollback creates a separately approved inverse change linked to the original.
 
@@ -274,6 +292,7 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 - Dynamic thresholds require sufficient representative history; verify their behavior after deployment.
 - Keep receiver secrets out of exports and documentation. The managed ledger encrypts stored payloads and redacts displayed secret-bearing values.
 - Rollback is a new pending request and can itself be unsafe if Azure changed afterward.
+- Reject/cancel is available only before apply and requires `alerts_manager.approve`; applied rows cross the cancellation boundary and require `alerts_manager.delete` to prepare a supported rollback.
 - Essential Activity Log destination defaults are local tenant/connection configuration. Saving them is not an Azure change and preview always revalidates the mapped groups.
 - Activity Log resource-group prerequisites cannot be automatically rolled back.
 
@@ -285,6 +304,7 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 | Gap preview blocked | Open/cancel active pending or approved blockers; then recheck metric definitions and Action Group health. |
 | Validation fails | Verify family, scope, metric/query, aggregation, dimensions, evaluation settings, identity, and region. |
 | Change stays pending | An approver must decide it; approval alone still does not apply it. |
+| Reject is unavailable on a change | The row is not pending or approved, or `alerts_manager.approve` is missing. Applied rows cannot be cancelled; use **Prepare rollback** with `alerts_manager.delete` when that target supports rollback. |
 | Apply is stale | Azure changed after the snapshot. Refresh and create a new request. |
 | Duplicate notifications remain | Trace all rule-to-Action-Group receiver paths and refresh out-of-band changes. |
 | Test reports success but receiver did not process | Inspect the downstream mailbox, endpoint, schema, filtering, and automation logs. |
@@ -292,7 +312,11 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 | Local Action Group override fails preview | Choose a healthy group in the rule subscription, clear the override to use the healthy central fallback, or explicitly plan a local clone. |
 | Hybrid routing leaves subscriptions unresolved | Select a healthy visible central Action Group, a healthy local override, or an explicitly enabled clone with a healthy source and safe prefix. |
 | Planned clone is invalid | Resolve its resource group/location, enable clone creation, select a visible enabled source with an active receiver, and use an Azure-safe prefix. |
-| Approved Activity Log rule returns a prerequisite conflict | Apply resource-group prerequisites, then Action Group prerequisites, then rules; or bulk-apply the complete approved batch to enforce tier order. |
+| Approved Activity Log rule returns a prerequisite conflict | Select the rule and use **Apply to Azure**; row-level apply resolves its closure and enforces resource group → Action Group → rule order. Approve any pending ancestor and correct missing, cross-connection, type, or cycle errors first. |
+| Selecting a row adds prerequisites not visible on the current page | Review the requested/prerequisite counts. This is the server-authoritative transitive closure, including rows discovered across pages. |
+| Bulk approval includes more rows than originally checked | Pending prerequisites are intentionally included. Inspect the expanded closure before confirming; approval remains an application-state write and does not mutate Azure. |
+| Bulk apply reports failed and skipped rows together | Use the grouped prerequisite error to correct or retry the failed root. Independent branches already continued, and skipped descendants remain approved for the next closure retry. |
+| Rejection reports a shared prerequisite | An unselected active dependent still needs that row. Review the dependent; the backend intentionally leaves the shared prerequisite pending or approved. |
 | Clone details omit receiver endpoints | This is the secret-safe design. Preview and audit details expose IDs and counts; encrypted source values are restored only for apply or eligible retry. |
 | Prepare rollback is unavailable for the resource group | Automatic group deletion is intentionally blocked; inspect the group and use a separately reviewed Azure removal process only if it is empty and unshared. |
 | Wizard-created clone rollback is blocked | Detach all dependent alert rules and refresh. Deletion is guarded both when rollback is prepared and when it is applied. |

@@ -70,7 +70,7 @@ def _rule_actions(props: dict[str, Any], family: str) -> list[str]:
         actions = [item.get("actionGroupId") for item in (props.get("actions") or {}).get("actionGroups") or [] if isinstance(item, dict)]
     else:
         actions = [item.get("actionGroupId") for item in props.get("actions") or [] if isinstance(item, dict)]
-    return [str(value) for value in actions if value]
+    return list(dict.fromkeys(str(value).strip().lower().rstrip("/") for value in actions if str(value).strip()))
 
 
 def _condition_count(props: dict[str, Any], family: str) -> int:
@@ -223,7 +223,7 @@ def editable_rule(resource: dict[str, Any]) -> dict[str, Any]:
                 "detector_parameters": detector.get("parameters") or {},
                 "frequency": str(props.get("frequency") or "PT5M"),
                 "throttling_duration": str((props.get("throttling") or {}).get("duration") or "PT0M"),
-                "action_group_ids": [str(value) for value in action_groups.get("groupIds") or []],
+                "action_group_ids": _rule_actions(props, family),
                 "conditions": [],
             }
         )

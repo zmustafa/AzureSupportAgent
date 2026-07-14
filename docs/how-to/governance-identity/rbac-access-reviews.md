@@ -22,7 +22,7 @@ feature_ids: [PROACTIVE_NAV:rbac, RBAC_NAV:overview]
 
 `/rbac/overview`, `/rbac/effective`, `/rbac/privileged`, `/rbac/scopes`, `/rbac/roles`, `/rbac/insights`, and `/rbac/diagnostics`.
 
-![RBAC effective-access review]({{ site.baseurl }}/usecase-assets/rbac.png)
+![RBAC effective-access review]({{ site.baseurl }}/assets/identity.png)
 
 ## How to scan RBAC scopes and directory context
 

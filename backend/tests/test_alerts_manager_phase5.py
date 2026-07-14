@@ -70,6 +70,9 @@ def test_promql_defensive_validation() -> None:
 def test_phase5_api_routes_are_registered() -> None:
     paths = {route.path for route in router.routes}
     assert "/alerts-manager/alert-rules/bulk-changes" in paths
+    assert "/alerts-manager/changes/resolve-dependencies" in paths
+    assert "/alerts-manager/changes/bulk-decision" in paths
+    assert "/alerts-manager/changes/bulk-apply" in paths
     assert "/alerts-manager/authoring/options" in paths
     assert "/alerts-manager/authoring/resolve" in paths
     assert "/alerts-manager/notifications/simulate" in paths

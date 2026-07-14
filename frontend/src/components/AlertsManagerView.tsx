@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -7,6 +7,7 @@ import {
   type AlertsManagerCapabilities,
   type AlertsManagerChange,
   type AlertsManagerChangeDetails,
+  type AlertsManagerDependencyResolution,
   type AlertAnalysisActionGroup,
   type AlertAnalysisGap,
   type AlertAnalysisOverlap,
@@ -334,18 +335,30 @@ function isActiveGapPlanStatus(status?: GapDeploymentPlanStatus["status"]): bool
   return status === "pending" || status === "approved";
 }
 
-function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSelectionChange, onCreatePlan, onOpenPlan, onCreateRule }: {
+function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, groupBySignal, onSelectionChange, onCreatePlan, onOpenPlan, onCreateRule }: {
   rows: AlertAnalysisGap[];
   selectedRows: AlertAnalysisGap[];
   selectedIds: Set<string>;
   plansByGap: Record<string, GapDeploymentPlanStatus>;
   canPlan: boolean;
+  groupBySignal: boolean;
   onSelectionChange: (ids: Set<string>) => void;
   onCreatePlan: () => void;
   onOpenPlan: (planId: string) => void;
   onCreateRule?: (row: AlertAnalysisGap) => void;
 }) {
+  const [collapsedSignals, setCollapsedSignals] = useState<Set<string>>(new Set());
+  const signalCounts = useMemo(() => rows.reduce<Record<string, number>>((counts, row) => {
+    const signal = row.signal || "No signal";
+    counts[signal] = (counts[signal] ?? 0) + 1;
+    return counts;
+  }, {}), [rows]);
+  useEffect(() => {
+    if (!groupBySignal) setCollapsedSignals(new Set());
+    else setCollapsedSignals((current) => new Set([...current].filter((signal) => signal in signalCounts)));
+  }, [groupBySignal, signalCounts]);
   const selectable = rows.filter((row, index) => {
+    if (groupBySignal && collapsedSignals.has(row.signal || "No signal")) return false;
     const active = plansByGap[gapIdentity(row, index)];
     return (row.type === "baseline_missing" || row.type === "baseline_misconfigured") && !!row.resource_id && !!row.signal && !isActiveGapPlanStatus(active?.status);
   });
@@ -361,6 +374,7 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSel
   }
   return (
     <div className="overflow-hidden rounded-xl border bg-white">
+      {groupBySignal && <div className="flex items-center justify-end gap-2 border-b bg-gray-50 px-3 py-2"><span className="mr-auto text-[10px] text-gray-500">{Object.keys(signalCounts).length} signal group{Object.keys(signalCounts).length === 1 ? "" : "s"}</span><button type="button" disabled={collapsedSignals.size === Object.keys(signalCounts).length} onClick={() => setCollapsedSignals(new Set(Object.keys(signalCounts)))} className="rounded border bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40">Collapse all</button><button type="button" disabled={collapsedSignals.size === 0} onClick={() => setCollapsedSignals(new Set())} className="rounded border bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40">Expand all</button></div>}
       {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-3 border-b border-indigo-200 bg-indigo-50 px-4 py-3" data-testid="gap-selection-bar"><div><div className="text-xs font-semibold text-indigo-900">{selectedIds.size} gap{selectedIds.size === 1 ? "" : "s"} selected</div><div className="text-[10px] text-indigo-700">{resourceCount} resource{resourceCount === 1 ? "" : "s"}{severitySummary ? ` · ${severitySummary}` : ""}</div></div><div className="ml-auto flex gap-2"><button onClick={() => onSelectionChange(new Set())} className="rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-100">Clear</button><button data-action="create-gaps-plan" disabled={!canPlan} onClick={onCreatePlan} className="rounded bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40">Create remediation plan</button></div></div>}
       <div className="overflow-auto">
       <table className="w-full min-w-[980px] text-left text-xs">
@@ -368,11 +382,16 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSel
         <tbody className="divide-y">
           {rows.map((row, index) => {
             const id = gapIdentity(row, index);
+            const previousSignal = index > 0 ? rows[index - 1].signal || "No signal" : "";
+            const signal = row.signal || "No signal";
+            const showSignalHeader = groupBySignal && signal !== previousSignal;
+            const collapsed = groupBySignal && collapsedSignals.has(signal);
             const plan = plansByGap[id];
             const activePlan = isActiveGapPlanStatus(plan?.status);
             const actionable = (row.type === "baseline_missing" || row.type === "baseline_misconfigured") && !!row.resource_id && !!row.signal && !activePlan;
-            return (
-            <tr key={id} data-testid={`gap-row-${id}`} className={`align-top hover:bg-gray-50 ${selectedIds.has(id) ? "bg-indigo-50/60" : ""}`}>
+            return <Fragment key={id}>
+            {showSignalHeader && <tr className="bg-sky-50/80"><th colSpan={7} scope="rowgroup" className="p-0 text-left text-[11px] font-semibold text-sky-800"><button type="button" aria-expanded={!collapsed} onClick={() => setCollapsedSignals((current) => { const next = new Set(current); if (next.has(signal)) next.delete(signal); else next.add(signal); return next; })} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-sky-100"><span aria-hidden="true" className="w-3 text-center">{collapsed ? "▸" : "▾"}</span><span>Signal: {signal}</span><span className="font-normal text-sky-600">{signalCounts[signal]} gap{signalCounts[signal] === 1 ? "" : "s"} on this page</span></button></th></tr>}
+            {!collapsed && <tr key={id} data-testid={`gap-row-${id}`} className={`align-top hover:bg-gray-50 ${selectedIds.has(id) ? "bg-indigo-50/60" : ""}`}>
               <td className="px-3 py-3"><input type="checkbox" aria-label={`Select ${row.signal || row.resource_name || "gap"}`} checked={selectedIds.has(id)} disabled={!canPlan || !actionable} title={!actionable ? activePlan ? "This gap already has an active deployment plan." : "Bulk remediation currently supports metric baseline gaps first." : undefined} onChange={(event) => { const next = new Set(selectedIds); if (event.target.checked) next.add(id); else next.delete(id); onSelectionChange(next); }} /></td>
               <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 font-medium ${RISK_STYLE[row.risk] ?? RISK_STYLE.warning}`}>{row.risk}</span></td>
               <td className="px-3 py-3 font-medium capitalize text-gray-700"><div>{row.type.replaceAll("_", " ")}</div>{plan && plan.status !== "none" && <button onClick={() => onOpenPlan(plan.plan_id)} className={`mt-1 rounded px-2 py-0.5 text-[10px] ${plan.status === "rejected" || plan.status === "failed" || plan.status === "stale" ? "bg-rose-50 text-rose-700" : plan.status === "applied" || plan.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{plan.status} plan ↗</button>}</td>
@@ -380,8 +399,8 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, onSel
               <td className="px-3 py-3 text-gray-600">{row.signal || "—"}</td>
               <td className="max-w-sm px-3 py-3 text-gray-600">{row.recommendation}</td>
               <td className="px-3 py-3"><div className="flex items-center gap-2"><PortalLink id={row.rule_id || row.resource_id} />{onCreateRule && row.resource_id && row.signal && <button disabled={activePlan} title={activePlan ? "An active deployment plan already covers this gap." : "Create a separate reviewed alert-rule change"} onClick={() => onCreateRule(row)} className="whitespace-nowrap rounded border px-2 py-1 text-[10px] text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40">Create reviewed rule</button>}</div></td>
-            </tr>
-          );})}
+            </tr>}
+          </Fragment>;})}
         </tbody>
       </table>
       {rows.length === 0 && <div className="p-10 text-center text-sm text-gray-400">No coverage or routing gaps detected.</div>}
@@ -501,30 +520,112 @@ function ManagedActionGroupsTable({ rows, caps, busy, refreshing, onRefresh, onC
   );
 }
 
-function ChangesTable({ rows, caps, busy, applyingIds, preparingCount, onDecision, onApply, onBulkDecision, onBulkApply, onRollback }: { rows: AlertsManagerChange[]; caps?: AlertsManagerCapabilities; busy: string; applyingIds: Set<string>; preparingCount: number; onDecision: (row: AlertsManagerChange, decision: "approved" | "rejected") => void; onApply: (row: AlertsManagerChange) => void; onBulkDecision: (rows: AlertsManagerChange[], decision: "approved" | "rejected") => Promise<void>; onBulkApply: (rows: AlertsManagerChange[]) => Promise<void>; onRollback: (row: AlertsManagerChange) => void }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+function ChangesTable({ rows, total, actionableCount, connectionId, view, sort, caps, busy, applyingIds, preparingCount, onDecision, onApply, onBulkDecision, onBulkApply, onRollback }: { rows: AlertsManagerChange[]; total: number; actionableCount: number; connectionId: string; view: ChangesView; sort: ChangesSort; caps?: AlertsManagerCapabilities; busy: string; applyingIds: Set<string>; preparingCount: number; onDecision: (row: AlertsManagerChange, decision: "approved" | "rejected") => void; onApply: (row: AlertsManagerChange) => void; onBulkDecision: (rows: AlertsManagerChange[], decision: "approved" | "rejected") => Promise<boolean>; onBulkApply: (rows: AlertsManagerChange[]) => Promise<boolean>; onRollback: (row: AlertsManagerChange) => void }) {
+  const [selected, setSelected] = useState<Map<string, AlertsManagerChange>>(new Map());
+  const [requestedIds, setRequestedIds] = useState<Set<string>>(new Set());
+  const [dependencyResolution, setDependencyResolution] = useState<AlertsManagerDependencyResolution | null>(null);
+  const [dependencyErrors, setDependencyErrors] = useState<string[]>([]);
+  const [resolvingDependencies, setResolvingDependencies] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [detailsRow, setDetailsRow] = useState<AlertsManagerChange | null>(null);
   const [details, setDetails] = useState<AlertsManagerChangeDetails | null>(null);
   const [detailsError, setDetailsError] = useState("");
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const selectedRows = rows.filter((row) => selected.has(row.id));
+  const selectedRows = [...selected.values()];
   const pendingRows = selectedRows.filter((row) => row.status === "pending");
   const approvedRows = selectedRows.filter((row) => row.status === "approved");
+  const rejectableRows = selectedRows.filter((row) => row.status === "pending" || row.status === "approved");
+  const appliedRows = selectedRows.filter((row) => row.status === "applied");
   const selectableRows = rows.filter((row) => row.status === "pending" || row.status === "approved");
-  const allSelected = selectableRows.length > 0 && selectableRows.every((row) => selected.has(row.id));
+  const allSelected = actionableCount > 0 && requestedIds.size === actionableCount;
+  const resolutionSequence = useRef(0);
+  const resetSelection = () => {
+    resolutionSequence.current += 1;
+    setSelected(new Map());
+    setRequestedIds(new Set());
+    setDependencyResolution(null);
+    setDependencyErrors([]);
+    setResolvingDependencies(false);
+  };
+  const resolveSelection = async (ids: string[], fallbackRows: AlertsManagerChange[] = []) => {
+    const uniqueIds = [...new Set(ids)];
+    const sequence = ++resolutionSequence.current;
+    if (!uniqueIds.length) { resetSelection(); return; }
+    setResolvingDependencies(true);
+    setDependencyErrors([]);
+    try {
+      const resolution = await api.resolveAlertsManagerChangeDependencies({ connection_id: connectionId, change_ids: uniqueIds, include_prerequisites: true });
+      if (sequence !== resolutionSequence.current) return;
+      setRequestedIds(new Set(resolution.selected_ids.length ? resolution.selected_ids : uniqueIds));
+      setSelected(new Map(resolution.changes.map((row) => [row.id, row])));
+      setDependencyResolution(resolution);
+      setDependencyErrors((resolution.errors ?? []).map((item) => item.message));
+    } catch (cause) {
+      if (sequence !== resolutionSequence.current) return;
+      setRequestedIds(new Set(uniqueIds));
+      setSelected(new Map(fallbackRows.map((row) => [row.id, row])));
+      setDependencyResolution(null);
+      setDependencyErrors([formatError(cause)]);
+    } finally {
+      if (sequence === resolutionSequence.current) setResolvingDependencies(false);
+    }
+  };
   useEffect(() => {
-    const available = new Set(selectableRows.map((row) => row.id));
     setSelected((current) => {
-      const next = new Set([...current].filter((id) => available.has(id)));
-      return next.size === current.size ? current : next;
+      const next = new Map(current);
+      for (const row of rows) {
+        if (next.has(row.id)) next.set(row.id, row);
+      }
+      return next;
     });
   }, [rows]);
+  useEffect(() => { resetSelection(); }, [connectionId, view]);
   const runDecision = async (decision: "approved" | "rejected") => {
-    await onBulkDecision(pendingRows, decision);
+    const decisionRows = decision === "approved" ? pendingRows : rejectableRows;
+    if (await onBulkDecision(decisionRows, decision)) resetSelection();
   };
   const runApply = async () => {
-    await onBulkApply(approvedRows);
+    if (await onBulkApply(selectedRows)) resetSelection();
   };
+  const toggleAllPages = async (checked: boolean) => {
+    if (!checked) { resetSelection(); return; }
+    setSelectingAll(true);
+    try {
+      const pageCount = Math.max(1, Math.ceil(total / CHANGES_PAGE_SIZE));
+      const pages: AlertsManagerChange[][] = new Array(pageCount);
+      let cursor = 1;
+      async function worker() {
+        while (cursor <= pageCount) {
+          const nextPage = cursor++;
+          pages[nextPage - 1] = (await api.alertsManagerChanges(connectionId, nextPage, CHANGES_PAGE_SIZE, view, sort)).changes;
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(6, pageCount) }, () => worker()));
+      const actionable = pages.flat().filter((row) => row.status === "pending" || row.status === "approved");
+      await resolveSelection(actionable.map((row) => row.id), actionable);
+    } finally { setSelectingAll(false); }
+  };
+  const toggleRow = async (row: AlertsManagerChange, checked: boolean) => {
+    const nextIds = new Set(requestedIds);
+    if (checked) nextIds.add(row.id); else nextIds.delete(row.id);
+    const fallback = selectedRows.filter((selectedRow) => nextIds.has(selectedRow.id));
+    if (checked && !fallback.some((selectedRow) => selectedRow.id === row.id)) fallback.push(row);
+    await resolveSelection([...nextIds], fallback);
+  };
+  const closureErrors = dependencyErrors.length > 0 || (dependencyResolution?.counts.blocked ?? 0) > 0;
+  const dependencyStatus = resolvingDependencies
+    ? "Resolving prerequisites…"
+    : dependencyErrors.length
+      ? `Missing/error · ${dependencyErrors.slice(0, 2).join(" · ")}`
+      : (dependencyResolution?.counts.blocked ?? 0) > 0
+        ? `Missing/error · ${dependencyResolution?.counts.blocked} blocked`
+        : pendingRows.length > 0
+          ? `Waiting for approval · ${pendingRows.length}`
+          : approvedRows.length > 0
+            ? `Waiting to apply · ${approvedRows.length}`
+            : dependencyResolution?.ready
+              ? "Ready"
+              : selectedRows.length > 0 ? "Ready" : "";
   const showDetails = async (row: AlertsManagerChange) => {
     setDetailsRow(row); setDetails(null); setDetailsError(""); setDetailsLoading(true);
     try { setDetails(await api.alertsManagerChangeDetails(row.id)); }
@@ -534,20 +635,20 @@ function ChangesTable({ rows, caps, busy, applyingIds, preparingCount, onDecisio
   return (
     <div className="overflow-hidden rounded-xl border bg-white">
       {busy === "bulk" && <div className="flex items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-3 text-xs font-medium text-sky-800"><span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />Preparing {preparingCount} managed change request{preparingCount === 1 ? "" : "s"} with up to 6 concurrent Azure lookups… Approval and rejection controls will appear when validation completes.</div>}
-      {selectedRows.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b bg-indigo-50 px-4 py-3"><div><span className="text-sm font-semibold text-indigo-900">{selectedRows.length} selected</span><span className="ml-2 text-xs text-indigo-700">{pendingRows.length} pending · {approvedRows.length} approved{applyingIds.size ? ` · ${applyingIds.size} applying` : ""}</span></div><div className="ml-auto flex flex-wrap gap-2"><button disabled={!!busy} onClick={() => setSelected(new Set())} className="rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 disabled:opacity-40">Clear</button>{caps?.can_approve && <><button disabled={!!busy || !pendingRows.length} onClick={() => void runDecision("approved")} className="rounded border border-green-300 bg-white px-3 py-1.5 text-xs text-green-700 disabled:opacity-40">Approve ({pendingRows.length})</button><button disabled={!!busy || !pendingRows.length} onClick={() => void runDecision("rejected")} className="rounded border border-red-300 bg-white px-3 py-1.5 text-xs text-red-700 disabled:opacity-40">Reject ({pendingRows.length})</button><button disabled={!!busy || !approvedRows.length} onClick={() => void runApply()} className="rounded bg-gray-900 px-3 py-1.5 text-xs text-white disabled:opacity-40">{busy === "bulk-apply" ? `Applying to Azure (${applyingIds.size}/6 active)` : `Apply to Azure (${approvedRows.length})`}</button></>}</div></div>}
+      {selectedRows.length > 0 && <div className="flex flex-wrap items-center gap-3 border-b bg-indigo-50 px-4 py-3"><div><div className="text-sm font-semibold text-indigo-900">{requestedIds.size} requested · {dependencyResolution?.counts.prerequisites ?? Math.max(0, selectedRows.length - requestedIds.size)} prerequisites added · {selectedRows.length} selected</div><div className="mt-0.5 text-xs text-indigo-700">{pendingRows.length} pending · {approvedRows.length} approved · {appliedRows.length} applied{applyingIds.size ? ` · ${applyingIds.size} applying` : ""}</div><div className={`mt-1 text-[10px] ${closureErrors ? "text-red-700" : "text-indigo-600"}`}>{dependencyStatus}</div></div><div className="ml-auto flex flex-wrap gap-2"><button disabled={!!busy} onClick={resetSelection} className="rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 disabled:opacity-40">Clear selection</button>{caps?.can_approve && <><button disabled={!!busy || resolvingDependencies || !pendingRows.length} onClick={() => void runDecision("approved")} className="rounded border border-green-300 bg-white px-3 py-1.5 text-xs text-green-700 disabled:opacity-40">Approve ({pendingRows.length})</button><button disabled={!!busy || resolvingDependencies || !rejectableRows.length} title="Reject pending or approved changes that have not been applied" onClick={() => void runDecision("rejected")} className="rounded border border-red-300 bg-white px-3 py-1.5 text-xs text-red-700 disabled:opacity-40">Reject ({rejectableRows.length})</button><button disabled={!!busy || resolvingDependencies || closureErrors || !approvedRows.length} title={closureErrors ? "Resolve dependency errors before applying." : undefined} onClick={() => void runApply()} className="rounded bg-gray-900 px-3 py-1.5 text-xs text-white disabled:opacity-40">{busy === "bulk-apply" ? "Applying dependency closure…" : `Apply to Azure (${approvedRows.length})`}</button></>}</div></div>}
       <div className="overflow-auto">
       <table className="w-full min-w-[1000px] text-left text-xs">
-        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" aria-label="Select all actionable managed changes" checked={allSelected} disabled={!selectableRows.length} onChange={(event) => setSelected(event.target.checked ? new Set(selectableRows.map((row) => row.id)) : new Set())} /></th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Change</th><th className="px-3 py-2">Risk</th><th className="px-3 py-2">Safe summary</th><th className="px-3 py-2">Requested</th><th className="px-3 py-2">Actions</th></tr></thead>
+        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" aria-label="Select all actionable managed changes across all pages" title="Select all actionable managed changes across all pages" checked={allSelected} disabled={selectingAll || !selectableRows.length} onChange={(event) => void toggleAllPages(event.target.checked)} /></th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Change</th><th className="px-3 py-2">Risk</th><th className="px-3 py-2">Safe summary</th><th className="px-3 py-2">Requested</th><th className="px-3 py-2">Actions</th></tr></thead>
         <tbody className="divide-y">
           {rows.map((row) => (
             <tr key={row.id} className="align-top hover:bg-gray-50">
-              <td className="px-3 py-3"><input type="checkbox" aria-label={`Select ${row.target_name}`} disabled={row.status !== "pending" && row.status !== "approved"} checked={selected.has(row.id)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(row.id); else next.delete(row.id); return next; })} /></td>
+              <td className="px-3 py-3"><input type="checkbox" aria-label={`Select ${row.target_name}`} disabled={resolvingDependencies || (row.status !== "pending" && row.status !== "approved")} checked={selected.has(row.id)} onChange={(event) => void toggleRow(row, event.target.checked)} /></td>
               <td className="px-3 py-3">{applyingIds.has(row.id) && row.status === "approved" ? <span className="inline-flex items-center gap-1.5 rounded bg-sky-50 px-2 py-0.5 text-sky-700"><span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />applying</span> : <span className={`rounded px-2 py-0.5 ${row.status === "applied" ? "bg-green-50 text-green-700" : row.status === "failed" || row.status === "stale" || row.status === "rejected" ? "bg-red-50 text-red-700" : row.status === "approved" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700"}`}>{row.status}</span>}{row.error_message && <div className="mt-1 max-w-xs text-[10px] text-red-600">{row.error_message}</div>}</td>
               <td className="px-3 py-3"><div className="font-medium capitalize text-gray-800">{row.operation} · {row.target_name}</div><div className="mt-1 font-mono text-[10px] text-gray-400">{row.id}</div>{row.rollback_of && <div className="text-[10px] text-indigo-500">rollback of {row.rollback_of}</div>}</td>
               <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 ${row.risk === "critical" ? "bg-red-100 text-red-700" : row.risk === "high" ? "bg-orange-100 text-orange-700" : "bg-amber-100 text-amber-700"}`}>{row.risk}</span></td>
               <td className="max-w-sm px-3 py-3 text-gray-600"><div>{row.summary.reason || "No reason provided"}</div>{row.summary.clone_source_id && <div className="mt-1 text-[10px] text-indigo-600" title={row.summary.clone_source_id}>Cloned from {row.summary.clone_source_name || row.summary.clone_source_id}</div>}<div className="mt-1 text-[10px] text-gray-400">Sensitive destinations, callbacks, and query payloads are encrypted and omitted from this audit view.</div></td>
               <td className="px-3 py-3 text-gray-600"><div>{new Date(row.requested_at).toLocaleString()}</div><div className="text-[10px] text-gray-400">by {row.requested_by}</div></td>
-              <td className="px-3 py-3"><div className="flex flex-wrap gap-1">{row.status === "pending" && caps?.can_approve && <><button disabled={!!busy} onClick={() => onDecision(row, "approved")} className="rounded border border-green-300 px-2 py-1 text-[10px] text-green-700">Approve</button><button disabled={!!busy} onClick={() => onDecision(row, "rejected")} className="rounded border border-red-300 px-2 py-1 text-[10px] text-red-700">Reject</button><button disabled={!!busy} onClick={() => void showDetails(row)} className="rounded border px-2 py-1 text-[10px] text-gray-700">Details</button></>}{(row.status === "approved" || row.can_retry) && caps?.can_approve && <><button disabled={!!busy} onClick={() => onApply(row)} className="rounded bg-gray-900 px-2 py-1 text-[10px] text-white disabled:opacity-60">{applyingIds.has(row.id) ? "Applying…" : row.can_retry ? "Retry clone" : "Apply to Azure"}</button><button disabled={!!busy} onClick={() => void showDetails(row)} className="rounded border px-2 py-1 text-[10px] text-gray-700">Details</button></>}{row.status === "applied" && caps?.can_delete && <button disabled={!!busy} onClick={() => onRollback(row)} className="rounded border px-2 py-1 text-[10px] text-indigo-700">Prepare rollback</button>}{row.evidence_id && <a href="/evidence" className="rounded border px-2 py-1 text-[10px] text-gray-600">Evidence</a>}</div></td>
+              <td className="px-3 py-3"><div className="flex flex-wrap gap-1">{row.status === "pending" && caps?.can_approve && <><button disabled={!!busy} onClick={() => onDecision(row, "approved")} className="rounded border border-green-300 px-2 py-1 text-[10px] text-green-700">Approve</button><button disabled={!!busy} onClick={() => onDecision(row, "rejected")} className="rounded border border-red-300 px-2 py-1 text-[10px] text-red-700">Reject</button><button disabled={!!busy} onClick={() => void showDetails(row)} className="rounded border px-2 py-1 text-[10px] text-gray-700">Details</button></>}{(row.status === "approved" || row.can_retry) && caps?.can_approve && <><button disabled={!!busy} onClick={() => onApply(row)} className="rounded bg-gray-900 px-2 py-1 text-[10px] text-white disabled:opacity-60">{applyingIds.has(row.id) ? "Applying…" : row.can_retry ? "Retry clone" : "Apply to Azure"}</button>{row.status === "approved" && <button disabled={!!busy} title="Reject this approved change instead of applying it" onClick={() => onDecision(row, "rejected")} className="rounded border border-red-300 px-2 py-1 text-[10px] text-red-700 disabled:opacity-60">Reject</button>}<button disabled={!!busy} onClick={() => void showDetails(row)} className="rounded border px-2 py-1 text-[10px] text-gray-700">Details</button></>}{row.status === "applied" && caps?.can_delete && <button disabled={!!busy} onClick={() => onRollback(row)} className="rounded border px-2 py-1 text-[10px] text-indigo-700">Prepare rollback</button>}{row.evidence_id && <a href="/evidence" className="rounded border px-2 py-1 text-[10px] text-gray-600">Evidence</a>}</div></td>
             </tr>
           ))}
         </tbody>
@@ -653,6 +754,11 @@ export function AlertsManagerPanel() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [ruleSort, setRuleSort] = useState<"default" | "cost_desc" | "cost_asc">("default");
+  const [gapRisk, setGapRisk] = useState("all");
+  const [gapType, setGapType] = useState("all");
+  const [gapSignal, setGapSignal] = useState("all");
+  const [gapGroup, setGapGroup] = useState<"none" | "signal">("none");
+  const [gapSort, setGapSort] = useState<"default" | "risk" | "signal" | "gap" | "resource">("default");
   const [analysisNeedsRefresh, setAnalysisNeedsRefresh] = useState(false);
   const [exporting, setExporting] = useState("");
   const [error, setError] = useState("");
@@ -661,6 +767,7 @@ export function AlertsManagerPanel() {
   const [ruleEditor, setRuleEditor] = useState<EditableAlertRule | null>(null);
   const [managementBusy, setManagementBusy] = useState("");
   const [applyingChangeIds, setApplyingChangeIds] = useState<Set<string>>(new Set());
+  const [bulkOutcome, setBulkOutcome] = useState("");
   const [bulkPreparingCount, setBulkPreparingCount] = useState(0);
   const [selectedGapIds, setSelectedGapIds] = useState<Set<string>>(new Set());
   const [gapPlannerOpen, setGapPlannerOpen] = useState(false);
@@ -761,7 +868,6 @@ export function AlertsManagerPanel() {
     enabled: ready && !!data && !data.demo && tab === "changes",
     staleTime: 15_000,
   });
-  const changesQueryKey = queryKeys.alertsManager.changes(connId, page, CHANGES_PAGE_SIZE, changesView, changesSort);
   useEffect(() => {
     const state = jobQ.data;
     if (!state?.job) return;
@@ -808,7 +914,27 @@ export function AlertsManagerPanel() {
     });
   }, [searchableRules, query, status, ruleSort]);
   const overlaps = useMemo(() => searchableOverlaps.filter(({ text }) => !query || text.includes(query)).map(({ row }) => row), [searchableOverlaps, query]);
-  const gaps = useMemo(() => searchableGaps.filter(({ text }) => !query || text.includes(query)).map(({ row }) => row), [searchableGaps, query]);
+  const gapOptions = useMemo(() => ({
+    risks: [...new Set(searchableGaps.map(({ row }) => row.risk).filter(Boolean))].sort(),
+    types: [...new Set(searchableGaps.map(({ row }) => row.type).filter(Boolean))].sort(),
+    signals: [...new Set(searchableGaps.map(({ row }) => row.signal).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
+  }), [searchableGaps]);
+  const gaps = useMemo(() => {
+    const riskOrder: Record<string, number> = { critical: 0, error: 1, warning: 2, info: 3 };
+    const filtered = searchableGaps.filter(({ row, text }) =>
+      (!query || text.includes(query))
+      && (gapRisk === "all" || row.risk === gapRisk)
+      && (gapType === "all" || row.type === gapType)
+      && (gapSignal === "all" || row.signal === gapSignal)
+    ).map(({ row }) => row);
+    return filtered.sort((left, right) => {
+      if (gapGroup === "signal" || gapSort === "signal") return (left.signal || "").localeCompare(right.signal || "") || (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
+      if (gapSort === "risk") return (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
+      if (gapSort === "gap") return left.type.localeCompare(right.type);
+      if (gapSort === "resource") return (left.rule_name || left.resource_name || "").localeCompare(right.rule_name || right.resource_name || "");
+      return 0;
+    });
+  }, [searchableGaps, query, gapRisk, gapType, gapSignal, gapGroup, gapSort]);
   const allGaps = data?.active_gaps ?? data?.gaps ?? [];
   const allGapIds = useMemo(() => [...new Set(allGaps.map((row, index) => gapIdentity(row, index)))], [allGaps]);
   const gapPlansQ = useQuery({
@@ -857,6 +983,14 @@ export function AlertsManagerPanel() {
     qc.invalidateQueries({ queryKey: queryKeys.alertsManager.changesRoot }),
     qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }),
   ]);
+  const invalidateManagedChangeCoverage = () => Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.alertsManager.changesRoot }),
+    qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }),
+    qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }),
+    qc.invalidateQueries({ queryKey: queryKeys.alertsManager.actionGroupsRoot }),
+    qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }),
+  ]);
+  const groupedCounts = (counts: Record<string, number>) => Object.entries(counts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status.replaceAll("_", " ")}`).join(" · ");
 
   async function refresh() {
     if (!ready || refreshing) return;
@@ -1019,30 +1153,31 @@ export function AlertsManagerPanel() {
   }
 
   async function bulkDecideManagedChanges(rows: AlertsManagerChange[], decision: "approved" | "rejected") {
-    if (!rows.length) return;
+    if (!rows.length) return false;
     const reason = window.prompt(`${decision === "approved" ? "Approval" : "Rejection"} reason for ${rows.length} selected changes:`, `Bulk ${decision} after operator review`) ?? "";
-    if (!reason) return;
-    setManagementBusy("bulk-decision"); setError("");
-    const failures: string[] = [];
+    if (!reason) return false;
+    setManagementBusy("bulk-decision"); setError(""); setBulkOutcome("");
     try {
-      for (const row of rows) {
-        try { await api.decideAlertsManagerChange(row.id, decision, reason); }
-        catch (cause) { failures.push(`${row.target_name}: ${formatError(cause)}`); }
-      }
-      await invalidateManagedChanges();
-      if (failures.length) setError(`${rows.length - failures.length} of ${rows.length} changes were ${decision}. ${failures.join(" · ")}`);
-    } finally { setManagementBusy(""); }
+      const result = await api.bulkDecideAlertsManagerChanges({ connection_id: connId, change_ids: rows.map((row) => row.id), decision, reason, include_prerequisites: true });
+      await invalidateManagedChangeCoverage();
+      const errors = (result.errors ?? []).map((item) => item.message);
+      setBulkOutcome(`${decision === "approved" ? "Approval" : "Rejection"} complete${groupedCounts(result.counts) ? ` · ${groupedCounts(result.counts)}` : ` · ${result.changes.length} changed`}${errors.length ? ` · ${errors.length} error${errors.length === 1 ? "" : "s"}` : ""}`);
+      if (errors.length) setError(errors.slice(0, 3).join(" · "));
+      return true;
+    } catch (cause) { setError(formatError(cause)); return false; }
+    finally { setManagementBusy(""); }
   }
 
   async function applyManagedChange(row: AlertsManagerChange) {
     if (!window.confirm(row.can_retry ? `Retry the failed clone for ${row.target_name} now? The source receiver endpoints will be restored before applying.` : `Apply the approved ${row.operation} for ${row.target_name} to Azure now?`)) return;
-    setManagementBusy(row.id); setApplyingChangeIds((current) => new Set(current).add(row.id)); setError("");
+    setManagementBusy(row.id); setApplyingChangeIds((current) => new Set(current).add(row.id)); setError(""); setBulkOutcome("");
     try {
-      const result = await api.applyAlertsManagerChange(row.id);
-      setAnalysisNeedsRefresh(true);
-      qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
-      await changesQ.refetch();
-      void Promise.all([qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.actionGroupsRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot })]);
+      const result = await api.bulkApplyAlertsManagerChanges({ connection_id: connId, change_ids: [row.id], include_prerequisites: true });
+      const errors = [...(result.prerequisite_errors ?? []).map((item) => item.message), ...result.results.flatMap((item) => item.error ? [item.error] : [])];
+      if (result.results.some((item) => item.status === "applied" || item.outcome === "applied")) setAnalysisNeedsRefresh(true);
+      await invalidateManagedChangeCoverage();
+      setBulkOutcome(`Apply complete · ${groupedCounts(result.counts) || `${result.results.length} processed`}${errors.length ? ` · ${errors.length} error${errors.length === 1 ? "" : "s"}` : ""}`);
+      if (errors.length) setError(errors.slice(0, 3).join(" · "));
       if (row.target_type === "action_group") {
         goTab("action-groups");
         await managedGroupsQ.refetch();
@@ -1052,47 +1187,19 @@ export function AlertsManagerPanel() {
   }
 
   async function bulkApplyManagedChanges(rows: AlertsManagerChange[]) {
-    if (!rows.length || !window.confirm(`Apply ${rows.length} approved changes to Azure? Resource groups run first, then Action Groups, then remaining changes use up to 6 concurrent workers. Each prerequisite tier must finish before the next starts.`)) return;
-    setManagementBusy("bulk-apply"); setError("");
-    const failures: string[] = [];
-    let appliedCount = 0;
+    if (!rows.length || !window.confirm(`Apply the dependency closure for ${rows.length} selected changes to Azure? The backend applies resource groups first, then Action Groups, then dependent changes in topological order.`)) return false;
+    setManagementBusy("bulk-apply"); setApplyingChangeIds(new Set(rows.filter((row) => row.status === "approved").map((row) => row.id))); setError(""); setBulkOutcome("");
     try {
-      const resourceGroupRows = rows.filter((row) => row.target_type === "resource_group");
-      const actionGroupRows = rows.filter((row) => row.target_type === "action_group");
-      const remainingRows = rows.filter((row) => row.target_type !== "resource_group" && row.target_type !== "action_group");
-      async function applyRow(row: AlertsManagerChange) {
-        setApplyingChangeIds((current) => new Set(current).add(row.id));
-        try {
-          const result = await api.applyAlertsManagerChange(row.id);
-          appliedCount += 1;
-          qc.setQueryData<ChangesPage>(changesQueryKey, (current) => current ? { ...current, changes: current.changes.map((change) => change.id === result.change.id ? result.change : change) } : current);
-        } catch (cause) {
-          failures.push(`${row.target_name}: ${formatError(cause)}`);
-        } finally {
-          setApplyingChangeIds((current) => { const next = new Set(current); next.delete(row.id); return next; });
-        }
-      }
-      for (const row of resourceGroupRows) await applyRow(row);
-      for (const row of actionGroupRows) await applyRow(row);
-      let cursor = 0;
-      async function worker() {
-        while (cursor < remainingRows.length) {
-          const row = remainingRows[cursor++];
-          await applyRow(row);
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(6, remainingRows.length) }, () => worker()));
-      if (appliedCount > 0) setAnalysisNeedsRefresh(true);
-      await Promise.all([
-        invalidateManagedChanges(),
-        qc.invalidateQueries({ queryKey: queryKeys.alertsManager.summaryRoot }),
-        qc.invalidateQueries({ queryKey: queryKeys.alertsManager.actionGroupsRoot }),
-        qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }),
-        qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }),
-      ]);
+      const result = await api.bulkApplyAlertsManagerChanges({ connection_id: connId, change_ids: rows.map((row) => row.id), include_prerequisites: true });
+      const errors = [...(result.prerequisite_errors ?? []).map((item) => item.message), ...result.results.flatMap((item) => item.error ? [item.error] : [])];
+      if (result.results.some((item) => item.status === "applied" || item.outcome === "applied")) setAnalysisNeedsRefresh(true);
+      await invalidateManagedChangeCoverage();
       if (page !== 1) goPage(1); else await changesQ.refetch();
-      if (failures.length) setError(`${rows.length - failures.length} of ${rows.length} changes were applied. ${failures.join(" · ")}`);
-    } finally { setApplyingChangeIds(new Set()); setManagementBusy(""); }
+      setBulkOutcome(`Apply complete · ${groupedCounts(result.counts) || `${result.results.length} processed`}${errors.length ? ` · ${errors.length} error${errors.length === 1 ? "" : "s"}` : ""}`);
+      if (errors.length) setError(errors.slice(0, 3).join(" · "));
+      return true;
+    } catch (cause) { setError(formatError(cause)); return false; }
+    finally { setApplyingChangeIds(new Set()); setManagementBusy(""); }
   }
 
   async function rollbackManagedChange(row: AlertsManagerChange) {
@@ -1236,7 +1343,7 @@ export function AlertsManagerPanel() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => void refresh()} disabled={!ready || refreshing} title={analysisIsStaleAfterApply ? "Azure was changed after this analysis. Analyze again to refresh findings, costs, coverage, and counts." : undefined} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${analysisIsStaleAfterApply ? "animate-pulse bg-red-600 ring-2 ring-red-200 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-700"}`}>{refreshing ? "Analyzing…" : analysisIsStaleAfterApply ? "⚠ Data stale — Analyze again" : data?.report_exists ? "↻ Analyze again" : "Analyze alerts"}</button>
+              <button onClick={() => void refresh()} disabled={!ready || refreshing} title={analysisIsStaleAfterApply ? "Azure was changed after this analysis. Analyze again to refresh findings, costs, coverage, and counts." : undefined} className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 ${analysisIsStaleAfterApply ? "animate-pulse bg-red-600 ring-2 ring-red-200 hover:bg-red-700" : "bg-gray-900 hover:bg-gray-700"}`}>{refreshing ? `Analyzing… ${elapsedText(refreshJob?.started_at)}` : analysisIsStaleAfterApply ? "⚠ Data stale — Analyze again" : data?.report_exists ? "↻ Analyze again" : "Analyze alerts"}</button>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => void download("csv")} disabled={!data?.report_exists || !!exporting} className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{exporting === "csv" ? "Exporting…" : "⬇ CSV"}</button>
@@ -1256,15 +1363,17 @@ export function AlertsManagerPanel() {
         {data?.report_exists && !managementTab && tab !== "overview" && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search rules, signals, resources…" className="w-64 rounded-lg border px-3 py-1.5 text-xs focus:border-brand focus:outline-none" />
+            {tab === "gaps" && <><select aria-label="Filter gaps by risk" value={gapRisk} onChange={(event) => { setGapRisk(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All risks</option>{gapOptions.risks.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Filter gaps by type" value={gapType} onChange={(event) => { setGapType(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All gap types</option>{gapOptions.types.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select><select aria-label="Filter gaps by signal" value={gapSignal} onChange={(event) => { setGapSignal(event.target.value); goPage(1); }} className="max-w-64 rounded-lg border px-2 py-1.5 text-xs"><option value="all">All signals</option>{gapOptions.signals.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Group gaps" value={gapGroup} onChange={(event) => { setGapGroup(event.target.value as typeof gapGroup); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="none">No grouping</option><option value="signal">Group by signal</option></select><select aria-label="Sort gaps" value={gapSort} onChange={(event) => { setGapSort(event.target.value as typeof gapSort); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="risk">Risk</option><option value="signal">Signal</option><option value="gap">Gap type</option><option value="resource">Resource / rule</option></select></>}
             {tab === "rules" && <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All statuses</option><option value="overlap">Overlaps</option><option value="gap">Gaps</option><option value="ok">OK</option></select>}
             {tab === "rules" && <select aria-label="Sort rule analysis" value={ruleSort} onChange={(event) => { setRuleSort(event.target.value as typeof ruleSort); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="cost_desc">Cost: highest first</option><option value="cost_asc">Cost: lowest first</option></select>}
-            {(search || status !== "all" || ruleSort !== "default") && <button onClick={() => { setSearch(""); setStatus("all"); setRuleSort("default"); }} className="text-xs text-gray-500 hover:underline">Clear</button>}
+            {(search || status !== "all" || ruleSort !== "default" || gapRisk !== "all" || gapType !== "all" || gapSignal !== "all" || gapGroup !== "none" || gapSort !== "default") && <button onClick={() => { setSearch(""); setStatus("all"); setRuleSort("default"); setGapRisk("all"); setGapType("all"); setGapSignal("all"); setGapGroup("none"); setGapSort("default"); goPage(1); }} className="text-xs text-gray-500 hover:underline">Clear</button>}
           </div>
         )}
         <AnalysisProgress state={jobQ.data} compact />
       </header>
 
       <main ref={contentScrollRef} className={`min-h-0 flex-1 overflow-auto px-6 pb-4 ${tab === "visualize" ? "pt-0" : "pt-4"}`}>
+        {bulkOutcome && <div role="status" className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{bulkOutcome}</div>}
         {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         {reportQ.isLoading ? <Skeleton rows={8} /> : reportQ.isError ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(reportQ.error)}</div>
@@ -1272,7 +1381,7 @@ export function AlertsManagerPanel() {
           <div className="py-20 text-center text-sm text-gray-400">Select a workload, subscription, or management group to begin.</div>
         ) : !data?.report_exists && !managementTab ? (
           <div className="mx-auto mt-12 max-w-xl rounded-2xl border border-dashed bg-white p-10 text-center">
-            <div className="text-4xl">🔔</div><h2 className="mt-3 text-base font-semibold text-gray-800">No alert analysis yet for this scope</h2><p className="mt-1 text-sm text-gray-500">Run a read-only scan of Azure Monitor rules, action groups, recipient paths, and AMBA baseline gaps.</p><button onClick={() => void refresh()} disabled={refreshing} className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{refreshing ? "Analyzing…" : "Analyze alerts"}</button>
+            <div className="text-4xl">🔔</div><h2 className="mt-3 text-base font-semibold text-gray-800">No alert analysis yet for this scope</h2><p className="mt-1 text-sm text-gray-500">Run a read-only scan of Azure Monitor rules, action groups, recipient paths, and AMBA baseline gaps.</p><button onClick={() => void refresh()} disabled={refreshing} className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium tabular-nums text-white disabled:opacity-50">{refreshing ? `Analyzing… ${elapsedText(refreshJob?.started_at)}` : "Analyze alerts"}</button>
             <AnalysisProgress state={jobQ.data} />
           </div>
         ) : tab === "inbox" ? data?.demo ? (
@@ -1310,7 +1419,7 @@ export function AlertsManagerPanel() {
                       <label className="ml-auto flex items-center gap-2 text-gray-600">Sort by<select aria-label="Sort managed changes" value={changesSort} onChange={(event) => { setChangesSort(event.target.value as ChangesSort); goPage(1); }} className="rounded-md border px-2.5 py-1.5 text-xs text-gray-700"><option value="newest">Newest requested</option><option value="oldest">Oldest requested</option><option value="status">Status</option><option value="risk">Risk</option><option value="change">Change</option></select></label>
                       <span className="text-[10px] text-gray-400">{CHANGES_PAGE_SIZE} per page</span>
                     </div>
-                    <ChangesTable rows={changesQ.data?.changes ?? []} caps={capabilities} busy={managementBusy} applyingIds={applyingChangeIds} preparingCount={bulkPreparingCount} onDecision={(row, decision) => void decideManagedChange(row, decision)} onApply={(row) => void applyManagedChange(row)} onBulkDecision={bulkDecideManagedChanges} onBulkApply={bulkApplyManagedChanges} onRollback={(row) => void rollbackManagedChange(row)} />
+                    <ChangesTable rows={changesQ.data?.changes ?? []} total={changesQ.data?.total ?? 0} actionableCount={changesQ.data?.actionable_count ?? 0} connectionId={connId} view={changesView} sort={changesSort} caps={capabilities} busy={managementBusy} applyingIds={applyingChangeIds} preparingCount={bulkPreparingCount} onDecision={(row, decision) => void decideManagedChange(row, decision)} onApply={(row) => void applyManagedChange(row)} onBulkDecision={bulkDecideManagedChanges} onBulkApply={bulkApplyManagedChanges} onRollback={(row) => void rollbackManagedChange(row)} />
                     <PageBar total={changesQ.data?.total ?? 0} page={page} pageSize={CHANGES_PAGE_SIZE} onPage={goPage} />
                   </div>
           : !data ? <div className="py-20 text-center text-sm text-gray-400">No analysis snapshot is available.</div>
@@ -1333,7 +1442,7 @@ export function AlertsManagerPanel() {
             <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
           </div>
           : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
-          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
+          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
           : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
           : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} />
           : null}

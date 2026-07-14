@@ -17,7 +17,7 @@ feature_ids: [PROACTIVE_NAV:rbac, RBAC_NAV:diagnostics, RBAC_NAV:effective, RBAC
 
 **App routes:** `/rbac` and `/rbac/:tab`
 RBAC composes Azure role assignments, role definitions, scope hierarchy, and available Entra directory/group/ownership context into effective-access rows. It is an access-review tool and does not add or remove assignments.
-![RBAC review showing effective and privileged access analysis]({{ site.baseurl }}/usecase-assets/rbac.png)
+![RBAC review showing effective and privileged access analysis]({{ site.baseurl }}/assets/identity.png)
 
 ## Prerequisites and data sources
 

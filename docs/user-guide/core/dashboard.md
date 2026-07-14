@@ -15,7 +15,7 @@ permalink: /user-guide/core/dashboard/
 ## Purpose
 
 The Dashboard is the application's home base. Use it after sign-in to finish setup, choose a primary workload, review cached estate signals, and jump to the feature that owns the underlying detail.
-![Azure Support Agent dashboard with guided onboarding cards]({{ site.baseurl }}/usecase-assets/dashboard.png)
+![Azure Support Agent dashboard with guided onboarding cards]({{ site.baseurl }}/assets/proactive-support.png)
 
 ### When to use it
 

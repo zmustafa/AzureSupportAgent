@@ -12,7 +12,7 @@ permalink: /how-to/lifecycle-investigation/retirement-radar/
 
 **Exact route:** `/radar`.
 
-![Retirement Radar event and workload view]({{ site.baseurl }}/usecase-assets/radar.png)
+![Retirement Radar event and workload view]({{ site.baseurl }}/assets/retirement-coverage.png)
 
 ## Prerequisites
 
