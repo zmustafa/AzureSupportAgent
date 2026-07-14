@@ -11,10 +11,14 @@ import {
 import { formatError } from "../utils/format";
 import { ResourcePicker } from "./ResourcePicker";
 import { AzurePlacementFields, AzureResourceDropdown, SelectedScopesTable, resolvedScopesToWorkloadNodes, useResolvedAlertScopes } from "./AlertsAuthoringSelectors";
+import { SortableHeader, type SortDirection } from "./SortableHeader";
 
 export type RuleFamily = "metric" | "log" | "activity" | "smart" | "prometheus";
 
 type RuleGrouping = "none" | "family" | "category";
+type ManagedRuleSort = "rule" | "type" | "scope" | "evaluation" | "action_groups";
+
+const MANAGED_RULES_PAGE_SIZE = 100;
 
 const ruleFamilyLabels: Record<RuleFamily, string> = {
   metric: "Metric",
@@ -223,6 +227,9 @@ export function ManagedAlertRulesTable({ rows, caps, busy, actionGroups = [], on
   const [state, setState] = useState<"all" | "enabled" | "disabled">("all");
   const [search, setSearch] = useState("");
   const [grouping, setGrouping] = useState<RuleGrouping>("none");
+  const [sortColumn, setSortColumn] = useState<ManagedRuleSort | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<"enable" | "disable" | "delete" | "add_action_group">("disable");
   const [bulkGroup, setBulkGroup] = useState("");
@@ -234,19 +241,42 @@ export function ManagedAlertRulesTable({ rows, caps, busy, actionGroups = [], on
     && (state === "all" || row.enabled === (state === "enabled"))
     && (!search || `${row.name} ${row.description} ${row.scopes.join(" ")}`.toLowerCase().includes(search.toLowerCase()))
   ), [rows, family, state, search]);
+  const sorted = useMemo(() => {
+    if (!sortColumn) return filtered;
+    const direction = sortDirection === "asc" ? 1 : -1;
+    const text = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+    return [...filtered].sort((left, right) => {
+      let result = 0;
+      if (sortColumn === "rule") result = text(left.name, right.name);
+      else if (sortColumn === "type") result = text(`${ruleFamilyLabels[left.family]} ${left.enabled ? "enabled" : "disabled"}`, `${ruleFamilyLabels[right.family]} ${right.enabled ? "enabled" : "disabled"}`);
+      else if (sortColumn === "scope") result = left.scopes.length - right.scopes.length || text(left.scopes[0] || "", right.scopes[0] || "");
+      else if (sortColumn === "evaluation") result = left.condition_count - right.condition_count || text(`${left.evaluation_frequency} ${left.window_size}`, `${right.evaluation_frequency} ${right.window_size}`);
+      else result = left.action_group_ids.length - right.action_group_ids.length || text(left.action_group_ids.join(" "), right.action_group_ids.join(" "));
+      return direction * (result || text(left.name, right.name));
+    });
+  }, [filtered, sortColumn, sortDirection]);
+  const pageCount = Math.max(1, Math.ceil(sorted.length / MANAGED_RULES_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = sorted.slice((currentPage - 1) * MANAGED_RULES_PAGE_SIZE, currentPage * MANAGED_RULES_PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [family, state, search, grouping, sortColumn, sortDirection]);
+  function changeSort(column: ManagedRuleSort) {
+    if (sortColumn === column) setSortDirection((current) => current === "asc" ? "desc" : "asc");
+    else { setSortColumn(column); setSortDirection("asc"); }
+    setPage(1);
+  }
   const grouped = useMemo(() => {
-    if (grouping === "none") return [{ key: "all", label: "", rows: filtered }];
+    if (grouping === "none") return [{ key: "all", label: "", rows: pageRows }];
     const order = grouping === "family"
       ? Object.keys(ruleFamilyLabels) as RuleFamily[]
       : ["metric", "log", ...activityCategoryLabels, "Other Activity Log", "smart", "prometheus"];
     return order.map((key) => ({
       key,
       label: key in ruleFamilyLabels ? ruleFamilyLabels[key as RuleFamily] : key,
-      rows: filtered.filter((row) => grouping === "family"
+      rows: pageRows.filter((row) => grouping === "family"
         ? row.family === key
         : row.family === "activity" ? activityCategoryLabel(row.category) === key : row.family === key),
     })).filter((group) => group.rows.length > 0);
-  }, [filtered, grouping]);
+  }, [pageRows, grouping]);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-white px-4 py-3">
@@ -270,7 +300,7 @@ export function ManagedAlertRulesTable({ rows, caps, busy, actionGroups = [], on
       {caps?.can_bulk_manage && selected.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs"><strong>{selected.length} selected</strong><select value={bulkAction} onChange={(event) => setBulkAction(event.target.value as typeof bulkAction)} className="rounded border px-2 py-1"><option value="enable">Enable</option><option value="disable">Disable</option><option value="add_action_group">Add Action Group</option><option value="delete">Delete</option></select>{bulkAction === "add_action_group" && <select value={bulkGroup} onChange={(event) => setBulkGroup(event.target.value)} className="min-w-96 max-w-full rounded border px-2 py-1"><option value="">Choose Action Group…</option>{bulkActionGroupSubscriptions.map((subscription) => <optgroup key={subscription.subscriptionId || "unknown"} label={subscriptionHeading(subscription.subscriptionName, subscription.subscriptionId)}>{subscription.items.map((group) => <option key={group.id} value={group.id}>{group.name} · RG {group.resource_group || "—"} · {group.enabled ? "Enabled" : "Disabled"} · {actionGroupHealth(group)}</option>)}</optgroup>)}</select>}<button disabled={!!busy || (bulkAction === "add_action_group" && !bulkGroup)} onClick={() => onBulk?.(rows.filter((row) => selected.includes(row.id)), bulkAction, bulkGroup)} className="rounded bg-indigo-700 px-3 py-1 text-white disabled:opacity-50">Create {selected.length} change requests</button><button onClick={() => setSelected([])} className="text-gray-600">Clear</button><span className="ml-auto text-gray-500">Not atomic; each child change is approved, applied, and rolled back independently.</span></div>}
       <div className="overflow-auto rounded-xl border bg-white">
         <table className="w-full min-w-[1100px] text-left text-xs">
-          <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr>{caps?.can_bulk_manage && <th className="px-3 py-2"><input aria-label="Select all visible rules" type="checkbox" checked={filtered.length > 0 && filtered.every((row) => selected.includes(row.id))} onChange={(event) => setSelected(event.target.checked ? Array.from(new Set([...selected, ...filtered.map((row) => row.id)])).slice(0, 50) : selected.filter((id) => !filtered.some((row) => row.id === id)))} /></th>}<th className="px-3 py-2">Rule</th><th className="px-3 py-2">Type / state</th><th className="px-3 py-2">Scope</th><th className="px-3 py-2">Evaluation</th><th className="px-3 py-2">Actions</th><th className="px-3 py-2">Manage</th></tr></thead>
+          <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr>{caps?.can_bulk_manage && <th className="px-3 py-2"><input aria-label="Select all visible rules" type="checkbox" checked={pageRows.length > 0 && pageRows.every((row) => selected.includes(row.id))} onChange={(event) => setSelected(event.target.checked ? Array.from(new Set([...selected, ...pageRows.map((row) => row.id)])).slice(0, 50) : selected.filter((id) => !pageRows.some((row) => row.id === id)))} /></th>}<SortableHeader column="rule" label="Rule" sortColumn={sortColumn} sortDirection={sortDirection} onSort={changeSort} /><SortableHeader column="type" label="Type / state" sortColumn={sortColumn} sortDirection={sortDirection} onSort={changeSort} /><SortableHeader column="scope" label="Scope" sortColumn={sortColumn} sortDirection={sortDirection} onSort={changeSort} /><SortableHeader column="evaluation" label="Evaluation" sortColumn={sortColumn} sortDirection={sortDirection} onSort={changeSort} /><SortableHeader column="action_groups" label="Action Groups" sortColumn={sortColumn} sortDirection={sortDirection} onSort={changeSort} /><th className="px-3 py-2">Manage</th></tr></thead>
           <tbody className="divide-y">{grouped.map((group) => <Fragment key={group.key}>
             {grouping !== "none" && <tr className="bg-gray-50/80"><th colSpan={caps?.can_bulk_manage ? 7 : 6} scope="rowgroup" className="px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700">{group.label}<span className="ml-1.5 font-normal text-gray-400">{group.rows.length}</span></th></tr>}
             {group.rows.map((row) => <tr key={row.id} className="align-top hover:bg-gray-50">
@@ -286,6 +316,7 @@ export function ManagedAlertRulesTable({ rows, caps, busy, actionGroups = [], on
         </table>
         {filtered.length === 0 && <div className="p-10 text-center text-sm text-gray-400">No alert rules match this scope and filter.</div>}
       </div>
+      {sorted.length > MANAGED_RULES_PAGE_SIZE && <div className="flex items-center justify-between rounded-lg border bg-white px-3 py-2 text-xs text-gray-600"><span>Showing {(currentPage - 1) * MANAGED_RULES_PAGE_SIZE + 1}–{Math.min(currentPage * MANAGED_RULES_PAGE_SIZE, sorted.length)} of {sorted.length} · 100 per page</span><div className="flex items-center gap-2"><button disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded border px-2.5 py-1 disabled:opacity-40">Previous</button><span>Page {currentPage} of {pageCount}</span><button disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="rounded border px-2.5 py-1 disabled:opacity-40">Next</button></div></div>}
     </div>
   );
 }

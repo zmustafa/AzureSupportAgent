@@ -38,6 +38,7 @@ import { AlertBlueprintPlanner } from "./AlertBlueprintPlanner";
 import { GapRemediationPlanner } from "./GapRemediationPlanner";
 import { ActivityLogCoverageSection, ActivityLogSetupWizard } from "./ActivityLogCoverage";
 import { ActivityLogDiagnosticsWizard } from "./ActivityLogDiagnosticsWizard";
+import { SortableHeader, type SortDirection } from "./SortableHeader";
 
 const STATUS_STYLE: Record<string, string> = {
   ok: "bg-emerald-50 text-emerald-700",
@@ -71,6 +72,10 @@ const PAGE_SIZE = 100;
 const CHANGES_PAGE_SIZE = 100;
 type ChangesView = "all" | "action_required" | "archived";
 type ChangesSort = "newest" | "oldest" | "status" | "risk" | "change";
+type OverlapSort = "confidence" | "signal" | "rules" | "destinations";
+type GapSort = "risk" | "gap" | "resource" | "signal" | "recommendation";
+type RuleSort = "status" | "rule" | "condition" | "targets" | "action_groups" | "cost" | "firings";
+type ActionGroupSort = "name" | "state" | "receivers" | "dependencies" | "destinations";
 const VALID_TABS = new Set<Tab>(["overview", "inbox", "overlaps", "gaps", "rules", "manage-rules", "action-groups", "deployment-plans", "visualize", "changes"]);
 type ChangesPage = { changes: AlertsManagerChange[]; total: number; page: number; page_size: number; pending_count: number; approved_count: number; actionable_count: number };
 
@@ -209,6 +214,22 @@ function costStatusLabel(cost?: Pick<AlertAnalysisRuleCost, "status" | "monthly_
   return "Estimated";
 }
 
+function sortActionGroups<T extends AlertAnalysisActionGroup>(rows: T[], sortColumn: ActionGroupSort | null, sortDirection: SortDirection): T[] {
+  if (!sortColumn) return rows;
+  const direction = sortDirection === "asc" ? 1 : -1;
+  const text = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+  return [...rows].sort((left, right) => {
+    const leftDependencies = "dependencies" in left && Array.isArray(left.dependencies) ? left.dependencies.length : 0;
+    const rightDependencies = "dependencies" in right && Array.isArray(right.dependencies) ? right.dependencies.length : 0;
+    let result = sortColumn === "name" ? text(left.name, right.name)
+      : sortColumn === "state" ? Number(left.enabled) - Number(right.enabled)
+        : sortColumn === "receivers" ? left.receiver_count - right.receiver_count
+          : sortColumn === "dependencies" ? leftDependencies - rightDependencies
+            : text(left.receivers.map((receiver) => `${receiver.type} ${receiver.destination || receiver.masked}`).join(" "), right.receivers.map((receiver) => `${receiver.type} ${receiver.destination || receiver.masked}`).join(" "));
+    return direction * (result || text(left.name, right.name));
+  });
+}
+
 function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: { overlaps: AlertAnalysisOverlap[]; gaps: AlertAnalysisGap[]; rules: AlertAnalysisRule[]; costSummary?: AlertAnalysisSnapshot["cost_summary"]; activityLogCoverage: ReactNode }) {
   const top = [
     ...overlaps.map((item) => ({
@@ -300,12 +321,12 @@ function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: {
   );
 }
 
-function OverlapsTable({ rows, onDismiss }: { rows: AlertAnalysisOverlap[]; onDismiss: (id: string) => void }) {
+function OverlapsTable({ rows, sortColumn, sortDirection, onSort, onDismiss }: { rows: AlertAnalysisOverlap[]; sortColumn: OverlapSort | null; sortDirection: SortDirection; onSort: (column: OverlapSort) => void; onDismiss: (id: string) => void }) {
   return (
     <div className="overflow-auto rounded-xl border bg-white">
       <table className="w-full min-w-[900px] text-left text-xs">
         <thead className="sticky top-0 bg-gray-50 text-gray-500">
-          <tr><th className="px-3 py-2">Confidence</th><th className="px-3 py-2">Signal / target</th><th className="px-3 py-2">Overlapping rules</th><th className="px-3 py-2">Notification impact</th><th className="px-3 py-2">Recommendation</th><th className="px-3 py-2" /></tr>
+          <tr><SortableHeader column="confidence" label="Confidence" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="signal" label="Signal / target" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="rules" label="Overlapping rules" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="destinations" label="Notification impact" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><th className="px-3 py-2">Recommendation</th><th className="px-3 py-2" /></tr>
         </thead>
         <tbody className="divide-y">
           {rows.map((row) => (
@@ -335,13 +356,16 @@ function isActiveGapPlanStatus(status?: GapDeploymentPlanStatus["status"]): bool
   return status === "pending" || status === "approved";
 }
 
-function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, groupBySignal, onSelectionChange, onCreatePlan, onOpenPlan, onCreateRule }: {
+function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, groupBySignal, sortColumn, sortDirection, onSort, onSelectionChange, onCreatePlan, onOpenPlan, onCreateRule }: {
   rows: AlertAnalysisGap[];
   selectedRows: AlertAnalysisGap[];
   selectedIds: Set<string>;
   plansByGap: Record<string, GapDeploymentPlanStatus>;
   canPlan: boolean;
   groupBySignal: boolean;
+  sortColumn: GapSort | null;
+  sortDirection: SortDirection;
+  onSort: (column: GapSort) => void;
   onSelectionChange: (ids: Set<string>) => void;
   onCreatePlan: () => void;
   onOpenPlan: (planId: string) => void;
@@ -378,7 +402,7 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, group
       {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-3 border-b border-indigo-200 bg-indigo-50 px-4 py-3" data-testid="gap-selection-bar"><div><div className="text-xs font-semibold text-indigo-900">{selectedIds.size} gap{selectedIds.size === 1 ? "" : "s"} selected</div><div className="text-[10px] text-indigo-700">{resourceCount} resource{resourceCount === 1 ? "" : "s"}{severitySummary ? ` · ${severitySummary}` : ""}</div></div><div className="ml-auto flex gap-2"><button onClick={() => onSelectionChange(new Set())} className="rounded border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-100">Clear</button><button data-action="create-gaps-plan" disabled={!canPlan} onClick={onCreatePlan} className="rounded bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40">Create remediation plan</button></div></div>}
       <div className="overflow-auto">
       <table className="w-full min-w-[980px] text-left text-xs">
-        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" aria-label="Select all visible actionable gaps" checked={allVisibleSelected} disabled={!canPlan || !visibleIds.length} onChange={toggleAllVisible} /></th><th className="px-3 py-2">Risk</th><th className="px-3 py-2">Gap</th><th className="px-3 py-2">Resource / rule</th><th className="px-3 py-2">Signal</th><th className="px-3 py-2">Recommended action</th><th className="px-3 py-2" /></tr></thead>
+        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2"><input type="checkbox" aria-label="Select all visible actionable gaps" checked={allVisibleSelected} disabled={!canPlan || !visibleIds.length} onChange={toggleAllVisible} /></th><SortableHeader column="risk" label="Risk" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="gap" label="Gap type" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="resource" label="Resource / rule" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="signal" label="Signal" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="recommendation" label="Recommended action" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><th className="px-3 py-2" /></tr></thead>
         <tbody className="divide-y">
           {rows.map((row, index) => {
             const id = gapIdentity(row, index);
@@ -409,11 +433,11 @@ function GapsTable({ rows, selectedRows, selectedIds, plansByGap, canPlan, group
   );
 }
 
-function RulesTable({ rows, onDecision }: { rows: AlertAnalysisRule[]; onDecision: (rule: AlertAnalysisRule, action: "keep_rule" | "exempt_rule") => void }) {
+function RulesTable({ rows, sortColumn, sortDirection, onSort, onDecision }: { rows: AlertAnalysisRule[]; sortColumn: RuleSort | null; sortDirection: SortDirection; onSort: (column: RuleSort) => void; onDecision: (rule: AlertAnalysisRule, action: "keep_rule" | "exempt_rule") => void }) {
   return (
     <div className="overflow-auto rounded-xl border bg-white">
       <table className="w-full min-w-[1250px] text-left text-xs">
-        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Status</th><th className="px-3 py-2">Rule</th><th className="px-3 py-2">Condition</th><th className="px-3 py-2">Targets</th><th className="px-3 py-2">Action groups</th><th className="px-3 py-2">Estimated cost</th><th className="px-3 py-2">Firings</th><th className="px-3 py-2">Actions</th></tr></thead>
+        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><SortableHeader column="status" label="Status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="rule" label="Rule" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="condition" label="Condition / signal" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="targets" label="Targets" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="action_groups" label="Action groups" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="cost" label="Estimated cost" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="firings" label="Firings" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><th className="px-3 py-2">Actions</th></tr></thead>
         <tbody className="divide-y">
           {rows.map((rule) => {
             const condition = rule.conditions[0];
@@ -440,11 +464,11 @@ function RulesTable({ rows, onDecision }: { rows: AlertAnalysisRule[]; onDecisio
   );
 }
 
-function ActionGroupsTable({ rows }: { rows: AlertAnalysisActionGroup[] }) {
+function ActionGroupsTable({ rows, sortColumn, sortDirection, onSort }: { rows: AlertAnalysisActionGroup[]; sortColumn: ActionGroupSort | null; sortDirection: SortDirection; onSort: (column: ActionGroupSort) => void }) {
   return (
     <div className="overflow-auto rounded-xl border bg-white">
       <table className="w-full min-w-[800px] text-left text-xs">
-        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Action group</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Receivers</th><th className="px-3 py-2">Destinations</th><th className="px-3 py-2" /></tr></thead>
+        <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><SortableHeader column="name" label="Action group" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="state" label="State" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="receivers" label="Receivers" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="destinations" label="Destinations" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><th className="px-3 py-2" /></tr></thead>
         <tbody className="divide-y">
           {rows.map((group) => (
             <tr key={group.id} className="align-top hover:bg-gray-50">
@@ -486,7 +510,7 @@ function FiredAlertsTable({ rows, canManage, busy, onState }: { rows: FiredAlert
   );
 }
 
-function ManagedActionGroupsTable({ rows, caps, busy, refreshing, onRefresh, onCreate, onEdit, onClone, onToggle, onDelete, onTest }: { rows: ManagedActionGroup[]; caps?: AlertsManagerCapabilities; busy: string; refreshing: boolean; onRefresh: () => void; onCreate: () => void; onEdit: (row: ManagedActionGroup) => void; onClone: (row: ManagedActionGroup) => void; onToggle: (row: ManagedActionGroup) => void; onDelete: (row: ManagedActionGroup) => void; onTest: (row: ManagedActionGroup) => void }) {
+function ManagedActionGroupsTable({ rows, sortColumn, sortDirection, onSort, caps, busy, refreshing, onRefresh, onCreate, onEdit, onClone, onToggle, onDelete, onTest }: { rows: ManagedActionGroup[]; sortColumn: ActionGroupSort | null; sortDirection: SortDirection; onSort: (column: ActionGroupSort) => void; caps?: AlertsManagerCapabilities; busy: string; refreshing: boolean; onRefresh: () => void; onCreate: () => void; onEdit: (row: ManagedActionGroup) => void; onClone: (row: ManagedActionGroup) => void; onToggle: (row: ManagedActionGroup) => void; onDelete: (row: ManagedActionGroup) => void; onTest: (row: ManagedActionGroup) => void }) {
   const azureRows = rows.map((group) => {
     const dependencies = group.dependencies;
     return { ...group, dependencies, dependency_count: dependencies.length };
@@ -500,7 +524,7 @@ function ManagedActionGroupsTable({ rows, caps, busy, refreshing, onRefresh, onC
       {caps?.read_only && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">The selected connection is read-only. Management controls are disabled.</div>}
       <div className="overflow-auto rounded-xl border bg-white">
         <table className="w-full min-w-[1050px] text-left text-xs">
-          <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><th className="px-3 py-2">Action group</th><th className="px-3 py-2">State</th><th className="px-3 py-2">Receivers</th><th className="px-3 py-2">Dependencies</th><th className="px-3 py-2">Destinations</th><th className="px-3 py-2">Actions</th></tr></thead>
+          <thead className="sticky top-0 bg-gray-50 text-gray-500"><tr><SortableHeader column="name" label="Action group" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="state" label="State" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="receivers" label="Receivers" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="dependencies" label="Dependencies" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><SortableHeader column="destinations" label="Destinations" sortColumn={sortColumn} sortDirection={sortDirection} onSort={onSort} /><th className="px-3 py-2">Actions</th></tr></thead>
           <tbody className="divide-y">
             {azureRows.map((group) => (
               <tr key={group.id} className="align-top hover:bg-gray-50">
@@ -753,12 +777,18 @@ export function AlertsManagerPanel() {
   }, [tab]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const [ruleSort, setRuleSort] = useState<"default" | "cost_desc" | "cost_asc">("default");
+  const [overlapSort, setOverlapSort] = useState<OverlapSort | null>(null);
+  const [overlapSortDirection, setOverlapSortDirection] = useState<SortDirection>("asc");
+  const [ruleSort, setRuleSort] = useState<RuleSort | null>(null);
+  const [ruleSortDirection, setRuleSortDirection] = useState<SortDirection>("asc");
   const [gapRisk, setGapRisk] = useState("all");
   const [gapType, setGapType] = useState("all");
   const [gapSignal, setGapSignal] = useState("all");
   const [gapGroup, setGapGroup] = useState<"none" | "signal">("none");
-  const [gapSort, setGapSort] = useState<"default" | "risk" | "signal" | "gap" | "resource">("default");
+  const [gapSort, setGapSort] = useState<GapSort | null>(null);
+  const [gapSortDirection, setGapSortDirection] = useState<SortDirection>("asc");
+  const [actionGroupSort, setActionGroupSort] = useState<ActionGroupSort | null>(null);
+  const [actionGroupSortDirection, setActionGroupSortDirection] = useState<SortDirection>("asc");
   const [analysisNeedsRefresh, setAnalysisNeedsRefresh] = useState(false);
   const [exporting, setExporting] = useState("");
   const [error, setError] = useState("");
@@ -895,6 +925,12 @@ export function AlertsManagerPanel() {
   }, [jobQ.data, qc, queryKey, scopeKind, effectiveWorkloadId, subId, mgId, connId]);
 
   const query = useDeferredValue(search.trim().toLowerCase());
+  const compareText = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+  function updateSort<K extends string>(column: K, current: K | null, direction: SortDirection, setColumn: (value: K) => void, setDirection: (value: SortDirection) => void, defaultDirection: SortDirection = "asc") {
+    if (current === column) setDirection(direction === "asc" ? "desc" : "asc");
+    else { setColumn(column); setDirection(defaultDirection); }
+    goPage(1);
+  }
   const searchableRules = useMemo(() => (data?.rules ?? []).map((rule) => ({ rule, text: `${rule.name} ${rule.type} ${rule.resource_group} ${rule.conditions.map((item) => item.signal_name).join(" ")} ${rule.action_group_names.join(" ")}`.toLowerCase() })), [data?.rules]);
   const searchableOverlaps = useMemo(() => (data?.active_overlaps ?? data?.overlaps ?? []).map((row) => ({ row, text: `${row.signal_name} ${row.target_id} ${row.rule_names.join(" ")}`.toLowerCase() })), [data?.active_overlaps, data?.overlaps]);
   const searchableGaps = useMemo(() => (data?.active_gaps ?? data?.gaps ?? []).map((row) => ({ row, text: `${row.type} ${row.resource_name} ${row.rule_name} ${row.signal}`.toLowerCase() })), [data?.active_gaps, data?.gaps]);
@@ -903,17 +939,38 @@ export function AlertsManagerPanel() {
       if (status !== "all" && rule.finding_status !== status) return false;
       return !query || text.includes(query);
     }).map(({ rule }) => rule);
-    if (ruleSort === "default") return filtered;
+    if (!ruleSort) return filtered;
+    const direction = ruleSortDirection === "asc" ? 1 : -1;
     return [...filtered].sort((left, right) => {
-      const leftCost = left.cost?.monthly_usd;
-      const rightCost = right.cost?.monthly_usd;
-      if (leftCost == null && rightCost == null) return left.name.localeCompare(right.name);
-      if (leftCost == null) return 1;
-      if (rightCost == null) return -1;
-      return ruleSort === "cost_desc" ? rightCost - leftCost : leftCost - rightCost;
+      let result = 0;
+      if (ruleSort === "status") result = compareText(left.finding_status, right.finding_status);
+      else if (ruleSort === "rule") result = compareText(left.name, right.name);
+      else if (ruleSort === "condition") result = compareText(`${left.conditions[0]?.signal_name || ""} ${left.conditions[0]?.aggregation || ""}`, `${right.conditions[0]?.signal_name || ""} ${right.conditions[0]?.aggregation || ""}`);
+      else if (ruleSort === "targets") result = left.effective_target_count - right.effective_target_count || compareText(left.scopes[0] || "", right.scopes[0] || "");
+      else if (ruleSort === "action_groups") result = left.action_group_names.length - right.action_group_names.length || compareText(left.action_group_names.join(" "), right.action_group_names.join(" "));
+      else if (ruleSort === "cost") {
+        const leftCost = left.cost?.monthly_usd;
+        const rightCost = right.cost?.monthly_usd;
+        if (leftCost == null || rightCost == null) return leftCost == null && rightCost == null ? compareText(left.name, right.name) : leftCost == null ? 1 : -1;
+        result = leftCost - rightCost;
+      }
+      else result = (left.firing_30d ?? left.firing_7d ?? 0) - (right.firing_30d ?? right.firing_7d ?? 0);
+      return direction * (result || compareText(left.name, right.name));
     });
-  }, [searchableRules, query, status, ruleSort]);
-  const overlaps = useMemo(() => searchableOverlaps.filter(({ text }) => !query || text.includes(query)).map(({ row }) => row), [searchableOverlaps, query]);
+  }, [searchableRules, query, status, ruleSort, ruleSortDirection]);
+  const overlaps = useMemo(() => {
+    const filtered = searchableOverlaps.filter(({ text }) => !query || text.includes(query)).map(({ row }) => row);
+    if (!overlapSort) return filtered;
+    const direction = overlapSortDirection === "asc" ? 1 : -1;
+    const confidenceOrder = { medium: 0, high: 1 };
+    return [...filtered].sort((left, right) => {
+      let result = overlapSort === "confidence" ? confidenceOrder[left.confidence] - confidenceOrder[right.confidence]
+        : overlapSort === "signal" ? compareText(`${left.signal_name} ${left.target_id}`, `${right.signal_name} ${right.target_id}`)
+          : overlapSort === "rules" ? left.rule_names.length - right.rule_names.length
+            : left.shared_recipient_count - right.shared_recipient_count;
+      return direction * (result || compareText(left.signal_name, right.signal_name));
+    });
+  }, [searchableOverlaps, query, overlapSort, overlapSortDirection]);
   const gapOptions = useMemo(() => ({
     risks: [...new Set(searchableGaps.map(({ row }) => row.risk).filter(Boolean))].sort(),
     types: [...new Set(searchableGaps.map(({ row }) => row.type).filter(Boolean))].sort(),
@@ -927,14 +984,23 @@ export function AlertsManagerPanel() {
       && (gapType === "all" || row.type === gapType)
       && (gapSignal === "all" || row.signal === gapSignal)
     ).map(({ row }) => row);
-    return filtered.sort((left, right) => {
-      if (gapGroup === "signal" || gapSort === "signal") return (left.signal || "").localeCompare(right.signal || "") || (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
-      if (gapSort === "risk") return (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
-      if (gapSort === "gap") return left.type.localeCompare(right.type);
-      if (gapSort === "resource") return (left.rule_name || left.resource_name || "").localeCompare(right.rule_name || right.resource_name || "");
-      return 0;
+    if (!gapSort && gapGroup !== "signal") return filtered;
+    const direction = gapSortDirection === "asc" ? 1 : -1;
+    return [...filtered].sort((left, right) => {
+      const signalResult = compareText(left.signal || "", right.signal || "");
+      if (gapGroup === "signal" && signalResult) return gapSort === "signal" ? direction * signalResult : signalResult;
+      let result = 0;
+      if (gapSort === "risk") result = (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
+      else if (gapSort === "gap") result = compareText(left.type, right.type);
+      else if (gapSort === "resource") result = compareText(left.rule_name || left.resource_name || "", right.rule_name || right.resource_name || "");
+      else if (gapSort === "signal") result = signalResult;
+      else if (gapSort === "recommendation") result = compareText(left.recommendation, right.recommendation);
+      else result = (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
+      return direction * (result || compareText(left.resource_name || left.rule_name || "", right.resource_name || right.rule_name || ""));
     });
-  }, [searchableGaps, query, gapRisk, gapType, gapSignal, gapGroup, gapSort]);
+  }, [searchableGaps, query, gapRisk, gapType, gapSignal, gapGroup, gapSort, gapSortDirection]);
+  const sortedAnalysisGroups = useMemo(() => sortActionGroups(data?.action_groups ?? [], actionGroupSort, actionGroupSortDirection), [data?.action_groups, actionGroupSort, actionGroupSortDirection]);
+  const sortedManagedGroups = useMemo(() => sortActionGroups(managedGroupsQ.data?.action_groups ?? [], actionGroupSort, actionGroupSortDirection), [managedGroupsQ.data?.action_groups, actionGroupSort, actionGroupSortDirection]);
   const allGaps = data?.active_gaps ?? data?.gaps ?? [];
   const allGapIds = useMemo(() => [...new Set(allGaps.map((row, index) => gapIdentity(row, index)))], [allGaps]);
   const gapPlansQ = useQuery({
@@ -1363,10 +1429,10 @@ export function AlertsManagerPanel() {
         {data?.report_exists && !managementTab && tab !== "overview" && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search rules, signals, resources…" className="w-64 rounded-lg border px-3 py-1.5 text-xs focus:border-brand focus:outline-none" />
-            {tab === "gaps" && <><select aria-label="Filter gaps by risk" value={gapRisk} onChange={(event) => { setGapRisk(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All risks</option>{gapOptions.risks.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Filter gaps by type" value={gapType} onChange={(event) => { setGapType(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All gap types</option>{gapOptions.types.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select><select aria-label="Filter gaps by signal" value={gapSignal} onChange={(event) => { setGapSignal(event.target.value); goPage(1); }} className="max-w-64 rounded-lg border px-2 py-1.5 text-xs"><option value="all">All signals</option>{gapOptions.signals.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Group gaps" value={gapGroup} onChange={(event) => { setGapGroup(event.target.value as typeof gapGroup); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="none">No grouping</option><option value="signal">Group by signal</option></select><select aria-label="Sort gaps" value={gapSort} onChange={(event) => { setGapSort(event.target.value as typeof gapSort); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="risk">Risk</option><option value="signal">Signal</option><option value="gap">Gap type</option><option value="resource">Resource / rule</option></select></>}
+            {tab === "gaps" && <><select aria-label="Filter gaps by risk" value={gapRisk} onChange={(event) => { setGapRisk(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All risks</option>{gapOptions.risks.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Filter gaps by type" value={gapType} onChange={(event) => { setGapType(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All gap types</option>{gapOptions.types.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select><select aria-label="Filter gaps by signal" value={gapSignal} onChange={(event) => { setGapSignal(event.target.value); goPage(1); }} className="max-w-64 rounded-lg border px-2 py-1.5 text-xs"><option value="all">All signals</option>{gapOptions.signals.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Group gaps" value={gapGroup} onChange={(event) => { setGapGroup(event.target.value as typeof gapGroup); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="none">No grouping</option><option value="signal">Group by signal</option></select><select aria-label="Sort gaps" value={gapSort ?? "default"} onChange={(event) => { setGapSort(event.target.value === "default" ? null : event.target.value as GapSort); setGapSortDirection("asc"); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="risk">Risk</option><option value="signal">Signal</option><option value="gap">Gap type</option><option value="resource">Resource / rule</option><option value="recommendation">Recommended action</option></select><button type="button" disabled={!gapSort} onClick={() => { setGapSortDirection((value) => value === "asc" ? "desc" : "asc"); goPage(1); }} title="Reverse gap sort direction" className="rounded-lg border px-2 py-1.5 text-xs disabled:opacity-40">{gapSortDirection === "asc" ? "↑" : "↓"}</button></>}
             {tab === "rules" && <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All statuses</option><option value="overlap">Overlaps</option><option value="gap">Gaps</option><option value="ok">OK</option></select>}
-            {tab === "rules" && <select aria-label="Sort rule analysis" value={ruleSort} onChange={(event) => { setRuleSort(event.target.value as typeof ruleSort); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="cost_desc">Cost: highest first</option><option value="cost_asc">Cost: lowest first</option></select>}
-            {(search || status !== "all" || ruleSort !== "default" || gapRisk !== "all" || gapType !== "all" || gapSignal !== "all" || gapGroup !== "none" || gapSort !== "default") && <button onClick={() => { setSearch(""); setStatus("all"); setRuleSort("default"); setGapRisk("all"); setGapType("all"); setGapSignal("all"); setGapGroup("none"); setGapSort("default"); goPage(1); }} className="text-xs text-gray-500 hover:underline">Clear</button>}
+            {tab === "rules" && <select aria-label="Sort rule analysis" value={ruleSort === "cost" ? `cost_${ruleSortDirection}` : "default"} onChange={(event) => { const value = event.target.value; setRuleSort(value === "default" ? null : "cost"); if (value !== "default") setRuleSortDirection(value.endsWith("desc") ? "desc" : "asc"); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="cost_desc">Cost: highest first</option><option value="cost_asc">Cost: lowest first</option></select>}
+            {(search || status !== "all" || ruleSort || overlapSort || gapRisk !== "all" || gapType !== "all" || gapSignal !== "all" || gapGroup !== "none" || gapSort) && <button onClick={() => { setSearch(""); setStatus("all"); setRuleSort(null); setOverlapSort(null); setGapRisk("all"); setGapType("all"); setGapSignal("all"); setGapGroup("none"); setGapSort(null); goPage(1); }} className="text-xs text-gray-500 hover:underline">Clear</button>}
           </div>
         )}
         <AnalysisProgress state={jobQ.data} compact />
@@ -1392,11 +1458,11 @@ export function AlertsManagerPanel() {
               : managedRulesQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(managedRulesQ.error)}</div>
                     : ruleActionGroupsQ.isLoading ? <Skeleton rows={8} />
                       : ruleActionGroupsQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(ruleActionGroupsQ.error)}</div>
-                      : <PagedView rows={managedRulesQ.data?.rules ?? []} page={page} onPage={goPage}>{(pageRows) => <ManagedAlertRulesTable rows={pageRows} caps={capabilities} busy={managementBusy} actionGroups={ruleActionGroupsQ.data?.action_groups ?? []} onCreate={createManagedRule} onEdit={(row) => void editManagedRule(row)} onClone={(row) => void cloneManagedRule(row)} onToggle={(row) => void toggleManagedRule(row)} onDelete={(row) => void deleteManagedRule(row)} onBulk={(rows, action, groupId) => void bulkManagedRules(rows, action, groupId)} />}</PagedView>
-                  : tab === "action-groups" ? data?.demo ? <PagedView rows={data.action_groups} page={page} onPage={goPage}>{(pageRows) => <ActionGroupsTable rows={pageRows} />}</PagedView>
+                        : <ManagedAlertRulesTable rows={managedRulesQ.data?.rules ?? []} caps={capabilities} busy={managementBusy} actionGroups={ruleActionGroupsQ.data?.action_groups ?? []} onCreate={createManagedRule} onEdit={(row) => void editManagedRule(row)} onClone={(row) => void cloneManagedRule(row)} onToggle={(row) => void toggleManagedRule(row)} onDelete={(row) => void deleteManagedRule(row)} onBulk={(rows, action, groupId) => void bulkManagedRules(rows, action, groupId)} />
+                      : tab === "action-groups" ? data?.demo ? <PagedView rows={sortedAnalysisGroups} page={page} onPage={goPage}>{(pageRows) => <ActionGroupsTable rows={pageRows} sortColumn={actionGroupSort} sortDirection={actionGroupSortDirection} onSort={(column) => updateSort(column, actionGroupSort, actionGroupSortDirection, setActionGroupSort, setActionGroupSortDirection)} />}</PagedView>
             : managedGroupsQ.isLoading ? <Skeleton rows={8} />
               : managedGroupsQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(managedGroupsQ.error)}</div>
-                : <PagedView rows={managedGroupsQ.data?.action_groups ?? []} page={page} onPage={goPage}>{(pageRows) => <ManagedActionGroupsTable rows={pageRows} caps={capabilities} busy={managementBusy} refreshing={managedGroupsQ.isFetching} onRefresh={() => void managedGroupsQ.refetch()} onCreate={() => { setError(""); setActionGroupEditorError(""); setEditor(blankActionGroup()); }} onEdit={(row) => void editActionGroup(row)} onClone={(row) => void cloneActionGroup(row)} onToggle={(row) => void toggleActionGroup(row)} onDelete={(row) => void deleteActionGroup(row)} onTest={(row) => void testActionGroup(row)} />}</PagedView>
+                : <PagedView rows={sortedManagedGroups} page={page} onPage={goPage}>{(pageRows) => <ManagedActionGroupsTable rows={pageRows} sortColumn={actionGroupSort} sortDirection={actionGroupSortDirection} onSort={(column) => updateSort(column, actionGroupSort, actionGroupSortDirection, setActionGroupSort, setActionGroupSortDirection)} caps={capabilities} busy={managementBusy} refreshing={managedGroupsQ.isFetching} onRefresh={() => void managedGroupsQ.refetch()} onCreate={() => { setError(""); setActionGroupEditorError(""); setEditor(blankActionGroup()); }} onEdit={(row) => void editActionGroup(row)} onClone={(row) => void cloneActionGroup(row)} onToggle={(row) => void toggleActionGroup(row)} onDelete={(row) => void deleteActionGroup(row)} onTest={(row) => void testActionGroup(row)} />}</PagedView>
           : tab === "deployment-plans" ? (
             <AlertBlueprintPlanner
               mode="plans"
@@ -1441,9 +1507,9 @@ export function AlertsManagerPanel() {
             </div>}
             <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
           </div>
-          : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
-          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
-          : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
+          : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} sortColumn={overlapSort} sortDirection={overlapSortDirection} onSort={(column) => updateSort(column, overlapSort, overlapSortDirection, setOverlapSort, setOverlapSortDirection, column === "confidence" ? "desc" : "asc")} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
+          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} sortColumn={gapSort} sortDirection={gapSortDirection} onSort={(column) => updateSort(column, gapSort, gapSortDirection, setGapSort, setGapSortDirection)} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
+          : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} sortColumn={ruleSort} sortDirection={ruleSortDirection} onSort={(column) => updateSort(column, ruleSort, ruleSortDirection, setRuleSort, setRuleSortDirection, column === "cost" || column === "firings" ? "desc" : "asc")} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
           : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} />
           : null}
       </main>
