@@ -751,6 +751,7 @@ export function AlertsManagerPanel() {
   const [connId, setConnId] = usePersistedState("azsup.alertAnalysis.connectionId", "");
   const [mgId, setMgId] = usePersistedState("azsup.alertAnalysis.mgId", "");
   const [mgName, setMgName] = usePersistedState("azsup.alertAnalysis.mgName", "");
+  const [mgRefreshToken, setMgRefreshToken] = useState(0);
   const tab: Tab = routeTab && VALID_TABS.has(routeTab as Tab) ? routeTab as Tab : "overview";
   const contentScrollRef = useRef<HTMLElement>(null);
   const page = Math.max(1, Number.parseInt(routeSearch.get("page") || "1", 10) || 1);
@@ -1385,13 +1386,13 @@ export function AlertsManagerPanel() {
             <div className="flex items-center gap-2">
               <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
                 {(["workload", "subscription", "management_group"] as const).map((kind) => (
-                  <button key={kind} onClick={() => setScopeKind(kind)} className={`rounded-md px-2.5 py-1 ${scopeKind === kind ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
+                  <button key={kind} onClick={() => { setScopeKind(kind); if (kind === "management_group") setMgRefreshToken((value) => value + 1); }} className={`rounded-md px-2.5 py-1 ${scopeKind === kind ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
                     {kind === "workload" ? "Workload" : kind === "subscription" ? "Subscription" : "Management group"}
                   </button>
                 ))}
               </div>
               {scopeKind === "management_group" ? (
-                <ManagementGroupPicker value={mgId} valueName={mgName} connectionId={connId} onPick={(id, name) => { setMgId(id); setMgName(name); }} />
+                <ManagementGroupPicker value={mgId} valueName={mgName} connectionId={connId} refreshToken={mgRefreshToken} onPick={(id, name) => { setMgId(id); setMgName(name); }} />
               ) : (
                 <ScopePicker
                   scopeKind={scopeKind}

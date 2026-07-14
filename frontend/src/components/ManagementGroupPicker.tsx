@@ -6,16 +6,18 @@ export function ManagementGroupPicker({
   value,
   valueName,
   connectionId,
+  refreshToken = 0,
   onPick,
 }: {
   value: string;
   valueName: string;
   connectionId?: string;
+  refreshToken?: number;
   onPick: (id: string, name: string) => void;
 }) {
   const groupsQ = useQuery({
-    queryKey: ["management-group-picker", connectionId],
-    queryFn: () => api.workloadTree({ connection_id: connectionId ?? "", group_by: "mg_flat" }),
+    queryKey: ["management-group-picker", connectionId, refreshToken],
+    queryFn: () => api.workloadTree({ connection_id: connectionId ?? "", group_by: "mg_flat", refresh: refreshToken > 0 }),
     staleTime: 24 * 60 * 60 * 1000,
   });
   const groups = (groupsQ.data?.nodes ?? []).filter((node) => node.kind === "mg");
@@ -31,12 +33,12 @@ export function ManagementGroupPicker({
           const selected = groups.find((group) => group.id === event.target.value);
           onPick(event.target.value, selected?.name ?? event.target.value);
         }}
-        disabled={groupsQ.isLoading}
+        disabled={groupsQ.isLoading || groupsQ.isFetching}
         title="Management group scope"
         aria-label="Management group scope"
         className="max-w-[260px] rounded-lg border py-1.5 pl-7 pr-2 text-xs disabled:opacity-50"
       >
-        <option value="">{groupsQ.isLoading ? "Loading management groups…" : "Select management group…"}</option>
+        <option value="">{groupsQ.isLoading || groupsQ.isFetching ? "Refreshing management groups…" : "Select management group…"}</option>
         {groups.map((group) => (
           <option key={group.id} value={group.id}>
             {group.depth ? `${"  ".repeat(group.depth)}↳ ${group.name}` : group.name}
