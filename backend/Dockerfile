@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 # via mounted ~/.azure). Kept in one layer to slim the image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && apt-get clean \

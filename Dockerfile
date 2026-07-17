@@ -3,7 +3,7 @@
 # (API under /api, SPA + assets at every other path). Targets Azure Container Apps.
 
 # ---- Stage 1: build the React SPA --------------------------------------------------
-FROM node:20-alpine AS frontend
+FROM node:22-alpine AS frontend
 WORKDIR /web
 COPY frontend/package.json ./
 RUN npm install
@@ -46,7 +46,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
         iputils-ping traceroute dnsutils netcat-openbsd iproute2 \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && apt-get clean \
