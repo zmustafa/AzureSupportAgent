@@ -81,7 +81,7 @@ COPY third_party/ /app/third_party/
 RUN python -m venv /opt/eidmcp \
     && /opt/eidmcp/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/eidmcp/bin/pip install --no-cache-dir \
-        azure-core azure-identity "mcp[cli]" msgraph-core msgraph-sdk fastmcp python-dotenv
+        azure-core azure-identity "mcp[cli]>=1.28.1,<2" msgraph-core msgraph-sdk fastmcp python-dotenv
 
 EXPOSE 8000
 
