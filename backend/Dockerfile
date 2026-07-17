@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Node.js (for `npx @azure/mcp`) and the Azure CLI (for local DefaultAzureCredential
 # via mounted ~/.azure). Kept in one layer to slim the image.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg libicu76 \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \

@@ -45,6 +45,7 @@ RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
+        libicu76 \
         iputils-ping traceroute dnsutils netcat-openbsd iproute2 \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
