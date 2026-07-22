@@ -5,8 +5,10 @@
 # ---- Stage 1: build the React SPA --------------------------------------------------
 FROM node:22-alpine AS frontend
 WORKDIR /web
-COPY frontend/package.json ./
-RUN npm install
+# Install exactly the audited lockfile. Copying both manifests into this layer also ensures
+# dependency-only security updates invalidate Docker's npm cache before the SPA is bundled.
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
 # Same-origin API base so the bundle calls /api/... on whatever host serves it.
 ENV VITE_API_BASE=/api
