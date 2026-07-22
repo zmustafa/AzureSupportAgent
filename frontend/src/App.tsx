@@ -1,4 +1,4 @@
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import ChatView from "./components/ChatView";
 import { useAuth } from "./components/AuthContext";
@@ -6,6 +6,7 @@ import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
 import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
 import { WelcomeModal } from "./components/WelcomeModal";
+import { ContextDocumentationHelp } from "./components/ContextDocumentationHelp";
 import { APP_VERSION, APP_VERSION_DISPLAY } from "./version";
 import { api } from "./api";
 
@@ -30,6 +31,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export default function App() {
   const { user, loading, logout } = useAuth();
+  const location = useLocation();
   const activeLlmQ = useQuery({
     queryKey: ["activeLlm"],
     queryFn: api.activeLlm,
@@ -80,6 +82,7 @@ export default function App() {
             <kbd className="rounded bg-white/20 px-1 text-[10px]">⌘K</kbd>
           </button>
           <HelpMenu />
+          <ContextDocumentationHelp pathname={location.pathname} />
           {aiProvider ? (
             user.role === "admin" ? (
               <Link

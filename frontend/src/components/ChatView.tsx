@@ -207,7 +207,6 @@ const MetricChart = lazy(() =>
   import("./chat/MetricChart").then((m) => ({ default: m.MetricChart })),
 );
 import { NotificationBell } from "./NotificationBell";
-import { ContextDocumentationHelp } from "./ContextDocumentationHelp";
 
 // Fallback shown while a lazy panel chunk loads.
 function PanelLoading() {
@@ -501,7 +500,6 @@ type LiveStream = {
 
 export default function ChatView() {
   const qc = useQueryClient();
-  const docsRootRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { chatId: routeChatId } = useParams<{ chatId?: string }>();
   const location = useLocation();
@@ -2448,8 +2446,7 @@ export default function ChatView() {
 
   return (
     <ExecContext.Provider value={execConfig}>
-    <div ref={docsRootRef} className="relative flex h-full">
-      <ContextDocumentationHelp rootRef={docsRootRef} pathname={location.pathname} />
+    <div className="relative flex h-full">
       {/* Sidebar */}
       <aside
         className={`flex flex-col border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${

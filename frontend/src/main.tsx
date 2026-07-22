@@ -6,6 +6,7 @@ import App from "./App";
 import { AuthProvider } from "./components/AuthContext";
 import { ConfirmProvider } from "./components/ConfirmDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { AppErrorBoundary } from "./components/chat/PanelErrorBoundary";
 import { queryClient } from "./queryClient";
 import { initWebVitals } from "./webVitals";
 import { setupPWA } from "./pwa";
@@ -17,8 +18,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <BrowserRouter>
         <AuthProvider>
           <ConfirmProvider>
-            <App />
-            <UpdateBanner />
+            <AppErrorBoundary>
+              <App />
+              <UpdateBanner />
+            </AppErrorBoundary>
           </ConfirmProvider>
         </AuthProvider>
       </BrowserRouter>
