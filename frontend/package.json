@@ -18,7 +18,7 @@
     "@tiptap/extension-table-row": "^3.27.1",
     "@tiptap/pm": "^3.27.1",
     "@tiptap/react": "^3.27.1",
-    "@tiptap/starter-kit": "^3.27.1",
+    "@tiptap/starter-kit": "^3.29.2",
     "@types/dompurify": "^3.0.5",
     "@xyflow/react": "^12.11.0",
     "clsx": "^2.1.1",
