@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      # The microsoft-kiota-* packages are a VERSION-LOCKED FAMILY: every one is pinned
+      # to the same version and they require each other exactly. Bumping one alone is
+      # unmergeable -- pip resolution fails outright. Group them so they move together.
+      microsoft-kiota:
+        patterns:
+          - "microsoft-kiota-*"
+      msgraph:
+        patterns:
+          - "msgraph-*"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -24,10 +34,24 @@ updates:
     schedule:
       interval: "monthly"
 
+  # Base images are DIGEST-pinned. What is wanted here is a refreshed digest for the SAME
+  # tag, so the pin keeps inheriting upstream security patches. Version updates are
+  # ignored: bumping the tag itself (node 22 -> 25, python 3.12 -> 3.14) is a runtime
+  # migration, not a patch, and must be a deliberate decision. Digest updates are not a
+  # "version-update" type, so they still come through.
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/backend"
+      - "/frontend"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # Matters once CI exists: a compromised third-party action runs with repo credentials.
   - package-ecosystem: "github-actions"

@@ -33,6 +33,12 @@ jobs:
   frontend:
     name: frontend typecheck + build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # `npm --prefix <dir>` works, but `npx --prefix <dir>` does NOT scope the tool --
+        # tsc receives no input files, prints its help text and the check passes (or fails)
+        # without ever type-checking anything. Run from the directory instead.
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,11 +46,11 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --prefix frontend
-      - run: npx --prefix frontend tsc --noEmit
+      - run: npm ci
+      - run: npx tsc --noEmit
       # `vite build` fails on unused top-level symbols (TS6133), so this catches
       # dead code the dev server tolerates.
-      - run: npm run build --prefix frontend
+      - run: npm run build
 
   hooks:
     name: conditional hooks check
