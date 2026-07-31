@@ -16,7 +16,7 @@
     "@tiptap/extension-table-cell": "^3.27.1",
     "@tiptap/extension-table-header": "^3.27.1",
     "@tiptap/extension-table-row": "^3.27.1",
-    "@tiptap/pm": "^3.27.1",
+    "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "@types/dompurify": "^3.0.5",
