@@ -153,7 +153,7 @@ _DEMO_ACTORS = [
 
 def _bucket(s: str, n: int) -> int:
     import hashlib
-    return int(hashlib.sha1(s.encode()).hexdigest()[:8], 16) % max(1, n)
+    return int(hashlib.sha1(s.encode(), usedforsecurity=False).hexdigest()[:8], 16) % max(1, n)
 
 
 def _op_for_type(rtype: str, name: str) -> dict[str, Any] | None:

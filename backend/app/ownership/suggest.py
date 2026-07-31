@@ -29,7 +29,7 @@ _OWNER_ROLES = {
 
 
 def _sig_id(*parts: str) -> str:
-    return "sug-" + hashlib.sha1("|".join(p for p in parts if p).encode()).hexdigest()[:16]  # noqa: S324
+    return "sug-" + hashlib.sha1("|".join(p for p in parts if p).encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def _workload_subs(wl: dict[str, Any]) -> set[str]:

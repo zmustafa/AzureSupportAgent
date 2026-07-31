@@ -159,7 +159,7 @@ def fingerprint(signal_id: str, object_id: str, discriminator: str = "") -> str:
     underlying condition.
     """
     raw = f"{signal_id}|{object_id}|{discriminator}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]  # noqa: S324 - identity, not security
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:20]
 
 
 def finding(

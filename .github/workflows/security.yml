@@ -1,0 +1,135 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * 1" # weekly full sweep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # required to upload SARIF to the Security tab
+
+jobs:
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # REQUIRED. The default shallow clone scans only the tip, which is the most
+          # common reason secret scanning silently does nothing.
+          fetch-depth: 0
+      - name: gitleaks (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+      - name: TruffleHog (verified secrets only)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified --fail
+
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  sast:
+    name: ruff + bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff bandit[sarif]
+      # continue-on-error while the baseline is being established (plan 05).
+      # REMOVE both once the baseline is clean, or this job is decorative.
+      - name: ruff security rules
+        run: ruff check backend/app --select S,ASYNC --output-format sarif --output-file ruff.sarif
+        continue-on-error: true
+      - name: bandit
+        run: bandit -r backend/app third_party -ll -f sarif -o bandit.sarif
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: .
+
+  deps:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: pip-audit -r backend/requirements.txt
+      - name: pip-audit (vendored Entra MCP server)
+        run: pip-audit -r third_party/entraid-mcp-server/requirements.txt
+        continue-on-error: true # vendored upstream; triage, don't block
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      # NOTE: 2 high advisories are knowingly accepted here - react-router
+      # GHSA-qwww-vcr4-c8h2 is RSC-mode-only and this is a client-only BrowserRouter
+      # SPA with no RSC/SSR/server actions. Re-evaluate if SSR is ever adopted.
+      - run: npm audit --prefix frontend --audit-level=critical
+
+  container:
+    name: image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t scan-target:ci .
+      - name: trivy (secrets in layers)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: scan-target:ci
+          scanners: secret
+          exit-code: "1"
+      - name: trivy (vulnerabilities)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: scan-target:ci
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+
+  iac:
+    name: iac scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@master
+        with:
+          directory: deploy
+          framework: bicep
+          output_format: sarif
+          output_file_path: checkov.sarif
+        continue-on-error: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif

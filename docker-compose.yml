@@ -42,7 +42,9 @@ services:
       # Mount host az-login credentials so the MCP server can reach Azure with
       # your own identity (DefaultAzureCredential). For service principal auth,
       # set AZURE_* in .env instead and this mount is ignored.
-      - ${AZURE_CONFIG_DIR:-~/.azure}:/root/.azure:ro
+      # Path follows the container's HOME, which moved from /root to /home/azsup when
+      # the dev image stopped running as root (2026-07-31).
+      - ${AZURE_CONFIG_DIR:-~/.azure}:/home/azsup/.azure:ro
     depends_on:
       postgres:
         condition: service_healthy

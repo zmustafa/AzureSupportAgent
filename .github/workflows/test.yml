@@ -1,0 +1,59 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: pytest
+        # working-directory is NOT cosmetic. `addopts = "-m 'not slow'"` lives in
+        # backend/pyproject.toml. Running from the repo root picks a different rootdir,
+        # silently loses that config, and executes the heavy/live suite that needs real
+        # Azure + network -> ~58 spurious failures. Green looks like "N passed, M deselected"
+        # with M non-zero.
+        working-directory: backend
+        run: python -m pytest -q
+
+  frontend:
+    name: frontend typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npx --prefix frontend tsc --noEmit
+      # `vite build` fails on unused top-level symbols (TS6133), so this catches
+      # dead code the dev server tolerates.
+      - run: npm run build --prefix frontend
+
+  hooks:
+    name: conditional hooks check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: no conditionally-called React hooks
+        run: python frontend/scripts/find_conditional_hooks.py frontend/src/components
+        continue-on-error: true

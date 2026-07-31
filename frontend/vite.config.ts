@@ -1,24 +1,25 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
   plugins: [
     react(),
-    // SERVICE WORKER REMOVAL (self-destroying). This app is online-only — API responses are
-    // deliberately never cached, the backend serves index.html no-cache + hashed assets
-    // immutable, so a service worker provided ~no benefit while causing real staleness bugs:
-    // a still-active OLD worker served STALE lazily-loaded route chunks (e.g. v72 Performance
-    // code) even after a hard refresh updated the document to v73, and the "waiting" worker
-    // re-prompted endlessly. `selfDestroying: true` emits a sw.js that UNREGISTERS the existing
-    // worker and DELETES all its caches on the client's next visit, then this plugin is removed
-    // entirely in a follow-up release. Reliable freshness now comes from plain HTTP caching +
-    // the lightweight /version poll banner in src/pwa.ts (long-open tabs still get notified).
-    VitePWA({
-      selfDestroying: true,
-      injectRegister: null,
-      devOptions: { enabled: false },
-    }),
+    // NO SERVICE WORKER. This app is online-only: API responses are deliberately never
+    // cached, and the backend serves index.html no-cache + hashed assets immutable, so a
+    // service worker provided ~no benefit while causing real staleness bugs (a still-active
+    // OLD worker served STALE lazily-loaded route chunks even after a hard refresh, and the
+    // "waiting" worker re-prompted endlessly).
+    //
+    // History: `vite-plugin-pwa` was kept temporarily with `selfDestroying: true` to emit an
+    // sw.js that unregistered existing workers. That shim has now served its purpose across
+    // many releases and the plugin is REMOVED (planned in its own comment; done 2026-07-31,
+    // which also drops 8 high-severity transitive advisories via workbox-build -> ejs/jake/
+    // filelist/minimatch/brace-expansion, none of which had an upstream fix).
+    //
+    // Cleanup is now done by the app itself: `_killServiceWorkers()` in src/pwa.ts unregisters
+    // ANY leftover worker and deletes all caches on every load, so this does not depend on
+    // sw.js still being served. Freshness comes from plain HTTP caching + the /version poll
+    // banner in src/pwa.ts.
   ],
   server: {
     port: 5173,

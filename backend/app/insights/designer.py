@@ -365,7 +365,8 @@ _SOURCE_HINTS: dict[str, tuple[str, ...]] = {
     "policy": ("policy", "complian", "non-compliant", "exemption", "governance"),
 }
 _FLAG_HINTS: dict[str, tuple[str, ...]] = {
-    "public_exposure": ("public", "expose", "internet", "0.0.0.0"),
+    # "0.0.0.0" is a SEARCH KEYWORD for finding publicly-exposed resources, not a bind address.
+    "public_exposure": ("public", "expose", "internet", "0.0.0.0"),  # nosec B104
     "rbac_grant": ("role", "rbac", "privileg", "owner", "grant"),
 }
 _CATEGORY_BY_SOURCE = {

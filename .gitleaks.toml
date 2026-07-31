@@ -1,0 +1,125 @@
+# gitleaks configuration for Azure Support Agent
+#
+# Two jobs:
+#   1. project-specific detection rules (formats generic rulesets miss)
+#   2. an allowlist that carries forward the VERIFIED false positives from the
+#      2026-06-27 full scan (.security/SECURITY_SCAN_REPORT.md), so the gate does
+#      not re-litigate them every deploy.
+#
+# Adding to the allowlist is a security decision. Every entry needs a comment
+# saying why it is safe. No bare entries.
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Project-specific rules
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "azsup-fernet-key"
+description = "Fernet key (SECRETS_ENCRYPTION_KEY) - master key for all stored Azure credentials"
+regex = '''(?i)(secrets_encryption_key|fernet[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9_\-]{43}=["']?'''
+tags = ["key", "critical"]
+
+[[rules]]
+id = "azsup-enc-v1-blob"
+description = "Encrypted secret blob leaked out of the database"
+regex = '''enc:v1:[A-Za-z0-9_\-=]{40,}'''
+tags = ["secret"]
+
+[[rules]]
+id = "azsup-entra-client-secret"
+description = "Entra client secret"
+regex = '''(?i)(client_?secret|sp_?secret|app_?secret)\s*[:=]\s*["']?[A-Za-z0-9~._\-]{34,40}["']?'''
+tags = ["azure", "critical"]
+
+[[rules]]
+id = "azsup-pg-conn-inline-password"
+description = "Postgres connection string with an inline password"
+regex = '''postgres(ql)?(\+asyncpg)?://[^:\s]+:[^@\s]+@'''
+tags = ["database"]
+
+[[rules]]
+id = "azsup-storage-sas"
+description = "Azure Storage SAS token"
+regex = '''sig=[A-Za-z0-9%2F%2B]{40,}'''
+tags = ["azure"]
+
+# ---------------------------------------------------------------------------
+# Allowlist
+# ---------------------------------------------------------------------------
+
+[allowlist]
+description = "Verified false positives and non-source paths"
+# Match the whole source LINE, not just the extracted secret value. Without this,
+# value-shaped allowlist patterns silently never match.
+regexTarget = "line"
+
+paths = [
+  # Tool output. These files are FULL of strings that look like keys because they
+  # are vulnerability reports about packages. Gitignored; never shipped.
+  # NOTE: patterns must match BOTH relative paths (git-history mode) and absolute
+  # container paths like /repo/... (--no-git filesystem mode). Hence (^|/).
+  '''(^|/)\.security/''',
+  # Security plan + evidence. Gitignored.
+  '''(^|/)docs/improvement-plans/''',
+  # Test artefacts and traces.
+  '''(^|/)e2e/test-results/''',
+  '''(^|/)e2e/playwright-report/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)dist/''',
+  # Build artefacts. Not tracked; only seen in --no-git filesystem mode.
+  '''(^|/)__pycache__/''',
+  '''\.pyc$''',
+  '''(^|/)\.pytest_cache/''',
+  '''(^|/)\.ruff_cache/''',
+  '''(^|/)\.mypy_cache/''',
+  '''(^|/)\.egg-info/''',
+  # Lockfiles: integrity hashes trip generic entropy rules.
+  '''package-lock\.json$''',
+  '''(^|/)\.data/''',
+  # Binary/media
+  '''\.(png|jpe?g|gif|svg|webp|ico|woff2?|ttf|pdf|zip|bundle)$''',
+  # Documented templates: intentionally tracked, placeholder values only.
+  '''\.env\.(example|sample|template)$''',
+]
+
+regexes = [
+  # NOTE: regexTarget = "line" (set above) means these match the whole source line,
+  # not just the captured secret. Without it, gitleaks matches only the extracted
+  # value and none of these fire.
+  #
+  # Documented LOCAL DEV defaults, not credentials. These match docker-compose.yml
+  # and backend/app/core/config.py and are overridden by DATABASE_URL in every real
+  # deployment. Weak-by-design placeholders, NOT live secrets.
+  # (Still tracked as plan finding G18 - dev creds should move to .env regardless.)
+  '''postgres(ql)?(\+asyncpg)?://azsup:azsup@''',
+  '''redis://localhost:6379''',
+  # Bicep/ARM template interpolation: the "password" segment is a @secure()
+  # parameter REFERENCE, not a literal value. Verified 2026-07-31 against
+  # deploy/main.bicep:110 (`${postgresAdminPassword}`) and its compiled main.json.
+  # This makes the azsup-pg-conn-inline-password rule correct rather than merely
+  # silenced - a real inline literal would still fire.
+  '''://\$\{[^}]+\}:\$\{[^}]+\}@''',
+  '''\[(format|concat|parameters|variables|listKeys|reference)\(''',
+  # 2026-06-27 verified FP: public Claude OAuth client id (a published, non-secret
+  # public client identifier - see .security/SECURITY_SCAN_REPORT.md).
+  '''9d1c250a-e61b-44d9-88ed-5944d1962f5e''',
+  # 2026-06-27 verified FP: example prompt strings in ChatView.tsx.
+  '''(?i)example[_-]?prompt''',
+  # UI storage-key NAMES, not secrets. Convention: `const FOO_KEY = "azsup.<x>.v1"`.
+  # Verified 2026-07-31: ACTIVITIES/PROGRESS/INVESTIGATIONS/DEEP_CONFIRMED/
+  # INVESTIGATION_WIDTH keys in ChatView.tsx are localStorage keys.
+  '''[A-Z0-9_]+_KEY\s*=\s*["']azsup\.''',
+  # Structurally-fake JWT fixtures in tests: literally "header.<payload>.sig".
+  # A real JWT never has the literal words "header"/"sig" as its segments.
+  '''["']header\.[A-Za-z0-9_\-]+\.sig["']''',
+  # Entra authentication-method enum values (phishing-resistance set in
+  # entra/collectors/people.py). Microsoft API vocabulary, not credentials.
+  '''passKeyDeviceBound''',
+  '''fido2SecurityKey''',
+  # Documented template files are meant to be committed and contain placeholders.
+  '''(?i)(your|placeholder|example|changeme|xxx+|<[a-z-]+>)[-_]?(secret|key|password|token)''',
+]

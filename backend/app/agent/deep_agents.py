@@ -58,7 +58,9 @@ DEEP_AGENTS: list[dict[str, Any]] = [
         "name": "Security & Exposure",
         "icon": "🔐",
         "domain": "Public exposure, Defender for Cloud, open ports, NSG 0.0.0.0/0, posture",
-        "keywords": ["security", "exposure", "public", "internet", "defender", "0.0.0.0",
+        # "0.0.0.0" below is a SEARCH KEYWORD for finding publicly-exposed resources,
+        # not a socket bind address.
+        "keywords": ["security", "exposure", "public", "internet", "defender", "0.0.0.0",  # nosec B104
                      "open port", "vulnerab", "cve", "exposed", "breach", "attack",
                      "compliance", "encryption", "tls", "https"],
     },

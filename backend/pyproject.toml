@@ -49,6 +49,51 @@ packages = ["app"]
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+# Security rules are ON permanently, so a NEW violation fails instead of being
+# discovered during a pre-deploy sweep.
+#   S      = flake8-bandit  (the security ruleset)
+#   ASYNC  = async antipatterns
+extend-select = ["S", "ASYNC"]
+
+# Every ignore below was individually reviewed on 2026-07-31 against the running code,
+# and cross-checked with the 2026-06-27 full scan (.security/SECURITY_SCAN_REPORT.md).
+# DELIBERATELY NOT IGNORED: S602/S603/S607 (subprocess), S608 (SQL/KQL string building),
+# S301/S302 (pickle), S307 (eval), S321 (ftp), S501 (TLS verify off) — those must keep
+# failing, because they are the rules that would catch a real regression in this codebase.
+ignore = [
+    # Type-narrowing assertions only (`assert result is not None`, `assert proc.stdout`).
+    # Verified: none performs a security check, so stripping under `python -O` yields an
+    # AttributeError rather than an auth bypass.
+    "S101",
+    # URL/þconstant names that merely LOOK like credentials, e.g. `_TOKEN_URL`, and the
+    # `secret_kind` keyword argument. No literal secrets. Confirmed 2026-06-27.
+    "S105", "S106",
+    # try/except/pass and try/except/continue on deliberate best-effort paths (cache
+    # warmers, token refresh retry, cleanup that "must never raise"). These already carry
+    # `# noqa: BLE001` with a written reason at each site.
+    "S110", "S112",
+    # `random` is used only for exponential-backoff jitter, never for tokens or secrets.
+    # Confirmed 2026-06-27.
+    "S311",
+    # SHA-1 / MD-family: filesystem cache keys (rbac/cache.py) and the X.509 `x5t`
+    # thumbprint in azure/credentials.py, which RFC 7515 REQUIRES to be SHA-1. Not a
+    # cryptographic signature. Confirmed 2026-06-27.
+    "S303", "S324",
+    # "0.0.0.0" appears as a catalog keyword string and as the container bind address,
+    # which is correct inside a container behind ingress. Confirmed 2026-06-27.
+    "S104",
+    # A `timeout` parameter on an async def is deliberate API design here, not a missing
+    # cancellation scope.
+    "ASYNC109",
+    # pathlib in async context: local .data JSON registry reads, not blocking network I/O.
+    "ASYNC240",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately assert, and use obviously-fake credentials as fixtures.
+"tests/*" = ["S101", "S105", "S106", "S108"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # ALWAYS run pytest with cwd = backend/. Run it from the repo root and pytest picks a

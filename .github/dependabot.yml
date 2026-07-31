@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    ignore:
+      # react-router GHSA-qwww-vcr4-c8h2 is RSC-mode-only. This is a client-only
+      # Vite BrowserRouter SPA with no RSC, no SSR and no server actions, so the
+      # advisory is not reachable. The only "fix" is a major bump to 8.x.
+      # Re-evaluate if SSR/RSC is ever adopted. Major bumps still surface here.
+      - dependency-name: "react-router-dom"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/e2e"
+    schedule:
+      interval: "monthly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Matters once CI exists: a compromised third-party action runs with repo credentials.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

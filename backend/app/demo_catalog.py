@@ -283,5 +283,5 @@ def tier_index(scope_id: str) -> dict[str, str]:
 
 def bucket(rid: str, n: int) -> int:
     """Deterministic 0..n-1 from a resource id, for stable per-resource variation."""
-    h = hashlib.sha1(rid.encode("utf-8")).hexdigest()
+    h = hashlib.sha1(rid.encode("utf-8"), usedforsecurity=False).hexdigest()
     return int(h[:8], 16) % max(1, n)

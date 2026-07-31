@@ -151,11 +151,18 @@ docs/_journey_render/
 docs/improvement-plans/
 
 # --- Workspace agent customization (local-only, not shipped) -----------------
-# The whole .github folder stays local: it holds the workspace custom agents
+# Most of .github stays local: it holds the workspace custom agents
 # (.github/agents/documentation-regenerator.agent.md, .github/agents/ui-test-pilot.agent.md)
 # and their design notes (.github/UITestAgent.md) — internal tooling, not product code.
 # Public documentation under docs/ remains tracked.
-.github/
+#
+# EXCEPTION: CI configuration MUST ship, or it can never run. A blanket `.github/`
+# ignore silently prevents any workflow from existing. Note the `/*` form: git cannot
+# re-include a child once its parent DIRECTORY is excluded, so `.github/` + `!...` would
+# silently not work. `.github/*` excludes the contents while allowing negation.
+.github/*
+!.github/workflows/
+!.github/dependabot.yml
 .docs-work/
 docs/.jekyll-cache/
 docs/.sass-cache/

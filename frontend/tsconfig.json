@@ -1,8 +1,14 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    // ES2022 because the codebase already uses ES2021 `String.replaceAll` and ES2022
+    // `Array.prototype.at` / `String.prototype.at` at runtime. This was previously declared
+    // as ES2020 and only compiled because `vite-plugin-pwa`'s type reference transitively
+    // pulled in workbox's higher `lib` directives. Removing that plugin (2026-07-31) exposed
+    // the mismatch. Vite's default browser target supports both features, so this makes the
+    // types honest rather than changing what ships.
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",

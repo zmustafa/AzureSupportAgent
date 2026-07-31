@@ -3,7 +3,11 @@
 # (API under /api, SPA + assets at every other path). Targets Azure Container Apps.
 
 # ---- Stage 1: build the React SPA --------------------------------------------------
-FROM node:22-alpine AS frontend
+# Base images are pinned BY DIGEST so a build is reproducible and a compromised or
+# silently-retagged upstream cannot slip in. Pinning alone would freeze out upstream
+# SECURITY patches, so it is paired with the `docker` ecosystem in .github/dependabot.yml,
+# which opens a PR when a new digest is published. Do not un-pin; bump via that PR.
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS frontend
 WORKDIR /web
 # Install exactly the audited lockfile. Copying both manifests into this layer also ensures
 # dependency-only security updates invalidate Docker's npm cache before the SPA is bundled.
@@ -23,7 +27,7 @@ ENV VITE_APP_RELEASE=$APP_RELEASE
 RUN npm run build
 
 # ---- Stage 2: backend + bundled SPA ------------------------------------------------
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -89,6 +93,27 @@ RUN python -m venv /opt/eidmcp \
         "cryptography>=48.0.1" azure-core azure-identity "mcp[cli]>=1.28.1,<2" msgraph-core msgraph-sdk fastmcp python-dotenv
 
 EXPOSE 8000
+
+# ---- Drop root -------------------------------------------------------------------
+# Everything above needs root (apt, pip, npm -g, az extension install). Everything at
+# RUNTIME does not, and the agent can execute `az` and spawn MCP subprocesses, so any
+# code-execution bug would otherwise be root-in-container.
+#
+# Safe for the persistent volume: ACA mounts the Azure Files share at /app/.data with
+# mode 0777 (verified 2026-07-31 on the live revision: `drwxrwxrwx 2 0 0 /app/.data`),
+# so a non-root uid can still read/write it. The app writes secret.key + JSON registries
+# there and creates them 0600 under its own uid.
+#
+# HOME must exist and be writable: the Azure CLI writes throwaway AZURE_CONFIG_DIRs and
+# npm/npx (for `npx @azure/mcp`) needs a cache dir.
+RUN groupadd --system --gid 1000 azsup \
+    && useradd --system --uid 1000 --gid 1000 --home-dir /home/azsup --shell /usr/sbin/nologin azsup \
+    && mkdir -p /home/azsup /app/.data \
+    && chown -R azsup:azsup /app /home/azsup \
+    && chmod 0755 /home/azsup
+ENV HOME=/home/azsup \
+    NPM_CONFIG_CACHE=/home/azsup/.npm
+USER azsup
 
 # Run DB migrations then start the API + SPA. All AI-provider sign-in flows are headless
 # (OAuth device flow + paste-the-code), so no virtual display / browser is needed.

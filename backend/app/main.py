@@ -585,8 +585,16 @@ async def version():
 
 
 @api.get("/llm/active")
-async def llm_active():
-    """Currently active AI provider + model (non-sensitive) for display in the UI."""
+async def llm_active(principal: Principal = Depends(get_principal)):  # noqa: ARG001
+    """Currently active AI provider + model, for display in the UI.
+
+    REQUIRES A SESSION -- do not remove the dependency. The provider and model name are
+    not credentials, but they describe the deployment's AI supply chain and there is no
+    reason to expose that to unauthenticated callers on an internet-facing instance.
+
+    tests/test_route_authz_matrix.py asserts that no /api route answers an
+    unauthenticated caller, so a regression here fails the suite.
+    """
     cfg = get_active()
     return {"provider": cfg.get("provider", ""), "model": cfg.get("model", "")}
 

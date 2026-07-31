@@ -16,8 +16,11 @@ from app.entra.collectors import activations as activations_mod
 from app.entra.collectors import governance as governance_mod
 from app.entra.collectors import pim as pim_mod
 
-TENANT = "6711ec7d-31e6-40dc-9bc9-176428a12110"
-CLIENT = "318c5cc2-48b1-443d-9833-3d49556e107c"
+# Synthetic identifiers. These are only ever substituted into URL builders, so any
+# well-formed GUID works. Do NOT paste real tenant/app ids here: this repo is public,
+# and a real id is free reconnaissance even though it is not a secret.
+TENANT = "00000000-1111-2222-3333-444444444444"
+CLIENT = "55555555-6666-7777-8888-999999999999"
 
 
 def _source(module) -> str:

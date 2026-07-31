@@ -34,7 +34,7 @@ def target_key(kind: str, cfg: dict[str, Any]) -> str:
         basis = f"web|{(cfg.get('url') or '').strip().lower()}"
     else:
         basis = f"tcp|{(cfg.get('host') or '').strip().lower()}|{cfg.get('port')}"
-    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(basis.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _read() -> dict[str, Any]:

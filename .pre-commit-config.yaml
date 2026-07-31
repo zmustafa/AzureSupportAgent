@@ -1,0 +1,51 @@
+# Pre-commit hooks: stop secrets and environment-specific identifiers reaching git.
+#
+# This is the cheapest place to catch them. Once a value is committed to a public repo,
+# removing it later does not unpublish it -- history rewrites leave orphaned objects
+# reachable by SHA, and forks keep their own copies.
+#
+# Install once:
+#   backend\.venv\Scripts\python.exe -m pip install pre-commit
+#   backend\.venv\Scripts\python.exe -m pre_commit install
+#
+# NEVER bypass with `git commit --no-verify`. If a hook produces a false positive,
+# add a scoped, COMMENTED entry to .gitleaks.toml instead — that leaves an audit
+# trail, whereas --no-verify leaves nothing.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        # Uses .gitleaks.toml at the repo root (project rules + verified false positives).
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+        # deploy/main.json is generated but must stay valid.
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      # Blocks the class of mistake found by the security gate on 2026-07-31: real
+      # tenant / connection / app-registration GUIDs committed to a PUBLIC repo.
+      # Not secrets, but free reconnaissance.
+      #
+      # The identifier list is read from .security/live-identifiers.txt, which is
+      # GITIGNORED. It is deliberately NOT inlined here: this file is committed to a
+      # public repo, so inlining would make the detector the leak. Clones without that
+      # file get a silent no-op, which is correct — the identifiers are the operator's,
+      # not the product's.
+      - id: no-live-azure-identifiers
+        name: no live Azure tenant/app identifiers in source
+        entry: python .security/check_identifiers.py
+        language: system
+        types: [text]
+        exclude: '^(docs/improvement-plans/|\.security/)'
+        pass_filenames: true

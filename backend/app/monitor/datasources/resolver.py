@@ -37,7 +37,7 @@ def _cache_key(kind: str, cfg: dict[str, Any], params: dict[str, Any], tenant_id
     basis = json.dumps(
         {"k": kind, "c": cfg, "p": params, "t": tenant_id}, sort_keys=True, default=str
     )
-    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+    return hashlib.sha1(basis.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _ttl_for(kind: str) -> float:

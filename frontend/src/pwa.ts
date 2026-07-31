@@ -67,9 +67,10 @@ async function _pollServerVersion(): Promise<void> {
 }
 
 // Belt-and-suspenders: proactively tear down ANY previously-installed service worker + its
-// caches the moment the app loads. The build's `selfDestroying` sw.js already does this on its
-// own, but unregistering here too means clients upgrade cleanly even if their cached sw.js is
-// momentarily stale. Safe no-op when there's no SW (dev, or already removed).
+// caches the moment the app loads. Since vite-plugin-pwa was removed (2026-07-31) this is now
+// the ONLY teardown path — there is no sw.js any more — and it is why removing the plugin was
+// safe: a client still holding an old worker gets it unregistered here on the next load.
+// Safe no-op when there's no SW (dev, or already removed).
 function _killServiceWorkers(): void {
   if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
     void navigator.serviceWorker.getRegistrations()

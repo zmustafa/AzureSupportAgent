@@ -14,7 +14,13 @@ import logging
 import re
 from typing import Any
 from urllib.parse import urlparse
-from xml.etree import ElementTree as ET
+
+# defusedxml, not stdlib ElementTree: this parses XML fetched over the NETWORK. The feed
+# is an allowlisted Microsoft HTTPS endpoint, but "the source is trusted" is a control
+# that depends on TLS, DNS and Microsoft's own CDN all staying honest. defusedxml removes
+# the entity-expansion / XXE / billion-laughs class outright, so trust stops being load-
+# bearing. Drop-in API-compatible with xml.etree.ElementTree.
+from defusedxml import ElementTree as ET
 
 log = logging.getLogger("app.radar.feed")
 
@@ -41,7 +47,7 @@ def _strip_html(text: str) -> str:
 def _parse_rss(xml_text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     try:
-        root = ET.fromstring(xml_text)  # noqa: S314 - trusted Microsoft feed, no entity expansion used
+        root = ET.fromstring(xml_text)
     except ET.ParseError:
         return out
     for item in root.iter("item"):

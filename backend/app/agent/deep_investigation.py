@@ -397,6 +397,20 @@ class DeepInvestigator:
                 else:
                     res_for_model = res
                     cap = data_cap
+                # Neutralise prompt-injection markers before the result re-enters the
+                # model context, exactly as the chat orchestrator does.
+                #
+                # REQUIRED, not optional. Tool output carries attacker-influenceable
+                # text -- resource tags and names, alert descriptions, Entra app display
+                # names, PIM justifications -- and this agent can call tools, so raw
+                # output would be an indirect prompt-injection channel.
+                #
+                # Any NEW agent loop must do the same;
+                # tests/test_prompt_injection_corpus.py enforces it across every module
+                # that builds tool-role messages.
+                from app.agent.result_sanitizer import sanitize_tool_result
+
+                res_for_model = sanitize_tool_result(res_for_model)
                 messages.append(
                     {
                         "role": "tool",

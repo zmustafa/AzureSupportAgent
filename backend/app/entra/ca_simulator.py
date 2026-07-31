@@ -547,7 +547,7 @@ def _order_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _fingerprint(changes: list[dict[str, Any]], contexts: list[SignInContext]) -> str:
     parts = [f"{c.get('kind')}:{c.get('policy_id')}" for c in changes or []]
     parts += [c.key for c in contexts]
-    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]  # noqa: S324 - identity only
+    return hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------ Microsoft engine

@@ -170,7 +170,7 @@ def policy_fingerprint(policy: dict[str, Any]) -> str:
         ",".join(sorted(g.get("controls") or [])),
         str(g.get("auth_strength_id") or ""),
     ]
-    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]  # noqa: S324 - identity only
+    return hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _controls_of(policy: dict[str, Any], strengths: dict[str, dict[str, Any]]) -> set[str]:

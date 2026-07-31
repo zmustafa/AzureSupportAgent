@@ -55,7 +55,7 @@ def _scope_hash(scope: str) -> str:
     """Stable, filesystem-safe sidecar name for a scope id."""
     if scope == DIRECTORY_KEY:
         return DIRECTORY_KEY
-    return hashlib.sha1((scope or "").encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1((scope or "").encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 # --------------------------------------------------------------------------- index I/O
