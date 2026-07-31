@@ -68,6 +68,42 @@ def _azure_env_available() -> bool:
         return False
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_schema():
+    """Create the database schema once before any test runs.
+
+    Some tests write through a background job rather than an HTTP request, so they never
+    start the app lifespan and never trigger ``ensure_schema()``. On a developer machine
+    that goes unnoticed because .data/app.db already exists from earlier runs; on a fresh
+    clone (or CI) those tests fail with "no such table: audit_log".
+
+    Uses a SYNCHRONOUS engine on purpose. Creating the schema through the app's async
+    engine binds it to whichever loop happens to be active at session setup, which is the
+    "bound to a different event loop" failure this suite has hit before. ``create_all`` is
+    idempotent, so this is a no-op when the tables already exist.
+    """
+    from sqlalchemy import create_engine
+
+    from app.core.config import Settings
+    from app.core.db import Base
+
+    import app.models  # noqa: F401 - registers every table on Base.metadata
+
+    url = Settings().database_url
+    # Only SQLite is set up here; a Postgres-backed run is expected to be migrated already.
+    if url.startswith("sqlite"):
+        sync_url = url.replace("+aiosqlite", "")
+        path = sync_url.split("///", 1)[-1]
+        if path and path != ":memory:":
+            os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        engine = create_engine(sync_url)
+        try:
+            Base.metadata.create_all(engine)
+        finally:
+            engine.dispose()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_alerts_manager_cache():
     alerts_manager_cache.reset_for_tests()
