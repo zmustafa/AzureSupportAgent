@@ -88,7 +88,7 @@ opentelemetry-sdk==1.42.1
 opentelemetry-semantic-conventions==0.63b1
 packaging==26.2
 pathable==0.6.0
-platformdirs==4.10.0
+platformdirs==4.11.0
 pluggy==1.6.0
 propcache==0.5.2
 py-key-value-aio==0.4.5
