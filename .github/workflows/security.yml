@@ -26,10 +26,18 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+      # Run the container directly rather than trufflesecurity/trufflehog@main.
+      # That action derives BASE/HEAD from the event and hard-fails with "BASE and HEAD
+      # commits are the same. TruffleHog won't scan anything" whenever they coincide --
+      # which is a scan that never ran being reported as a security failure. Scanning the
+      # checked-out repo explicitly is deterministic and matches what is run locally.
+      # --results=verified actively validates candidates against the issuing provider, so
+      # a hit here is a live credential, not a pattern match.
       - name: TruffleHog (verified secrets only)
-        uses: trufflesecurity/trufflehog@main
-        with:
-          extra_args: --results=verified --fail
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" \
+            trufflesecurity/trufflehog:latest \
+            git file:///repo --results=verified --fail --no-update
 
   codeql:
     name: codeql
