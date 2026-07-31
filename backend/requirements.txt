@@ -143,7 +143,7 @@ pillow==12.3.0
 pyHanko==0.35.1
 pyhanko-certvalidator==0.31.1
 pypdf==6.14.2
-python-bidi==0.6.10
+python-bidi==0.6.11
 reportlab==4.5.1
 svglib==2.0.0
 tinycss2==1.5.1
