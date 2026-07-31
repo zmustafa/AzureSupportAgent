@@ -23,7 +23,7 @@ cachetools==7.1.4
 caio==0.9.25
 certifi==2026.5.20
 cffi==2.0.0
-charset-normalizer==3.4.7
+charset-normalizer==3.4.9
 click==8.4.1
 colorama==0.4.6
 croniter==6.2.2
