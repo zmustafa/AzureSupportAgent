@@ -13,6 +13,17 @@ jobs:
   backend:
     name: backend pytest
     runs-on: ubuntu-latest
+    env:
+      # The suite runs against SQLite, matching local development. Without this the
+      # app falls back to the Postgres default in app/core/config.py, and every test
+      # that starts the application lifespan spends its timeout failing to reach
+      # 127.0.0.1:5432 -- ~2000 errors and a 22-minute run rather than a clear failure.
+      #
+      # Local machines get these from a gitignored .env, which is exactly why this
+      # only ever broke in CI. Set them explicitly here so the workflow does not
+      # depend on ambient configuration it cannot see.
+      ENVIRONMENT: local
+      DATABASE_URL: "sqlite+aiosqlite:///./.data/app.db"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,7 +39,9 @@ jobs:
         # Azure + network -> ~58 spurious failures. Green looks like "N passed, M deselected"
         # with M non-zero.
         working-directory: backend
-        run: python -m pytest -q
+        run: |
+          mkdir -p .data
+          python -m pytest -q
 
   frontend:
     name: frontend typecheck + build
