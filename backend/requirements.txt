@@ -147,6 +147,6 @@ python-bidi==0.6.10
 reportlab==4.5.1
 svglib==2.0.0
 tinycss2==1.5.1
-tzlocal==5.4
+tzlocal==5.4.4
 webencodings==0.5.1
 xhtml2pdf==0.2.17
