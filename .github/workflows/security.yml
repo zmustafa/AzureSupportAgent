@@ -82,7 +82,7 @@ jobs:
       - name: pip-audit (vendored Entra MCP server)
         run: pip-audit -r third_party/entraid-mcp-server/requirements.txt
         continue-on-error: true # vendored upstream; triage, don't block
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
