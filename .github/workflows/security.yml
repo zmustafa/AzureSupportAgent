@@ -23,7 +23,7 @@ jobs:
           # common reason secret scanning silently does nothing.
           fetch-depth: 0
       - name: gitleaks (full history)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
       - name: TruffleHog (verified secrets only)
