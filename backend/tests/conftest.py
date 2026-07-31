@@ -39,6 +39,35 @@ _SLOW_TEST_FILES: set[str] = {
 }
 
 
+# ------------------------------------------------------- tests that need a live Azure env
+# These assert behaviour that can only be exercised against a real Azure connection: they
+# shell out to `az` or resolve a configured connection, and fail with "Please run 'az login'"
+# or "No Azure connection is configured for this scope" when neither exists.
+#
+# They pass on a developer machine (which has an az session and .data/azure_connections.json,
+# both gitignored) and cannot pass in CI. Skipping on the ACTUAL condition rather than tagging
+# the whole file `slow` keeps them in the fast local loop, where they still catch regressions,
+# while giving CI an honest skip instead of a failure.
+_AZURE_REQUIRED_TESTS: set[str] = {
+    "test_rule_apply_blocks_stale_state",
+    "test_update_change_blocks_stale_azure_state",
+    "test_bulk_simulator_resolves_visible_cross_subscription_group",
+    "test_submit_and_plan_decision_create_only_approval_ledger_rows",
+    "test_plan_decision_rejects_child_from_different_connection",
+    "test_selected_gap_plan_is_server_built_approval_gated_and_status_is_ledger_aware",
+}
+
+
+def _azure_env_available() -> bool:
+    """True when at least one Azure connection is configured for these tests to use."""
+    try:
+        from app.core.azure_connections import list_connections
+
+        return bool(list_connections())
+    except Exception:  # noqa: BLE001 - absence is the answer we want
+        return False
+
+
 @pytest.fixture(autouse=True)
 def _isolate_alerts_manager_cache():
     alerts_manager_cache.reset_for_tests()
@@ -47,8 +76,15 @@ def _isolate_alerts_manager_cache():
 
 
 def pytest_collection_modifyitems(config, items):  # noqa: ARG001
-    """Auto-tag the heavy suites as ``slow`` so the default ``-m 'not slow'`` run is fast."""
+    """Auto-tag the heavy suites as ``slow`` so the default ``-m 'not slow'`` run is fast,
+    and skip the Azure-dependent tests when no connection is configured."""
     slow = pytest.mark.slow
+    azure_ok = _azure_env_available()
+    needs_azure = pytest.mark.skip(
+        reason="needs a configured Azure connection (az session + .data/azure_connections.json)"
+    )
     for item in items:
         if os.path.basename(str(item.fspath)) in _SLOW_TEST_FILES:
             item.add_marker(slow)
+        if not azure_ok and item.name.split("[")[0] in _AZURE_REQUIRED_TESTS:
+            item.add_marker(needs_azure)

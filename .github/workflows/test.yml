@@ -24,6 +24,11 @@ jobs:
       # depend on ambient configuration it cannot see.
       ENVIRONMENT: local
       DATABASE_URL: "sqlite+aiosqlite:///./.data/app.db"
+      # The LLM tests mock every response, but the provider client validates that a key is
+      # PRESENT at construction. Note the variable is LLM_API_KEY (pydantic-settings maps
+      # Settings.llm_api_key), NOT OPENAI_API_KEY - the client is built from app config, so
+      # setting the vendor's own variable has no effect. This value is never sent anywhere.
+      LLM_API_KEY: "sk-not-a-real-key-tests-mock-all-responses"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,6 +43,12 @@ jobs:
         # silently loses that config, and executes the heavy/live suite that needs real
         # Azure + network -> ~58 spurious failures. Green looks like "N passed, M deselected"
         # with M non-zero.
+        #
+        # Deliberately NOT running `alembic upgrade head` here: the app creates its schema on
+        # startup, and migration 0003 fails on a fresh SQLite database with "table
+        # alert_manager_changes already exists". That is a real, pre-existing bug in the
+        # migration chain on SQLite - it does not affect production (Postgres) and does not
+        # block the suite, which passes without it. Tracked separately.
         working-directory: backend
         run: |
           mkdir -p .data

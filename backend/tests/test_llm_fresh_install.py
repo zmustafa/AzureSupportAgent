@@ -15,8 +15,14 @@ from app.core.config import Settings
 def _seed_with(monkeypatch, **overrides):
     """Build the default config as if the process started with the given env settings.
 
-    ``_env_file=None`` ignores any developer ``.env`` so the test reflects a clean host.
+    ``_env_file=None`` ignores any developer ``.env``, and the ``delenv`` calls below clear
+    the matching PROCESS environment variables. Both are needed for "a clean host": pydantic
+    reads real env vars regardless of ``_env_file``, so without this the test silently
+    inverts its own premise on any machine (or CI job) that exports one of them.
     """
+    for var in ("LLM_API_KEY", "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL",
+                "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT"):
+        monkeypatch.delenv(var, raising=False)
     settings = Settings(_env_file=None, **overrides)
     monkeypatch.setattr(llm_config, "get_settings", lambda: settings)
     return llm_config._default_config()
