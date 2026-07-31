@@ -21,6 +21,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      # @tiptap/* is a VERSION-LOCKED FAMILY, like microsoft-kiota-* above: each package
+      # peer-depends on @tiptap/core at an EXACT version, so bumping any one of them
+      # alone fails npm resolution with ERESOLVE. Group them (the pattern also catches
+      # the transitive @tiptap/core) so the family migrates in a single PR.
+      tiptap:
+        patterns:
+          - "@tiptap/*"
     ignore:
       # react-router GHSA-qwww-vcr4-c8h2 is RSC-mode-only. This is a client-only
       # Vite BrowserRouter SPA with no RSC, no SSR and no server actions, so the
