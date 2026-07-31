@@ -119,7 +119,7 @@ signxml==4.4.0
 six==1.17.0
 sniffio==1.3.1
 SQLAlchemy==2.0.50
-sse-starlette==3.4.4
+sse-starlette==3.4.6
 starlette==1.3.1
 std-uritemplate==2.0.10
 tqdm==4.68.1
