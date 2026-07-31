@@ -27,7 +27,7 @@ charset-normalizer==3.4.9
 click==8.4.1
 colorama==0.4.6
 croniter==6.2.2
-cryptography==48.0.1
+cryptography==49.0.0
 cyclopts==4.16.1
 distro==1.9.0
 dnspython==2.8.0
