@@ -63,7 +63,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff bandit
+      # Pin ruff to the SAME version backend/requirements.txt pins, read from that file so
+      # there is one source of truth. `pip install ruff` (unpinned) is what broke this job:
+      # the repo pins 0.15.16, CI silently installed 0.16.1, and 0.16 hugely expanded the
+      # DEFAULT rule set (0.15 shipped E/F; 0.16 adds B, UP, RUF, I, SIM, FURB, ISC...).
+      # The gate then reported 2294 findings where a developer running the pinned version
+      # locally saw 90 -- a lint gate that disagrees with every workstation is worthless.
+      - name: install pinned linters
+        run: |
+          ruff_pin="$(grep -E '^ruff==' backend/requirements.txt)"
+          echo "using $ruff_pin"
+          pip install "$ruff_pin" 'bandit==1.9.4'
       # These are a PASS/FAIL gate, not a code-scanning feed. Uploading their SARIF put
       # 149 alerts in the Security tab that the reviewed `ignore` list in
       # backend/pyproject.toml had already dispositioned -- CLI `--select` OVERRIDES that
@@ -75,18 +85,76 @@ jobs:
           # Filter to security codes so ordinary lint does not gate the security job.
           ruff check backend/app --output-format json > ruff.json || true
           python - <<'PY'
-          import json, sys
-          findings = [
-              f for f in json.load(open("ruff.json"))
-              if (f.get("code") or "").startswith(("S", "ASYNC"))
-          ]
+          import json, re, sys
+
+          SECURITY = {"S", "ASYNC"}  # flake8-bandit, and async antipatterns
+
+          def group(code):
+              """"S608" -> "S", "ASYNC109" -> "ASYNC", "SIM102" -> "SIM".
+
+              Compare the ALPHABETIC PREFIX, never str.startswith: "SIM102".startswith("S")
+              is True, so the previous filter counted all 36 flake8-simplify findings as
+              security findings and failed the job on style rules.
+              """
+              m = re.match(r"[A-Z]+", code or "")
+              return m.group(0) if m else ""
+
+          findings = [f for f in json.load(open("ruff.json")) if group(f.get("code")) in SECURITY]
           print(f"{len(findings)} security finding(s)")
           for f in findings[:25]:
               print(f"  {f['code']} {f['filename']}:{f['location']['row']}")
           sys.exit(1 if findings else 0)
           PY
-      - name: bandit
-        run: bandit -r backend/app third_party -ll -q
+      # A gate that selects nothing passes everything, and looks identical in the UI to a
+      # gate that found nothing. Plant a known S-rule violation and require ruff to flag it.
+      - name: prove the security ruleset is live
+        run: |
+          mkdir -p backend/_ruff_sentinel
+          printf 'import subprocess\nsubprocess.call("ls", shell=True)\n' > backend/_ruff_sentinel/probe.py
+          ruff check backend/_ruff_sentinel --output-format json > sentinel.json || true
+          rm -rf backend/_ruff_sentinel
+          python - <<'PY'
+          import json, re, sys
+          codes = sorted({f.get("code") or "" for f in json.load(open("sentinel.json"))})
+          hits = [c for c in codes if re.fullmatch(r"S\d+", c)]
+          if not hits:
+              sys.exit(
+                  "flake8-bandit is NOT enabled for backend/ -- this gate would pass on "
+                  f"anything. Sentinel produced: {codes}"
+              )
+          print(f"security ruleset live; sentinel flagged {hits}")
+          PY
+      # backend/app is a HARD gate, and is clean at 0. It must agree with the ruff step
+      # above: ruff's `S` ruleset IS flake8-bandit, so a disagreement between the two means
+      # one of them is misconfigured, not that the code changed.
+      - name: bandit (first-party, blocking)
+        run: bandit -r backend/app -ll -q
+
+      # third_party/ is a vendored upstream MCP server, and the Dockerfile COPYs it into
+      # the image, so it DOES ship. It carries 266 pre-existing findings at -ll (248
+      # medium / 18 high), overwhelmingly B608 hardcoded SQL plus B102/B307 exec/eval in
+      # upstream's own code. Blocking on those would wedge every build; dropping them
+      # entirely would make this step decorative, which is exactly what the previous
+      # `continue-on-error: true` did. So it is a RATCHET: the counts may fall, never rise.
+      - name: bandit (vendored third_party, ratchet)
+        run: |
+          bandit -r third_party -ll -q -f json -o bandit-third-party.json || true
+          python - <<'PY'
+          import json, sys
+
+          BASELINE_TOTAL, BASELINE_HIGH = 266, 18  # measured 2026-07-31 against bandit 1.9.4
+
+          results = json.load(open("bandit-third-party.json"))["results"]
+          high = [r for r in results if r["issue_severity"] == "HIGH"]
+          print(
+              f"third_party: {len(results)} finding(s) at -ll, {len(high)} HIGH "
+              f"(baseline {BASELINE_TOTAL}/{BASELINE_HIGH})"
+          )
+          if len(results) > BASELINE_TOTAL or len(high) > BASELINE_HIGH:
+              sys.exit("vendored findings INCREASED -- triage before refreshing the baseline")
+          if len(results) < BASELINE_TOTAL or len(high) < BASELINE_HIGH:
+              print("counts fell -- lower the baseline in this workflow to lock the gain in")
+          PY
 
   deps:
     name: dependency audit
