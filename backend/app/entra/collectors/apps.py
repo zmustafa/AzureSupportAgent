@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from app.entra import model
 from app.entra.collectors import CollectContext, as_dict, as_list, batch_collection, clip, guarded
@@ -140,22 +141,50 @@ def perm_flags(name: str) -> dict[str, bool]:
 
 
 # ------------------------------------------------------------------------ FIC issuers
-_TRUSTED_FIC_PREFIXES = (
-    "https://token.actions.githubusercontent.com",
-    "https://vstoken.dev.azure.com",
-    "https://login.microsoftonline.com/",
-    "https://sts.windows.net/",
-    "https://gitlab.com",
-    "https://oidc.prod-aks.azure.com",
-    "https://kubernetes.default.svc",
-    "https://container.googleapis.com",
-    "https://token.actions.github.com",
-)
+# Compared as HOSTS, not as url prefixes. The previous form was a tuple of url prefixes
+# fed to `str.startswith`, and only two of the nine carried a trailing "/" -- so
+# `https://gitlab.com.evil.com/` and `https://token.actions.github.com.evil.com/` both
+# classified as trusted. Storing bare hosts makes the trailing-delimiter mistake
+# impossible to make again.
+_TRUSTED_FIC_HOSTS = frozenset({
+    "token.actions.githubusercontent.com",
+    "vstoken.dev.azure.com",
+    "login.microsoftonline.com",
+    "sts.windows.net",
+    "gitlab.com",
+    "oidc.prod-aks.azure.com",
+    "kubernetes.default.svc",
+    "container.googleapis.com",
+    "token.actions.github.com",
+})
+
+# AKS hands out per-region OIDC issuers as https://<region>.oic.prod-aks.azure.com/<...>,
+# so this one is a genuine domain suffix rather than a fixed host. The leading dot is
+# required: it is what stops `https://evil-oic.prod-aks.azure.com/` from matching.
+_TRUSTED_FIC_HOST_SUFFIXES = (".oic.prod-aks.azure.com",)
 
 
 def fic_trusted(issuer: str) -> bool:
-    iss = (issuer or "").strip().lower()
-    return any(iss.startswith(p.lower()) for p in _TRUSTED_FIC_PREFIXES) or ".oic.prod-aks.azure.com" in iss
+    """True when a federated-identity-credential issuer is a known identity provider.
+
+    Parses the url and compares the host. The previous implementation combined
+    `startswith` on url prefixes with `".oic.prod-aks.azure.com" in iss`, so an issuer of
+    `https://evil.com/.oic.prod-aks.azure.com/x` was reported as TRUSTED -- the substring
+    appears anywhere in the string, including the path. That inverts the meaning of the
+    only signal this collector publishes about FIC issuers, on exactly the input an
+    attacker controls when they add a credential to an app registration. CodeQL
+    `py/incomplete-url-substring-sanitization`.
+    """
+    try:
+        parsed = urlparse((issuer or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return host in _TRUSTED_FIC_HOSTS or host.endswith(_TRUSTED_FIC_HOST_SUFFIXES)
 
 
 # ------------------------------------------------------------------ redirect URI risk
