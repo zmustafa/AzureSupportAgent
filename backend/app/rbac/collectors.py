@@ -66,9 +66,15 @@ async def _get_all(token: str, url: str, params: dict[str, str] | None = None) -
     next_url: str | None = url
     next_params = dict(params or {})
     code = 200
+    # nextLink is echoed from the response body, and the bearer token is re-sent on every
+    # hop, so pin the host to the one we deliberately called. A page that redirected us
+    # elsewhere would hand that token over.
+    origin_host = (httpx.URL(url).host or "").lower()
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             while next_url:
+                if (httpx.URL(next_url).host or "").lower() != origin_host:
+                    return out, f"refusing to follow nextLink to host {httpx.URL(next_url).host!r}", code
                 resp = await client.get(next_url, headers=headers, params=next_params or None)
                 code = resp.status_code
                 if code != 200:

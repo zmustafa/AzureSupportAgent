@@ -941,6 +941,14 @@ async def test_action_group(connection: dict[str, Any], action_group_id: str, al
         if props.get(key):
             request_body[key] = props[key]
     token = await _token(connection)
+    # `action_group_id` arrives straight from the request body (only a length bound on the
+    # schema), and this f-string puts it where the HOST is decided: a value starting with
+    # `@` or `.` moves the request off management.azure.com while the Authorization header
+    # below still carries a live ARM token. Validate before interpolating, not after.
+    from app.azure.arm import arm_path_error
+
+    if bad := arm_path_error(action_group_id):
+        raise ValueError(f"Invalid action group id: {bad}")
     url = f"https://management.azure.com{action_group_id.rstrip('/')}/createNotifications"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=60) as client:

@@ -103,10 +103,16 @@ async def _fetch(service_name: str, region: str, currency: str) -> tuple[list[di
         " and type eq 'Consumption'"
     )
     url = f"{RETAIL_API}?api-version={RETAIL_API_VERSION}&currencyCode='{currency}'&$filter={filters}"
+    # NextPageLink comes back inside the response body. This call is unauthenticated, so a
+    # redirected page leaks no token, but it would still turn the pricing refresh into a
+    # server-side request probe. Pin the host to the API we meant to call.
+    origin_host = (httpx.URL(RETAIL_API).host or "").lower()
     items: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=45) as client:
             for _page in range(MAX_PAGES):
+                if (httpx.URL(url).host or "").lower() != origin_host:
+                    return items, f"Retail Prices refused NextPageLink host {httpx.URL(url).host!r}"
                 response = await client.get(url)
                 if response.status_code != 200:
                     return items, f"Retail Prices {response.status_code}: {response.text[:200]}"

