@@ -14,9 +14,13 @@ from typing import Any
 from app.tagintel.analysis import norm_key
 
 _ALL_KEYS_RE = re.compile(r"\b(all|every|list|show|what)\b.*\b(tag )?keys?\b", re.I)
-_VALUES_RE = re.compile(r"\b(values?|distinct|unique)\b.*?\bfor\b\s+([A-Za-z0-9 _\-./]+)$|\bvalues?\s+of\s+([A-Za-z0-9 _\-./]+)$", re.I)
+# The tag-name captures below split off the first character so the preceding `\s+` and the
+# space inside the character class can't both claim the same run. The old
+# `\s+([A-Za-z0-9 _\-./]+)$` form was ambiguous and quadratic on an unbounded, entirely
+# user-supplied question: ~3050ms at 40k characters (CodeQL `py/polynomial-redos`).
+_VALUES_RE = re.compile(r"\b(values?|distinct|unique)\b.*?\bfor\b\s+([A-Za-z0-9_\-./][A-Za-z0-9 _\-./]*)$|\bvalues?\s+of\s+([A-Za-z0-9_\-./][A-Za-z0-9 _\-./]*)$", re.I)
 _UNTAGGED_RE = re.compile(r"\b(untagged|without (any )?tags?|no tags?)\b", re.I)
-_MISSING_RE = re.compile(r"\bmissing\b\s+([A-Za-z0-9 _\-./]+)$", re.I)
+_MISSING_RE = re.compile(r"\bmissing\b\s+([A-Za-z0-9_\-./][A-Za-z0-9 _\-./]*)$", re.I)
 _HIGHCARD_RE = re.compile(r"\bhigh[- ]?cardinality\b", re.I)
 # Signals a compound/complex question the simple regex templates can't handle (e.g. a tag
 # condition AND a resource-type condition) — these are routed to the AI NL→ARG path.

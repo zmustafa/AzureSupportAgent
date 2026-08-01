@@ -509,7 +509,47 @@ async def simulate_notification_path(connection: dict[str, Any], event: dict[str
 
 
 def _strip_comments(value: str) -> str:
-    return re.sub(r"//[^\n]*|/\*.*?\*/", " ", value or "", flags=re.S)
+    """Replace `// ...` and `/* ... */` comments with a single space.
+
+    Deliberately NOT a regex. The previous `//[^\n]*|/\*.*?\*/` (re.S) is polynomial:
+    a lazy `.*?` with no closing `*/` rescans to end-of-string from every `/*`, so a
+    query full of unterminated openers costs ~2000ms at 60k characters
+    (CodeQL ``py/polynomial-redos``).
+
+    Four regex rewrites were benchmarked against that input and every one was equal or
+    worse -- unrolled loop 4813ms, negative-lookahead 7801ms, possessive 1461ms, and
+    possessive-lazy 1964ms, against 1983ms for the original. A single left-to-right
+    scan has nothing to backtrack over and runs in 0.04ms, and matches the original
+    output on all 31 cases that were compared -- including the order-sensitive ones like
+    `/* // */` and `http://x /* y */`, where handling the two comment styles in separate
+    passes would give the wrong answer. See tests/test_security_fixes_v43.py.
+    """
+    text = value or ""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        j = text.find("/", i)
+        if j < 0 or j + 1 >= n:
+            out.append(text[i:])
+            return "".join(out)
+        nxt = text[j + 1]
+        if nxt == "/":  # line comment: to end of line
+            out.append(text[i:j])
+            out.append(" ")
+            eol = text.find("\n", j)
+            i = n if eol < 0 else eol
+        elif nxt == "*":  # block comment: to the first `*/`, else leave the rest alone
+            end = text.find("*/", j + 2)
+            if end < 0:
+                out.append(text[i:])
+                return "".join(out)
+            out.append(text[i:j])
+            out.append(" ")
+            i = end + 2
+        else:
+            out.append(text[i : j + 1])
+            i = j + 1
+    return "".join(out)
 
 
 def _kql_semantic_key(query: str) -> str:
@@ -528,7 +568,11 @@ def _kql_semantic_key(query: str) -> str:
 
 def _promql_semantic_key(expression: str) -> str:
     clean = re.sub(r"\s+", " ", _strip_comments(expression).strip().lower())
-    clean = re.sub(r"\s*(>=|<=|==|!=|>|<)\s*-?\d+(?:\.\d+)?\s*$", "", clean)
+    # `clean` has already had every whitespace run collapsed to one space and been
+    # stripped, so the leading `\s*` can only ever match a single space -- writing it as
+    # ` ?` is equivalent here and removes the quadratic re-scan the greedy form causes
+    # (10549ms -> 0.86ms at 60k characters). CodeQL `py/polynomial-redos`.
+    clean = re.sub(r" ?(>=|<=|==|!=|>|<) ?-?\d+(?:\.\d+)?\s*$", "", clean)
     clean = re.sub(r"\[(?:\d+(?:\.\d+)?[smhdwy])+\]", "[<range>]", clean)
     clean = re.sub(r"\boffset\s+\d+(?:\.\d+)?[smhdwy]", "offset <duration>", clean)
 

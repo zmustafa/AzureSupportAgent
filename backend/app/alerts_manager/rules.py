@@ -23,7 +23,12 @@ _OPERATORS = {"Equals", "GreaterThan", "GreaterThanOrEqual", "LessThan", "LessTh
 _DYNAMIC_OPERATORS = {"GreaterThan", "LessThan", "GreaterOrLessThan"}
 _AGGREGATIONS = {"Average", "Count", "Minimum", "Maximum", "Total"}
 _RULE_NAME_RE = re.compile(r"^[^*#&+:<>?@%{}\\/]+$")
-_DISALLOWED_KQL = re.compile(r"(^|[;\n]\s*)\.|\b(externaldata|external_table|http_request|evaluate\s+python)\b", re.I)
+# `[^\S\n]` (horizontal whitespace only) instead of `\s` so the separator class and the
+# gap after it can't both match a newline. The old `(^|[;\n]\s*)\.` was ambiguous and
+# quadratic -- 1694ms on 30k newlines, and the length guard below only *reports* an
+# oversize query, it doesn't stop this search from running. A run of newlines still
+# matches because the last newline in the run can serve as the separator.
+_DISALLOWED_KQL = re.compile(r"(?:^|[;\n])[^\S\n]*\.|\b(?:externaldata|external_table|http_request|evaluate\s+python)\b", re.I)
 
 
 def family_for_type(resource_type: str) -> str:

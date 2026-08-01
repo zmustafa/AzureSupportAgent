@@ -42,7 +42,11 @@ _RECEIVER_KEYS = (
     "itsmReceivers",
 )
 _ALL_RECEIVER_KEYS = _RECEIVER_KEYS
-_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+# Possessive quantifiers (`++`) so the domain labels can't be re-partitioned on failure;
+# the old `[A-Z0-9.-]+\.` let the literal dot and the dot inside the class fight over the
+# same character (CodeQL `py/polynomial-redos`). Requiring a real label before each dot
+# also makes this correctly reject consecutive dots -- `a@b..co` used to validate.
+_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]++@(?:[A-Z0-9-]++\.)++[A-Z]{2,}", re.I)
 _PHONE_RE = re.compile(r"(?<![A-Za-z0-9])\+?\d[\d ()-]{7,}\d")
 _AG_ID_RE = re.compile(
     r"/subscriptions/[^\s\"']+/resourcegroups/[^\s\"']+/providers/microsoft\.insights/actiongroups/[^\s\"'/?]+",

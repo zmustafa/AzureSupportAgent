@@ -91,6 +91,9 @@ def _tls_expiry(host: str) -> str:
     """Best-effort TLS certificate notAfter for a host (blocking; run rarely)."""
     try:
         ctx = ssl.create_default_context()
+        # Already the default on this interpreter, but state it so a future runtime or an
+        # openssl.cnf that lowers the floor can't silently re-enable TLS 1.0/1.1 here.
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         with ctx.wrap_socket(__import__("socket").socket(), server_hostname=host) as s:
             s.settimeout(5)
             s.connect((host, 443))
