@@ -63,19 +63,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff bandit[sarif]
-      # continue-on-error while the baseline is being established (plan 05).
-      # REMOVE both once the baseline is clean, or this job is decorative.
+      - run: pip install ruff bandit
+      # These are a PASS/FAIL gate, not a code-scanning feed. Uploading their SARIF put
+      # 149 alerts in the Security tab that the reviewed `ignore` list in
+      # backend/pyproject.toml had already dispositioned -- CLI `--select` OVERRIDES that
+      # list, so CI re-reported findings that are zero locally. Code scanning is for
+      # CodeQL's dataflow results; lint belongs in the job result.
       - name: ruff security rules
-        run: ruff check backend/app --select S,ASYNC --output-format sarif --output-file ruff.sarif
-        continue-on-error: true
+        run: |
+          # No --select: let backend/pyproject.toml decide, so the justified ignores apply.
+          # Filter to security codes so ordinary lint does not gate the security job.
+          ruff check backend/app --output-format json > ruff.json || true
+          python - <<'PY'
+          import json, sys
+          findings = [
+              f for f in json.load(open("ruff.json"))
+              if (f.get("code") or "").startswith(("S", "ASYNC"))
+          ]
+          print(f"{len(findings)} security finding(s)")
+          for f in findings[:25]:
+              print(f"  {f['code']} {f['filename']}:{f['location']['row']}")
+          sys.exit(1 if findings else 0)
+          PY
       - name: bandit
-        run: bandit -r backend/app third_party -ll -f sarif -o bandit.sarif
-        continue-on-error: true
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: .
+        run: bandit -r backend/app third_party -ll -q
 
   deps:
     name: dependency audit
@@ -117,6 +128,12 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: scan-target:ci
+          # --ignore-unfixed: only file alerts for CVEs that HAVE an upstream patch.
+          # Without it ~330 unpatchable Debian base-OS CVEs land in the Security tab, where
+          # they cannot be acted on and bury the findings that can. They are still detected
+          # and still reported in the deploy gate's image scan, which is where the action
+          # (rebuild the image) actually lives.
+          ignore-unfixed: true
           format: sarif
           output: trivy.sarif
           severity: HIGH,CRITICAL

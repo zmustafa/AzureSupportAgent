@@ -685,7 +685,11 @@ if _STATIC_DIR.is_dir():
         if _is_api_fallback_path(full_path):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         candidate = (_STATIC_DIR / full_path).resolve()
-        if candidate.is_file() and str(candidate).startswith(str(_STATIC_DIR)):
+        # `is_relative_to`, NOT `str.startswith`. startswith is a PREFIX test, not a
+        # containment test: with _STATIC_DIR = /app/static it also accepts
+        # /app/static-backup/secrets.env, because that string shares the prefix. Only one
+        # stray sibling directory in the image separates that from a real file read.
+        if candidate.is_file() and candidate.is_relative_to(_STATIC_DIR):
             return FileResponse(str(candidate))
         return FileResponse(str(_index_file), headers={"Cache-Control": "no-cache"})
 

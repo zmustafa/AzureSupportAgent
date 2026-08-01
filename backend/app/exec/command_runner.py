@@ -32,6 +32,31 @@ from app.core.app_settings import load_settings
 _FORBIDDEN_OPERATORS = (";", "|", "&", ">", "<", "`")
 
 
+def _join_wrapped_lines(query: str) -> str:
+    """Collapse a multi-line query onto one line, joining wrapped lines with a space.
+
+    Replaces ``re.sub(r"\\s*\\n\\s*", " ", query).strip()``. That pattern is polynomial:
+    ``\\s`` also matches ``\\n``, so the engine backtracks across the ``\\s*``/``\\n``
+    alternation and a long whitespace run costs quadratic time -- ~940ms for 40k
+    characters, which is a cheap DoS on any caller that accepts operator-supplied KQL.
+    Flagged by CodeQL as ``py/polynomial-redos``.
+
+    Measured alternatives, none of which were adopted:
+      * ``\\s+``                     0.09ms but NOT equivalent -- it also collapses runs
+                                     with no newline, so ``where x == "a  b"`` silently
+                                     becomes ``"a b"`` and tabs are eaten.
+      * ``[^\\S\\n]*\\n\\s*``          equivalent but ~1900ms -- twice as slow.
+      * ``[^\\S\\n]*(?:\\n[^\\S\\n]*)+`` equivalent but ~8300ms -- nine times as slow.
+
+    Splitting on line boundaries has no ambiguity to backtrack over: 0.02ms on the same
+    input, and verified byte-identical to the original across KQL-shaped cases including
+    quoted literals containing double spaces.
+    """
+    return " ".join(
+        part for part in (line.strip() for line in (query or "").splitlines()) if part
+    ).strip()
+
+
 def _has_unquoted_shell_operator(raw: str) -> bool:
     """True if a shell operator or command-substitution appears outside quotes."""
     in_single = False
@@ -662,9 +687,8 @@ async def run_kql_stream(
     # after the first KQL line. KQL is whitespace-insensitive between tokens, so a
     # one-line form is equivalent. Also strip `// ...` line comments first.
     query = re.sub(r"//[^\n]*", "", query)
-    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = _join_wrapped_lines(query)
     query = re.sub(r"[ \t]{2,}", " ", query)
-
     timeout = int(settings.get("command_timeout_seconds", 120))
     sp = _is_service_principal(connection)
 
@@ -867,7 +891,7 @@ def _normalize_kql(kql: str) -> tuple[str, str]:
     if len(query) > 8000:
         return "", "Query is too long."
     query = re.sub(r"//[^\n]*", "", query)
-    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = _join_wrapped_lines(query)
     query = re.sub(r"[ \t]{2,}", " ", query)
     return query, ""
 
@@ -1133,7 +1157,7 @@ async def run_la_capture(
     Graph: this targets a Log Analytics *workspace* and supports the full KQL surface.
     """
     query = re.sub(r"//[^\n]*", "", (kql or "").strip())
-    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = _join_wrapped_lines(query)
     if not query:
         return CaptureResult(ok=False, error="Empty query.")
     if not workspace_id:
@@ -1272,7 +1296,7 @@ async def run_app_insights_capture(
     the App Insights query API directly, for components NOT in workspace-based mode.
     Read-only; the same query-sanitization + length cap as Log Analytics applies."""
     query = re.sub(r"//[^\n]*", "", (kql or "").strip())
-    query = re.sub(r"\s*\n\s*", " ", query).strip()
+    query = _join_wrapped_lines(query)
     if not query:
         return CaptureResult(ok=False, error="Empty query.")
     if not app_id:
