@@ -99,6 +99,6 @@ Overview, PIM, and app registrations use separate caches and refreshes. Partial 
 
 ## Related docs
 
-- [Identity reference]({{ site.baseurl }}/user-guide/governance-identity/identity/)
+- [Entra ID reference]({{ site.baseurl }}/user-guide/governance-identity/identity/)
 - [RBAC access reviews]({{ site.baseurl }}/how-to/governance-identity/rbac-access-reviews/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

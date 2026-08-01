@@ -4,7 +4,10 @@ import { api, type EntraApp360, type EntraAppRow } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
 import { AppRegistrationsView } from "../AppRegistrationsView";
-import { Bar, EntraEmpty, SevBadge, useInitialSubTab } from "./EntraShared";
+import {
+  Bar, EntraEmpty, SevBadge, useSubTabRoute,
+  SEVERITY_RANK, SortScopeNote, SortTh, cmp, useEntraSorted, useSortState, type SortState,
+} from "./EntraShared";
 
 /**
  * Application 360.
@@ -18,8 +21,6 @@ import { Bar, EntraEmpty, SevBadge, useInitialSubTab } from "./EntraShared";
 // question from `inventory`: inventory is about the permissions an app *holds* (risk), while
 // registrations is about the credentials an app *expires on* (operational hygiene). Both are
 // about applications, so they belong on the same screen rather than in a separate product.
-type Tab = "inventory" | "consent" | "registrations";
-
 const TABS = ["inventory", "consent", "registrations"] as const;
 
 const TIER_CHIP: Record<string, string> = {
@@ -29,8 +30,54 @@ const TIER_CHIP: Record<string, string> = {
   low: "bg-gray-100 text-gray-500",
 };
 
+// ---------------------------------------------------------------------------- sorting
+// The inventory grid pages server-side, so its columns sort server-side too — the keys
+// below are exactly the ones `GET /entra/apps` accepts. Sorting the loaded page in the
+// browser would silently mean "top by credentials among the 200 rows risk picked".
+type AppsSortKey = "risk" | "name" | "permissions" | "credentials" | "owners" | "assigned" | "tier";
+/** What the server already does when asked for nothing. Never sent as a parameter. */
+const APPS_SORT_DEFAULT: SortState<AppsSortKey> = { key: "risk", dir: -1 };
+
+type ConsentGrant = { client: string; resource: string; scopes: string[]; max_tier: string };
+type ConsentSortKey = "client" | "resource" | "scopes" | "tier";
+// The server returns these tier-descending then client-ascending; starting there keeps the
+// first render identical to the unsorted screen.
+const CONSENT_SORT_DEFAULT: SortState<ConsentSortKey> = { key: "tier", dir: -1 };
+/** Stable identity for the empty case, so the memo does not re-sort on every render. */
+const NO_GRANTS: ConsentGrant[] = [];
+
+function compareConsent(a: ConsentGrant, b: ConsentGrant, key: ConsentSortKey): number {
+  switch (key) {
+    case "client": return cmp.text(a.client, b.client);
+    case "resource": return cmp.text(a.resource, b.resource);
+    // A grant's weight is how many scopes it carries, not how they happen to spell.
+    case "scopes": return cmp.num(a.scopes?.length ?? null, b.scopes?.length ?? null);
+    // Permission tiers use the critical/high/medium/low vocabulary, so the shared
+    // severity ranks apply verbatim — alphabetical would file `high` below `low`.
+    case "tier": return cmp.rank(SEVERITY_RANK, a.max_tier, b.max_tier);
+    default: return 0;
+  }
+}
+
+type AppCredential = EntraApp360["credentials"][number];
+// "none" is the untouched state: Graph returns credentials in no particular order and this
+// panel must open showing exactly that, so the default comparator is a no-op.
+type CredSortKey = "none" | "name" | "kind" | "expiry";
+const CRED_SORT_DEFAULT: SortState<CredSortKey> = { key: "none", dir: -1 };
+
+function compareCredential(a: AppCredential, b: AppCredential, key: CredSortKey): number {
+  switch (key) {
+    case "name": return cmp.text(a.display_name || a.id || a.kind, b.display_name || b.id || b.kind);
+    case "kind": return cmp.text(a.kind, b.kind);
+    // The end date, not `days_left`: a credential with no recorded expiry is unknown,
+    // and cmp.date sinks it rather than pretending it expires today.
+    case "expiry": return cmp.date(a.end, b.end);
+    default: return 0;
+  }
+}
+
 export function EntraAppsView({ connectionId }: { connectionId: string | null }) {
-  const [tab, setTab] = useState<Tab>(useInitialSubTab(TABS, "inventory"));
+  const [tab, setTab] = useSubTabRoute(TABS, "inventory");
   return (
     // h-full, not flex-1: the parent is EntraView's plain scroll box, not a flex column, so
     // flex-1 resolves to nothing there and this root would grow to its full content height.
@@ -75,12 +122,25 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
   const [ownerless, setOwnerless] = useState(false);
   const [riskMin, setRiskMin] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [sort, setSort] = useSortState<AppsSortKey>("apps-inventory", APPS_SORT_DEFAULT);
+  // This grid is a server-side page. Asking for the default explicitly would work, but
+  // sending nothing is what actually guarantees the server's own risk-first ordering.
+  const serverSorted = sort.key !== APPS_SORT_DEFAULT.key || sort.dir !== APPS_SORT_DEFAULT.dir;
 
   const q = useQuery({
-    queryKey: ["entra-apps", connectionId, dSearch, ownerless, riskMin],
-    queryFn: () =>
-      api.entraApps({ search: dSearch || undefined, ownerless: ownerless || undefined, risk_min: riskMin },
-                    connectionId),
+    queryKey: ["entra-apps", connectionId, dSearch, ownerless, riskMin, sort.key, sort.dir],
+    queryFn: () => {
+      // Built as a variable, not passed inline: api.ts still declares the pre-sort param
+      // shape, and TypeScript only excess-property-checks fresh object literals.
+      const params = {
+        search: dSearch || undefined,
+        ownerless: ownerless || undefined,
+        risk_min: riskMin,
+        sort: serverSorted ? sort.key : undefined,
+        dir: serverSorted ? (sort.dir === 1 ? "asc" : "desc") : undefined,
+      };
+      return api.entraApps(params, connectionId);
+    },
   });
 
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading applications…</div>;
@@ -110,7 +170,7 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
           />
         </label>
         <span className="ml-auto text-xs text-gray-400">
-          {d.total.toLocaleString()} application(s) · sorted by risk
+          {d.total.toLocaleString()} application(s){serverSorted ? "" : " · sorted by risk"}
         </span>
       </div>
 
@@ -118,12 +178,14 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-              <th className="px-3 py-2 font-medium">Risk</th>
-              <th className="px-2 py-2 font-medium">Application</th>
-              <th className="px-2 py-2 font-medium">Permissions</th>
-              <th className="px-2 py-2 font-medium">Credentials</th>
-              <th className="px-2 py-2 font-medium">Owners</th>
-              <th className="px-2 py-2 font-medium">Assigned</th>
+              <SortTh label="Risk" col="risk" sort={sort} setSort={setSort} className="px-3" />
+              <SortTh label="Application" col="name" sort={sort} setSort={setSort} className="px-2" firstDir={1} />
+              <SortTh label="Permissions" col="permissions" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by the number of granted permissions" />
+              <SortTh label="Credentials" col="credentials" sort={sort} setSort={setSort} className="px-2" />
+              <SortTh label="Owners" col="owners" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by owner count — applications whose owners could not be read are not counted as zero" />
+              <SortTh label="Assigned" col="assigned" sort={sort} setSort={setSort} className="px-2" />
             </tr>
           </thead>
           <tbody>
@@ -132,6 +194,8 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
             ))}
           </tbody>
         </table>
+        {/* Only fires when the server capped the page. */}
+        <SortScopeNote shown={d.apps.length} total={d.total} />
       </div>
 
       {selected && (
@@ -332,36 +396,7 @@ function App360Body({ data }: { data: EntraApp360 }) {
 
       <Section title={`Credentials (${data.credentials.length})`}>
         {data.credentials.length ? (
-          <table className="w-full text-xs">
-            <tbody>
-              {data.credentials.map((c, i) => (
-                <tr key={i} className="border-b last:border-b-0">
-                  <td className="py-1 text-gray-700">{c.display_name || c.id || c.kind}</td>
-                  <td className="py-1 text-gray-500">{c.kind}</td>
-                  <td className="py-1 text-right">
-                    {c.expired ? (
-                      <span className="text-red-600">expired</span>
-                    ) : c.days_left == null ? (
-                      <span className="text-gray-500">—</span>
-                    ) : c.days_left <= 90 ? (
-                      <span className="text-amber-600">{c.days_left}d left</span>
-                    ) : c.days_left > 365 * 3 ? (
-                      // "34785d" is not a number anyone can read, and a multi-decade secret
-                      // is a finding in itself, not a neutral fact.
-                      <span
-                        className="text-amber-600"
-                        title={`This credential is valid for about ${Math.round(c.days_left / 365)} years. Long-lived secrets cannot be rotated on any sensible schedule.`}
-                      >
-                        ~{Math.round(c.days_left / 365)}y lifetime
-                      </span>
-                    ) : (
-                      <span className="text-gray-500">{c.days_left.toLocaleString()}d</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <CredentialsTable credentials={data.credentials} />
         ) : (
           <div className="text-gray-500">No credentials.</div>
         )}
@@ -430,11 +465,66 @@ function App360Body({ data }: { data: EntraApp360 }) {
   );
 }
 
+/**
+ * The credential list, sortable by expiry.
+ *
+ * Its own component because the drawer renders it conditionally and a hook cannot live
+ * behind an `&&`. Expiry is the column that matters: this panel exists to answer "what
+ * breaks next", which the collection order of Graph never happens to answer.
+ */
+function CredentialsTable({ credentials }: { credentials: AppCredential[] }) {
+  const [sort, setSort] = useSortState<CredSortKey>("app360-credentials", CRED_SORT_DEFAULT);
+  const rows = useEntraSorted(credentials, sort, compareCredential);
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="border-b text-left text-[11px] text-gray-500">
+          <SortTh label="Credential" col="name" sort={sort} setSort={setSort} firstDir={1} />
+          <SortTh label="Kind" col="kind" sort={sort} setSort={setSort} firstDir={1} />
+          <SortTh label="Expiry" col="expiry" sort={sort} setSort={setSort} align="right"
+                  title="Sort by expiry date — credentials with no recorded expiry sort last" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((c, i) => (
+          <tr key={i} className="border-b last:border-b-0">
+            <td className="py-1 text-gray-700">{c.display_name || c.id || c.kind}</td>
+            <td className="py-1 text-gray-500">{c.kind}</td>
+            <td className="py-1 text-right">
+              {c.expired ? (
+                <span className="text-red-600">expired</span>
+              ) : c.days_left == null ? (
+                <span className="text-gray-500">—</span>
+              ) : c.days_left <= 90 ? (
+                <span className="text-amber-600">{c.days_left}d left</span>
+              ) : c.days_left > 365 * 3 ? (
+                // "34785d" is not a number anyone can read, and a multi-decade secret
+                // is a finding in itself, not a neutral fact.
+                <span
+                  className="text-amber-600"
+                  title={`This credential is valid for about ${Math.round(c.days_left / 365)} years. Long-lived secrets cannot be rotated on any sensible schedule.`}
+                >
+                  ~{Math.round(c.days_left / 365)}y lifetime
+                </span>
+              ) : (
+                <span className="text-gray-500">{c.days_left.toLocaleString()}d</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function Consent({ connectionId }: { connectionId: string | null }) {
+  const [sort, setSort] = useSortState<ConsentSortKey>("apps-consent-grants", CONSENT_SORT_DEFAULT);
   const q = useQuery({
     queryKey: ["entra-apps-consent", connectionId],
     queryFn: () => api.entraAppsConsent(connectionId),
   });
+  // Sorted before the early returns, because a hook cannot sit behind a loading branch.
+  const grants = useEntraSorted(q.data?.all_principals_grants ?? NO_GRANTS, sort, compareConsent);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -481,14 +571,15 @@ function Consent({ connectionId }: { connectionId: string | null }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Application</th>
-                <th className="px-2 py-2 font-medium">Resource</th>
-                <th className="px-2 py-2 font-medium">Scopes</th>
-                <th className="px-2 py-2 font-medium">Tier</th>
+                <SortTh label="Application" col="client" sort={sort} setSort={setSort} className="px-3" firstDir={1} />
+                <SortTh label="Resource" col="resource" sort={sort} setSort={setSort} className="px-2" firstDir={1} />
+                <SortTh label="Scopes" col="scopes" sort={sort} setSort={setSort} className="px-2"
+                        title="Sort by how many scopes the grant carries" />
+                <SortTh label="Tier" col="tier" sort={sort} setSort={setSort} className="px-2" />
               </tr>
             </thead>
             <tbody>
-              {d.all_principals_grants.map((g, i) => (
+              {grants.map((g, i) => (
                 <tr key={i} className="border-b last:border-b-0">
                   <td className="px-3 py-1.5 text-gray-900">{g.client}</td>
                   <td className="px-2 py-1.5 text-gray-600">{g.resource}</td>

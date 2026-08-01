@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api, streamEntraRefresh, type EntraPillar, type EntraProgress } from "../api";
+import { api, streamEntraRefresh, type EntraPillar, type EntraPosture, type EntraProgress } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState } from "../utils/persistedState";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
@@ -15,6 +15,7 @@ import { EntraScannersView } from "./entra/EntraScannersView";
 import { EntraSignalsView } from "./entra/EntraSignalsView";
 import { EntraSetupView } from "./entra/EntraSetupView";
 import { Bar, CoverageBanner, EntraEmpty, FreshnessBadge, ScoreRing, SevBadge, StateChip } from "./entra/EntraShared";
+import { FederationNote } from "./entra/EntraIdentityFabric";
 
 /**
  * Entra ID Support Agent.
@@ -164,10 +165,17 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const startRefresh = async () => {
+  // `domains` scopes the collection. A tab that only needs its own data re-read (the
+  // sign-in window is the case that forced this) should not make the reader wait for the
+  // whole directory, and the progress strip below works the same either way.
+  const startRefresh = async (domains?: string[]) => {
     setProgress([]);
+    // Guarded because this is wired to `onClick` in two places, and a click handler is
+    // handed a DOM event as its first argument. Without this, pressing Refresh would post
+    // a serialised event object as the domain list.
+    const wanted = Array.isArray(domains) && domains.length ? domains : undefined;
     try {
-      await api.entraRefresh(cid);
+      await api.entraRefresh(cid, wanted);
       follow();
     } catch (err) {
       setProgress([{ seq: -1, ts: "", level: "error", message: formatError(err) }]);
@@ -176,30 +184,47 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-gray-50">
-      <div className="flex items-center gap-1 border-b bg-white px-4 pt-2">
+      {/* Title row. Every other screen in the product names itself at the top; this one
+          opened straight onto a tab strip, so a shared link landed the reader in a bare
+          row of tabs with nothing saying which product surface they were looking at.
+          The connection picker and freshness badge live here rather than beside the tabs
+          because nine tab labels and two controls do not fit on one 1440px line. */}
+      <div className="border-b bg-white px-4 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xl">🛡️</span>
+            <h1 className="text-lg font-bold text-gray-800">Entra ID</h1>
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+              Identity posture
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <FreshnessBadge meta={statusQ.data?.meta} onRefresh={() => void startRefresh()}
+                            refreshing={refreshing} />
+            <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
+          </div>
+        </div>
         {/* Nine tabs with real names do not fit at 1440px. Scrolling horizontally keeps
             every label on one line and readable; wrapping them turned the bar into three
             ragged rows that pushed the content below the fold. Scrolling alone is not
             enough though — with four tabs off-screen and no edge cue, a live tenant looked
             like it simply had five screens. */}
-        <TabScroller activeId={tab}>
-          {ENTRA_NAV.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              title={label}
-              data-active={tab === id ? "true" : undefined}
-              className={`shrink-0 whitespace-nowrap rounded-t-lg px-3 py-1.5 text-sm font-medium ${
-                tab === id ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </TabScroller>
-        <div className="ml-auto flex shrink-0 items-center gap-3 pb-1.5">
-          <FreshnessBadge meta={statusQ.data?.meta} onRefresh={startRefresh} refreshing={refreshing} />
-          <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
+        <div className="flex items-center gap-1">
+          <TabScroller activeId={tab}>
+            {ENTRA_NAV.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                title={label}
+                data-active={tab === id ? "true" : undefined}
+                className={`shrink-0 whitespace-nowrap rounded-t-lg px-3 py-1.5 text-sm font-medium ${
+                  tab === id ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </TabScroller>
         </div>
       </div>
 
@@ -209,12 +234,15 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "posture" && (
-          <PostureTab connectionId={cid} onRefresh={startRefresh} onOpenSetup={() => setTab("setup")} onOpenPillar={() => setTab("findings")} />
+          <PostureTab connectionId={cid} onRefresh={() => void startRefresh()} onOpenSetup={() => setTab("setup")} onOpenPillar={() => setTab("findings")} />
         )}
         {tab === "conditional-access" && <EntraCaView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "privileged" && <EntraPrivilegedView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "applications" && <EntraAppsView connectionId={cid} />}
-        {tab === "signals" && <EntraSignalsView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
+        {tab === "signals" && (
+          <EntraSignalsView connectionId={cid} onOpenSetup={() => setTab("setup")}
+                            onRecollect={(domains) => void startRefresh(domains)} />
+        )}
         {tab === "governance" && <EntraGovernanceView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "graph" && <EntraGraphView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "findings" && <EntraScannersView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
@@ -289,6 +317,7 @@ function PostureTab({
   }
 
   const s = data.score;
+  const trend = data.trend as PostureTrend;
   const tenantName = data.tenant?.display_name || data.tenant?.primary_domain || data.meta.tenant_id;
 
   return (
@@ -300,7 +329,12 @@ function PostureTab({
         <div className="flex flex-wrap items-center gap-5">
           <ScoreRing score={s.score} coverage={s.coverage} />
           <div className="min-w-0 flex-1">
-            <div className="text-sm text-gray-500">{tenantName}</div>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-500">
+              <span>{tenantName}</span>
+              {/* A federated tenant does not authenticate its own users, which changes how
+                  every authentication figure below should be read. */}
+              <FederationNote fabric={data.identity_fabric} context="inline" />
+            </div>
             <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-2xl font-semibold text-gray-900">Identity posture {s.score}/100</span>
               {s.grade ? (
@@ -315,6 +349,9 @@ function PostureTab({
                   {data.trend.delta > 0 ? "▲" : "▼"} {Math.abs(data.trend.delta)} point
                   {Math.abs(data.trend.delta) === 1 ? "" : "s"} since the previous run
                 </span>
+              )}
+              {trend.points.length > 1 && (
+                <Sparkline values={trend.points.map((p) => p.score)} w={110} h={26} />
               )}
             </div>
             <div className="mt-1 text-xs text-gray-500">
@@ -338,7 +375,14 @@ function PostureTab({
         <div className="border-b px-4 py-2 text-[13px] font-semibold text-gray-800">Pillars</div>
         <div className="divide-y">
           {s.pillars.map((p) => (
-            <PillarRow key={p.key} pillar={p} onOpen={() => onOpenPillar(p.key)} onOpenSetup={onOpenSetup} />
+            <PillarRow
+              key={p.key}
+              pillar={p}
+              history={trend.points.map((pt) => pt.pillars?.[p.key] ?? null)}
+              delta={trend.pillar_delta?.[p.key]}
+              onOpen={() => onOpenPillar(p.key)}
+              onOpenSetup={onOpenSetup}
+            />
           ))}
         </div>
       </div>
@@ -369,7 +413,15 @@ function PostureTab({
       )}
 
       {/* Trend */}
-      {data.trend.points.length > 1 && <Trend points={data.trend.points} />}
+      {trend.points.length > 1 ? (
+        <Trend points={trend.points} pillars={s.pillars} />
+      ) : (
+        <div className="rounded-lg border border-dashed bg-white p-3 text-xs text-gray-500">
+          Only one full collection has been recorded for this tenant, so there is nothing to
+          trend yet. A history point is written after each successful full refresh, and the
+          last 90 are kept.
+        </div>
+      )}
 
       {/* Inventory counts */}
       <div className="grid gap-3 md:grid-cols-4">
@@ -391,12 +443,92 @@ function PostureTab({
   );
 }
 
+/** Posture history as served by `/api/entra/posture`. */
+type PostureTrendPoint = EntraPosture["trend"]["points"][number];
+type PostureTrend = EntraPosture["trend"];
+
+const SERIES_COLOURS = ["#0891b2", "#ea580c", "#7c3aed", "#16a34a", "#db2777", "#ca8a04", "#0284c7", "#dc2626"];
+
+/**
+ * A score movement, or nothing at all.
+ *
+ * Zero renders as "level" rather than "▲ 0", and a pillar that was blind on either side of
+ * the comparison renders as nothing: "unchanged" and "we could not see it" are different
+ * answers and a chip that conflates them is worse than no chip.
+ */
+function DeltaChip({ delta, since, compact }: { delta?: number | null; since?: string | null; compact?: boolean }) {
+  if (delta == null) return null;
+  const suffix = since ? ` since ${since.slice(0, 10)}` : " since the previous run";
+  if (delta === 0) {
+    return (
+      <span className="text-[11px] text-gray-400" title={`No change${suffix}`}>
+        {compact ? "–" : `level${suffix}`}
+      </span>
+    );
+  }
+  const up = delta > 0;
+  return (
+    <span className={`text-[11px] font-medium ${up ? "text-green-600" : "text-red-600"}`}
+          title={`${up ? "Up" : "Down"} ${Math.abs(delta)} point${Math.abs(delta) === 1 ? "" : "s"}${suffix}`}>
+      {up ? "▲" : "▼"} {Math.abs(delta)}
+      {!compact && ` point${Math.abs(delta) === 1 ? "" : "s"}${suffix}`}
+    </span>
+  );
+}
+
+/**
+ * A pillar's own history, drawn small.
+ *
+ * Scaled to the series rather than to 0–100: every pillar on a settled tenant would
+ * otherwise be a flat line, which is exactly the movement this was added to show. The band
+ * is never narrower than ten points, so a one-point wobble cannot masquerade as a collapse.
+ */
+function Sparkline({ values, tone = "#4f46e5", w = 88, h = 24 }: {
+  values: (number | null)[]; tone?: string; w?: number; h?: number;
+}) {
+  const runs = segments(values);
+  const seen = values.filter((v): v is number => v != null);
+  if (seen.length < 2) {
+    return (
+      <span className="text-[10px] text-gray-300" title="Not enough history yet — trend appears after two full collections">
+        no trend yet
+      </span>
+    );
+  }
+  const lo = Math.min(...seen), hi = Math.max(...seen);
+  const mid = (lo + hi) / 2;
+  const band = Math.max(10, hi - lo);
+  const top = Math.min(100, mid + band / 2), bottom = Math.max(0, mid - band / 2);
+  const x = (i: number) => (values.length > 1 ? (i / (values.length - 1)) * w : w / 2);
+  const y = (v: number) => 2 + (1 - (v - bottom) / Math.max(1, top - bottom)) * (h - 4);
+  const last = seen[seen.length - 1];
+  const first = seen[0];
+  const colour = last > first ? "#16a34a" : last < first ? "#dc2626" : tone;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} className="shrink-0"
+         role="img"
+         aria-label={`Trend from ${first} to ${last}`}
+         >
+      <title>{`${seen.length} recorded refreshes · ${first} → ${last}`}</title>
+      {runs.map((seg, i) => (
+        <path key={i} fill="none" stroke={colour} strokeWidth={1.5} strokeLinecap="round"
+              d={seg.map((p, j) => `${j === 0 ? "M" : "L"} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(" ")} />
+      ))}
+      <circle cx={x(values.length - 1)} cy={y(last)} r={1.8} fill={colour} />
+    </svg>
+  );
+}
+
 function PillarRow({
   pillar,
+  history,
+  delta,
   onOpen,
   onOpenSetup,
 }: {
   pillar: EntraPillar;
+  history: (number | null)[];
+  delta?: number;
   onOpen: () => void;
   onOpenSetup: () => void;
 }) {
@@ -421,6 +553,10 @@ function PillarRow({
       </div>
       <div className="w-12 shrink-0 text-right text-sm font-semibold text-gray-800">
         {measured ? pillar.score : "—"}
+      </div>
+      <div className="flex w-28 shrink-0 flex-col items-end gap-0.5">
+        <Sparkline values={history} />
+        <DeltaChip delta={delta} compact />
       </div>
       <div className="w-28 shrink-0">
         <StateChip state={pillar.state} title={reason} />
@@ -449,24 +585,121 @@ function PillarRow({
   );
 }
 
-function Trend({ points }: { points: { at: string; score: number; coverage: number }[] }) {
-  const w = 600;
-  const h = 80;
-  const max = 100;
-  const step = points.length > 1 ? w / (points.length - 1) : w;
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${(i * step).toFixed(1)} ${(h - (p.score / max) * h).toFixed(1)}`)
-    .join(" ");
+function Trend({ points, pillars }: { points: PostureTrendPoint[]; pillars: EntraPillar[] }) {
+  // Every pillar is drawn by default: the first question on this card is "what moved",
+  // which needs all eight visible at once. Chips then subtract, so isolating one pillar is
+  // still a click away.
+  const [shown, setShown] = useState<string[]>(() => pillars.map((p) => p.key));
+  const toggle = (key: string) =>
+    setShown((s) => (s.includes(key) ? s.filter((k) => k !== key) : [...s, key]));
+  const allShown = shown.length === pillars.length;
+
+  // Colour is fixed to the pillar's position in the model, not to its position in the
+  // selection. Keying it off the selection meant a pillar changed colour as its neighbours
+  // were toggled, and the chip and its line could disagree about which colour it was.
+  const colourOf = (key: string) =>
+    SERIES_COLOURS[Math.max(0, pillars.findIndex((p) => p.key === key)) % SERIES_COLOURS.length];
+
+  const series = [
+    { key: "__overall", label: "Overall", colour: "#4f46e5",
+      values: points.map((p) => p.score as number | null) },
+    ...pillars
+      .filter((p) => shown.includes(p.key))
+      .map((p) => ({
+        key: p.key, label: p.label, colour: colourOf(p.key),
+        values: points.map((pt) => pt.pillars?.[p.key] ?? null),
+      })),
+  ];
+
+  const w = 600, h = 120, pad = 2;
+  const x = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * w : w / 2);
+  const y = (v: number) => pad + (1 - v / 100) * (h - pad * 2);
+
   return (
     <div className="rounded-lg border bg-white p-3">
-      <div className="mb-1 text-[13px] font-semibold text-gray-800">Trend</div>
-      <svg viewBox={`0 0 ${w} ${h}`} className="h-20 w-full" preserveAspectRatio="none">
-        <path d={path} fill="none" stroke="#4f46e5" strokeWidth="2" />
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-semibold text-gray-800">Trend</span>
+        <span className="text-[11px] text-gray-400">
+          {points.length} refresh{points.length === 1 ? "" : "es"} recorded · one point per full collection
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          <button
+            onClick={() => setShown(allShown ? [] : pillars.map((p) => p.key))}
+            title={allShown ? "Show the tenant score on its own" : "Overlay every pillar"}
+            className="rounded-full border px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+          >
+            {allShown ? "Overall only" : "Select all"}
+          </button>
+          {pillars.map((p) => {
+            const on = shown.includes(p.key);
+            return (
+              <button
+                key={p.key}
+                onClick={() => toggle(p.key)}
+                title={on ? `Hide ${p.label}` : `Overlay ${p.label}`}
+                className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                  on ? "border-transparent text-white" : "text-gray-500 hover:bg-gray-50"}`}
+                style={on ? { background: colourOf(p.key) } : undefined}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${w} ${h}`} className="h-32 w-full" preserveAspectRatio="none">
+        {/* A score chart without a fixed 0–100 frame flatters noise into a trend. */}
+        {[0, 25, 50, 75, 100].map((v) => (
+          <line key={v} x1={0} x2={w} y1={y(v)} y2={y(v)}
+                stroke={v === 0 || v === 100 ? "#e2e8f0" : "#f1f5f9"} strokeWidth={1} />
+        ))}
+        {series.map((s) => (
+          <g key={s.key}>
+            {segments(s.values).map((seg, i) => (
+              <path
+                key={i}
+                d={seg.map((pt, j) => `${j === 0 ? "M" : "L"} ${x(pt.i).toFixed(1)} ${y(pt.v).toFixed(1)}`).join(" ")}
+                fill="none" stroke={s.colour} strokeWidth={s.key === "__overall" ? 2 : 1.6}
+                strokeLinecap="round"
+              />
+            ))}
+          </g>
+        ))}
       </svg>
-      <div className="flex justify-between text-[11px] text-gray-400">
+
+      <div className="flex items-center justify-between text-[11px] text-gray-400">
         <span>{points[0]?.at?.slice(0, 10)}</span>
+        <span className="flex flex-wrap items-center gap-3">
+          {series.map((s) => {
+            const last = [...s.values].reverse().find((v) => v != null);
+            return (
+              <span key={s.key} className="flex items-center gap-1 text-gray-600">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: s.colour }} />
+                {s.label} {last ?? "—"}
+              </span>
+            );
+          })}
+        </span>
         <span>{points[points.length - 1]?.at?.slice(0, 10)}</span>
+      </div>
+      <div className="mt-1 text-[11px] text-gray-400">
+        A gap in a line is a refresh where that pillar could not be measured — not a score of zero.
       </div>
     </div>
   );
 }
+
+/** Split a series into unbroken runs, so a blind refresh leaves a gap instead of a cliff. */
+function segments(values: (number | null)[]): { i: number; v: number }[][] {
+  const out: { i: number; v: number }[][] = [];
+  let run: { i: number; v: number }[] = [];
+  values.forEach((v, i) => {
+    if (v == null) { if (run.length) out.push(run); run = []; return; }
+    run.push({ i, v });
+  });
+  if (run.length) out.push(run);
+  // A single measured point has no line to draw, but it should still show as a dot-sized run.
+  return out.map((r) => (r.length === 1 ? [r[0], r[0]] : r));
+}
+

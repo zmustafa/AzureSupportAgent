@@ -94,5 +94,5 @@ Static mode infers capabilities immediately from non-secret connection metadata 
 ## Related pages
 
 - [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/)
-- [Identity]({{ site.baseurl }}/user-guide/governance-identity/identity/)
+- [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/)
 - [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)

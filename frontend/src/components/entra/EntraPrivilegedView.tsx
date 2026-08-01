@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../../api";
+import { api, type EntraCrossPlaneRow, type EntraPimPolicy } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
 import { PimReviewPanel } from "../PimReviewView";
 import { EntraActivationsView } from "./EntraActivationsView";
-import { Bar, EntraEmpty, SevBadge, useInitialSubTab } from "./EntraShared";
+import {
+  Bar, EntraEmpty, SevBadge, SortScopeNote, SortTh, cmp, useEntraSorted,
+  useSortState, useSubTabRoute,
+} from "./EntraShared";
 
 /**
  * Privileged Access Mission Control.
@@ -38,7 +42,7 @@ export function EntraPrivilegedView({
   connectionId: string | null;
   onOpenSetup: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>(useInitialSubTab(TABS.map((t) => t.id), "overview"));
+  const [tab, setTab] = useSubTabRoute(TABS.map((t) => t.id), "overview");
   return (
     // h-full, not flex-1: the parent is EntraView's plain scroll box, not a flex column, so
     // flex-1 resolves to nothing there and this root would grow to its full content height.
@@ -80,17 +84,41 @@ export function EntraPrivilegedView({
   );
 }
 
-function Kpi({ label, value, tone, note }: { label: string; value: number | string; tone?: string; note?: string }) {
-  return (
-    <div className="rounded-lg border bg-white p-3">
+/**
+ * A headline number.
+ *
+ * Clickable when the number has somewhere to go: every one of these counts is a slice of a
+ * grid on another sub-tab, and reading "55 standing privileged" and then rebuilding that
+ * filter by hand is the kind of small friction that stops people looking.
+ */
+function Kpi({ label, value, tone, note, onClick, title }: {
+  label: string; value: number | string; tone?: string; note?: string;
+  onClick?: () => void; title?: string;
+}) {
+  const body = (
+    <>
       <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
       <div className={`text-xl font-semibold ${tone ?? "text-gray-900"}`}>{value}</div>
       {note && <div className="mt-0.5 text-[11px] text-gray-500">{note}</div>}
-    </div>
+    </>
+  );
+  if (!onClick) return <div className="rounded-lg border bg-white p-3">{body}</div>;
+  return (
+    <button onClick={onClick} title={title || `Show ${label.toLowerCase()}`}
+            className="rounded-lg border bg-white p-3 text-left transition hover:border-brand hover:bg-brand/5">
+      {body}
+    </button>
   );
 }
 
 function Overview({ connectionId, onOpenSetup }: { connectionId: string | null; onOpenSetup: () => void }) {
+  const navigate = useNavigate();
+  // Each tile is a saved query against another sub-tab. Filters travel in the URL, so the
+  // destination is bookmarkable and survives a reload like every other Entra screen.
+  const drill = (sub: string, query: Record<string, string> = {}) => {
+    const qs = new URLSearchParams(query).toString();
+    navigate(`/entra/privileged/${sub}${qs ? `?${qs}` : ""}`);
+  };
   const q = useQuery({
     queryKey: ["entra-priv-overview", connectionId],
     queryFn: () => api.entraPrivilegedOverview(connectionId),
@@ -105,16 +133,31 @@ function Overview({ connectionId, onOpenSetup }: { connectionId: string | null; 
     <div className="space-y-4 p-4">
       <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Kpi label="Global admins" value={c.global_admins ?? 0}
-             tone={(c.global_admins ?? 0) > 5 || (c.global_admins ?? 0) < 2 ? "text-red-600" : undefined} />
-        <Kpi label="Privileged principals" value={c.privileged_principals ?? 0} />
+             tone={(c.global_admins ?? 0) > 5 || (c.global_admins ?? 0) < 2 ? "text-red-600" : undefined}
+             title="Opens every Global Administrator assignment, standing and eligible"
+             onClick={() => drill("assignments", { kind: "all", q: "Global Administrator" })} />
+        {/* These two tiles count PRINCIPALS; the grid they open lists ASSIGNMENTS, and one
+            principal can hold several. The row count is therefore expected to exceed the
+            tile, which is why each title says what the destination actually shows. */}
+        <Kpi label="Privileged principals" value={c.privileged_principals ?? 0}
+             title="People and workload identities holding a privileged role. Opens every privileged assignment — one principal can hold several."
+             onClick={() => drill("assignments", { kind: "all", privileged: "1" })} />
         <Kpi label="Standing privileged" value={c.standing_privileged ?? 0}
-             tone={(c.standing_privileged ?? 0) > 0 ? "text-amber-600" : undefined} />
-        <Kpi label="Eligible" value={c.eligible ?? 0} />
+             tone={(c.standing_privileged ?? 0) > 0 ? "text-amber-600" : undefined}
+             title="Privileged access that is always on rather than activated on demand. Opens every standing privileged assignment, including those inherited through a group."
+             onClick={() => drill("assignments", { kind: "standing", privileged: "1" })} />
+        <Kpi label="Eligible" value={c.eligible ?? 0}
+             title="Opens the assignments that require activation through PIM"
+             onClick={() => drill("assignments", { kind: "eligible" })} />
         <Kpi label="PIM fully configured" value={`${c.pim_fully_configured ?? 0}/${c.pim_policies ?? 0}`}
              tone={(c.pim_policies ?? 0) > 0 && (c.pim_fully_configured ?? 0) < (c.pim_policies ?? 0)
-               ? "text-amber-600" : undefined} />
+               ? "text-amber-600" : undefined}
+             title="Opens the per-role PIM configuration health grid"
+             onClick={() => drill("pim")} />
         <Kpi label="Cross-plane" value={c.cross_plane ?? 0}
-             tone={(c.cross_plane ?? 0) > 0 ? "text-red-600" : undefined} />
+             tone={(c.cross_plane ?? 0) > 0 ? "text-red-600" : undefined}
+             title="Principals flagged for holding power in both Entra ID and Azure. Opens the full cross-plane grid, which lists every principal in the join."
+             onClick={() => drill("cross-plane")} />
       </div>
 
       {!d.azure_link.available && (
@@ -153,13 +196,60 @@ function Overview({ connectionId, onOpenSetup }: { connectionId: string | null; 
   );
 }
 
+/**
+ * Assignment columns. These strings are the server's `sort` vocabulary, not just column ids —
+ * the grid is capped at 2000 rows, so sorting in the browser would reorder the page the
+ * server picked rather than the tenant. `""` means "no sort parameter", which is how the
+ * server's own privileged-first default order is preserved on first load.
+ */
+type AssignKey = "principal" | "type" | "role" | "tier" | "kind" | "permanent" | "activation";
+
+type AssignKind = "standing" | "eligible" | "all";
+const ASSIGN_KINDS: AssignKind[] = ["standing", "eligible", "all"];
+
 function Assignments({ connectionId }: { connectionId: string | null }) {
-  const [kind, setKind] = useState<"standing" | "eligible" | "all">("standing");
-  const [search, setSearch] = useState("");
+  // Filters live in the URL so a drill-through from the overview tiles is a real link:
+  // bookmarkable, shareable, and unchanged by a reload. `standing` is the default and is
+  // therefore left out of the address bar rather than written into it.
+  const [params, setParams] = useSearchParams();
+  const kindParam = params.get("kind") as AssignKind | null;
+  const kind: AssignKind = kindParam && ASSIGN_KINDS.includes(kindParam) ? kindParam : "standing";
+  const privilegedOnly = params.get("privileged") === "1";
+  const urlSearch = params.get("q") ?? "";
+  const [search, setSearch] = useState(urlSearch);
   const dSearch = useDebounced(search, 150);
+  const [sort, setSort] = useSortState<AssignKey | "">("priv-assignments", { key: "", dir: -1 });
+
+  const writeParams = (mutate: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(params);
+    mutate(next);
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
+  };
+  const setKind = (k: AssignKind) =>
+    writeParams((next) => (k === "standing" ? next.delete("kind") : next.set("kind", k)));
+
+  // A term arriving from a link (or the back button) has to reach the input.
+  useEffect(() => { setSearch(urlSearch); }, [urlSearch]);
+  // …and a term typed here has to reach the URL, once it has settled.
+  useEffect(() => {
+    writeParams((next) => (dSearch ? next.set("q", dSearch) : next.delete("q")));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dSearch]);
+
   const q = useQuery({
-    queryKey: ["entra-priv-assignments", connectionId, kind, dSearch],
-    queryFn: () => api.entraPrivilegedAssignments({ kind, search: dSearch || undefined }, connectionId),
+    // The sort belongs in the key: a different order is a different server response, not a
+    // re-render of this one.
+    queryKey: ["entra-priv-assignments", connectionId, kind, privilegedOnly, dSearch, sort.key, sort.dir],
+    queryFn: () => {
+      const request = {
+        kind,
+        privileged: privilegedOnly || undefined,
+        search: dSearch || undefined,
+        sort: sort.key || undefined,
+        dir: sort.key ? (sort.dir === 1 ? "asc" : "desc") : undefined,
+      };
+      return api.entraPrivilegedAssignments(request, connectionId);
+    },
   });
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
@@ -180,6 +270,17 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
             {k}
           </button>
         ))}
+        {/* A filter arriving from a drill-through has to be visible and reversible, or the
+            grid silently shows a subset and the reader has no way to know or undo it. */}
+        {privilegedOnly && (
+          <button
+            onClick={() => writeParams((next) => next.delete("privileged"))}
+            title="Show unprivileged role assignments as well"
+            className="rounded-full border border-brand bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand"
+          >
+            privileged roles only ✕
+          </button>
+        )}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -197,13 +298,17 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-              <th className="px-3 py-2 font-medium">Principal</th>
-              <th className="px-2 py-2 font-medium">Type</th>
-              <th className="px-2 py-2 font-medium">Role</th>
-              <th className="px-2 py-2 font-medium">Tier</th>
-              <th className="px-2 py-2 font-medium">Kind</th>
-              <th className="px-2 py-2 font-medium">Permanent</th>
-              <th className="px-2 py-2 font-medium">Last activation</th>
+              <SortTh label="Principal" col="principal" sort={sort} setSort={setSort} firstDir={1}
+                      className="px-3" title="Sort every matching assignment by principal" />
+              <SortTh label="Type" col="type" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Role" col="role" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Tier" col="tier" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by role tier — tier 0 first" />
+              <SortTh label="Kind" col="kind" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Permanent" col="permanent" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by permanence — unknown last" />
+              <SortTh label="Last activation" col="activation" sort={sort} setSort={setSort}
+                      className="px-2" title="Sort by last activation — never activated last" />
             </tr>
           </thead>
           <tbody>
@@ -235,6 +340,7 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
             ))}
           </tbody>
         </table>
+        <SortScopeNote shown={d.assignments.length} total={d.total} />
       </div>
       <div className="mt-2 text-xs text-gray-400">
         Showing {d.assignments.length} of {d.total}.
@@ -243,11 +349,75 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
   );
 }
 
+type PimKey =
+  | "role" | "score" | "mfa" | "approval" | "justification" | "ticket"
+  | "duration" | "notifications" | "max_duration";
+
+/**
+ * Server control keys -> column keys. A control this build does not know about keeps a plain
+ * header rather than offering a sort the comparator would silently ignore.
+ */
+const PIM_CONTROL_COL: Record<string, PimKey> = {
+  mfa_on_activation: "mfa",
+  approval_required: "approval",
+  justification_required: "justification",
+  ticket_required: "ticket",
+  duration_bounded: "duration",
+  notifications: "notifications",
+};
+
+/**
+ * Every control cell is tri-state: satisfied, not satisfied, or never measured. `cmp.bool`
+ * treats null as unknown and pins it to the bottom in both directions, which is the whole
+ * point — a control we could not read is not a control that failed.
+ */
+function tri(v: boolean | null | undefined): boolean | null {
+  return v == null ? null : Boolean(v);
+}
+/** Bounded-duration control. No recorded maximum is unknown, not "unbounded". */
+function triHours(h: number | null | undefined, max = 8): boolean | null {
+  return h == null ? null : h <= max;
+}
+function triCount(n: number | null | undefined): boolean | null {
+  return n == null ? null : n > 0;
+}
+/** The MFA cell is the OR of two settings, so it is only unknown when neither was read. */
+function triMfa(p: EntraPimPolicy): boolean | null {
+  const mfa = tri(p.mfa_on_activation);
+  const ctx = tri(p.auth_context_required);
+  if (mfa === null && ctx === null) return null;
+  return Boolean(mfa || ctx);
+}
+
+function comparePim(a: EntraPimPolicy, b: EntraPimPolicy, key: PimKey): number {
+  switch (key) {
+    case "role": return cmp.text(a.role_name, b.role_name);
+    case "score": return cmp.num(a.score, b.score);
+    case "mfa": return cmp.bool(triMfa(a), triMfa(b));
+    case "approval": return cmp.bool(tri(a.approval_required), tri(b.approval_required));
+    case "justification":
+      return cmp.bool(tri(a.justification_required), tri(b.justification_required));
+    case "ticket": return cmp.bool(tri(a.ticket_required), tri(b.ticket_required));
+    case "duration":
+      return cmp.bool(triHours(a.max_activation_hours), triHours(b.max_activation_hours));
+    case "notifications":
+      return cmp.bool(triCount(a.notification_recipients), triCount(b.notification_recipients));
+    case "max_duration": return cmp.num(a.max_activation_hours, b.max_activation_hours);
+  }
+}
+
+/** Stable identity for the pre-load render, so the sort memo is not rebuilt every frame. */
+const NO_POLICIES: EntraPimPolicy[] = [];
+
 function PimConfig({ connectionId, onOpenSetup }: { connectionId: string | null; onOpenSetup: () => void }) {
   const q = useQuery({
     queryKey: ["entra-priv-pim", connectionId],
     queryFn: () => api.entraPrivilegedPimPolicies(connectionId),
   });
+  // Default is score ascending, which is the worst-configured-first order the server already
+  // returns — the first render is unchanged.
+  const [sort, setSort] = useSortState<PimKey>("priv-pim", { key: "score", dir: 1 });
+  const policies = useEntraSorted(q.data?.policies ?? NO_POLICIES, sort, comparePim);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -284,16 +454,24 @@ function PimConfig({ connectionId, onOpenSetup }: { connectionId: string | null;
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-              <th className="px-3 py-2 font-medium">Role</th>
-              <th className="px-2 py-2 font-medium">Score</th>
-              {d.controls.map((c) => (
-                <th key={c.key} className="px-2 py-2 text-center font-medium">{c.label}</th>
-              ))}
-              <th className="px-2 py-2 font-medium">Max duration</th>
+              <SortTh label="Role" col="role" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+              <SortTh label="Score" col="score" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by configuration score" />
+              {d.controls.map((c) => {
+                const col = PIM_CONTROL_COL[c.key];
+                return col ? (
+                  <SortTh key={c.key} label={c.label} col={col} sort={sort} setSort={setSort}
+                          align="center" className="px-2"
+                          title={`Sort by ${c.label.toLowerCase()} — roles where it was never measured last`} />
+                ) : (
+                  <th key={c.key} className="px-2 py-2 text-center font-medium">{c.label}</th>
+                );
+              })}
+              <SortTh label="Max duration" col="max_duration" sort={sort} setSort={setSort} className="px-2" />
             </tr>
           </thead>
           <tbody>
-            {d.policies.map((p) => (
+            {policies.map((p) => (
               <tr key={p.role_id} className="border-b last:border-b-0">
                 <td className="px-3 py-1.5">
                   <span className="text-gray-900">{p.role_name}</span>
@@ -328,11 +506,36 @@ function PimConfig({ connectionId, onOpenSetup }: { connectionId: string | null;
 }
 
 
+type CrossKey = "principal" | "entra" | "azure" | "scope";
+
+/** The scope cell, as a single string, so the column sorts by what the reader can see. */
+function crossScopeText(r: EntraCrossPlaneRow): string {
+  return r.azure_broad_scopes.join(", ") || r.azure_subscriptions.slice(0, 2).join(", ");
+}
+
+function compareCross(a: EntraCrossPlaneRow, b: EntraCrossPlaneRow, key: CrossKey): number {
+  switch (key) {
+    case "principal": return cmp.text(a.name, b.name);
+    // Both power columns are lists; their length is the thing with an order.
+    case "entra":
+      return cmp.num(a.entra_roles.length + a.entra_permissions.length,
+                     b.entra_roles.length + b.entra_permissions.length);
+    case "azure": return cmp.num(a.azure_roles.length, b.azure_roles.length);
+    case "scope": return cmp.text(crossScopeText(a), crossScopeText(b));
+  }
+}
+
+const NO_CROSS_ROWS: EntraCrossPlaneRow[] = [];
+
 function CrossPlane({ connectionId }: { connectionId: string | null }) {
   const q = useQuery({
     queryKey: ["entra-priv-crossplane", connectionId],
     queryFn: () => api.entraPrivilegedCrossPlane(connectionId),
   });
+  // The server orders by powerful-Azure-role count descending, then name; descending on
+  // that count with the stable tie-break reproduces it exactly, so nothing moves on load.
+  const [sort, setSort] = useSortState<CrossKey>("priv-cross-plane", { key: "azure", dir: -1 });
+  const rows = useEntraSorted(q.data?.rows ?? NO_CROSS_ROWS, sort, compareCross);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -358,14 +561,17 @@ function CrossPlane({ connectionId }: { connectionId: string | null }) {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-                  <th className="px-3 py-2 font-medium">Principal</th>
-                  <th className="px-2 py-2 font-medium">Entra power</th>
-                  <th className="px-2 py-2 font-medium">Azure power</th>
-                  <th className="px-2 py-2 font-medium">Scope</th>
+                  <SortTh label="Principal" col="principal" sort={sort} setSort={setSort}
+                          firstDir={1} className="px-3" />
+                  <SortTh label="Entra power" col="entra" sort={sort} setSort={setSort} className="px-2"
+                          title="Sort by how many directory roles and permissions this principal holds" />
+                  <SortTh label="Azure power" col="azure" sort={sort} setSort={setSort} className="px-2"
+                          title="Sort by how many powerful Azure roles this principal holds" />
+                  <SortTh label="Scope" col="scope" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
                 </tr>
               </thead>
               <tbody>
-                {d.rows.map((r) => (
+                {rows.map((r) => (
                   <tr key={r.principal_id} className={`border-b last:border-b-0 ${r.both_planes ? "bg-red-50/40" : ""}`}>
                     <td className="px-3 py-1.5">
                       <span className="text-gray-900">{r.name}</span>
@@ -390,6 +596,7 @@ function CrossPlane({ connectionId }: { connectionId: string | null }) {
                 ))}
               </tbody>
             </table>
+            <SortScopeNote shown={d.rows.length} total={d.total} />
           </div>
         </>
       )}

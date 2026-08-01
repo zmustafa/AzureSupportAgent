@@ -1,9 +1,9 @@
 import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
-import type { EntraAccessReview } from "../../api";
+import type { EntraAccessReview, EntraEntitlement, EntraGovernanceCoverage, EntraWorkflow } from "../../api";
 import { formatError } from "../../utils/format";
-import { Bar, CoverageBanner, EntraEmpty, SevBadge } from "./EntraShared";
+import { Bar, cmp, CoverageBanner, EntraEmpty, SevBadge, SortTh, useEntraSorted, useSortState, useSubTabRoute } from "./EntraShared";
 
 type Tab = "coverage" | "reviews" | "entitlement" | "lifecycle";
 
@@ -33,12 +33,78 @@ function Unlicensed({ what, why }: { what: string; why: string }) {
   );
 }
 
+// ---------------------------------------------------------------------------- sorting
+// Comparators live at module level so `useEntraSorted`'s memo has a stable dependency and
+// does not re-sort every render. `""` is the initial key on every grid and compares equal
+// for every pair, so the stable sort leaves the server's own ordering exactly as it came.
+
+type CoverageRow = EntraGovernanceCoverage["rows"][number];
+type CoverageSortKey = "" | "label" | "count" | "reviewed" | "governed" | "gap";
+const NO_COVERAGE_ROWS: CoverageRow[] = [];
+
+function coverageCompare(a: CoverageRow, b: CoverageRow, key: CoverageSortKey): number {
+  switch (key) {
+    case "label": return cmp.text(a.label, b.label);
+    case "count": return cmp.num(a.count, b.count);
+    case "reviewed": return cmp.num(a.reviewed, b.reviewed);
+    case "governed": return cmp.num(a.governed, b.governed);
+    case "gap": return cmp.num(a.gap, b.gap);
+    default: return 0;
+  }
+}
+
+type PackageRow = EntraEntitlement["packages"][number];
+type PackageSortKey = "" | "package" | "resources" | "policies" | "hygiene";
+const NO_PACKAGES: PackageRow[] = [];
+
+/** Hygiene is two independent faults, so it orders by how many of them a package has. */
+function hygieneFaults(p: PackageRow): number {
+  return (p.no_review ? 1 : 0) + (p.no_expiry ? 1 : 0);
+}
+
+function packageCompare(a: PackageRow, b: PackageRow, key: PackageSortKey): number {
+  switch (key) {
+    case "package": return cmp.text(a.display_name, b.display_name);
+    case "resources": return cmp.num(a.resource_scopes, b.resource_scopes);
+    case "policies": return cmp.num(a.policies.length, b.policies.length);
+    case "hygiene": return cmp.num(hygieneFaults(a), hygieneFaults(b));
+    default: return 0;
+  }
+}
+
+/**
+ * Workflow category in lifecycle order, not alphabetical order.
+ *
+ * Alphabetically a leaver workflow sorts first, which puts the end of the employee
+ * lifecycle at the top of a list about the employee lifecycle.
+ */
+const WORKFLOW_CATEGORY_RANK: Record<string, number> = { joiner: 3, mover: 2, leaver: 1 };
+type WorkflowSortKey = "" | "workflow" | "category" | "enabled" | "tasks" | "runs" | "failure";
+const NO_WORKFLOWS: EntraWorkflow[] = [];
+
+function workflowCompare(a: EntraWorkflow, b: EntraWorkflow, key: WorkflowSortKey): number {
+  switch (key) {
+    case "workflow": return cmp.text(a.display_name, b.display_name);
+    case "category": return cmp.rank(WORKFLOW_CATEGORY_RANK, a.category, b.category);
+    case "enabled": return cmp.bool(a.enabled, b.enabled);
+    case "tasks": return cmp.num(a.task_count, b.task_count);
+    case "runs": return cmp.num(a.runs.total, b.runs.total);
+    case "failure": return cmp.num(a.failure_rate, b.failure_rate);
+    default: return 0;
+  }
+}
+
 function CoverageTab({ connectionId }: { connectionId: string | null }) {
   const q = useQuery({
     queryKey: ["entra-gov-coverage", connectionId],
     queryFn: () => api.entraGovernanceCoverage(connectionId),
   });
   const [open, setOpen] = useState<string>("");
+  const [sort, setSort] = useSortState<CoverageSortKey>("gov-coverage", { key: "", dir: -1 });
+  // Only the top-level class rows are sorted; the expanded object list stays inside the
+  // Fragment belonging to its own row, so re-ordering can never detach one from the other.
+  const rows = useEntraSorted<CoverageRow, CoverageSortKey>(
+    q.data?.rows ?? NO_COVERAGE_ROWS, sort, coverageCompare);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Computing governance coverage…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -62,13 +128,15 @@ function CoverageTab({ connectionId }: { connectionId: string | null }) {
         <table className="w-full text-[13px]">
           <thead className="text-left text-[11px] uppercase tracking-wide text-gray-500">
             <tr className="border-b">
-              <th className="px-3 py-1.5">Object class</th>
-              <th>Count</th><th>Reviewed</th><th>Governed by package</th>
-              <th className="pr-3">Gap</th>
+              <SortTh label="Object class" col="label" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+              <SortTh label="Count" col="count" sort={sort} setSort={setSort} />
+              <SortTh label="Reviewed" col="reviewed" sort={sort} setSort={setSort} />
+              <SortTh label="Governed by package" col="governed" sort={sort} setSort={setSort} />
+              <SortTh label="Gap" col="gap" sort={sort} setSort={setSort} className="pr-3" />
             </tr>
           </thead>
           <tbody>
-            {d.rows.map((r) => (
+            {rows.map((r) => (
               <Fragment key={r.key}>
                 <tr className="cursor-pointer border-b last:border-b-0 hover:bg-gray-50"
                     onClick={() => setOpen(open === r.key ? "" : r.key)}>
@@ -182,6 +250,9 @@ function EntitlementTab({ connectionId }: { connectionId: string | null }) {
     queryKey: ["entra-gov-entitlement", connectionId],
     queryFn: () => api.entraEntitlement(30, connectionId),
   });
+  const [sort, setSort] = useSortState<PackageSortKey>("gov-packages", { key: "", dir: -1 });
+  const packages = useEntraSorted<PackageRow, PackageSortKey>(
+    q.data?.packages ?? NO_PACKAGES, sort, packageCompare);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading entitlement management…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -198,11 +269,16 @@ function EntitlementTab({ connectionId }: { connectionId: string | null }) {
         </div>
         <table className="w-full text-[13px]">
           <thead className="text-left text-[11px] uppercase tracking-wide text-gray-500">
-            <tr className="border-b"><th className="px-3 py-1.5">Package</th><th>Resources</th>
-              <th>Policies</th><th className="pr-3">Hygiene</th></tr>
+            <tr className="border-b">
+              <SortTh label="Package" col="package" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+              <SortTh label="Resources" col="resources" sort={sort} setSort={setSort} />
+              <SortTh label="Policies" col="policies" sort={sort} setSort={setSort} />
+              <SortTh label="Hygiene" col="hygiene" sort={sort} setSort={setSort}
+                      title="Sort by how many hygiene problems a package has" className="pr-3" />
+            </tr>
           </thead>
           <tbody>
-            {d.packages.map((p) => (
+            {packages.map((p) => (
               <tr key={p.id} className="border-b last:border-b-0">
                 <td className="px-3 py-1.5">
                   <div className="text-gray-900">{p.display_name}</div>
@@ -266,6 +342,9 @@ function LifecycleTab({ connectionId }: { connectionId: string | null }) {
     queryKey: ["entra-gov-lifecycle", connectionId],
     queryFn: () => api.entraLifecycle(connectionId),
   });
+  const [sort, setSort] = useSortState<WorkflowSortKey>("gov-lifecycle", { key: "", dir: -1 });
+  const workflows = useEntraSorted<EntraWorkflow, WorkflowSortKey>(
+    q.data?.workflows ?? NO_WORKFLOWS, sort, workflowCompare);
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading lifecycle workflows…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
@@ -288,11 +367,18 @@ function LifecycleTab({ connectionId }: { connectionId: string | null }) {
       <div className="rounded-lg border bg-white">
         <table className="w-full text-[13px]">
           <thead className="text-left text-[11px] uppercase tracking-wide text-gray-500">
-            <tr className="border-b"><th className="px-3 py-1.5">Workflow</th><th>Category</th>
-              <th>Enabled</th><th>Tasks</th><th>Runs</th><th className="pr-3">Failure rate</th></tr>
+            <tr className="border-b">
+              <SortTh label="Workflow" col="workflow" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+              <SortTh label="Category" col="category" sort={sort} setSort={setSort}
+                      title="Sort by lifecycle order: joiner, mover, leaver" />
+              <SortTh label="Enabled" col="enabled" sort={sort} setSort={setSort} />
+              <SortTh label="Tasks" col="tasks" sort={sort} setSort={setSort} />
+              <SortTh label="Runs" col="runs" sort={sort} setSort={setSort} />
+              <SortTh label="Failure rate" col="failure" sort={sort} setSort={setSort} className="pr-3" />
+            </tr>
           </thead>
           <tbody>
-            {d.workflows.map((w) => (
+            {workflows.map((w) => (
               <tr key={w.id} className="border-b last:border-b-0">
                 <td className="px-3 py-1.5 text-gray-900">{w.display_name}</td>
                 <td>{w.category}</td>
@@ -326,7 +412,7 @@ function LifecycleTab({ connectionId }: { connectionId: string | null }) {
 
 export function EntraGovernanceView({ connectionId, onOpenSetup }:
   { connectionId: string | null; onOpenSetup?: () => void }) {
-  const [tab, setTab] = useState<Tab>("coverage");
+  const [tab, setTab] = useSubTabRoute(TABS.map((t) => t.id), "coverage");
   const overviewQ = useQuery({
     queryKey: ["entra-gov-overview", connectionId],
     queryFn: () => api.entraGovernanceOverview(connectionId),

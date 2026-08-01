@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.entra import model
+from app.entra import federation, model
 from app.entra.collectors import CollectContext, as_dict, as_list, clip, guarded
 from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError
 
@@ -22,6 +22,14 @@ _ORG_SELECT = [
     "id", "displayName", "verifiedDomains", "onPremisesSyncEnabled",
     "onPremisesLastSyncDateTime", "technicalNotificationMails", "createdDateTime",
     "tenantType", "countryLetterCode",
+]
+
+# `/organization` carries verified domain NAMES and nothing about how they authenticate.
+# `/domains` is where the authentication type lives, and it is the difference between a
+# tenant that signs its own users in and one that delegates the job to somebody else.
+_DOMAIN_SELECT = [
+    "id", "authenticationType", "isVerified", "isDefault", "isInitial", "isRoot",
+    "supportedServices", "passwordValidityPeriodInDays", "passwordNotificationWindowInDays",
 ]
 
 
@@ -75,6 +83,8 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         ]
         primary = next((d["name"] for d in domains if d["is_default"]), "")
 
+        fabric = await _identity_fabric(client, ctx, notes)
+
         data = {
             "tenant": {
                 "id": org.get("id", "") or ctx.tenant_id,
@@ -88,7 +98,9 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
             "hybrid": {
                 "sync_enabled": bool(org.get("onPremisesSyncEnabled")),
                 "last_sync": org.get("onPremisesLastSyncDateTime", "") or "",
+                **fabric["hybrid"],
             },
+            "identity_fabric": fabric["fabric"],
             "authorization_policy": _authorization(authorization),
             "authentication_methods_policy": _auth_methods(auth_methods),
             "admin_consent_policy": {
@@ -103,13 +115,105 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
             ],
         }
         status = model.STATUS_PARTIAL if notes else model.STATUS_OK
+        federated = data["identity_fabric"]["federated_count"]
         await ctx.say("ok", f"Tenant: {data['tenant']['display_name'] or ctx.tenant_id} "
-                            f"({len(domains)} verified domain(s))")
+                            f"({len(domains)} verified domain(s)"
+                            + (f", {federated} federated" if federated else "") + ")")
         return model.domain_payload(
             DOMAIN, data, status=status, item_count=1 + len(domains), notes=notes
         )
 
     return await guarded(DOMAIN, ctx, _run)
+
+
+async def _identity_fabric(
+    client: GraphClient, ctx: CollectContext, notes: list[str]
+) -> dict[str, Any]:
+    """Domain authentication types, federation trusts, and on-premises sync features.
+
+    Three reads on a normal tenant, because `/domains/{id}/federationConfiguration` is only
+    fetched for domains that say they are federated — usually none or one.
+
+    Each piece degrades on its own. A tenant that cannot read the sync object still gets its
+    federation trusts, and vice versa; the payload records which piece is blind rather than
+    reporting an empty perimeter as a clean one.
+    """
+    fabric: dict[str, Any] = {
+        "domains": [], "federation": [], "federated_count": 0, "managed_count": 0,
+        "readable": False, "blind_reason": "",
+        # External identity providers guests sign in with (social, SAML, WS-Fed). Its own
+        # readability flag: it needs a scope nothing else does, so it is blind on its own
+        # long after the rest of the perimeter is legible.
+        "external_idps": [], "external_idps_readable": False, "external_idps_reason": "",
+    }
+    hybrid: dict[str, Any] = {"features_readable": False}
+
+    try:
+        rows, _ = await client.get_all("/domains", select=_DOMAIN_SELECT, top=0)
+        fabric["domains"] = [federation.normalise_domain(as_dict(d)) for d in rows]
+        fabric["readable"] = True
+    except GraphPermissionError as exc:
+        fabric["blind_reason"] = f"Domain.Read.All or Directory.Read.All ({clip(exc.message, 100)})"
+        notes.append(f"domains: not permitted ({clip(exc.message, 120)})")
+    except GraphError as exc:
+        fabric["blind_reason"] = clip(exc, 160)
+        notes.append(f"domains: {clip(exc, 160)}")
+
+    federated = [d for d in fabric["domains"] if d["federated"]]
+    fabric["federated_count"] = len(federated)
+    fabric["managed_count"] = len(fabric["domains"]) - len(federated)
+
+    for dom in federated:
+        name = dom["name"]
+        try:
+            body = await client.get(f"/domains/{name}/federationConfiguration")
+        except GraphError as exc:
+            notes.append(f"federationConfiguration({name}): {clip(exc, 140)}")
+            continue
+        for cfg in as_list(as_dict(body).get("value")) or [as_dict(body)]:
+            if not cfg:
+                continue
+            fabric["federation"].append(federation.normalise_federation(name, as_dict(cfg)))
+
+    try:
+        idps, _ = await client.get_all("/identity/identityProviders", top=0)
+        fabric["external_idps"] = [federation.normalise_idp(as_dict(i)) for i in idps]
+        fabric["external_idps_readable"] = True
+    except GraphPermissionError as exc:
+        fabric["external_idps_reason"] = "IdentityProvider.Read.All"
+        notes.append(f"identityProviders: not permitted ({clip(exc.message, 120)})")
+    except GraphError as exc:
+        fabric["external_idps_reason"] = clip(exc, 140)
+        notes.append(f"identityProviders: {clip(exc, 160)}")
+
+    try:
+        body = await client.get("/directory/onPremisesSynchronization")
+        rows = as_list(as_dict(body).get("value"))
+        sync = as_dict(rows[0]) if rows else {}
+        features = as_dict(sync.get("features"))
+        deletion = as_dict(as_dict(sync.get("configuration")).get("accidentalDeletionPrevention"))
+        hybrid = {
+            "features_readable": bool(sync),
+            "password_sync": bool(features.get("passwordSyncEnabled")),
+            "password_writeback": bool(features.get("passwordWritebackEnabled")),
+            "user_writeback": bool(features.get("userWritebackEnabled")),
+            "group_writeback": bool(features.get("groupWriteBackEnabled")
+                                    or features.get("unifiedGroupWritebackEnabled")),
+            "device_writeback": bool(features.get("deviceWritebackEnabled")),
+            "cloud_password_policy": bool(features.get("cloudPasswordPolicyForPasswordSyncedUsersEnabled")),
+            "block_soft_match": bool(features.get("blockSoftMatchEnabled")),
+            "block_cloud_object_takeover": bool(features.get("blockCloudObjectTakeoverThroughHardMatchEnabled")),
+            "deletion_prevention": {
+                "type": deletion.get("synchronizationPreventionType", "") or "",
+                "threshold": deletion.get("alertThreshold"),
+            },
+        }
+    except GraphPermissionError as exc:
+        notes.append(f"onPremisesSynchronization: not permitted ({clip(exc.message, 120)})")
+    except GraphError as exc:
+        notes.append(f"onPremisesSynchronization: {clip(exc, 160)}")
+
+    return {"fabric": fabric, "hybrid": hybrid}
 
 
 def _authorization(policy: dict[str, Any]) -> dict[str, Any]:

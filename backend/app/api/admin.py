@@ -94,6 +94,11 @@ class AppSettingsUpdate(BaseModel):
     retention_days: int | None = None
     mcp_read_only: bool | None = None
     entra_mcp_enabled: bool | None = None
+    # The Entra sign-in collection window. Bounded here to the same 1–90 days the settings
+    # store clamps to, so an out-of-range value is rejected rather than silently corrected.
+    # Without this field the whole update was accepted and dropped: the model is a
+    # whitelist, so an unlisted key writes nothing and still answers 200.
+    entra_signin_lookback_days: int | None = Field(default=None, ge=1, le=90)
     auto_execute_writes: bool | None = None
     max_tool_iterations: int | None = None
     tool_result_limit: int | None = None

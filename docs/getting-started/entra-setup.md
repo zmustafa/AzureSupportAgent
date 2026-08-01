@@ -13,6 +13,8 @@ Microsoft Graph access is optional. Add it when users need Entra users, groups, 
 
 Follow the canonical permission list and local-server notes in the [EntraID MCP Server guide]({{ site.baseurl }}/ENTRA_SETUP/). Microsoft permission names and consent requirements can change; verify them in Microsoft documentation before approval.
 
+The Entra ID posture feature is consented separately, in three read-only tiers, and has its own coverage diagnostics. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/) and [Set up and run the first Entra collection]({{ site.baseurl }}/how-to/governance-identity/entra-first-refresh/).
+
 ## Prerequisites
 
 - An application administrator who can configure Graph application permissions.

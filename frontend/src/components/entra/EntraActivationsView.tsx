@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type EntraActivationAction, type EntraActivationActionsResult,
          type EntraActivationSession } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
-import { EntraEmpty } from "./EntraShared";
+import {
+  EntraEmpty, EntraTimeWindow, Segmented, SortTh, cmp, useEntraSorted, useSortState,
+} from "./EntraShared";
 
 /**
  * Privileged activation sessions — who elevated, when, under what terms, and what they did.
@@ -52,6 +54,62 @@ function Chip({ text, cls, title }: { text: string; cls: string; title?: string 
   );
 }
 
+/**
+ * Sorting for the two grids on this screen.
+ *
+ * Both enum columns rank rather than spell: "missing" is not between "ok" and "weak" in any
+ * sense a reader cares about, and `unknown` is a fourth state — the source cannot carry a
+ * justification at all — which must not be read as "nobody gave a reason".
+ */
+type SessionKey = "started" | "who" | "role" | "where" | "for" | "reason";
+
+const JUSTIFICATION_RANK: Record<string, number> = {
+  missing: 3,  // no reason given: the interesting end of a descending sort
+  weak: 2,
+  ok: 1,
+  unknown: 0,  // the source cannot record one — our blind spot, not their omission
+};
+
+const ATTRIBUTION_RANK: Record<string, number> = {
+  required_activation: 2,  // the elevation is what made this possible
+  possible_without: 1,
+  unclassified: 0,
+};
+
+/** The "Where" cell as one string: plane first, exactly as the column reads. */
+function whereText(s: EntraActivationSession): string {
+  const scope = s.scope_name || (s.scope_type === "directory" ? "directory" : s.scope_type);
+  return `${s.plane === "azure" ? "Azure" : "Entra"} ${scope}`;
+}
+
+function compareSession(a: EntraActivationSession, b: EntraActivationSession, key: SessionKey): number {
+  switch (key) {
+    case "started": return cmp.date(a.start, b.start);
+    case "who": return cmp.text(a.label, b.label);
+    case "role": return cmp.text(a.role_name || a.role_id, b.role_name || b.role_id);
+    case "where": return cmp.text(whereText(a), whereText(b));
+    // Granted duration, null when the request never provisioned.
+    case "for": return cmp.num(a.granted_hours, b.granted_hours);
+    case "reason":
+      return cmp.rank(JUSTIFICATION_RANK, a.justification_quality, b.justification_quality);
+  }
+}
+
+type ActionKey = "when" | "operation" | "target" | "attribution";
+
+function compareAction(a: EntraActivationAction, b: EntraActivationAction, key: ActionKey): number {
+  switch (key) {
+    case "when": return cmp.date(a.at, b.at);
+    case "operation": return cmp.text(a.operation, b.operation);
+    case "target": return cmp.text(a.target, b.target);
+    case "attribution": return cmp.rank(ATTRIBUTION_RANK, a.attribution, b.attribution);
+  }
+}
+
+/** Stable identities for the pre-load render, so the sort memos survive a re-render. */
+const NO_SESSIONS: EntraActivationSession[] = [];
+const NO_ACTIONS: EntraActivationAction[] = [];
+
 function when(iso: string): string {
   if (!iso) return "—";
   return iso.replace("T", " ").slice(0, 16);
@@ -64,7 +122,15 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
   const [search, setSearch] = useState("");
   const [only, setOnly] = useState("");
   const [selected, setSelected] = useState<EntraActivationSession | null>(null);
+  // Brushed sub-window over the loaded sessions. Null means "the whole loaded range", which is
+  // not the same as the `days` selector: that one decides what the server returns, this one
+  // slices what came back without another round trip.
+  const [range, setRange] = useState<[number, number] | null>(null);
   const q = useDebounced(search, 250);
+
+  // Any change to what the server returns invalidates the brush — keeping it would silently
+  // hide rows from the new result set behind a window the user picked for the old one.
+  useEffect(() => { setRange(null); }, [connectionId, days, plane, tier, q, only]);
 
   // Activations are stamped in UTC. Judging "out of hours" against UTC in a tenant that
   // works in another zone is confidently wrong, so the browser's own offset is sent and
@@ -77,6 +143,29 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
       { days, plane, tier, q, utcOffsetHours: offsetHours }, connectionId),
   });
 
+  // Default is newest first, which is the order the server already returns.
+  const [sort, setSort] = useSortState<SessionKey>("activation-sessions", { key: "started", dir: -1 });
+
+  // Filter -> brush window -> sort, in that order and no other. Sorting is the last step so
+  // it can only reorder what the window already admitted; sorting earlier would let a click
+  // on a column heading pull rows back in from outside the brushed range.
+  const sessions = query.data?.sessions ?? NO_SESSIONS;
+  const rows = useMemo(() => sessions.filter((s) => {
+    if (only === "tier0") return s.tier === "tier0";
+    if (only === "out_of_hours") return s.in_business_hours === false;
+    if (only === "no_justification") return s.justification_quality === "missing";
+    if (only === "weak") return s.justification_quality === "weak";
+    if (only === "attempts") return !s.granted;
+    return true;
+  }), [sessions, only]);
+  const windowed = useMemo(() => (range
+    ? rows.filter((s) => {
+        const t = startMs(s);
+        return t !== null && t >= range[0] && t <= range[1];
+      })
+    : rows), [rows, range]);
+  const sorted = useEntraSorted(windowed, sort, compareSession);
+
   if (query.isLoading) {
     return <div className="p-6 text-sm text-gray-500">Loading activation sessions…</div>;
   }
@@ -88,32 +177,42 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
 
   const caps = d.capabilities || {};
   const facets = d.facets || {};
-  const rows = d.sessions.filter((s) => {
-    if (only === "tier0") return s.tier === "tier0";
-    if (only === "out_of_hours") return s.in_business_hours === false;
-    if (only === "no_justification") return s.justification_quality === "missing";
-    if (only === "weak") return s.justification_quality === "weak";
-    if (only === "attempts") return !s.granted;
-    return true;
-  });
 
   return (
     <div className="space-y-3 p-4">
       <SourceBanner caps={caps} ledger={d.ledger} lookback={d.lookback_days} />
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-        <Tile label="Sessions" value={d.total} onClick={() => setOnly("")} active={!only} />
-        <Tile label="Entra ID" value={facets.entra ?? 0} />
-        <Tile label="Azure" value={facets.azure ?? 0} />
+        {/* Sessions is the "no filter" tile, so it clears BOTH filters rather than only the
+            one it happens to share state with. Clearing `only` while leaving the plane set
+            left the grid filtered with nothing on screen claiming to be filtering it. */}
+        <Tile label="Sessions" value={d.total}
+              onClick={() => { setOnly(""); setPlane(""); }}
+              active={!only && !plane}
+              title="Every activation in the window, unfiltered" />
+        {/* These two are the plane filter, which is also the segmented control below. One
+            state, two ways in — a tile that showed a count and did nothing when clicked was
+            the odd one out in a row of five that all filtered. */}
+        <Tile label="Entra ID" value={facets.entra ?? 0}
+              onClick={() => setPlane(plane === "entra" ? "" : "entra")}
+              active={plane === "entra"}
+              title="Directory role activations only" />
+        <Tile label="Azure" value={facets.azure ?? 0}
+              onClick={() => setPlane(plane === "azure" ? "" : "azure")}
+              active={plane === "azure"}
+              title="Azure resource activations only" />
         <Tile label="Tier-0" value={facets.tier0 ?? 0} tone="text-red-700"
-              onClick={() => setOnly(only === "tier0" ? "" : "tier0")} active={only === "tier0"} />
+              onClick={() => setOnly(only === "tier0" ? "" : "tier0")} active={only === "tier0"}
+              title="Activations of the roles that can take over the tenant" />
         <Tile label="Out of hours" value={facets.out_of_hours ?? 0} tone="text-amber-700"
               onClick={() => setOnly(only === "out_of_hours" ? "" : "out_of_hours")}
               active={only === "out_of_hours"}
+              title="Activations outside the working day in your timezone"
               note={offsetHours === 0 ? "UTC" : `UTC${offsetHours >= 0 ? "+" : ""}${offsetHours}`} />
         <Tile label="No reason given" value={facets.no_justification ?? 0} tone="text-amber-700"
               onClick={() => setOnly(only === "no_justification" ? "" : "no_justification")}
-              active={only === "no_justification"} />
+              active={only === "no_justification"}
+              title="Activations recorded without a justification" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -123,12 +222,18 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
           placeholder="Search person, role, scope, reason…"
           className="w-64 rounded border px-2 py-1 text-[13px]"
         />
-        <select value={plane} onChange={(e) => setPlane(e.target.value)}
-                className="rounded border px-2 py-1 text-[13px]">
-          <option value="">Both planes</option>
-          <option value="entra">Entra ID</option>
-          <option value="azure">Azure resources</option>
-        </select>
+        {/* Buttons rather than a select: this is the switch a reviewer flips most often on
+            this tab, and a dropdown hid two of the three planes behind a click. */}
+        <Segmented
+          label="Filter activations by plane"
+          value={plane}
+          onChange={setPlane}
+          options={[
+            { value: "", label: "Both planes", title: "Entra ID and Azure resource activations together" },
+            { value: "entra", label: "Entra ID", title: "Directory role activations only" },
+            { value: "azure", label: "Azure resources", title: "Azure RBAC activations only" },
+          ]}
+        />
         <select value={tier} onChange={(e) => setTier(e.target.value)}
                 className="rounded border px-2 py-1 text-[13px]">
           <option value="">Any tier</option>
@@ -149,27 +254,37 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
           </button>
         )}
         <span className="ml-auto text-[11px] text-gray-500">
-          {rows.length.toLocaleString()} shown
+          {windowed.length.toLocaleString()} shown
         </span>
       </div>
 
-      <Timeline rows={rows.slice(0, 120)} onPick={setSelected} />
-
+      <EntraTimeWindow
+        label="Activation window"
+        unit="activation"
+        hotLabel="tier-0"
+        points={rows.map((s) => ({ t: startMs(s) ?? NaN, hot: s.tier === "tier0" }))}
+        value={range}
+        onChange={setRange}
+        shownCount={windowed.length}
+      />
       <div className="overflow-hidden rounded-lg border bg-white">
         <table className="w-full text-[13px]">
           <thead className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
             <tr>
-              <th className="px-2 py-2 font-medium">Started</th>
-              <th className="px-2 py-2 font-medium">Who</th>
-              <th className="px-2 py-2 font-medium">Role</th>
-              <th className="px-2 py-2 font-medium">Where</th>
-              <th className="px-2 py-2 font-medium">For</th>
-              <th className="px-2 py-2 font-medium">Reason</th>
+              <SortTh label="Started" col="started" sort={sort} setSort={setSort} className="px-2" />
+              <SortTh label="Who" col="who" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Role" col="role" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Where" col="where" sort={sort} setSort={setSort} firstDir={1} className="px-2"
+                      title="Sort by plane and scope" />
+              <SortTh label="For" col="for" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by granted duration — never granted last" />
+              <SortTh label="Reason" col="reason" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by justification quality — no reason given first" />
               <th className="px-2 py-2 font-medium"> </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((s) => (
+            {sorted.map((s) => (
               <tr key={s.id} className="border-t hover:bg-gray-50">
                 <td className="px-2 py-1.5 whitespace-nowrap text-gray-600">
                   {when(s.start)}
@@ -210,10 +325,12 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
                 </td>
               </tr>
             ))}
-            {!rows.length && (
+            {!windowed.length && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-sm text-gray-500">
-                  No activation matches these filters.
+                  {rows.length
+                    ? "No activation in the selected window. Widen the slider or click All."
+                    : "No activation matches these filters."}
                 </td>
               </tr>
             )}
@@ -252,13 +369,15 @@ function Justification({ session }: { session: EntraActivationSession }) {
   );
 }
 
-function Tile({ label, value, tone, note, onClick, active }: {
+function Tile({ label, value, tone, note, onClick, active, title }: {
   label: string; value: number; tone?: string; note?: string;
-  onClick?: () => void; active?: boolean;
+  onClick?: () => void; active?: boolean; title?: string;
 }) {
   const Cmp = onClick ? "button" : "div";
   return (
     <Cmp onClick={onClick}
+         title={title || (onClick ? `Filter to ${label.toLowerCase()}` : undefined)}
+         aria-pressed={onClick ? Boolean(active) : undefined}
          className={`rounded-lg border bg-white p-2.5 text-left ${
            active ? "ring-2 ring-brand" : onClick ? "hover:bg-gray-50" : ""}`}>
       <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
@@ -310,52 +429,10 @@ function SourceBanner({ caps, ledger, lookback }: {
   );
 }
 
-/** A compact day-by-day strip: where elevations cluster is the thing worth seeing. */
-function Timeline({ rows, onPick }: {
-  rows: EntraActivationSession[]; onPick: (s: EntraActivationSession) => void;
-}) {
-  const days = useMemo(() => {
-    const buckets = new Map<string, EntraActivationSession[]>();
-    for (const r of rows) {
-      const key = (r.start || "").slice(0, 10);
-      if (!key) continue;
-      const list = buckets.get(key);
-      if (list) list.push(r); else buckets.set(key, [r]);
-    }
-    return [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [rows]);
-
-  if (!days.length) return null;
-  const peak = Math.max(...days.map(([, v]) => v.length), 1);
-
-  return (
-    <div className="rounded-lg border bg-white p-3">
-      <div className="mb-2 text-[11px] uppercase tracking-wide text-gray-400">
-        Activations per day
-      </div>
-      <div className="flex items-end gap-1 overflow-x-auto">
-        {days.map(([day, list]) => {
-          const tier0 = list.filter((r) => r.tier === "tier0").length;
-          return (
-            <button
-              key={day}
-              onClick={() => onPick(list[0])}
-              title={`${day}: ${list.length} activation(s)${tier0 ? `, ${tier0} tier-0` : ""}`}
-              className="flex w-5 shrink-0 flex-col justify-end hover:opacity-80"
-              style={{ height: 56 }}
-            >
-              <div className={tier0 ? "bg-red-400" : "bg-indigo-300"}
-                   style={{ height: `${Math.max(6, (list.length / peak) * 52)}px` }} />
-            </button>
-          );
-        })}
-      </div>
-      <div className="mt-1 flex justify-between text-[10px] text-gray-400">
-        <span>{days[0][0]}</span>
-        <span>{days[days.length - 1][0]}</span>
-      </div>
-    </div>
-  );
+/** Session start as epoch ms, or null when the source did not stamp one. */
+function startMs(s: EntraActivationSession): number | null {
+  const t = new Date(s.start).getTime();
+  return Number.isNaN(t) ? null : t;
 }
 
 function SessionDrawer({ session, connectionId, onClose }: {
@@ -435,7 +512,11 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function Actions({ data }: { data: EntraActivationActionsResult }) {
   const counts = data.counts || {};
-  const actions = data.actions || [];
+  const actions = data.actions || NO_ACTIONS;
+  // Default is oldest first, the order the audit trail already arrives in — a window of
+  // activity reads as a sequence.
+  const [sort, setSort] = useSortState<ActionKey>("activation-actions", { key: "when", dir: 1 });
+  const sorted = useEntraSorted(actions, sort, compareAction);
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
@@ -487,14 +568,17 @@ function Actions({ data }: { data: EntraActivationActionsResult }) {
           <table className="w-full text-[12px]">
             <thead className="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500">
               <tr>
-                <th className="px-2 py-1.5 font-medium">When</th>
-                <th className="px-2 py-1.5 font-medium">Operation</th>
-                <th className="px-2 py-1.5 font-medium">Target</th>
-                <th className="px-2 py-1.5 font-medium">Attribution</th>
+                <SortTh label="When" col="when" sort={sort} setSort={setSort} className="px-2" />
+                <SortTh label="Operation" col="operation" sort={sort} setSort={setSort}
+                        firstDir={1} className="px-2" />
+                <SortTh label="Target" col="target" sort={sort} setSort={setSort}
+                        firstDir={1} className="px-2" />
+                <SortTh label="Attribution" col="attribution" sort={sort} setSort={setSort}
+                        className="px-2" title="Sort by attribution — actions that needed this elevation first" />
               </tr>
             </thead>
             <tbody>
-              {actions.map((a: EntraActivationAction, i: number) => (
+              {sorted.map((a: EntraActivationAction, i: number) => (
                 <tr key={i} className="border-t">
                   <td className="whitespace-nowrap px-2 py-1 text-gray-500">
                     {(a.at || "").replace("T", " ").slice(0, 19)}

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, type EntraFinding, type EntraSignal } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
-import { EntraEmpty, SEV_STYLE, SevBadge } from "./EntraShared";
+import { EntraEmpty, SEV_STYLE, SevBadge, SortScopeNote, SortTh, useSortState } from "./EntraShared";
 
 /**
  * The findings inbox — every signal's output in one list with persistent workflow state.
@@ -13,6 +13,14 @@ import { EntraEmpty, SEV_STYLE, SevBadge } from "./EntraShared";
  */
 
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;
+
+/**
+ * Sort columns, matched to the keys `GET /entra/findings` accepts.
+ *
+ * `""` means "whatever order the server chose", which is what the first render must show —
+ * a stored preference is the only thing that should ever override it.
+ */
+type FindingsSortKey = "" | "severity" | "title" | "object" | "signal" | "state";
 
 export function EntraFindingsView({
   connectionId,
@@ -27,14 +35,26 @@ export function EntraFindingsView({
   const [search, setSearch] = useState("");
   const dSearch = useDebounced(search, 150);
   const [selected, setSelected] = useState<EntraFinding | null>(null);
+  // Sorted by the server, not the browser: the request is capped at 500 rows, so a
+  // client-side sort would reorder the cap rather than the findings and quietly relabel
+  // "the 500 the server picked" as "the top by this column".
+  const [sort, setSort] = useSortState<FindingsSortKey>("findings", { key: "", dir: -1 });
 
   const q = useQuery({
-    queryKey: ["entra-findings", connectionId, severity, pillar ?? "", dSearch],
-    queryFn: () =>
-      api.entraFindings(
-        { severity: severity || undefined, pillar, search: dSearch || undefined, limit: 500 },
-        connectionId,
-      ),
+    queryKey: ["entra-findings", connectionId, severity, pillar ?? "", dSearch, sort.key, sort.dir],
+    queryFn: () => {
+      // Built as a variable rather than inline: api.ts does not yet declare `sort`/`dir`, and
+      // TypeScript only excess-property-checks fresh object literals.
+      const params = {
+        severity: severity || undefined,
+        pillar,
+        search: dSearch || undefined,
+        limit: 500,
+        // No key means no parameter, so the server's own default ordering stands untouched.
+        ...(sort.key ? { sort: sort.key, dir: sort.dir === 1 ? "asc" : "desc" } : {}),
+      };
+      return api.entraFindings(params, connectionId);
+    },
   });
 
   const counts = q.data?.by_severity ?? {};
@@ -86,11 +106,11 @@ export function EntraFindingsView({
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 bg-gray-50">
               <tr className="border-b text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Severity</th>
-                <th className="px-2 py-2 font-medium">Finding</th>
-                <th className="px-2 py-2 font-medium">Object</th>
-                <th className="px-2 py-2 font-medium">Signal</th>
-                <th className="px-2 py-2 font-medium">State</th>
+                <SortTh label="Severity" col="severity" sort={sort} setSort={setSort} className="px-3" />
+                <SortTh label="Finding" col="title" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+                <SortTh label="Object" col="object" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+                <SortTh label="Signal" col="signal" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+                <SortTh label="State" col="state" sort={sort} setSort={setSort} className="px-2" />
               </tr>
             </thead>
             <tbody>
@@ -114,6 +134,7 @@ export function EntraFindingsView({
             </tbody>
           </table>
         )}
+        <SortScopeNote shown={q.data.findings.length} total={q.data.total} />
       </div>
 
       {selected && (

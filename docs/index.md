@@ -54,7 +54,7 @@ AI-driven Azure operations, investigation, governance, and proactive support—d
 
 ### Govern and automate
 
-- Review [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/), [Identity]({{ site.baseurl }}/user-guide/governance-identity/identity/), and [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/).
+- Review [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/), [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/), and [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/).
 - Turn reviewed procedures into [Scheduled Tasks, Workbooks, and Playbooks]({{ site.baseurl }}/user-guide/automations/).
 - Route results through [Connectors]({{ site.baseurl }}/connectors/).
 

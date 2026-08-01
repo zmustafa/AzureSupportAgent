@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
@@ -25,6 +25,9 @@ const KIND_COLOUR: Record<string, string> = {
   oauth_permission: "#ea580c",
   ca_policy: "#059669",
   entra_tenant: "#4f46e5",
+  // Violet, matching the identity-fabric chips: the same external provider, drawn as the
+  // node it behaves like.
+  federated_domain: "#7c3aed",
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -38,6 +41,7 @@ const KIND_LABEL: Record<string, string> = {
   oauth_permission: "Permission",
   ca_policy: "CA policy",
   entra_tenant: "Tenant",
+  federated_domain: "Federated domain",
 };
 
 const EDGE_COLOUR: Record<string, string> = {
@@ -50,6 +54,7 @@ const EDGE_COLOUR: Record<string, string> = {
   excluded_from: "#b45309",
   escalates_to: "#dc2626",
   can_access: "#2563eb",
+  authenticates: "#7c3aed",
 };
 
 type Lens = "none" | "privilege" | "escalation" | "guest" | "risk";
@@ -92,6 +97,7 @@ function Canvas({ nodes, edges, lens, onSelect }: {
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
+  const [zoom, setZoom] = useState(1);
   const onEscalation = useMemo(() => {
     const s = new Set<string>();
     for (const e of edges) if (e.kind === "escalates_to") { s.add(e.source); s.add(e.target); }
@@ -124,6 +130,10 @@ function Canvas({ nodes, edges, lens, onSelect }: {
         { selector: 'node[kind="entra_group"]', style: { shape: "round-rectangle", width: 30, height: 22 } },
         { selector: 'node[kind="oauth_permission"]', style: { shape: "hexagon", width: 20, height: 20, "font-size": 8 } },
         { selector: 'node[kind="ca_policy"]', style: { shape: "round-tag", width: 32, height: 24 } },
+        // Deliberately the largest node on the canvas. It is one external system that can
+        // issue tokens for everything downstream of it, and it should look like it.
+        { selector: 'node[kind="federated_domain"]',
+          style: { shape: "cut-rectangle", width: 54, height: 34, "font-size": 11 } },
         {
           selector: "edge",
           style: {
@@ -160,13 +170,18 @@ function Canvas({ nodes, edges, lens, onSelect }: {
         },
         { selector: "edge.faded", style: { opacity: 0.18 } },
       ],
-      wheelSensitivity: 0.2,
+      // Cytoscape's default is 1. This ran at 0.2, which on a real 400-edge graph meant
+      // roughly a dozen wheel notches to cross one zoom step — slow enough that the canvas
+      // read as unresponsive. Full speed on the wheel, with buttons for precise steps.
+      wheelSensitivity: 1,
     });
     cyRef.current = cy;
     cy.on("tap", "node", (evt) => onSelect((evt.target.data("payload") as EntraGraphNode) || null));
     cy.on("tap", (evt) => { if (evt.target === cy) onSelect(null); });
     cy.on("mouseover", "node", (evt) => evt.target.addClass("hovered"));
     cy.on("mouseout", "node", (evt) => evt.target.removeClass("hovered"));
+    cy.on("zoom", () => setZoom(cy.zoom()));
+    setZoom(cy.zoom());
     return () => { cy.destroy(); cyRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -233,7 +248,51 @@ function Canvas({ nodes, edges, lens, onSelect }: {
     cy.fit(undefined, 40);
   }, [nodes, edges, lens, onEscalation]);
 
-  return <div ref={ref} className="h-full w-full bg-slate-50" />;
+  // Zoom about the centre of the viewport, not the graph's origin: zooming towards a point
+  // nobody is looking at throws the thing you were reading off the canvas.
+  const zoomBy = useCallback((factor: number) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const level = Math.min(cy.maxZoom(), Math.max(cy.minZoom(), cy.zoom() * factor));
+    cy.zoom({ level, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+  }, []);
+
+  const fit = useCallback(() => { cyRef.current?.fit(undefined, 40); }, []);
+
+  // Keyboard is the fast path once the canvas has focus: +/- step, 0 fits.
+  const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(1.3); }
+    else if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomBy(1 / 1.3); }
+    else if (e.key === "0") { e.preventDefault(); fit(); }
+  }, [zoomBy, fit]);
+
+  return (
+    // No wrapper element around the mount on purpose. Cytoscape's column is a flex item
+    // carrying min-width:0 so it can shrink below the canvas it already holds; slipping a
+    // plain div in between hid that from the flex row and brought the resize flicker back.
+    // The controls are a sibling of the mount and position against the column, which the
+    // caller marks `relative`.
+    <>
+      <div
+        ref={ref}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className="h-full w-full bg-slate-50 outline-none"
+      />
+      <div className="absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border bg-white/95 shadow-sm">
+        <button onClick={() => zoomBy(1.3)} title="Zoom in (+)"
+                className="px-2 py-1 text-base leading-5 text-gray-600 hover:bg-gray-100">＋</button>
+        <div className="border-t px-1 py-0.5 text-center text-[10px] tabular-nums text-gray-500"
+             title="Current zoom">
+          {Math.round(zoom * 100)}%
+        </div>
+        <button onClick={() => zoomBy(1 / 1.3)} title="Zoom out (−)"
+                className="border-t px-2 py-1 text-base leading-5 text-gray-600 hover:bg-gray-100">－</button>
+        <button onClick={fit} title="Fit the whole graph (0)"
+                className="border-t px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-100">Fit</button>
+      </div>
+    </>
+  );
 }
 
 function Inspector({ node, escalations, onFocus }: {
@@ -448,7 +507,7 @@ export function EntraGraphView({ connectionId, onOpenSetup }:
             which changed the height, which made Cytoscape re-measure — a visible flicker
             that never settled. overflow-hidden keeps a stale canvas size from leaking out
             during the frame between a resize and Cytoscape catching up. */}
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           {graphQ.isLoading && <div className="p-6 text-sm text-gray-500">Building the graph…</div>}
           {d && !d.meta.loaded && <EntraEmpty kind="cold" />}
           {d && d.meta.loaded && !d.nodes.length && (

@@ -1,10 +1,27 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type EntraCaCell, type EntraCaPolicy } from "../../api";
+import {
+  api,
+  type EntraBreakGlass,
+  type EntraCaCell,
+  type EntraCaCoverage,
+  type EntraCaPolicy,
+} from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
-import { ENTRA_CA_NAV, type EntraCaTab } from "../navConfig";
-import { CoverageBanner, EntraEmpty, SevBadge, StateChip } from "./EntraShared";
+import { ENTRA_CA_NAV, ENTRA_CA_TAB_IDS } from "../navConfig";
+import {
+  CA_STATE_RANK,
+  CoverageBanner,
+  EntraEmpty,
+  SevBadge,
+  SortTh,
+  StateChip,
+  cmp,
+  useEntraSorted,
+  useSortState,
+  useSubTabRoute,
+} from "./EntraShared";
 import { EntraSimulatorView } from "./EntraSimulatorView";
 
 /**
@@ -22,6 +39,90 @@ const CELL_STYLE: Record<string, { chip: string; label: string; title: string }>
   none: { chip: "bg-red-100 text-red-700", label: "✕", title: "No enforced policy applies this control" },
 };
 
+// ------------------------------------------------------------------------- sorting
+// Comparators live at module scope on purpose: one redefined on every render would be a new
+// dependency each time and would defeat the memo inside `useEntraSorted`.
+//
+// Every grid here opens on a `natural` key — a comparator that says nothing, so the stable
+// sort falls through to the order the server sent. The server's ordering for these grids is
+// not reproducible from any single column (the break-glass list is the exception), so the
+// alternative would be a first render that silently disagrees with the API.
+
+type CoverageRow = EntraCaCoverage["matrix"][number];
+type BreakGlassRow = EntraBreakGlass["candidates"][number];
+
+/** Stable empty arrays: a fresh `[]` per render would re-run every sort memo. */
+const NO_COVERAGE_ROWS: CoverageRow[] = [];
+const NO_BREAK_GLASS_ROWS: BreakGlassRow[] = [];
+
+type CoverageKey = "natural" | "cohort" | "size";
+
+/**
+ * The coverage matrix is not a list — it is a grid whose second axis is the control set.
+ *
+ * Only the row-identity columns (cohort, size) are sortable. The control columns are never
+ * reordered: moving them would slide ✓/✕ cells out from under the label that explains them.
+ * The application class is the *heading* of each table rather than a column, so rows are
+ * sorted WITHIN each app-class block and the blocks themselves keep the server's order.
+ */
+function compareCoverageRow(a: CoverageRow, b: CoverageRow, key: CoverageKey): number {
+  switch (key) {
+    case "cohort": return cmp.text(a.label, b.label);
+    case "size": return cmp.num(a.size, b.size);
+    case "natural": return 0;
+  }
+}
+
+type PolicyKey = "natural" | "policy" | "state" | "users" | "excluded" | "controls" | "apps";
+
+function policyAppScope(p: EntraCaPolicy): string {
+  return p.targets_all_apps ? "All cloud apps" : p.app_classes.join(", ");
+}
+
+function comparePolicy(a: EntraCaPolicy, b: EntraCaPolicy, key: PolicyKey): number {
+  switch (key) {
+    case "policy": return cmp.text(a.display_name, b.display_name);
+    // `state` is an enum whose alphabet is meaningless: "disabled" would outrank "enabled".
+    case "state": return cmp.rank(CA_STATE_RANK, a.state, b.state);
+    case "users": return cmp.num(a.effective_user_count, b.effective_user_count);
+    case "excluded": return cmp.num(a.excluded_user_count, b.excluded_user_count);
+    // Both of these sort by the text the cell actually shows, so identical scopes group.
+    case "controls": return cmp.text(a.controls.join(", "), b.controls.join(", "));
+    case "apps": return cmp.text(policyAppScope(a), policyAppScope(b));
+    case "natural": return 0;
+  }
+}
+
+/**
+ * Break-glass confirmation is tri-state, not a boolean.
+ *
+ * "Undecided" sits between the two settled answers so a descending sort leads with the
+ * accounts an operator has vouched for, then the ones still awaiting a decision, and files
+ * the explicitly rejected ones last. Sorting the words would put "confirmed" next to
+ * "rejected" and call that an order.
+ */
+const BREAK_GLASS_CONFIRMED_RANK: Record<string, number> = {
+  confirmed: 3, undecided: 2, rejected: 1,
+};
+
+function confirmedKey(v: boolean | null): string {
+  return v === true ? "confirmed" : v === false ? "rejected" : "undecided";
+}
+
+type BreakGlassKey = "account" | "signals" | "risk" | "confirmed";
+
+function compareBreakGlass(a: BreakGlassRow, b: BreakGlassRow, key: BreakGlassKey): number {
+  switch (key) {
+    case "account": return cmp.text(a.upn || a.display_name, b.upn || b.display_name);
+    // The cell lists the heuristics that fired; `score` is what the server ranked them by,
+    // so this column both reproduces the default order and restores it after a detour.
+    case "signals": return cmp.num(a.score, b.score);
+    case "risk": return cmp.bool(a.lockout_risk, b.lockout_risk);
+    case "confirmed":
+      return cmp.rank(BREAK_GLASS_CONFIRMED_RANK, confirmedKey(a.confirmed), confirmedKey(b.confirmed));
+  }
+}
+
 export function EntraCaView({
   connectionId,
   onOpenSetup,
@@ -29,7 +130,7 @@ export function EntraCaView({
   connectionId: string | null;
   onOpenSetup: () => void;
 }) {
-  const [tab, setTab] = useState<EntraCaTab>("coverage");
+  const [tab, setTab] = useSubTabRoute(ENTRA_CA_TAB_IDS, "coverage");
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b bg-white px-4">
@@ -63,6 +164,12 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
     queryFn: () => api.entraCaCoverage(connectionId),
   });
   const [cell, setCell] = useState<{ cohort: string; app_class: string; control: string } | null>(null);
+  // One sort state for the whole matrix: the row axis is the same cohort list in every
+  // app-class table, so a single ordering keeps the blocks comparable side by side.
+  const [matrixSort, setMatrixSort] = useSortState<CoverageKey>(
+    "ca-coverage-matrix", { key: "natural", dir: -1 },
+  );
+  const matrixRows = useEntraSorted(q.data?.matrix ?? NO_COVERAGE_ROWS, matrixSort, compareCoverageRow);
 
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading coverage…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
@@ -135,8 +242,11 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b bg-gray-50/50 text-left text-xs text-gray-500">
-                <th className="px-3 py-1.5 font-medium">Cohort</th>
-                <th className="px-2 py-1.5 font-medium">Size</th>
+                <SortTh label="Cohort" col="cohort" sort={matrixSort} setSort={setMatrixSort}
+                        firstDir={1} className="px-3" />
+                <SortTh label="Size" col="size" sort={matrixSort} setSort={setMatrixSort}
+                        className="px-2" />
+                {/* Control columns are the other axis of the matrix and are never reordered. */}
                 {data.controls.map((c) => (
                   <th key={c.key} className="px-2 py-1.5 text-center font-medium">
                     {c.label}
@@ -145,7 +255,7 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
               </tr>
             </thead>
             <tbody>
-              {data.matrix.map((row) => (
+              {matrixRows.map((row) => (
                 <tr key={row.cohort} className="border-b last:border-b-0">
                   <td className="px-3 py-1.5 text-gray-800">{row.label}</td>
                   <td className="px-2 py-1.5 text-gray-500">{row.size.toLocaleString()}</td>
@@ -279,6 +389,9 @@ function PoliciesTab({ connectionId }: { connectionId: string | null }) {
     const needle = dSearch.toLowerCase();
     return all.filter((p) => p.display_name.toLowerCase().includes(needle));
   }, [q.data, dSearch]);
+  // Filter first, then sort: the header reorders whatever the search box left behind.
+  const [sort, setSort] = useSortState<PolicyKey>("ca-policies", { key: "natural", dir: -1 });
+  const sorted = useEntraSorted(rows, sort, comparePolicy);
 
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading policies…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
@@ -297,16 +410,17 @@ function PoliciesTab({ connectionId }: { connectionId: string | null }) {
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-              <th className="px-3 py-2 font-medium">Policy</th>
-              <th className="px-2 py-2 font-medium">State</th>
-              <th className="px-2 py-2 font-medium">Users</th>
-              <th className="px-2 py-2 font-medium">Excluded</th>
-              <th className="px-2 py-2 font-medium">Controls</th>
-              <th className="px-2 py-2 font-medium">Apps</th>
+              <SortTh label="Policy" col="policy" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+              <SortTh label="State" col="state" sort={sort} setSort={setSort} className="px-2"
+                      title="Sort by enforcement: enabled, then report-only, then disabled" />
+              <SortTh label="Users" col="users" sort={sort} setSort={setSort} className="px-2" />
+              <SortTh label="Excluded" col="excluded" sort={sort} setSort={setSort} className="px-2" />
+              <SortTh label="Controls" col="controls" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
+              <SortTh label="Apps" col="apps" sort={sort} setSort={setSort} firstDir={1} className="px-2" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => (
+            {sorted.map((p) => (
               <tr
                 key={p.id}
                 onClick={() => setSelected(p.id)}
@@ -490,6 +604,9 @@ function BreakGlassTab({ connectionId }: { connectionId: string | null }) {
     queryFn: () => api.entraCaBreakGlass(connectionId),
   });
   const [busy, setBusy] = useState<string | null>(null);
+  // The server ranks candidates by heuristic score; opening on that column reproduces it.
+  const [sort, setSort] = useSortState<BreakGlassKey>("ca-breakglass", { key: "signals", dir: -1 });
+  const candidates = useEntraSorted(q.data?.candidates ?? NO_BREAK_GLASS_ROWS, sort, compareBreakGlass);
 
   const confirm = async (userId: string, confirmed: boolean) => {
     setBusy(userId);
@@ -530,14 +647,17 @@ function BreakGlassTab({ connectionId }: { connectionId: string | null }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Account</th>
-                <th className="px-2 py-2 font-medium">Signals</th>
-                <th className="px-2 py-2 font-medium">Risk</th>
-                <th className="px-2 py-2 font-medium">Confirmed</th>
+                <SortTh label="Account" col="account" sort={sort} setSort={setSort} firstDir={1} className="px-3" />
+                <SortTh label="Signals" col="signals" sort={sort} setSort={setSort} className="px-2"
+                        title="Sort by how strongly the account matches the break-glass heuristic" />
+                <SortTh label="Risk" col="risk" sort={sort} setSort={setSort} className="px-2"
+                        title="Sort by lockout risk" />
+                <SortTh label="Confirmed" col="confirmed" sort={sort} setSort={setSort} className="px-2"
+                        title="Sort by confirmation: confirmed, then undecided, then rejected" />
               </tr>
             </thead>
             <tbody>
-              {q.data.candidates.map((c) => (
+              {candidates.map((c) => (
                 <tr key={c.user_id} className="border-b last:border-b-0 align-top">
                   <td className="px-3 py-2">
                     <div className="font-medium text-gray-900">{c.upn || c.display_name}</div>

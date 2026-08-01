@@ -37,10 +37,14 @@ KIND_SP = "service_principal"
 KIND_MANAGED_IDENTITY = "managed_identity"
 KIND_PERMISSION = "oauth_permission"
 KIND_CA_POLICY = "ca_policy"
+# A domain whose users are authenticated by somebody else. It is a node rather than a
+# property because that is what it behaves like: an external system with an edge to every
+# principal it can issue tokens for.
+KIND_FEDERATED_DOMAIN = "federated_domain"
 
 NODE_KINDS: tuple[str, ...] = (
     KIND_TENANT, KIND_USER, KIND_GUEST, KIND_GROUP, KIND_ROLE, KIND_APP, KIND_SP,
-    KIND_MANAGED_IDENTITY, KIND_PERMISSION, KIND_CA_POLICY,
+    KIND_MANAGED_IDENTITY, KIND_PERMISSION, KIND_CA_POLICY, KIND_FEDERATED_DOMAIN,
 )
 
 # ------------------------------------------------------------------------- edge kinds
@@ -54,10 +58,13 @@ EDGE_EXCLUDED_FROM = "excluded_from"
 EDGE_ESCALATES_TO = "escalates_to"
 EDGE_CAN_ACCESS = "can_access"
 EDGE_IN_TENANT = "in_tenant"
+# The identity provider issues the token this principal signs in with.
+EDGE_AUTHENTICATES = "authenticates"
 
 EDGE_KINDS: tuple[str, ...] = (
     EDGE_MEMBER_OF, EDGE_OWNS, EDGE_ACTIVE_IN, EDGE_ELIGIBLE_FOR, EDGE_GRANTED,
     EDGE_PROTECTED_BY, EDGE_EXCLUDED_FROM, EDGE_ESCALATES_TO, EDGE_CAN_ACCESS, EDGE_IN_TENANT,
+    EDGE_AUTHENTICATES,
 )
 
 # Caps. A graph nobody can read is worse than no graph.
@@ -866,7 +873,66 @@ SCOPES: tuple[dict[str, str], ...] = (
      "blurb": "Everyone who holds it, however they hold it."},
     {"kind": "policy", "label": "Focus a Conditional Access policy",
      "blurb": "Covered and excluded cohorts for one policy."},
+    {"kind": "federation", "label": "Federated authentication",
+     "blurb": "Which external identity provider can issue tokens for privileged principals."},
 )
+
+
+def federation_map(data: dict[str, Any]) -> dict[str, Any]:
+    """Which external identity provider can issue tokens for privileged principals.
+
+    The question this answers is the one a federated tenant cannot answer anywhere else:
+    *if that provider is compromised, whose privilege does the attacker inherit?* Entra
+    accepts the provider's tokens — including its multi-factor claim, unless the trust says
+    otherwise — so every privileged principal whose UPN sits on a federated domain is
+    reachable from a single external system.
+
+    Only privileged principals are drawn. Every user on the domain would be thousands of
+    identical nodes saying one thing; the tier-0 and tier-1 holders are the answer.
+    """
+    fabric = ((data.get("tenant") or {}).get("identity_fabric")) or {}
+    trusts = fabric.get("federation") or []
+    if not fabric.get("readable"):
+        return _finish([], [], note="The domain list could not be read, so federation is unknown.")
+    if not trusts:
+        return _finish([], [], note="No domain is federated. Entra authenticates every user itself.")
+
+    roles = data.get("roles") or {}
+    people = data.get("people") or {}
+    users = {str(u.get("id")): u for u in people.get("users") or []}
+    from app.entra.collectors.roles import privileged_principal_ids
+
+    privileged = privileged_principal_ids(roles)
+
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    for trust in trusts:
+        domain = str(trust.get("domain") or "")
+        vendor = (trust.get("vendor") or {}).get("label") or "Unrecognised provider"
+        mfa = trust.get("mfa_behaviour") or {}
+        nid = f"efd:{domain.lower()}"
+        nodes.append(_node(
+            nid, KIND_FEDERATED_DOMAIN, f"{domain} → {vendor}",
+            domain=domain, vendor=vendor, issuer_uri=str(trust.get("issuer_uri") or ""),
+            host=str(trust.get("host") or ""), protocol=str(trust.get("protocol") or ""),
+            mfa_trusted=bool(mfa.get("trusted")), mfa_behaviour=str(mfa.get("value") or ""),
+            user_count=trust.get("user_count"),
+        ))
+        suffix = f"@{domain.lower()}"
+        for uid in privileged:
+            user = users.get(str(uid))
+            if not user or not str(user.get("upn") or "").lower().endswith(suffix):
+                continue
+            nodes.append(_user_node(user, privileged=True))
+            edges.append(_edge(
+                nid, user_id(str(user.get("id") or "")), EDGE_AUTHENTICATES,
+                label="authenticates",
+                mfa_trusted=bool(mfa.get("trusted")),
+            ))
+    note = ("Every privileged principal below signs in through the provider above. Where the "
+            "trust's multi-factor claim is accepted, that provider can satisfy Entra MFA on "
+            "their behalf.")
+    return _finish(nodes, edges, note=note)
 
 
 def build(data: dict[str, Any], analysis: dict[str, Any], *, scope_kind: str,
@@ -882,11 +948,13 @@ def build(data: dict[str, Any], analysis: dict[str, Any], *, scope_kind: str,
         return focus_role(data, scope_id)
     if scope_kind == "policy" and scope_id:
         return focus_policy(data, analysis, scope_id)
+    if scope_kind == "federation":
+        return federation_map(data)
     return privileged_overview(data, analysis)
 
 
 __all__ = [
     "ESCALATION_PRIMITIVES", "EDGE_KINDS", "NODE_KINDS", "SCOPES", "build",
     "escalation_edges", "escalation_map", "focus_application", "focus_policy",
-    "focus_principal", "focus_role", "privileged_overview", "TIER0", "TIER1",
+    "focus_principal", "focus_role", "federation_map", "privileged_overview", "TIER0", "TIER1",
 ]

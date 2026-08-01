@@ -484,9 +484,74 @@ def test_managed_identities_get_their_own_node_kind():
 
 
 def test_scopes_and_primitives_are_published_for_the_ui():
-    assert {s["kind"] for s in br.SCOPES} >= {"privileged", "escalation", "principal", "role"}
+    assert {s["kind"] for s in br.SCOPES} >= {"privileged", "escalation", "principal", "role",
+                                              "federation"}
     for primitive in br.ESCALATION_PRIMITIVES:
         assert primitive["name"] and primitive["rule"] and primitive["confidence"]
+
+
+# ------------------------------------------------------------------------- federation
+# "If that provider is compromised, whose privilege does the attacker inherit?" is a
+# question no other scope answers, and a wrong answer here understates a tenant-wide risk.
+def _federated(*, users=(), assignments=(), readable=True, trusts=None):
+    data = _data(users=users, assignments=assignments)
+    data["tenant"] = {"identity_fabric": {
+        "readable": readable,
+        "federation": list(trusts if trusts is not None else [{
+            "domain": "contoso.com",
+            "vendor": {"label": "PingFederate"},
+            "issuer_uri": "http://contoso.com/PingFederate",
+            "mfa_behaviour": {"value": "acceptIfMfaDoneByFederatedIdp", "trusted": True},
+        }]),
+    }}
+    return data
+
+
+def test_federation_draws_the_provider_and_the_privileged_it_can_impersonate():
+    data = _federated(
+        users=[{"id": "u1", "upn": "admin@contoso.com", "display_name": "Admin", "enabled": True},
+               {"id": "u2", "upn": "helper@contoso.com", "display_name": "Helper", "enabled": True}],
+        assignments=[_assignment("u1", GA_ID, "Admin")],
+    )
+    result = br.federation_map(data)
+    kinds = [n["kind"] for n in result["nodes"]]
+    assert kinds.count(br.KIND_FEDERATED_DOMAIN) == 1
+    # The unprivileged user on the same domain is not drawn: thousands of identical nodes
+    # would say one thing, and the tier-0 holder is the answer.
+    assert [n["label"] for n in result["nodes"] if n["kind"] != br.KIND_FEDERATED_DOMAIN] == ["Admin"]
+    assert {e["kind"] for e in result["edges"]} == {br.EDGE_AUTHENTICATES}
+    assert result["edges"][0]["data"]["mfa_trusted"] is True
+    _assert_no_dangling(result)
+
+
+def test_a_privileged_user_on_a_managed_domain_is_not_reachable_from_the_provider():
+    data = _federated(
+        users=[{"id": "u1", "upn": "admin@contoso.onmicrosoft.com", "display_name": "Cloud",
+                "enabled": True}],
+        assignments=[_assignment("u1", GA_ID, "Cloud")],
+    )
+    result = br.federation_map(data)
+    assert result["edges"] == []
+
+
+def test_a_cloud_only_tenant_says_so_instead_of_drawing_nothing():
+    result = br.federation_map(_federated(trusts=[]))
+    assert result["nodes"] == []
+    assert "No domain is federated" in result["note"]
+
+
+def test_an_unreadable_domain_list_is_unknown_not_clean():
+    result = br.federation_map(_federated(readable=False))
+    assert result["nodes"] == []
+    assert "could not be read" in result["note"]
+
+
+def test_build_routes_the_federation_scope():
+    data = _federated(
+        users=[{"id": "u1", "upn": "admin@contoso.com", "display_name": "Admin", "enabled": True}],
+        assignments=[_assignment("u1", GA_ID, "Admin")],
+    )
+    assert br.build(data, {}, scope_kind="federation") == br.federation_map(data)
 
 
 def test_build_falls_back_to_the_privileged_overview():

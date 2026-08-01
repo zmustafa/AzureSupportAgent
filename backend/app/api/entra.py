@@ -72,6 +72,37 @@ def _analysis(snapshot: dict[str, Any]) -> dict[str, Any]:
     return snapshot.get("_analysis") or {}
 
 
+# ------------------------------------------------------------------------- sorting
+# Grids that page or cap server-side have to sort server-side too. Sorting a capped page
+# in the browser reorders the rows that survived the cap and calls the result "the top by
+# this column", which is a different claim and a wrong one.
+#
+# The rule is the same one the client uses: a row with no value for the sorted column goes
+# LAST whichever way the arrow points. "Not recorded" is not "oldest" and not "zero".
+_FINDING_STATE_RANK = {"open": 4, "acknowledged": 3, "snoozed": 2, "suppressed": 1, "resolved": 0}
+
+
+def _text_key(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text or None
+
+
+def _apply_sort(
+    rows: list[dict[str, Any]],
+    keyfns: dict[str, Any],
+    sort: str | None,
+    direction: str,
+) -> list[dict[str, Any]]:
+    """Sort in place-ish by a named column, missing values last, stably."""
+    keyfn = keyfns.get(sort or "")
+    if keyfn is None:
+        return rows
+    present = [r for r in rows if keyfn(r) is not None]
+    missing = [r for r in rows if keyfn(r) is None]
+    present.sort(key=keyfn, reverse=direction != "asc")
+    return present + missing
+
+
 # =============================================================== lifecycle / status
 @router.get("/status")
 async def status(
@@ -177,6 +208,10 @@ async def setup_checklist(
         claim_error=permissions.get("claim_error", ""),
         domains=permissions.get("domains") or {},
         licence_value=TIER_VALUE,
+        # How the tenant actually authenticates: which domains are federated, to whom, and
+        # what the on-premises bridge is doing. It belongs on this screen because it decides
+        # whether the rest of the product's authentication numbers can be read at face value.
+        identity_fabric=_identity_fabric(snapshot),
         # Which app registration to edit. Without it an operator can grant the permission on
         # the wrong app and see no change — the exact failure this screen exists to prevent.
         app_registration={
@@ -186,6 +221,66 @@ async def setup_checklist(
         },
         consent_url=_consent_url(tenant_id, client_id),
     )
+
+
+def _identity_fabric(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The authentication perimeter, shaped for the screen.
+
+    The raw signing certificate never leaves the collector — only the derived facts
+    (subject, issuer, thumbprint, expiry) are carried here, the same rule application
+    credentials already follow.
+    """
+    tenant = (snapshot.get("data") or {}).get("tenant") or {}
+    fabric = dict(tenant.get("identity_fabric") or {})
+    hybrid = dict(tenant.get("hybrid") or {})
+    trusts = fabric.get("federation") or []
+    return {
+        **fabric,
+        "hybrid": hybrid,
+        "federated": bool(trusts),
+        # One line the header can render without re-deriving it in three places.
+        "summary": _fabric_summary(fabric, trusts),
+    }
+
+
+def _fabric_summary(fabric: dict[str, Any], trusts: list[dict[str, Any]]) -> str:
+    if not fabric.get("readable"):
+        return ""
+    if not trusts:
+        total = len(fabric.get("domains") or [])
+        return f"All {total} domain(s) authenticate in Entra ID. No external provider is federated."
+    vendors = sorted({(t.get("vendor") or {}).get("label") or "an external provider" for t in trusts})
+    share = sum(t.get("user_share") or 0 for t in trusts)
+    who = ", ".join(vendors)
+    tail = f", {round(share * 100)}% of users" if share else ""
+    return (f"{len(trusts)} of {len(fabric.get('domains') or [])} domain(s) federated to "
+            f"{who}{tail}.")
+
+
+def _fabric_brief(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The one-line version, for screens that only need to qualify their own numbers.
+
+    Kept separate from the full block on purpose: the posture header and the auth-methods
+    banner have no use for endpoints or certificate facts, and shipping them everywhere
+    would spread the authentication perimeter across payloads that do not need it.
+    """
+    tenant = (snapshot.get("data") or {}).get("tenant") or {}
+    fabric = tenant.get("identity_fabric") or {}
+    hybrid = tenant.get("hybrid") or {}
+    trusts = fabric.get("federation") or []
+    return {
+        "readable": bool(fabric.get("readable")),
+        "federated": bool(trusts),
+        "federated_count": fabric.get("federated_count", 0),
+        "managed_count": fabric.get("managed_count", 0),
+        "vendors": sorted({(t.get("vendor") or {}).get("label") or "" for t in trusts} - {""}),
+        "domains": [t.get("domain", "") for t in trusts],
+        "user_count": sum(t.get("user_count") or 0 for t in trusts) or None,
+        "user_share": round(sum(t.get("user_share") or 0 for t in trusts), 4) or None,
+        "sync_enabled": bool(hybrid.get("sync_enabled")),
+        "password_sync": hybrid.get("password_sync"),
+        "summary": _fabric_summary(fabric, trusts),
+    }
 
 
 def _consent_url(tenant_id: str, client_id: str) -> str:
@@ -276,12 +371,42 @@ async def posture(
         score=current,
         tenant=tenant,
         counts=_counts(snapshot),
+        # One line under the tenant name: a federated tenant does not authenticate its own
+        # users, which changes how every authentication figure below should be read.
+        identity_fabric=_fabric_brief(snapshot),
         trend={
             "previous_score": (previous or {}).get("score"),
+            "previous_at": (previous or {}).get("at"),
             "delta": (current.get("score") - previous["score"]) if previous and current else None,
-            "points": [{"at": h["at"], "score": h["score"], "coverage": h["coverage"]} for h in history[-90:]],
+            # Per-pillar movement since the previous FULL refresh. A pillar that was blind on
+            # either side has no delta rather than a delta of zero: "unchanged" and "we could
+            # not see it" are different answers and the UI must be able to tell them apart.
+            "pillar_delta": _pillar_delta(current, previous),
+            "points": [
+                {
+                    "at": h["at"],
+                    "score": h["score"],
+                    "coverage": h["coverage"],
+                    # Written by score.history_entry since the first release, but never served
+                    # until the posture screen grew per-pillar sparklines.
+                    "pillars": h.get("pillars") or {},
+                }
+                for h in history[-90:]
+            ],
         },
     )
+
+
+def _pillar_delta(current: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, int]:
+    if not previous:
+        return {}
+    before = previous.get("pillars") or {}
+    out: dict[str, int] = {}
+    for pillar in current.get("pillars") or []:
+        now, then = pillar.get("score"), before.get(pillar.get("key"))
+        if now is not None and then is not None:
+            out[pillar["key"]] = now - then
+    return out
 
 
 def _counts(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -353,6 +478,8 @@ async def findings(
     signal: str | None = None,
     state: str | None = None,
     search: str | None = None,
+    sort: str | None = Query(default=None, pattern="^(severity|title|object|signal|state)$"),
+    dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     offset: int = 0,
     limit: int = Query(default=200, ge=1, le=2000),
     connection_id: str | None = None,
@@ -386,12 +513,21 @@ async def findings(
     if state:
         rows = [f for f in rows if f["state"] == state]
 
+    rows = _apply_sort(rows, {
+        "severity": lambda r: model.SEVERITY_RANK.get(r.get("severity"), None),
+        "title": lambda r: _text_key(r.get("title")),
+        "object": lambda r: _text_key(r.get("object_name")),
+        "signal": lambda r: _text_key(r.get("signal_id")),
+        "state": lambda r: _FINDING_STATE_RANK.get(r.get("state"), None),
+    }, sort, dir)
+
     total = len(rows)
     page = rows[offset: offset + limit]
     spec_index = {s.id: s for s in sig.registry()}
     return _envelope(
         snapshot, cid,
         findings=page, total=total, offset=offset, limit=limit,
+        sort=sort or "", dir=dir,
         by_severity=model.count_by_severity(rows),
         signals={sid: spec_index[sid].public() for sid in {f["signal_id"] for f in page} if sid in spec_index},
         suppressed_count=len(user_state.get("suppressed") or []),
@@ -750,7 +886,10 @@ async def privileged_assignments(
     kind: str = Query(default="standing", pattern="^(standing|eligible|all)$"),
     tier: str | None = None,
     principal_type: str | None = None,
+    privileged: bool = False,
     search: str | None = None,
+    sort: str | None = Query(default=None, pattern="^(principal|type|role|tier|kind|permanent|activation)$"),
+    dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     connection_id: str | None = None,
     principal: Principal = Depends(require_read),
 ) -> dict[str, Any]:
@@ -771,6 +910,11 @@ async def privileged_assignments(
         rows = [r for r in rows if r.get("role_tier") == tier]
     if principal_type:
         rows = [r for r in rows if r.get("principal_type") == principal_type]
+    # Directory role assignments include plenty of unprivileged roles. The overview tiles
+    # are about privileged access specifically, so they need to be able to say so rather
+    # than sending the reader to a grid where most rows are beside the point.
+    if privileged:
+        rows = [r for r in rows if r.get("role_privileged")]
     if search:
         needle = search.lower()
         rows = [r for r in rows
@@ -781,7 +925,17 @@ async def privileged_assignments(
                                                str(r.get("role_id") or ""))
     rows.sort(key=lambda r: (not r.get("role_privileged"), r.get("role_tier", "z"),
                              r.get("role_name", ""), r.get("principal_name", "")))
+    rows = _apply_sort(rows, {
+        "principal": lambda r: _text_key(r.get("principal_name") or r.get("principal_upn")),
+        "type": lambda r: _text_key(r.get("principal_type")),
+        "role": lambda r: _text_key(r.get("role_name")),
+        "tier": lambda r: {"tier0": 3, "tier1": 2, "tier2": 1}.get(str(r.get("role_tier") or ""), None),
+        "kind": lambda r: _text_key(r.get("assignment_kind")),
+        "permanent": lambda r: None if r.get("permanent") is None else (1 if r.get("permanent") else 0),
+        "activation": lambda r: r.get("last_activation") or None,
+    }, sort, dir)
     return _envelope(snapshot, cid, assignments=rows[:2000], total=len(rows),
+                     sort=sort or "", dir=dir,
                      capabilities=roles.get("capabilities") or {})
 
 
@@ -1151,6 +1305,8 @@ async def apps_inventory(
     tier: str | None = None,
     ownerless: bool = False,
     risk_min: int = Query(default=0, ge=0, le=100),
+    sort: str | None = Query(default=None, pattern="^(risk|name|permissions|credentials|owners|assigned|tier)$"),
+    dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     offset: int = 0,
     limit: int = Query(default=200, ge=1, le=2000),
     connection_id: str | None = None,
@@ -1183,10 +1339,22 @@ async def apps_inventory(
     if risk_min:
         rows = [r for r in rows if r["risk_score"] >= risk_min]
     rows.sort(key=lambda r: (-r["risk_score"], r["display_name"]))
+    rows = _apply_sort(rows, {
+        "risk": lambda r: r.get("risk_score"),
+        "name": lambda r: _text_key(r.get("display_name")),
+        "permissions": lambda r: r.get("granted_permissions"),
+        "credentials": lambda r: r.get("credential_count"),
+        # Ownerless is a fact; "we cannot read owners" is not. Only the former sorts.
+        "owners": lambda r: r.get("owner_count") if r.get("owners_known") else None,
+        "assigned": lambda r: r.get("assigned_principals"),
+        "tier": lambda r: (_TIER_ORDER.index(r["max_permission_tier"])
+                           if r.get("max_permission_tier") in _TIER_ORDER else None),
+    }, sort, dir)
 
     return _envelope(
         snapshot, cid,
         apps=rows[offset: offset + limit], total=len(rows), offset=offset, limit=limit,
+        sort=sort or "", dir=dir,
         counts=apps.get("counts") or {}, capabilities=apps.get("capabilities") or {},
         risk_components=_risk_component_meta(),
     )
@@ -1521,8 +1689,29 @@ async def signals_overview(
         counts=risk.get("counts") or {},
         # Repeated at the top level so no chart can render without seeing it.
         sampled=bool(signins.get("sampled")),
+        # The window is the only lever a reader has against the row cap, so the screen has
+        # to be able to offer it. `days` is what the NEXT collection will use; `data_days`
+        # is what the numbers on screen actually cover. They differ between changing the
+        # setting and re-collecting, and conflating them would let the page claim a window
+        # it has not collected.
+        lookback=_signin_lookback(signins),
         domain=(snapshot.get("domains") or {}).get("risk") or {},
     )
+
+
+# Matches the clamp in app.core.app_settings, which is the authority.
+_LOOKBACK_MIN = 1
+_LOOKBACK_MAX = 90
+
+
+def _signin_lookback(signins: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "days": snapshot_mod.settings()["signin_lookback_days"],
+        "data_days": signins.get("lookback_days"),
+        "min": _LOOKBACK_MIN,
+        "max": _LOOKBACK_MAX,
+        "setting_key": "entra_signin_lookback_days",
+    }
 
 
 @router.get("/signals/auth-methods")
@@ -1589,6 +1778,11 @@ async def signals_auth_methods(
         gap_total=len(gap),
         enabled_total=len(enabled),
         unreported=unreported,
+        # Federated users register their factors with the identity provider, not with Entra,
+        # so every figure above describes the cloud-authenticated population plus whoever
+        # separately registered a method here. Without this the screen reports a gap it
+        # structurally cannot see — the same "blind is not zero" failure the score avoids.
+        identity_fabric=_fabric_brief(snapshot),
     )
 
 
@@ -2123,6 +2317,8 @@ async def findings_inbox(
     ageing_days: int | None = None,
     unassigned: bool = False,
     search: str | None = None,
+    sort: str | None = Query(default=None, pattern="^(severity|title|object|state|age|assignee)$"),
+    dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     offset: int = 0,
     limit: int = Query(default=200, ge=1, le=2000),
     connection_id: str | None = None,
@@ -2181,6 +2377,14 @@ async def findings_inbox(
 
     rows.sort(key=lambda r: (-model.SEVERITY_RANK.get(r["severity"], 0),
                              -(r["age_days"] or 0), r.get("object_name", "")))
+    rows = _apply_sort(rows, {
+        "severity": lambda r: model.SEVERITY_RANK.get(r.get("severity"), None),
+        "title": lambda r: _text_key(r.get("title")),
+        "object": lambda r: _text_key(r.get("object_name")),
+        "state": lambda r: _FINDING_STATE_RANK.get(r.get("state"), None),
+        "age": lambda r: r.get("age_days"),
+        "assignee": lambda r: _text_key(r.get("assignee")),
+    }, sort, dir)
     total = len(rows)
     resolved = [
         {"fingerprint": fp, **entry} for fp, entry in ledger.items() if entry.get("resolved_at")
@@ -2189,6 +2393,7 @@ async def findings_inbox(
     return _envelope(
         snapshot, cid,
         findings=rows[offset: offset + limit], total=total, offset=offset, limit=limit,
+        sort=sort or "", dir=dir,
         by_severity=model.count_by_severity(rows),
         by_state=_count_by(rows, "state"),
         recently_resolved=resolved[:50],

@@ -414,3 +414,5 @@ export const ENTRA_CA_NAV: { id: EntraCaTab; label: string }[] = [
   { id: "breakglass", label: "Break-glass" },
   { id: "simulate", label: "Simulate" },
 ];
+
+export const ENTRA_CA_TAB_IDS = ENTRA_CA_NAV.map((n) => n.id);

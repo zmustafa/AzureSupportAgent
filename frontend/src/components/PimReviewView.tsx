@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PimFinding, type PimGroupKey, type PimOverview } from "../api";
 import { Skeleton } from "../utils/perf";
@@ -29,12 +30,19 @@ const GROUPS: { key: PimGroupKey; label: string; icon: string; blurb: string }[]
   { key: "activation_review", label: "JIT activation review", icon: "⏱️", blurb: "Recent / currently-active activations to review for justification and duration." },
 ];
 
-const KPIS: { key: keyof PimOverview["kpis"]; label: string }[] = [
-  { key: "standing_access", label: "Standing access" },
-  { key: "high_priv_standing", label: "Tier-0 standing" },
-  { key: "stale_eligible", label: "Stale eligible" },
-  { key: "stale_active", label: "Dormant active" },
-  { key: "activations", label: "Activations" },
+/**
+ * Each KPI is a count of one finding group, so each one can filter to it.
+ *
+ * `tier0` is the exception and the reason this table carries more than a label: Tier-0
+ * standing is not its own group, it is the tier-0 slice of standing access. Mapping it to
+ * the group alone would have shown 102 findings under a tile that said 10.
+ */
+const KPIS: { key: keyof PimOverview["kpis"]; label: string; group: PimGroupKey; tier0?: boolean }[] = [
+  { key: "standing_access", label: "Standing access", group: "standing_access" },
+  { key: "high_priv_standing", label: "Tier-0 standing", group: "standing_access", tier0: true },
+  { key: "stale_eligible", label: "Stale eligible", group: "stale_eligible" },
+  { key: "stale_active", label: "Dormant active", group: "stale_active" },
+  { key: "activations", label: "Activations", group: "activation_review" },
 ];
 
 function agoText(seconds: number | null): string {
@@ -96,6 +104,9 @@ function FindingRow({ f }: { f: PimFinding }) {
 
 export function PimReviewPanel({ connectionId = null }: { connectionId?: string | null }) {
   const qc = useQueryClient();
+  // Which KPI the reader drilled into, if any. Null shows every group, which is the state
+  // the panel opens in.
+  const [focus, setFocus] = useState<string>("");
   const q = useQuery<PimOverview>({
     queryKey: ["pimOverview", connectionId],
     queryFn: () => api.pimOverview(connectionId),
@@ -109,6 +120,7 @@ export function PimReviewPanel({ connectionId = null }: { connectionId?: string 
   const data = q.data;
   const neverLoaded = data?.never_loaded;
   const source = data?.meta?.source;
+  const focused = KPIS.find((k) => k.key === focus);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -174,19 +186,44 @@ export function PimReviewPanel({ connectionId = null }: { connectionId?: string 
           <div className="space-y-4">
             {/* KPIs */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-              {KPIS.map(({ key, label }) => (
-                <div key={key} className="rounded-lg border bg-white px-3 py-2">
-                  <div className={`text-xl font-semibold ${data.kpis[key] ? "text-gray-900" : "text-gray-400"}`}>
-                    {data.kpis[key]}
-                  </div>
-                  <div className="truncate text-[11px] text-gray-500">{label}</div>
-                </div>
-              ))}
+              {KPIS.map(({ key, label }) => {
+                const active = focus === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setFocus(active ? "" : key)}
+                    aria-pressed={active}
+                    title={active ? `Show every group again` : `Show only ${label.toLowerCase()}`}
+                    className={`rounded-lg border bg-white px-3 py-2 text-left transition hover:border-brand hover:bg-brand/5 ${
+                      active ? "ring-2 ring-brand" : ""}`}
+                  >
+                    <div className={`text-xl font-semibold ${data.kpis[key] ? "text-gray-900" : "text-gray-400"}`}>
+                      {data.kpis[key]}
+                    </div>
+                    <div className="truncate text-[11px] text-gray-500">{label}</div>
+                  </button>
+                );
+              })}
             </div>
 
+            {focused && (
+              <div className="flex items-center gap-2 text-[12px] text-gray-600">
+                <span className="rounded-full border border-brand bg-brand/10 px-2 py-0.5 font-medium text-brand">
+                  {focused.label}
+                  {focused.tier0 && " · tier-0 only"}
+                </span>
+                <button onClick={() => setFocus("")} className="text-brand underline underline-offset-2">
+                  show all groups
+                </button>
+              </div>
+            )}
+
             {/* Groups */}
-            {GROUPS.map(({ key, label, icon, blurb }) => {
-              const items = data.groups[key] ?? [];
+            {GROUPS.filter(({ key }) => !focused || focused.group === key).map(({ key, label, icon, blurb }) => {
+              // A KPI that counts a slice of a group has to narrow the group too, or the
+              // list contradicts the number that was clicked.
+              const all = data.groups[key] ?? [];
+              const items = focused?.tier0 ? all.filter((f) => f.role_tier === "tier0") : all;
               const err = data.errors[key];
               const sev = data.group_severity[key];
               return (

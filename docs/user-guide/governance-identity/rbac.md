@@ -110,6 +110,6 @@ Apply least privilege, but do not remove emergency access, deployment identities
 
 ## Related pages
 
-- [Identity]({{ site.baseurl }}/user-guide/governance-identity/identity/)
+- [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/)
 - [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

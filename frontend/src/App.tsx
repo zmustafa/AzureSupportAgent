@@ -185,6 +185,9 @@ export default function App() {
           <Route path="/identity/*" element={<Navigate to="/entra" replace />} />
           <Route path="/entra" element={<ChatView />} />
           <Route path="/entra/:tab" element={<ChatView />} />
+          {/* Sub-tabs are the third segment (/entra/privileged/pim) so a reload, a shared
+              link or the back button all land on the screen the reader was actually on. */}
+          <Route path="/entra/:tab/:sub" element={<ChatView />} />
           <Route path="/coverage" element={<ChatView />} />
           <Route path="/alerts-manager" element={<ChatView />} />
           <Route path="/alerts-manager/simulator" element={<Navigate to="/alerts-manager/visualize" replace />} />

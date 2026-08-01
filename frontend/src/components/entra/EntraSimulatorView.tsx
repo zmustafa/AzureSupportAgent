@@ -1,8 +1,21 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type EntraCaPolicy, type EntraSimulationResult } from "../../api";
+import {
+  api,
+  type EntraCaPolicy,
+  type EntraSavedSimulation,
+  type EntraSimulationCase,
+  type EntraSimulationResult,
+} from "../../api";
 import { formatError } from "../../utils/format";
-import { EntraEmpty } from "./EntraShared";
+import {
+  EntraEmpty,
+  SortScopeNote,
+  SortTh,
+  cmp,
+  useEntraSorted,
+  useSortState,
+} from "./EntraShared";
 
 /**
  * Conditional Access Change Simulator.
@@ -24,6 +37,59 @@ const CATEGORY_META: { key: keyof EntraSimulationResult["counts"]; label: string
     blurb: "Access that was previously restricted." },
   { key: "unchanged", label: "Unchanged", tone: "text-gray-500", blurb: "" },
 ];
+
+// ------------------------------------------------------------------------- sorting
+// Module scope so the comparator identity is stable and `useEntraSorted` can memoise.
+
+/** Stable empty array — a literal per render would invalidate the sort memo every time. */
+const NO_SAVED: EntraSavedSimulation[] = [];
+
+type SavedKey = "label" | "at" | "impact" | "breakglass";
+
+function compareSaved(a: EntraSavedSimulation, b: EntraSavedSimulation, key: SavedKey): number {
+  switch (key) {
+    case "label": return cmp.text(a.label, b.label);
+    case "at": return cmp.date(a.at, b.at);
+    // The cell shows blocked and protection-lost side by side; "newly blocked" is the number
+    // that decides whether a change ships, so it is the one the column orders by.
+    case "impact": return cmp.num(a.counts.newly_blocked ?? 0, b.counts.newly_blocked ?? 0);
+    case "breakglass": return cmp.num(a.break_glass_affected, b.break_glass_affected);
+  }
+}
+
+/**
+ * Sign-in verdicts, worst first.
+ *
+ * `blocked` is an explicit block policy and `blocked_effective` is a control the principal
+ * cannot satisfy — both deny access, and both must outrank a mere extra prompt. Alphabetical
+ * order would file "blocked" above "challenged" by luck and "granted" above them both.
+ */
+const VERDICT_RANK: Record<string, number> = {
+  blocked: 4, blocked_effective: 3, challenged: 2, granted: 1,
+};
+
+/** The reason column reads out the change category; it ranks by how bad the change is. */
+const CASE_CATEGORY_RANK: Record<string, number> = {
+  newly_blocked: 4, protection_lost: 3, newly_challenged: 2, newly_granted: 1, unchanged: 0,
+};
+
+type CaseKey = "natural" | "principal" | "context" | "before" | "after" | "reason";
+
+/**
+ * `natural` keeps the server's ordering — break-glass first, then category severity, then
+ * privileged, then name. No single column reproduces that, and it is the ordering the reader
+ * must see before they touch a header, so it is the default rather than an approximation.
+ */
+function compareCase(a: EntraSimulationCase, b: EntraSimulationCase, key: CaseKey): number {
+  switch (key) {
+    case "principal": return cmp.text(a.principal, b.principal);
+    case "context": return cmp.text(a.context_label, b.context_label);
+    case "before": return cmp.rank(VERDICT_RANK, a.from, b.from);
+    case "after": return cmp.rank(VERDICT_RANK, a.to, b.to);
+    case "reason": return cmp.rank(CASE_CATEGORY_RANK, a.category, b.category);
+    case "natural": return 0;
+  }
+}
 
 export function EntraSimulatorView({ connectionId }: { connectionId: string | null }) {
   const policiesQ = useQuery({
@@ -52,6 +118,12 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
     if (changeKind === "report_only") return policies.filter((p) => p.is_enforced);
     return policies.filter((p) => p.is_enforced || p.is_report_only);
   }, [policies, changeKind]);
+
+  // Saved simulations arrive newest first; opening on the timestamp reproduces that exactly.
+  const [savedSort, setSavedSort] = useSortState<SavedKey>(
+    "ca-saved-simulations", { key: "at", dir: -1 },
+  );
+  const savedRows = useEntraSorted(savedQ.data?.simulations ?? NO_SAVED, savedSort, compareSaved);
 
   const run = async (save: boolean) => {
     if (!policyId) return;
@@ -177,8 +249,21 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
         <div className="rounded-lg border bg-white">
           <div className="border-b px-4 py-2 text-[13px] font-semibold text-gray-800">Saved simulations</div>
           <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
+                <SortTh label="Simulation" col="label" sort={savedSort} setSort={setSavedSort}
+                        firstDir={1} className="px-3" />
+                <SortTh label="Run" col="at" sort={savedSort} setSort={setSavedSort} className="px-2" />
+                <SortTh label="Impact" col="impact" sort={savedSort} setSort={setSavedSort} className="px-2"
+                        title="Sort by newly blocked principals" />
+                <SortTh label="Break-glass" col="breakglass" sort={savedSort} setSort={setSavedSort}
+                        className="px-2" />
+                {/* Re-run is an action, not an ordering. */}
+                <th className="px-2 py-1.5" />
+              </tr>
+            </thead>
             <tbody>
-              {savedQ.data!.simulations.map((s) => (
+              {savedRows.map((s) => (
                 <tr key={s.id} className="border-b last:border-b-0">
                   <td className="px-3 py-1.5 text-gray-900">{s.label}</td>
                   <td className="px-2 py-1.5 text-gray-500">{s.at?.slice(0, 16).replace("T", " ")}</td>
@@ -216,6 +301,8 @@ export function EntraSimulatorView({ connectionId }: { connectionId: string | nu
 }
 
 function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
+  const [caseSort, setCaseSort] = useSortState<CaseKey>("ca-sim-cases", { key: "natural", dir: -1 });
+  const cases = useEntraSorted(result.cases, caseSort, compareCase);
   return (
     <div className="space-y-3">
       {/* Break-glass impact is ALWAYS first and never collapsed. */}
@@ -285,15 +372,20 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">Principal</th>
-                <th className="px-2 py-2 font-medium">Context</th>
-                <th className="px-2 py-2 font-medium">Before</th>
-                <th className="px-2 py-2 font-medium">After</th>
-                <th className="px-2 py-2 font-medium">Reason</th>
+                <SortTh label="Principal" col="principal" sort={caseSort} setSort={setCaseSort}
+                        firstDir={1} className="px-3" />
+                <SortTh label="Context" col="context" sort={caseSort} setSort={setCaseSort}
+                        firstDir={1} className="px-2" />
+                <SortTh label="Before" col="before" sort={caseSort} setSort={setCaseSort} className="px-2"
+                        title="Sort by prior verdict, hardest denial first" />
+                <SortTh label="After" col="after" sort={caseSort} setSort={setCaseSort} className="px-2"
+                        title="Sort by resulting verdict, hardest denial first" />
+                <SortTh label="Reason" col="reason" sort={caseSort} setSort={setCaseSort} className="px-2"
+                        title="Sort by change category, most damaging first" />
               </tr>
             </thead>
             <tbody>
-              {result.cases.map((c, i) => (
+              {cases.map((c, i) => (
                 <tr key={i} className="border-b last:border-b-0">
                   <td className="px-3 py-1.5">
                     <span className="text-gray-900">{c.principal}</span>
@@ -318,6 +410,8 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
               ))}
             </tbody>
           </table>
+          {/* The case list is budgeted server-side, so a header only reorders what arrived. */}
+          <SortScopeNote shown={result.cases.length} total={result.case_total} sorted="the loaded cases" />
         </div>
       )}
 

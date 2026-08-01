@@ -162,6 +162,7 @@ def _load_specs() -> list[SignalSpec]:
     from app.entra.signal_defs import app as app_defs
     from app.entra.signal_defs import auth as auth_defs
     from app.entra.signal_defs import ca as ca_defs
+    from app.entra.signal_defs import fed as fed_defs
     from app.entra.signal_defs import gov as gov_defs
     from app.entra.signal_defs import mon as mon_defs
     from app.entra.signal_defs import ppl as ppl_defs
@@ -171,7 +172,7 @@ def _load_specs() -> list[SignalSpec]:
 
     specs: list[SignalSpec] = []
     for module in (auth_defs, ca_defs, priv_defs, priv_pim_defs, activation_defs, app_defs,
-                   ppl_defs, risk_defs, gov_defs, mon_defs):
+                   ppl_defs, risk_defs, gov_defs, mon_defs, fed_defs):
         specs.extend(module.SPECS)
     seen: set[str] = set()
     for s in specs:

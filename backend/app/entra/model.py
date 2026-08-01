@@ -39,6 +39,9 @@ SEVERITY_RANK = {s: i for i, s in enumerate(reversed(SEVERITIES))}  # info=0 ...
 OBJECT_KINDS = (
     "user", "group", "app", "sp", "role", "policy", "tenant",
     "package", "workflow", "review", "device", "credential",
+    # A verified DNS domain. Federation findings hang off one of these rather than the
+    # tenant, because a tenant can federate some domains and not others.
+    "domain",
 )
 
 

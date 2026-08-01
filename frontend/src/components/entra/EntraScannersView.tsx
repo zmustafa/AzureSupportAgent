@@ -4,7 +4,7 @@ import { api } from "../../api";
 import type { EntraInboxRow, EntraScanner, EntraScannerRun } from "../../api";
 import { formatError } from "../../utils/format";
 import { IdentityFindingsPanel } from "../IdentityView";
-import { CoverageBanner, EntraEmpty, SevBadge, useInitialSubTab } from "./EntraShared";
+import { CoverageBanner, EntraEmpty, SevBadge, SortScopeNote, SortTh, useSortState, useSubTabRoute } from "./EntraShared";
 import { FindingDrawer } from "./EntraFindingsView";
 
 // "hygiene" is the former /identity overview. It is kept separate from the inbox because it
@@ -25,6 +25,14 @@ const STATE_LABEL: Record<string, string> = {
   snoozed: "Snoozed",
   suppressed: "Suppressed",
 };
+
+/**
+ * Inbox sort columns, matched to the keys `GET /entra/inbox` accepts.
+ *
+ * `""` is "the server's own ordering" (severity, then age, then object), which is what an
+ * operator sees before they express any preference of their own.
+ */
+type InboxSortKey = "" | "severity" | "title" | "object" | "state" | "age";
 
 function Chip({ active, onClick, children }: {
   active: boolean; onClick: () => void; children: React.ReactNode;
@@ -54,14 +62,22 @@ function InboxTab({ connectionId }: { connectionId: string | null }) {
   const [snoozeDays, setSnoozeDays] = useState(14);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<EntraInboxRow | null>(null);
+  // Server-side, for the same reason as the findings list: the request is capped at 500
+  // rows, and sorting a cap in the browser answers a different question than it claims to.
+  const [sort, setSort] = useSortState<InboxSortKey>("inbox", { key: "", dir: -1 });
 
   const q = useQuery({
-    queryKey: ["entra-inbox", connectionId, severity, state, ageing, unassigned, search],
-    queryFn: () => api.entraInbox({
-      severity: severity || undefined, state: state || undefined,
-      ageing_days: ageing, unassigned: unassigned || undefined,
-      search: search || undefined, limit: 500,
-    }, connectionId),
+    queryKey: ["entra-inbox", connectionId, severity, state, ageing, unassigned, search, sort.key, sort.dir],
+    queryFn: () => {
+      const params = {
+        severity: severity || undefined, state: state || undefined,
+        ageing_days: ageing, unassigned: unassigned || undefined,
+        search: search || undefined, limit: 500,
+        // No key means no parameter, so the server's default ordering stands untouched.
+        ...(sort.key ? { sort: sort.key, dir: sort.dir === 1 ? "asc" : "desc" } : {}),
+      };
+      return api.entraInbox(params, connectionId);
+    },
   });
 
   const bulk = useMutation({
@@ -157,8 +173,14 @@ function InboxTab({ connectionId }: { connectionId: string | null }) {
         <table className="w-full text-[13px]">
           <thead className="sticky top-0 bg-white text-left text-[11px] uppercase tracking-wide text-gray-500">
             <tr className="border-b">
+              {/* Selection column: nothing to order by, and a sortable blank header would
+                  only invite a click that does nothing. */}
               <th className="w-8 px-2 py-1.5"></th>
-              <th>Severity</th><th>Finding</th><th>Object</th><th>State</th><th className="pr-3">Age</th>
+              <SortTh label="Severity" col="severity" sort={sort} setSort={setSort} />
+              <SortTh label="Finding" col="title" sort={sort} setSort={setSort} firstDir={1} />
+              <SortTh label="Object" col="object" sort={sort} setSort={setSort} firstDir={1} />
+              <SortTh label="State" col="state" sort={sort} setSort={setSort} />
+              <SortTh label="Age" col="age" sort={sort} setSort={setSort} className="pr-3" />
             </tr>
           </thead>
           <tbody>
@@ -198,6 +220,7 @@ function InboxTab({ connectionId }: { connectionId: string | null }) {
             )}
           </tbody>
         </table>
+        <SortScopeNote shown={d.findings.length} total={d.total} />
       </div>
 
       {open && (
@@ -434,7 +457,7 @@ function ScannersTab({ connectionId }: { connectionId: string | null }) {
 
 export function EntraScannersView({ connectionId, onOpenSetup }:
   { connectionId: string | null; onOpenSetup?: () => void }) {
-  const [tab, setTab] = useState<Tab>(useInitialSubTab(TABS.map(([id]) => id), "inbox"));
+  const [tab, setTab] = useSubTabRoute(TABS.map(([id]) => id), "inbox");
   const statusQ = useQuery({
     queryKey: ["entra-status", connectionId],
     queryFn: () => api.entraStatus(connectionId),

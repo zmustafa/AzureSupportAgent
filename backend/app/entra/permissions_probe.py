@@ -63,6 +63,10 @@ TIER_3 = (
     "LifecycleWorkflows.Read.All",
     "OnPremDirectorySynchronization.Read.All",
     "DirectoryRecommendations.Read.All",
+    # External identity providers for guests (social and SAML/WS-Fed). Nothing else grants
+    # it: `/identity/identityProviders` answers 403 even with Directory.Read.All, so without
+    # this the guest sign-in perimeter is simply invisible.
+    "IdentityProvider.Read.All",
 )
 ALL_SCOPES = TIER_1 + TIER_2 + TIER_3
 
@@ -72,7 +76,8 @@ TIERS: list[dict[str, Any]] = [
     {"tier": 2, "name": "Recommended", "scopes": list(TIER_2),
      "unlocks": "Dormancy, MFA registration truth, consent posture, change history and sign-in analysis."},
     {"tier": 3, "name": "Complete", "scopes": list(TIER_3),
-     "unlocks": "PIM depth, Identity Protection risk, access reviews, entitlement and lifecycle workflows."},
+     "unlocks": "PIM depth, Identity Protection risk, access reviews, entitlement, lifecycle "
+                "workflows and the external identity providers guests sign in with."},
 ]
 
 # Which permissions each collector domain needs. A domain is blind when NONE of the

@@ -246,6 +246,8 @@ def analyse(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
             ca_analysis = {}
     data["_ca_analysis"] = ca_analysis
 
+    _attach_federation_population(data)
+
     result = sig.evaluate_all(data, snapshot["domains"], ctx, snapshot.get("licences"))
     score = score_mod.compute(data, result, ctx)
 
@@ -273,6 +275,37 @@ def _attach_derived(snapshot: dict[str, Any], analysis: dict[str, Any]) -> None:
     data["_azure_link"] = analysis.get("azure_link") or azure_link_mod.empty(
         "The Azure join has not been computed for this snapshot yet."
     )
+    # The memo short-circuits `analyse`, so a cached snapshot would otherwise carry
+    # federation rows with no population attached.
+    _attach_federation_population(data)
+
+
+def _attach_federation_population(data: dict[str, Any]) -> None:
+    """Join each federation trust to the users who sign in through it.
+
+    Two collectors own the halves of this: `tenant` knows which domains are federated,
+    `people` knows every UPN. Neither reads the other during collection, so the join happens
+    here — where both are already loaded and no extra Graph call is needed.
+
+    A trust with no population attached is a trust whose user list could not be read; the
+    keys are simply absent rather than zero, so nothing renders "0 users" for a domain that
+    might have thousands.
+    """
+    from app.entra import federation as fed
+
+    fabric = ((data.get("tenant") or {}).get("identity_fabric")) or {}
+    trusts = fabric.get("federation") or []
+    if not trusts:
+        return
+    users = (data.get("people") or {}).get("users")
+    if not isinstance(users, list) or not users:
+        return
+    total = len(users)
+    for trust in trusts:
+        count = fed.population(users, str(trust.get("domain") or ""))
+        trust["user_count"] = count
+        trust["user_share"] = round(count / total, 4) if total else None
+    fabric["user_total"] = total
 
 
 def _state_stamp(tenant_id: str) -> str:

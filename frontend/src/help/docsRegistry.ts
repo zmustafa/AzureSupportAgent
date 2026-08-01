@@ -57,8 +57,17 @@ export const DOCUMENTATION_TARGETS: Readonly<Record<string, DocumentationTarget>
 
   "/policy": target("Azure Policy", "/user-guide/governance-identity/azure-policy", "/how-to/governance-identity"),
   // The Identity screen was absorbed by Entra ID, so its documentation is now the Entra help
-  // target. /identity itself redirects and never reaches this lookup.
-  "/entra": target("Entra ID", "/user-guide/governance-identity/identity", "/how-to/governance-identity/identity-reviews"),
+  // target. /identity itself redirects and never reaches this lookup. Each Entra tab has its
+  // own reference page; longest-prefix matching picks the tab entry before the /entra one.
+  "/entra/setup": target("Entra setup and coverage", "/user-guide/governance-identity/entra-setup-coverage", "/how-to/governance-identity/entra-first-refresh"),
+  "/entra/conditional-access": target("Entra Conditional Access", "/user-guide/governance-identity/entra-conditional-access", "/how-to/governance-identity/close-ca-coverage-gaps"),
+  "/entra/privileged": target("Entra privileged access", "/user-guide/governance-identity/entra-privileged", "/how-to/governance-identity/review-privileged-activity"),
+  "/entra/applications": target("Entra applications and consent", "/user-guide/governance-identity/entra-applications", "/how-to/governance-identity/investigate-entra-finding"),
+  "/entra/signals": target("Entra risk and sign-ins", "/user-guide/governance-identity/entra-signals", "/how-to/governance-identity/investigate-entra-finding"),
+  "/entra/governance": target("Entra governance", "/user-guide/governance-identity/entra-governance", "/how-to/governance-identity/investigate-entra-finding"),
+  "/entra/graph": target("Entra blast radius", "/user-guide/governance-identity/entra-blast-radius", "/how-to/governance-identity/review-privileged-activity"),
+  "/entra/findings": target("Entra findings and scanners", "/user-guide/governance-identity/entra-findings-scanners", "/how-to/governance-identity/investigate-entra-finding"),
+  "/entra": target("Entra ID", "/user-guide/governance-identity/identity", "/how-to/governance-identity/entra-first-refresh"),
   "/rbac": target("RBAC", "/user-guide/governance-identity/rbac", "/how-to/governance-identity/rbac-access-reviews"),
 
   "/radar": target("Retirement Radar", "/user-guide/lifecycle-investigation/retirement-radar", "/how-to/lifecycle-investigation/retirement-radar"),

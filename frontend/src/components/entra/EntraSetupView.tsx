@@ -1,8 +1,31 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type EntraPermissionRecheck } from "../../api";
+import { api, type EntraDomainMeta, type EntraPermissionRecheck } from "../../api";
 import { formatError } from "../../utils/format";
-import { EntraEmpty, StateChip, domainNote, BlockerList } from "./EntraShared";
+import {
+  EntraEmpty, StateChip, domainNote, BlockerList,
+  DOMAIN_STATE_RANK, SortTh, cmp, useEntraSorted, useSortState, type SortState,
+} from "./EntraShared";
+import { IdentityFabricCard } from "./EntraIdentityFabric";
+
+// ---------------------------------------------------------------------------- sorting
+// "none" is the untouched state. `meta.domains` arrives as an object whose key order is the
+// collector's own, and this table must open showing exactly that.
+type DomainSortKey = "none" | "domain" | "state" | "items";
+const DOMAIN_SORT_DEFAULT: SortState<DomainSortKey> = { key: "none", dir: -1 };
+
+function compareDomain(a: EntraDomainMeta, b: EntraDomainMeta, key: DomainSortKey): number {
+  switch (key) {
+    case "domain": return cmp.text(a.name, b.name);
+    // Ranked, not alphabetical, and ranked worst-highest so one descending click puts the
+    // errored and not-permitted domains — the only rows worth acting on — at the top.
+    case "state": return cmp.rank(DOMAIN_STATE_RANK, a.status, b.status);
+    // A domain that never reported an item count has not collected zero items; cmp.num
+    // treats the absence as unknown and sinks it either way.
+    case "items": return cmp.num(a.item_count, b.item_count);
+    default: return 0;
+  }
+}
 
 /**
  * Setup & coverage.
@@ -88,6 +111,9 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
           )}
         </Card>
       )}
+
+      {/* How the tenant authenticates ------------------------------------------- */}
+      <IdentityFabricCard fabric={setupQ.data?.identity_fabric} />
 
       {/* Token + licence state -------------------------------------------------- */}
       <div className="grid gap-3 md:grid-cols-2">
@@ -188,28 +214,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
         {!meta.loaded ? (
           <EntraEmpty kind="cold" detail="No collection has run for this tenant yet." />
         ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b text-left text-xs text-gray-500">
-                <th className="py-1.5 font-medium">Domain</th>
-                <th className="py-1.5 font-medium">State</th>
-                <th className="py-1.5 font-medium">Items</th>
-                <th className="py-1.5 font-medium">Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.values(meta.domains ?? {}).map((d) => (
-                <tr key={d.name} className="border-b last:border-b-0">
-                  <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
-                  <td className="py-1.5">
-                    <StateChip state={d.status} />
-                  </td>
-                  <td className="py-1.5 text-gray-600">{d.item_count.toLocaleString()}</td>
-                  <td className="py-1.5 text-xs text-gray-500">{domainNote(d)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DomainCoverageTable domains={Object.values(meta.domains ?? {})} />
         )}
       </Card>
 
@@ -229,6 +234,43 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Per-domain collection state.
+ *
+ * Its own component so the sort hooks are not stranded behind the `meta.loaded` branch.
+ * The Note column stays unsorted: it is generated prose, and ordering prose alphabetically
+ * says nothing a reader wanted to know.
+ */
+function DomainCoverageTable({ domains }: { domains: EntraDomainMeta[] }) {
+  const [sort, setSort] = useSortState<DomainSortKey>("setup-domain-coverage", DOMAIN_SORT_DEFAULT);
+  const rows = useEntraSorted(domains, sort, compareDomain);
+  return (
+    <table className="w-full text-[13px]">
+      <thead>
+        <tr className="border-b text-left text-xs text-gray-500">
+          <SortTh label="Domain" col="domain" sort={sort} setSort={setSort} firstDir={1} />
+          <SortTh label="State" col="state" sort={sort} setSort={setSort}
+                  title="Sort by collection state — descending puts errors and blind domains first" />
+          <SortTh label="Items" col="items" sort={sort} setSort={setSort} />
+          <th className="py-1.5 font-medium">Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((d) => (
+          <tr key={d.name} className="border-b last:border-b-0">
+            <td className="py-1.5 font-medium text-gray-800">{d.name}</td>
+            <td className="py-1.5">
+              <StateChip state={d.status} />
+            </td>
+            <td className="py-1.5 text-gray-600">{d.item_count.toLocaleString()}</td>
+            <td className="py-1.5 text-xs text-gray-500">{domainNote(d)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
