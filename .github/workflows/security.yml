@@ -124,36 +124,50 @@ jobs:
               )
           print(f"security ruleset live; sentinel flagged {hits}")
           PY
-      # backend/app is a HARD gate, and is clean at 0. It must agree with the ruff step
-      # above: ruff's `S` ruleset IS flake8-bandit, so a disagreement between the two means
-      # one of them is misconfigured, not that the code changed.
-      - name: bandit (first-party, blocking)
-        run: bandit -r backend/app -ll -q
-
-      # third_party/ is a vendored upstream MCP server, and the Dockerfile COPYs it into
-      # the image, so it DOES ship. It carries 266 pre-existing findings at -ll (248
-      # medium / 18 high), overwhelmingly B608 hardcoded SQL plus B102/B307 exec/eval in
-      # upstream's own code. Blocking on those would wedge every build; dropping them
-      # entirely would make this step decorative, which is exactly what the previous
-      # `continue-on-error: true` did. So it is a RATCHET: the counts may fall, never rise.
-      - name: bandit (vendored third_party, ratchet)
+      # ruff's `S` ruleset IS flake8-bandit, and the ruff step above covers backend/app
+      # only. Bandit's added value is third_party/ -- the vendored MCP server, which ruff
+      # never looks at and which the Dockerfile COPYs into the image. Both roots are clean.
+      #
+      # --exclude is load-bearing. A developer's third_party/entraid-mcp-server/.venv holds
+      # ~17k site-packages files; scanning those reports 266 findings (18 HIGH) that do not
+      # exist in the repository. git tracks 21 .py files under third_party and
+      # .dockerignore keeps the venv out of the image, so those findings are pure local
+      # noise -- but they are what a naive local run produces, and a baseline recorded from
+      # one is wrong by three orders of magnitude. Note bandit does NOT honour `**/` here:
+      # `*/.venv/*` excludes, `**/.venv` is silently ignored.
+      - name: bandit
         run: |
-          bandit -r third_party -ll -q -f json -o bandit-third-party.json || true
+          bandit -r backend/app third_party -ll -q -f json -o bandit.json \
+            --exclude '*/.venv/*,*/site-packages/*' || true
           python - <<'PY'
-          import json, sys
+          import json, subprocess, sys
 
-          BASELINE_TOTAL, BASELINE_HIGH = 266, 18  # measured 2026-07-31 against bandit 1.9.4
+          report = json.load(open("bandit.json"))
+          results = report["results"]
+          scanned = [k for k in report.get("metrics", {}) if k != "_totals"]
+          tracked = [
+              p
+              for p in subprocess.run(
+                  ["git", "ls-files", "backend/app", "third_party"],
+                  capture_output=True, text=True, check=True,
+              ).stdout.split()
+              if p.endswith(".py")
+          ]
 
-          results = json.load(open("bandit-third-party.json"))["results"]
-          high = [r for r in results if r["issue_severity"] == "HIGH"]
-          print(
-              f"third_party: {len(results)} finding(s) at -ll, {len(high)} HIGH "
-              f"(baseline {BASELINE_TOTAL}/{BASELINE_HIGH})"
-          )
-          if len(results) > BASELINE_TOTAL or len(high) > BASELINE_HIGH:
-              sys.exit("vendored findings INCREASED -- triage before refreshing the baseline")
-          if len(results) < BASELINE_TOTAL or len(high) < BASELINE_HIGH:
-              print("counts fell -- lower the baseline in this workflow to lock the gain in")
+          # A scan of NOTHING and a clean scan both print "0 findings". That is not
+          # hypothetical: a baseline measured against a local virtualenv passed in CI
+          # against a tree that contained none of those files, and looked green.
+          print(f"bandit scanned {len(scanned)} file(s); git tracks {len(tracked)} .py file(s)")
+          if len(scanned) < len(tracked):
+              sys.exit(
+                  f"bandit only scanned {len(scanned)} of {len(tracked)} tracked files -- "
+                  "the exclude pattern or the checkout is wrong, not the code"
+              )
+
+          for r in results:
+              print(f"  {r['issue_severity']} {r['test_id']} {r['filename']}:{r['line_number']}")
+          print(f"{len(results)} finding(s) at -ll")
+          sys.exit(1 if results else 0)
           PY
 
   deps:
