@@ -129,6 +129,12 @@ class CollectorContext:
         Returns ``(json_or_none, error_or_none, status_code)``. ``status_code`` is surfaced so a
         collector can distinguish 403 (unauthorized) / 404 (not supported) / 409 (not registered)
         and stamp the right collection_status. Never raises."""
+        from app.azure.arm import arm_path_error
+
+        # `base_url` is not a containment boundary: httpx lets an absolute url replace it
+        # outright, and this request carries the connection's ARM token.
+        if bad := arm_path_error(path):
+            return None, f"ARM request refused: {bad}", 0
         client = self.client
         headers = {"Authorization": f"Bearer {self.token}"}
         region = self.region or "-"

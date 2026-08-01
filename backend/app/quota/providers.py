@@ -36,6 +36,10 @@ _region_cache: dict[tuple[str, str], tuple[float, list[dict[str, str]]]] = {}
 
 
 async def _get(token: str, path: str, params: dict[str, str]) -> tuple[Any, str | None, int]:
+    from app.azure.arm import arm_path_error
+
+    if bad := arm_path_error(path):
+        return None, f"ARM request refused: {bad}", 0
     headers = {"Authorization": f"Bearer {token}"}
     try:
         async with httpx.AsyncClient(timeout=45, base_url=_ARM) as client:

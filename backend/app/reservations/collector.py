@@ -238,6 +238,10 @@ def empty_snapshot(
 
 # --------------------------------------------------------------------- live queries
 async def _arm_get(token: str, path: str, params: dict[str, str]) -> tuple[Any, str | None]:
+    from app.azure.arm import arm_path_error
+
+    if bad := arm_path_error(path):
+        return None, f"ARM request refused: {bad}"
     headers = {"Authorization": f"Bearer {token}"}
     try:
         async with httpx.AsyncClient(timeout=30, base_url=_ARM) as client:

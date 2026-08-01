@@ -199,3 +199,95 @@ async def test_paged_collector_refuses_a_cross_host_nextlink():
     assert out == [{"id": 1}], "the first, legitimate page should still be returned"
     assert "refusing to follow nextLink" in (error or "")
     assert not any("evil.com" in c for c in calls), "the token was sent to the attacker host"
+
+
+# --------------------------------------------------------------------------------------
+# arm.py was not the only place. Four more modules had their own copy of the same helper,
+# each building an httpx client with base_url=_ARM and taking `path` from its caller.
+# `base_url` reads like a containment boundary and is not one, which is exactly why the
+# pattern got duplicated without anyone noticing.
+# --------------------------------------------------------------------------------------
+
+HOSTILE = "https://evil.com/steal"
+
+
+async def test_quota_provider_helper_refuses(monkeypatch):
+    from app.quota import providers
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _exploding_client())
+    data, error, status = await providers._get("TOK", HOSTILE, {})
+    assert data is None and status == 0 and "refused" in (error or "")
+
+
+async def test_reservations_helper_refuses(monkeypatch):
+    from app.reservations import collector
+
+    monkeypatch.setattr(collector.httpx, "AsyncClient", _exploding_client())
+    data, error = await collector._arm_get("TOK", HOSTILE, {})
+    assert data is None and "refused" in (error or "")
+
+
+async def test_quota_collector_context_refuses(monkeypatch):
+    from app.quota.base import CollectorContext
+
+    monkeypatch.setattr("app.quota.base.httpx.AsyncClient", _exploding_client())
+    ctx = CollectorContext(
+        connection={},
+        tenant_id="t",
+        tenant_name="t",
+        subscription_id="s",
+        subscription_name="s",
+        token="TOK",
+    )
+    data, error, status = await ctx.arm_get(HOSTILE, {})
+    assert data is None and status == 0 and "refused" in (error or "")
+
+
+def _exploding_client():
+    def _explode(*_a, **_k):
+        raise AssertionError("an HTTP request was issued for a refused target")
+
+    return _explode
+
+
+def test_every_arm_client_helper_validates_its_path():
+    """Catch a NEW copy of the pattern before it ships.
+
+    Any function that builds an httpx client against `base_url=_ARM` and then requests a
+    caller-supplied path must run it through `arm_path_error` first. The two exemptions
+    below POST to a hard-coded Resource Graph path, so there is no caller input to guard.
+    """
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    exempt = {
+        # Both POST to the fixed "/providers/Microsoft.ResourceGraph/resources" endpoint.
+        ("azure/arm.py", "_arg_query"),
+        ("azure/arm.py", "_arg_query_paged"),
+        # Builds the shared client and hands it to CollectorContext; it never issues a
+        # request itself, and every collector goes through CollectorContext.arm_get,
+        # which is guarded and covered by test_quota_collector_context_refuses above.
+        ("quota/scan.py", "scan_events"),
+    }
+
+    offenders: list[str] = []
+    for py in app_dir.rglob("*.py"):
+        source = py.read_text(encoding="utf-8")
+        if "base_url=_ARM" not in source:
+            continue
+        rel = py.relative_to(app_dir).as_posix()
+        for block in re.split(r"\n(?=(?:async )?def |class )", source):
+            if "base_url=_ARM" not in block:
+                continue
+            name_match = re.match(r"(?:async )?def (\w+)", block.lstrip())
+            name = name_match.group(1) if name_match else "<module>"
+            if (rel, name) in exempt:
+                continue
+            if "arm_path_error" not in block and "arm_path_error" not in source:
+                offenders.append(f"{rel}::{name}")
+
+    assert not offenders, (
+        "these build an ARM client with a caller-supplied path but never call "
+        f"arm_path_error: {offenders}"
+    )
