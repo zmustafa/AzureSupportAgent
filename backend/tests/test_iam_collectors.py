@@ -225,3 +225,137 @@ async def test_every_new_collector_emits_full_schema_rows(monkeypatch, collector
     assert rows, "fixture should produce at least one row"
     for r in rows:
         assert set(r.keys()) == set(schema.COLUMNS)
+
+
+# --------------------------------------------------------------------------- SSRF / token egress
+# Collectors build URLs as f"{_ARM}{scope}/..." with a caller-supplied scope and attach the
+# connection's bearer token to every request, so a scope that can move the HOST exfiltrates that
+# token. CodeQL flagged this as py/partial-ssrf (alert 554).
+
+
+class _ExplodingClient:
+    """Fails the test if a request is ever constructed. Proves the guard runs BEFORE the token
+    is attached, rather than merely discarding the response afterwards."""
+
+    def __init__(self, *a, **kw):
+        raise AssertionError("a bearer-token request was issued for a refused host")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://management.azure.com/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments",
+        "https://graph.microsoft.com/v1.0/directoryObjects/getByIds",
+    ],
+)
+def test_legitimate_arm_and_graph_hosts_are_allowed(url):
+    assert collectors._host_error(url) is None
+
+
+@pytest.mark.parametrize(
+    "hostile,parsed_host",
+    [
+        # userinfo: everything before "@" is credentials, so the real host is evil.com
+        ("https://management.azure.com@evil.com/providers/x", "evil.com"),
+        # registrable domain the attacker can own outright
+        ("https://management.azure.com.evil.com/providers/x", "management.azure.com.evil.com"),
+    ],
+)
+def test_host_moving_urls_are_refused(hostile, parsed_host):
+    import httpx
+
+    # non-vacuity: the string really does resolve to an attacker host, and the naive prefix
+    # test these guards replace would have accepted it.
+    assert (httpx.URL(hostile).host or "") == parsed_host
+    assert hostile.startswith("https://management.azure.com"), "prefix test would pass this"
+
+    err = collectors._host_error(hostile)
+    assert err and "refusing to send a bearer token" in err
+
+
+def test_plain_http_is_refused_because_the_request_carries_a_token():
+    err = collectors._host_error("http://management.azure.com/subscriptions/s1")
+    assert err and "https" in err
+
+
+def test_protocol_relative_scope_does_not_escape_but_is_still_allowed_host():
+    """Guards against over-claiming: httpx normalises "//evil.com" back onto the base host, so
+    this is NOT an escape and must not be cited as one."""
+    import httpx
+
+    url = f"{collectors._ARM}//evil.com/providers/x"
+    assert (httpx.URL(url).host or "") == "management.azure.com"
+    assert collectors._host_error(url) is None
+
+
+async def test_hostile_scope_never_issues_a_token_bearing_request(monkeypatch):
+    monkeypatch.setattr(collectors.httpx, "AsyncClient", _ExplodingClient)
+
+    value, err, code = await collectors._get_all(
+        "super-secret-token", f"{collectors._ARM}@evil.com/providers/Microsoft.Authorization/roleAssignments"
+    )
+
+    assert value == [] and code == 0
+    assert err and "refusing to send a bearer token" in err
+
+
+async def test_graph_post_refuses_a_hostile_host(monkeypatch):
+    monkeypatch.setattr(collectors.httpx, "AsyncClient", _ExplodingClient)
+
+    value, err, _code = await collectors._graph_post("super-secret-token", "https://evil.com/getByIds", {})
+
+    assert value == [] and err and "refusing to send a bearer token" in err
+
+
+async def test_collector_reports_a_hostile_scope_instead_of_leaking_the_token(monkeypatch):
+    """End-to-end through a real collector: the refusal surfaces as a normal collector error."""
+    monkeypatch.setattr(collectors.httpx, "AsyncClient", _ExplodingClient)
+
+    index, st = await collectors.collect_role_definitions("super-secret-token", "@evil.com")
+
+    assert index == {}
+    assert st.status != schema.STATUS_SUCCEEDED
+    assert "refusing to send a bearer token" in st.message
+
+
+async def test_nextlink_to_another_host_is_refused_mid_pagination(monkeypatch):
+    """The token is re-sent on every hop, so page 2 is as dangerous as page 1. Pinning to the
+    FIRST url's host is not enough -- that host is only trustworthy once allowlisted."""
+    pages = {
+        f"{collectors._ARM}/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments": {
+            "value": [{"id": "a1"}],
+            "nextLink": "https://evil.com/steal?page=2",
+        }
+    }
+    seen: list[str] = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            seen.append(url)
+            return _Resp(pages[url])
+
+    monkeypatch.setattr(collectors.httpx, "AsyncClient", _Client)
+
+    value, err, _code = await collectors._get_all("super-secret-token", next(iter(pages)))
+
+    assert [r["id"] for r in value] == ["a1"], "page 1 should still be returned"
+    assert err and "refusing to follow nextLink" in err
+    assert "https://evil.com/steal?page=2" not in seen, "the token must never reach evil.com"

@@ -28,6 +28,37 @@ _ARM = "https://management.azure.com"
 _GRAPH = "https://graph.microsoft.com/v1.0"
 _RA_API = "2022-04-01"  # Authorization roleAssignments / roleDefinitions
 
+# The ONLY hosts this module may send a bearer token to. Every request below attaches the
+# connection's ARM/Graph token, so a value that can move the HOST is a token-exfiltration
+# primitive rather than merely a wrong URL.
+_ALLOWED_HOSTS = frozenset({"management.azure.com", "graph.microsoft.com"})
+
+
+def _host_error(url: str) -> str | None:
+    """Return why ``url`` must not receive a bearer token, or None when it is safe.
+
+    Compares the PARSED host, never a string prefix. Collectors build their URLs as
+    ``f"{_ARM}{scope}/..."`` with a caller-supplied ``scope``, which hands the host to anyone
+    who can begin that value with:
+
+      * ``@`` -- ``https://management.azure.com@evil.com/...`` parses ``management.azure.com``
+        as *userinfo*, so the request (and the token) goes to ``evil.com``;
+      * ``.`` -- ``https://management.azure.com.evil.com/...`` is a registrable domain the
+        attacker can own.
+
+    A ``startswith("https://management.azure.com")`` test waves both through, which is why
+    this parses instead. https is required because the request carries the token.
+    """
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return "malformed url"
+    if parsed.scheme != "https":
+        return "url must use https; the request carries a bearer token"
+    if (parsed.host or "").lower() not in _ALLOWED_HOSTS:
+        return f"refusing to send a bearer token to host {parsed.host or '(none)'!r}"
+    return None
+
 # Bounded concurrency for per-principal Graph fan-out (group expansion, SP owners). A directory
 # scan can touch hundreds of groups / service principals; issuing one Graph call per id strictly
 # sequentially made a refresh take tens of seconds. We fan them out across a small worker pool —
@@ -63,20 +94,24 @@ def _status_for_http(code: int) -> str:
 
 async def _get_all(token: str, url: str, params: dict[str, str] | None = None) -> tuple[list[dict[str, Any]], str | None, int]:
     """GET a paged ARM/Graph collection following nextLink. Returns (value, error, http_code)."""
+    # Fail closed BEFORE the token is attached. Callers interpolate caller-supplied scopes and
+    # resource ids directly after the host, so the target host is not trustworthy until parsed.
+    if bad := _host_error(url):
+        return [], f"request refused: {bad}", 0
     headers = {"Authorization": f"Bearer {token}"}
     out: list[dict[str, Any]] = []
     next_url: str | None = url
     next_params = dict(params or {})
     code = 200
     # nextLink is echoed from the response body, and the bearer token is re-sent on every
-    # hop, so pin the host to the one we deliberately called. A page that redirected us
-    # elsewhere would hand that token over.
-    origin_host = (httpx.URL(url).host or "").lower()
+    # hop, so every hop is re-checked against the SAME allowlist rather than against the
+    # first URL's host -- pinning to the origin alone would faithfully follow an attacker
+    # who had already moved the host on the initial request.
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             while next_url:
-                if (httpx.URL(next_url).host or "").lower() != origin_host:
-                    return out, f"refusing to follow nextLink to host {httpx.URL(next_url).host!r}", code
+                if bad := _host_error(next_url):
+                    return out, f"refusing to follow nextLink: {bad}", code
                 resp = await client.get(next_url, headers=headers, params=next_params or None)
                 code = resp.status_code
                 if code != 200:
@@ -379,6 +414,10 @@ def _normalize_principal_type(odata_type: str) -> str:
 
 async def _graph_post(token: str, url: str, body: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None, int]:
     """POST a Graph collection request (e.g. directoryObjects/getByIds), following nextLink."""
+    # Same fail-closed host check as _get_all: this attaches the same bearer token, and taking
+    # a url parameter means a future caller could interpolate into it as the GETs already do.
+    if bad := _host_error(url):
+        return [], f"request refused: {bad}", 0
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     out: list[dict[str, Any]] = []
     code = 200
