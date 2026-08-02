@@ -369,7 +369,28 @@ export function BulkPathSimulator({ params }: { params: ScopeParams }) {
         <label className="flex h-7 flex-none items-center gap-1.5 whitespace-nowrap text-xs"><input type="checkbox" checked={includeDisabled} onChange={(event) => { invalidateSimulationForFilterChange(); setIncludeDisabled(event.target.checked); }} /> Include disabled rules</label>
       </div>
       <div className="flex flex-wrap items-center gap-1 border-b px-4 py-2">{["Total", "Mapped", "Unmapped", "Alerted", "No alert", "Healthy", "Flow gaps"].map((label) => <div key={label} className="h-8 min-w-16 rounded-lg border bg-gray-50 px-2 py-px"><div className="h-4 w-6 animate-pulse rounded bg-gray-200" /><div className="mt-0.5 text-[8px] font-medium uppercase tracking-wide text-gray-400">{label}</div></div>)}</div>
-      <div className="flex h-[580px] flex-col items-center justify-center gap-3 text-sm text-gray-500"><div className="h-7 w-7 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" /><div>Building the notification flow…</div><div className="text-xs tabular-nums text-gray-500" role="timer" aria-live="off">Elapsed {elapsedLabel(elapsedSeconds)}</div><div className="text-xs text-gray-400">Loading resources, alert rules, Action Groups, and receivers.</div></div>
+      {/* The spinner is keyed on `busy`, NOT on `!result`. It used to render whenever there was
+          no result, so a failed simulation left "Building the notification flow… Elapsed 0:01"
+          spinning forever underneath the error banner — the screen claimed to be working on
+          something it had already given up on. */}
+      {busy ? (
+        <div className="flex h-[580px] flex-col items-center justify-center gap-3 text-sm text-gray-500"><div className="h-7 w-7 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" /><div>Building the notification flow…</div><div className="text-xs tabular-nums text-gray-500" role="timer" aria-live="off">Elapsed {elapsedLabel(elapsedSeconds)}</div><div className="text-xs text-gray-400">Loading resources, alert rules, Action Groups, and receivers.</div></div>
+      ) : (
+        <div className="flex h-[580px] flex-col items-center justify-center gap-2 px-8 text-center text-sm text-gray-500">
+          <div className="text-2xl">{error ? "⚠️" : "🔀"}</div>
+          <div className="font-medium text-gray-700">
+            {error ? "The notification flow could not be built." : "No notification flow has been built yet."}
+          </div>
+          <div className="max-w-md text-xs text-gray-500">
+            {error
+              ? "Nothing below is a measurement of this scope — the inventory it needs could not be read. The reason is shown above."
+              : "Choose a scope, then run the simulation to trace every alert rule to the people it would page."}
+          </div>
+          <button onClick={() => void run()} className="mt-1 h-7 rounded-lg bg-gray-900 px-3 text-xs font-medium text-white">
+            {error ? "↻ Try again" : "▶ Simulate all alerts"}
+          </button>
+        </div>
+      )}
     </section>}
 
     {result && <>

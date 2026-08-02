@@ -185,9 +185,9 @@ export function DashboardPanel() {
     staleTime: 5 * 60_000,
     refetchOnMount: false,
   });
-  const rbacQ = useQuery({
+  const iamQ = useQuery({
     queryKey: ["dashRbac"],
-    queryFn: () => api.rbacOverview(),
+    queryFn: () => api.iamOverview(),
     enabled: isAdmin,
     retry: false,
     staleTime: 5 * 60_000,
@@ -699,7 +699,7 @@ export function DashboardPanel() {
   const toggleSection = (key: string) =>
     setHiddenSections(isHidden(key) ? hiddenSections.filter((k) => k !== key) : [...hiddenSections, key]);
 
-  const anyPostureLoading = ambaTrendQ.isLoading || identityQ.isLoading || rbacQ.isLoading;
+  const anyPostureLoading = ambaTrendQ.isLoading || identityQ.isLoading || iamQ.isLoading;
   const coreLoading = meQ.isLoading || wlQ.isLoading || runsQ.isLoading || archQ.isLoading;
 
   return (
@@ -1017,19 +1017,19 @@ export function DashboardPanel() {
 
             {/* Access (RBAC) */}
             {isAdmin && (
-              <Card title="Access (RBAC)" icon="🛂" manageTo="/rbac">
-                {rbacQ.isError ? (
+              <Card title="Access (IAM)" icon="🛂" manageTo="/iam">
+                {iamQ.isError ? (
                   <Empty text="RBAC data not available." />
-                ) : rbacQ.data?.never_loaded ? (
+                ) : iamQ.data?.never_loaded ? (
                   <Empty text="Not loaded yet — open RBAC and refresh a scope." />
-                ) : !rbacQ.data ? (
+                ) : !iamQ.data ? (
                   <Empty text="No access data." />
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
-                    <MiniStat to="/rbac" label="Privileged" value={rbacQ.data.kpis.privileged} tone={rbacQ.data.kpis.privileged > 0 ? "amber" : "ok"} />
-                    <MiniStat to="/rbac" label="Principals" value={rbacQ.data.kpis.unique_principals} tone="ok" />
-                    <MiniStat to="/rbac" label="Group-derived" value={rbacQ.data.kpis.group_derived} tone="ok" />
-                    <MiniStat to="/rbac" label="Eligible (PIM)" value={rbacQ.data.kpis.eligible} tone="ok" />
+                    <MiniStat to="/iam" label="Privileged" value={iamQ.data.kpis.privileged} tone={iamQ.data.kpis.privileged > 0 ? "amber" : "ok"} />
+                    <MiniStat to="/iam" label="Principals" value={iamQ.data.kpis.unique_principals} tone="ok" />
+                    <MiniStat to="/iam" label="Group-derived" value={iamQ.data.kpis.group_derived} tone="ok" />
+                    <MiniStat to="/iam" label="Eligible (PIM)" value={iamQ.data.kpis.eligible} tone="ok" />
                   </div>
                 )}
               </Card>

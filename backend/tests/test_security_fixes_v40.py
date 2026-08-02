@@ -48,7 +48,7 @@ def _test_client():
 
 
 def test_rbac_csv_neutralizes_formula_triggers():
-    from app.rbac.export import _csv_safe
+    from app.iam.export import _csv_safe
 
     assert _csv_safe("=cmd|'/c calc'!A1") == "'=cmd|'/c calc'!A1"
     assert _csv_safe("+1+1") == "'+1+1"
@@ -64,8 +64,8 @@ def test_rbac_csv_neutralizes_formula_triggers():
 
 
 def test_rbac_csv_writes_quoted_safe_values():
-    from app.rbac import schema
-    from app.rbac.export import to_csv
+    from app.iam import schema
+    from app.iam.export import to_csv
 
     rows = [{c: "=evil()" for c in schema.COLUMNS}]
     csv_text = to_csv(rows)

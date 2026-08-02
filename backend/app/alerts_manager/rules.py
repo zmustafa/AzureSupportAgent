@@ -165,6 +165,10 @@ async def _list_rules_uncached(
     connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
     management_group_id: str | None, family: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not subscription_id and not management_group_id:
+        demo = service.demo_scope_inventory(workload_id)
+        if demo is not None:
+            return demo
     subscriptions, workload_ids = await _subscriptions(connection, workload_id, subscription_id, management_group_id)
     families = [family] if family else list(RULE_APIS)
     types = [api_for_family(item)[0] for item in families]

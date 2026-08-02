@@ -9,7 +9,7 @@ Produces a workbook that breaks the app-registrations snapshot into one sheet pe
   - High Risk      — only the apps flagged high-risk, with the reason signals
   - Permission Pivot — count of apps per permission (the facet rollup)
 
-Mirrors app.rbac.export.to_workbook (same styling + CSV-injection neutralization)."""
+Mirrors app.iam.export.to_workbook (same styling + CSV-injection neutralization)."""
 from __future__ import annotations
 
 from typing import Any

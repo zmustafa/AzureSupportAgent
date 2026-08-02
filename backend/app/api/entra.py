@@ -15,10 +15,11 @@ Read-only: no endpoint here writes to the directory, and no Graph write scope is
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -27,6 +28,7 @@ from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.entra import DOMAINS, blastradius, ca_engine, ca_simulator, cache, demo as demo_mod, job, model, permissions_probe
 from app.entra import scanners as scanners_mod
+from app.entra import export as entra_export
 from app.entra import signals as sig
 from app.entra import snapshot as snapshot_mod
 from app.entra import score as score_mod
@@ -2087,6 +2089,63 @@ async def graph_escalations(
     return _envelope(
         snapshot, cid, escalations=rows, total=len(rows), by_primitive=by_primitive,
         primitives=[dict(p) for p in blastradius.ESCALATION_PRIMITIVES],
+    )
+
+
+@router.get("/export/workbook")
+async def export_workbook(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_read),
+) -> Response:
+    """Every tab and sub-tab under /entra as one multi-sheet Excel workbook.
+
+    Built from the snapshot rather than by replaying twenty-five endpoints, so it is a single
+    read and it cannot disagree with the screens. That also side-steps the page caps those
+    endpoints apply for the browser's benefit — the findings list is capped at 2,000 and the
+    MFA gap at 500, and an export that silently stopped there would be a quieter version of the
+    bug it exists to fix.
+
+    Carries the raw directory too (users, groups, service principals, registrations), which the
+    tabs only ever show counts of. **The Users sheet contains personal data.**"""
+    connection, tenant_id, _cid = _target(principal, connection_id)
+    snapshot = snapshot_mod.analyse(tenant_id)
+
+    # The few things the screens compute rather than store. Passed in so the formatter stays
+    # pure and can be unit-tested without a tenant.
+    escalations = [{
+        "source": e["source"], "target": e["target"], "primitive": e["data"]["primitive"],
+        "name": e["label"], "reason": e["data"]["reason"],
+        "confidence": e["data"]["confidence"], "rule": e["data"]["rule"],
+    } for e in blastradius.escalation_edges(snapshot.get("data") or {})]
+
+    granted = set((snapshot.get("permissions") or {}).get("granted") or [])
+    setup_tiers = [{
+        **tier,
+        "granted": [s for s in tier["scopes"] if s in granted],
+        "missing": [s for s in tier["scopes"] if s not in granted],
+        "complete": bool(granted) and all(s in granted for s in tier["scopes"]),
+    } for tier in permissions_probe.TIERS]
+
+    scanner_cards = [s.public() for s in scanners_mod.registry()]
+
+    # The screen merges the snapshot's sessions with the durable ledger so history reaches past
+    # Graph's 30-day retention. Reading the snapshot alone loses those older sessions.
+    merged_sessions, _domain = _activation_sessions(snapshot, tenant_id, history=True)
+    merged_sessions = _decorate(merged_sessions, snapshot, 0.0, (8, 18))
+
+    content = await asyncio.to_thread(
+        entra_export.to_workbook,
+        snapshot=snapshot,
+        escalations=escalations,
+        history=score_mod.history(tenant_id) if hasattr(score_mod, "history") else None,
+        setup_tiers=setup_tiers,
+        scanners=scanner_cards,
+        activations=merged_sessions,
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=entra-identity-review.xlsx"},
     )
 
 

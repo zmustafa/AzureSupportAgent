@@ -224,6 +224,36 @@ def _workload_context(workload_id: str | None) -> tuple[dict[str, Any] | None, s
     return workload, ids, subscriptions
 
 
+# The synthetic demo workloads (Contoso Hotels, Zava) live in the placeholder subscription
+# `00000000-…-0000000d3340`, which exists in no tenant. Every other coverage module already
+# refuses to take a demo scope to Azure (`amba`, `backupdr`, `alert_analysis` all guard on
+# `is_demo_scope`); the Alerts Manager inventory endpoints did not, so selecting a demo workload
+# alongside a real connection sent that subscription id to Resource Graph, which answered
+# HTTP 400. The API turned that into a 502 and the Visualize tab spun forever under a banner
+# quoting an Azure correlation id at the reader.
+_DEMO_INVENTORY_NOTE = (
+    "This is a demo workload: its resources are synthetic and exist in no Azure subscription, "
+    "so there are no Action Groups or alert rules in Azure to list for it. This is not a "
+    "measurement of your tenant — select a real workload or subscription to inventory one."
+)
+
+
+def demo_scope_inventory(workload_id: str | None) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """Empty inventory + the reason, when the scope is a demo workload. ``None`` otherwise.
+
+    Returned instead of querying Azure. An empty list on its own would be the exact defect this
+    product exists to avoid — "no alert rules" read as a measurement rather than as "we did not,
+    and could not, look" — so the note travels with it and the callers publish it."""
+    from app.demo_catalog import is_demo_workload
+
+    if not workload_id or not is_demo_workload(workload_id):
+        return None
+    return [], {
+        "partial": False, "truncated": False, "source_total": 0, "source_count": 0,
+        "source_limit": 0, "demo_scope": True, "note": _DEMO_INVENTORY_NOTE,
+    }
+
+
 def resolve_selected_connection(connection_id: str | None, workload_id: str | None = None) -> dict[str, Any]:
     from app.core.azure_connections import connection_for_scope, resolve_connection
 
@@ -323,6 +353,10 @@ async def _list_fired_alerts_uncached(
     connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
     management_group_id: str | None, days: int, states: set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not subscription_id and not management_group_id:
+        demo = demo_scope_inventory(workload_id)
+        if demo is not None:
+            return demo
     _workload, workload_ids, workload_subs = _workload_context(workload_id)
     subscriptions = {subscription_id} if subscription_id else workload_subs
     if management_group_id:
@@ -435,6 +469,10 @@ async def _list_action_groups_uncached(
     connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
     management_group_id: str | None, all_visible: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not subscription_id and not management_group_id and not all_visible:
+        demo = demo_scope_inventory(workload_id)
+        if demo is not None:
+            return demo
     _workload, workload_ids, workload_subs = _workload_context(workload_id)
     subscriptions = {subscription_id} if subscription_id else workload_subs
     if all_visible:

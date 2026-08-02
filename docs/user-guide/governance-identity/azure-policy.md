@@ -129,4 +129,4 @@ DeployIfNotExists and Modify remediation require assignment identity, location w
 
 - [Telemetry Coverage]({{ site.baseurl }}/user-guide/coverage/telemetry-coverage/)
 - [Tag Intelligence]({{ site.baseurl }}/user-guide/estate-intelligence/tag-intelligence/)
-- [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)
+- [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)

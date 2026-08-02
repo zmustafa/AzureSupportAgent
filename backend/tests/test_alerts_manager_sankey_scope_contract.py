@@ -451,3 +451,59 @@ async def test_bulk_api_retains_legacy_routes_while_forwarding_scope(
         "monitor_condition": "Fired", "include_disabled": True,
         "families": {"metric"}, "severities": {2},
     }
+
+# --------------------------------------------------------------------- demo scope is not Azure
+@pytest.mark.anyio
+async def test_a_demo_workload_is_never_taken_to_resource_graph(monkeypatch) -> None:
+    """The synthetic demo workloads live in subscription `00000000-...-0000000d3340`, which
+    exists in no tenant.
+
+    Found live: selecting "Contoso Hotels" while a real connection was active sent that
+    subscription id to Resource Graph, which answered HTTP 400. The API re-raised it as a 502,
+    and the Visualize tab rendered an Azure correlation id at the reader above a spinner that
+    never stopped. Asking Azure about a resource that cannot exist is a category error, not a
+    query — so it must not be issued at all."""
+    from app.demo_catalog import CONTOSO_ID
+
+    async def explode(*_args, **_kwargs):
+        raise AssertionError("a demo scope must not reach Resource Graph")
+
+    monkeypatch.setattr(service, "_arg", explode)
+
+    groups, group_meta = await service._list_action_groups_uncached(
+        {}, workload_id=CONTOSO_ID, subscription_id=None, management_group_id=None,
+    )
+    found, rule_meta = await rules._list_rules_uncached(
+        {}, workload_id=CONTOSO_ID, subscription_id=None, management_group_id=None, family="",
+    )
+
+    assert groups == [] and found == []
+    for meta in (group_meta, rule_meta):
+        # Empty on its own would read as "this scope has no alerting", which is a measurement
+        # nobody made. The reason has to travel with the emptiness.
+        assert meta["demo_scope"] is True
+        assert "demo workload" in meta["note"]
+        assert meta["partial"] is False
+
+
+@pytest.mark.anyio
+async def test_a_real_workload_still_queries_resource_graph(monkeypatch) -> None:
+    """The demo guard must not swallow real scopes: it is keyed on the demo catalogue, not on
+    "the workload produced no subscriptions"."""
+    calls: list[Any] = []
+
+    async def fake_arg(_conn, _query, subscriptions=None, **_kwargs):
+        calls.append(subscriptions)
+        return [], {"partial": False, "truncated": False, "source_total": 0,
+                    "source_count": 0, "source_limit": 0}
+
+    monkeypatch.setattr(service, "_arg", fake_arg)
+    monkeypatch.setattr(
+        service, "_workload_context",
+        lambda _wid: ({"id": "real"}, {"/subscriptions/sub-1/x"}, {"sub-1"}),
+    )
+
+    await service._list_action_groups_uncached(
+        {}, workload_id="real-workload", subscription_id=None, management_group_id=None,
+    )
+    assert calls == [{"sub-1"}]

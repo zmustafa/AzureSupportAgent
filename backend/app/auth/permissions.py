@@ -66,7 +66,10 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("assessments.run", "Run assessments; manage waivers, custom checks, and schedules"),
         ("policy.read", "View Azure Policy inventory and compliance"),
         ("policy.write", "Generate policy rollouts and IaC"),
-        ("rbac.read", "View the Azure RBAC access review"),
+        ("iam.read", "View the Azure IAM access review"),
+        ("iam.write", "Import scanner runs into the IAM access review and purge imported data"),
+        ("iam.review", "Run IAM access review campaigns and record certification decisions"),
+        ("iam.simulate", "Model IAM access changes before making them (read-only what-if)"),
         ("identity.read", "View identity security findings and app registrations"),
         ("entra.read", "View the Entra ID tenant posture, policies and identities"),
         ("entra.admin", "Refresh Entra collection, manage findings state and confirm break-glass accounts"),
@@ -129,6 +132,31 @@ PERMISSIONS: dict[str, str] = {
 }
 
 ALL_PERMISSIONS: list[str] = list(PERMISSIONS.keys())
+
+# --- Legacy permission keys -------------------------------------------------------
+# Renamed capabilities, old key -> current key. ``seed_system_roles`` rewrites the built-in
+# roles from code on every startup, but CUSTOM roles keep whatever was stored when they were
+# created — so renaming a key silently strips access from every custom role that held it, and
+# the symptom is an unexplained 403. ``require_permission`` accepts either key; the startup
+# migration rewrites stored custom-role grants to the new one.
+PERMISSION_ALIASES: dict[str, str] = {
+    "rbac.read": "iam.read",  # /rbac screen renamed to /iam
+}
+
+# Reverse lookup used by the API guard: current key -> every legacy key that still satisfies it.
+LEGACY_KEYS_FOR: dict[str, tuple[str, ...]] = {}
+for _old, _new in PERMISSION_ALIASES.items():
+    LEGACY_KEYS_FOR[_new] = (*LEGACY_KEYS_FOR.get(_new, ()), _old)
+
+
+def canonical_permission(key: str) -> str:
+    """Map a possibly-legacy permission key to its current name."""
+    return PERMISSION_ALIASES.get(key, key)
+
+
+def accepted_permission_keys(key: str) -> tuple[str, ...]:
+    """Every key that satisfies ``key`` — the key itself plus any legacy spelling of it."""
+    return (key, *LEGACY_KEYS_FOR.get(key, ()))
 
 # Every read-only capability — the backbone of the auditor role.
 READ_PERMISSIONS: list[str] = [p for p in ALL_PERMISSIONS if p.endswith(".read")]

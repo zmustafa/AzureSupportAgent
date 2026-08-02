@@ -1235,7 +1235,7 @@ function BulkBar({ count, onClear, onExport }: { count: number; onClear: () => v
 }
 
 // =========================================================================== Detail drawer
-type DrawerTab = "overview" | "governance" | "findings" | "cost";
+type DrawerTab = "overview" | "access" | "governance" | "findings" | "cost";
 
 function DetailDrawer({
   resource,
@@ -1319,7 +1319,7 @@ function DetailDrawer({
 
         {/* Tabs */}
         <div className="flex items-center gap-1 border-b px-3 pt-1.5 text-[12px]">
-          {([["overview", "Overview"], ["governance", "Governance"], ["findings", "Findings"], ["cost", "Cost"]] as const).map(([t, label]) => (
+          {([["overview", "Overview"], ["access", "Access"], ["governance", "Governance"], ["findings", "Findings"], ["cost", "Cost"]] as const).map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)} className={`rounded-t-md px-2.5 py-1.5 font-medium ${tab === t ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"}`}>{label}</button>
           ))}
         </div>
@@ -1395,6 +1395,7 @@ function DetailDrawer({
             </div>
           )}
 
+          {tab === "access" && <AccessTab resourceId={r.id} connectionId={connectionId} />}
           {tab === "governance" && <GovernanceTab resourceId={r.id} connectionId={connectionId} />}
           {tab === "findings" && <FindingsTab resourceId={r.id} />}
           {tab === "cost" && <CostTab cost={cost} costCurrency={costCurrency} loaded={costLoaded} onLoad={onLoadCost} loading={costLoading} />}
@@ -1462,6 +1463,131 @@ function OwnerField({ resourceId, connectionId }: { resourceId: string; connecti
         <div className="text-[11px] text-gray-400">Tag write-back disabled (enable in Settings).</div>
       )}
       {msg && <div className="text-[11px] text-gray-600">{msg}</div>}
+    </div>
+  );
+}
+
+/** "Who can access this resource" — the IAM engine, answered where people already are.
+ *
+ * Three things are structural rather than cosmetic:
+ *
+ *  - **an unscanned tenant is a wall, not an empty list.** A short access list on a resource is
+ *    the most reassuring thing this drawer can render, and on an unscanned tenant it is a lie;
+ *  - **inherited access is the substance.** Almost nobody is assigned at a resource — they are
+ *    Owner on the subscription, or on a management group covering it — so every grant says
+ *    where it was actually made;
+ *  - **RBAC is not the only door.** The bypass verdict sits in the same panel, because a short
+ *    access list on a storage account whose shared keys are enabled means nothing.
+ */
+function AccessTab({ resourceId, connectionId }: { resourceId: string; connectionId: string }) {
+  const q = useQuery({
+    queryKey: ["invAccess", resourceId, connectionId],
+    queryFn: () => api.iamResourceAccessSummary(resourceId, connectionId || null),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  if (q.isLoading) return <div className="text-[12px] text-gray-400">Resolving who can access this…</div>;
+  if (q.isError) return <div className="text-[12px] text-red-500">{(q.error as Error)?.message || "Failed to resolve access."}</div>;
+  const d = q.data;
+  if (!d) return null;
+
+  const bypass = d.bypass;
+
+  return (
+    <div className="space-y-3">
+      {!d.measured ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5">
+          <div className="text-[12px] font-semibold text-amber-900">Access is unknown, not empty</div>
+          <p className="mt-0.5 text-[11px] text-amber-900">{d.reason}</p>
+          <Link to="/iam" className="mt-1 inline-block text-[11px] text-brand hover:underline">Open IAM →</Link>
+        </div>
+      ) : (
+        <>
+          <div className="text-[11px] text-gray-500">
+            <b className="text-gray-700">{d.total}</b> principal{d.total === 1 ? "" : "s"} can reach
+            this resource{d.privilegedTotal > 0 && <> · <b className="text-red-600">{d.privilegedTotal}</b> with a privileged role</>}.
+          </div>
+
+          {d.principals.map((p) => (
+            <div key={p.principalId} className="rounded-lg border p-2.5">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium text-gray-800">
+                  {p.principalName || p.principalId}
+                </span>
+                {p.privileged && (
+                  <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">privileged</span>
+                )}
+                {p.principalExists === "false" && (
+                  <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-800">deleted principal</span>
+                )}
+                {p.principalType && (
+                  <span className="shrink-0 text-[10px] text-gray-400">{p.principalType}</span>
+                )}
+              </div>
+              {p.grants.map((g, i) => (
+                <div key={`${g.roleName}-${g.scope}-${i}`} className="mt-0.5 text-[11px] text-gray-500">
+                  <b className="text-gray-700">{g.roleName}</b> · granted at {g.grantedAt}
+                  {g.accessPath === "GroupTransitive" && g.sourceGroupName && <> · via group {g.sourceGroupName}</>}
+                  {g.assignmentState === "Eligible" && <> · eligible (JIT)</>}
+                </div>
+              ))}
+            </div>
+          ))}
+          {d.total === 0 && (
+            <div className="text-[12px] text-gray-400">
+              No principal reaches this resource through Azure RBAC in the cached scan.
+            </div>
+          )}
+        </>
+      )}
+
+      {/* RBAC is not the only door — and "we never swept" must not read as "no other way in". */}
+      <div className={`rounded-lg border p-2.5 ${bypass.measured && bypass.openDoors.length > 0 ? "border-red-300 bg-red-50" : ""}`}>
+        <div className="text-[12px] font-semibold text-gray-800">Ways in that are not RBAC</div>
+        {!bypass.measured ? (
+          <p className="mt-0.5 text-[11px] text-amber-900">{bypass.reason}</p>
+        ) : bypass.checked === 0 ? (
+          /* Zero checks is not zero doors. No bypass spec covers this resource type, which is a
+             statement about our coverage — not about the resource. Saying "found no door open"
+             here would draw a conclusion from no evidence at all. */
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            No RBAC-bypass check covers this resource type, so whether it can be reached without
+            a role assignment was not assessed.
+          </p>
+        ) : bypass.openDoors.length === 0 ? (
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            {bypass.checked} check{bypass.checked === 1 ? "" : "s"} ran against this resource and
+            found no key-based or anonymous door open.
+          </p>
+        ) : (
+          <ul className="mt-1 space-y-1">
+            {bypass.openDoors.map((b) => (
+              <li key={b.key} className="text-[11px] text-red-900">
+                <b>{b.title}</b>
+                {b.reachabilityAvailable && b.reachableCount > 0 && (
+                  <> — {b.reachableCount} principal(s) can fetch the credential</>
+                )}
+                <div className="text-[11px] text-red-800/80">{b.detail}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {d.limitations.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5">
+          <div className="text-[11px] font-semibold text-amber-900">What this does not tell you</div>
+          <ul className="mt-1 space-y-0.5">
+            {d.limitations.map((l) => (
+              <li key={l} className="text-[11px] text-amber-900">{l}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <Link to="/iam/effective" className="inline-block text-[11px] text-brand hover:underline">
+        Open Effective Access →
+      </Link>
     </div>
   );
 }

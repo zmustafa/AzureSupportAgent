@@ -1,6 +1,7 @@
 """Auth service: user/role/group queries, effective permissions, sessions, seeding."""
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -8,9 +9,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import hash_password
-from app.auth.permissions import SYSTEM_ROLES, role_rank
+from app.auth.permissions import PERMISSION_ALIASES, SYSTEM_ROLES, role_rank
 from app.auth.settings import load_auth_settings
 from app.models.auth import Group, Role, Session, User, UserGroup, UserRole
+
+log = logging.getLogger("app.auth.service")
 
 
 def _now() -> datetime:
@@ -39,8 +42,28 @@ async def seed_system_roles(db: AsyncSession) -> dict[str, Role]:
             r.is_system = True
             r.permissions_json = list(perms)
             r.description = desc
+    migrate_legacy_permissions(existing.values())
     await db.flush()
     return existing
+
+
+def migrate_legacy_permissions(roles) -> int:
+    """Rewrite renamed permission keys in stored (custom) role grants. Idempotent.
+
+    System roles are re-seeded from code above, so they heal themselves. Custom roles keep
+    whatever was stored when they were created — without this a renamed capability silently
+    strips their access, and the symptom is an unexplained 403 in the renamed feature.
+    Returns the number of roles changed (for logging/tests)."""
+    changed = 0
+    for r in roles:
+        perms = list(r.permissions_json or [])
+        if not any(p in PERMISSION_ALIASES for p in perms):
+            continue
+        rewritten = list(dict.fromkeys(PERMISSION_ALIASES.get(p, p) for p in perms))
+        if rewritten != perms:
+            r.permissions_json = rewritten
+            changed += 1
+    return changed
 
 
 async def seed_admin(db: AsyncSession) -> None:
@@ -176,6 +199,20 @@ async def create_session(
     return sess
 
 
+#: How stale ``last_seen_at`` may get before it is written again.
+#:
+#: This is a heartbeat, not a security boundary. Writing it on EVERY authenticated request put a
+#: database write on the read path of the whole product: a single screen that fires a dozen
+#: parallel API calls produced a dozen writes, and under any concurrent long write (an IAM
+#: collection run) SQLite's single-writer lock outlasted its busy timeout and every one of those
+#: requests failed with "database is locked" — including the login that would let you back in.
+#:
+#: Sliding at most once a minute cannot EXTEND a session beyond policy (the dangerous direction);
+#: at worst it expires one up to a minute early against an idle window measured in tens of
+#: minutes.
+SESSION_SLIDE_SECONDS = 60
+
+
 async def resolve_session(db: AsyncSession, sid: str) -> tuple[Session, User] | None:
     """Validate a session id against absolute + idle expiry; slide last_seen."""
     sess = await db.get(Session, sid)
@@ -185,15 +222,25 @@ async def resolve_session(db: AsyncSession, sid: str) -> tuple[Session, User] | 
     cfg = load_auth_settings()
     if _aware(sess.expires_at) and now > _aware(sess.expires_at):
         return None
-    idle_cap = _aware(sess.last_seen_at) + timedelta(minutes=int(cfg["session_idle_minutes"]))
+    last_seen = _aware(sess.last_seen_at)
+    idle_cap = last_seen + timedelta(minutes=int(cfg["session_idle_minutes"]))
     if now > idle_cap:
         return None
     user = await db.get(User, sess.user_id)
     if user is None or user.status != "active":
         return None
-    # Slide the idle window (cheap update).
-    sess.last_seen_at = now
-    await db.commit()
+
+    if (now - last_seen).total_seconds() >= SESSION_SLIDE_SECONDS:
+        sess.last_seen_at = now
+        try:
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            # The session has already been VALIDATED above; only the heartbeat failed. Denying a
+            # demonstrably valid session because a bookkeeping write lost a lock race is the
+            # worst possible trade — it logs people out of a working application, and it was
+            # observed doing exactly that under a concurrent collection run.
+            log.warning("could not slide session last_seen_at; continuing", exc_info=True)
+            await db.rollback()
     return sess, user
 
 

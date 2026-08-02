@@ -100,5 +100,5 @@ Overview, PIM, and app registrations use separate caches and refreshes. Partial 
 ## Related docs
 
 - [Entra ID reference]({{ site.baseurl }}/user-guide/governance-identity/identity/)
-- [RBAC access reviews]({{ site.baseurl }}/how-to/governance-identity/rbac-access-reviews/)
+- [IAM access reviews]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

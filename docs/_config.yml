@@ -37,6 +37,7 @@ last_edit_time_format: "%Y-%m-%d"
 
 plugins:
   - jekyll-remote-theme
+  - jekyll-redirect-from
   - jekyll-seo-tag
   - jekyll-sitemap
 

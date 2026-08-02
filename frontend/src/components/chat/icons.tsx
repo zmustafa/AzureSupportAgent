@@ -198,7 +198,7 @@ export function IdentityIcon({ className }: { className?: string }) {
 }
 
 // RBAC / access review: a shield with a key — reads distinctly from Policy's check shield.
-export function RbacIcon({ className }: { className?: string }) {
+export function IamIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
       <path d="M10 2.5l5.5 2v4.2c0 3.4-2.3 6.4-5.5 7.3-3.2-.9-5.5-3.9-5.5-7.3V4.5L10 2.5z" strokeLinejoin="round" />

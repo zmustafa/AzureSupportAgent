@@ -109,12 +109,12 @@ _REVIEWED_CALL_SITES = {
     "connections.py": 1,
     "entra.py": 1,
     "graph.py": 1,
+    "iam.py": 1,  # renamed from rbac.py; same reviewed call site, unchanged count
     "identity.py": 3,
     "inventory.py": 1,
     "ownership.py": 4,
     "policy.py": 1,
     "quota.py": 6,
-    "rbac.py": 1,
     "reservations.py": 2,
     "tagintel.py": 3,
     "workloads.py": 16,

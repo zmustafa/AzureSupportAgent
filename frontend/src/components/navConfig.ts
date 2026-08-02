@@ -132,7 +132,7 @@ export const PROACTIVE_NAV: ProactiveItem[] = [
   // Governance & identity — policy, identity posture and access review.
   { id: "policy", to: "/policy", label: "Azure Policy", icon: "🛡️", group: "Governance & identity", desc: "Policy inventory, compliance, effective policy, rollout planning and drift / IaC." },
   { id: "entra", to: "/entra", label: "Entra ID", icon: "🛡️", desc: "Tenant-wide identity posture score, Conditional Access coverage and conflicts, privileged access, app-registration and credential-expiry hygiene, and a findings inbox — who can do what, and what breaks if you change it." },
-  { id: "rbac", to: "/rbac", label: "RBAC", icon: "🔑", desc: "Azure RBAC access review — effective access, privileged exposure and scopes." },
+  { id: "iam", to: "/iam", label: "IAM", icon: "🔑", desc: "Azure access review — effective access, privileged exposure, PIM and scopes." },
   // Lifecycle & investigation — what's expiring, what's wrong, and the evidence trail.
   { id: "radar", to: "/radar", label: "Retirement Radar", icon: "🛰️", group: "Lifecycle & investigation", desc: "Track Azure retirements and breaking changes impacting your estate." },
   { id: "reservations", to: "/reservations", label: "Reservations Monitor", icon: "🎟️", desc: "Track reservation order expiry and surface a weekly renewal digest." },
@@ -327,29 +327,51 @@ export const CHANGEEXPLORER_NAV: { id: ChangeExplorerTab; label: string }[] = [
 export const CHANGEEXPLORER_TAB_IDS = new Set<ChangeExplorerTab>(CHANGEEXPLORER_NAV.map((n) => n.id));
 
 // ---- RBAC / Access Review -------------------------------------------------------
-// Sub-tabs of the RBAC access-review screen, driven by the /rbac/:tab URL so a refresh (or a
-// shared link) restores the same view. "overview" is the default (bare /rbac). The 7 tabs
+// Sub-tabs of the IAM access-review screen, driven by the /iam/:tab URL so a refresh (or a
+// shared link) restores the same view. "overview" is the default (bare /iam). The tabs
 // collapse the standalone scanner's 25 workbook sheets into task-oriented views.
-export type RbacTab =
+export type IamTab =
   | "overview"
+  | "findings"
+  | "scanners"
   | "effective"
   | "privileged"
+  | "escalation"
+  | "bypass"
+  | "leastprivilege"
+  | "simulator"
+  | "compare"
+  | "reviews"
+  | "pim"
   | "scopes"
   | "roles"
   | "insights"
   | "diagnostics";
 
-export const RBAC_NAV: { id: RbacTab; label: string }[] = [
-  { id: "overview", label: "📊 Overview" },
-  { id: "effective", label: "🧩 Effective Access" },
-  { id: "privileged", label: "🛡️ Privileged & Exposure" },
-  { id: "scopes", label: "🗂️ Scopes" },
-  { id: "roles", label: "🎫 Roles & Principals" },
-  { id: "insights", label: "📈 Insights" },
-  { id: "diagnostics", label: "🩺 Diagnostics" },
+// The icon is a SEPARATE field, not baked into the label, so it can be rendered smaller than
+// the text. At full size the sixteen glyphs cost 343px and put the last tabs back behind a
+// horizontal scrollbar; at 11px they cost 140px, which fits. Keeping the label free of the
+// glyph also keeps the accessible name clean for the e2e selectors that match on it.
+export const IAM_NAV: { id: IamTab; label: string; icon: string }[] = [
+  { id: "overview", label: "Overview", icon: "\u{1F4CA}" },
+  { id: "findings", label: "Findings", icon: "\u{1F6A8}" },
+  { id: "scanners", label: "Scanners", icon: "\u{1F4E1}" },
+  { id: "effective", label: "Effective Access", icon: "\u{1F9E9}" },
+  { id: "privileged", label: "Privileged", icon: "\u{1F6E1}\uFE0F" },
+  { id: "escalation", label: "Escalation", icon: "\u26A1" },
+  { id: "bypass", label: "Shadow Access", icon: "\u{1F6AA}" },
+  { id: "leastprivilege", label: "Least Privilege", icon: "\u{1F4C9}" },
+  { id: "simulator", label: "Simulator", icon: "\u{1F9EA}" },
+  { id: "compare", label: "Compare", icon: "\u{1F552}" },
+  { id: "reviews", label: "Reviews", icon: "\u2705" },
+  { id: "pim", label: "PIM", icon: "\u23F1\uFE0F" },
+  { id: "scopes", label: "Scopes", icon: "\u{1F5C2}\uFE0F" },
+  { id: "roles", label: "Roles", icon: "\u{1F3AB}" },
+  { id: "insights", label: "Insights", icon: "\u{1F4C8}" },
+  { id: "diagnostics", label: "Diagnostics", icon: "\u{1FA7A}" },
 ];
 
-export const RBAC_TAB_IDS = new Set<RbacTab>(RBAC_NAV.map((n) => n.id));
+export const IAM_TAB_IDS = new Set<IamTab>(IAM_NAV.map((n) => n.id));
 
 // ---- Ownership ------------------------------------------------------------------
 // The /ownership section's sub-tabs (URL-driven: /ownership/:tab). "directory" is the
@@ -390,16 +412,19 @@ export type EntraTab =
   | "posture" | "conditional-access" | "privileged" | "applications"
   | "signals" | "governance" | "graph" | "findings" | "setup";
 
-export const ENTRA_NAV: { id: EntraTab; label: string }[] = [
-  { id: "posture", label: "🛡️ Posture" },
-  { id: "conditional-access", label: "🚦 Conditional Access" },
-  { id: "privileged", label: "👑 Privileged Access" },
-  { id: "applications", label: "🧩 Applications" },
-  { id: "signals", label: "📊 Risk & sign-ins" },
-  { id: "governance", label: "📜 Governance" },
-  { id: "graph", label: "🕸️ Blast radius" },
-  { id: "findings", label: "📋 Findings & scanners" },
-  { id: "setup", label: "🔌 Setup & coverage" },
+// Same treatment as IAM_NAV: the glyph is a separate field so it can be rendered smaller than
+// the label. Nine tabs with real names measured 1259px, which fits at 1366 and scrolls below it;
+// at the tighter sizing they measure 978px and fit down to 1152.
+export const ENTRA_NAV: { id: EntraTab; label: string; icon: string }[] = [
+  { id: "posture", label: "Posture", icon: "🛡️" },
+  { id: "conditional-access", label: "Conditional Access", icon: "🚦" },
+  { id: "privileged", label: "Privileged Access", icon: "👑" },
+  { id: "applications", label: "Applications", icon: "🧩" },
+  { id: "signals", label: "Risk & sign-ins", icon: "📊" },
+  { id: "governance", label: "Governance", icon: "📜" },
+  { id: "graph", label: "Blast radius", icon: "🕸️" },
+  { id: "findings", label: "Findings & scanners", icon: "📋" },
+  { id: "setup", label: "Setup & coverage", icon: "🔌" },
 ];
 
 export const ENTRA_TAB_IDS = new Set<EntraTab>(ENTRA_NAV.map((n) => n.id));

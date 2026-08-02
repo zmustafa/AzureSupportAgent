@@ -16,6 +16,7 @@ import { EntraSignalsView } from "./entra/EntraSignalsView";
 import { EntraSetupView } from "./entra/EntraSetupView";
 import { Bar, CoverageBanner, EntraEmpty, FreshnessBadge, ScoreRing, SevBadge, StateChip } from "./entra/EntraShared";
 import { FederationNote } from "./entra/EntraIdentityFabric";
+import { useExportDownload } from "./ExportProgress";
 
 /**
  * Entra ID Support Agent.
@@ -204,23 +205,26 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
             <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
           </div>
         </div>
-        {/* Nine tabs with real names do not fit at 1440px. Scrolling horizontally keeps
-            every label on one line and readable; wrapping them turned the bar into three
-            ragged rows that pushed the content below the fold. Scrolling alone is not
-            enough though — with four tabs off-screen and no edge cue, a live tenant looked
-            like it simply had five screens. */}
+        {/* Nine tabs with real names do not fit at 1440px at the default `px-3 text-sm`.
+            Scrolling horizontally keeps every label on one line and readable; wrapping them
+            turned the bar into three ragged rows that pushed the content below the fold.
+            Scrolling alone is not enough though — with four tabs off-screen and no edge cue, a
+            live tenant looked like it simply had five screens. Sized to match IAM: the glyph is
+            rendered at 11px rather than at label size, which is what makes the row fit at 1152
+            instead of 1366. */}
         <div className="flex items-center gap-1">
           <TabScroller activeId={tab}>
-            {ENTRA_NAV.map(({ id, label }) => (
+            {ENTRA_NAV.map(({ id, label, icon }) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
                 title={label}
                 data-active={tab === id ? "true" : undefined}
-                className={`shrink-0 whitespace-nowrap rounded-t-lg px-3 py-1.5 text-sm font-medium ${
+                className={`shrink-0 whitespace-nowrap rounded-t-lg px-1 py-1.5 text-[13px] font-medium ${
                   tab === id ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"
                 }`}
               >
+                <span aria-hidden="true" className="mr-0.5 text-[11px]">{icon}</span>
                 {label}
               </button>
             ))}
@@ -302,6 +306,9 @@ function PostureTab({
     queryKey: ["entra-posture", connectionId],
     queryFn: () => api.entraPosture(connectionId),
   });
+  // Before every early return below — this component has three, and a hook after any of them
+  // changes the hook order between renders.
+  const download = useExportDownload("Entra export");
 
   if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Loading posture…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
@@ -322,6 +329,7 @@ function PostureTab({
 
   return (
     <div className="space-y-4 p-4">
+      {download.dialog}
       <CoverageBanner meta={data.meta} onOpenSetup={onOpenSetup} />
 
       {/* Headline: the score is meaningless without its coverage, so they are never split. */}
@@ -358,13 +366,29 @@ function PostureTab({
               Measured {Math.round(s.coverage * 100)}% of the model · {s.measured_signals} of {s.total_signals} checks ·
               registry v{s.registry_version}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               {(["critical", "high", "medium", "low"] as const).map((sev) => (
                 <span key={sev} className="inline-flex items-center gap-1 text-xs text-gray-600">
                   <SevBadge sev={sev} />
                   {s.findings_by_severity?.[sev] ?? 0}
                 </span>
               ))}
+              {/* One button for the whole section. It lives here rather than per-tab because
+                  the workbook is not this tab's data — it is every tab's, plus the raw
+                  directory the tabs only show counts of. The connection id is explicit: the
+                  equivalent IAM link omitted it and silently exported the DEFAULT tenant.
+                  Routed through fetch rather than a plain href so the ~8s build has visible
+                  progress; without it people conclude it is broken and click again, which
+                  starts a second build. */}
+              <button
+                type="button"
+                onClick={() => download.start(api.entraWorkbookUrl(connectionId), "entra-identity-review.xlsx")}
+                disabled={download.phase !== "idle"}
+                className="ml-auto rounded border border-green-300 bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                title="Every /entra tab and sub-tab as one multi-sheet workbook — posture, findings, Conditional Access, privileged access, applications, sign-in risk, governance, blast radius and the raw directory. Contains personal data."
+              >
+                ⬇ Export everything to Excel
+              </button>
             </div>
           </div>
         </div>

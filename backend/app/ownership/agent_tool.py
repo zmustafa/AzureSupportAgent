@@ -128,7 +128,7 @@ def build_ownership_tools(tenant_id: str) -> list[ConnectorTool]:
 
 
 def register_ownership_tools(toolset, *, tenant_id: str) -> None:
-    """Add the ownership tools to a connector toolset when enabled (mirrors register_rbac_tools)."""
+    """Add the ownership tools to a connector toolset when enabled (mirrors register_iam_tools)."""
     from app.core.app_settings import load_settings
 
     if not bool(load_settings().get("ownership_tools_enabled", True)):

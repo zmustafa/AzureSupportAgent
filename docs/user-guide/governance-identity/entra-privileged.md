@@ -102,4 +102,4 @@ The Azure half of cross-plane and of activation sessions comes from the RBAC cac
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
 - [Entra: applications and consent]({{ site.baseurl }}/user-guide/governance-identity/entra-applications/)
 - [Review identity, PIM, and app registrations]({{ site.baseurl }}/how-to/governance-identity/identity-reviews/)
-- [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)
+- [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)

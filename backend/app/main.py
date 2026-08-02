@@ -36,6 +36,7 @@ from app.api import (
     evidence,
     fmea,
     graph,
+    iam,
     identity,
     insights,
     inventory,
@@ -49,7 +50,6 @@ from app.api import (
     perfprofile,
     quota,
     radar,
-    rbac,
     reservations,
     tagintel,
     telemetry,
@@ -547,7 +547,16 @@ api.include_router(radar.router)
 api.include_router(teleintel.router)
 api.include_router(perfprofile.router)
 api.include_router(missions.router)
-api.include_router(rbac.router)
+api.include_router(iam.router, prefix="/iam")
+# Legacy alias: /rbac was renamed to /iam. Kept (hidden from the schema, Deprecation-tagged)
+# so existing bookmarks, saved automations and API clients keep working. Remove one release
+# after the frontend has moved.
+api.include_router(
+    iam.router,
+    prefix="/rbac",
+    include_in_schema=False,
+    dependencies=[Depends(iam.deprecated_rbac_alias)],
+)
 api.include_router(reservations.router)
 api.include_router(quota.router)
 api.include_router(ownership.router)

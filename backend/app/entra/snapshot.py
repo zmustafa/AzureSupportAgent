@@ -316,7 +316,7 @@ def _state_stamp(tenant_id: str) -> str:
 def _rbac_signature() -> str:
     """So a fresh Azure RBAC scan invalidates the cross-plane join."""
     try:
-        from app.rbac import cache as rbac_cache
+        from app.iam import cache as rbac_cache
 
         return str(rbac_cache.cache_version())
     except Exception:  # noqa: BLE001 - the RBAC module is optional here

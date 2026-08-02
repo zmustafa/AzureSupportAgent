@@ -360,7 +360,7 @@ def test_suggestions_from_rbac(monkeypatch):
     monkeypatch.setattr(wlreg, "list_workloads", lambda *a, **k: [wl])
     # Fake an RBAC cached scan: Grace has Owner on the subscription.
     monkeypatch.setattr(
-        "app.rbac.compose.build_master_rows",
+        "app.iam.compose.build_master_rows",
         lambda tid: [{
             "subscriptionId": SUB, "roleName": "Owner", "roleIsPrivileged": True,
             "effectivePrincipalName": "Grace Hopper", "effectivePrincipalId": "p-grace",

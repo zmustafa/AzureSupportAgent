@@ -29,6 +29,17 @@ const PROVIDER_LABELS: Record<string, string> = {
   lmstudio: "LM Studio (local)",
 };
 
+/** Redirect a legacy `/rbac[/tab]` URL to its `/iam` equivalent.
+ *
+ *  A bare `<Navigate to="/iam" />` would be wrong twice over: it drops the tab segment, so
+ *  `/rbac/insights` lands on the overview, and it drops `location.search`, so the Estate Graph
+ *  handoff (`?workload_id=`) and any shared filter URL silently lose their scope. */
+function LegacyIamRedirect() {
+  const location = useLocation();
+  const rest = location.pathname.replace(/^\/rbac/, "");
+  return <Navigate to={`/iam${rest}${location.search}${location.hash}`} replace />;
+}
+
 export default function App() {
   const { user, loading, logout } = useAuth();
   const location = useLocation();
@@ -163,8 +174,14 @@ export default function App() {
           <Route path="/change-explorer/:tab" element={<ChatView />} />
           <Route path="/insights" element={<ChatView />} />
           <Route path="/insights/:section" element={<ChatView />} />
-          <Route path="/rbac" element={<ChatView />} />
-          <Route path="/rbac/:tab" element={<ChatView />} />
+          <Route path="/iam" element={<ChatView />} />
+          <Route path="/iam/:tab" element={<ChatView />} />
+          {/* /rbac was renamed to /iam (the screen covers access models that are not RBAC).
+              Keep old links, bookmarks and shared URLs working — tab segment, query string
+              and hash all have to survive, or the Graph handoff (?workload_id=) and any
+              shared filter URL land on a bare overview. */}
+          <Route path="/rbac" element={<LegacyIamRedirect />} />
+          <Route path="/rbac/:tab" element={<LegacyIamRedirect />} />
           <Route path="/assessments" element={<ChatView />} />
           <Route path="/assessments/:id" element={<ChatView />} />
           <Route path="/architectures" element={<ChatView />} />

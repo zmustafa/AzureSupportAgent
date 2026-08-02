@@ -135,4 +135,4 @@ The canvas carries its own zoom control in the top right: step in, step out, a l
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
 - [Entra: findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/)
 - [Review Entra ID posture end to end]({{ site.baseurl }}/how-to/governance-identity/entra-first-refresh/)
-- [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)
+- [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)

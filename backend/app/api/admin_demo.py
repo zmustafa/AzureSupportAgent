@@ -94,8 +94,8 @@ def _purge_features(tenant_id: str) -> dict[str, Any]:
     from app.identity import pim_cache
     step("pim_lifecycle", lambda: pim_cache.delete_snapshot(tenant_id))
 
-    from app.rbac import cache as rbac_cache
-    step("rbac", lambda: rbac_cache.purge_demo(tenant_id))
+    from app.iam import cache as rbac_cache
+    step("iam", lambda: rbac_cache.purge_demo(tenant_id))
 
     from app.reservations import cache as res_cache, demo as res_demo
     step("reservations", lambda: res_cache.delete_snapshot(tenant_id, res_demo.DEMO_SCOPE_ID))
@@ -207,7 +207,7 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     from app.netcheck import demo as nc_demo
     from app.perfprofile import demo as perf_demo
     from app.radar import demo as radar_demo
-    from app.rbac import demo as rbac_demo
+    from app.iam import demo as rbac_demo
     from app.reservations import cache as res_cache, demo as res_demo
     from app.teleintel import demo as ti_demo
     from app.telemetry import demo as tel_demo
@@ -233,7 +233,7 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     _seed_each("performance_profiler", lambda w: perf_demo.seed_demo(tenant_id=tenant_id, scope_id=w))
     _seed_each("retirement_radar", lambda w: radar_demo.seed_demo(tenant_id=tenant_id, scope_id=w))
     step("telemetry_intelligence", lambda: ti_demo.ensure_demo())
-    step("rbac", lambda: rbac_demo.seed_demo(tenant_id))
+    step("iam", lambda: rbac_demo.seed_demo(tenant_id))
     step("reservations", lambda: res_cache.write_snapshot(tenant_id, res_demo.DEMO_SCOPE_ID, res_demo.seed_demo()))
     step("app_registrations", lambda: appregs.seed_demo(tenant_id))
     step("pim_lifecycle", lambda: pim_demo.seed_demo(tenant_id))
@@ -259,7 +259,7 @@ def _status(tenant_id: str) -> dict[str, Any]:
     from app.connectors import demo as conn_demo
     from app.connectors.registry import get_connector
     from app.identity import appregs_cache
-    from app.rbac import cache as rbac_cache
+    from app.iam import cache as rbac_cache
     from app.reservations import cache as res_cache, demo as res_demo
 
     def _appregs_demo_present() -> bool:
@@ -278,7 +278,7 @@ def _status(tenant_id: str) -> dict[str, Any]:
         "backup_dr_coverage": bdr_cache.read_snapshot(tenant_id, "workload", DEMO_WORKLOAD_ID) is not None,
         "performance_profiler": perf_cache.read_snapshot(tenant_id, "workload", DEMO_WORKLOAD_ID) is not None,
         "retirement_radar": radar_cache.read_snapshot(tenant_id, "workload", DEMO_WORKLOAD_ID) is not None,
-        "rbac": rbac_cache.is_demo(tenant_id),
+        "iam": rbac_cache.is_demo(tenant_id),
         "reservations": _reservations_demo_present(),
         "app_registrations": _appregs_demo_present(),
         "connectors": any(get_connector(cid) is not None for cid in conn_demo.DEMO_CONNECTOR_IDS),

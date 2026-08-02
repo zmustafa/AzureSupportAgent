@@ -68,7 +68,7 @@ export const DOCUMENTATION_TARGETS: Readonly<Record<string, DocumentationTarget>
   "/entra/graph": target("Entra blast radius", "/user-guide/governance-identity/entra-blast-radius", "/how-to/governance-identity/review-privileged-activity"),
   "/entra/findings": target("Entra findings and scanners", "/user-guide/governance-identity/entra-findings-scanners", "/how-to/governance-identity/investigate-entra-finding"),
   "/entra": target("Entra ID", "/user-guide/governance-identity/identity", "/how-to/governance-identity/entra-first-refresh"),
-  "/rbac": target("RBAC", "/user-guide/governance-identity/rbac", "/how-to/governance-identity/rbac-access-reviews"),
+  "/iam": target("IAM", "/user-guide/governance-identity/iam", "/how-to/governance-identity/iam-access-reviews"),
 
   "/radar": target("Retirement Radar", "/user-guide/lifecycle-investigation/retirement-radar", "/how-to/lifecycle-investigation/retirement-radar"),
   "/reservations": target("Reservations Monitor", "/user-guide/lifecycle-investigation/reservations-monitor", "/how-to/lifecycle-investigation/reservations-monitor"),

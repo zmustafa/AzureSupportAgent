@@ -44,8 +44,8 @@ def empty(reason: str = "") -> dict[str, Any]:
 def build(tenant_id: str, *, entra_generated_at: str = "") -> dict[str, Any]:
     """Index the RBAC cache by principal id. Never raises."""
     try:
-        from app.rbac import cache as rbac_cache
-        from app.rbac import compose, schema
+        from app.iam import cache as rbac_cache
+        from app.iam import compose, schema
     except Exception as exc:  # noqa: BLE001 - the RBAC module is optional to this feature
         return empty(f"RBAC module unavailable: {exc}")
 

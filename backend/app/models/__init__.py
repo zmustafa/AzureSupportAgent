@@ -17,6 +17,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -540,13 +541,17 @@ class AssessmentFindingState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
-class RbacScanRun(Base):
-    """One completed RBAC (access review) refresh — a compact history point for drift.
+class IamScanRun(Base):
+    """One completed IAM (access review) refresh — a compact history point for drift.
 
     The heavy per-scope rows live in the file cache; this table keeps only the summary needed
     to chart movement and diff "new privileged access since last scan". ``privileged_keys_json``
     is the set of ``effectivePrincipal|role|scope`` keys present at scan time so a later run can
-    compute added/removed privileged grants."""
+    compute added/removed privileged grants.
+
+    The table name stays ``rbac_scan_runs`` after the /rbac -> /iam rename: renaming it would
+    cost a migration (and a downgrade path) for something no user can see. Revisit if/when the
+    analytical ``iam_access_rows`` table lands, and do both in one migration."""
 
     __tablename__ = "rbac_scan_runs"
 
@@ -562,12 +567,105 @@ class RbacScanRun(Base):
     kpis_json: Mapped[dict] = mapped_column(JSON, default=dict)
     scopes_json: Mapped[list] = mapped_column(JSON, default=list)  # per-scope summary
     privileged_keys_json: Mapped[list] = mapped_column(JSON, default=list)  # for drift diff
+    # Full access rows, for the CLASSIFIED diff. Retained on the newest run only (a rolling
+    # one-run buffer) plus any run explicitly pinned — a campaign baseline or an evidence
+    # snapshot. Thirty runs of a large tenant's rows is not a history feature, it is an outage,
+    # so `store.save_run` clears this from its predecessors as it writes.
+    rows_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    pinned: Mapped[bool] = mapped_column(default=False)
+    pin_reason: Mapped[str] = mapped_column(String(256), default="")
     diff_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # change vs previous run
     demo: Mapped[bool] = mapped_column(default=False)
     triggered_by: Mapped[str] = mapped_column(String(128), default="")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class IamFindingState(Base):
+    """A human decision about an IAM finding — suppression, accepted risk, in progress.
+
+    Deliberately SEPARATE from the evaluation. Findings are recomputed from the cached access
+    snapshot on every read, so resolution is computed (a fingerprint that stops appearing is
+    resolved). This table is the only thing a person writes, and a collection run must never
+    touch it — otherwise a rescan would silently clear somebody's risk acceptance.
+
+    Keyed on the finding's fingerprint (signal id + subject), so the decision survives
+    re-evaluation without inheriting onto a genuinely different finding."""
+
+    __tablename__ = "iam_finding_state"
+    __table_args__ = (UniqueConstraint("tenant_id", "fingerprint", name="uq_iam_finding_state"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    state: Mapped[str] = mapped_column(String(24), default="open")  # open|in_progress|suppressed|accepted
+    reason: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(128), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class IamReviewCampaign(Base):
+    """A certification campaign: *"prove a human reviewed who has this access."*
+
+    Entra Access Reviews cover directory roles and group membership. They do not cover Azure RBAC
+    at resource scope, Key Vault access policies, classic administrators, Lighthouse delegations
+    or bypass credentials. This table is that gap.
+
+    ``baseline_run_id`` matters more than it looks: a campaign certifies a specific
+    :class:`IamScanRun`, so "what was reviewed" stays answerable after the estate has moved on."""
+
+    __tablename__ = "iam_review_campaign"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(256), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    selector_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    baseline_run_id: Mapped[str] = mapped_column(String(36), default="")
+    reviewer_strategy: Mapped[str] = mapped_column(String(24), default="owner")  # owner|manager|fixed|self
+    reviewer_fallback_id: Mapped[str] = mapped_column(String(128), default="")
+    # draft | active | completed | cancelled | expired
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reminder_days: Mapped[list] = mapped_column(JSON, default=list)
+    stats_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_id: Mapped[str] = mapped_column(String(64), default="")
+    created_by: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class IamReviewItem(Base):
+    """One access row placed in front of one reviewer.
+
+    ``row_snapshot_json`` is the point of the whole table: the reviewer certified **what they
+    were shown**. If the underlying access changes mid-campaign the item is flagged
+    ``changed_since_baseline`` and re-presented — it is never silently updated underneath a
+    decision that was made about something else."""
+
+    __tablename__ = "iam_review_item"
+    __table_args__ = (UniqueConstraint("campaign_id", "row_key", name="uq_iam_review_item"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    campaign_id: Mapped[str] = mapped_column(String(36), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    row_key: Mapped[str] = mapped_column(String(512))
+    row_snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    context_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    reviewer_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    reviewer_source: Mapped[str] = mapped_column(String(24), default="")  # owner|manager|sp_owner|fallback
+    # approve | revoke | reduce | delegate | needs_info | None
+    decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    decision_reason: Mapped[str] = mapped_column(Text, default="")
+    decided_by: Mapped[str] = mapped_column(String(128), default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delegated_to: Mapped[str] = mapped_column(String(128), default="")
+    changed_since_baseline: Mapped[bool] = mapped_column(default=False)
+    # none | generated | exported | confirmed_applied
+    remediation_state: Mapped[str] = mapped_column(String(24), default="none")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class QuotaScanRun(Base):

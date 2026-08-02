@@ -118,5 +118,5 @@ Do not purge runs needed for incident, legal, or audit retention. Do not mistake
 ## Related pages
 
 - [Inventory]({{ site.baseurl }}/user-guide/estate-intelligence/inventory/)
-- [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)
+- [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)
 - [Alerts Manager]({{ site.baseurl }}/user-guide/coverage/alerts-manager/)

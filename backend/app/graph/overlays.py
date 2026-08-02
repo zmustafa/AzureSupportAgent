@@ -168,7 +168,7 @@ def _coverage_pct(snap: dict[str, Any]) -> int | None:
 def rbac_overlay(*, tenant_id: str, connection_id: str) -> dict[str, Any]:
     out = _empty()
     try:
-        from app.rbac.compose import build_master_rows
+        from app.iam.compose import build_master_rows
     except Exception:  # noqa: BLE001
         return out
     try:

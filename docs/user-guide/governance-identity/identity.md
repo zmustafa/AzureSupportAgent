@@ -138,5 +138,5 @@ Compare scores over time within one tenant. Do not compare a score across tenant
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
 - [Review Entra ID posture end to end]({{ site.baseurl }}/how-to/governance-identity/entra-first-refresh/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)
-- [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/)
+- [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)
 - [Change Explorer]({{ site.baseurl }}/user-guide/estate-intelligence/change-explorer/)

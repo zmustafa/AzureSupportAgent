@@ -2530,10 +2530,10 @@ export type ReservationsDigestPreview = {
   error: string;
 };
 
-// ---- RBAC / Access Review -------------------------------------------------------
-export type RbacRow = Record<string, string | boolean>;
+// ---- IAM / Access Review -------------------------------------------------------
+export type IamRow = Record<string, string | boolean>;
 
-export type RbacScopeFreshness = {
+export type IamScopeFreshness = {
   scope: string;
   scopeType: string;
   displayName: string;
@@ -2546,9 +2546,13 @@ export type RbacScopeFreshness = {
   collectors_attention: number;
   stale?: boolean;
   demo: boolean;
+  verified_at?: string;
+  verified_age_seconds?: number | null;
+  verified_unchanged?: boolean;
+  source?: string;
 };
 
-export type RbacDirectoryFreshness = {
+export type IamDirectoryFreshness = {
   status: string;
   generated_at: string;
   age_seconds: number | null;
@@ -2559,7 +2563,7 @@ export type RbacDirectoryFreshness = {
   loaded: boolean;
 };
 
-export type RbacCollector = {
+export type IamCollector = {
   collector: string;
   status: string;
   rowsAdded: number;
@@ -2569,7 +2573,7 @@ export type RbacCollector = {
   scopeLabel: string;
 };
 
-export type RbacOverview = {
+export type IamOverview = {
   tenant_id: string;
   generated_at: string;
   kpis: {
@@ -2581,48 +2585,72 @@ export type RbacOverview = {
     owners: number;
     entra_roles: number;
     eligible: number;
+    /** Deny assignments in force. NOT counted in total_assignments — a deny removes access. */
+    deny_assignments?: number;
+    /** Legacy Key Vault access-policy grants (vaults with enableRbacAuthorization false). */
+    key_vault_policies?: number;
+    /** Classic administrators (Account / Service / Co-Administrator). */
+    classic_admins?: number;
+    /** Privileged access held PERMANENTLY — what PIM exists to eliminate. */
+    standing_privileged?: number;
+    /** Privileged access that must be activated first (eligible / JIT). */
+    eligible_privileged?: number;
+    /** JIT elevations currently in force. Active now, but they expire. */
+    active_elevations?: number;
+    /**
+     * Whether a PIM collector actually ran for the cached scopes.
+     * False means eligibility was never looked for, so the absence of eligible rows is an
+     * artefact — NOT evidence that all privileged access is permanent.
+     */
+    pim_collected?: boolean;
+    /**
+     * standing / (standing + eligible), 0..1.
+     * `null` when there is no privileged access to measure — a 0 would read as a perfect JIT
+     * posture, which is the opposite of "nothing was measured".
+     */
+    standing_ratio?: number | null;
     scopes: number;
     subscriptions: number;
   };
   group_severity: Record<string, string>;
-  scopes: RbacScopeFreshness[];
-  directory: RbacDirectoryFreshness;
-  collectors: RbacCollector[];
+  scopes: IamScopeFreshness[];
+  directory: IamDirectoryFreshness;
+  collectors: IamCollector[];
   demo: boolean;
   never_loaded: boolean;
   ttl_s: number;
   connection_configured: boolean;
 };
 
-export type RbacAccessPage = {
+export type IamAccessPage = {
   total: number;
   offset: number;
   limit: number;
-  rows: RbacRow[];
+  rows: IamRow[];
   columns: string[];
 };
 
-export type RbacPivotItem = { label: string; count: number };
-export type RbacPivots = { pivots: Record<string, RbacPivotItem[]>; labels: Record<string, string> };
+export type IamPivotItem = { label: string; count: number };
+export type IamPivots = { pivots: Record<string, IamPivotItem[]>; labels: Record<string, string> };
 
-export type RbacScopeNode = {
+export type IamScopeNode = {
   id: string;
   name: string;
   type: "root" | "managementGroup" | "subscription";
   count: number;
   subscriptionIds: string[];
   inferred?: boolean;
-  children: RbacScopeNode[];
+  children: IamScopeNode[];
 };
 
-export type RbacScopeTree = {
-  root: RbacScopeNode;
+export type IamScopeTree = {
+  root: IamScopeNode;
   demo: boolean;
   subscription_count: number;
   mg_count: number;
 };
 
-export type RbacJob = {
+export type IamJob = {
   id: string;
   key: string;
   scope: string;
@@ -2635,7 +2663,7 @@ export type RbacJob = {
   error: string;
 } | null;
 
-export type RbacRun = {
+export type IamRun = {
   id: string;
   scope: string;
   trigger: string;
@@ -2653,7 +2681,48 @@ export type RbacRun = {
   duration_ms: number | null;
 };
 
-export type RbacProgress = { seq: number; ts: string; level: "info" | "ok" | "warning" | "error"; message: string };
+/** Elapsed time and, where it can be justified, a remaining estimate.
+ *
+ * `eta_seconds` is null whenever the estimate cannot be grounded in this tenant's own previous
+ * runs — a first run, or a run that has already outlasted its estimate. Render `eta_label`
+ * (an em dash in that case) and `eta_basis`; never substitute a default, because a bar that
+ * says "8 seconds remaining" for four minutes teaches people the number is decorative. */
+export type IamRunTiming = {
+  elapsed_seconds: number;
+  elapsed_label: string;
+  eta_seconds: number | null;
+  eta_label: string;
+  eta_basis: string;
+  typical_seconds: number | null;
+};
+
+export type IamProgress = {
+  seq: number;
+  ts: string;
+  level: "info" | "ok" | "warning" | "error";
+  message: string;
+} & Partial<IamRunTiming>;
+
+/** Emitted every few seconds while the job is producing no messages, so the clock keeps
+ *  moving through a long silent collection. */
+export type IamTick = IamRunTiming & { status: string; last_message: string };
+
+export type IamCacheEntry = {
+  key: string;
+  label: string;
+  generated_at: string;
+  built_from_version: number | null;
+  /** Whether this derived result was built from the current source data. */
+  current: boolean;
+  duration_seconds: number | null;
+  size: Record<string, number | null | undefined>;
+};
+
+export type IamCacheStatus = {
+  source_version: number;
+  entries: IamCacheEntry[];
+  refresh_estimate: { typical_seconds: number | null; basis: string };
+};
 
 // ---- Central knowledge graph (/graph) ----
 export type GraphNodeKind =
@@ -5618,6 +5687,11 @@ export const api = {
 
   entraPosture: (connectionId?: string | null) =>
     http<EntraPosture>(`/entra/posture${entraQs(connectionId)}`),
+  /** Every /entra tab and sub-tab as one workbook. A plain URL because it is an <a href>
+   *  download; the connection id MUST be carried or the backend falls back to the default
+   *  connection and exports a different tenant. */
+  entraWorkbookUrl: (connectionId?: string | null) =>
+    `${API_BASE}/entra/export/workbook${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
   entraPosturePillar: (pillar: string, connectionId?: string | null) =>
     http<{ meta: EntraMeta; pillar: EntraPillar; signals: (EntraSignal & { findings: number; measured: boolean; not_measured_reason: string })[]; findings: EntraFinding[] }>(
       `/entra/posture/pillar/${encodeURIComponent(pillar)}${entraQs(connectionId)}`),
@@ -6072,10 +6146,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ connection_id: connectionId, approved: true }),
     }),
-  // RBAC / Access Review — server cache, per-scope refresh.
-  rbacOverview: (connectionId?: string | null) =>
-    http<RbacOverview>(`/rbac/overview${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
-  rbacAccess: (params: {
+  // IAM / Access Review — server cache, per-scope refresh.
+  iamOverview: (connectionId?: string | null) =>
+    http<IamOverview>(`/iam/overview${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamAccess: (params: {
     tab?: string;
     scope?: string;
     surface?: string;
@@ -6102,52 +6176,281 @@ export const api = {
     if (params.offset != null) q.set("offset", String(params.offset));
     if (params.limit != null) q.set("limit", String(params.limit));
     if (params.connection_id) q.set("connection_id", params.connection_id);
-    return http<RbacAccessPage>(`/rbac/access?${q.toString()}`);
+    return http<IamAccessPage>(`/iam/access?${q.toString()}`);
   },
-  rbacScopeTree: (connectionId?: string | null) => http<RbacScopeTree>(`/rbac/scope-tree${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
-  rbacScopes: (connectionId?: string | null) => http<{ scopes: RbacScopeFreshness[]; directory: RbacDirectoryFreshness; ttl_s: number }>(`/rbac/scopes${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
-  rbacRoles: (connectionId?: string | null) => http<{ role_defs: Record<string, unknown>[]; principals: Record<string, unknown>[] }>(`/rbac/roles${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
-  rbacPivots: (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
+  iamScopeTree: (connectionId?: string | null) => http<IamScopeTree>(`/iam/scope-tree${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamScopes: (connectionId?: string | null) => http<{ scopes: IamScopeFreshness[]; directory: IamDirectoryFreshness; ttl_s: number }>(`/iam/scopes${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamFindings: (params?: {
+    severity?: string;
+    pillar?: string;
+    signal_id?: string;
+    framework?: string;
+    state?: string;
+    include_suppressed?: boolean;
+    limit?: number;
+    offset?: number;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return http<IamFindings>(`/iam/findings${qs ? `?${qs}` : ""}`);
+  },
+  iamScore: (connectionId?: string | null) =>
+    http<IamScore>(`/iam/score${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamSignals: () => http<IamSignalCatalog>(`/iam/signals`),
+  iamUsage: (connectionId?: string | null) =>
+    http<IamUsageSummary>(`/iam/usage${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamRefreshUsage: (days = 90, connectionId?: string | null) =>
+    http<{ ok: boolean }>(
+      `/iam/usage/refresh?days=${days}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamResourceAccessSummary: (resourceId: string, connectionId?: string | null) =>
+    http<IamResourceAccess>(
+      `/iam/resource/access-summary?resource_id=${encodeURIComponent(resourceId)}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamCacheStatus: (connectionId?: string | null) =>
+    http<IamCacheStatus>(
+      `/iam/cache${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamRebuildCache: (connectionId?: string | null) =>
+    http<{ ok: boolean; rebuilt: string[]; duration_seconds: number }>(
+      `/iam/cache/rebuild${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamScanners: (connectionId?: string | null) =>
+    http<IamScannersResponse>(
+      `/iam/scanners${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamScannerFindings: (scannerId: string, connectionId?: string | null) =>
+    http<IamScannerCard & { findings: IamFinding[] }>(
+      `/iam/scanners/${encodeURIComponent(scannerId)}/findings${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamRunScanner: (scannerId: string, connectionId?: string | null) =>
+    http<IamScannerCard>(
+      `/iam/scanners/${encodeURIComponent(scannerId)}/run${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamRunScanners: (force: boolean, connectionId?: string | null) =>
+    http<{ ran: IamScannerCard[]; count: number }>(
+      `/iam/scanners/run?force=${force ? "true" : "false"}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamRightsizing: (connectionId?: string | null) =>
+    http<IamRightsizing>(`/iam/rightsizing${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamSimulate: (changes: Record<string, string>[], connectionId?: string | null) =>
+    http<IamSimulation>(
+      `/iam/simulate${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify({ changes }) },
+    ),
+  iamSimulateKinds: () => http<{ kinds: string[]; seed: number }>(`/iam/simulate/kinds`),
+  iamDiff: (params?: {
+    from_run?: string;
+    to_run?: string;
+    class?: string;
+    scope_id?: string;
+    limit?: number;
+    offset?: number;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return http<IamDiff>(`/iam/diff${qs ? `?${qs}` : ""}`);
+  },
+  iamAttribute: (days = 30, connectionId?: string | null) =>
+    http<IamDiff>(
+      `/iam/attribute?days=${days}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamTimeline: (principalId: string, connectionId?: string | null) =>
+    http<IamTimeline>(
+      `/iam/principal/${encodeURIComponent(principalId)}/timeline${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamFrameworks: (connectionId?: string | null) =>
+    http<IamFrameworkMap>(`/iam/frameworks${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamPinRun: (runId: string, pinned: boolean, reason = "", connectionId?: string | null) =>
+    http<{ run: unknown }>(
+      `/iam/run/${encodeURIComponent(runId)}/pin${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify({ pinned, reason }) },
+    ),
+  iamCampaigns: (connectionId?: string | null) =>
+    http<{ campaigns: IamCampaign[]; strategies: string[]; decisions: string[] }>(
+      `/iam/campaigns${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamCreateCampaign: (
+    body: {
+      name: string;
+      selector: Record<string, unknown>;
+      description?: string;
+      baseline_run_id?: string;
+      reviewer_strategy?: string;
+      reviewer_fallback_id?: string;
+      due_at?: string;
+    },
+    connectionId?: string | null,
+  ) =>
+    http<{ campaign: IamCampaign }>(
+      `/iam/campaigns${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  iamCampaign: (id: string, params?: { reviewer_id?: string; undecided_only?: boolean; connection_id?: string | null }) => {
+    const q = new URLSearchParams();
+    Object.entries(params ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "" && v !== false) q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return http<{ campaign: IamCampaign; items: IamReviewItem[] }>(
+      `/iam/campaigns/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`,
+    );
+  },
+  iamActivateCampaign: (id: string, connectionId?: string | null) =>
+    http<{ campaign: IamCampaign }>(
+      `/iam/campaigns/${encodeURIComponent(id)}/activate${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamDecide: (
+    campaignId: string,
+    itemId: string,
+    body: { decision: string; reason?: string; delegated_to?: string },
+    connectionId?: string | null,
+  ) =>
+    http<{ ok: boolean; stats: IamCampaign["stats"] }>(
+      `/iam/campaigns/${encodeURIComponent(campaignId)}/items/${encodeURIComponent(itemId)}/decide${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  iamRefreshCampaign: (id: string, connectionId?: string | null) =>
+    http<{ re_presented: number; confirmed: number; reverted_claims: number }>(
+      `/iam/campaigns/${encodeURIComponent(id)}/refresh${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamCompleteCampaign: (id: string, connectionId?: string | null) =>
+    http<{ campaign: IamCampaign }>(
+      `/iam/campaigns/${encodeURIComponent(id)}/complete${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamCampaignRemediation: (id: string, format: string, connectionId?: string | null) =>
+    http<{ bundle: IamRemediationBundle | null; note?: string }>(
+      `/iam/campaigns/${encodeURIComponent(id)}/remediation${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify({ format }) },
+    ),
+  iamCampaignEvidence: (id: string, connectionId?: string | null) =>
+    http<{ evidence: { id?: string; sha256?: string }; digest: string }>(
+      `/iam/campaigns/${encodeURIComponent(id)}/evidence${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST" },
+    ),
+  iamBypass: (params?: {
+    family?: string;
+    severity?: string;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return http<IamBypassResponse>(`/iam/bypass${qs ? `?${qs}` : ""}`);
+  },
+  iamEscalation: (params?: {
+    scope_id?: string;
+    principal_id?: string;
+    min_confidence?: string;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params ?? {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return http<IamEscalationGraph>(`/iam/escalation${qs ? `?${qs}` : ""}`);
+  },
+  iamManagedIdentities: (connectionId?: string | null) =>
+    http<{ identities: IamManagedIdentity[]; total: number; federated_total: number }>(
+      `/iam/identities${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+    ),
+  iamEffective: (params: {
+    principal_id: string;
+    scope: string;
+    action?: string;
+    plane?: string;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    return http<IamDecision>(`/iam/effective?${q.toString()}`);
+  },
+  iamPrincipalAccess: (principalId: string, scope = "/", connectionId?: string | null) => {
+    const q = new URLSearchParams({ scope });
+    if (connectionId) q.set("connection_id", connectionId);
+    return http<IamGrantSet>(`/iam/principal/${encodeURIComponent(principalId)}/access?${q.toString()}`);
+  },
+  iamResourceAccess: (params: {
+    scope: string;
+    action: string;
+    plane?: string;
+    limit?: number;
+    connection_id?: string | null;
+  }) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    return http<IamWhoCan>(`/iam/resource-access?${q.toString()}`);
+  },
+  iamSetFindingState: (fingerprint: string, state: string, reason: string, connectionId?: string | null) =>
+    http<{ ok: boolean; fingerprint: string; state: string }>(
+      `/iam/findings/${encodeURIComponent(fingerprint)}/state${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`,
+      { method: "POST", body: JSON.stringify({ state, reason }) },
+    ),
+  iamRoles: (connectionId?: string | null) => http<{ role_defs: Record<string, unknown>[]; principals: Record<string, unknown>[] }>(`/iam/roles${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamPivots: (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (params?.scope_id) q.set("scope_id", params.scope_id);
     if (params?.subscription_ids) q.set("subscription_ids", params.subscription_ids);
     if (params?.workload_id) q.set("workload_id", params.workload_id);
     if (params?.connection_id) q.set("connection_id", params.connection_id);
     const qs = q.toString();
-    return http<RbacPivots>(`/rbac/pivots${qs ? `?${qs}` : ""}`);
+    return http<IamPivots>(`/iam/pivots${qs ? `?${qs}` : ""}`);
   },
-  rbacDiagnostics: (connectionId?: string | null) =>
-    http<{ collectors: RbacCollector[]; errors: Record<string, string>[]; directory: RbacDirectoryFreshness }>(`/rbac/diagnostics${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
-  rbacRefresh: (body: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null }) =>
-    http<RbacJob & { already_running: boolean }>("/rbac/refresh", { method: "POST", body: JSON.stringify(body) }),
-  rbacJob: (params: { scope?: string; mode?: string; connection_id?: string | null }) => {
+  iamDiagnostics: (connectionId?: string | null) =>
+    http<{ collectors: IamCollector[]; errors: Record<string, string>[]; directory: IamDirectoryFreshness }>(`/iam/diagnostics${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  iamRefresh: (body: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null }) =>
+    http<IamJob & { already_running: boolean }>("/iam/refresh", { method: "POST", body: JSON.stringify(body) }),
+  iamJob: (params: { scope?: string; mode?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (params.scope) q.set("scope", params.scope);
     if (params.mode) q.set("mode", params.mode);
     if (params.connection_id) q.set("connection_id", params.connection_id);
-    return http<{ job: RbacJob }>(`/rbac/job?${q.toString()}`);
+    return http<{ job: IamJob }>(`/iam/job?${q.toString()}`);
   },
-  rbacRuns: () => http<{ runs: RbacRun[] }>("/rbac/runs"),
-  rbacRun: (id: string) => http<{ run: RbacRun | null }>(`/rbac/run/${encodeURIComponent(id)}`),
-  rbacExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
+  iamRuns: () => http<{ runs: IamRun[] }>("/iam/runs"),
+  iamRun: (id: string) => http<{ run: IamRun | null }>(`/iam/run/${encodeURIComponent(id)}`),
+  iamExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams({ fmt, tab });
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
     if (filter?.workload_id) q.set("workload_id", filter.workload_id);
     if (filter?.connection_id) q.set("connection_id", filter.connection_id);
-    return `${API_BASE}/rbac/export?${q.toString()}`;
+    return `${API_BASE}/iam/export?${q.toString()}`;
   },
-  rbacWorkbookUrl: (filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
+  iamWorkbookUrl: (filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
     const q = new URLSearchParams();
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
     if (filter?.workload_id) q.set("workload_id", filter.workload_id);
     if (filter?.connection_id) q.set("connection_id", filter.connection_id);
     const qs = q.toString();
-    return `${API_BASE}/rbac/export/workbook${qs ? `?${qs}` : ""}`;
+    return `${API_BASE}/iam/export/workbook${qs ? `?${qs}` : ""}`;
   },
-  rbacDemoSeed: () => http<{ ok: boolean; scopes: number; directory_rows: number; overview: RbacOverview }>("/rbac/demo/seed", { method: "POST", body: "{}" }),
-  rbacDemoPurge: () => http<{ ok: boolean; scopes_removed: number }>("/rbac/demo/purge", { method: "POST", body: "{}" }),
+  iamDemoSeed: () => http<{ ok: boolean; scopes: number; directory_rows: number; overview: IamOverview }>("/iam/demo/seed", { method: "POST", body: "{}" }),
+  iamDemoPurge: () => http<{ ok: boolean; scopes_removed: number }>("/iam/demo/purge", { method: "POST", body: "{}" }),
   // Coverage / posture trend (shared shape across the 4 dashboards).
   coverageTrend: (feature: "amba" | "telemetry" | "backupdr" | "performance", params: { workload_id?: string; subscription_id?: string }) => {
     const base = feature === "performance" ? "/performance/trend" : `/${feature}/trend`;
@@ -9376,15 +9679,16 @@ export async function streamMission(
   if (!terminal && !signal?.aborted) handlers.onError?.("Mission stream disconnected before completion.");
 }
 
-// ---- RBAC per-scope refresh (SSE) ----------------------------------------------
-/** Follow a per-scope RBAC refresh over SSE. The server job keeps running even if this stream
+// ---- IAM per-scope refresh (SSE) ----------------------------------------------
+/** Follow a per-scope IAM refresh over SSE. The server job keeps running even if this stream
  *  disconnects — re-calling re-attaches and replays the log. mode: scope | directory | all. */
-export async function streamRbacRefresh(
+export async function streamIamRefresh(
   params: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null },
   handlers: {
-    onStart?: (d: RbacJob) => void;
-    onProgress?: (d: RbacProgress) => void;
-    onDone?: (d: { key: string; scope: string; mode: string }) => void;
+    onStart?: (d: IamJob) => void;
+    onProgress?: (d: IamProgress) => void;
+    onTick?: (d: IamTick) => void;
+    onDone?: (d: { key: string; scope: string; mode: string } & Partial<IamRunTiming>) => void;
     onError?: (msg: string) => void;
   },
   signal?: AbortSignal,
@@ -9394,7 +9698,7 @@ export async function streamRbacRefresh(
   if (params.mode) q.set("mode", params.mode);
   if (params.display_name) q.set("display_name", params.display_name);
   if (params.connection_id) q.set("connection_id", params.connection_id);
-  const res = await fetch(`${API_BASE}/rbac/refresh/stream?${q.toString()}`, {
+  const res = await fetch(`${API_BASE}/iam/refresh/stream?${q.toString()}`, {
     method: "GET",
     credentials: "include",
     signal,
@@ -9442,6 +9746,7 @@ export async function streamRbacRefresh(
       }
       if (event === "start") handlers.onStart?.(parsed as never);
       else if (event === "progress") handlers.onProgress?.(parsed as never);
+      else if (event === "tick") handlers.onTick?.(parsed as never);
       else if (event === "done") handlers.onDone?.(parsed as never);
       else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Refresh failed.");
     }
@@ -14778,3 +15083,668 @@ export type EntraFabricBrief = {
   vendors?: string[]; domains?: string[]; user_count?: number | null; user_share?: number | null;
   sync_enabled?: boolean; password_sync?: boolean | null; summary?: string;
 };
+
+// >>> iam-findings-types (generated by scripts/add_iam_findings_api.py)
+// ---- IAM findings ---------------------------------------------------------------
+// The findings screen has to be able to say "we could not look here", which is why every
+// payload below carries its own measurement state rather than just a list of problems.
+export type IamFinding = {
+  id: string;
+  signal_id: string;
+  title: string;
+  severity: "critical" | "error" | "warning" | "info";
+  pillar: string;
+  object_kind: string;
+  subject: string;
+  subject_label: string;
+  detail: string;
+  count: number;
+  evidence: Record<string, unknown>;
+  remediation: string;
+  frameworks: string[];
+  why?: string;
+  state: "open" | "in_progress" | "suppressed" | "accepted";
+  state_reason: string;
+  state_updated_by: string;
+  state_updated_at: string;
+};
+
+// A signal that could not be evaluated. Rendered explicitly: an empty findings list plus a
+// hidden "we never checked" is indistinguishable from a clean result, and reads as one.
+export type IamUnmeasured = {
+  signal_id: string;
+  title: string;
+  pillar: string;
+  reason: string;
+};
+
+export type IamFindings = {
+  findings: IamFinding[];
+  total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+  counts_by_severity: Record<string, number>;
+  counts_by_pillar: Record<string, number>;
+  unmeasured: IamUnmeasured[];
+};
+
+export type IamPillarScore = {
+  key: string;
+  label: string;
+  desc: string;
+  weight: number;
+  // null when the pillar is blind or not implemented. Never coerce this to 0 or 100 --
+  // "we could not measure" is not a score and must not render as one.
+  score: number | null;
+  state: "ok" | "partial" | "blind" | "not_implemented";
+  reason: string;
+  signals: number;
+  signals_measured: number;
+  findings: number;
+  measured_fraction: number;
+};
+
+export type IamScore = {
+  score: number | null;
+  coverage: number;
+  // Withheld below the coverage floor. Render the absence, not a placeholder letter.
+  grade: string | null;
+  grade_label: string | null;
+  grade_withheld_reason: string | null;
+  min_coverage_for_grade: number;
+  pillars: IamPillarScore[];
+};
+
+export type IamSignalDef = {
+  id: string;
+  title: string;
+  pillar: string;
+  severity: string;
+  weight: number;
+  object_kind: string;
+  why: string;
+  remediation: string;
+  frameworks: string[];
+};
+
+export type IamSignalCatalog = {
+  signals: IamSignalDef[];
+  pillars: { key: string; label: string; desc: string; weight: number }[];
+  severities: string[];
+};
+// <<< iam-findings-types
+
+// >>> iam-effective-types (generated by scripts/add_iam_effective_api.py)
+// ---- IAM effective permissions --------------------------------------------------
+// "indeterminate" is a first-class verdict, not an error. It is returned whenever an
+// unevaluated ABAC condition or an unresolved role definition sits in the decision path, and
+// the UI must render it as its own state -- rounding it to yes or no is the whole failure mode
+// this verdict exists to prevent.
+export type IamVerdict = "allowed" | "denied" | "not_granted" | "indeterminate";
+
+export type IamAssignmentRef = {
+  assignmentId: string;
+  roleName: string;
+  roleDefinitionId: string;
+  scope: string;
+  scopeDisplayName: string;
+  principalId: string;
+  principalName: string;
+  accessPath: string;
+  sourceGroupId: string;
+  sourceGroupName: string;
+  surface: string;
+  assignmentState: string;
+  condition: string;
+  matchedBy?: string;
+  notAction?: string;
+  actionCount?: number;
+  dataActionCount?: number;
+};
+
+export type IamDecision = {
+  verdict: IamVerdict;
+  action: string;
+  plane: string;
+  scope: string;
+  principalId: string;
+  decidedBy: IamAssignmentRef | null;
+  grantingAssignments: IamAssignmentRef[];
+  denyingAssignments: IamAssignmentRef[];
+  notActionExclusions: IamAssignmentRef[];
+  conditionUnevaluated: IamAssignmentRef[];
+  viaGroups: { groupId: string; groupName: string; assignmentId: string }[];
+  unknownRoles: string[];
+  reason: string;
+};
+
+export type IamGrantSet = {
+  principalId: string;
+  scope: string;
+  control: IamAssignmentRef[];
+  data: IamAssignmentRef[];
+  denies: IamAssignmentRef[];
+  unknownRoles: string[];
+};
+
+export type IamWhoCan = {
+  scope: string;
+  action: string;
+  plane: string;
+  allowed: { principalId: string; principalName: string; verdict: IamVerdict; decidedBy: IamAssignmentRef | null; reason: string }[];
+  indeterminate: { principalId: string; principalName: string; verdict: IamVerdict; decidedBy: IamAssignmentRef | null; reason: string }[];
+  candidates: number;
+};
+// <<< iam-effective-types
+
+// >>> iam-escalation-types (generated by scripts/add_iam_escalation_api.py)
+// ---- IAM escalation graph -------------------------------------------------------
+// --- iam bypass (P6) ---
+export type IamBypassReach = {
+  principalId: string;
+  principalName: string;
+  scope: string;
+};
+
+export type IamBypassRow = {
+  key: string;
+  family: string;
+  resourceId: string;
+  resourceType: string;
+  resourceName: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  bypassKind: string;
+  title: string;
+  detail: string;
+  severity: string;
+  environment: string;
+  credentialAction: string;
+  reachableBy: IamBypassReach[];
+  reachableCount: number;
+  // False means the join could not run. An empty reachableBy with this false is NOT "nobody" —
+  // rendering it as nobody is the exact "blind reads as zero" failure this product forbids.
+  reachabilityAvailable: boolean;
+  rbacOnlyPossible: boolean;
+  remediation: string;
+  // Never render remediation without this.
+  breaksIf: string;
+  frameworks: string[];
+};
+
+export type IamBypassFamily = {
+  family: string;
+  assessed: number;
+  affected: number;
+  findings: number;
+  status: string;
+  message: string;
+};
+
+export type IamBypassSummary = {
+  assessed: number;
+  rbac_only: number;
+  bypassed: number;
+  // null when nothing was assessed — render "not assessed", never 0%.
+  rbac_only_pct: number | null;
+  findings: number;
+  by_family: IamBypassFamily[];
+  by_severity: Record<string, number>;
+  limitations: string[];
+};
+
+export type IamBypassResponse = {
+  rows: IamBypassRow[];
+  summary: IamBypassSummary;
+  generated_at: string;
+  status: string;
+  collectors: { name: string; status: string; message: string }[];
+  never_loaded: boolean;
+  families: string[];
+};
+// --- end iam bypass (P6) ---
+
+// --- iam governance (P7) ---
+export type IamActor = {
+  actorPrincipalId: string;
+  actorDisplayName: string;
+  actorType: string;
+  eventTimestamp: string;
+  callerIpAddress: string;
+  correlationId: string;
+  deploymentName: string;
+  changeSource: string;
+  // "exact" | "inferred" | "unknown". An unmatched change is explicitly unknown — never blank,
+  // because blank reads as "nobody did this".
+  confidence: string;
+};
+
+export type IamChange = {
+  class: string;
+  key: string;
+  principalId: string;
+  principalName: string;
+  principalType: string;
+  scope: string;
+  scopeName: string;
+  surface: string;
+  roleName: string;
+  assignmentId: string;
+  privileged: boolean;
+  worsens: boolean;
+  broader?: boolean;
+  actor: IamActor | null;
+  from?: { roleName: string; scope: string; assignmentState: string; accessPath: string; tier: number };
+  to?: { roleName: string; scope: string; assignmentState: string; accessPath: string; tier: number };
+  run_id?: string;
+  at?: string;
+};
+
+export type IamDiff = {
+  changes: IamChange[];
+  counts_by_class: Record<string, number>;
+  total: number;
+  filtered_total?: number;
+  truncated: boolean;
+  worsening?: number;
+  // False means there was nothing to compare against. That is NOT the same as nothing having
+  // changed, and must never render as an all-clear.
+  available: boolean;
+  baseline_run_id?: string;
+  note?: string;
+  classes?: string[];
+  attribution?: {
+    attributed_exact?: number;
+    attributed_inferred?: number;
+    unattributed?: number;
+    days?: number;
+    note?: string;
+  };
+};
+
+export type IamTimeline = {
+  principal_id: string;
+  events: IamChange[];
+  runs_considered: number;
+  limitations: string[];
+};
+
+export type IamControl = {
+  framework: string;
+  control: string;
+  title: string;
+  signals: string[];
+  measured_signals: number;
+  findings: number;
+  // "pass" | "fail" | "not_measured". A control nothing measured is NEVER "pass".
+  state: string;
+};
+
+export type IamFrameworkMap = {
+  controls: IamControl[];
+  by_framework: { framework: string; name: string; controls: number; passing: number; failing: number; not_measured: number }[];
+  limitations: string[];
+};
+
+export type IamCampaign = {
+  id: string;
+  name: string;
+  description: string;
+  selector: Record<string, unknown>;
+  baseline_run_id: string;
+  reviewer_strategy: string;
+  status: string;
+  due_at: string;
+  reminder_days: number[];
+  stats: {
+    total?: number;
+    decided?: number;
+    undecided?: number;
+    privileged?: number;
+    unassigned?: number;
+    changed_since_baseline?: number;
+    complete?: boolean;
+    completeness_pct?: number | null;
+    by_decision?: Record<string, number>;
+    truncated?: boolean;
+  };
+  evidence_id: string;
+  created_by: string;
+  created_at: string;
+  completed_at: string;
+  // Self-review is not certification. The label travels with the record.
+  attestation_only: boolean;
+};
+
+export type IamReviewItem = {
+  id: string;
+  row_key: string;
+  principalId: string;
+  principalName: string;
+  principalType: string;
+  roleName: string;
+  scope: string;
+  scopeName: string;
+  surface: string;
+  privileged: boolean;
+  context: {
+    why?: string;
+    groupChain?: string;
+    standing?: boolean;
+    escalationPaths?: { length: number; confidence: string }[];
+    openFindings?: { id: string; title: string; severity: string }[];
+    usage?: null;
+    usageNote?: string;
+  };
+  reviewer_id: string;
+  reviewer_source: string;
+  decision: string | null;
+  decision_reason: string;
+  decided_by: string;
+  decided_at: string;
+  delegated_to: string;
+  changed_since_baseline: boolean;
+  remediation_state: string;
+};
+
+export type IamRemediationAction = {
+  action: string;
+  label: string;
+  format: string;
+  dry_run: string;
+  command: string;
+  // Never optional. A revoke with no way back is not a remediation.
+  rollback: string;
+  breaks_if: string;
+};
+
+export type IamRemediationBundle = {
+  format: string;
+  generator: string;
+  action_count: number;
+  script: string;
+  actions: IamRemediationAction[];
+};
+// --- end iam governance (P7) ---
+
+// --- iam ciem (P8) ---
+export type IamUsageSummary = {
+  // False means nobody has run a usage scan. That is NOT the same as nothing having been used,
+  // and the difference is somebody's access.
+  measured: boolean;
+  // Usage has its OWN freshness — the access snapshot can be minutes old while this is weeks old.
+  generated_at: string;
+  window_days: number;
+  source: string;
+  status: string;
+  event_count: number;
+  principal_count: number;
+  notes: string[];
+  limitations: string[];
+};
+
+export type IamResourceGrant = {
+  roleName: string;
+  scope: string;
+  scopeLabel: string;
+  /** Where the access was actually made: "this resource", "resource group",
+   *  "subscription", "management group" or "tenant root". Removing inherited access means
+   *  editing the assignment where it was written, which affects everything under it. */
+  grantedAt: string;
+  accessPath: string;
+  assignmentState: string;
+  surface: string;
+  sourceGroupName: string;
+};
+
+export type IamResourcePrincipal = {
+  principalId: string;
+  principalName: string;
+  principalType: string;
+  principalExists: string;
+  privileged: boolean;
+  grants: IamResourceGrant[];
+};
+
+export type IamResourceBypassDoor = {
+  key: string;
+  title: string;
+  bypassKind: string;
+  severity: string;
+  detail: string;
+  credentialAction: string;
+  reachableCount: number;
+  reachabilityAvailable: boolean;
+  remediation: string;
+};
+
+export type IamResourceAccess = {
+  /** false means no access scan exists — the list is unknown, NOT empty. */
+  measured: boolean;
+  resourceId?: string;
+  principals: IamResourcePrincipal[];
+  total: number;
+  privilegedTotal: number;
+  reason: string;
+  bypass: {
+    /** false means no bypass sweep ran; absence of doors is not proof they are shut. */
+    measured: boolean;
+    checked: number;
+    openDoors: IamResourceBypassDoor[];
+    reason: string;
+  };
+  limitations: string[];
+};
+
+export type IamScannerUnmeasured = {
+  signal_id: string;
+  title: string;
+  reason: string;
+};
+
+export type IamScannerCounts = {
+  total: number;
+  new: number;
+  resolved: number;
+  persisting: number;
+};
+
+export type IamScannerCard = {
+  id: string;
+  name: string;
+  description: string;
+  cadence: string;
+  severity_floor: string;
+  pillars: string[];
+  signal_ids: string[];
+  only_critical: boolean;
+  enabled: boolean;
+  signal_count: number;
+  at: string;
+  /** Why this scanner could not run. Non-empty means `counts` is null on purpose. */
+  blocked: string[];
+  /** null when blocked — a scanner that could not look must never publish a zero. */
+  counts: IamScannerCounts | null;
+  by_severity: Record<string, number>;
+  /** This scanner's own checks that could not be performed. Never folded into a pass. */
+  unmeasured?: IamScannerUnmeasured[];
+  first_run: boolean;
+  last_run_at: string;
+  due: boolean;
+};
+
+export type IamScannersResponse = {
+  scanners: IamScannerCard[];
+  severities: string[];
+  immediate_signal_ids: string[];
+};
+
+export type IamRightsizeRecommendation = {
+  // Full identity of the grant this recommendation is about: (principal, role, scope, surface,
+  // assignment state). One principal can hold two over-privileged roles at the same scope, so
+  // (principalId, scope) does NOT identify a row — use this as the React key.
+  id: string;
+  principalId: string;
+  principalName: string;
+  principalType: string;
+  scope: string;
+  scopeName: string;
+  currentRoles: string[];
+  // Both numbers travel together, always. A bare percentage is a figure designed to be quoted
+  // out of context.
+  usedActionCount: number;
+  grantedActionCount: number;
+  unusedRatio: number;
+  usedActions: string[];
+  window: { days: number; clamped: boolean };
+  confidence: string;
+  confidenceWhy: string;
+  recommendation: {
+    roles: string[];
+    scope: string;
+    coversUsedActions: boolean;
+    // What the narrower proposal gives up. Never render the proposal without it.
+    residualRisk: string;
+  } | null;
+  note: string;
+};
+
+export type IamRightsizing = {
+  measured: boolean;
+  recommendations: IamRightsizeRecommendation[];
+  assessed: number;
+  window_days: number;
+  source?: string;
+  break_glass_excluded?: number;
+  action_universe_size?: number;
+  unresolved_roles?: number;
+  excluded: string[];
+  notes: string[];
+  limitations: string[];
+};
+
+export type IamSimAccess = {
+  principalId: string;
+  principalName: string;
+  roleName: string;
+  scope: string;
+  scopeName: string;
+  privileged: boolean;
+  wasVia?: string;
+  otherPath?: string;
+  otherVia?: string;
+  otherScope?: string;
+};
+
+export type IamSimulation = {
+  changes_applied: Record<string, string>[];
+  principals_affected: number;
+  access_lost: IamSimAccess[];
+  // The most valuable field on the screen: a revocation that changes nothing is worse than no
+  // revocation, because it leaves a false record of remediation behind.
+  access_retained_via_other_path: IamSimAccess[];
+  access_gained: IamSimAccess[];
+  orphaned_resources: {
+    resourceId: string;
+    lostAllOwners: boolean;
+    previousOwners: string[];
+    remainingAccess: string[];
+    hasRecordedOwner: boolean;
+  }[];
+  standing_privilege_before: number;
+  standing_privilege_after: number;
+  unchanged: number;
+  sample: { sampled: boolean; size: number; population: number; seed: number; always_full: number };
+  limitations: string[];
+  escalation_paths_before?: number;
+};
+// --- end iam ciem (P8) ---
+
+export type IamEscalationNode = {
+  id: string;
+  kind: "principal" | "identity" | "scope" | "capability";
+  label: string;
+  principalId?: string;
+  identityKind?: string;
+  attachedResourceId?: string;
+  scope?: string;
+  resourceId?: string;
+  // True when the principal ALREADY holds full control. Such a principal cannot escalate; the
+  // node is drawn (it is a legitimate target) but the findings must not report it as at risk.
+  alreadyTier0?: boolean;
+  tier?: number;
+  federatedCredentials?: number;
+};
+
+export type IamEscalationEdge = {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  data: {
+    label: string;
+    primitive: string;
+    confidence: "high" | "medium" | "low";
+    reason: string;
+    rule: string;
+    evidence: Record<string, unknown>;
+    also_via?: string[];
+  };
+};
+
+export type IamEscalationHop = {
+  source: string;
+  sourceLabel: string;
+  target: string;
+  targetLabel: string;
+  primitive: string;
+  confidence: string;
+  reason: string;
+};
+
+export type IamEscalationPath = {
+  from: string;
+  fromLabel: string;
+  to: string;
+  length: number;
+  hops: IamEscalationHop[];
+  // The weakest link. A chain is only as trustworthy as its least certain hop.
+  min_confidence: "high" | "medium" | "low";
+};
+
+export type IamEscalationGraph = {
+  nodes: IamEscalationNode[];
+  edges: IamEscalationEdge[];
+  paths: IamEscalationPath[];
+  dropped_edges: number;
+  fan_out_total: Record<string, number>;
+  truncated: boolean;
+  // NEVER hide this. An escalation map that could not see managed identities showing an empty
+  // graph reads as "no paths exist", which is the opposite of what it means.
+  limitations: string[];
+  stats: { node_count: number; edge_count: number };
+  primitives: { key: string; name: string; confidence: string; rule: string }[];
+};
+
+export type IamManagedIdentity = {
+  principalId: string;
+  identityKind: string;
+  identityResourceId: string;
+  identityName: string;
+  clientId?: string;
+  subscriptionId?: string;
+  resourceGroup?: string;
+  attachedResourceIds: string[];
+  attachedResourceCount: number;
+  roles: string[];
+  privileged: boolean;
+  assignmentCount: number;
+  federatedCredentials: {
+    name: string;
+    issuer: string;
+    subject: string;
+    audiences: string[];
+  }[];
+};
+// <<< iam-escalation-types

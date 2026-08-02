@@ -13,11 +13,13 @@ from fastapi import HTTPException
 
 from app.auth.permissions import (
     ALL_PERMISSIONS,
+    PERMISSION_ALIASES,
     PERMISSION_GROUPS,
     PERMISSIONS,
     READ_PERMISSIONS,
     SYSTEM_ROLES,
 )
+from app.auth.service import migrate_legacy_permissions
 from app.core.security import Principal, require_permission
 
 
@@ -56,7 +58,7 @@ def test_new_feature_permissions_are_present():
     for key in (
         "inventory.read",
         "graph.read",
-        "rbac.read",
+        "iam.read",
         "identity.read",
         "tagintel.read",
         "tagintel.write",
@@ -145,3 +147,60 @@ def test_require_permission_allows_holder_and_admin_denies_others():
     with pytest.raises(HTTPException) as exc:
         _run(dep(principal=denied))
     assert exc.value.status_code == 403
+
+
+# ------------------------------------------------------- renamed capabilities (aliases)
+def test_legacy_permission_key_still_satisfies_the_renamed_capability():
+    """A CUSTOM role holding only the pre-rename key must not lose access.
+
+    ``seed_system_roles`` rewrites the built-in roles from code on every startup, so they heal
+    themselves — custom roles keep whatever was stored when they were created. Renaming a
+    capability without this alias silently 403s every custom role that legitimately holds it,
+    and the symptom looks like a bug in the renamed feature."""
+    dep = require_permission("iam.read")
+
+    legacy = _principal("custom", ["rbac.read"])  # /rbac screen renamed to /iam
+    assert _run(dep(principal=legacy)) is legacy
+
+    current = _principal("custom", ["iam.read"])
+    assert _run(dep(principal=current)) is current
+
+    # The alias is one-way: it does not grant unrelated capabilities.
+    with pytest.raises(HTTPException):
+        _run(require_permission("policy.read")(principal=legacy))
+
+
+def test_permission_aliases_point_at_live_catalog_keys():
+    """Every alias must resolve to a key that actually exists, or it silently grants nothing."""
+    for old, new in PERMISSION_ALIASES.items():
+        assert new in PERMISSIONS, f"alias {old} -> {new} targets a key not in the catalog"
+        assert old not in PERMISSIONS, f"legacy key {old} is still in the catalog"
+
+
+def test_legacy_permission_migration_rewrites_custom_roles_only():
+    class _Role:
+        def __init__(self, perms):
+            self.permissions_json = list(perms)
+
+    custom = _Role(["rbac.read", "inventory.read"])
+    already = _Role(["iam.read", "inventory.read"])
+    unrelated = _Role(["chat.use"])
+
+    changed = migrate_legacy_permissions([custom, already, unrelated])
+    assert changed == 1
+    assert custom.permissions_json == ["iam.read", "inventory.read"]  # order preserved
+    assert already.permissions_json == ["iam.read", "inventory.read"]
+    assert unrelated.permissions_json == ["chat.use"]
+
+    # Idempotent: a second pass changes nothing.
+    assert migrate_legacy_permissions([custom, already, unrelated]) == 0
+
+
+def test_legacy_permission_migration_dedupes_when_both_keys_are_held():
+    class _Role:
+        def __init__(self, perms):
+            self.permissions_json = list(perms)
+
+    both = _Role(["rbac.read", "iam.read"])
+    assert migrate_legacy_permissions([both]) == 1
+    assert both.permissions_json == ["iam.read"]

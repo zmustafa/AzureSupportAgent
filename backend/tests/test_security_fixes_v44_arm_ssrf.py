@@ -160,7 +160,7 @@ async def test_arm_rest_refuses_without_issuing_a_request(monkeypatch):
 
 async def test_paged_collector_refuses_a_cross_host_nextlink():
     """nextLink is echoed from the response body and the token is re-sent on every hop."""
-    from app.rbac import collectors
+    from app.iam import collectors
 
     calls: list[str] = []
 
@@ -185,7 +185,7 @@ async def test_paged_collector_refuses_a_cross_host_nextlink():
             calls.append(url)
             return _Resp(url)
 
-    import app.rbac.collectors as mod
+    import app.iam.collectors as mod
 
     original = mod.httpx.AsyncClient
     mod.httpx.AsyncClient = lambda *a, **k: _Client()  # type: ignore[assignment]

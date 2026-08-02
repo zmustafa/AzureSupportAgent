@@ -999,7 +999,7 @@ async def export_run_endpoint(
         # an attacker who controls any flagged-resource name can run code on the
         # admin's workstation when the CSV is opened. Prefix with an apostrophe
         # to force literal text. Shared with the RBAC CSV export.
-        from app.rbac.export import _csv_safe
+        from app.iam.export import _csv_safe
 
         def _safe_row(values: list) -> list:
             return [_csv_safe(v) for v in values]

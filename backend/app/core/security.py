@@ -149,10 +149,17 @@ async def require_admin(principal: Principal = Depends(get_principal)) -> Princi
 
 
 def require_permission(permission: str):
-    """Dependency factory enforcing a specific capability (fine-grained RBAC)."""
+    """Dependency factory enforcing a specific capability (fine-grained RBAC).
+
+    A legacy spelling of the capability also passes — see ``PERMISSION_ALIASES``. Custom roles
+    keep whatever permission keys were stored when they were created, so a renamed capability
+    would otherwise 403 every custom role that legitimately holds it."""
+    from app.auth.permissions import accepted_permission_keys
+
+    accepted = accepted_permission_keys(permission)
 
     async def _dep(principal: Principal = Depends(get_principal)) -> Principal:
-        if principal.is_admin or principal.has(permission):
+        if principal.is_admin or any(principal.has(p) for p in accepted):
             return principal
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

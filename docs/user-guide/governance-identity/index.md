@@ -16,7 +16,7 @@ These views combine Azure Resource Manager, Policy Insights, and Microsoft Graph
 | --- | --- |
 | [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/) | Inventory definitions/assignments/exemptions, analyze compliance and effective policy, plan rollout, and assess drift. |
 | [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/) | Start here for tenant identity posture: the nine tabs, the snapshot model, and what the score does and does not mean. |
-| [RBAC]({{ site.baseurl }}/user-guide/governance-identity/rbac/) | Review effective Azure/Entra access, privileged and data-plane exposure, scopes, roles, and diagnostics. |
+| [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/) | Review effective Azure/Entra access, privileged and data-plane exposure, scopes, roles, and diagnostics. |
 
 ### Entra ID deep dives
 

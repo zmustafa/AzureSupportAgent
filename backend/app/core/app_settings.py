@@ -316,13 +316,13 @@ DEFAULTS: dict[str, Any] = {
     "perfprofile_window": "P1D",
     "perfprofile_interval": "PT15M",
     "perfprofile_scan_cap": 200,
-    # --- RBAC / Access Review (per-scope access scanner) ---------------------------
+    # --- IAM / Access Review (per-scope access scanner) ----------------------------
     # Server-side cache TTL (seconds) after which a scope's slice is badged stale. Default 6h.
-    "rbac_cache_ttl_s": 21600,
+    "iam_cache_ttl_s": 21600,
     # Max access rows returned in one grid page response (defensive cap).
-    "rbac_max_rows": 5000,
-    # Expose the read-only RBAC agent tools (who_can_access / privileged_access_review).
-    "rbac_tools_enabled": True,
+    "iam_max_rows": 5000,
+    # Expose the read-only IAM agent tools (who_can_access / privileged_access_review).
+    "iam_tools_enabled": True,
     # --- Policy exemption manager (create/modify/remove policy exemptions) ----------
     # Guardrails enforced server-side before any exemption write (create/extend) so exemptions
     # stay a controlled, hygienic security exception rather than a permanent escape hatch.
@@ -384,6 +384,24 @@ DEFAULTS: dict[str, Any] = {
 ALLOWED_COMMAND_BINARIES = ["az", "azd", "kubectl"]
 
 
+# Renamed settings keys, old -> new. ``load_settings`` filters the stored blob to keys present
+# in DEFAULTS, so a renamed key is dropped on read and the operator's configured value silently
+# reverts to the default. Carry it over on load; the next save rewrites the file without the
+# legacy spelling.
+LEGACY_SETTING_KEYS: dict[str, str] = {
+    "rbac_cache_ttl_s": "iam_cache_ttl_s",  # /rbac screen renamed to /iam
+    "rbac_max_rows": "iam_max_rows",
+    "rbac_tools_enabled": "iam_tools_enabled",
+}
+
+
+def _carry_legacy_keys(data: dict[str, Any], saved: dict[str, Any]) -> None:
+    """Adopt a stored legacy key's value when the current key was never explicitly set."""
+    for old, new in LEGACY_SETTING_KEYS.items():
+        if old in saved and new not in saved and saved[old] is not None:
+            data[new] = saved[old]
+
+
 def load_settings() -> dict[str, Any]:
     from app.core import jsonstore
 
@@ -391,6 +409,7 @@ def load_settings() -> dict[str, Any]:
     saved = jsonstore.read_json(_PATH, {})
     if isinstance(saved, dict):
         data.update({k: v for k, v in saved.items() if k in DEFAULTS})
+        _carry_legacy_keys(data, saved)
     return data
 
 
@@ -555,10 +574,11 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     _pi = str(current.get("perfprofile_interval", "PT15M") or "PT15M").strip().upper()
     current["perfprofile_interval"] = _pi if re.match(r"^PT\d+[MH]$", _pi) else "PT15M"
     current["perfprofile_scan_cap"] = max(1, min(2000, int(current.get("perfprofile_scan_cap", 200) or 200)))
-    # RBAC / Access Review: clamp cache TTL + row cap.
-    current["rbac_cache_ttl_s"] = max(0, min(604800, int(current.get("rbac_cache_ttl_s", 21600) or 21600)))
-    current["rbac_max_rows"] = max(100, min(50000, int(current.get("rbac_max_rows", 5000) or 5000)))
-    current["rbac_tools_enabled"] = bool(current.get("rbac_tools_enabled", True))
+    # IAM / Access Review: clamp cache TTL + row cap. (The pre-rename `rbac_*` keys are
+    # adopted on load — see LEGACY_SETTING_KEYS — so only the current keys exist here.)
+    current["iam_cache_ttl_s"] = max(0, min(604800, int(current.get("iam_cache_ttl_s", 21600) or 21600)))
+    current["iam_max_rows"] = max(100, min(50000, int(current.get("iam_max_rows", 5000) or 5000)))
+    current["iam_tools_enabled"] = bool(current.get("iam_tools_enabled", True))
     # Policy exemption guardrails.
     current["policy_exemption_require_justification"] = bool(current.get("policy_exemption_require_justification", True))
     current["policy_exemption_max_expiry_days"] = max(0, min(3650, int(current.get("policy_exemption_max_expiry_days", 180) or 0)))

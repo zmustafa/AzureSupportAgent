@@ -470,7 +470,7 @@ async def _gather_cost(scope: dict[str, Any], *, tenant_id: str, lookback_hours:
 # --------------------------------------------------------------------------- rbac
 async def _gather_rbac(scope: dict[str, Any], *, tenant_id: str, lookback_hours: int,
                        filters: dict[str, Any]) -> dict[str, Any]:
-    from app.rbac.compose import build_master_rows, compute_overview
+    from app.iam.compose import build_master_rows, compute_overview
 
     overview = compute_overview(tenant_id)
     if overview.get("never_loaded"):

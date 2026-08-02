@@ -101,5 +101,5 @@ Zero and unlicensed mean different things everywhere on this tab. Zero access pa
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
 - [Entra: risk and sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/)
 - [Review identity, PIM, and app registrations]({{ site.baseurl }}/how-to/governance-identity/identity-reviews/)
-- [Review, scan, export, and investigate RBAC]({{ site.baseurl }}/how-to/governance-identity/rbac-access-reviews/)
+- [Review, scan, export, and investigate IAM]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/)
 - [Troubleshoot Entra collection and coverage]({{ site.baseurl }}/how-to/governance-identity/troubleshoot-entra-collection/)

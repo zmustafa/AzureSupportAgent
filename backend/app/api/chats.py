@@ -1482,12 +1482,12 @@ async def _start_message_turn(
             actor=principal.display_name or principal.email or principal.subject,
         )
 
-    # RBAC access-review tools: answer "who can access X" / "privileged access review" from the
+    # IAM access-review tools: answer "who can access X" / "privileged access review" from the
     # latest cached access scan (read-only, no Azure calls during the turn).
     if turn_connector_toolset is not None:
-        from app.rbac.agent_tool import register_rbac_tools
+        from app.iam.agent_tool import register_iam_tools
 
-        register_rbac_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
+        register_iam_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
 
     # Ownership tools: answer "who owns X" / "what does <owner> own" / "find unowned" from the
     # local ownership registries (read-only, no Azure calls during the turn).

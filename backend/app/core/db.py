@@ -69,6 +69,14 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         "provider": "VARCHAR(64)",
         "model": "VARCHAR(128)",
     },
+    # Bounded row retention for IAM run diffing (P7). `create_all` makes missing TABLES but
+    # never adds a column to a table that already exists, so a late-added column has to be
+    # registered here or every existing install fails on the next query with "no such column".
+    "rbac_scan_runs": {
+        "rows_json": "JSON",
+        "pinned": "BOOLEAN DEFAULT 0",
+        "pin_reason": "VARCHAR(256) DEFAULT ''",
+    },
     "scheduled_tasks": {
         "deleted_at": "DATETIME",
         "notify_connector_ids": "JSON",

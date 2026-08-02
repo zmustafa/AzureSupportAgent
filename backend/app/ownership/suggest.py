@@ -5,7 +5,7 @@ elsewhere, so the Suggestions tab is instant and the inference is explainable:
 
 * **RBAC owners** — principals holding ``Owner`` / ``User Access Administrator`` /
   ``Contributor`` on a subscription the subject lives in (from the cached RBAC scan via
-  :func:`app.rbac.compose.build_master_rows`). The strongest signal: a person with Owner on
+  :func:`app.iam.compose.build_master_rows`). The strongest signal: a person with Owner on
   the subscription is the likeliest accountable owner.
 * **Orphan tag owners** — an ``owner`` tag on a resource that isn't yet a managed owner
   (surfaced by the coverage scan). Suggest promoting the tag value to a real owner.
@@ -47,7 +47,7 @@ def _rbac_owners_by_sub(tenant_id: str) -> dict[str, list[dict[str, Any]]]:
     scan, restricted to accountability-implying roles. Empty when nothing's been scanned."""
     out: dict[str, list[dict[str, Any]]] = {}
     try:
-        from app.rbac import compose
+        from app.iam import compose
         rows = compose.build_master_rows(tenant_id)
     except Exception:  # noqa: BLE001
         return out

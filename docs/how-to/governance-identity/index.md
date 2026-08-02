@@ -20,7 +20,7 @@ Use these guides to turn cached governance and access data into verified review 
 | Plan a staged policy change | [Rollout Planner and AI tools]({{ site.baseurl }}/how-to/governance-identity/policy-rollout-ai/) |
 | Reconcile observed policy with IaC | [Policy drift and IaC]({{ site.baseurl }}/how-to/governance-identity/policy-drift-iac/) |
 | Triage identity, PIM, and applications | [Identity reviews and handoffs]({{ site.baseurl }}/how-to/governance-identity/identity-reviews/) |
-| Review and export effective access | [RBAC access reviews]({{ site.baseurl }}/how-to/governance-identity/rbac-access-reviews/) |
+| Review and export effective access | [IAM access reviews]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/) |
 | Consent, collect, and verify Entra coverage | [First Entra collection]({{ site.baseurl }}/how-to/governance-identity/entra-first-refresh/) |
 | Work an Entra finding from inbox to closure | [Investigate an Entra finding]({{ site.baseurl }}/how-to/governance-identity/investigate-entra-finding/) |
 | Close a Conditional Access coverage gap | [Conditional Access coverage gaps]({{ site.baseurl }}/how-to/governance-identity/close-ca-coverage-gaps/) |

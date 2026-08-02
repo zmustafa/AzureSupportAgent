@@ -26,6 +26,86 @@ def test_default_and_resolve_keys():
     assert sysreg.resolve_keys(None) == keys
 
 
+def test_the_access_review_is_registered_as_iam_not_rbac():
+    assert "iam" in sysreg.all_system_keys()
+    assert "rbac" not in sysreg.all_system_keys()
+    assert sysreg.get_system("iam") is not None
+
+
+def test_a_mission_saved_before_the_rename_still_runs_its_access_review():
+    """Missions persist `system_keys`, and `resolve_keys` drops unknown keys silently. Without
+    the alias a mission saved as "rbac" would simply stop reviewing access — no error, no empty
+    card, just a system that quietly disappeared from the run."""
+    assert sysreg.canonical_system_key("rbac") == "iam"
+    assert sysreg.resolve_keys(["rbac"]) == ["iam"]
+    assert sysreg.get_system("rbac") is sysreg.get_system("iam")
+    # …and it must not resurrect a genuinely unknown key.
+    assert sysreg.resolve_keys(["rbac", "bogus"]) == ["iam"]
+
+
+def test_the_iam_mission_verdict_comes_from_findings_not_the_privileged_count(monkeypatch):
+    """Attention used to mean "this tenant has privileged access", which is true of every
+    tenant. A warning that is always on is indistinguishable from no warning, and it meant the
+    mission reflected none of the 56 checks the findings engine runs."""
+    from app.iam import findings as iam_findings
+
+    class _Spec:
+        id = "x"
+
+    class _Res:
+        def __init__(self, findings, measured=True):
+            self.spec, self.findings, self.measured, self.reason = _Spec(), findings, measured, ""
+
+    class _F:
+        def __init__(self, sev):
+            self.severity = sev
+
+    monkeypatch.setattr(iam_findings, "compute_score",
+                        lambda t: {"score": 82, "grade": "B", "coverage": 0.9})
+    monkeypatch.setattr(iam_findings, "evaluate", lambda t: [_Res([_F("warning"), _F("info")])])
+    head, score, attention, detail = sysreg._iam_verdict("t1", {"kpis": {"privileged": 40}})
+    assert score == 82, "the score is the posture score, not a count of privileged assignments"
+    assert attention is False, "warnings alone are not a readiness blocker"
+    assert "82/100" in detail
+
+    monkeypatch.setattr(iam_findings, "evaluate", lambda t: [_Res([_F("critical")])])
+    _h, _s, attention2, _d = sysreg._iam_verdict("t1", {"kpis": {"privileged": 40}})
+    assert attention2 is True
+
+
+def test_the_iam_mission_says_when_checks_could_not_be_performed(monkeypatch):
+    """A blind check is not a pass, and a readiness verdict must not imply otherwise."""
+    from app.iam import findings as iam_findings
+
+    class _Spec:
+        id = "x"
+
+    class _Res:
+        def __init__(self, measured):
+            self.spec, self.findings, self.measured, self.reason = _Spec(), [], measured, "no data"
+
+    monkeypatch.setattr(iam_findings, "compute_score",
+                        lambda t: {"score": 90, "grade": "A", "coverage": 0.5})
+    monkeypatch.setattr(iam_findings, "evaluate", lambda t: [_Res(True), _Res(False), _Res(False)])
+    _h, _s, _a, detail = sysreg._iam_verdict("t1", {"kpis": {}})
+    assert "2 check(s) could not be performed" in detail
+    assert "not passes" in detail
+
+
+def test_the_iam_mission_falls_back_to_counts_when_the_findings_engine_fails(monkeypatch):
+    """The card must render without the findings engine rather than reporting a confident zero."""
+    from app.iam import findings as iam_findings
+
+    def _boom(_t):
+        raise RuntimeError("cache corrupt")
+
+    monkeypatch.setattr(iam_findings, "compute_score", _boom)
+    head, score, _a, detail = sysreg._iam_verdict("t1", {"kpis": {"total_assignments": 7, "privileged": 2}})
+    assert "7 assignments" in head
+    assert score == 2
+    assert "unavailable" in detail
+
+
 def test_headline_extractors():
     h, score, att = sysreg._h_amba({"coverage_pct": 40, "kpis": {"alerts_missing": 12}})
     assert "40%" in h and score == 40 and att is True

@@ -925,11 +925,53 @@ def _rbac_headline(ov: dict[str, Any]) -> tuple[str, int, bool]:
     return head, priv, (priv > 0 or owners > 0)
 
 
+def _iam_verdict(tenant_id: str, ov: dict[str, Any]) -> tuple[str, int | None, bool, str]:
+    """Headline, score, attention and detail for the mission card — from the FINDINGS engine.
+
+    The original version scored the count of privileged assignments and set attention whenever
+    that count was above zero. Every real tenant has privileged assignments, so the card was
+    permanently amber: a warning that is always on is indistinguishable from no warning, and it
+    also meant the mission never reflected any of the 56 checks the findings engine runs.
+
+    Now the score is the posture score and attention means *open critical or error findings*,
+    which is a condition a workload can actually clear. If the score cannot be computed the card
+    falls back to the assignment counts and says so rather than reporting a confident zero."""
+    from app.iam import findings as iam_findings
+
+    counts_head, priv, _ = _rbac_headline(ov)
+    try:
+        score = iam_findings.compute_score(tenant_id)
+        results = iam_findings.evaluate(tenant_id)
+    except Exception:  # noqa: BLE001 - the mission card must render without the findings engine
+        logger.warning("missions iam: findings unavailable", exc_info=True)
+        return counts_head, priv, priv > 0, "Posture score unavailable; showing assignment counts."
+
+    open_by_sev: dict[str, int] = {}
+    for r in results:
+        for f in r.findings:
+            open_by_sev[f.severity] = open_by_sev.get(f.severity, 0) + 1
+    critical = open_by_sev.get("critical", 0)
+    error = open_by_sev.get("error", 0)
+    unmeasured = [r for r in results if not r.measured]
+
+    grade = str(score.get("grade") or "")
+    value = score.get("score")
+    coverage = score.get("coverage")
+    head = f"{counts_head} · {critical} critical, {error} error"
+    detail_bits = [f"Posture {value}/100 ({grade})." if value is not None else "Posture score withheld."]
+    if coverage is not None:
+        detail_bits.append(f"Measured {round(float(coverage) * 100)}% of the weighted checks.")
+    if unmeasured:
+        # A blind check is not a pass, and the readiness verdict must not imply otherwise.
+        detail_bits.append(f"{len(unmeasured)} check(s) could not be performed — these are not passes.")
+    return head, (int(value) if value is not None else None), bool(critical or error), " ".join(detail_bits)
+
+
 async def _run_rbac(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
     from app.architectures.reverse import resolve_scope
-    from app.rbac import compose, orchestrator
+    from app.iam import compose, orchestrator
 
-    link = "/rbac"
+    link = "/iam"
     if ctx.connection is None:
         return SystemResult(status="skipped", headline="No Azure connection", link=link)
 
@@ -958,25 +1000,40 @@ async def _run_rbac(ctx: MissionContext, *, force: bool, progress=None) -> Syste
     await orchestrator.refresh_directory(ctx.tenant_id, ctx.connection, progress=_p)
 
     ov = compose.compute_overview(ctx.tenant_id)
-    head, priv, attention = _rbac_headline(ov)
-    return SystemResult(status="done", headline=head, score=priv, attention=attention, link=link,
+    head, score, attention, detail = _iam_verdict(ctx.tenant_id, ov)
+
+    # Sweep the proactive scanners on the same snapshot. This is what makes the mission the
+    # thing that notices a change while nobody is looking at the screen — without it the
+    # scanners only ever run when a human opens the tab, which is the opposite of proactive.
+    try:
+        from app.iam import scanner_jobs
+
+        ran = await scanner_jobs.run_due(ctx.tenant_id)
+        if ran and progress:
+            await progress(f"Swept {len(ran)} access scanner(s).")
+    except Exception:  # noqa: BLE001 - a scanner failure must not fail the mission
+        logger.warning("missions iam: scanner sweep failed", exc_info=True)
+
+    return SystemResult(status="done", headline=head, detail=detail, score=score,
+                        attention=attention, link=link,
                         result_ref={"kind": "rbac", "tenant_id": ctx.tenant_id})
 
 
 async def _state_rbac(ctx: MissionContext) -> dict[str, Any] | None:
-    from app.rbac import cache, compose
+    from app.iam import cache, compose
 
     if not cache.has_any(ctx.tenant_id):
         return None
     ov = compose.compute_overview(ctx.tenant_id)
-    head, priv, attention = _rbac_headline(ov)
+    head, score, attention, detail = _iam_verdict(ctx.tenant_id, ov)
     return {
         "status": "done",
         "headline": head,
-        "score": priv,
+        "detail": detail,
+        "score": score,
         "attention": attention,
         "age_seconds": _age_seconds({"generated_at": ov.get("generated_at")}),
-        "link": "/rbac",
+        "link": "/iam",
     }
 
 
@@ -1137,12 +1194,21 @@ SYSTEMS: list[SystemDef] = [
     SystemDef(key="tagintel", label="Tag Intelligence", icon="🏷️", run=_run_tagintel, last_state=_state_tagintel, ai_heavy=True),
     SystemDef(key="changeexplorer", label="Change Explorer", icon="🕵️", run=_run_changeexplorer, last_state=_state_changeexplorer, ai_heavy=True),
     SystemDef(key="inventory", label="Inventory Scanning", icon="🗂️", run=_run_inventory, last_state=_state_inventory, informational=True),
-    SystemDef(key="rbac", label="RBAC Access Review", icon="🔐", run=_run_rbac, last_state=_state_rbac, informational=True),
+    SystemDef(key="iam", label="IAM Access Review", icon="🔐", run=_run_rbac, last_state=_state_rbac, informational=True),
     SystemDef(key="identity", label="Identity Findings", icon="🪪", run=_run_identity, last_state=_state_identity),
     SystemDef(key="entra", label="Entra ID Posture", icon="🛡️", run=_run_entra, last_state=_state_entra),
 ]
 
 _BY_KEY: dict[str, SystemDef] = {s.key: s for s in SYSTEMS}
+
+# Missions persist their `system_keys`, so a saved mission created before the rename still asks
+# for "rbac". `resolve_keys` filters unknown keys out silently, which would have dropped the
+# access review from those missions with nothing to show that it had gone.
+LEGACY_SYSTEM_KEYS: dict[str, str] = {"rbac": "iam"}
+
+
+def canonical_system_key(key: str) -> str:
+    return LEGACY_SYSTEM_KEYS.get(key, key)
 
 
 def all_system_keys() -> list[str]:
@@ -1154,12 +1220,17 @@ def default_system_keys() -> list[str]:
 
 
 def get_system(key: str) -> SystemDef | None:
-    return _BY_KEY.get(key)
+    return _BY_KEY.get(canonical_system_key(key))
 
 
 def resolve_keys(keys: list[str] | None) -> list[str]:
-    """Validate + order a requested subset against the canonical system order."""
+    """Validate + order a requested subset against the canonical system order.
+
+    Legacy keys are translated, not dropped: an unknown key is filtered out silently here, so a
+    saved mission asking for the pre-rename "rbac" would simply stop running its access review
+    with no error anywhere."""
     if not keys:
         return default_system_keys()
-    wanted = {k for k in keys if k in _BY_KEY}
+    wanted = {canonical_system_key(k) for k in keys}
+    wanted = {k for k in wanted if k in _BY_KEY}
     return [s.key for s in SYSTEMS if s.key in wanted] or default_system_keys()
