@@ -6432,11 +6432,19 @@ export const api = {
   },
   iamRuns: () => http<{ runs: IamRun[] }>("/iam/runs"),
   iamRun: (id: string) => http<{ run: IamRun | null }>(`/iam/run/${encodeURIComponent(id)}`),
-  iamExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null }) => {
+  // Every filter the access grid can apply must be representable here. When it could only
+  // carry the scope/workload narrowing, a CSV taken with a search term or the privileged
+  // toggle active silently contained rows the grid was not showing.
+  iamExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null; scope?: string; surface?: string; principal_type?: string; privileged_only?: boolean; search?: string }) => {
     const q = new URLSearchParams({ fmt, tab });
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
     if (filter?.workload_id) q.set("workload_id", filter.workload_id);
+    if (filter?.scope) q.set("scope", filter.scope);
+    if (filter?.surface) q.set("surface", filter.surface);
+    if (filter?.principal_type) q.set("principal_type", filter.principal_type);
+    if (filter?.privileged_only) q.set("privileged_only", "true");
+    if (filter?.search) q.set("search", filter.search);
     if (filter?.connection_id) q.set("connection_id", filter.connection_id);
     return `${API_BASE}/iam/export?${q.toString()}`;
   },
@@ -15124,8 +15132,15 @@ export type IamFindings = {
   offset: number;
   limit: number;
   truncated: boolean;
+  // Every count map is computed server-side over the WHOLE filtered set, before paging. The UI
+  // groups the page it was handed, so a header counted from `findings` would shrink as you
+  // scroll. `counts_by_signal` carries only non-zero keys; the others carry their full
+  // vocabulary so a genuine zero can be rendered as a zero.
   counts_by_severity: Record<string, number>;
   counts_by_pillar: Record<string, number>;
+  counts_by_signal: Record<string, number>;
+  counts_by_object_kind: Record<string, number>;
+  counts_by_state: Record<string, number>;
   unmeasured: IamUnmeasured[];
 };
 

@@ -29,7 +29,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.iam import attribution, bypass, cache, campaigns, compose, dataplane, demo, diff, effective, escalation, export, findings, frameworks, importer, job, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
+from app.iam import attribution, bypass, cache, campaigns, compose, cpu, dataplane, demo, diff, effective, escalation, export, findings, frameworks, importer, job, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
 from app.iam import scopes as scope_filters
 from app.iam import resource_access as resource_access_mod
 from app.iam import score as score_mod
@@ -82,6 +82,49 @@ _TAB_FILTERS = {
 }
 
 
+def _apply_grid_filters(
+    rows: list[dict[str, Any]],
+    *,
+    tab: str = "all",
+    scope: str | None = None,
+    surface: str | None = None,
+    principal_type: str | None = None,
+    privileged_only: bool = False,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    """The access grid's row filters, in one place.
+
+    Shared by ``GET /access`` and ``GET /export`` DELIBERATELY. They used to filter separately
+    and the export understood strictly fewer parameters, so a download quietly contained rows
+    the grid above it did not show. An export that disagrees with the screen it was launched
+    from is worse than no export: it is the artifact that gets attached to the audit."""
+    tab_filter = _TAB_FILTERS.get(tab, _TAB_FILTERS["all"])
+    rows = [r for r in rows if tab_filter(r)]
+    if scope:
+        sl = scope.lower()
+        rows = [r for r in rows if sl in str(r.get("scope", "")).lower() or sl in str(r.get("scopeDisplayName", "")).lower() or sl in str(r.get("subscriptionName", "")).lower()]
+    if surface:
+        rows = [r for r in rows if r.get("surface") == surface]
+    if principal_type:
+        rows = [r for r in rows if (r.get("effectivePrincipalType") or r.get("principalType")) == principal_type]
+    if privileged_only:
+        rows = [r for r in rows if r.get("roleIsPrivileged")]
+    if search:
+        q = search.lower()
+        rows = [
+            r
+            for r in rows
+            if q in str(r.get("effectivePrincipalName", "")).lower()
+            or q in str(r.get("principalDisplayName", "")).lower()
+            or q in str(r.get("effectivePrincipalUserPrincipalName", "")).lower()
+            or q in str(r.get("roleName", "")).lower()
+            or q in str(r.get("scope", "")).lower()
+        ]
+    # Privileged first, then by role name — most-interesting rows on top.
+    rows.sort(key=lambda r: (not r.get("roleIsPrivileged"), r.get("roleName", ""), r.get("effectivePrincipalName", "")))
+    return rows
+
+
 def _target(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
     """Resolve (connection, tenant_id, connection-id) for the active access scan."""
     from app.core.azure_connections import resolve_connection
@@ -112,7 +155,10 @@ async def overview(
 ) -> dict[str, Any]:
     """KPIs + per-scope freshness + collector status. Reads cache only (never scans)."""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    ov = compose.compute_overview(tenant_id)
+    # Off the loop like every other compose call in this module. "Reads cache only" is not the
+    # same as "is cheap": after any write the memo is gone and this recomposes the whole estate,
+    # and this endpoint is polled by the screen that is open while a refresh runs.
+    ov = await asyncio.to_thread(compose.compute_overview, tenant_id)
     ttl = _ttl_s()
     for s in ov["scopes"]:
         age = s.get("age_seconds")
@@ -141,7 +187,7 @@ async def access(
 ) -> dict[str, Any]:
     """Paged + filtered normalized access rows for a tab (the shared 46-column grid)."""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    rows = compose.build_master_rows(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     # Azure-scope (management group / subscription tree) and/or workload narrowing.
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
@@ -152,30 +198,15 @@ async def access(
             workload_id=workload_id or "",
             connection=connection,
         )
-    tab_filter = _TAB_FILTERS.get(tab, _TAB_FILTERS["all"])
-    rows = [r for r in rows if tab_filter(r)]
-    if scope:
-        sl = scope.lower()
-        rows = [r for r in rows if sl in str(r.get("scope", "")).lower() or sl in str(r.get("scopeDisplayName", "")).lower() or sl in str(r.get("subscriptionName", "")).lower()]
-    if surface:
-        rows = [r for r in rows if r.get("surface") == surface]
-    if principal_type:
-        rows = [r for r in rows if (r.get("effectivePrincipalType") or r.get("principalType")) == principal_type]
-    if privileged_only:
-        rows = [r for r in rows if r.get("roleIsPrivileged")]
-    if search:
-        q = search.lower()
-        rows = [
-            r
-            for r in rows
-            if q in str(r.get("effectivePrincipalName", "")).lower()
-            or q in str(r.get("principalDisplayName", "")).lower()
-            or q in str(r.get("effectivePrincipalUserPrincipalName", "")).lower()
-            or q in str(r.get("roleName", "")).lower()
-            or q in str(r.get("scope", "")).lower()
-        ]
-    # Privileged first, then by role name — most-interesting rows on top.
-    rows.sort(key=lambda r: (not r.get("roleIsPrivileged"), r.get("roleName", ""), r.get("effectivePrincipalName", "")))
+    rows = _apply_grid_filters(
+        rows,
+        tab=tab,
+        scope=scope,
+        surface=surface,
+        principal_type=principal_type,
+        privileged_only=privileged_only,
+        search=search,
+    )
     total = len(rows)
     page = rows[max(0, offset) : max(0, offset) + min(limit, _max_rows())]
     return {"total": total, "offset": offset, "limit": limit, "rows": page, "columns": list(schema.COLUMNS)}
@@ -190,7 +221,7 @@ async def scope_tree(
     """The management-group → subscription tree (with per-node grant counts) used by the scope
     filter. Built from the cache only — visiting never triggers an Azure call."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    return scope_filters.build_scope_tree(tenant_id)
+    return await asyncio.to_thread(scope_filters.build_scope_tree, tenant_id)
 
 
 # --------------------------------------------------------------------------- scopes
@@ -201,7 +232,7 @@ async def scopes(
 ) -> dict[str, Any]:
     """Cached scopes with freshness (drives per-scope refresh buttons) + directory freshness."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    ov = compose.compute_overview(tenant_id)
+    ov = await asyncio.to_thread(compose.compute_overview, tenant_id)
     ttl = _ttl_s()
     for s in ov["scopes"]:
         age = s.get("age_seconds")
@@ -226,7 +257,7 @@ async def roles(
 ) -> dict[str, Any]:
     """Role definitions + principal directory from the cached directory layer."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    directory = cache.read_directory(tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
     return {
         "role_defs": directory.get("role_defs", []),
         "principals": directory.get("principals", []),
@@ -244,7 +275,7 @@ async def insights(
 ) -> dict[str, Any]:
     """The 13 precomputed pivot summaries for the Insights tab (honors the scope/workload filter)."""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    rows = compose.build_master_rows(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
         rows = await scope_filters.filter_rows(
@@ -254,7 +285,7 @@ async def insights(
             workload_id=workload_id or "",
             connection=connection,
         )
-    return {"pivots": pivots.compute_pivots(rows), "labels": pivots.PIVOT_LABELS}
+    return {"pivots": await asyncio.to_thread(pivots.compute_pivots, rows), "labels": pivots.PIVOT_LABELS}
 
 
 # --------------------------------------------------------------------------- diagnostics
@@ -265,8 +296,8 @@ async def diagnostics(
 ) -> dict[str, Any]:
     """Collector statuses + any rows that carry an error/partial collection status."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    ov = compose.compute_overview(tenant_id)
-    rows = compose.build_master_rows(tenant_id)
+    ov = await asyncio.to_thread(compose.compute_overview, tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     errors = [
         {
             "collector": r.get("collector", ""),
@@ -670,7 +701,7 @@ async def attribute_drift(
     payload["changes"] = changes
     payload["attribution"] = {**stats, "days": days, "note": note}
     payload["note"] = note
-    cache.write_drift(tenant_id, payload)
+    await asyncio.to_thread(cache.write_drift, tenant_id, payload)
     return payload
 
 
@@ -748,7 +779,7 @@ async def rightsizing(
     request in the process until SQLite began reporting "database is locked" on unrelated session
     writes. Even at two seconds a synchronous CPU burn has no business in an async handler."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    return await asyncio.to_thread(rightsize.analyse_for_tenant, tenant_id, force=force)
+    return await cpu.run(rightsize.analyse_for_tenant, tenant_id, force=force, label="right-sizing")
 
 
 # --------------------------------------------------------------------------- simulator
@@ -765,8 +796,8 @@ async def simulate(
     referent has since been deleted is a **409**: the request was valid when it was written and
     the world moved."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    rows = compose.build_master_rows(tenant_id)
-    directory = cache.read_directory(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
     usage_meta = cache.read_usage_meta(tenant_id)
 
     age = None
@@ -1061,6 +1092,11 @@ async def export_rows(
     scope_id: str | None = None,
     subscription_ids: str | None = None,
     workload_id: str | None = None,
+    scope: str | None = None,
+    surface: str | None = None,
+    principal_type: str | None = None,
+    privileged_only: bool = False,
+    search: str | None = None,
     connection_id: str | None = None,
     principal: Principal = Depends(require_admin),
 ) -> Response:
@@ -1068,10 +1104,14 @@ async def export_rows(
 
     ``csv`` / ``json`` carry every column this product knows; ``scanner`` projects back down to
     the frozen 46 the standalone all-azure-access scanner emits, so a round trip through
-    ``POST /iam/import`` is byte-identical. Honors the active scope/workload filter so the
-    export matches what's on screen."""
+    ``POST /iam/import`` is byte-identical.
+
+    Takes the SAME filter parameters as ``GET /access`` and applies them through the same
+    function. It previously understood only the scope/workload narrowing, so a download taken
+    with a search term or the privileged toggle active silently contained every other row too —
+    and this is the artifact that gets attached to an access review."""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    rows = compose.build_master_rows(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
         rows = await scope_filters.filter_rows(
@@ -1081,8 +1121,15 @@ async def export_rows(
             workload_id=workload_id or "",
             connection=connection,
         )
-    tab_filter = _TAB_FILTERS.get(tab, _TAB_FILTERS["all"])
-    rows = [r for r in rows if tab_filter(r)]
+    rows = _apply_grid_filters(
+        rows,
+        tab=tab,
+        scope=scope,
+        surface=surface,
+        principal_type=principal_type,
+        privileged_only=privileged_only,
+        search=search,
+    )
     if fmt == "scanner":
         body = export.to_json(rows, columns=schema.SCANNER_COLUMNS)
         return Response(content=body, media_type="application/json", headers={"Content-Disposition": "attachment; filename=allAzureAccess.json"})
@@ -1110,7 +1157,7 @@ async def export_workbook(
     by construction, so it is NOT filtered — a finding about a scope you filtered out is still
     true, and silently dropping it would make the export read cleaner than the tenant is."""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    rows = compose.build_master_rows(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
         rows = await scope_filters.filter_rows(
@@ -1120,42 +1167,50 @@ async def export_workbook(
             workload_id=workload_id or "",
             connection=connection,
         )
-    overview = compose.compute_overview(tenant_id)
-    pivots_data = pivots.compute_pivots(rows)
-    directory = cache.read_directory(tenant_id)
+    overview = await asyncio.to_thread(compose.compute_overview, tenant_id)
+    pivots_data = await asyncio.to_thread(pivots.compute_pivots, rows)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
 
     # Every one of these is served from a version-stamped cache, so gathering them costs
     # milliseconds rather than re-running the engines.
     results = await asyncio.to_thread(findings.evaluate, tenant_id)
     findings_payload = await findings.list_findings(tenant_id, cap=None)
     all_findings = [f.public() for r in results for f in r.findings]
-    scanner_cards = [
-        {**spec.public(), **scanners.summarise(
-            scanners.run(spec, tenant_id, all_findings, results, persist=False)
-        ), "due": scanners.due(spec, tenant_id)}
-        for spec in scanners.registry()
-    ]
-
-    content = await asyncio.to_thread(
-        export.to_workbook,
-        rows=rows,
-        overview=overview,
-        pivots=pivots_data,
-        pivot_labels=pivots.PIVOT_LABELS,
-        directory=directory,
-        findings=findings_payload,
-        rightsizing=rightsize.analyse_for_tenant(tenant_id),
-        bypass=cache.read_bypass(tenant_id),
-        escalation=escalation.graph_for_tenant(
-            tenant_id, compose.build_master_rows(tenant_id),
-            effective.build_role_index(directory.get("role_defs", [])),
-            identities=directory.get("identities", {}),
-            federated=directory.get("federated", []),
-        ),
-        scanners=scanner_cards,
-        score=score_mod.compute(results),
-        dataplane=dataplane.public_catalogue(),
+    scanner_cards = await asyncio.to_thread(
+        lambda: [
+            {**spec.public(), **scanners.summarise(
+                scanners.run(spec, tenant_id, all_findings, results, persist=False)
+            ), "due": scanners.due(spec, tenant_id)}
+            for spec in scanners.registry()
+        ]
     )
+
+    # Everything the workbook needs is built INSIDE the thread. Passing `rightsize.analyse(...)`
+    # or `escalation.graph_for_tenant(...)` as an ARGUMENT to `to_thread` evaluates it on the
+    # event loop first — the call is threaded, its arguments are not — so the two most expensive
+    # computations in the export were running exactly where they must not.
+    def _build_workbook() -> bytes:
+        return export.to_workbook(
+            rows=rows,
+            overview=overview,
+            pivots=pivots_data,
+            pivot_labels=pivots.PIVOT_LABELS,
+            directory=directory,
+            findings=findings_payload,
+            rightsizing=rightsize.analyse_for_tenant(tenant_id),
+            bypass=cache.read_bypass(tenant_id),
+            escalation=escalation.graph_for_tenant(
+                tenant_id, compose.build_master_rows(tenant_id),
+                effective.build_role_index(directory.get("role_defs", [])),
+                identities=directory.get("identities", {}),
+                federated=directory.get("federated", []),
+            ),
+            scanners=scanner_cards,
+            score=score_mod.compute(results),
+            dataplane=dataplane.public_catalogue(),
+        )
+
+    content = await cpu.run(_build_workbook, label="workbook export")
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1164,14 +1219,20 @@ async def export_workbook(
 
 
 # --------------------------------------------------------------------------- effective access
-def _effective_context(tenant_id: str):
-    """(composed rows, role index) for a tenant.
-
-    Both come from cache, so an evaluation never issues an Azure call — the answer is only as
-    current as the last refresh, which the caller surfaces alongside it."""
+def _effective_context_sync(tenant_id: str):
     rows = compose.build_master_rows(tenant_id)
     directory = cache.read_directory(tenant_id)
     return rows, effective.build_role_index(directory.get("role_defs", []))
+
+
+async def _effective_context(tenant_id: str):
+    """(composed rows, role index) for a tenant, built off the event loop.
+
+    Both come from cache, so an evaluation never issues an Azure call — the answer is only as
+    current as the last refresh, which the caller surfaces alongside it. "From cache" still
+    means gunzipping every scope sidecar and indexing every role definition whenever a write has
+    invalidated the memo, which is precisely what happens throughout a refresh."""
+    return await asyncio.to_thread(_effective_context_sync, tenant_id)
 
 
 @router.get("/effective")
@@ -1190,10 +1251,10 @@ async def effective_access(
     unevaluated ABAC condition or an unresolved role definition sits in the path, because a
     confident yes that turns out to be conditional is worse than admitting the uncertainty."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    rows, role_index = _effective_context(tenant_id)
+    rows, role_index = await _effective_context(tenant_id)
     if not action:
         out = effective.effective_actions(rows, role_index, principal_id=principal_id, scope=scope)
-        out["generated_at"] = compose.compute_overview(tenant_id).get("generated_at", "")
+        out["generated_at"] = (await asyncio.to_thread(compose.compute_overview, tenant_id)).get("generated_at", "")
         return out
     if plane and plane not in (effective.PLANE_CONTROL, effective.PLANE_DATA):
         raise HTTPException(status_code=400, detail="plane must be 'control' or 'data'")
@@ -1215,7 +1276,7 @@ async def principal_access(
     Role-level on purpose — a tenant-wide action expansion is tens of thousands of strings that
     nobody reads, and the per-action question is what ``/iam/effective`` is for."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    rows, role_index = _effective_context(tenant_id)
+    rows, role_index = await _effective_context(tenant_id)
     return effective.effective_actions(rows, role_index, principal_id=principal_id, scope=scope)
 
 
@@ -1233,8 +1294,10 @@ async def resource_access(
     Each candidate goes through the same evaluator rather than a "who holds a matching role"
     query, so a principal blocked by a deny assignment does not appear in the allowed list."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    rows, role_index = _effective_context(tenant_id)
-    return effective.who_can(rows, role_index, scope=scope, action=action, plane=plane, limit=limit)
+    rows, role_index = await _effective_context(tenant_id)
+    return await asyncio.to_thread(
+        effective.who_can, rows, role_index, scope=scope, action=action, plane=plane, limit=limit
+    )
 
 
 @router.get("/escalation")
@@ -1262,19 +1325,20 @@ async def escalation_graph(
     _conn, tenant_id, _cid = _target(principal, connection_id)
     if min_confidence not in (escalation.CONF_LOW, escalation.CONF_MEDIUM, escalation.CONF_HIGH):
         raise HTTPException(status_code=400, detail="min_confidence must be low, medium or high")
-    rows, role_index = _effective_context(tenant_id)
-    directory = cache.read_directory(tenant_id)
+    rows, role_index = await _effective_context(tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
     if not principal_id and not scope_id:
         # The unfiltered graph is the expensive one and is shared with /findings and /score.
-        return await asyncio.to_thread(
+        return await cpu.run(
             escalation.graph_for_tenant,
             tenant_id, rows, role_index,
             identities=directory.get("identities", {}),
             federated=directory.get("federated", []),
             min_confidence=min_confidence,
             force=force,
+            label="escalation graph",
         )
-    return await asyncio.to_thread(
+    return await cpu.run(
         escalation.detect,
         rows, role_index,
         identities=directory.get("identities", {}),
@@ -1282,6 +1346,7 @@ async def escalation_graph(
         min_confidence=min_confidence,
         principal_id=principal_id,
         scope_filter=scope_id,
+        label="escalation detect",
     )
 
 
@@ -1347,15 +1412,16 @@ async def rebuild_cache(
     minutes, while this recomputes from the snapshot already on disk. Somebody who suspects a
     stale *derived* result wants this one."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    rows, role_index = _effective_context(tenant_id)
-    directory = cache.read_directory(tenant_id)
+    rows, role_index = await _effective_context(tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
     started = _time.monotonic()
-    graph = await asyncio.to_thread(
+    graph = await cpu.run(
         escalation.graph_for_tenant,
         tenant_id, rows, role_index,
         identities=directory.get("identities", {}),
         federated=directory.get("federated", []),
         force=True,
+        label="escalation graph (forced rebuild)",
     )
     return {
         "ok": True,
@@ -1376,9 +1442,9 @@ async def managed_identities(
     Answers "which resource IS this GUID service principal?" — currently unanswerable in any
     Azure-native view and the most common complaint about every RBAC report."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    directory = cache.read_directory(tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
     identities = directory.get("identities", {})
-    rows = compose.build_master_rows(tenant_id)
+    rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
 
     grants: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
@@ -1591,7 +1657,7 @@ async def import_scanner_run(
         )
     )
     await db.commit()
-    return {"ok": True, **summary, "overview": compose.compute_overview(tenant_id)}
+    return {"ok": True, **summary, "overview": await asyncio.to_thread(compose.compute_overview, tenant_id)}
 
 
 @router.post("/import/purge")
@@ -1640,7 +1706,7 @@ async def demo_seed(
         )
     )
     await db.commit()
-    return {"ok": True, **summary, "overview": compose.compute_overview(tenant_id)}
+    return {"ok": True, **summary, "overview": await asyncio.to_thread(compose.compute_overview, tenant_id)}
 
 
 @router.post("/demo/purge")

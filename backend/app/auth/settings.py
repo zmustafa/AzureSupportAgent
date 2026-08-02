@@ -41,7 +41,32 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+#: Memo: (file stamp, settings). `load_auth_settings` is called by `resolve_session`, which runs
+#: on EVERY authenticated request in the product — so this used to `exists()`, `read_text()` and
+#: `json.loads()` a file per request, synchronously, on the event loop. Cheap while the machine
+#: is idle and distinctly not cheap while a worker thread is holding the GIL through a long IAM
+#: analysis, which is exactly when the application is already under strain.
+#:
+#: Keyed on the file's mtime + size rather than a TTL, so a saved change is picked up on the
+#: very next request and the steady state costs one `stat()`.
+_cache: tuple[tuple[int, int], dict[str, Any]] | None = None
+
+
+def _stamp() -> tuple[int, int]:
+    try:
+        st = _PATH.stat()
+    except OSError:
+        return (0, 0)
+    return (st.st_mtime_ns, st.st_size)
+
+
 def load_auth_settings() -> dict[str, Any]:
+    global _cache
+    stamp = _stamp()
+    if _cache is not None and _cache[0] == stamp:
+        # A copy: callers treat this as their own dict, and handing out the memo would let one
+        # of them silently rewrite the auth policy for every subsequent request.
+        return dict(_cache[1])
     data = dict(DEFAULTS)
     if _PATH.exists():
         try:
@@ -50,14 +75,19 @@ def load_auth_settings() -> dict[str, Any]:
                 data.update({k: saved[k] for k in DEFAULTS if k in saved})
         except (json.JSONDecodeError, OSError):
             pass
+    _cache = (stamp, dict(data))
     return data
 
 
 def save_auth_settings(patch: dict[str, Any]) -> dict[str, Any]:
+    global _cache
     data = load_auth_settings()
     for k, v in patch.items():
         if k in DEFAULTS:
             data[k] = v
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Explicit, not left to the stamp: two saves inside one filesystem mtime tick that happen to
+    # produce the same file size would otherwise serve the first one's settings forever.
+    _cache = None
     return data

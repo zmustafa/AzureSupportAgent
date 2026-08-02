@@ -1585,7 +1585,9 @@ function AccessTab({ resourceId, connectionId }: { resourceId: string; connectio
         </div>
       )}
 
-      <Link to="/iam/effective" className="inline-block text-[11px] text-brand hover:underline">
+      {/* Carries the resource through as the scope so the tab opens on the same question this
+          panel just answered, in its per-action form. */}
+      <Link to={`/iam/evaluate?mode=who&scope=${encodeURIComponent(resourceId)}`} className="inline-block text-[11px] text-brand hover:underline">
         Open Effective Access →
       </Link>
     </div>

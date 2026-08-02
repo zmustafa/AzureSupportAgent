@@ -335,6 +335,7 @@ export type IamTab =
   | "findings"
   | "scanners"
   | "effective"
+  | "evaluate"
   | "privileged"
   | "escalation"
   | "bypass"
@@ -352,12 +353,17 @@ export type IamTab =
 // the text. At full size the sixteen glyphs cost 343px and put the last tabs back behind a
 // horizontal scrollbar; at 11px they cost 140px, which fits. Keeping the label free of the
 // glyph also keeps the accessible name clean for the e2e selectors that match on it.
+//
+// Note that `effective` is labelled "Access" while `evaluate` is labelled "Effective Access".
+// The id/label mismatch is deliberate: `effective` has always been the raw grant grid, and
+// renaming its id would change what the existing `/iam/effective` URL means. The label moved
+// to the tab that actually evaluates effective permissions; the id stayed where the URL is.
 export const IAM_NAV: { id: IamTab; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "\u{1F4CA}" },
   { id: "findings", label: "Findings", icon: "\u{1F6A8}" },
   { id: "scanners", label: "Scanners", icon: "\u{1F4E1}" },
-  { id: "effective", label: "Effective Access", icon: "\u{1F9E9}" },
-  { id: "privileged", label: "Privileged", icon: "\u{1F6E1}\uFE0F" },
+  { id: "effective", label: "Access", icon: "\u{1F5C3}\uFE0F" },
+  { id: "evaluate", label: "Effective Access", icon: "\u{1F9E9}" },
   { id: "escalation", label: "Escalation", icon: "\u26A1" },
   { id: "bypass", label: "Shadow Access", icon: "\u{1F6AA}" },
   { id: "leastprivilege", label: "Least Privilege", icon: "\u{1F4C9}" },
@@ -371,7 +377,14 @@ export const IAM_NAV: { id: IamTab; label: string; icon: string }[] = [
   { id: "diagnostics", label: "Diagnostics", icon: "\u{1FA7A}" },
 ];
 
-export const IAM_TAB_IDS = new Set<IamTab>(IAM_NAV.map((n) => n.id));
+// Tabs that are routable but NOT in the strip. `privileged` was its own tab until it turned
+// out to be the Access grid with one checkbox ticked; it now renders that grid with the
+// privileged lens on. It must stay routable — `IAM_TAB_IDS` is what validates `/iam/:tab`, so
+// dropping the id from the nav alone would send every existing bookmark and doc link to the
+// Overview tab without a word.
+export const IAM_ALIAS_TAB_IDS = new Set<IamTab>(["privileged"]);
+
+export const IAM_TAB_IDS = new Set<IamTab>([...IAM_NAV.map((n) => n.id), ...IAM_ALIAS_TAB_IDS]);
 
 // ---- Ownership ------------------------------------------------------------------
 // The /ownership section's sub-tabs (URL-driven: /ownership/:tab). "directory" is the

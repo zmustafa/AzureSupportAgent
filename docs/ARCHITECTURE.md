@@ -7,8 +7,8 @@ nav_exclude: true
 # Architecture (for contributors)
 
 How Azure Support Agent is put together, so you can find your way around and extend it. For
-*using* the product, see [USER_GUIDE.md](USER_GUIDE.md); for the deep spec, see
-[TECHNICAL_SPEC.md](TECHNICAL_SPEC.md).
+*using* the product, see [USER_GUIDE.md]({{ site.baseurl }}/USER_GUIDE/); for the deep spec, see
+[TECHNICAL_SPEC.md]({{ site.baseurl }}/TECHNICAL_SPEC/).
 
 ## High level
 
@@ -102,7 +102,7 @@ A multi-arch Docker image bundles the built SPA and the API. `deploy/main.bicep`
 Files share. `APP_VERSION` / `VITE_APP_VERSION` build args stamp the running version and
 `APP_RELEASE` / `VITE_APP_RELEASE` stamp a sequential release number (git commit count), so
 the header and **Help → About** show a pill like `v1 (rel 102)`. See
-[DEPLOYMENT.md](DEPLOYMENT.md).
+[DEPLOYMENT.md]({{ site.baseurl }}/DEPLOYMENT/).
 
 ## Repo hygiene
 

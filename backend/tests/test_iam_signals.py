@@ -477,6 +477,64 @@ async def test_unmeasured_signals_are_published_alongside_the_findings(isolated_
     assert all(u["reason"] for u in out["unmeasured"])
 
 
+# ------------------------------------------------------------------- grouping count maps
+_COUNT_MAPS = ("counts_by_severity", "counts_by_pillar", "counts_by_signal", "counts_by_object_kind", "counts_by_state")
+
+
+async def test_every_count_map_tallies_the_whole_filtered_set(isolated_cache):
+    """The UI groups findings using these maps, so each one must sum to ``total``.
+
+    A map that summed to the PAGE instead would give every group header a number that shrinks as
+    the reader scrolls — and on any estate past the page size, understates the problem."""
+    demo.seed_demo("t1")
+    out = await findings.list_findings("t1")
+    for key in _COUNT_MAPS:
+        assert sum(out[key].values()) == out["total"], f"{key} does not tally the whole set"
+
+
+async def test_count_maps_are_unaffected_by_paging(isolated_cache):
+    """Same filters, one row per page: the tallies must not move."""
+    demo.seed_demo("t1")
+    full = await findings.list_findings("t1")
+    paged = await findings.list_findings("t1", limit=1)
+    assert len(paged["findings"]) == 1 < len(full["findings"])
+    for key in _COUNT_MAPS:
+        assert paged[key] == full[key], f"{key} changed when the page shrank"
+
+
+async def test_count_maps_describe_the_filtered_set_not_the_whole_tenant(isolated_cache):
+    """Filtering to one severity must shrink the other maps with it, or the headers describe
+    findings the reader cannot see."""
+    demo.seed_demo("t1")
+    full = await findings.list_findings("t1")
+    sev = next(s for s, n in full["counts_by_severity"].items() if n)
+    narrowed = await findings.list_findings("t1", severity=sev)
+    assert narrowed["counts_by_severity"][sev] == full["counts_by_severity"][sev]
+    assert sum(narrowed["counts_by_severity"].values()) == narrowed["total"] < full["total"]
+    assert sum(narrowed["counts_by_signal"].values()) == narrowed["total"]
+    assert set(narrowed["counts_by_signal"]) <= set(full["counts_by_signal"])
+
+
+async def test_signal_tally_omits_zeroes_but_the_fixed_vocabularies_do_not(isolated_cache):
+    """~50 registered signals produce nothing on a healthy tenant; shipping 50 zero keys on
+    every response is pure payload. The fixed vocabularies keep theirs so a genuine zero can be
+    rendered AS a zero rather than as an absent group."""
+    demo.seed_demo("t1")
+    out = await findings.list_findings("t1")
+    assert all(n > 0 for n in out["counts_by_signal"].values())
+    assert set(out["counts_by_severity"]) == set(signals.SEVERITIES)
+    assert set(out["counts_by_object_kind"]) == set(signals.OBJECT_KINDS)
+    assert set(out["counts_by_state"]) == set(findings.STATES)
+
+
+async def test_grouping_keys_are_present_on_every_finding(isolated_cache):
+    """A finding missing one of these lands in an unlabelled bucket the reader cannot act on."""
+    demo.seed_demo("t1")
+    out = await findings.list_findings("t1", limit=findings.MAX_FINDINGS)
+    for f in out["findings"]:
+        assert f["pillar"] and f["severity"] and f["signal_id"] and f["object_kind"] and f["state"]
+
+
 # --------------------------------------------------------------------------- api surface
 def test_findings_routes_are_registered_and_write_is_separated():
     from app.api import iam as iam_api

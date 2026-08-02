@@ -5,6 +5,7 @@ Each completed refresh records a compact summary so the dashboard can chart move
 we persist KPIs, per-scope summaries and the set of privileged-access keys used to diff runs."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +32,15 @@ def _privileged_keys(rows: list[dict[str, Any]]) -> list[str]:
         who = r.get("effectivePrincipalId") or r.get("effectivePrincipalName") or r.get("principalId")
         keys.add(f"{who}|{r.get('roleName','')}|{r.get('scope','')}")
     return sorted(keys)
+
+
+def _compose_snapshot(tenant_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+    """The whole synchronous half of a run snapshot, in one thread hop.
+
+    Grouped rather than threaded call-by-call because each hop costs a context switch and these
+    three share the memoised row set — splitting them would recompose the estate up to twice."""
+    master = compose.build_master_rows(tenant_id)
+    return compose.compute_overview(tenant_id), master, _privileged_keys(master)
 
 
 def _public(run: Any) -> dict[str, Any]:
@@ -75,9 +85,11 @@ async def save_run(
     duration_ms: int | None = None,
 ) -> dict[str, Any]:
     """Snapshot the current composed access for ``tenant_id`` into a history row + diff vs prev."""
-    overview = compose.compute_overview(tenant_id)
-    master = compose.build_master_rows(tenant_id)
-    keys = _privileged_keys(master)
+    # Composed OFF the event loop, and BEFORE the session opens. Recomposing the estate and
+    # hashing its privileged keys is pure CPU; run inline it stalls every other request in the
+    # process, and doing it inside the session would additionally hold the SQLite write lock
+    # open across work that has nothing to do with the database.
+    overview, master, keys = await asyncio.to_thread(_compose_snapshot, tenant_id)
 
     async with SessionLocal() as db:
         prev = (
@@ -97,7 +109,7 @@ async def save_run(
             # explicit `available: False` rather than a silently empty change list.
             prev_rows = list(prev.rows_json or []) if getattr(prev, "rows_json", None) else []
             if prev_rows:
-                classified = diff_mod.compute(prev_rows, master)
+                classified = await asyncio.to_thread(diff_mod.compute, prev_rows, master)
                 classified["available"] = True
             classified["baseline_run_id"] = prev.id
             diff = {
@@ -113,7 +125,7 @@ async def save_run(
                 # Bounded on purpose: thirty runs of a full change list is not a history feature.
                 "changes": classified.get("changes", [])[:RUN_DIFF_CHANGES],
             }
-        cache.write_drift(tenant_id, classified)
+        await asyncio.to_thread(cache.write_drift, tenant_id, classified)
 
         run = IamScanRun(
             tenant_id=tenant_id,

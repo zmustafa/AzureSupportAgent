@@ -1,16 +1,18 @@
 """Auth service: user/role/group queries, effective permissions, sessions, seeding."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.passwords import hash_password
 from app.auth.permissions import PERMISSION_ALIASES, SYSTEM_ROLES, role_rank
 from app.auth.settings import load_auth_settings
+from app.core.db import SessionLocal
 from app.models.auth import Group, Role, Session, User, UserGroup, UserRole
 
 log = logging.getLogger("app.auth.service")
@@ -212,6 +214,58 @@ async def create_session(
 #: minutes.
 SESSION_SLIDE_SECONDS = 60
 
+#: Outstanding heartbeat writes. Held so the tasks are not garbage-collected mid-flight, and so
+#: shutdown and the tests can wait for them.
+_slide_tasks: set[asyncio.Task] = set()
+#: Session ids with a slide already queued — a screen firing a dozen parallel calls must not
+#: queue a dozen identical writes.
+_slide_pending: set[str] = set()
+
+
+async def _slide_now(sid: str, now: datetime) -> None:
+    try:
+        async with SessionLocal() as db:
+            await db.execute(update(Session).where(Session.id == sid).values(last_seen_at=now))
+            await db.commit()
+    except Exception:  # noqa: BLE001 - a heartbeat is bookkeeping; losing one costs nothing
+        log.warning("could not slide session last_seen_at", exc_info=True)
+    finally:
+        _slide_pending.discard(sid)
+
+
+def _schedule_slide(sid: str, now: datetime) -> bool:
+    """Queue the heartbeat write to happen AFTER the response.
+
+    The session has already been validated by the time this is called, so the write decides
+    nothing about the current request — it only postpones a future idle expiry. Keeping it on the
+    critical path meant every authenticated request in the product waited on the SQLite write
+    lock, so a long background writer (an IAM collection run) stalled the entire application and
+    presented as "the app froze". Off the path, a slow write delays nobody.
+
+    Returns False when there is no running loop, in which case the caller writes inline — losing
+    the heartbeat entirely would expire sessions at the idle cap regardless of activity."""
+    if sid in _slide_pending:
+        return True
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - no loop (sync context)
+        return False
+    _slide_pending.add(sid)
+    task = loop.create_task(_slide_now(sid, now))
+    _slide_tasks.add(task)
+    task.add_done_callback(_slide_tasks.discard)
+    return True
+
+
+async def drain_session_slides() -> None:
+    """Wait for queued heartbeat writes. For shutdown and for tests that assert the slide.
+
+    The guarantee this feature makes is "an active session is slid forward", NOT "it is slid
+    forward before the response is sent". A test that assumed the latter would be asserting the
+    very coupling this change removes."""
+    while _slide_tasks:
+        await asyncio.gather(*list(_slide_tasks), return_exceptions=True)
+
 
 async def resolve_session(db: AsyncSession, sid: str) -> tuple[Session, User] | None:
     """Validate a session id against absolute + idle expiry; slide last_seen."""
@@ -231,16 +285,17 @@ async def resolve_session(db: AsyncSession, sid: str) -> tuple[Session, User] | 
         return None
 
     if (now - last_seen).total_seconds() >= SESSION_SLIDE_SECONDS:
-        sess.last_seen_at = now
-        try:
-            await db.commit()
-        except Exception:  # noqa: BLE001
-            # The session has already been VALIDATED above; only the heartbeat failed. Denying a
-            # demonstrably valid session because a bookkeeping write lost a lock race is the
-            # worst possible trade — it logs people out of a working application, and it was
-            # observed doing exactly that under a concurrent collection run.
-            log.warning("could not slide session last_seen_at; continuing", exc_info=True)
-            await db.rollback()
+        if not _schedule_slide(sess.id, now):
+            # No event loop to defer onto. Write inline, but never let the bookkeeping decide the
+            # request: the session has ALREADY been validated above, and denying a demonstrably
+            # valid session because a heartbeat lost a lock race logs people out of a working
+            # application — which was observed happening during a concurrent collection run.
+            sess.last_seen_at = now
+            try:
+                await db.commit()
+            except Exception:  # noqa: BLE001
+                log.warning("could not slide session last_seen_at; continuing", exc_info=True)
+                await db.rollback()
     return sess, user
 
 

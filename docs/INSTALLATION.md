@@ -11,7 +11,7 @@ CLI and no local setup required. This guide walks the one-click path from clicki
 button to onboarding your first workload.
 
 > Prefer the CLI or want full control over the resources? See the
-> **[manual deployment guide](DEPLOYMENT.md)** instead.
+> **[manual deployment guide]({{ site.baseurl }}/DEPLOYMENT/)** instead.
 
 ## Prerequisites
 
@@ -180,7 +180,7 @@ See the [user guide]({{ site.baseurl }}/user-guide/) for the current feature ove
 | **Workload discovery shows zero resources** | Same cause — the identity needs **Reader** on the subscription/management group. |
 | **Pasted token "expired"** immediately | Generate a fresh token with `az account get-access-token` and paste the full JSON again. |
 | **No models** in the chat model picker | Enable a provider under **Settings → AI Providers** (Step 7). |
-| Forgot the admin password | An admin can reset it under **Settings → Access Control → Users**; otherwise reset it against the database (see [DEPLOYMENT.md](DEPLOYMENT.md)). |
+| Forgot the admin password | An admin can reset it under **Settings → Access Control → Users**; otherwise reset it against the database (see [DEPLOYMENT.md]({{ site.baseurl }}/DEPLOYMENT/)). |
 | App is slow on the very first request | Cold start — the container is warming up; subsequent requests are fast. |
 
 ## Teardown
@@ -196,4 +196,4 @@ Or in the Portal: open the resource group → **Delete resource group**.
 ---
 
 Need the manual / CLI deployment path, production env vars, or cost-tuning notes? See
-**[docs/DEPLOYMENT.md](DEPLOYMENT.md)**.
+**[docs/DEPLOYMENT.md]({{ site.baseurl }}/DEPLOYMENT/)**.

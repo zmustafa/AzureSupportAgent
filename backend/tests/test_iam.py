@@ -342,6 +342,47 @@ def test_scanner_format_export_projects_back_to_the_frozen_46(isolated_cache):
     assert set(parsed[0].keys()) == set(schema.SCANNER_COLUMNS)
 
 
+def test_export_understands_every_filter_the_access_grid_can_apply():
+    """The download is the artifact that gets attached to an access review.
+
+    The export used to take only the scope/workload narrowing, while the grid could also filter
+    by search, surface, principal type and the privileged lens — so a CSV taken from a narrowed
+    screen quietly contained every other row too. That was survivable only because "Privileged"
+    was its own tab and reached the export through `tab=privileged`; once the tab became a
+    checkbox, the lens stopped travelling at all. Both endpoints must accept the same set."""
+    import inspect
+
+    from app.api import iam as iam_api
+
+    grid_filters = {
+        "tab", "scope", "surface", "principal_type", "privileged_only", "search",
+        "scope_id", "subscription_ids", "workload_id",
+    }
+    assert grid_filters <= set(inspect.signature(iam_api.access).parameters)
+    assert grid_filters <= set(inspect.signature(iam_api.export_rows).parameters)
+
+
+def test_grid_and_export_filter_through_the_same_function(isolated_cache):
+    """Not just the same parameters — the same implementation.
+
+    Two copies of the predicate is how they drift, and the drifted copy is the one nobody looks
+    at until an auditor asks why the file has more rows than the screenshot."""
+    import inspect
+
+    from app.api import iam as iam_api
+
+    src = inspect.getsource(iam_api)
+    assert src.count("_apply_grid_filters(") >= 3  # definition + both call sites
+
+    demo.seed_demo("t1")
+    master = compose.build_master_rows("t1")
+    priv = iam_api._apply_grid_filters(master, privileged_only=True)
+    assert priv and all(r.get("roleIsPrivileged") for r in priv)
+    # The old `tab=privileged` lens and the new checkbox must select identically, or the
+    # legacy `/iam/privileged` route starts disagreeing with the tab it now renders.
+    assert priv == iam_api._apply_grid_filters(master, tab="privileged")
+
+
 # ------------------------------------------------------ deduping inherited assignments
 def _assignment(scope: str, *, aid: str, inherited: bool, sub: str = "") -> dict:
     return schema.make_row(

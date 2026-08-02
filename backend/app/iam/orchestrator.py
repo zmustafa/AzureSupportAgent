@@ -9,12 +9,13 @@ It never raises on a collector failure — failures are captured as collector st
 scope's slice is still written (stale-while-error per scope)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from app.iam import cache, collectors, schema
+from app.iam import cache, collectors, cpu, schema
 
 log = logging.getLogger("app.iam.orchestrator")
 
@@ -195,7 +196,7 @@ async def refresh_scope(
             "coverage": {},
             "demo": False,
         }
-        return cache.write_scope(tenant_id, scope, meta=meta, rows=[])
+        return await asyncio.to_thread(cache.write_scope, tenant_id, scope, meta=meta, rows=[])
 
     statuses: list[collectors.CollectorStatus] = []
     if from_bulk:
@@ -371,7 +372,7 @@ async def refresh_scope(
         "source": "arg" if from_bulk else "arm",
         "duration_seconds": round(time.monotonic() - started, 2),
     }
-    written = cache.write_scope(tenant_id, scope, meta=meta, rows=rows)
+    written = await asyncio.to_thread(cache.write_scope, tenant_id, scope, meta=meta, rows=rows)
     await progress("ok", f"Cached {len(rows)} assignment(s) for {label}.")
     return written
 
@@ -438,7 +439,8 @@ async def refresh_directory(
             "collectors": collector_list,
             "demo": False,
         }
-        return cache.write_directory(
+        return await asyncio.to_thread(
+            cache.write_directory,
             tenant_id, meta=meta, rows=[], role_defs=_preserve_role_defs(tenant_id, role_defs),
             principals=[], groups={}, management_groups=mg_names,
             identities=identities, federated=federated,
@@ -454,7 +456,7 @@ async def refresh_directory(
     await progress("info", f"{entra_status.rows_added} directory role assignment(s) [{entra_status.status}].")
 
     # Derive the group + SP ids that actually appear in cached assignments (only expand what's used).
-    scope_rows = cache.all_scope_rows(tenant_id)
+    scope_rows = await asyncio.to_thread(cache.all_scope_rows, tenant_id)
     group_ids = sorted({r.get("principalId", "") for r in scope_rows if r.get("principalType") == "Group" and r.get("principalId")})
     sp_ids = sorted({r.get("principalId", "") for r in scope_rows if r.get("principalType") == "ServicePrincipal" and r.get("principalId")})
 
@@ -497,7 +499,8 @@ async def refresh_directory(
         "collectors": [s.public() for s in statuses],
         "demo": False,
     }
-    written = cache.write_directory(
+    written = await asyncio.to_thread(
+        cache.write_directory,
         tenant_id,
         meta=meta,
         rows=[*entra_rows, *owner_rows],
@@ -692,15 +695,22 @@ async def refresh_bypass(
         f"{len(resources)} resource(s) assessed across {len(readable)} of {len(statuses)} service families.",
     )
 
-    access_rows = compose.build_master_rows(tenant_id)
-    role_index = effective.build_role_index(cache.read_directory(tenant_id).get("role_defs", []))
+    access_rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
+    directory = await asyncio.to_thread(cache.read_directory, tenant_id)
+    role_index = await asyncio.to_thread(effective.build_role_index, directory.get("role_defs", []))
     actions = sorted({s.credential_action for s in bypass.BYPASS_SPECS if s.credential_action})
 
     reachability: dict[str, list[dict[str, str]]] = {}
     reachability_available = bool(role_index)
     if reachability_available:
         await progress("info", "Resolving who can obtain each credential…")
-        reachability = bypass.compute_reachability(access_rows, role_index, actions)
+        # OFF THE LOOP. This join is every principal x every granting scope x every credential
+        # action; it is the single most expensive thing a refresh does, and run inline it froze
+        # the entire product — login included — for its whole duration. Measured: the same class
+        # of work costs 0.98s of loop lag inline and 0.04s in a thread.
+        reachability = await cpu.run(
+            bypass.compute_reachability, access_rows, role_index, actions, label="bypass reachability"
+        )
     else:
         # An empty reachable list and an unavailable join look identical to a reader, so the rows
         # carry the distinction explicitly rather than implying nobody can get the key.
@@ -709,16 +719,17 @@ async def refresh_bypass(
             "Role definitions are not cached, so 'who can obtain the credential' could not be computed.",
         )
 
-    rows = bypass.assess(
-        resources, reachability=reachability, reachability_available=reachability_available
+    rows = await asyncio.to_thread(
+        bypass.assess, resources, reachability=reachability, reachability_available=reachability_available
     )
-    summary = bypass.summarize(resources, rows, statuses)
+    summary = await asyncio.to_thread(bypass.summarize, resources, rows, statuses)
 
     overall = schema.STATUS_SUCCEEDED
     for st in statuses.values():
         if st.status in schema.ATTENTION_STATUSES:
             overall = schema.STATUS_PARTIAL
-    written = cache.write_bypass(
+    written = await asyncio.to_thread(
+        cache.write_bypass,
         tenant_id,
         meta={
             "status": overall,
@@ -762,7 +773,7 @@ async def refresh_usage(
     if not token:
         payload = usage_mod._empty(days, f"Usage collection needs an Azure token: {terr}",
                                    status=schema.STATUS_UNAUTHORIZED)
-        cache.write_usage(tenant_id, payload)
+        await asyncio.to_thread(cache.write_usage, tenant_id, payload)
         await progress("warning", payload["notes"][0])
         return payload
     subs_raw, serr = await list_subscriptions(token)
@@ -772,13 +783,18 @@ async def refresh_usage(
     await progress("info", f"Collecting exercised actions across {len(subs)} subscription(s)…")
 
     payload = await usage_mod.collect(subs, connection, days=days)
-    written = cache.write_usage(tenant_id, payload)
+    written = await asyncio.to_thread(cache.write_usage, tenant_id, payload)
 
     # The analysis is written with the usage it derives from, so the findings endpoint reads a
     # cached result instead of paying two seconds of CPU per request.
+    #
+    # OFF THE LOOP. This is the analysis whose inline execution starved the event loop hard
+    # enough that SQLite began reporting "database is locked" on unrelated session writes and
+    # login hung. That was fixed at the /iam/rightsizing endpoint and MISSED here — the same
+    # defect surviving in a second call site, which is why the freeze came back during refreshes.
     from app.iam import rightsize
 
-    analysis = rightsize.analyse_for_tenant(tenant_id, force=True)
+    analysis = await cpu.run(rightsize.analyse_for_tenant, tenant_id, force=True, label="right-sizing")
 
     if not usage_mod.is_measured(payload):
         await progress("warning", "; ".join(payload.get("notes") or ["Usage could not be collected."]))

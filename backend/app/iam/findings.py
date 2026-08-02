@@ -208,8 +208,20 @@ async def list_findings(
         truncated = total > cap
         page = items[offset : offset + max(1, min(limit, cap))]
 
+    # Every count map below is derived from `items` — the WHOLE filtered set, before paging.
+    # The UI groups the page it was given, so a header counted from that page would read
+    # "Escalation 200" on an estate with 340: a number that shrinks as you scroll is worse than
+    # no number. `sum(map.values()) == total` is the invariant, and it is tested.
     counts_by_severity = {s: sum(1 for i in items if i["severity"] == s) for s in sig.SEVERITIES}
     counts_by_pillar = {p["key"]: sum(1 for i in items if i["pillar"] == p["key"]) for p in sig.PILLARS}
+    counts_by_object_kind = {k: sum(1 for i in items if i["object_kind"] == k) for k in sorted(sig.OBJECT_KINDS)}
+    counts_by_state = {s: sum(1 for i in items if i["state"] == s) for s in STATES}
+    # Signals only: the registry has ~50 specs and most produce nothing on a healthy tenant, so
+    # a full key set would be mostly zeroes on every response. The other maps keep their full
+    # vocabulary because the UI renders an explicit "0" for those.
+    counts_by_signal: dict[str, int] = {}
+    for i in items:
+        counts_by_signal[i["signal_id"]] = counts_by_signal.get(i["signal_id"], 0) + 1
 
     return {
         "findings": page,
@@ -219,6 +231,9 @@ async def list_findings(
         "truncated": truncated,
         "counts_by_severity": counts_by_severity,
         "counts_by_pillar": counts_by_pillar,
+        "counts_by_signal": counts_by_signal,
+        "counts_by_object_kind": counts_by_object_kind,
+        "counts_by_state": counts_by_state,
         "unmeasured": [
             {"signal_id": r.spec.id, "title": r.spec.title, "pillar": r.spec.pillar, "reason": r.reason}
             for r in results if not r.measured

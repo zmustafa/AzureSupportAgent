@@ -19,6 +19,7 @@ import { IAM_NAV, type IamTab } from "../navConfig";
 import { ConnectionScopePicker } from "../ConnectionScopePicker";
 import { AccessGrid } from "./IamAccessGrid";
 import { DiagnosticsTab } from "./IamDiagnostics";
+import { EffectiveTab } from "./IamEffective";
 import { EscalationTab } from "./IamEscalation";
 import { BypassTab } from "./IamBypass";
 import { CompareTab } from "./IamCompare";
@@ -180,10 +181,14 @@ function IamPanelBody({
         <FindingsTab />
       ) : tab === "scanners" ? (
         <ScannersTab />
-      ) : tab === "effective" ? (
-        <AccessGrid tab="effective" />
-      ) : tab === "privileged" ? (
-        <AccessGrid tab="privileged" />
+      ) : tab === "effective" || tab === "privileged" ? (
+        // One grid, one lens control. `/iam/privileged` used to be a separate tab whose only
+        // difference was a server-side `roleIsPrivileged` filter — the same filter the grid's
+        // own checkbox applies — so it now seeds that checkbox instead. The route is kept so
+        // existing links keep landing on the view they promised.
+        <AccessGrid tab="effective" initialPrivOnly={tab === "privileged"} />
+      ) : tab === "evaluate" ? (
+        <EffectiveTab />
       ) : tab === "escalation" ? (
         <EscalationTab />
       ) : tab === "bypass" ? (

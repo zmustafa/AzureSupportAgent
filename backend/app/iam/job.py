@@ -132,20 +132,26 @@ async def _warm_derived(tenant_id: str, progress) -> None:
 
     Off the event loop, and never fatal: a warm cache is an optimisation, and failing a
     successful collection because an optimisation failed would be a poor trade."""
-    from app.iam import cache, compose, effective, escalation
+    from app.iam import cache, compose, cpu, effective, escalation
 
     await progress("info", "Rebuilding the escalation graph…")
     started = time.monotonic()
     try:
-        rows = compose.build_master_rows(tenant_id)
-        directory = cache.read_directory(tenant_id)
-        graph = await asyncio.to_thread(
-            escalation.graph_for_tenant,
-            tenant_id, rows,
-            effective.build_role_index(directory.get("role_defs", [])),
-            identities=directory.get("identities", {}),
-            federated=directory.get("federated", []),
-        )
+        # ONE thread hop for the whole chain. `build_master_rows` and `read_directory` used to
+        # run here on the event loop despite the docstring above promising otherwise — they
+        # gunzip every scope sidecar and recompose the estate, and on a large tenant that is the
+        # stall people describe as "the app froze". Only the graph call was ever threaded.
+        def _build() -> dict[str, Any]:
+            rows = compose.build_master_rows(tenant_id)
+            directory = cache.read_directory(tenant_id)
+            return escalation.graph_for_tenant(
+                tenant_id, rows,
+                effective.build_role_index(directory.get("role_defs", [])),
+                identities=directory.get("identities", {}),
+                federated=directory.get("federated", []),
+            )
+
+        graph = await cpu.run(_build, label="escalation graph (refresh warm-up)")
     except Exception:  # noqa: BLE001 - the collection succeeded; this is a cache warm-up
         log.warning("iam job: could not warm the escalation graph", exc_info=True)
         await progress("warning", "The escalation graph could not be pre-built; the next screen "

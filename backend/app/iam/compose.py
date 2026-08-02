@@ -10,6 +10,7 @@ explicit per-scope refresh repopulates the cache.
 :mod:`app.iam.pivots` aggregates it for the Insights tab."""
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from app.iam import cache, schema
@@ -236,19 +237,47 @@ def build_master_rows(tenant_id: str) -> list[dict[str, Any]]:
     /access (incl. every search keystroke), /pivots, /diagnostics, /overview, /scope-tree and the
     exports, and each call otherwise re-reads + gunzips every scope sidecar from disk. The memo
     means repeated reads between refreshes are O(1); any cache write (which bumps the index/blob
-    mtimes) transparently invalidates it."""
+    mtimes) transparently invalidates it.
+
+    **Single-flight, and safe to call from worker threads.** Every caller now runs this off the
+    event loop, so several can arrive at once — and they reliably do: finishing a refresh
+    invalidates seven react-query keys simultaneously, each landing on a memo the final write
+    just discarded. Without the lock that is seven identical full recomposes racing, and two
+    threads could also store their results out of order, leaving an OLDER row set under a NEWER
+    signature — a memo that is not merely stale but wrong. The lock makes the losers wait for
+    the winner's result instead of duplicating it."""
     sig = _cache_signature(tenant_id)
     hit = _MASTER_CACHE.get(tenant_id)
     if hit is not None and hit[0] == sig:
         return hit[1]
-    rows = _build_master_rows_uncached(tenant_id)
-    _MASTER_CACHE[tenant_id] = (sig, rows)
-    return rows
+    with _master_lock(tenant_id):
+        # Re-check inside the lock: while waiting, the thread that held it has very likely just
+        # built exactly what this caller wanted.
+        hit = _MASTER_CACHE.get(tenant_id)
+        sig = _cache_signature(tenant_id)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        rows = _build_master_rows_uncached(tenant_id)
+        _MASTER_CACHE[tenant_id] = (sig, rows)
+        return rows
 
 
 # RP1 — in-process memo: tenant -> (cache-version, rows). Bounded to the active tenants in a
 # process; entries are replaced (not accumulated) as the cache version advances.
 _MASTER_CACHE: dict[str, tuple[int, list[dict[str, Any]]]] = {}
+
+# One rebuild lock per tenant. Per-tenant rather than global so a slow recompose for one tenant
+# does not serialise reads for another — this process serves several connections at once.
+_MASTER_LOCKS: dict[str, threading.Lock] = {}
+_MASTER_LOCKS_GUARD = threading.Lock()
+
+
+def _master_lock(tenant_id: str) -> threading.Lock:
+    lock = _MASTER_LOCKS.get(tenant_id)
+    if lock is None:
+        with _MASTER_LOCKS_GUARD:
+            lock = _MASTER_LOCKS.setdefault(tenant_id, threading.Lock())
+    return lock
 
 
 def _cache_signature(tenant_id: str) -> int:

@@ -18,8 +18,16 @@ _is_sqlite = _db_url.startswith("sqlite")
 # with "database is locked".
 _connect_args = {"timeout": 30} if _is_sqlite else {}
 
+# `pool_pre_ping` issues a `SELECT 1` on every connection checkout to detect a connection the
+# server has dropped underneath us — a real hazard for a NETWORK database behind a firewall or
+# an idle timeout, and meaningless for a local SQLite file, which cannot go stale.
+#
+# It is not free, and its cost is worst exactly when it hurts most. Measured here: a database
+# round trip costs ~0 ms idle and **210 ms while one CPU-bound worker thread holds the GIL**, so
+# on SQLite the pre-ping doubles the round trips of every authenticated request precisely while
+# a heavy IAM analysis is running. Kept for Postgres, where it earns its cost.
 engine = create_async_engine(
-    _db_url, echo=False, pool_pre_ping=True, connect_args=_connect_args
+    _db_url, echo=False, pool_pre_ping=not _is_sqlite, connect_args=_connect_args
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

@@ -261,6 +261,27 @@ async def _startup() -> None:
 
     scheduler.start()
 
+    # Watch the event loop itself. One worker means one loop, so any synchronous call left on it
+    # freezes the WHOLE product, and the symptom people report is "the database locked up" —
+    # an awaited commit cannot resume while nothing is being scheduled. This says which it is.
+    from app.core import loopwatch
+
+    loopwatch.start()
+
+    # CPU-bound work now runs on worker threads, and a thread holds the GIL for a whole switch
+    # interval before yielding. Every hop an interactive request makes — loop -> aiosqlite thread
+    # -> loop — can therefore wait one interval, and a request that makes several hops pays it
+    # several times over. Shortening the interval trades a little throughput on the CPU job for
+    # the latency of everything else.
+    #
+    # Measured at the HTTP boundary during a 107-second graph rebuild on a 5,514-row tenant, so
+    # this number is not a guess. Tunable because the right trade differs on a box dedicated to
+    # analysis.
+    import os as _os
+    import sys as _sys
+
+    _sys.setswitchinterval(float(_os.getenv("PY_SWITCH_INTERVAL_S", "0.001")))
+
     # Start the Monitor availability sampler (web/TCP ping history for dashboards).
     from app.monitor.sampler import sampler as monitor_sampler
 
@@ -302,6 +323,17 @@ async def _shutdown() -> None:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await _warm_task
     _warm_task = None
+
+    from app.core import loopwatch
+
+    await loopwatch.stop()
+
+    # Flush any queued session heartbeats. They are deliberately not awaited on the request
+    # path; dropping them at shutdown would expire active sessions early on the next start.
+    from app.auth.service import drain_session_slides
+
+    with contextlib.suppress(Exception):
+        await drain_session_slides()
 
     from app.automations.scheduler import scheduler
 

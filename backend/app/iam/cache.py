@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -139,6 +140,19 @@ def _read_index() -> dict[str, Any]:
 # The version answers "have the rows changed", so only things that change the rows may bump it.
 _write_seq = 0
 
+# Writes now happen on worker threads (they gzip and hit the filesystem, and doing that on the
+# event loop froze every request in the product). `_write_seq += 1` is a read-modify-write and
+# is NOT atomic, so two concurrent scope writes could lose a bump — and a LOST bump is not a
+# slow cache, it is a silently wrong one: consumers would keep serving a memo built from rows
+# that have since changed. Every mutation of the counter goes through this lock.
+_seq_lock = threading.Lock()
+
+
+def _bump() -> None:
+    global _write_seq
+    with _seq_lock:
+        _write_seq += 1
+
 
 def cache_version() -> int:
     """Current source-data version; changes when scope rows or the directory layer change.
@@ -161,11 +175,10 @@ def cache_fingerprint() -> tuple[str, int]:
 
 
 def _write_index(data: dict[str, Any], *, bump: bool = True) -> None:
-    global _write_seq
     _INDEX.parent.mkdir(parents=True, exist_ok=True)
     _INDEX.write_text(json.dumps(data, indent=2), encoding="utf-8")
     if bump:
-        _write_seq += 1
+        _bump()
 
 
 def _tenant_bucket(data: dict[str, Any], tenant_id: str) -> dict[str, Any]:
@@ -182,13 +195,12 @@ def _blob_path(tenant_id: str, scope: str) -> Path:
 
 
 def _write_blob(tenant_id: str, scope: str, payload: dict[str, Any], *, bump: bool = True) -> None:
-    global _write_seq
     path = _blob_path(tenant_id, scope)
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     path.write_bytes(gzip.compress(raw))
     if bump:
-        _write_seq += 1
+        _bump()
 
 
 def _read_blob(tenant_id: str, scope: str) -> dict[str, Any]:

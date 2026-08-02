@@ -7,7 +7,7 @@ nav_exclude: true
 # User Guide
 
 A task-oriented tour of Azure Support Agent: what each area is for, when to use it, and how
-to get value fast. New to the vocabulary? Keep [CONCEPTS.md](CONCEPTS.md) open alongside.
+to get value fast. New to the vocabulary? Keep [CONCEPTS.md]({{ site.baseurl }}/CONCEPTS/) open alongside.
 
 > **Tip:** Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> anywhere to open the **Command
 > Palette** and jump to any page or action. The **Help (?)** menu in the top bar has the
@@ -189,6 +189,6 @@ Open it from the top navigation.
 
 ### Where to go next
 
-- Don't know a term? → [Concepts & Glossary](CONCEPTS.md)
-- Deploying? → [Installation](INSTALLATION.md) · [Manual deploy](DEPLOYMENT.md)
-- Building on it? → [Architecture](ARCHITECTURE.md)
+- Don't know a term? → [Concepts & Glossary]({{ site.baseurl }}/CONCEPTS/)
+- Deploying? → [Installation]({{ site.baseurl }}/INSTALLATION/) · [Manual deploy]({{ site.baseurl }}/DEPLOYMENT/)
+- Building on it? → [Architecture]({{ site.baseurl }}/ARCHITECTURE/)

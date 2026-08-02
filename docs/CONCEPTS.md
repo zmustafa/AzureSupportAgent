@@ -244,5 +244,5 @@ screen. Demo data never touches Azure.
 | **Encrypted credentials** | Azure connection secrets are encrypted at rest on the Azure Files volume. |
 | **Data residency** | Everything runs in *your* subscription; data never leaves your tenant. |
 
-See [USER_GUIDE.md](USER_GUIDE.md) for how to use each feature, and the in-app **Help →
+See [USER_GUIDE.md]({{ site.baseurl }}/USER_GUIDE/) for how to use each feature, and the in-app **Help →
 Trust & Security** page for the live posture.

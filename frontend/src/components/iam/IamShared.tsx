@@ -168,12 +168,15 @@ export function useIamRefresh() {
         onTick: keepTiming,
         onDone: (d) => {
           keepTiming(d);
-          invalidate();
         },
         onError: (msg) => setLog((l) => [...l, { seq: l.length, ts: "", level: "error", message: msg }]),
       },
       ctrl.signal,
     );
+    // ONCE. This used to fire here AND from `onDone`, so a finished refresh invalidated seven
+    // query keys twice — up to fourteen requests dispatched in the same tick, every one of them
+    // landing on caches the run's final write had just discarded, at the exact moment the user
+    // thinks the work is over.
     invalidate();
     setRefreshing((s) => {
       const n = new Set(s);

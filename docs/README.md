@@ -12,13 +12,13 @@ Everything you need to deploy, understand, operate, and extend Azure Support Age
 
 | If you want to… | Read |
 | --- | --- |
-| **Deploy it** to your own Azure subscription (one click) | [INSTALLATION.md](INSTALLATION.md) |
-| Deploy via **CLI / full control** | [DEPLOYMENT.md](DEPLOYMENT.md) |
-| **Understand the concepts** & vocabulary (AMBA, War Room, Evidence Locker…) | [CONCEPTS.md](CONCEPTS.md) |
-| **Use the product** feature-by-feature | [USER_GUIDE.md](USER_GUIDE.md) |
-| Wire up **Entra ID (SSO / Microsoft Graph)** | [ENTRA_SETUP.md](ENTRA_SETUP.md) |
+| **Deploy it** to your own Azure subscription (one click) | [INSTALLATION.md]({{ site.baseurl }}/INSTALLATION/) |
+| Deploy via **CLI / full control** | [DEPLOYMENT.md]({{ site.baseurl }}/DEPLOYMENT/) |
+| **Understand the concepts** & vocabulary (AMBA, War Room, Evidence Locker…) | [CONCEPTS.md]({{ site.baseurl }}/CONCEPTS/) |
+| **Use the product** feature-by-feature | [USER_GUIDE.md]({{ site.baseurl }}/USER_GUIDE/) |
+| Wire up **Entra ID (SSO / Microsoft Graph)** | [ENTRA_SETUP.md]({{ site.baseurl }}/ENTRA_SETUP/) |
 | **Understand the codebase** | [Architecture]({{ site.baseurl }}/ARCHITECTURE/) · [Technical documentation]({{ site.baseurl }}/technical/) |
-| See the deep **technical spec** | [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md) |
+| See the deep **technical spec** | [TECHNICAL_SPEC.md]({{ site.baseurl }}/TECHNICAL_SPEC/) |
 
 ## 🧭 The 5-minute mental model
 
@@ -40,7 +40,7 @@ four pillars:
    findings route to Teams / Slack / Jira / ServiceNow / PagerDuty, your SIEM (Splunk, Sumo
    Logic, CrowdStrike NG-SIEM), or Azure Logic Apps via connectors and scheduled agents.
 
-> **New to the vocabulary?** The [Concepts & Glossary](CONCEPTS.md) defines every term used
+> **New to the vocabulary?** The [Concepts & Glossary]({{ site.baseurl }}/CONCEPTS/) defines every term used
 > in the UI. The same glossary is available in-app under the **Help (?) menu**.
 
 ## 🔒 Enterprise & security posture
@@ -51,7 +51,7 @@ four pillars:
 - **RBAC** (users / roles / groups), **OIDC + SAML SSO**, **encrypted connection credentials**, and a **full audit log**.
 
 See the in-app **Trust & Security** page (Help → Trust & Security) and
-[CONCEPTS.md § Security model](CONCEPTS.md#security--access-model).
+[CONCEPTS.md § Security model]({{ site.baseurl }}/CONCEPTS/#security--access-model).
 
 ## 🗂️ Repository layout
 
@@ -62,4 +62,4 @@ deploy/     Bicep + compiled ARM template for one-click Azure deploy
 docs/        ← you are here
 ```
 
-A deeper map of the backend modules and frontend views is in [ARCHITECTURE.md](ARCHITECTURE.md).
+A deeper map of the backend modules and frontend views is in [ARCHITECTURE.md]({{ site.baseurl }}/ARCHITECTURE/).

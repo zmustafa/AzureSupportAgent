@@ -15,12 +15,20 @@ import { WhyPanel } from "./IamWhyPanel";
 
 type WhyTarget = { principalId: string; principalName: string; scope: string };
 
-export function AccessGrid({ tab }: { tab: string }) {
+/** `initialPrivOnly` is how the legacy `/iam/privileged` route survives the tab merge: the
+ *  Privileged tab was never anything but this grid with one checkbox ticked, so the route now
+ *  seeds the checkbox instead of selecting a separate tab. An explicit `?privileged=` in the
+ *  URL always wins over it — a shared link must mean what it says regardless of which route
+ *  rendered it. */
+export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; initialPrivOnly?: boolean }) {
   const [search, setSearch] = useState("");
   const dSearch = useDebounced(search, 250); // RP2 — don't re-query the server on every keystroke
   const [surface, setSurface] = useState("");
   const [ptype, setPtype] = useState("");
-  const [privOnly, setPrivOnly] = useState(false);
+  const [privOnly, setPrivOnly] = useState(() => {
+    const p = new URLSearchParams(window.location.search).get("privileged");
+    return p === null ? initialPrivOnly : p === "1" || p === "true";
+  });
   const [filter, setFilter] = useState<AccessFilter | null>(null);
   const [why, setWhy] = useState<WhyTarget | null>(null);
   const connectionId = useIamConnectionId();
@@ -33,6 +41,16 @@ export function AccessGrid({ tab }: { tab: string }) {
     if (wid) setFilter({ type: "workload", label: params.get("workload_name") || wid, workload_id: wid });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reflect the privileged lens in the URL so it is shareable — `replaceState`, not a router
+  // navigation: this must not push a history entry per checkbox click, and it must not remount
+  // the grid (which would discard every loaded page and scroll position).
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (privOnly) url.searchParams.set("privileged", "1");
+    else url.searchParams.delete("privileged");
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
+  }, [privOnly]);
   const q = useInfiniteQuery({
     queryKey: ["iam", "access", tab, dSearch, surface, ptype, privOnly, filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
     initialPageParam: 0,
@@ -84,7 +102,22 @@ export function AccessGrid({ tab }: { tab: string }) {
       void q.fetchNextPage();
     }
   }, [lastIndex, rows.length, q.hasNextPage, q.isFetchingNextPage, q]);
+  // EVERY filter on screen goes into the export, not just the scope rail. The row export used
+  // to carry only scope/workload, so a CSV taken while searching or with the privileged lens on
+  // quietly held rows the grid was not showing — and that file is what gets attached to the
+  // access review. The workbook is a different artifact (every view, scope-wide) and
+  // deliberately keeps taking only the scope narrowing.
   const exportFilter = {
+    scope_id: filter?.scope_id,
+    subscription_ids: filter?.subscription_ids,
+    workload_id: filter?.workload_id,
+    connection_id: connectionId,
+    surface,
+    principal_type: ptype,
+    privileged_only: privOnly,
+    search: dSearch,
+  };
+  const workbookFilter = {
     scope_id: filter?.scope_id,
     subscription_ids: filter?.subscription_ids,
     workload_id: filter?.workload_id,
@@ -128,7 +161,7 @@ export function AccessGrid({ tab }: { tab: string }) {
           {exportToast && <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {exportToast}</span>}
           <a href={api.iamExportUrl("csv", tab, exportFilter)} onClick={() => noteExport("CSV")} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ CSV</a>
           <a href={api.iamExportUrl("json", tab, exportFilter)} onClick={() => noteExport("JSON")} title="Export the current grid (honors the active filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ JSON</a>
-          <a href={api.iamWorkbookUrl(exportFilter)} onClick={() => noteExport("Excel")} title="Multi-tab workbook of every IAM view (honors the active scope/workload)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
+          <a href={api.iamWorkbookUrl(workbookFilter)} onClick={() => noteExport("Excel")} title="Multi-tab workbook of every IAM view (honors the active scope/workload, not the grid's search or lens)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {q.isLoading ? (
