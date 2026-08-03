@@ -1482,12 +1482,26 @@ async def _start_message_turn(
             actor=principal.display_name or principal.email or principal.subject,
         )
 
+    # The tenant every cache-backed first-party tool must be keyed on. It comes from the
+    # RESOLVED CONNECTION, never from `principal.tenant_id` alone — see
+    # app/api/entra.py::_target, which records deriving it from the principal as the bug that
+    # leaked data across connections in the Estate Graph.
+    _turn_tenant_id = str(
+        (turn_connection or {}).get("tenant_id") or principal.tenant_id or "default"
+    )
+
     # IAM access-review tools: answer "who can access X" / "privileged access review" from the
     # latest cached access scan (read-only, no Azure calls during the turn).
+    #
+    # Keyed on the RESOLVED CONNECTION's tenant, not `principal.tenant_id`. The IAM cache is
+    # bucketed by Azure tenant id; passing the app-level tenant ('dev-tenant' under DEV_AUTH)
+    # pointed these tools at a different bucket entirely, so chat answered access questions
+    # from seed data while the operator was looking at a live tenant. Same class of defect the
+    # Estate Graph hit — see app/api/entra.py::_target.
     if turn_connector_toolset is not None:
         from app.iam.agent_tool import register_iam_tools
 
-        register_iam_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
+        register_iam_tools(turn_connector_toolset, tenant_id=_turn_tenant_id)
 
     # Ownership tools: answer "who owns X" / "what does <owner> own" / "find unowned" from the
     # local ownership registries (read-only, no Azure calls during the turn).
@@ -1495,6 +1509,20 @@ async def _start_message_turn(
         from app.ownership.agent_tool import register_ownership_tools
 
         register_ownership_tools(turn_connector_toolset, tenant_id=principal.tenant_id)
+
+    # Entra identity tools: the Investigate dossier and the Conditional Access verdict. Given
+    # the CALLER's principal, not the agent's, because these re-check the same permissions the
+    # HTTP routes check and write the same audit rows — a question answered in chat has to be
+    # as permissioned, and as auditable, as the same question answered by clicking.
+    if turn_connector_toolset is not None:
+        from app.entra.agent_tool import register_entra_identity_tools
+
+        register_entra_identity_tools(
+            turn_connector_toolset,
+            tenant_id=_turn_tenant_id,
+            principal=principal,
+            connection=turn_connection,
+        )
 
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
@@ -1504,6 +1532,13 @@ async def _start_message_turn(
         from app.core.app_settings import load_settings as _load_app_settings
 
         turn_entra_enabled = bool(_load_app_settings().get("entra_mcp_enabled", False))
+
+    # Behavioural Graph reads (sign-in logs, directory audit) are withheld from a caller who
+    # does not hold `investigate.activity`. Without this the first-party gate is decorative:
+    # the agent would simply call the raw Graph equivalents instead.
+    from app.entra.agent_tool import behavioural_graph_tools_blocked
+
+    turn_entra_blocked = behavioural_graph_tools_blocked(principal)
 
     # Create the assistant message up-front (in the request session) so we have a
     # stable id; the background task updates it via its own session.
@@ -1551,6 +1586,7 @@ async def _start_message_turn(
                 extra_instructions=turn_extra_instructions,
                 write_policy_override=turn_write_override,
                 entra_enabled=turn_entra_enabled,
+                entra_blocked_tools=turn_entra_blocked,
             )
         orchestrator = runner
         async with SessionLocal() as task_db:

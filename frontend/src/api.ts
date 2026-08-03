@@ -4449,7 +4449,11 @@ export const api = {
     }),
   deleteCase: (id: string) =>
     http<{ deleted: boolean }>(`/cases/${id}`, { method: "DELETE" }),
-  createChat: () => http<Chat>("/chats", { method: "POST", body: "{}" }),
+  createChat: (connectionId?: string | null) =>
+    http<Chat>("/chats", {
+      method: "POST",
+      body: JSON.stringify(connectionId ? { connection_id: connectionId } : {}),
+    }),
   deepReviewFleet: (workloadIds: string[]) =>
     http<{
       launched: number;
@@ -5881,6 +5885,14 @@ export const api = {
   ) =>
     http<InvestigateActivity>(
       `/entra/investigate/${encodeURIComponent(principalId)}/activity${entraQs(connectionId)}`,
+      { method: "POST", body: JSON.stringify(body) }),
+  entraInvestigateMembers: (
+    principalId: string,
+    body: { expand: string[]; direction?: "down" | "up" },
+    connectionId?: string | null,
+  ) =>
+    http<InvestigateTree>(
+      `/entra/investigate/${encodeURIComponent(principalId)}/members${entraQs(connectionId)}`,
       { method: "POST", body: JSON.stringify(body) }),
   entraInvestigateExportUrl: (principalId: string, connectionId?: string | null) =>
     `${API_BASE}/entra/investigate/${encodeURIComponent(principalId)}/export${entraQs(connectionId)}`,
@@ -10227,10 +10239,44 @@ export type InvestigateRecent = {
 
 export type InvestigateAccess = {
   directory_roles: string[];
+  directory_roles_active?: string[];
+  directory_roles_eligible_only?: string[];
   directory_assignments: Record<string, unknown>[];
   azure: Record<string, unknown> | null;
   azure_assignments: Record<string, unknown>[];
   azure_assignment_count: number;
+};
+
+/** One person, group or workload inside a group. */
+export type InvestigateMember = {
+  id: string; kind: string; display_name: string; upn: string;
+};
+
+/** A node in the live membership tree. `expandable` is decided by the server so the client
+ *  never has to infer "is there more below this" from the kind string. */
+export type InvestigateTreeNode = InvestigateMember & {
+  enabled: boolean | null; expandable: boolean;
+};
+
+export type InvestigateMembers = {
+  members: InvestigateMember[];
+  count: number;
+  /** False means "never expanded", which is NOT an empty group. */
+  known: boolean;
+  dynamic: boolean;
+  membership_rule: string;
+  on_prem_synced: boolean;
+  role_assignable: boolean;
+};
+
+export type InvestigateTree = {
+  meta: EntraMeta;
+  root: string;
+  direction: "down" | "up";
+  /** group id -> its DIRECT children. Accumulated client-side into the rendered tree. */
+  nodes: Record<string, InvestigateTreeNode[]>;
+  notes: string[];
+  truncated: boolean;
 };
 
 export type InvestigateDossier = InvestigateEnvelope & {
@@ -10239,6 +10285,8 @@ export type InvestigateDossier = InvestigateEnvelope & {
     findings: InvestigateSection<Record<string, unknown>[]>;
     timeline: InvestigateSection<{ events: Record<string, unknown>[]; runs_considered: number }>;
     activations: InvestigateSection<Record<string, unknown>[]>;
+    /** Groups only. Absent for every other kind. */
+    members?: InvestigateSection<InvestigateMembers>;
   };
 };
 
@@ -10325,6 +10373,10 @@ export type EntraSimulationCase = {
   context: string; context_label: string;
   from: string; to: string; category: string; missing: string[];
   policies_before: string[]; policies_after: string[]; mfa_unknown: boolean;
+  /** "tightened" | "relaxed" | "" — how the SESSION controls moved. Both verdicts are
+   *  identical for a session-only change, so this is the only thing that explains the row. */
+  session_delta: string;
+  session_after: Record<string, { on?: boolean; by?: string[] } | boolean>;
 };
 
 export type EntraSimulationResult = {
@@ -10332,7 +10384,11 @@ export type EntraSimulationResult = {
   changes: string[];
   counts: {
     newly_blocked: number; newly_challenged: number; newly_granted: number;
-    protection_lost: number; unchanged: number;
+    protection_lost: number;
+    /** Sign-in verdict unchanged, but the SESSION may now do less (or more). A change that
+     *  only touches session controls used to categorise as `unchanged` and vanish. */
+    session_tightened: number;
+    unchanged: number;
   };
   break_glass_impact: EntraSimulationCase[];
   break_glass_affected: number;

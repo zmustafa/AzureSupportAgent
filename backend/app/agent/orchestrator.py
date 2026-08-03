@@ -190,6 +190,7 @@ class Orchestrator:
         extra_instructions: str | None = None,
         write_policy_override: str | None = None,
         entra_enabled: bool = False,
+        entra_blocked_tools: frozenset[str] | None = None,
     ) -> None:
         self._settings = settings
         # Per-chat provider/model override (falls back to globally-active config).
@@ -200,6 +201,10 @@ class Orchestrator:
         # connection's service-principal identity. Built only when enabled for this turn.
         self._entra = None
         self._entra_tool_names: set[str] = set()
+        # Graph tools withheld from THIS caller. Behavioural reads about a named individual
+        # sit behind `investigate.activity`; leaving the raw equivalents in the catalogue
+        # would make that permission unenforceable through chat.
+        self._entra_blocked = frozenset(entra_blocked_tools or ())
         if entra_enabled:
             try:
                 from app.mcp.client import build_entra_mcp_client
@@ -234,6 +239,7 @@ class Orchestrator:
         if self._entra is not None:
             try:
                 entra_tools = await self._entra.list_tools()
+                entra_tools = [t for t in entra_tools if t.name not in self._entra_blocked]
                 self._entra_tool_names = {t.name for t in entra_tools}
                 # On a name clash, Azure tools win; EntraID-only names are added.
                 existing = {t.name for t in tools}

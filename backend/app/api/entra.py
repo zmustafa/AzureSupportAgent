@@ -1587,6 +1587,18 @@ async def investigate_export(
               coerce(a.get("ticket_number"))]
              for a in sections["activations"]["data"]],
         )
+        if "members" in sections:
+            m = sections["members"]["data"]
+            wb.sheet(
+                "Members", ["Name", "Kind", "UPN", "Object id"],
+                [[coerce(r.get("display_name")), coerce(r.get("kind")), coerce(r.get("upn")),
+                  coerce(r.get("id"))]
+                 for r in m["members"]],
+                note=("Transitive membership: nested groups were expanded away when this was "
+                      "collected, so a member here may belong through a subgroup."
+                      + (" Membership is rule-derived (dynamic group)." if m.get("dynamic") else "")
+                      + (" Membership is authored in on-premises AD." if m.get("on_prem_synced") else "")),
+            )
         # Provenance is a SHEET, not a footnote: an auditor reading "no findings" needs to
         # know whether that means none were raised or the domain could not be read.
         wb.sheet(
@@ -1618,6 +1630,68 @@ class InvestigateActivityBody(BaseModel):
     types: list[str] = Field(default_factory=lambda: list(inv_activity.EAGER_TYPES))
     days: int = Field(default=3, ge=1, le=365)
     justification: str = Field(default="", max_length=512)
+
+
+class InvestigateMembersBody(BaseModel):
+    """Which branches of the membership tree to open, and in which direction."""
+
+    expand: list[str] = Field(default_factory=list, max_length=100)
+    direction: str = Field(default="down", pattern="^(down|up)$")
+
+
+@router.post("/investigate/{principal_id}/members")
+async def investigate_members(
+    principal_id: str,
+    body: InvestigateMembersBody,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """One level of the group's membership tree, per branch asked for.
+
+    POST because it is a live directory read and a recorded act, and because the set of
+    opened branches is a body, not a URL.
+
+    Deliberately NOT part of the dossier: the dossier reads caches only and must stay fast
+    enough to be linked from dozens of places. Nested structure exists nowhere in those
+    caches — both collectors resolve membership transitively, which discards the
+    intermediate groups — so a tree can only come from a live call, and a live call must be
+    asked for rather than made on everyone's behalf.
+
+    Gated on ``investigate.read`` rather than ``investigate.activity``: group membership is
+    a structural fact about access, not behavioural data about a person.
+    """
+    from app.entra import investigate_members as inv_members
+
+    connection, tenant_id, cid = _target(principal, connection_id)
+    snapshot = snapshot_mod.analyse(tenant_id)
+    data = snapshot.get("data") or {}
+
+    subject = await _resolve_principal(data, tenant_id, principal_id.strip())
+    subject_id = str(subject.get("id") or principal_id)
+
+    if subject.get("kind") != investigate.KIND_GROUP:
+        # Answered, not 400'd: asking a user for its members is a reasonable mistake to make
+        # from a deep link, and the answer is a sentence.
+        return _envelope(
+            snapshot, cid, root=subject_id, direction=body.direction, nodes={}, truncated=False,
+            notes=[f"{subject.get('display_name') or subject_id} is a "
+                   f"{subject.get('kind')}, not a group — only groups have members."],
+        )
+
+    result = await inv_members.expand(
+        connection, subject_id, expand_ids=list(body.expand), direction=body.direction,
+    )
+
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="investigate.members", target=subject_id,
+        metadata_json={"direction": body.direction, "branches": len(body.expand) + 1,
+                       "connection_id": cid},
+    ))
+    await db.commit()
+
+    return _envelope(snapshot, cid, root=subject_id, direction=body.direction, **result)
 
 
 @router.post("/investigate/{principal_id}/activity")

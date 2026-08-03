@@ -62,6 +62,20 @@ CTRL_CASB = "cloud_app_security_proxy"
 CTRL_CAE = "continuous_access_evaluation"
 CTRL_LEGACY_BLOCKED = "legacy_auth_blocked"
 
+# Every control that governs the SESSION rather than the sign-in. A grant control decides
+# whether you get in; these decide what the session may do once you are. Nothing here can
+# ever be a reason someone is refused access, which is why the simulator must subtract the
+# whole set before computing what a principal has to satisfy — see `required_controls`.
+SESSION_CONTROLS: frozenset[str] = frozenset({
+    CTRL_SESSION, CTRL_SIGNIN_FREQUENCY, CTRL_PERSISTENT_BROWSER,
+    CTRL_APP_ENFORCED, CTRL_CASB, CTRL_CAE,
+})
+
+# The subset that bounds what leaves the session, as opposed to how long it lasts. "Can they
+# download the file" is answered by these two and by nothing else: a sign-in frequency of one
+# hour does not stop a single download in minute one.
+EGRESS_CONTROLS: frozenset[str] = frozenset({CTRL_APP_ENFORCED, CTRL_CASB})
+
 CONTROLS: list[dict[str, str]] = [
     {"key": CTRL_MFA, "label": "MFA"},
     {"key": CTRL_AUTH_STRENGTH, "label": "Auth strength"},
@@ -368,6 +382,11 @@ _NARROWING = (
     ("service_principal_risk", "workload identity risk"),
     ("client_app_types", "client app type"),
     ("device_filter_rule", "device filter"),
+    # A policy scoped to device-code flow or authentication transfer applies to almost no
+    # ordinary sign-in. Omitting it here let "Block authentication flows" — all users, all
+    # apps, block — count as an UNCONDITIONAL block, which is how a hardening policy every
+    # tenant is told to create turned into "everyone is blocked from everything".
+    ("auth_flows", "authentication flow"),
 )
 
 

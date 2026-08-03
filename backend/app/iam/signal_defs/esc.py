@@ -237,7 +237,10 @@ def _federated_loose_subject(ctx: SignalContext) -> list[Finding]:
                 title=f"Federated credential on {fic.get('identityName', 'an identity')} is too permissive",
                 severity="critical",
                 pillar="esc",
-                object_kind="principal",
+                # A federated credential is an external TRUST, not a principal: `subject` below
+                # is a credential id, so calling this `principal` sent the UI's investigate
+                # deep link off to resolve an id no directory has ever held.
+                object_kind="delegation",
                 subject=str(fic.get("credentialId") or fic.get("name", "")),
                 subject_label=f"{fic.get('identityName', '')} · {fic.get('name', '')}",
                 detail=(

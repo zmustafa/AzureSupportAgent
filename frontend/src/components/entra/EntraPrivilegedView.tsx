@@ -6,7 +6,7 @@ import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
 import { PimReviewPanel } from "../PimReviewView";
 import { EntraActivationsView } from "./EntraActivationsView";
-import { InvestigateLink } from "./InvestigateLink";
+import { InvestigateLink, investigatableId } from "./InvestigateLink";
 import {
   Bar, EntraEmpty, SevBadge, SortScopeNote, SortTh, cmp, useEntraSorted,
   useSortState, useSubTabRoute,
@@ -181,15 +181,19 @@ function Overview({ connectionId, onOpenSetup }: { connectionId: string | null; 
           <EntraEmpty kind="clean" detail="No privileged-access findings." onOpenSetup={onOpenSetup} />
         ) : (
           <div className="divide-y">
-            {d.findings.slice(0, 60).map((f) => (
-              <div key={f.fingerprint} className="flex items-start gap-3 px-4 py-2">
-                <SevBadge sev={f.severity} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[13px] text-gray-900">{f.title}</div>
-                  <div className="text-xs text-gray-500">{f.signal_id}</div>
+            {d.findings.slice(0, 60).map((f) => {
+              const pid = investigatableId(f.object_kind, f.object_id);
+              return (
+                <div key={f.fingerprint} className="flex items-start gap-3 px-4 py-2">
+                  <SevBadge sev={f.severity} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] text-gray-900">{f.title}</div>
+                    <div className="text-xs text-gray-500">{f.signal_id}</div>
+                  </div>
+                  {pid && <InvestigateLink principalId={pid} label={f.object_name || pid} />}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -577,8 +581,11 @@ function CrossPlane({ connectionId }: { connectionId: string | null }) {
                 {rows.map((r) => (
                   <tr key={r.principal_id} className={`border-b last:border-b-0 ${r.both_planes ? "bg-red-50/40" : ""}`}>
                     <td className="px-3 py-1.5">
-                      <span className="text-gray-900">{r.name}</span>
-                      <span className="ml-1 text-xs text-gray-400">{r.kind}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="min-w-0 truncate text-gray-900">{r.name}</span>
+                        <span className="shrink-0 text-xs text-gray-400">{r.kind}</span>
+                        <InvestigateLink principalId={r.principal_id} label={r.name} />
+                      </div>
                     </td>
                     <td className="px-2 py-1.5 text-gray-700">
                       {[...r.entra_roles, ...r.entra_permissions].slice(0, 4).join(", ") || "—"}

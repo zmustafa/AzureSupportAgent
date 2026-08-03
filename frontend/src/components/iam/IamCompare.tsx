@@ -12,6 +12,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type IamChange } from "../../api";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId } from "./IamShared";
 
 const CLASS_LABEL: Record<string, string> = {
@@ -49,8 +50,16 @@ function Actor({ change }: { change: IamChange }) {
     );
   }
   return (
-    <span className="text-[11px] text-gray-700">
-      {a.actorDisplayName || a.actorPrincipalId}
+    <span className="inline-flex items-baseline gap-1 text-[11px] text-gray-700">
+      <span className="truncate">{a.actorDisplayName || a.actorPrincipalId}</span>
+      {/* The actor is a SECOND principal on this row — "whose access changed" and "who
+          changed it" are different investigations, and the second is usually the next
+          question. Only offered when the match was real: an unknown actor returns above. */}
+      {investigatableId(a.actorType, a.actorPrincipalId) && (
+        <InvestigateLink principalId={a.actorPrincipalId}
+                         label={a.actorDisplayName || a.actorPrincipalId}
+                         title="Investigate the identity that made this change" />
+      )}
       {a.changeSource && a.changeSource !== "Unknown" && (
         <span className="ml-1 rounded bg-gray-100 px-1 text-[10px] text-gray-600">{a.changeSource}</span>
       )}
@@ -69,9 +78,12 @@ function Row({ c }: { c: IamChange }) {
       <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${CLASS_CLASS[c.class] ?? "bg-gray-100 text-gray-700"}`}>
         {CLASS_LABEL[c.class] ?? c.class}
       </span>
-      <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">
-        {c.principalName || c.principalId}
-        {c.privileged && <span className="ml-1 rounded bg-red-50 px-1 text-[10px] text-red-700">privileged</span>}
+      <span className="flex min-w-0 flex-1 items-baseline gap-1 text-xs font-medium text-gray-800">
+        <span className="min-w-0 truncate">{c.principalName || c.principalId}</span>
+        {c.privileged && <span className="shrink-0 rounded bg-red-50 px-1 text-[10px] text-red-700">privileged</span>}
+        {investigatableId(c.principalType, c.principalId) && (
+          <InvestigateLink principalId={c.principalId} label={c.principalName || c.principalId} />
+        )}
       </span>
       <span className="min-w-0 flex-1 truncate text-[11px] text-gray-600" title={c.scope}>
         {c.from && c.to && c.from.roleName !== c.to.roleName

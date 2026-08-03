@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import { Skeleton, useDebounced, VirtualList } from "../../utils/perf";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId } from "./IamShared";
 
 export function RolesTab() {
@@ -48,13 +49,22 @@ export function RolesTab() {
             items={fp}
             estimateSize={34}
             max="60vh"
-            render={(p: Record<string, unknown>) => (
-              <div className="grid grid-cols-[1.4fr_0.8fr_1.2fr] items-center gap-2 border-b px-3 py-1.5 text-sm last:border-0">
-                <span className="truncate font-medium text-gray-800">{String(p.displayName ?? "")}</span>
-                <span className="truncate text-gray-500">{String(p.principalType ?? "")}</span>
-                <span className="truncate text-[11px] text-gray-400">{String(p.userPrincipalName ?? p.appId ?? "")}</span>
-              </div>
-            )}
+            render={(p: Record<string, unknown>) => {
+              const name = String(p.displayName ?? "");
+              // Inside the name cell, not a fourth column: the row is a fixed 3-column grid
+              // and the glyph belongs against the identity anyway.
+              const pid = investigatableId(String(p.principalType ?? ""), String(p.principalId ?? ""));
+              return (
+                <div className="grid grid-cols-[1.4fr_0.8fr_1.2fr] items-center gap-2 border-b px-3 py-1.5 text-sm last:border-0">
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="truncate font-medium text-gray-800">{name}</span>
+                    {pid && <InvestigateLink principalId={pid} label={name} />}
+                  </span>
+                  <span className="truncate text-gray-500">{String(p.principalType ?? "")}</span>
+                  <span className="truncate text-[11px] text-gray-400">{String(p.userPrincipalName ?? p.appId ?? "")}</span>
+                </div>
+              );
+            }}
           />
         </div>
       </div>

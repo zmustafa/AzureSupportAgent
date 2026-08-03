@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type IamFinding, type IamPillarScore } from "../../api";
 import { usePersistedState } from "../../utils/persistedState";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId } from "./IamShared";
 
 const SEV_STYLE: Record<string, string> = {
@@ -194,6 +195,9 @@ function UnmeasuredPanel({ items }: { items: { signal_id: string; title: string;
 
 function FindingCard({ f, onState }: { f: IamFinding; onState: (fp: string, state: string) => void }) {
   const [open, setOpen] = useState(false);
+  // Shared with every other surface that offers this jump, so the rules for "is this a
+  // principal we can actually resolve" cannot drift apart screen by screen.
+  const principalId = investigatableId(f.object_kind, f.subject);
   return (
     <div data-testid="finding-card" className={`rounded-lg border bg-white p-3 ${f.state === "suppressed" || f.state === "accepted" ? "opacity-60" : ""}`}>
       <div className="flex items-start gap-2">
@@ -202,8 +206,17 @@ function FindingCard({ f, onState }: { f: IamFinding; onState: (fp: string, stat
           <button type="button" onClick={() => setOpen((v) => !v)} className="text-left text-sm font-semibold text-gray-800 hover:underline">
             {f.title}
           </button>
-          <div className="truncate text-xs text-gray-500" title={f.subject_label || f.subject}>
-            {f.subject_label || f.subject}
+          <div className="flex items-center gap-1">
+            <div className="min-w-0 truncate text-xs text-gray-500" title={f.subject_label || f.subject}>
+              {f.subject_label || f.subject}
+            </div>
+            {principalId && (
+              <InvestigateLink
+                principalId={principalId}
+                label={f.subject_label || f.subject}
+                title="Investigate this identity — everything we know about it"
+              />
+            )}
           </div>
           <div className="mt-1 text-xs text-gray-700">{f.detail}</div>
         </div>

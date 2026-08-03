@@ -35,6 +35,8 @@ const CATEGORY_META: { key: keyof EntraSimulationResult["counts"]; label: string
     blurb: "Can satisfy the control — will see an extra prompt." },
   { key: "newly_granted", label: "Newly granted", tone: "text-sky-700",
     blurb: "Access that was previously restricted." },
+  { key: "session_tightened", label: "Session restricted", tone: "text-violet-700",
+    blurb: "Sign-in unchanged, but the session may now do less — e.g. browse without download." },
   { key: "unchanged", label: "Unchanged", tone: "text-gray-500", blurb: "" },
 ];
 
@@ -70,8 +72,31 @@ const VERDICT_RANK: Record<string, number> = {
 
 /** The reason column reads out the change category; it ranks by how bad the change is. */
 const CASE_CATEGORY_RANK: Record<string, number> = {
-  newly_blocked: 4, protection_lost: 3, newly_challenged: 2, newly_granted: 1, unchanged: 0,
+  newly_blocked: 4, protection_lost: 3, newly_challenged: 2, newly_granted: 1,
+  session_tightened: 1, unchanged: 0,
 };
+
+/** Human names for the session controls, so a row says WHICH one moved. */
+const SESSION_LABEL: Record<string, string> = {
+  app_enforced_restrictions: "app-enforced restrictions",
+  cloud_app_security: "cloud app security proxy",
+  persistent_browser: "persistent browser",
+  sign_in_frequency: "sign-in frequency",
+};
+
+/**
+ * What a session-only change actually did.
+ *
+ * A session change leaves the before and after verdicts identical, so the verdict columns
+ * explain nothing: without this the row reads "something changed" with no way to tell what.
+ */
+function sessionSummary(c: EntraSimulationCase): string {
+  const on = Object.entries(c.session_after ?? {})
+    .filter(([k, v]) => k !== "egress_restricted" && (v as { on?: boolean })?.on)
+    .map(([k]) => SESSION_LABEL[k] ?? k.replace(/_/g, " "));
+  const verb = c.session_delta === "relaxed" ? "session relaxed" : "session restricted";
+  return on.length ? `${verb} — ${on.join(", ")}` : verb;
+}
 
 type CaseKey = "natural" | "principal" | "context" | "before" | "after" | "reason";
 
@@ -400,11 +425,17 @@ function SimulationResultCard({ result }: { result: EntraSimulationResult }) {
                   <td className="px-2 py-1.5 text-gray-500">{c.from}</td>
                   <td className={`px-2 py-1.5 font-medium ${
                     c.category === "newly_blocked" ? "text-red-700"
-                      : c.category === "protection_lost" ? "text-orange-700" : "text-amber-700"}`}>
+                      : c.category === "protection_lost" ? "text-orange-700"
+                      : c.category === "session_tightened" ? "text-violet-700" : "text-amber-700"}`}>
                     {c.to}
                   </td>
                   <td className="px-2 py-1.5 text-xs text-gray-500">
-                    {c.missing.length ? `cannot satisfy ${c.missing.join(", ")}` : c.category.replace(/_/g, " ")}
+                    {c.missing.length ? `cannot satisfy ${c.missing.join(", ")}`
+                      /* A session change leaves both verdicts identical, so the verdict
+                         columns explain nothing on their own. Name the control, or the row
+                         reads as "something changed" with no way to tell what. */
+                      : c.session_delta ? sessionSummary(c)
+                      : c.category.replace(/_/g, " ")}
                   </td>
                 </tr>
               ))}

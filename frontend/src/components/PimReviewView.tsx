@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PimFinding, type PimGroupKey, type PimOverview } from "../api";
 import { Skeleton } from "../utils/perf";
+import { InvestigateLink, investigatableId } from "./entra/InvestigateLink";
 
 const SEV_META: Record<string, { label: string; cls: string; dot: string; rank: number }> = {
   critical: { label: "Critical", cls: "bg-red-100 text-red-700", dot: "bg-red-500", rank: 4 },
@@ -90,7 +91,14 @@ function FindingRow({ f }: { f: PimFinding }) {
       <div className="mt-1 text-[13px] font-medium text-gray-900">{f.title}</div>
       <div className="text-[12px] text-gray-600">{f.detail}</div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-500">
-        <span>👤 {f.subject} <span className="text-gray-400">({f.subject_id})</span></span>
+        <span className="inline-flex items-center gap-1">
+          👤 {f.subject} <span className="text-gray-400">({f.subject_id})</span>
+          {/* `kind` here is the FINDING kind ("standing_access"), not a principal kind, so
+              the shape of the subject id is the only gate that applies. */}
+          {investigatableId(undefined, f.subject_id) && (
+            <InvestigateLink principalId={f.subject_id} label={f.subject} />
+          )}
+        </span>
         {f.activation_count_90d != null && <span>· {f.activation_count_90d} activation(s)/90d</span>}
       </div>
       {f.remediation && (

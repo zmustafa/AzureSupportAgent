@@ -19,6 +19,8 @@ import type {
 } from "../../api";
 import { formatError } from "../../utils/format";
 import { CoverageBanner, Segmented } from "./EntraShared";
+import { InvestigateLink } from "./InvestigateLink";
+import { MembersTree } from "./MembersTree";
 
 const KIND_LABEL: Record<InvestigateKind, string> = {
   user: "User", guest: "Guest", group: "Group", servicePrincipal: "Service principal",
@@ -31,13 +33,17 @@ const KIND_GLYPH: Record<InvestigateKind, string> = {
 };
 
 /** The same data, ordered by what the reader came to do. Section ORDER only — no new data,
- *  which is why this is cheap enough to ship with the first version. */
+ *  which is why this is cheap enough to ship with the first version.
+ *
+ *  `members` is groups-only and simply absent for every other kind, so listing it here costs
+ *  nothing when it does not apply. It leads `recertification` because that is the default
+ *  lens for a group, and "who is in this thing" is the first question asked of one. */
 const LENSES = {
-  incident: { label: "Incident", order: ["activity", "access", "findings", "timeline", "activations"] },
-  offboarding: { label: "Offboarding", order: ["access", "activations", "timeline", "findings", "activity"] },
-  recertification: { label: "Recertification", order: ["access", "activations", "findings", "timeline", "activity"] },
+  incident: { label: "Incident", order: ["activity", "access", "members", "findings", "timeline", "activations"] },
+  offboarding: { label: "Offboarding", order: ["access", "members", "activations", "timeline", "findings", "activity"] },
+  recertification: { label: "Recertification", order: ["members", "access", "activations", "findings", "timeline", "activity"] },
   workload: { label: "Workload identity", order: ["access", "findings", "activity", "timeline", "activations"] },
-  support: { label: "Support", order: ["access", "findings"] },
+  support: { label: "Support", order: ["access", "members", "findings"] },
 } as const;
 type Lens = keyof typeof LENSES;
 
@@ -49,7 +55,7 @@ const WINDOWS = [
 /** Short names for the jump links — the section headings themselves stay in full English. */
 const SECTION_LABEL: Record<string, string> = {
   activity: "Activity", access: "Access", findings: "Findings",
-  timeline: "Changes", activations: "Activations",
+  timeline: "Changes", activations: "Activations", members: "Members",
 };
 
 /**
@@ -89,12 +95,16 @@ function Prov({ p }: { p: InvestigateProvenance }) {
 }
 
 /** A section renders its own emptiness. "We could not read this" and "there is nothing
- *  here" are opposite facts and must not share a rendering. */
+ *  here" are opposite facts and must not share a rendering.
+ *
+ *  `footer` renders in EVERY state, including unreadable and empty. That is not a
+ *  convenience: an affordance that FETCHES the missing data must not be hidden by the data
+ *  being missing, which is exactly what happens if it is passed as a child. */
 function Section({
-  id, title, count, prov, children, empty,
+  id, title, count, prov, children, empty, footer,
 }: {
   id: string; title: string; count?: number; prov?: InvestigateProvenance;
-  children?: React.ReactNode; empty?: string;
+  children?: React.ReactNode; empty?: string; footer?: React.ReactNode;
 }) {
   const unreadable = prov?.unreadable;
   return (
@@ -115,6 +125,7 @@ function Section({
       ) : (
         children
       )}
+      {footer}
       {prov && <Prov p={prov} />}
     </section>
   );
@@ -691,9 +702,24 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                       <div>
                         <div className="mb-1 text-[11px] uppercase text-gray-500">Entra directory roles</div>
                         <div className="flex flex-wrap gap-1">
-                          {d.directory_roles.map((r) => (
-                            <span key={r} className="rounded border bg-gray-50 px-1.5 py-0.5 text-xs">{r}</span>
-                          ))}
+                          {d.directory_roles.map((r) => {
+                            // A PIM-eligible role is not held. Rendering it in the same chip
+                            // as a standing one told the reader this account permanently has
+                            // Global Administrator when in fact it has to activate for it.
+                            const eligibleOnly = (d.directory_roles_eligible_only ?? []).includes(r);
+                            return (
+                              <span
+                                key={r}
+                                title={eligibleOnly
+                                  ? "PIM-eligible: must be activated, not held right now"
+                                  : "Held now"}
+                                className={`rounded border px-1.5 py-0.5 text-xs ${
+                                  eligibleOnly ? "border-amber-300 bg-amber-50 text-amber-800" : "bg-gray-50"}`}
+                              >
+                                {r}{eligibleOnly ? " · eligible" : ""}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -712,6 +738,64 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                           ])}
                         />
                       </div>
+                    )}
+                  </div>
+                </Section>
+              );
+            }
+            if (name === "members") {
+              const s = dossier.sections.members;
+              // Absent for every kind except a group. The lens order lists it unconditionally
+              // so the orders stay readable; this is where it costs nothing when it is absent.
+              if (!s) return null;
+              const d = s.data;
+              return (
+                <Section key="members" id="members" title="Members" count={d.count}
+                         prov={s.provenance}
+                         empty="No member reached Azure access through this group."
+                         /* The tree is the REMEDY for this list being absent — only groups
+                            holding an Azure assignment are expanded, so most groups have no
+                            cached membership at all. Hiding the live fetch behind the cache
+                            having data would hide it precisely when it is the only answer. */
+                         footer={
+                           <MembersTree principalId={principal.id}
+                                        rootName={principal.display_name || principal.id}
+                                        connectionId={connectionId} />
+                         }>
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {d.dynamic && (
+                        <span title={d.membership_rule || "Membership is evaluated from a rule."}
+                              className="rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-800">
+                          dynamic — membership is a rule's output
+                        </span>
+                      )}
+                      {d.on_prem_synced && (
+                        <span title="Members are added and removed in on-premises AD, not in Entra. Changes here will be overwritten by the next sync."
+                              className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-800">
+                          synced from on-premises AD
+                        </span>
+                      )}
+                      {d.role_assignable && (
+                        <span title="This group can be assigned an Entra directory role, so its membership is a privileged-access control."
+                              className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-800">
+                          role-assignable
+                        </span>
+                      )}
+                    </div>
+                    {d.membership_rule && (
+                      <pre className="overflow-auto rounded bg-gray-50 p-2 text-[10px] text-gray-700">{d.membership_rule}</pre>
+                    )}
+                    {d.count > 0 && (
+                      <Table
+                        head={["Member", "Kind", "UPN", ""]}
+                        rows={d.members.slice(0, 200).map((m) => [
+                          m.display_name || m.id,
+                          m.kind,
+                          m.upn,
+                          <InvestigateLink principalId={m.id} label={m.display_name || m.id} />,
+                        ])}
+                      />
                     )}
                   </div>
                 </Section>

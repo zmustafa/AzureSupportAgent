@@ -12,6 +12,7 @@ import {
   useSortState, useSubTabRoute,
 } from "./EntraShared";
 import { FederationNote } from "./EntraIdentityFabric";
+import { InvestigateLink } from "./InvestigateLink";
 
 type Tab = "overview" | "auth-methods" | "legacy" | "failures" | "risky" | "patterns";
 
@@ -460,7 +461,8 @@ function AuthMethodsTab({ connectionId }: { connectionId: string | null }) {
                     privileged
                   </span>
                 )}
-                <span className="truncate text-gray-800">{u.upn || u.display_name}</span>
+                <span className="min-w-0 truncate text-gray-800">{u.upn || u.display_name}</span>
+                <InvestigateLink principalId={u.id} label={u.upn || u.display_name} />
               </div>
             ))}
             {!d.gap.length && <div className="text-xs text-gray-500">Every enabled user has a method registered.</div>}
@@ -884,7 +886,8 @@ function RiskyUsersTab({ connectionId }: { connectionId: string | null }) {
                         privileged
                       </span>
                     )}
-                    <span className="text-gray-900">{u.upn || u.name}</span>
+                    <span className="min-w-0 truncate text-gray-900">{u.upn || u.name}</span>
+                    <InvestigateLink principalId={u.id} label={u.upn || u.name} />
                   </div>
                 </td>
                 <td className={u.level === "high" ? "font-semibold text-red-600" : ""}>{u.level}</td>

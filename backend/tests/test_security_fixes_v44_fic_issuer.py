@@ -31,7 +31,7 @@ from app.entra.collectors.apps import fic_trusted
         "https://token.actions.githubusercontent.com/",
         "https://vstoken.dev.azure.com/abc",
         "https://login.microsoftonline.com/tenant-id/v2.0",
-        "https://sts.windows.net/739fb5dd-0000-0000-0000-000000000000/",
+        "https://sts.windows.net/00000000-0000-0000-0000-000000000000/",
         "https://gitlab.com",
         "https://gitlab.com/group/project",
         "https://oidc.prod-aks.azure.com/abc",

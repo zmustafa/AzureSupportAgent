@@ -285,3 +285,103 @@ def test_a_principal_the_directory_no_longer_holds_keeps_its_recorded_name():
     entries = inv.recent_entries([_view("gone-1", at="T1", name="Retired SPN")], connection_id="c-1")
     got = inv.refresh_recent_names(_snapshot_data(), entries)
     assert got[0]["display_name"] == "Retired SPN"
+
+
+# ======================================================= PIM eligibility is not standing access
+# `build_dossier` used to concatenate `assignments` + `group_derived` + `eligible` into one
+# flat `directory_assignments` list with nothing saying which bucket a row came from. An
+# eligibility row carries `permanent: True` when the ELIGIBILITY never lapses, so a correctly
+# governed PIM-eligible Global Administrator was reported as a "permanent, direct" Global
+# Administrator — the opposite of the truth, and it invited the reader to remove a standing
+# assignment that does not exist.
+import pytest
+
+
+def _roles_data() -> dict[str, Any]:
+    common = {
+        "principal_id": "u1", "principal_type": "User", "principal_name": "P - Zeeshan",
+        "role_privileged": True, "role_tier": "tier0",
+    }
+    return {
+        "assignments": [
+            # A live PIM ACTIVATION: held right now, but time-boxed.
+            {**common, "id": "a1", "role_name": "Global Administrator", "scope": "/",
+             "assignment_kind": "active", "source": "direct", "activated": True,
+             "permanent": False, "end": "2026-08-03T23:10:05Z", "permanence_known": True},
+            # Genuinely standing.
+            {**common, "id": "a2", "role_name": "Global Reader", "scope": "/",
+             "assignment_kind": "active", "source": "direct", "activated": False,
+             "permanent": True, "end": "", "permanence_known": True},
+        ],
+        "group_derived": [],
+        "eligible": [
+            {**common, "id": "e1", "role_name": "Global Administrator",
+             "start": "2025-02-26T14:33:36Z", "end": "", "permanent": True, "status": "Provisioned"},
+            {**common, "id": "e2", "role_name": "SharePoint Administrator",
+             "start": "2025-04-09T19:40:52Z", "end": "", "permanent": True, "status": "Provisioned"},
+        ],
+    }
+
+
+async def _access(monkeypatch) -> dict[str, Any]:
+    async def _no_rows(_tenant):
+        return []
+
+    monkeypatch.setattr(inv, "access_rows", _no_rows)
+
+    async def _resolve(_data, _tenant, needle):
+        return {"id": "u1", "kind": "user", "display_name": "P - Zeeshan",
+                "resolution": "resolved", "upn": "p-zeeshan@example.com"}
+
+    monkeypatch.setattr(inv, "resolve", _resolve)
+    snapshot = {"data": {"roles": _roles_data()}, "_analysis": {}, "domains": {}}
+    _env, sections = await inv.build_dossier(snapshot, "t", "u1")
+    return sections["access"]["data"]
+
+
+@pytest.mark.asyncio
+async def test_an_eligible_role_is_never_reported_as_permanent(monkeypatch):
+    """The exact defect: `permanent: True` on an eligibility row read as standing access."""
+    data = await _access(monkeypatch)
+    eligible = [r for r in data["directory_assignments"] if r["assignment_kind"] == "eligible"]
+    assert len(eligible) == 2
+    for row in eligible:
+        assert "permanent" not in row, f"{row['role_name']} still carries the ambiguous key"
+        assert row["standing_access"] is False
+        assert row["activated"] is False
+        # The eligibility not lapsing is a different fact, and it keeps its own name.
+        assert row["eligibility_permanent"] is True
+
+
+@pytest.mark.asyncio
+async def test_every_assignment_row_says_what_kind_it_is(monkeypatch):
+    """Flattening the buckets is only safe if the rows are self-describing."""
+    data = await _access(monkeypatch)
+    kinds = {r["role_name"]: r["assignment_kind"] for r in data["directory_assignments"]}
+    assert kinds["SharePoint Administrator"] == "eligible"
+    assert kinds["Global Reader"] == "active"
+    assert all(r.get("assignment_kind") for r in data["directory_assignments"])
+
+
+@pytest.mark.asyncio
+async def test_held_now_is_separable_from_privileged_by_any_path(monkeypatch):
+    """`directory_roles` stays 'privileged by any path' (the score depends on it), but a
+    reader deciding whether someone HOLDS a role needs the split."""
+    data = await _access(monkeypatch)
+    assert "sharepoint administrator" in data["directory_roles"]
+    assert "sharepoint administrator" not in data["directory_roles_active"]
+    assert data["directory_roles_eligible_only"] == ["sharepoint administrator"]
+    # GA is both eligible AND currently activated, so it is held now and must not be
+    # listed as eligible-only.
+    assert "global administrator" in data["directory_roles_active"]
+
+
+@pytest.mark.asyncio
+async def test_an_activated_pim_role_is_still_reported_as_held(monkeypatch):
+    """The fix must not swing the other way: an ACTIVATED role really is held right now."""
+    data = await _access(monkeypatch)
+    active_ga = [r for r in data["directory_assignments"]
+                 if r["role_name"] == "Global Administrator" and r["assignment_kind"] == "active"]
+    assert len(active_ga) == 1
+    assert active_ga[0]["activated"] is True
+    assert active_ga[0]["end"], "an activation must keep its expiry"

@@ -168,6 +168,22 @@ def _slim_policy(p: dict[str, Any]) -> dict[str, Any]:
             "application_filter_mode": str(as_dict(apps.get("applicationFilter")).get("mode") or ""),
             "application_filter_rule": str(as_dict(apps.get("applicationFilter")).get("rule") or ""),
             "client_app_types": [str(x) for x in as_list(conditions.get("clientAppTypes"))],
+            # Authentication FLOWS (device-code flow, authentication transfer). Microsoft's
+            # recommended "block device code flow" policy targets all users and all apps and
+            # narrows ONLY on this. Not collecting it made that policy read as an
+            # unconditional block on everyone, so the simulator reported every sign-in in the
+            # tenant as blocked.
+            "auth_flows": [
+                str(x) for x in as_list(
+                    as_dict(conditions.get("authenticationFlows")).get("transferMethods")
+                )
+            ] or [
+                # Graph returns the transfer methods as a comma-joined string on some API
+                # versions; normalise both shapes to a list.
+                s.strip() for s in str(
+                    as_dict(conditions.get("authenticationFlows")).get("transferMethods") or ""
+                ).split(",") if s.strip()
+            ],
             "platforms_include": [str(x) for x in as_list(platforms.get("includePlatforms"))],
             "platforms_exclude": [str(x) for x in as_list(platforms.get("excludePlatforms"))],
             "locations_include": [str(x) for x in as_list(locations.get("includeLocations"))],

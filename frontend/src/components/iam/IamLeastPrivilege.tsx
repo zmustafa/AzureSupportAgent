@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type IamRightsizeRecommendation } from "../../api";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId } from "./IamShared";
 
 const CONFIDENCE_CLASS: Record<string, string> = {
@@ -28,21 +29,30 @@ function Row({ r }: { r: IamRightsizeRecommendation }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded border bg-white">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-gray-50"
-      >
-        <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${CONFIDENCE_CLASS[r.confidence] ?? "bg-gray-100"}`}>
-          {r.confidence}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{r.principalName || r.principalId}</span>
-        <span className="shrink-0 text-[11px] text-gray-600">{r.currentRoles.join(", ")}</span>
-        {/* The denominator travels with the ratio, everywhere it appears. */}
-        <span data-testid="rightsize-ratio" className="shrink-0 text-[11px] text-gray-700">
-          used <b>{r.usedActionCount}</b> of <b>{r.grantedActionCount}</b>
-        </span>
-      </button>
+      {/* The disclosure control and the investigate jump are SIBLINGS, not nested. A button
+          inside a button is invalid HTML, and the browser resolves it by swallowing the
+          inner click — the link would render and simply never fire. */}
+      <div className="flex items-baseline gap-1 pr-2 hover:bg-gray-50">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-baseline gap-2 px-3 py-2 text-left"
+        >
+          <span className={`shrink-0 rounded px-1.5 text-[10px] font-semibold uppercase ${CONFIDENCE_CLASS[r.confidence] ?? "bg-gray-100"}`}>
+            {r.confidence}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{r.principalName || r.principalId}</span>
+          <span className="shrink-0 text-[11px] text-gray-600">{r.currentRoles.join(", ")}</span>
+          {/* The denominator travels with the ratio, everywhere it appears. */}
+          <span data-testid="rightsize-ratio" className="shrink-0 text-[11px] text-gray-700">
+            used <b>{r.usedActionCount}</b> of <b>{r.grantedActionCount}</b>
+          </span>
+        </button>
+        {investigatableId(undefined, r.principalId) && (
+          <InvestigateLink principalId={r.principalId}
+                           label={r.principalName || r.principalId} />
+        )}
+      </div>
       {open && (
         <div className="space-y-2 border-t px-3 py-2">
           <div className="text-[11px] text-gray-600">

@@ -24,12 +24,14 @@ loss."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import gzip
 import hashlib
 import json
 import logging
 import shutil
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -181,6 +183,34 @@ def _write_index(data: dict[str, Any], *, bump: bool = True) -> None:
         _bump()
 
 
+# Every index mutation is READ-MODIFY-WRITE over one shared JSON file:
+#
+#     data = _read_index(); data[...] = entry; _write_index(data)
+#
+# Two of those interleaving is a LOST UPDATE — the second writer's snapshot predates the first
+# writer's change, so the first scope silently vanishes from the index while its sidecar blob
+# sits on disk orphaned. The reader then reports a scope that was collected as never collected.
+#
+# This was latent rather than theoretical even before the refresh fanned out: writes already run
+# on worker threads (`asyncio.to_thread(cache.write_scope, ...)`) while the API keeps serving
+# requests that write baselines, drift and right-sizing. Refreshing three scopes at a time just
+# makes it likely instead of rare.
+#
+# Reentrant because a guarded function may legitimately call another one.
+_index_lock = threading.RLock()
+
+
+def _index_guarded(fn: "Callable[..., Any]") -> "Callable[..., Any]":
+    """Serialise a function that reads, mutates and rewrites the index."""
+
+    @functools.wraps(fn)
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        with _index_lock:
+            return fn(*args, **kwargs)
+
+    return _wrapped
+
+
 def _tenant_bucket(data: dict[str, Any], tenant_id: str) -> dict[str, Any]:
     bucket = data.setdefault(tenant_id or "default", {})
     bucket.setdefault("scopes", {})
@@ -271,6 +301,7 @@ def is_fresh(generated_at: str | None, ttl_s: int) -> bool:
 
 
 # --------------------------------------------------------------------------- scope slice
+@_index_guarded
 def write_scope(
     tenant_id: str,
     scope: str,
@@ -301,6 +332,7 @@ def read_scope_meta(tenant_id: str, scope: str) -> dict[str, Any] | None:
     return entry if isinstance(entry, dict) else None
 
 
+@_index_guarded
 def mark_scope_verified(tenant_id: str, scope: str, *, reason: str = "") -> dict[str, Any] | None:
     """Record that a delta refresh checked this scope and found no authorization activity.
 
@@ -363,6 +395,7 @@ def all_scope_rows(tenant_id: str) -> list[dict[str, Any]]:
     return rows
 
 
+@_index_guarded
 def delete_scope(tenant_id: str, scope: str) -> bool:
     data = _read_index()
     bucket = _tenant_bucket(data, tenant_id)
@@ -373,6 +406,7 @@ def delete_scope(tenant_id: str, scope: str) -> bool:
 
 
 # --------------------------------------------------------------------------- directory layer
+@_index_guarded
 def write_directory(
     tenant_id: str,
     *,
@@ -439,6 +473,7 @@ def read_directory(tenant_id: str) -> dict[str, Any]:
     }
 
 
+@_index_guarded
 def write_bypass(
     tenant_id: str,
     *,
@@ -499,6 +534,7 @@ def read_bypass_meta(tenant_id: str) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
+@_index_guarded
 def write_drift(tenant_id: str, payload: dict[str, Any]) -> None:
     """Persist the classified diff from the latest run.
 
@@ -536,6 +572,7 @@ def read_drift(tenant_id: str) -> dict[str, Any]:
     }
 
 
+@_index_guarded
 def write_usage(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Persist the usage sweep with its OWN collection time.
 
@@ -592,6 +629,7 @@ RIGHTSIZING_KEY = "rightsizing"
 ESCALATION_KEY = "escalation"
 
 
+@_index_guarded
 def write_escalation(
     tenant_id: str,
     graph: dict[str, Any],
@@ -642,6 +680,7 @@ def read_escalation_meta(tenant_id: str) -> dict[str, Any]:
 
 
 
+@_index_guarded
 def write_rightsizing(
     tenant_id: str,
     payload: dict[str, Any],
@@ -695,6 +734,7 @@ def has_any(tenant_id: str) -> bool:
     return bool(bucket["scopes"]) or bool(bucket.get(DIRECTORY_KEY))
 
 
+@_index_guarded
 def delete_tenant(tenant_id: str) -> int:
     """Drop every cached scope + the directory for a tenant (demo purge). Returns scopes removed."""
     data = _read_index()
@@ -713,6 +753,7 @@ def delete_tenant(tenant_id: str) -> int:
     return n
 
 
+@_index_guarded
 def purge_demo(tenant_id: str) -> int:
     """Remove ONLY demo-flagged scope slices (and the directory layer if it is demo), leaving any
     real scan slices cached under the same tenant intact. Returns the number of scopes removed.

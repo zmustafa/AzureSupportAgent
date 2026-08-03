@@ -34,8 +34,10 @@ from app.entra.ca_engine import (
     CTRL_COMPLIANT,
     CTRL_HYBRID,
     CTRL_MFA,
+    CTRL_PERSISTENT_BROWSER,
     CTRL_PHISH,
     CTRL_SESSION,
+    CTRL_SIGNIN_FREQUENCY,
 )
 from app.entra.collectors.ca import (
     APP_ADMIN_PORTALS,
@@ -61,7 +63,16 @@ BLOCKING_VERDICTS = (BLOCKED, BLOCKED_EFFECTIVE)
 # trustworthy; a simulator that implies completeness it does not have is worse than none.
 LIMITATIONS: tuple[str, ...] = (
     "Does not model Continuous Access Evaluation revocation timing.",
-    "Does not model app-enforced session restrictions inside the application.",
+    # Reworded when session controls started being REPORTED. We now say which policies
+    # impose app-enforced restrictions; we still cannot say what the application does with
+    # that signal, and conflating the two would be the false confidence this list exists to
+    # prevent.
+    "Session controls are reported as configured in Conditional Access. Application-enforced "
+    "restrictions are implemented by the application (SharePoint, Exchange), not by Entra — "
+    "if the app's own access controls disagree, the app wins.",
+    "Conditional Access is not the application's own configuration. 'No policy restricts "
+    "download' is not the same as 'download is allowed' — SharePoint has unmanaged-device "
+    "controls of its own, outside Conditional Access entirely.",
     "Does not model per-application authentication context assignment inside workloads.",
     "Device compliance is taken from the simulated context, not a live Intune evaluation.",
     "Guest MFA satisfaction from a home tenant is modelled from the cross-tenant access "
@@ -225,6 +236,17 @@ def matches(policy: dict[str, Any], principal: SimPrincipal, ctx: SignInContext)
     if client_apps and "all" not in client_apps and ctx.client_app not in client_apps:
         return False
 
+    # Authentication flows (device-code flow, authentication transfer). A policy scoped to
+    # these applies ONLY to those flows — never to an ordinary interactive sign-in. The
+    # simulated contexts model interactive sign-ins, so such a policy must not match.
+    #
+    # This is load-bearing: Microsoft's recommended "block device code flow" policy targets
+    # ALL users and ALL apps and narrows on nothing else. Treating it as unconditional made
+    # every simulated sign-in in the tenant come back BLOCKED — a false hard block on the
+    # whole estate, produced by the one policy security teams are told to create.
+    if conditions.get("auth_flows"):
+        return False
+
     sign_in_risk = set(conditions.get("sign_in_risk") or [])
     if sign_in_risk and ctx.sign_in_risk not in sign_in_risk:
         return False
@@ -235,14 +257,23 @@ def matches(policy: dict[str, Any], principal: SimPrincipal, ctx: SignInContext)
 
 
 def required_controls(applicable: list[dict[str, Any]]) -> set[str]:
-    """Union of grant controls across applicable policies.
+    """Union of GRANT controls across applicable policies.
 
     Within one policy an ``OR`` operator means any one control satisfies it, so only the
     cheapest is required; ``AND`` requires all. Across policies the union is conjunctive —
-    every applicable policy must be satisfied."""
+    every applicable policy must be satisfied.
+
+    Session controls are subtracted as a SET, not just the legacy aggregate. When the
+    sub-controls were split out of ``session_limits`` this line kept removing only the
+    aggregate, so a policy whose only control was app-enforced restrictions — the ordinary
+    shape of "SharePoint, unmanaged device, browse but do not download" — landed in
+    `required`, matched nothing in `capabilities`, and rendered as **blocked_effective**.
+    A false hard block is the worst answer this screen can give: it says someone cannot get
+    in when in truth they get in with a restricted session.
+    """
     required: set[str] = set()
     for p in applicable:
-        controls = set(p["controls"]) - {CTRL_BLOCK, CTRL_SESSION}
+        controls = set(p["controls"]) - {CTRL_BLOCK} - ca_engine.SESSION_CONTROLS
         if not controls:
             continue
         operator = str((p.get("grant") or {}).get("operator") or "OR").upper()
@@ -259,6 +290,37 @@ def required_controls(applicable: list[dict[str, Any]]) -> set[str]:
     return required
 
 
+def session_controls(applicable: list[dict[str, Any]]) -> dict[str, Any]:
+    """Which session controls the applicable policies impose, and which policies impose them.
+
+    Reported SEPARATELY from the verdict and never folded into it. "Granted" and "granted
+    but the session cannot download anything" are different answers, and collapsing them
+    into one word is the same class of error as rendering "unreadable" as "empty".
+
+    ``by`` names the policies, because a reader who cannot see which policy imposes a
+    control can neither verify the claim nor find the thing to change.
+    """
+    out: dict[str, Any] = {}
+    for control in sorted(ca_engine.SESSION_CONTROLS - {CTRL_SESSION}):
+        by = [p["display_name"] for p in applicable if control in set(p.get("controls") or [])]
+        entry: dict[str, Any] = {"on": bool(by), "by": by}
+        if control == CTRL_SIGNIN_FREQUENCY and by:
+            src = next((p for p in applicable if control in set(p.get("controls") or [])), {})
+            sess = src.get("session") or {}
+            entry["value"] = sess.get("sign_in_frequency_value")
+            entry["type"] = sess.get("sign_in_frequency_type") or ""
+        if control == CTRL_PERSISTENT_BROWSER and by:
+            src = next((p for p in applicable if control in set(p.get("controls") or [])), {})
+            entry["mode"] = (src.get("session") or {}).get("persistent_browser_mode") or ""
+        out[control] = entry
+    # The question people actually ask of this block. Kept explicit rather than left for the
+    # reader to derive from two keys, because deriving it wrongly is silent.
+    out["egress_restricted"] = any(
+        out[c]["on"] for c in ca_engine.EGRESS_CONTROLS if c in out
+    )
+    return out
+
+
 def evaluate(
     policies: list[dict[str, Any]], principal: SimPrincipal, ctx: SignInContext
 ) -> dict[str, Any]:
@@ -266,24 +328,30 @@ def evaluate(
     applicable = [p for p in policies if p["is_enforced"] and matches(p, principal, ctx)]
     if not applicable:
         return {"verdict": GRANTED, "policies": [], "required": [], "missing": [],
-                "protected": False}
+                "protected": False, "session": session_controls([])}
 
     blocks = [p for p in applicable if p["is_block"]]
     if blocks:
         return {"verdict": BLOCKED, "policies": [p["display_name"] for p in applicable],
                 "required": ["block"], "missing": ["block"], "protected": True,
-                "blocked_by": [p["display_name"] for p in blocks]}
+                "blocked_by": [p["display_name"] for p in blocks],
+                # Still reported: a blocked sign-in tells you nothing about what the session
+                # would have been allowed to do had a different context reached the app.
+                "session": session_controls(applicable)}
 
     required = required_controls(applicable)
     satisfied = principal.capabilities(ctx)
     missing = sorted(required - satisfied)
+    session = session_controls(applicable)
     if not missing:
         return {"verdict": GRANTED if not required else CHALLENGED,
                 "policies": [p["display_name"] for p in applicable],
-                "required": sorted(required), "missing": [], "protected": bool(required)}
+                "required": sorted(required), "missing": [], "protected": bool(required),
+                "session": session}
     return {"verdict": BLOCKED_EFFECTIVE,
             "policies": [p["display_name"] for p in applicable],
-            "required": sorted(required), "missing": missing, "protected": True}
+            "required": sorted(required), "missing": missing, "protected": True,
+            "session": session}
 
 
 # ------------------------------------------------------------------- change application
@@ -469,7 +537,7 @@ def simulate(
 
     cases: list[dict[str, Any]] = []
     counts = {"newly_blocked": 0, "newly_challenged": 0, "newly_granted": 0,
-              "protection_lost": 0, "unchanged": 0}
+              "protection_lost": 0, "session_tightened": 0, "unchanged": 0}
     by_cohort: dict[str, dict[str, int]] = {}
     by_context: dict[str, dict[str, int]] = {}
     break_glass_impact: list[dict[str, Any]] = []
@@ -506,6 +574,8 @@ def simulate(
                 "missing": after.get("missing") or [],
                 "policies_before": before.get("policies") or [],
                 "policies_after": after.get("policies") or [],
+                "session_delta": _session_delta(before, after),
+                "session_after": after.get("session") or {},
                 "mfa_unknown": principal.mfa_unknown,
             }
             cases.append(case)
@@ -541,12 +611,38 @@ def simulate(
     }
 
 
+def _session_delta(before: dict[str, Any], after: dict[str, Any]) -> str:
+    """``tightened`` | ``relaxed`` | ``""`` — how the SESSION controls moved.
+
+    Needed because a change that only touches session controls leaves both verdicts
+    identical. Without this, adding "SharePoint, unmanaged device, browse but do not
+    download" simulates as **unchanged** and the case is dropped entirely — the screen tells
+    an operator their new policy does nothing. That is the same false-negative as the hard
+    block this module already had, pointing the other way.
+    """
+    b = before.get("session") or {}
+    a = after.get("session") or {}
+    keys = {k for k in (set(b) | set(a)) if k != "egress_restricted"}
+    added = [k for k in keys if (a.get(k) or {}).get("on") and not (b.get(k) or {}).get("on")]
+    removed = [k for k in keys if (b.get(k) or {}).get("on") and not (a.get(k) or {}).get("on")]
+    if removed:
+        # Losing a session restriction is a protection loss even when more were added; the
+        # thing that used to be prevented is now possible.
+        return "relaxed"
+    return "tightened" if added else ""
+
+
 def _categorise(before: dict[str, Any], after: dict[str, Any]) -> str:
     b, a = before["verdict"], after["verdict"]
     if b == a:
         # Same verdict, but protection may still have been lost (e.g. a control disappeared).
         if before.get("protected") and not after.get("protected"):
             return "protection_lost"
+        delta = _session_delta(before, after)
+        if delta == "relaxed":
+            return "protection_lost"
+        if delta == "tightened":
+            return "session_tightened"
         return "unchanged"
     if a in BLOCKING_VERDICTS and b not in BLOCKING_VERDICTS:
         return "newly_blocked"
@@ -562,7 +658,7 @@ def _categorise(before: dict[str, Any], after: dict[str, Any]) -> str:
 
 
 _CATEGORY_ORDER = {"newly_blocked": 0, "protection_lost": 1, "newly_challenged": 2,
-                   "newly_granted": 3, "unchanged": 4}
+                   "newly_granted": 3, "session_tightened": 4, "unchanged": 5}
 
 
 def _order_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:

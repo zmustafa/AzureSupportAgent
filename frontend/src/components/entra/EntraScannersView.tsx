@@ -6,6 +6,7 @@ import { formatError } from "../../utils/format";
 import { IdentityFindingsPanel } from "../IdentityView";
 import { CoverageBanner, EntraEmpty, SevBadge, SortScopeNote, SortTh, useSortState, useSubTabRoute } from "./EntraShared";
 import { FindingDrawer } from "./EntraFindingsView";
+import { InvestigateLink, investigatableId } from "./InvestigateLink";
 
 // "hygiene" is the former /identity overview. It is kept separate from the inbox because it
 // comes from a different pipeline (the ARM-backed identity cache with its own refresh) rather
@@ -196,7 +197,18 @@ function InboxTab({ connectionId }: { connectionId: string | null }) {
                   <div className="text-gray-900">{f.title}</div>
                   <div className="text-[11px] text-gray-500">{f.signal_id}</div>
                 </td>
-                <td className="pr-2 text-gray-700">{f.object_name}</td>
+                <td className="pr-2 text-gray-700" onClick={(e) => e.stopPropagation()}>
+                  {/* `min-w-0 truncate` WITHOUT `flex-1`: the name shrinks when it must, but
+                     never stretches, so the glyph stays against the identity instead of
+                     drifting to the far edge of a wide column where it reads as its own. */}
+                  <div className="flex items-center gap-1">
+                    <span className="min-w-0 truncate">{f.object_name}</span>
+                    {investigatableId(f.object_kind, f.object_id) && (
+                      <InvestigateLink principalId={investigatableId(f.object_kind, f.object_id)!}
+                                       label={f.object_name} />
+                    )}
+                  </div>
+                </td>
                 <td>
                   <span className={`text-[12px] ${
                     f.state === "open" ? "text-gray-700" :
@@ -293,8 +305,14 @@ function ScannerFindings({ scannerId, connectionId, floor }: {
                 )}
               </div>
               {f.object_name && (
-                <div className="truncate text-[11px] text-gray-500" title={f.object_name}>
-                  {f.object_name}
+                <div className="flex items-center gap-1">
+                  <span className="min-w-0 truncate text-[11px] text-gray-500" title={f.object_name}>
+                    {f.object_name}
+                  </span>
+                  {investigatableId(f.object_kind, f.object_id) && (
+                    <InvestigateLink principalId={investigatableId(f.object_kind, f.object_id)!}
+                                     label={f.object_name} />
+                  )}
                 </div>
               )}
             </div>

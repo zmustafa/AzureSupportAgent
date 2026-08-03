@@ -8,7 +8,16 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type IamRow } from "../../api";
 import { useDebounced } from "../../utils/perf";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { IAM_PAGE, KpiTile, useIamConnectionId } from "./IamShared";
+
+/** The principal a PIM row is about: the EFFECTIVE holder where a group was expanded, so the
+ *  jump lands on the person who actually elevates rather than the group they came through. */
+function principalCell(r: IamRow): { name: string; id: string | null } {
+  const name = String(r.effectivePrincipalName || r.principalDisplayName || r.effectivePrincipalId || "");
+  const id = String(r.effectivePrincipalId || r.principalId || "");
+  return { name, id: investigatableId(undefined, id) };
+}
 
 function pct(v: number | null | undefined): string {
   return v == null ? "—" : `${Math.round(v * 100)}%`;
@@ -152,18 +161,26 @@ export function PimTab() {
               </tr>
             </thead>
             <tbody>
-              {elevated.map((r, i) => (
-                <tr key={i} className="border-t">
-                  <td className="px-3 py-1.5 font-medium text-gray-800">{String(r.effectivePrincipalName || r.principalDisplayName || r.effectivePrincipalId)}</td>
-                  <td className="px-3 py-1.5">{String(r.roleName)}</td>
-                  <td className="px-3 py-1.5 text-gray-600">{String(r.scopeDisplayName || r.scope)}</td>
-                  <td className="px-3 py-1.5">
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
-                      {untilText(String(r.activationExpiresOn))}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {elevated.map((r, i) => {
+                const p = principalCell(r);
+                return (
+                  <tr key={i} className="border-t">
+                    <td className="px-3 py-1.5 font-medium text-gray-800">
+                      <div className="flex items-center gap-1">
+                        <span className="min-w-0 truncate">{p.name}</span>
+                        {p.id && <InvestigateLink principalId={p.id} label={p.name} />}
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5">{String(r.roleName)}</td>
+                    <td className="px-3 py-1.5 text-gray-600">{String(r.scopeDisplayName || r.scope)}</td>
+                    <td className="px-3 py-1.5">
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                        {untilText(String(r.activationExpiresOn))}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -211,9 +228,15 @@ export function PimTab() {
               {eligible.map((r, i) => {
                 const permanent = !!r.isPermanentEligible;
                 const weak = !r.requiresApproval && !r.requiresMfa;
+                const p = principalCell(r);
                 return (
                   <tr key={i} className="border-t">
-                    <td className="px-3 py-1.5 font-medium text-gray-800">{String(r.effectivePrincipalName || r.principalDisplayName || r.effectivePrincipalId)}</td>
+                    <td className="px-3 py-1.5 font-medium text-gray-800">
+                      <div className="flex items-center gap-1">
+                        <span className="min-w-0 truncate">{p.name}</span>
+                        {p.id && <InvestigateLink principalId={p.id} label={p.name} />}
+                      </div>
+                    </td>
                     <td className="px-3 py-1.5">{String(r.roleName)}</td>
                     <td className="px-3 py-1.5 text-gray-600">{String(r.scopeDisplayName || r.scope)}</td>
                     <td className="px-3 py-1.5">

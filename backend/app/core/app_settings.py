@@ -323,6 +323,23 @@ DEFAULTS: dict[str, Any] = {
     "iam_max_rows": 5000,
     # Expose the read-only IAM agent tools (who_can_access / privileged_access_review).
     "iam_tools_enabled": True,
+    # --- Entra identity agent tools (Investigate + Conditional Access) --------------
+    # Master switch, then a per-tool map. Only the two that answer the questions people
+    # actually ask are on by default: the combined Azure + Graph catalogue is already large
+    # enough to be TRIMMED for request size, so every extra tool costs every turn.
+    "entra_identity_tools_enabled": True,
+    "entra_identity_tools": {
+        "identity_investigate": True,
+        "ca_evaluate": True,
+        "identity_group_members": False,
+        "ca_policies_for_app": False,
+        "identity_findings": False,
+    },
+    # Behavioural Graph reads (sign-in logs, directory audit) exposed by the EntraID MCP
+    # server. Gating `identity_investigate` behind `investigate.activity` is worthless while
+    # these stay open to the same user — the agent simply calls them instead and assembles
+    # the same answer with a thinner audit trail. They travel together or the split is theatre.
+    "entra_mcp_behavioural_tools_enabled": False,
     # --- Policy exemption manager (create/modify/remove policy exemptions) ----------
     # Guardrails enforced server-side before any exemption write (create/extend) so exemptions
     # stay a controlled, hygienic security exception rather than a permanent escape hatch.

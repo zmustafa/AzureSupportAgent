@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.entra import ca_taxonomy, model
+from app.entra import ca_engine, ca_taxonomy, model
 from app.entra.ca_coverage import CELL_COVERED, CELL_NA, CELL_PARTIAL, CELL_REPORT_ONLY
 from app.entra.ca_engine import SESSION_CONTENT_CONTROLS, CTRL_BLOCK
 from app.entra.signals import (
@@ -148,6 +148,46 @@ def _dependency_split(data: dict[str, Any], ctx: SignalContext) -> list[dict[str
             portal_link=model.portal_ca_policy(""),
         ))
     return out
+
+
+def _no_egress_control_on_content(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
+    """Content services reachable with nothing bounding what the session can take away.
+
+    Deliberately narrower than `no_session_control_on_content`, and it fires where that one
+    cannot. That signal is satisfied by ANY session control, including a sign-in frequency —
+    so a tenant with hourly re-authentication and no download restriction reads as covered.
+    Time-bounding a session and bounding what leaves it are different controls answering
+    different questions: a one-hour sign-in frequency does not stop a download in minute one.
+
+    Only two controls bound egress: application-enforced restrictions (SharePoint/OneDrive
+    limited web access) and a Defender for Cloud Apps session proxy.
+    """
+    cells = _cells(data)
+    covered = [c for c in ca_engine.EGRESS_CONTROLS
+               if (cells.get(f"collaboration_content|{c}") or {}).get("state") in
+               (CELL_COVERED, CELL_PARTIAL)]
+    if covered:
+        return []
+    # Nothing to say about a class this tenant does not have.
+    reachable = cells.get("collaboration_content|mfa") or {}
+    if reachable.get("state") == CELL_NA:
+        return []
+    return [model.finding(
+        signal_id="ca.no_egress_control_on_content", severity="medium", pillar="ca",
+        object_kind="app_class", object_id="collaboration_content",
+        object_name="Collaboration content",
+        title="Nothing limits what a session can download from content services",
+        detail="A user who signs in to SharePoint, OneDrive or Exchange from an unmanaged "
+               "device can download, sync and keep the files. No policy applies "
+               "application-enforced restrictions or routes the session through a cloud "
+               "app security proxy. A sign-in frequency does not close this: it decides how "
+               "often they re-authenticate, not what they may take with them.",
+        evidence={"controls_checked": sorted(ca_engine.EGRESS_CONTROLS),
+                  "note": "Conditional Access is not the application's own configuration. "
+                          "SharePoint has unmanaged-device controls outside CA that this "
+                          "does not read."},
+        portal_link=model.portal_ca_policy(""),
+    )]
 
 
 def _no_session_control_on_content(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
@@ -455,6 +495,14 @@ SPECS: list[SignalSpec] = [
           "inside, and whether the decision is ever revisited.",
           "medium", 5, _no_session_control_on_content,
           remediation="Apply app-enforced restrictions, CAE, or a sign-in frequency."),
+    _spec("ca.no_egress_control_on_content", "Nothing limits download from content services",
+          "Can a session take files out of SharePoint, OneDrive or Exchange unrestricted?",
+          "Bounding how long a session lasts is not the same as bounding what leaves it. A "
+          "sign-in frequency does not stop a download in the first minute.",
+          "medium", 6, _no_egress_control_on_content,
+          remediation="Apply application-enforced restrictions to SharePoint and Exchange "
+                      "for unmanaged devices, or route the session through Defender for "
+                      "Cloud Apps."),
     _spec("ca.security_info_registration_unprotected", "Security info registration unprotected",
           "Is registering MFA methods itself protected?",
           "If an attacker with a stolen password can enrol their own MFA method, they stop "

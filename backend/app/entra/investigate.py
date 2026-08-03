@@ -433,11 +433,42 @@ async def build_dossier(
     # --- access -----------------------------------------------------------------
     roles_data = data.get("roles") or {}
     link = data.get("_azure_link") or {}
-    directory_assignments = [
-        a for a in (roles_data.get("assignments") or []) + (roles_data.get("group_derived") or [])
-        + (roles_data.get("eligible") or [])
-        if str(a.get("principal_id") or "") == subject_id
-    ]
+    # Active and eligible are DIFFERENT facts and must never be flattened together.
+    #
+    # A PIM eligibility row carries `permanent: True` when the *eligibility* itself never
+    # lapses. That says nothing about standing access — the holder still has to activate,
+    # with whatever MFA, justification, approval and expiry the policy demands. Merged into
+    # one list under a key named `permanent`, an eligible Global Administrator read as a
+    # "permanent Global Administrator": the exact opposite of the truth, and the single
+    # worst thing this dossier could say about a correctly-governed account. It also
+    # invites the reader to "remove" an assignment that does not exist.
+    #
+    # So: every row is tagged with what it is, and the ambiguous key is renamed on eligible
+    # rows rather than left to be misread.
+    def _mine(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [r for r in rows if str(r.get("principal_id") or "") == subject_id]
+
+    def _as_eligible(row: dict[str, Any]) -> dict[str, Any]:
+        out = {k: v for k, v in row.items() if k != "permanent"}
+        out.update({
+            "assignment_kind": "eligible",
+            "activated": False,
+            # The point of the whole record: eligibility is not held access.
+            "standing_access": False,
+            "eligibility_permanent": bool(row.get("permanent")),
+        })
+        return out
+
+    active_rows = _mine((roles_data.get("assignments") or [])
+                        + (roles_data.get("group_derived") or []))
+    eligible_rows = [_as_eligible(e) for e in _mine(roles_data.get("eligible") or [])]
+    directory_assignments = active_rows + eligible_rows
+    active_role_names = {
+        (a.get("role_name") or "").strip().lower() for a in active_rows
+    } - {""}
+    eligible_role_names = {
+        (e.get("role_name") or "").strip().lower() for e in eligible_rows
+    } - {""}
     azure_matches: list[dict[str, Any]] = []
     azure_unreadable = False
     azure_reason = ""
@@ -453,6 +484,11 @@ async def build_dossier(
     sections["access"] = section(
         {
             "directory_roles": sorted(effective_role_names(roles_data, subject_id)),
+            # `directory_roles` is "privileged by ANY path", which is the right definition
+            # for scoring but the wrong one for a reader deciding whether someone holds a
+            # role right now. These two split it without changing that contract.
+            "directory_roles_active": sorted(active_role_names),
+            "directory_roles_eligible_only": sorted(eligible_role_names - active_role_names),
             "directory_assignments": directory_assignments,
             "azure": (link.get("principals") or {}).get(subject_id),
             "azure_assignments": azure_matches[:500],
@@ -506,6 +542,49 @@ async def build_dossier(
                    reason=("Microsoft Graph retains roughly 30 days. Older sessions come from "
                            "our own ledger, which is why the two can differ in length.")),
     )
+
+    # --- members: groups only ----------------------------------------------------
+    # Built from the IAM directory's expansion, which is TRANSITIVE and had nested groups
+    # filtered out when it was collected. So this is the honest answer to "who ends up with
+    # access through this group" and CANNOT answer "through which nested group" — the tree
+    # for that is fetched live, on demand, by the members endpoint.
+    if subject.get("kind") == KIND_GROUP:
+        import asyncio
+
+        from app.entra import investigate_members
+
+        # OFF the event loop. It is a synchronous disk read plus a JSON parse of the whole
+        # directory blob — ~10ms on a real tenant, which is nothing once and several seconds
+        # of a blocked loop when a caller walks a few hundred dossiers. Every other expensive
+        # read in this function is already offloaded; this one has to be too.
+        members, known, reason = await asyncio.to_thread(
+            investigate_members.cached_members, tenant_id, subject_id,
+        )
+        sub = subject.get("sub_kind") or {}
+        sections["members"] = section(
+            {
+                "members": members,
+                "count": len(members),
+                "known": known,
+                # Both change how the list should be read, and neither is visible from the
+                # list itself: a dynamic group's membership is a rule's output, and a synced
+                # group's membership is authored in on-prem AD where we cannot see it change.
+                "dynamic": bool(sub.get("dynamic")),
+                "membership_rule": str(sub.get("membership_rule") or ""),
+                "on_prem_synced": bool(sub.get("on_prem_synced")),
+                "role_assignable": bool(sub.get("role_assignable")),
+            },
+            provenance(
+                "Azure access cache — transitive group expansion",
+                collected_at=generated_at,
+                unreadable=not known,
+                reason=reason or (
+                    "Transitive membership: nested groups were expanded away when this was "
+                    "collected, so a member listed here may belong through a subgroup. Open "
+                    "the tree to see the path."
+                ),
+            ),
+        )
 
     return env, sections
 

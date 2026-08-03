@@ -199,7 +199,7 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
                     <tr key={i} ref={rowVirt.measureElement} data-index={i} className={`border-b last:border-0 hover:bg-gray-50 ${r.effect === "Deny" ? "bg-red-50/60" : ""}`}>
                       <td className="px-3 py-1.5">
                         <div className="flex items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate font-medium text-gray-800">{who}</span>
+                          <span className="min-w-0 truncate font-medium text-gray-800">{who}</span>
                           <InvestigateLink
                             principalId={(r.effectivePrincipalId || r.principalId || "") as string}
                             label={who}

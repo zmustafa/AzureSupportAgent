@@ -809,6 +809,10 @@ export default function ChatView() {
   // the chat's saved agent and changed via the composer's agent selector.
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedWorkloadId, setSelectedWorkloadId] = useState<string | null>(null);
+  // The tenant (Azure connection) chosen in the composer. Held locally — like the agent
+  // and workload selections — because it must apply to the FIRST turn too, which happens
+  // before the chat exists and therefore before there is anything to PATCH.
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   // First-time deep-investigation notice modal (shown when enabling deep mode).
   const [deepNotice, setDeepNotice] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1216,7 +1220,10 @@ export default function ChatView() {
     // Ensure a chat exists so clarify can enumerate subscriptions.
     let chatId = activeId;
     if (!chatId) {
-      const chat = await api.createChat();
+      // Create the chat already bound to the composer's tenant. Passing nothing makes the
+      // backend stamp the DEFAULT connection, which would then disagree with the
+      // connection this turn actually runs against.
+      const chat = await api.createChat(activeTenant?.id ?? null);
       // Seed the sidebar with this chat already titled from the first message, so it
       // never flashes "New Chat". Also carry the currently-selected agent and thinking
       // level onto the optimistic chat so the picker doesn't flash back to "Default
@@ -2133,7 +2140,14 @@ export default function ChatView() {
     setThinkingLevel(activeChat?.thinking_level === "deep" ? "deep" : "normal");
     setSelectedAgentId(activeChat?.agent_id ?? null);
     setSelectedWorkloadId(activeChat?.workload_id ?? null);
-  }, [activeChat?.id, activeChat?.thinking_level, activeChat?.agent_id, activeChat?.workload_id]);
+    setSelectedConnectionId(activeChat?.connection_id ?? null);
+  }, [
+    activeChat?.id,
+    activeChat?.thinking_level,
+    activeChat?.agent_id,
+    activeChat?.workload_id,
+    activeChat?.connection_id,
+  ]);
 
   // Handoff from the Architecture Memory screen: "Investigate with this memory" stores a
   // one-shot scope in sessionStorage and navigates to /chat. We preselect deep mode + the
@@ -2350,6 +2364,7 @@ export default function ChatView() {
   // The tenant (Azure connection) bound to the active chat — the chat's saved tenant,
   // else the default connection. Drives the composer tenant selector and turn scope.
   const activeTenant =
+    tenants.find((t) => t.id === selectedConnectionId) ??
     tenants.find((t) => t.id === activeChat?.connection_id) ??
     tenants.find((t) => t.is_default) ??
     (tenants.length === 1 ? tenants[0] : undefined);
@@ -3975,6 +3990,11 @@ export default function ChatView() {
                       tenants={tenants}
                       activeId={activeTenant?.id}
                       onPick={(id) => {
+                        // Record the pick locally FIRST. A brand-new chat has no id to
+                        // PATCH, and dropping the choice there ran the opening turn
+                        // against the default connection while the picker showed the
+                        // tenant the operator had selected.
+                        setSelectedConnectionId(id);
                         if (activeId) {
                           void api.setChatConnection(activeId, id).then(() => {
                             qc.invalidateQueries({ queryKey: ["chats"] });

@@ -17,6 +17,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type IamBypassRow } from "../../api";
+import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId, StatusPill } from "./IamShared";
 
 const SEV_CLASS: Record<string, string> = {
@@ -83,12 +84,22 @@ function Row({ r }: { r: IamBypassRow }) {
                       const ambiguous =
                         r.reachableBy.filter((o) => o.principalName === h.principalName).length > 1;
                       return (
-                        <li key={`${h.principalId}-${h.scope}`} className="text-[11px] text-gray-700">
-                          {h.principalName}
-                          {ambiguous && (
-                            <span className="text-gray-400"> ({h.principalId.slice(0, 8)})</span>
-                          )}{" "}
-                          <span className="text-gray-400">at {h.scope}</span>
+                        <li key={`${h.principalId}-${h.scope}`}
+                            className="flex items-center gap-1 text-[11px] text-gray-700">
+                          {/* The affordance sits against the NAME, not at the panel's right
+                              edge. These rows span the full width of a wide panel, so a
+                              right-aligned glyph ends up inches from the identity it acts on
+                              and reads as belonging to the row's last column instead. */}
+                          <span className="max-w-[22rem] shrink-0 truncate">
+                            {h.principalName}
+                            {ambiguous && (
+                              <span className="text-gray-400"> ({h.principalId.slice(0, 8)})</span>
+                            )}
+                          </span>
+                          {investigatableId(undefined, h.principalId) && (
+                            <InvestigateLink principalId={h.principalId} label={h.principalName} />
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-gray-400">at {h.scope}</span>
                         </li>
                       );
                     })}

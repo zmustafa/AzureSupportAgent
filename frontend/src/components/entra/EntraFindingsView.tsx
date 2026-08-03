@@ -4,6 +4,7 @@ import { api, type EntraFinding, type EntraSignal } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
 import { EntraEmpty, SEV_STYLE, SevBadge, SortScopeNote, SortTh, useSortState } from "./EntraShared";
+import { InvestigateLink, investigatableId } from "./InvestigateLink";
 
 /**
  * The findings inbox — every signal's output in one list with persistent workflow state.
@@ -124,7 +125,15 @@ export function EntraFindingsView({
                     <SevBadge sev={f.severity} />
                   </td>
                   <td className="px-2 py-2 text-gray-800">{f.title}</td>
-                  <td className="px-2 py-2 text-gray-600">{f.object_name}</td>
+                  <td className="px-2 py-2 text-gray-600">
+                    <div className="flex items-center gap-1">
+                      <span className="min-w-0 truncate">{f.object_name}</span>
+                      {investigatableId(f.object_kind, f.object_id) && (
+                        <InvestigateLink principalId={investigatableId(f.object_kind, f.object_id)!}
+                                         label={f.object_name} />
+                      )}
+                    </div>
+                  </td>
                   <td className="px-2 py-2">
                     <code className="rounded bg-gray-100 px-1 text-[11px] text-gray-600">{f.signal_id}</code>
                   </td>
@@ -237,6 +246,14 @@ export function FindingDrawer({
         )}
 
         <div className="flex flex-wrap gap-2">
+          {investigatableId(finding.object_kind, finding.object_id) && (
+            <InvestigateLink
+              principalId={investigatableId(finding.object_kind, finding.object_id)!}
+              label="Investigate this identity"
+              compact={false}
+              title="Everything we know about this identity — access, findings, changes, activations"
+            />
+          )}
           {finding.portal_link && (
             <a
               href={finding.portal_link}

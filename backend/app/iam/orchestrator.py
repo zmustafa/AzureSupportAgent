@@ -809,6 +809,60 @@ async def refresh_usage(
     return written
 
 
+# How many scopes a whole-tenant refresh collects at once.
+#
+# Three, not more. The ceiling is not CPU — it is Azure Resource Graph, which allows
+# 15 queries / 5s PER SECURITY PRINCIPAL, shared tenant-wide (see app/azure/arg_throttle.py).
+# The pacer smooths admissions and retries what slips through, so a wider fan-out does not go
+# faster; it just queues behind the same quota while holding more ARM connections open and
+# making the progress log unreadable. Three keeps every worker busy through the slow serial
+# part of a scope (PIM + classic admins on ARM) without crowding the window.
+_SCOPE_FANOUT = 3
+
+
+async def _fan_out(
+    targets: list[tuple[str, str]],
+    run: "Callable[[str, str], Awaitable[Any]]",
+    *,
+    progress: ProgressFn,
+    label: str,
+) -> list[str]:
+    """Collect ``targets`` ``_SCOPE_FANOUT`` at a time; return the scopes that SUCCEEDED.
+
+    Fan out, then fan back in: the caller may not continue until every target has been written,
+    because the phase that follows depends on this one being complete.
+
+    One scope failing must not lose the rest of the run, so exceptions are gathered rather than
+    raised — a whole-tenant refresh that dies on the twentieth of twenty-six subscriptions is
+    worse than one that reports which one broke. Returning the succeeded scopes rather than a
+    count lets the caller keep its per-path statistics honest: a scope that raised must not be
+    counted as collected by either path.
+    """
+    if not targets:
+        return []
+    if len(targets) > 1:
+        await progress("info", f"Collecting {len(targets)} {label}(s), {_SCOPE_FANOUT} at a time…")
+
+    sem = asyncio.Semaphore(_SCOPE_FANOUT)
+
+    async def _one(scope: str, name: str) -> Any:
+        async with sem:
+            return await run(scope, name)
+
+    results = await asyncio.gather(
+        *(_one(scope, name) for scope, name in targets), return_exceptions=True
+    )
+
+    ok: list[str] = []
+    for (scope, name), result in zip(targets, results, strict=True):
+        if isinstance(result, BaseException):
+            log.warning("iam refresh: %s %s failed: %s", label, scope, result)
+            await progress("error", f"{name or scope} failed: {result}")
+            continue
+        ok.append(scope)
+    return ok
+
+
 async def refresh_all(
     tenant_id: str,
     connection: dict[str, Any] | None,
@@ -855,20 +909,29 @@ async def refresh_all(
     if mgerr:
         await progress("warning", f"Management-group listing failed: {mgerr}")
     await progress("info", f"{len(mgs)} management group(s) visible.")
-    for mg in mgs:
-        mg_id = str(mg.get("id", "")).strip()
-        if not mg_id:
-            continue
-        scope = f"/providers/Microsoft.Management/managementGroups/{mg_id}"
-        # Always ARM: Resource Graph indexes authorizationresources per subscription, so an
-        # MG-scoped grant appears only as inherited copies under its children. Collecting the MG
-        # in its own right is what lets dedupe attribute the grant to the MG.
-        await refresh_scope(
-            tenant_id, connection, scope, display_name=mg.get("name", "") or mg_id,
+
+    mg_targets = [
+        (f"/providers/Microsoft.Management/managementGroups/{str(mg.get('id', '')).strip()}",
+         mg.get("name", "") or str(mg.get("id", "")).strip())
+        for mg in mgs if str(mg.get("id", "")).strip()
+    ]
+    # Always ARM: Resource Graph indexes authorizationresources per subscription, so an
+    # MG-scoped grant appears only as inherited copies under its children. Collecting the MG
+    # in its own right is what lets dedupe attribute the grant to the MG.
+    #
+    # Fanned out, but the PHASE boundary below is not negotiable — see the docstring. Every
+    # management group must be written before the first subscription is collected, or dedupe
+    # has no authoritative copy to attribute an inherited grant to.
+    done = await _fan_out(
+        mg_targets,
+        lambda scope, name: refresh_scope(
+            tenant_id, connection, scope, display_name=name,
             progress=progress, pim_licence=licence, role_def_sink=all_role_defs,
-        )
-        refreshed += 1
-        stats["arm_scopes"] += 1
+        ),
+        progress=progress, label="management group",
+    )
+    refreshed += len(done)
+    stats["arm_scopes"] += len(done)
 
     # 2. Subscriptions.
     await progress("info", "Listing subscriptions…")
@@ -907,11 +970,14 @@ async def refresh_all(
             subscription_names=sub_names, progress=progress,
         )
 
+    sub_targets: list[tuple[str, str]] = []
+    used_arg_by_scope: dict[str, bool] = {}
     for sub in to_refresh:
         # arm.list_subscriptions returns the GUID under `id`, NOT `subscriptionId` — reading the
         # raw ARM field name yields 0 subscriptions on a tenant that has plenty.
         scope = f"/subscriptions/{sub['id']}"
         used_arg = bulk.covers(scope)
+        used_arg_by_scope[scope] = used_arg
         if bulk.usable and not used_arg:
             # The sweep worked but returned nothing for this subscription. Every live
             # subscription has at least its own owner assignment, so this is a gap in what ARG
@@ -922,15 +988,21 @@ async def refresh_all(
                 "warning",
                 f"Resource Graph returned no assignments for {sub.get('name', sub['id'])} — verifying via ARM.",
             )
-        await refresh_scope(
-            tenant_id, connection, scope,
-            display_name=sub.get("name", sub["id"]), progress=progress,
-            bulk=bulk if used_arg else None,
-            pim_licence=licence,
-            role_def_sink=all_role_defs,
-        )
-        refreshed += 1
-        stats["arg_scopes" if used_arg else "arm_scopes"] += 1
+        sub_targets.append((scope, str(sub.get("name", sub["id"]))))
+
+    collected = await _fan_out(
+        sub_targets,
+        lambda scope, name: refresh_scope(
+            tenant_id, connection, scope, display_name=name, progress=progress,
+            bulk=bulk if used_arg_by_scope.get(scope) else None,
+            pim_licence=licence, role_def_sink=all_role_defs,
+        ),
+        progress=progress, label="subscription",
+    )
+    refreshed += len(collected)
+    # Counted from what actually succeeded, so a failed scope inflates neither path.
+    for scope in collected:
+        stats["arg_scopes" if used_arg_by_scope.get(scope) else "arm_scopes"] += 1
 
     await refresh_directory(tenant_id, connection, progress=progress, role_defs=all_role_defs)
     await refresh_bypass(tenant_id, connection, progress=progress)

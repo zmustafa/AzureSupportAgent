@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type EntraActivationAction, type EntraActivationActionsResult,
          type EntraActivationSession } from "../../api";
-import { formatError } from "../../utils/format";
+import { ensureUtc, formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
+import { InvestigateLink } from "./InvestigateLink";
 import {
   EntraEmpty, EntraTimeWindow, Segmented, SortTh, cmp, useEntraSorted, useSortState,
 } from "./EntraShared";
@@ -110,9 +111,52 @@ function compareAction(a: EntraActivationAction, b: EntraActivationAction, key: 
 const NO_SESSIONS: EntraActivationSession[] = [];
 const NO_ACTIONS: EntraActivationAction[] = [];
 
-function when(iso: string): string {
+/** The zone abbreviation for THIS instant, e.g. "CDT". */
+function zoneAbbrev(d: Date): string {
+  // Not every runtime/zone has a short name; those fall back to a GMT offset ("GMT+5:30"),
+  // which still answers the only question being asked — which clock is this?
+  const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(d);
+  return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+}
+
+/**
+ * A UTC timestamp as local wall-clock time, tagged with the zone that reading is in.
+ *
+ * The ledger stamps activations in UTC and this used to print that string verbatim, so an
+ * elevation at 13:58 Central appeared as 18:58 with nothing on screen to say which zone it
+ * was — five hours wrong in the one view whose whole question is "was this out of hours?",
+ * and sitting next to a 🌙 marker the server had already computed in local time.
+ *
+ * The abbreviation is resolved per timestamp rather than once for the table: a 90-day window
+ * straddles a daylight-saving change, so stamping every row with today's abbreviation would
+ * be an hour wrong across part of the range.
+ *
+ * Layout stays ISO-ordered rather than locale-ordered because the column is sorted by time
+ * and fixed-width keeps it scannable.
+ */
+function when(iso: string, opts?: { seconds?: boolean }): string {
   if (!iso) return "—";
-  return iso.replace("T", " ").slice(0, 16);
+  const d = new Date(ensureUtc(iso));
+  if (Number.isNaN(d.getTime())) return "—";
+  const p = (n: number) => String(n).padStart(2, "0");
+  const secs = opts?.seconds ? `:${p(d.getSeconds())}` : "";
+  return `${localDate(d)} ${p(d.getHours())}:${p(d.getMinutes())}${secs} (${zoneAbbrev(d)})`;
+}
+
+function localDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** The local calendar date of a UTC timestamp. No zone tag — it is a date, not a clock.
+ *
+ * Slicing the ISO string instead names the UTC day, which is yesterday for anything stamped
+ * before ~05:00Z. On this screen that made the retention window look a day shorter than it is.
+ */
+function whenDate(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(ensureUtc(iso));
+  return Number.isNaN(d.getTime()) ? "" : localDate(d);
 }
 
 export function EntraActivationsView({ connectionId }: { connectionId: string | null }) {
@@ -293,7 +337,10 @@ export function EntraActivationsView({ connectionId }: { connectionId: string | 
                   )}
                 </td>
                 <td className="px-2 py-1.5">
-                  <div className="truncate text-gray-900" title={s.label}>{s.label}</div>
+                  <div className="flex items-center gap-1">
+                    <div className="min-w-0 truncate text-gray-900" title={s.label}>{s.label}</div>
+                    <InvestigateLink principalId={s.principal_id} label={s.label} />
+                  </div>
                   {!s.granted && (
                     <Chip text={s.status || "not granted"} cls="bg-slate-100 text-slate-600"
                           title="This request never provisioned, so no privilege was issued." />
@@ -393,7 +440,7 @@ function SourceBanner({ caps, ledger, lookback }: {
   caps: Record<string, unknown>; ledger: Record<string, unknown>; lookback: number;
 }) {
   const total = Number(ledger.total || 0);
-  const earliest = String(ledger.earliest || "").slice(0, 10);
+  const earliest = whenDate(String(ledger.earliest || ""));
   return (
     <div className="space-y-2">
       {/* Keyed on `detail`, not on any single source. Justification comes from the PIM
@@ -581,7 +628,7 @@ function Actions({ data }: { data: EntraActivationActionsResult }) {
               {sorted.map((a: EntraActivationAction, i: number) => (
                 <tr key={i} className="border-t">
                   <td className="whitespace-nowrap px-2 py-1 text-gray-500">
-                    {(a.at || "").replace("T", " ").slice(0, 19)}
+                    {when(a.at, { seconds: true })}
                   </td>
                   <td className="px-2 py-1 text-gray-800">
                     <span className="mr-1 text-[10px] uppercase text-gray-400">
