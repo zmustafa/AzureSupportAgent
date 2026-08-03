@@ -32,11 +32,12 @@ Policy resolution follows rules that are easy to get wrong by hand: exclusions w
 
 ## Tabs and actions
 
-The page is organised into five sub-tabs, selected within the page.
+The page is organised into six sub-tabs, selected within the page.
 
 | Sub-tab | What it shows |
 | --- | --- |
 | Coverage | The headline gap sentence and the cohort × application-class × control matrix |
+| Exposure | One row per application class, ordered by what is actually exposed |
 | Policies | Every policy normalised, with resolved user counts, controls and application scope |
 | Conflicts | Set-logic detections across policies, each with an explanation |
 | Break-glass | Emergency-account candidates with a local confirm or reject decision |
@@ -44,7 +45,59 @@ The page is organised into five sub-tabs, selected within the page.
 
 **Coverage** opens with the sentence the page exists for: how many enabled users and how many enterprise applications are matched by no enforced policy, how many of those principals hold privileged roles, and out of what totals. An expandable note states how the count was made — enabled policies only, exclusions applied, role-scoped policies including eligible holders, disabled accounts not counted.
 
-Below it, one matrix per application class — All cloud apps, Microsoft Admin Portals, Office 365 and Azure Management — crosses the cohorts against the controls MFA, Phishing-resistant, Compliant device, Hybrid joined and Session limits. The cohorts are Global Administrators, all privileged roles, break-glass accounts, members that are not privileged, guests, likely service accounts, and users with no MFA method registered. Each cell reports the strongest state any policy achieves for that combination: enforced for the whole cohort, enforced for part of it, only a report-only policy applies, or nothing applies. Selecting a cell opens a drill-down listing the policies that produced it and the members of the cohort left uncovered, flagging those with no MFA method. The uncovered list is a capped sample and says so.
+Below it, one matrix per application class crosses the cohorts against the controls. The cohorts are Global Administrators, all privileged roles, break-glass accounts, members that are not privileged, guests, likely service accounts, and users with no MFA method registered.
+
+### Application classes
+
+Applications are grouped by a versioned taxonomy rather than by the four presets the portal offers. The classes are All cloud apps, the Office 365 bundle, Collaboration and content, Admin planes, Management and automation APIs, the Legacy authentication surface, Device and identity lifecycle, Third-party SaaS, Custom line-of-business applications, and application-filter or authentication-context scoped constructs.
+
+The distinction that matters most is between the **Office 365 bundle** and **Collaboration and content**. The bundle is whatever Microsoft currently says it is; its membership changes without notice and without anyone editing a policy. Collaboration and content is the smaller set that actually holds organisational data. A policy can name the bundle and still not reach every application inside it, which is what the *bundle does not cover all its members* finding reports.
+
+Membership is resolved against the tenant's own service principals. Microsoft publishes the Office 365 suite by name and directs you to resolve the identifiers in your own tenant, so the taxonomy matches on published names rather than inventing GUIDs for them. Where Microsoft does publish a stable identifier — SharePoint Online, Exchange Online, Azure Resource Manager, Microsoft Graph, the admin centres — the taxonomy records it along with the source it came from and a confidence level.
+
+### The control axis
+
+Fourteen controls are tracked: MFA, authentication strength, phishing-resistant, compliant or hybrid device, approved client app, app protection policy, block, terms of use, sign-in frequency, persistent browser, app-enforced restrictions, Cloud App Security proxy, continuous access evaluation, and legacy authentication blocked.
+
+The session controls are tracked separately rather than as one "session limits" column. A policy that sets a sign-in frequency and one that enforces app-enforced restrictions are doing different jobs, and collapsing them hides the data-handling gap on content services entirely. *Approved client app* and *app protection policy* are likewise distinct: one governs which application may connect, the other governs what that application may do with the data once it has it.
+
+Continuous access evaluation is a mode, not a switch. A policy that explicitly disables it is not treated as having the control.
+
+### How to read a cell
+
+A cell reports coverage on **two axes**, and is green only when both are complete:
+
+| State | Meaning |
+| --- | --- |
+| Covered | Every member of the cohort and every application in the class is reached by an enforced policy applying that control |
+| Partial | Some of the cohort, or some of the class's applications, are not reached |
+| Report-only | Only a report-only policy applies. This protects nobody |
+| Uncovered | No enforced policy applies this control |
+| Not available | Entra does not offer this control for this target. It is not a gap |
+
+The application axis exists because a policy can reach every user in a cohort and still miss half the applications a class contains — Teams but not the SharePoint and Exchange underneath it. A matrix that counted only users would render that as fully covered.
+
+"Not available" is a real state rather than a gap. Entra permits only MFA and authentication strength on the *Register or join devices* user action; showing the other eleven controls as missing would invent work that cannot be done.
+
+Selecting a cell opens a drill-down listing the policies that produced it, the applications in the class that are not reached, and the members of the cohort left uncovered, flagging those with no MFA method. Both lists are capped samples and say so.
+
+### Derived classes
+
+Two groups sit below the matrix and are labelled **Derived**, because they are conclusions drawn from the analysis rather than targets a policy can name. Neither has a control axis: there is no policy anyone could write to turn them green.
+
+*Shadowed classes* are application classes where policies exist and every one of them is disabled or in report-only. On a policy list these read as covered.
+
+*Unattributed applications* are applications with recent sign-in activity that no enforced policy covers. This requires per-application sign-in activity, which needs `AuditLog.Read.All` and an Entra ID P1 licence. When it has not been collected the panel says **not measured** and explains why. It never shows an empty list, because an empty list here would read as "nothing wrong" when the truth is "nobody looked".
+
+### Exposure
+
+**Exposure** is the same analysis collapsed into an order of work. The matrix is the right shape for an audit and the wrong shape for deciding what to do on a Tuesday morning; ten classes across fourteen controls is a hundred and forty cells, and they do not sort themselves.
+
+Each row is one application class with its worst open finding, how many findings it has, and how many applicable controls are covered. Rows are ordered by severity first and by the proportion of uncovered controls only as a tie-break — a class with thirteen minor controls satisfied and one critical control missing is not 93% safe.
+
+Expanding a row gives, for each finding, what the exposure means, its blast radius, and the first step to close it. That text is static and human-reviewed rather than generated at request time: an operator acting on it is about to change production, and a sentence produced on the fly cannot be reviewed before they do. Where a class-specific statement has not been written the page says so and falls back to the detector's own explanation.
+
+The row set is exportable as CSV from the button on the page, or from `/api/entra/ca/exposure/export?fmt=csv`.
 
 **Policies** is a filterable table of policy name, state, effective user count, excluded user count, controls and application scope. Opening a policy shows its resolved detail together with a sample of the users it effectively covers, a sample of the users excluded from it, and any conflicts that involve it. The samples are capped; large identifier lists are deliberately not sent to the grid.
 
@@ -62,7 +115,9 @@ The simulator answers "if I make this change, what changes" — never "here is w
 
 A run posts to `/api/entra/ca/simulate` with a list of changes, an optional list of sign-in contexts, an optional list of cohorts, a sample size that defaults to 400 and is clamped between 50 and 5000, and optional save and label fields. The change vocabulary is closed: enable, disable, set to report-only, delete, add and modify. Anything else is rejected rather than ignored. The page builds single-policy enable, disable, report-only and delete changes.
 
-Contexts and cohorts are published by `/api/entra/ca/simulate/contexts`, which also returns the cohorts that are always evaluated in full and the model's limitations. The default contexts cover browser on an unmanaged device, desktop client on a compliant device, Exchange ActiveSync, other legacy clients, browser from a trusted location, Microsoft admin portals, Azure management, and a high-risk sign-in. Break-glass, break-glass candidates, Global Administrators and all privileged principals are always evaluated in full regardless of sample size; the remainder is a seeded sample so that repeated runs stay comparable.
+Contexts and cohorts are published by `/api/entra/ca/simulate/contexts`, which also returns the cohorts that are always evaluated in full and the model's limitations. The default contexts cover browser on an unmanaged device, desktop client on a compliant device, Exchange ActiveSync, other legacy clients, browser from a trusted location, Microsoft admin portals, Azure management, SharePoint/Exchange/Teams content, the Office 365 suite, a third-party SaaS application, registering security information, registering or joining a device, and a high-risk sign-in. Break-glass, break-glass candidates, Global Administrators and all privileged principals are always evaluated in full regardless of sample size; the remainder is a seeded sample so that repeated runs stay comparable.
+
+The two user-action contexts behave differently from the application ones, and the difference is not cosmetic. In Entra a policy targets cloud applications, or user actions, or an authentication context — the three are mutually exclusive on the target blade. A policy scoped to *All cloud apps* therefore does **not** protect device registration or security-information registration, and the simulator models that. Treating the wildcard as covering user actions would report almost every tenant as protected against an attack it is wide open to.
 
 Saving a run stores it locally with its input and result. The saved list shows the label, timestamp, headline counts, break-glass impact and a staleness marker when the run predates the current snapshot. Re-running a saved simulation evaluates the same input against the current snapshot; if the change refers to a policy that no longer exists, the re-run is refused with an explanation rather than silently returning a different answer.
 
@@ -71,7 +126,9 @@ Saving a run stores it locally with its input and result. The saved list shows t
 One snapshot per tenant serves every Entra tab, so a single refresh from the freshness badge updates Conditional Access alongside posture, privileged access, applications, signals, governance and blast radius. Opening a sub-tab reads the cached snapshot; no tab collects on its own.
 
 If Conditional Access has never been collected for the tenant, the simulator and the analysis endpoints report that plainly instead of returning an empty result. Coverage and the simulator both report a blind or unlicensed Conditional Access domain with a route to Setup & coverage rather than showing a clean matrix.
+The two Conditional Access user actions are reported separately even though they share one application class. A policy protecting security-information registration says nothing about device registration, and Entra offers a different set of controls for each — only MFA and authentication strength are available on *Register or join devices*.
 
+The break-glass consistency finding is tagged **reliability** rather than security, and the distinction is deliberate. An emergency account excluded from four policies and forgotten in the fifth is not a hardening gap; it is an account that will fail during the incident it exists for. Closing it by removing the exclusion would make the tenant less recoverable, not more secure.
 ## Interpretation of results
 
 Report-only policies protect nobody. They are visible in the policy list and can produce a report-only cell in the matrix, but they never count towards coverage, never appear in the headline sentence and never block anyone in a simulation.
@@ -88,6 +145,24 @@ Conflict kinds each mean something specific:
 | Redundant | Fully subsumed by another policy — same or narrower users, applications and controls |
 | Duplicate | Identical conditions and grants to another policy |
 
+The application-class detectors that feed the Exposure tab each answer a different question:
+
+| Finding | What it means |
+| --- | --- |
+| Application class never targeted | No enforced policy names this class, directly or through All cloud apps |
+| Bundle does not cover all its members | A policy names the Office 365 bundle but does not reach every application currently inside it |
+| Front-end app protected, its data services are not | Teams is covered while the SharePoint and Exchange holding its content are not |
+| No session control on content services | Authentication is controlled but nothing governs the session that follows |
+| Security info registration unprotected | Nothing stops an attacker with a stolen password from enrolling their own MFA method |
+| Device registration unprotected | Any account with a valid password can join a device, which then becomes an identity that may satisfy your device controls |
+| Break-glass account excluded inconsistently | A confirmed emergency account is excluded from some blocking policies and not others. Tagged **reliability**, not security |
+| Guests held to a weaker standard | Members are fully covered by a control on a class and guests are not |
+| Portal protected, API is not | Admin portals require a control that the management APIs beneath them do not |
+| Class covered only by inactive policies | Every policy covering the class is disabled or report-only |
+| Exclusion carves a hole in a sensitive class | An all-apps policy excludes an application in a class that matters |
+| Grant accepts its weakest branch | An OR grant lets a user satisfy the policy by meeting any single control |
+| Application signed into but never covered | An application with real sign-in traffic that no enforced policy governs |
+
 Break-glass detection is a heuristic and is labelled as one everywhere it appears. It scores signals such as not being covered by any enforced security policy, being explicitly excluded from one, holding Global Administrator, being cloud-only, matching an emergency naming pattern, having no department or job title, and having no recent interactive sign-in. Guests are never candidates. The decision to accept a candidate is always the operator's, and it is a local annotation: confirming or rejecting an account is stored with the finding state for this product and is never written to Entra.
 
 In the simulator, the distinction that carries the value is between a challenge and an effective block. "Requires MFA" is friction for a user with a registered method and a hard block for a service account that has none, and the model computes that from each principal's capability profile rather than assuming everyone can satisfy a control. Where MFA registration could not be read, the result says how many principals are unknown instead of guessing. Where the run was sampled, it states how many principals were evaluated out of how many exist.
@@ -102,6 +177,9 @@ Every result carries a confidence label and the published limitations. Read them
 - Coverage, conflict and simulation results are only as current as the snapshot. A policy changed after the last collection is not reflected until the next refresh.
 - Uncovered lists, effective user samples and excluded user samples are capped and the page states the cap. Treat them as evidence of a gap, not as a complete membership export.
 - Service-account identification is a heuristic based on naming, missing MFA registration and absent interactive sign-in. Verify before excluding anything from a rollout on that basis.
+- Application-class membership is resolved against this tenant's service principals. Microsoft controls what the Office 365 bundle contains and changes it without notice, so a class that is fully covered today can gain an unreached member without any policy being edited. The bundle-divergence finding exists to catch that, but it can only report what the last snapshot saw.
+- Where the taxonomy records an application identifier that Microsoft does not publish on a documentation page, it is marked with a lower confidence level and a note saying so. Verify those against your own tenant before relying on them.
+- "Unattributed applications" requires per-application sign-in activity. Without `AuditLog.Read.All` and an Entra ID P1 licence the panel reports **not measured** rather than an empty list. Do not read a not-measured panel as a clean result.
 - Exports and drill-downs contain identity metadata. Handle them as governance material and avoid pasting live tenant, object or user identifiers into tickets or prompts.
 
 ## Troubleshooting

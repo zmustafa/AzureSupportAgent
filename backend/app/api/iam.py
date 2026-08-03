@@ -29,7 +29,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.iam import attribution, bypass, cache, campaigns, compose, cpu, dataplane, demo, diff, effective, escalation, export, findings, frameworks, importer, job, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
+from app.iam import attribution, bypass, cache, campaigns, compose, cpu, dataplane, demo, diff, effective, escalation, export, findings, flow, frameworks, importer, job, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
 from app.iam import scopes as scope_filters
 from app.iam import resource_access as resource_access_mod
 from app.iam import score as score_mod
@@ -286,6 +286,47 @@ async def insights(
             connection=connection,
         )
     return {"pivots": await asyncio.to_thread(pivots.compute_pivots, rows), "labels": pivots.PIVOT_LABELS}
+
+
+# --------------------------------------------------------------------------- access map
+@router.get("/flow")
+async def access_flow(
+    scope_id: str | None = None,
+    subscription_ids: str | None = None,
+    workload_id: str | None = None,
+    principal_id: str | None = None,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Pivot-ready access facts for the Access Map.
+
+    Returns a deduplicated projection rather than master rows: the grid's 66-column rows are
+    far too heavy to re-send every time the operator reorders the columns, and the diagram only
+    reads about eighteen of them. Denies and eligibility are kept distinguishable rather than
+    folded in, because a flow diagram cannot express either honestly on its own.
+    """
+    connection, tenant_id, _cid = _target(principal, connection_id)
+    rows = await cpu.run(compose.build_master_rows, tenant_id, label="access map rows")
+    if scope_id or subscription_ids or workload_id:
+        sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
+        rows = await scope_filters.filter_rows(
+            rows,
+            scope_id=scope_id or "",
+            subscription_ids=sub_id_list,
+            workload_id=workload_id or "",
+            connection=connection,
+        )
+    if principal_id:
+        needle = principal_id.strip().lower()
+        rows = [
+            r for r in rows
+            if needle in {
+                str(r.get("principalId") or "").lower(),
+                str(r.get("effectivePrincipalId") or "").lower(),
+            }
+        ]
+    facts = await cpu.run(flow.build_facts, rows, label="access map facts")
+    return await cpu.run(flow.encode, facts, label="access map encode")
 
 
 # --------------------------------------------------------------------------- diagnostics

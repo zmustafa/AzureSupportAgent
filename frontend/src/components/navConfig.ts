@@ -336,6 +336,7 @@ export type IamTab =
   | "scanners"
   | "effective"
   | "evaluate"
+  | "accessmap"
   | "privileged"
   | "escalation"
   | "bypass"
@@ -364,6 +365,9 @@ export const IAM_NAV: { id: IamTab; label: string; icon: string }[] = [
   { id: "scanners", label: "Scanners", icon: "\u{1F4E1}" },
   { id: "effective", label: "Access", icon: "\u{1F5C3}\uFE0F" },
   { id: "evaluate", label: "Effective Access", icon: "\u{1F9E9}" },
+  // Sits with the other two access tabs on purpose: all three answer "who can reach what",
+  // as a grid, as an evaluation, and as a flow.
+  { id: "accessmap", label: "Access Map", icon: "\u{1F500}" },
   { id: "escalation", label: "Escalation", icon: "\u26A1" },
   { id: "bypass", label: "Shadow Access", icon: "\u{1F6AA}" },
   { id: "leastprivilege", label: "Least Privilege", icon: "\u{1F4C9}" },
@@ -423,11 +427,13 @@ export const OWNERSHIP_TAB_IDS = new Set<OwnershipTab>(OWNERSHIP_NAV.map((n) => 
 // link) restores the same view. "posture" is the default (bare /entra).
 export type EntraTab =
   | "posture" | "conditional-access" | "privileged" | "applications"
-  | "signals" | "governance" | "graph" | "findings" | "setup";
+  | "signals" | "governance" | "graph" | "findings" | "investigate" | "setup";
 
 // Same treatment as IAM_NAV: the glyph is a separate field so it can be rendered smaller than
-// the label. Nine tabs with real names measured 1259px, which fits at 1366 and scrolls below it;
-// at the tighter sizing they measure 978px and fit down to 1152.
+// the label. Measured at the tight sizing: nine tabs were 1028px and fitted the 1078px bar at
+// 1366. Adding "Investigate" took the row to 1128px and clipped the last tab, so "Setup &
+// coverage" lost its second noun to pay for it — 1053px, which fits again. The bar is only
+// 864px at 1152, where it has always scrolled. Re-measure before adding an eleventh.
 export const ENTRA_NAV: { id: EntraTab; label: string; icon: string }[] = [
   { id: "posture", label: "Posture", icon: "🛡️" },
   { id: "conditional-access", label: "Conditional Access", icon: "🚦" },
@@ -437,16 +443,22 @@ export const ENTRA_NAV: { id: EntraTab; label: string; icon: string }[] = [
   { id: "governance", label: "Governance", icon: "📜" },
   { id: "graph", label: "Blast radius", icon: "🕸️" },
   { id: "findings", label: "Findings & scanners", icon: "📋" },
-  { id: "setup", label: "Setup & coverage", icon: "🔌" },
+  // Next to Findings on purpose: a finding names a principal, and this is where you go to ask
+  // everything about that one principal. It is a destination you link INTO, from here and /iam.
+  { id: "investigate", label: "Investigate", icon: "🔍" },
+  { id: "setup", label: "Setup", icon: "🔌" },
 ];
 
 export const ENTRA_TAB_IDS = new Set<EntraTab>(ENTRA_NAV.map((n) => n.id));
 
 // Sub-tabs of the Conditional Access Command Center.
-export type EntraCaTab = "coverage" | "policies" | "conflicts" | "breakglass" | "simulate";
+export type EntraCaTab = "coverage" | "exposure" | "policies" | "conflicts" | "breakglass" | "simulate";
 
 export const ENTRA_CA_NAV: { id: EntraCaTab; label: string }[] = [
   { id: "coverage", label: "Coverage" },
+  // Sits next to Coverage because it answers the question Coverage raises: the matrix shows
+  // every cell, this ranks the classes by what is actually exposed.
+  { id: "exposure", label: "Exposure" },
   { id: "policies", label: "Policies" },
   { id: "conflicts", label: "Conflicts" },
   { id: "breakglass", label: "Break-glass" },

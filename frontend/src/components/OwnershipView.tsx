@@ -17,7 +17,7 @@ import {
   type OwnershipSuggestion,
 } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { CONNECTION_KEY, usePersistedState } from "../utils/persistedState";
 import { Skeleton, InlineSearch, useDebounced, VirtualList } from "../utils/perf";
 import { OWNERSHIP_NAV, type OwnershipTab } from "./navConfig";
 import { type ScopeKind } from "./ScopePicker";
@@ -61,7 +61,7 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
   // The connection (Azure-tenant) picker scopes the Azure SCANS — coverage/suggestions/the
   // subjects overview and the subscription tree — to the chosen tenant. The owner/assignment
   // directory is shared across connections (Option A), so Directory + My Estate ignore it.
-  const [connectionId, setConnectionId] = usePersistedState("azsup.ownership.connectionId", "");
+  const [connectionId, setConnectionId] = usePersistedState(CONNECTION_KEY, "");
   // Tabs that respect the section scope show the scope bar; owner-centric tabs (Directory,
   // My Estate) are a tenant-wide directory, so they don't.
   const scopeAware = tab === "assignments" || tab === "coverage" || tab === "suggestions" || tab === "attestation";

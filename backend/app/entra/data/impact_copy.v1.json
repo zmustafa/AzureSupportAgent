@@ -1,0 +1,133 @@
+{
+  "version": "1",
+  "reviewed": "2026-08-02",
+  "note": "Static, human-reviewed copy. Keyed detector x application class. No runtime generation: an operator acting on a remediation needs the same words every time, and a sentence produced on the fly cannot be reviewed before someone changes production on the strength of it. A missing pair is not an error - the UI falls back to the detector's own 'why' and says the class-specific impact has not been written.",
+  "copy": {
+    "ca.class_never_targeted": {
+      "management_apis": {
+        "impact": "Anyone who can sign in can call Azure Resource Manager and Microsoft Graph directly. Every protection you have applied in the portal is bypassed by using the CLI, PowerShell or a script instead.",
+        "blast_radius": "Whole-tenant. These APIs are the control plane for subscriptions, directory objects and role assignments.",
+        "first_step": "Create a policy targeting Windows Azure Service Management API and Microsoft Graph requiring MFA for all users."
+      },
+      "admin_planes": {
+        "impact": "The administrative portals accept a password alone. An attacker with valid credentials reaches the same screens your administrators use.",
+        "blast_radius": "Whole-tenant. Admin portals expose role assignment, policy configuration and user management.",
+        "first_step": "Target the Microsoft Admin Portals preset with an authentication strength requiring a phishing-resistant method."
+      },
+      "collaboration_content": {
+        "impact": "SharePoint, OneDrive, Exchange and Teams are reachable with no Conditional Access decision applied at all. This is where the documents are.",
+        "blast_radius": "All organisational content stored in Microsoft 365.",
+        "first_step": "Target Office 365 with MFA, then add app-enforced restrictions for unmanaged devices."
+      },
+      "identity_lifecycle": {
+        "impact": "Registering or changing authentication methods is unguarded. A stolen password becomes a permanent foothold the moment the attacker enrols their own MFA method.",
+        "blast_radius": "Every account in the tenant, including administrators.",
+        "first_step": "Target the 'Register security information' user action and require MFA or a trusted network location."
+      },
+      "legacy_protocols": {
+        "impact": "Clients that cannot perform MFA can still authenticate. Every MFA policy you own becomes optional from an attacker's point of view.",
+        "blast_radius": "Any account whose password is known, tenant-wide.",
+        "first_step": "Create a policy blocking the Exchange ActiveSync and 'other clients' client app types."
+      },
+      "third_party_saas": {
+        "impact": "Federated third-party applications hold organisational data outside Microsoft 365 and no policy governs access to them.",
+        "blast_radius": "Scoped to the data each application holds, which is frequently underestimated.",
+        "first_step": "Inventory the federated applications, then bring them into an all-apps policy rather than naming them individually."
+      },
+      "custom_lob": {
+        "impact": "Internally developed applications are outside every policy. These are typically the least externally reviewed applications in the tenant.",
+        "blast_radius": "Scoped per application, but line-of-business apps often carry broad backend permissions.",
+        "first_step": "Confirm whether an all-apps policy should already cover these and why it does not."
+      }
+    },
+    "ca.dependency_split": {
+      "collaboration_content": {
+        "impact": "Teams is protected and the services holding its data are not. Files shared in a Teams channel live in SharePoint and meeting content lives in Exchange; both are reachable directly, without going through Teams at all.",
+        "blast_radius": "All content exchanged through Teams, despite Teams itself appearing covered.",
+        "first_step": "Extend the same policy to SharePoint Online and Exchange Online."
+      }
+    },
+    "ca.management_api_gap": {
+      "management_apis": {
+        "impact": "The portal enforces the control and the API beneath it does not. This protects users who choose a browser and nobody else - the CLI, the SDKs and any automation reach the same operations unchallenged.",
+        "blast_radius": "Whole-tenant control plane.",
+        "first_step": "Add Windows Azure Service Management API and Microsoft Graph to the policy that already covers the portals."
+      }
+    },
+    "ca.bundle_member_divergence": {
+      "office365_bundle": {
+        "impact": "The policy names the Office 365 bundle but does not reach every application currently inside it. Microsoft controls that membership and changes it without notifying tenants, so the gap can appear without anyone editing the policy.",
+        "blast_radius": "Whichever bundle members are currently unreached - the list changes over time.",
+        "first_step": "Review the listed missing applications and confirm each is intentionally out of scope."
+      }
+    },
+    "ca.guest_scope_gap": {
+      "collaboration_content": {
+        "impact": "Guests reach organisational content under weaker requirements than employees. Guest accounts are governed by an organisation whose security posture you neither see nor control.",
+        "blast_radius": "All content shared with external collaborators.",
+        "first_step": "Add guest and external users to the policy, or write a dedicated guest policy with equal or stronger controls."
+      },
+      "admin_planes": {
+        "impact": "External accounts reach administrative surfaces under weaker requirements than your own staff.",
+        "blast_radius": "Whole-tenant, if any guest holds a privileged role.",
+        "first_step": "Include guest and external users, and separately review whether any guest holds a directory role."
+      }
+    },
+    "ca.no_session_control_on_content": {
+      "collaboration_content": {
+        "impact": "Sign-in is controlled; the session that follows is not. Nothing prevents bulk download to an unmanaged device, nothing re-evaluates the session if the account is later found to be compromised, and nothing bounds how long access lasts.",
+        "blast_radius": "All content reachable in an established session.",
+        "first_step": "Apply app-enforced restrictions for unmanaged devices and enable continuous access evaluation."
+      }
+    },
+    "ca.exclusion_defeats_control": {
+      "management_apis": {
+        "impact": "A policy that appears to cover every application has the management APIs carved out of it. The coverage summary reads as complete and the most sensitive surface in the tenant is exempt.",
+        "blast_radius": "Whole-tenant control plane.",
+        "first_step": "Remove the exclusion, or replace it with an exclusion scoped to specific accounts rather than the application."
+      }
+    },
+    "ca.shadowed_class": {
+      "management_apis": {
+        "impact": "Policies for this class exist and none of them is enforcing. On a policy list this reads as covered; in practice nothing is applied.",
+        "blast_radius": "As if no policy existed at all.",
+        "first_step": "Enable one of the listed policies, or delete them so the gap is visible."
+      }
+    },
+    "ca.security_info_registration_unprotected": {
+      "identity_lifecycle": {
+        "impact": "An attacker holding only a password can enrol their own authentication method. From that point they satisfy every MFA policy in the tenant legitimately, and the compromise survives a password reset.",
+        "blast_radius": "Every account, including break-glass and administrative accounts.",
+        "first_step": "Target the 'Register security information' user action requiring MFA, a trusted location, or a compliant device."
+      }
+    },
+    "ca.device_join_unprotected": {
+      "identity_lifecycle": {
+        "impact": "Any account with a valid password can join a device to the tenant. That device becomes a directory identity of its own, and on a tenant that grants access to compliant or hybrid-joined devices, an attacker-controlled device can become the very thing that satisfies your device control.",
+        "blast_radius": "Every resource protected by a device-based grant rather than by user authentication.",
+        "first_step": "Target the 'Register or join devices' user action with MFA or an authentication strength. Entra offers no other control for this action."
+      }
+    },
+    "ca.breakglass_inconsistent": {
+      "identity_lifecycle": {
+        "impact": "The emergency account is excluded from some blocking policies and not others, so whether it works during an incident depends on which control happens to fire. This is an availability problem, not a hardening one.",
+        "blast_radius": "Loss of emergency access at the moment emergency access is needed.",
+        "first_step": "Decide whether the account is excluded from every enforced blocking policy or from none, apply that uniformly, and document it. Do not remove an exclusion without confirming the account can satisfy the control."
+      }
+    },
+    "ca.unattributed_apps": {
+      "unattributed_apps": {
+        "impact": "This application has real sign-in traffic and no enforced policy governs it. Unlike a coverage gap on a dormant application, this one is being exercised right now.",
+        "blast_radius": "Scoped to the application's own data and permissions.",
+        "first_step": "Confirm what the application is, then bring it into an existing policy's scope."
+      }
+    },
+    "ca.weak_grant_semantics": {
+      "all_cloud_apps": {
+        "impact": "The grant uses OR, so a user satisfies the policy by meeting any single requirement. The portal displays the full list of controls, which reads as though all of them apply.",
+        "blast_radius": "Everything the policy targets is protected only to the strength of its weakest branch.",
+        "first_step": "Change the grant operator to AND, or split it into separate policies."
+      }
+    }
+  }
+}

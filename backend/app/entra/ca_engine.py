@@ -35,6 +35,7 @@ from app.entra.collectors.ca import (
     STATE_ENABLED,
     STATE_REPORT_ONLY,
 )
+from app.entra import ca_coverage, ca_taxonomy
 
 # ------------------------------------------------------------------ control vocabulary
 CTRL_MFA = "mfa"
@@ -45,14 +46,47 @@ CTRL_BLOCK = "block"
 CTRL_SESSION = "session_limits"
 CTRL_APPROVED_APP = "approved_app"
 
+# Sub-controls split out of the former single "Session limits" column, plus the legacy-auth
+# column. Every one of these was ALREADY collected and then discarded at this line — a policy
+# that required app-enforced restrictions or CAE was rendered identically to one that set a
+# sign-in frequency, which made the DLP-relevant session gap on collaboration content
+# invisible. Splitting them is what lets `no_session_control_on_content` exist.
+CTRL_APP_PROTECTION = "app_protection_policy"
+CTRL_COMPLIANT_OR_HYBRID = "compliant_or_hybrid_device"
+CTRL_TERMS = "terms_of_use"
+CTRL_AUTH_STRENGTH = "auth_strength"
+CTRL_SIGNIN_FREQUENCY = "sign_in_frequency"
+CTRL_PERSISTENT_BROWSER = "persistent_browser"
+CTRL_APP_ENFORCED = "app_enforced_restrictions"
+CTRL_CASB = "cloud_app_security_proxy"
+CTRL_CAE = "continuous_access_evaluation"
+CTRL_LEGACY_BLOCKED = "legacy_auth_blocked"
+
 CONTROLS: list[dict[str, str]] = [
     {"key": CTRL_MFA, "label": "MFA"},
+    {"key": CTRL_AUTH_STRENGTH, "label": "Auth strength"},
     {"key": CTRL_PHISH, "label": "Phishing-resistant"},
-    {"key": CTRL_COMPLIANT, "label": "Compliant device"},
-    {"key": CTRL_HYBRID, "label": "Hybrid joined"},
-    {"key": CTRL_SESSION, "label": "Session limits"},
+    {"key": CTRL_COMPLIANT_OR_HYBRID, "label": "Compliant/hybrid device"},
+    {"key": CTRL_APPROVED_APP, "label": "Approved client app"},
+    {"key": CTRL_APP_PROTECTION, "label": "App protection policy"},
+    {"key": CTRL_BLOCK, "label": "Block"},
+    {"key": CTRL_TERMS, "label": "Terms of use"},
+    {"key": CTRL_SIGNIN_FREQUENCY, "label": "Sign-in frequency"},
+    {"key": CTRL_PERSISTENT_BROWSER, "label": "Persistent browser"},
+    {"key": CTRL_APP_ENFORCED, "label": "App-enforced restrictions"},
+    {"key": CTRL_CASB, "label": "Cloud App Security proxy"},
+    {"key": CTRL_CAE, "label": "Continuous access evaluation"},
+    {"key": CTRL_LEGACY_BLOCKED, "label": "Legacy auth blocked"},
 ]
 
+CONTROL_KEYS = [c["key"] for c in CONTROLS]
+
+# Session controls that constitute a real data-handling control on content. Named here rather
+# than inline so the detector and the matrix cannot drift apart.
+SESSION_CONTENT_CONTROLS = (CTRL_APP_ENFORCED, CTRL_CASB, CTRL_SIGNIN_FREQUENCY, CTRL_CAE)
+
+# Retained ONLY so older callers and the compatibility alias below keep working. The taxonomy in
+# `ca_taxonomy` is now the source of truth for classes.
 APP_CLASSES: list[dict[str, str]] = [
     {"key": "all", "label": "All cloud apps"},
     {"key": "admin_portals", "label": "Microsoft Admin Portals"},
@@ -184,19 +218,44 @@ def _controls_of(policy: dict[str, Any], strengths: dict[str, dict[str, Any]]) -
         out.add(CTRL_MFA)
     if "compliantDevice" in builtin:
         out.add(CTRL_COMPLIANT)
+        out.add(CTRL_COMPLIANT_OR_HYBRID)
     if "domainJoinedDevice" in builtin:
         out.add(CTRL_HYBRID)
-    if "approvedApplication" in builtin or "compliantApplication" in builtin:
+        out.add(CTRL_COMPLIANT_OR_HYBRID)
+    if "approvedApplication" in builtin:
         out.add(CTRL_APPROVED_APP)
+    if "compliantApplication" in builtin:
+        # An app-protection policy is a DIFFERENT control from an approved client app: one
+        # governs which app may connect, the other governs what that app may do with the data
+        # once it has it. Collapsing them (as this line used to) hides the MAM gap entirely.
+        out.add(CTRL_APP_PROTECTION)
+    if grant.get("terms_of_use"):
+        out.add(CTRL_TERMS)
     strength_id = str(grant.get("auth_strength_id") or "")
     if strength_id:
         out.add(CTRL_MFA)
+        out.add(CTRL_AUTH_STRENGTH)
         strength = strengths.get(strength_id) or {}
         combos = set(strength.get("combinations") or [])
         name = str(strength.get("display_name") or grant.get("auth_strength_name") or "").lower()
         if "phishing" in name or (combos and combos <= _phish_combo_universe(combos)):
             out.add(CTRL_PHISH)
+    if session.get("sign_in_frequency"):
+        out.add(CTRL_SIGNIN_FREQUENCY)
+    if session.get("persistent_browser"):
+        out.add(CTRL_PERSISTENT_BROWSER)
+    if session.get("app_enforced_restrictions"):
+        out.add(CTRL_APP_ENFORCED)
+    if session.get("cloud_app_security"):
+        out.add(CTRL_CASB)
+    # CAE is a MODE string, not a bool. `disabled` is a deliberate opt-OUT and must not read as
+    # the control being present.
+    cae = str(session.get("continuous_access_evaluation") or "").lower()
+    if cae and cae != "disabled":
+        out.add(CTRL_CAE)
     if session.get("sign_in_frequency") or session.get("persistent_browser"):
+        # Backwards-compatible aggregate so the pre-existing export sheet and any stored view
+        # that asks for `session_limits` still resolves.
         out.add(CTRL_SESSION)
     return out
 
@@ -234,7 +293,7 @@ def _app_classes_of(policy: dict[str, Any]) -> set[str]:
     return out
 
 
-def normalize_policies(snapshot_data: dict[str, Any]) -> list[dict[str, Any]]:
+def normalize_policies(snapshot_data: dict[str, Any], tenant_id: str = "") -> list[dict[str, Any]]:
     """Resolve every policy's user condition to concrete user ids + derived flags."""
     ca = snapshot_data.get("ca") or {}
     people = snapshot_data.get("people") or {}
@@ -246,6 +305,7 @@ def normalize_policies(snapshot_data: dict[str, Any]) -> list[dict[str, Any]]:
     group_members = ca.get("group_members") or {}
     role_index = _role_template_index(roles)
     strengths = {s["id"]: s for s in ca.get("auth_strengths") or [] if s.get("id")}
+    app_index = ca_taxonomy.build_app_index(snapshot_data, tenant_id)
 
     out: list[dict[str, Any]] = []
     for p in ca.get("policies") or []:
@@ -264,6 +324,14 @@ def normalize_policies(snapshot_data: dict[str, Any]) -> list[dict[str, Any]]:
         )
         effective = inc - exc
         controls = _controls_of(p, strengths)
+        blocks_legacy = bool(
+            CTRL_BLOCK in controls
+            and set(c.get("client_app_types") or []) & LEGACY_CLIENT_APPS
+            and not (set(c.get("client_app_types") or []) & {"browser", "mobileAppsAndDesktopClients", "all"})
+        )
+        if blocks_legacy:
+            controls.add(CTRL_LEGACY_BLOCKED)
+        class_coverage = ca_taxonomy.resolve_policy(p, app_index)
         out.append({
             **p,
             "fingerprint": policy_fingerprint(p),
@@ -274,17 +342,14 @@ def normalize_policies(snapshot_data: dict[str, Any]) -> list[dict[str, Any]]:
             "effective_user_count": len(effective),
             "excluded_user_count": len(exc),
             "controls": sorted(controls),
+            "class_coverage": class_coverage,
+            "app_classes": sorted(class_coverage),
             "is_block": CTRL_BLOCK in controls,
             "is_enforced": p.get("state") == STATE_ENABLED,
             "is_report_only": p.get("state") == STATE_REPORT_ONLY,
             "is_disabled": p.get("state") == STATE_DISABLED,
-            "app_classes": sorted(_app_classes_of(p)),
             "targets_all_apps": APP_ALL in set(c.get("include_apps") or []),
-            "blocks_legacy": bool(
-                CTRL_BLOCK in controls
-                and set(c.get("client_app_types") or []) & LEGACY_CLIENT_APPS
-                and not (set(c.get("client_app_types") or []) & {"browser", "mobileAppsAndDesktopClients", "all"})
-            ),
+            "blocks_legacy": blocks_legacy,
             "has_risk_condition": bool(c.get("sign_in_risk") or c.get("user_risk")),
             # A block that only fires under a condition (from these countries, on this
             # platform, at this risk level) does NOT always beat a grant. Treating every
@@ -379,32 +444,26 @@ def build_coverage(
     policies: list[dict[str, Any]],
     cohorts: list[dict[str, Any]],
     snapshot_data: dict[str, Any],
+    tenant_id: str = "",
 ) -> dict[str, Any]:
-    """Cohort × application-class × control coverage.
+    """Cohort x application-class x control coverage.
 
-    A cell reports the *strongest* state any policy achieves for that combination, plus how
-    much of the cohort it actually reaches — "enforced for 60% of admins" is a materially
-    different fact from "enforced"."""
-    enforced = [p for p in policies if p["is_enforced"]]
-    report_only = [p for p in policies if p["is_report_only"]]
-
-    matrix: list[dict[str, Any]] = []
-    for cohort in cohorts:
-        ids = set(cohort["ids"])
-        row: dict[str, Any] = {"cohort": cohort["key"], "label": cohort["label"], "size": cohort["size"], "cells": {}}
-        for app_class in APP_CLASSES:
-            for control in CONTROLS:
-                cell_key = f"{app_class['key']}|{control['key']}"
-                row["cells"][cell_key] = _cell(ids, enforced, report_only, app_class["key"], control["key"])
-        matrix.append(row)
-
-    return {
-        "cohorts": [{k: v for k, v in c.items() if k != "ids"} for c in cohorts],
-        "app_classes": APP_CLASSES,
-        "controls": CONTROLS,
-        "matrix": matrix,
-        "headline": build_headline(policies, snapshot_data),
+    Delegates the matrix to :mod:`ca_coverage`, which computes coverage on BOTH the user and the
+    application axis. The headline stays here because it is about the tenant, not the matrix."""
+    index = ca_taxonomy.build_app_index(snapshot_data, tenant_id)
+    out = ca_coverage.build(
+        policies,
+        cohorts,
+        index,
+        controls=CONTROLS,
+        signin_activity=(snapshot_data.get("apps") or {}).get("signin_activity"),
+    )
+    out["headline"] = build_headline(policies, snapshot_data)
+    out["app_index"] = {
+        "app_count": index["app_count"],
+        "members": {k: len(v) for k, v in index["members"].items()},
     }
+    return out
 
 
 def _cell(
@@ -635,6 +694,11 @@ def detect_breakglass(
     gas = global_admin_ids(roles)
     enforced = [p for p in policies if p["is_enforced"]]
     security_policies = [p for p in enforced if set(p["controls"]) & {CTRL_MFA, CTRL_BLOCK, CTRL_PHISH, CTRL_COMPLIANT}]
+    # Built once per policy, not once per user per policy. These were previously constructed
+    # inside the loop below, which on a 5,000-user tenant with 60 policies meant 600,000
+    # rebuilds of a 5,000-element set and turned this function into a 29-second stall on the
+    # Conditional Access page. Hoisting them makes it ~0.1s; the logic is unchanged.
+    _sec = [(p, frozenset(p["effective_ids"]), frozenset(p["excluded_ids"])) for p in security_policies]
 
     candidates: list[dict[str, Any]] = []
     for uid, u in users.items():
@@ -647,8 +711,8 @@ def detect_breakglass(
         # flooded the candidate list and buried the one genuine emergency account.
         if str(u.get("user_type") or "") == "Guest":
             continue
-        covered_by = [p for p in security_policies if uid in set(p["effective_ids"])]
-        excluded_from = [p for p in security_policies if uid in set(p["excluded_ids"])]
+        covered_by = [p for p, eff, _exc in _sec if uid in eff]
+        excluded_from = [p for p, _eff, exc in _sec if uid in exc]
         reasons: list[str] = []
         score = 0
         if security_policies and not covered_by:
@@ -712,17 +776,18 @@ def analyse(
     *,
     confirmed_breakglass: dict[str, Any] | None = None,
     now: datetime | None = None,
+    tenant_id: str = "",
 ) -> dict[str, Any]:
     """Full Conditional Access analysis over a collected snapshot. Pure."""
     now = now or _now()
     roles = snapshot_data.get("roles") or {}
     from app.entra.collectors.roles import privileged_principal_ids
 
-    policies = normalize_policies(snapshot_data)
+    policies = normalize_policies(snapshot_data, tenant_id)
     privileged = privileged_principal_ids(roles)
     breakglass = detect_breakglass(policies, snapshot_data, confirmed_breakglass, now=now)
     cohorts = build_cohorts(snapshot_data, set(breakglass["confirmed_ids"]))
-    coverage = build_coverage(policies, cohorts, snapshot_data)
+    coverage = build_coverage(policies, cohorts, snapshot_data, tenant_id)
     conflicts = detect_conflicts(policies, privileged)
 
     enforced = [p for p in policies if p["is_enforced"]]

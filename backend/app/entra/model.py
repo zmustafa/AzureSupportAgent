@@ -42,6 +42,10 @@ OBJECT_KINDS = (
     # A verified DNS domain. Federation findings hang off one of these rather than the
     # tenant, because a tenant can federate some domains and not others.
     "domain",
+    # A class of applications from the Conditional Access taxonomy (see ca_taxonomy). Exposure
+    # findings hang off the class, not a single app: "nothing covers your management APIs" is a
+    # fact about the class, and pinning it to one arbitrary member app would misrepresent it.
+    "app_class",
 )
 
 

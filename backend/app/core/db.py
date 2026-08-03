@@ -123,6 +123,14 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         # (the live in-memory log is evicted after the run finishes / on a restart).
         "log_json": "JSON",
     },
+    # A case opened from an identity investigation is ABOUT a principal. Existing installs
+    # already have a `cases` table, so these have to be patched on here as well as in the
+    # migration — `create_all` never adds a column to a table that already exists.
+    "cases": {
+        "principal_id": "VARCHAR(128)",
+        "principal_name": "VARCHAR(256)",
+        "principal_kind": "VARCHAR(32)",
+    },
 }
 
 
@@ -146,6 +154,8 @@ _RUNTIME_INDEXES: list[tuple[str, str, str]] = [
     # notification list joins+filters by (tenant, read). These back both hot paths.
     ("ix_notif_tenant_read", "notifications", "tenant_id, read"),
     ("ix_notifdeliv_tenant_channel", "notification_deliveries", "tenant_id, channel"),
+    # "Every case about this identity" is the second question an investigator asks.
+    ("ix_cases_principal_id", "cases", "principal_id"),
 ]
 
 

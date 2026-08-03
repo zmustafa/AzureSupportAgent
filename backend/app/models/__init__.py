@@ -815,6 +815,12 @@ class Case(Base):
     workload_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     architecture_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # The identity a case is ABOUT, when it is about one. Indexed because "every case
+    # concerning this principal" is the question an investigator asks second, right after
+    # opening the case — and carrying the subject only in the summary makes it unanswerable.
+    principal_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
+    principal_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    principal_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Cross-feature attachments that stitch the estate operations loop together.
     finding_uids: Mapped[list] = mapped_column(JSON, default=list)  # assessment/identity finding keys
     change_event_ids: Mapped[list] = mapped_column(JSON, default=list)  # change-explorer ids

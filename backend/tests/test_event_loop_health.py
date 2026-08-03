@@ -42,6 +42,7 @@ def anyio_backend():
 # recomposes the estate, indexes every role definition, or gzips a full row set.
 _MUST_BE_THREADED = {
     "build_master_rows",
+    "build_facts",
     "compute_overview",
     "compute_pivots",
     "build_scope_tree",

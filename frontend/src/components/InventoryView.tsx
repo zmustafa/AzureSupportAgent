@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousWithinConnection } from "../utils/queryPlaceholder";
+import { CONNECTION_KEY, usePersistedState } from "../utils/persistedState";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
@@ -53,14 +55,16 @@ export function InventoryPanel({ tab = "grid" }: { tab?: InventoryTab }) {
   const qc = useQueryClient();
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
   const connections = connQ.data?.connections ?? [];
-  const [connectionId, setConnectionId] = useState("");
+  const [connectionId, setConnectionId] = usePersistedState(CONNECTION_KEY, "");
   const effectiveConn = connectionId || connections.find((c) => c.is_default)?.id || "";
 
   const invQ = useQuery({
     queryKey: ["inventory", effectiveConn],
     queryFn: () => api.inventory(effectiveConn || null, false),
     enabled: !connQ.isLoading,
-    placeholderData: keepPreviousData,
+    // Keep the grid up while filters change, but never across a connection change - that would
+    // show one tenant's inventory under another tenant's name.
+    placeholderData: keepPreviousWithinConnection(effectiveConn, (key: readonly unknown[]) => key[1]),
     staleTime: 5 * 60 * 1000,
     retry: false,
   });

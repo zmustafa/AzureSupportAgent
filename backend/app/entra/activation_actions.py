@@ -216,6 +216,76 @@ def _remember(tenant_id: str, session_id: str, payload: dict[str, Any]) -> None:
     cache.write_state(tenant_id, STATE_NAME, store)
 
 
+async def actions_in_window(
+    connection: dict[str, Any] | None,
+    principal_id: str,
+    start_iso: str,
+    end_iso: str,
+    snapshot_data: dict[str, Any],
+    *,
+    subscriptions: list[str] | None = None,
+    planes: tuple[str, ...] = ("entra", "azure"),
+) -> dict[str, Any]:
+    """What one principal did between two instants, on either plane, classified.
+
+    Extracted from :func:`collect_actions` so the Investigate screen can ask the same
+    question over an arbitrary window ("the last three days") instead of only over a PIM
+    activation. The classification is the whole point and is unchanged: an action is
+    *never* blamed on an elevation the principal did not need.
+
+    Returns the body of an actions payload — the caller owns windowing and caching.
+    """
+    notes: list[str] = []
+    entra_rows: list[dict[str, Any]] = []
+    azure_rows: list[dict[str, Any]] = []
+
+    if connection is None:
+        notes.append("No connection is attached, so no actions could be read.")
+    elif not principal_id:
+        notes.append("No principal id, so actions cannot be traced.")
+    else:
+        if "entra" in planes:
+            entra_rows, e_note = await _entra_actions(connection, principal_id, start_iso, end_iso)
+            if e_note:
+                notes.append(e_note)
+        if "azure" in planes:
+            if subscriptions:
+                azure_rows, a_note = await _azure_actions(
+                    connection, principal_id, start_iso, end_iso, subscriptions)
+                if a_note:
+                    notes.append(a_note)
+            else:
+                notes.append("No subscription in scope, so resource operations cannot be read.")
+
+    link = snapshot_data.get("_azure_link") or {}
+    standing_entra = _standing_privileged(snapshot_data, principal_id)
+    standing_azure = _standing_azure(snapshot_data, principal_id)
+    link_ok = bool(link.get("available"))
+
+    actions = [
+        {**row, "attribution": classify(row["plane"], standing_entra, standing_azure, link_ok)}
+        for row in [*entra_rows, *azure_rows]
+    ]
+    actions.sort(key=lambda r: r.get("at") or "")
+
+    return {
+        "actions": actions,
+        "counts": {
+            "total": len(actions),
+            "entra": len(entra_rows),
+            "azure": len(azure_rows),
+            REQUIRED: sum(1 for a in actions if a["attribution"] == REQUIRED),
+            POSSIBLE: sum(1 for a in actions if a["attribution"] == POSSIBLE),
+            UNKNOWN: sum(1 for a in actions if a["attribution"] == UNKNOWN),
+        },
+        "standing_entra_roles": standing_entra,
+        "standing_azure_roles": standing_azure,
+        "azure_link_available": link_ok,
+        "truncated": len(entra_rows) >= MAX_ENTRA_ACTIONS or len(azure_rows) >= MAX_AZURE_ACTIONS,
+        "notes": notes,
+    }
+
+
 async def collect_actions(tenant_id: str, connection: dict[str, Any] | None,
                           session: dict[str, Any], snapshot_data: dict[str, Any],
                           *, refresh: bool = False) -> dict[str, Any]:
@@ -248,52 +318,31 @@ async def collect_actions(tenant_id: str, connection: dict[str, Any] | None,
     end_iso = (end + pad).strftime("%Y-%m-%dT%H:%M:%SZ")
     principal_id = str(session.get("principal_id") or "")
 
-    entra_rows: list[dict[str, Any]] = []
-    azure_rows: list[dict[str, Any]] = []
-    if connection is None:
-        notes.append("No connection is attached, so no actions could be read.")
-    elif not principal_id:
-        notes.append("This activation has no principal id, so its actions cannot be traced.")
-    else:
-        entra_rows, e_note = await _entra_actions(connection, principal_id, start_iso, end_iso)
-        if e_note:
-            notes.append(e_note)
-        subs = [session["subscription_id"]] if session.get("subscription_id") else []
-        if session.get("plane") == "azure" and subs:
-            azure_rows, a_note = await _azure_actions(connection, principal_id, start_iso,
-                                                      end_iso, subs)
-            if a_note:
-                notes.append(a_note)
-        elif session.get("plane") == "azure":
-            notes.append("This Azure activation records no subscription, so resource "
-                         "operations cannot be scoped to it.")
+    # An activation reads the Azure plane only when it IS an Azure activation, and only
+    # against its own subscription — widening that here would attribute unrelated work.
+    subs: list[str] = []
+    planes: tuple[str, ...] = ("entra",)
+    if session.get("plane") == "azure":
+        planes = ("entra", "azure")
+        if session.get("subscription_id"):
+            subs = [session["subscription_id"]]
 
-    link = snapshot_data.get("_azure_link") or {}
-    standing_entra = _standing_privileged(snapshot_data, principal_id)
-    standing_azure = _standing_azure(snapshot_data, principal_id)
-    link_ok = bool(link.get("available"))
-
-    actions: list[dict[str, Any]] = []
-    for row in [*entra_rows, *azure_rows]:
-        actions.append({**row, "attribution": classify(
-            row["plane"], standing_entra, standing_azure, link_ok)})
-    actions.sort(key=lambda r: r.get("at") or "")
+    body = await actions_in_window(
+        connection, principal_id, start_iso, end_iso, snapshot_data,
+        subscriptions=subs, planes=planes,
+    )
+    # Preserve the original wording for the one case this endpoint phrases differently.
+    body_notes = [
+        ("This Azure activation records no subscription, so resource operations cannot be "
+         "scoped to it.") if n == "No subscription in scope, so resource operations cannot be read."
+        else n
+        for n in body["notes"]
+    ]
 
     payload = {
-        "actions": actions,
-        "counts": {
-            "total": len(actions),
-            "entra": len(entra_rows),
-            "azure": len(azure_rows),
-            REQUIRED: sum(1 for a in actions if a["attribution"] == REQUIRED),
-            POSSIBLE: sum(1 for a in actions if a["attribution"] == POSSIBLE),
-            UNKNOWN: sum(1 for a in actions if a["attribution"] == UNKNOWN),
-        },
-        "standing_entra_roles": standing_entra,
-        "standing_azure_roles": standing_azure,
-        "azure_link_available": link_ok,
+        **{k: v for k, v in body.items() if k not in ("notes", "truncated")},
         "window": {"start": start_iso, "end": end_iso, "pad_minutes": WINDOW_PAD_MINUTES},
-        "notes": notes,
+        "notes": [*notes, *body_notes],
         "collected_at": cache.now_iso(),
         "cached": False,
     }

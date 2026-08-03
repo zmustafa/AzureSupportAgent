@@ -23,6 +23,7 @@ _OPEN_STATES = ("open", "investigating", "remediating", "verifying")
 _EDITABLE = (
     "title", "summary", "severity", "risk_score", "confidence", "assignee",
     "workload_id", "workload_name", "connection_id", "architecture_id",
+    "principal_id", "principal_name", "principal_kind",
     "investigation_chat_id", "investigation_message_id", "remediation_task_id",
     "verification_json",
 )
@@ -73,6 +74,9 @@ async def create_case(
     workload_name: str | None = None,
     connection_id: str | None = None,
     architecture_id: str | None = None,
+    principal_id: str | None = None,
+    principal_name: str | None = None,
+    principal_kind: str | None = None,
     investigation_chat_id: str | None = None,
     investigation_message_id: str | None = None,
     finding_uids: list[str] | None = None,
@@ -92,6 +96,9 @@ async def create_case(
         workload_name=workload_name or None,
         connection_id=connection_id or None,
         architecture_id=architecture_id or None,
+        principal_id=principal_id or None,
+        principal_name=principal_name or None,
+        principal_kind=principal_kind or None,
         investigation_chat_id=investigation_chat_id or None,
         investigation_message_id=investigation_message_id or None,
         finding_uids=list(dict.fromkeys(finding_uids or [])),
@@ -107,7 +114,8 @@ async def create_case(
     await add_event(
         db, tenant_id=tenant_id, case_id=case.id, kind="opened", actor=actor,
         message=f"Case opened: {case.title}",
-        payload={"severity": case.severity, "workload_id": case.workload_id or ""},
+        payload={"severity": case.severity, "workload_id": case.workload_id or "",
+                 "principal_id": case.principal_id or ""},
     )
     return case
 
@@ -118,6 +126,7 @@ async def list_cases(
     *,
     status: str | None = None,
     workload_id: str | None = None,
+    principal_id: str | None = None,
     include_resolved: bool = True,
     limit: int = 200,
 ) -> list[Case]:
@@ -129,6 +138,8 @@ async def list_cases(
         stmt = stmt.where(Case.status.in_(_OPEN_STATES))
     if workload_id:
         stmt = stmt.where(Case.workload_id == workload_id)
+    if principal_id:
+        stmt = stmt.where(Case.principal_id == principal_id)
     stmt = stmt.order_by(Case.updated_at.desc()).limit(max(1, min(limit, 500)))
     return list((await db.execute(stmt)).scalars().all())
 

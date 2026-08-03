@@ -95,7 +95,7 @@ class SignInContext:
     device_hybrid_joined: bool = False
     sign_in_risk: str = "none"
     user_risk: str = "none"
-    app_class: str = "all"               # all | admin_portals | office365 | azure_management
+    app_class: str = "all_cloud_apps"    # a class id from app.entra.ca_taxonomy
 
 
 DEFAULT_CONTEXTS: tuple[SignInContext, ...] = (
@@ -106,12 +106,29 @@ DEFAULT_CONTEXTS: tuple[SignInContext, ...] = (
     SignInContext("legacy_eas", "Exchange ActiveSync (legacy)", client_app="exchangeActiveSync"),
     SignInContext("legacy_other", "Other legacy clients (IMAP/POP/SMTP)", client_app="other"),
     SignInContext("trusted_location", "Browser from a trusted location", location="trusted"),
-    SignInContext("admin_portal", "Microsoft Admin Portals", app_class="admin_portals"),
-    SignInContext("azure_mgmt", "Azure management", app_class="azure_management"),
+    SignInContext("admin_portal", "Microsoft Admin Portals", app_class="admin_planes"),
+    SignInContext("azure_mgmt", "Azure management", app_class="management_apis"),
+    # The content surface. Without this, a change scoped to SharePoint/Exchange/Teams simulated
+    # as affecting nobody — the only classes modelled were the two admin ones, so the simulator
+    # was blind to changes on the applications where the organisation's data actually lives.
+    SignInContext("collab_content", "SharePoint, Exchange and Teams content",
+                  app_class="collaboration_content"),
+    SignInContext("office365", "Office 365 suite", app_class="office365_bundle"),
+    SignInContext("third_party", "Third-party SaaS application", app_class="third_party_saas"),
+    # The two user actions. A policy targeting a user action targets no application at all, so
+    # every application-shaped context missed it entirely.
+    SignInContext("register_security_info", "Registering security information",
+                  app_class="identity_lifecycle"),
+    SignInContext("register_device", "Registering or joining a device",
+                  app_class="identity_lifecycle"),
     SignInContext("high_risk", "High sign-in risk", sign_in_risk="high", user_risk="high"),
 )
 
 CONTEXTS_BY_KEY = {c.key: c for c in DEFAULT_CONTEXTS}
+
+#: Classes that are NOT cloud applications. A policy scoped to "All cloud apps" does not reach
+#: these — Entra targets applications, user actions and authentication contexts separately.
+_NON_APP_CLASSES = frozenset({"identity_lifecycle", "scoped_constructs", "legacy_protocols"})
 
 
 # ------------------------------------------------------------------------- principal
@@ -161,8 +178,24 @@ def matches(policy: dict[str, Any], principal: SimPrincipal, ctx: SignInContext)
     ``effective_ids`` were resolved."""
     if principal.id not in policy["_effective"]:
         return False
-    if ctx.app_class not in policy["app_classes"]:
-        return False
+    # A policy targeting every cloud app also governs the narrower application classes.
+    # Comparing class ids for equality (as this once did) made an "All cloud apps" policy
+    # invisible to the admin portal and Azure management scenarios, which is exactly where a
+    # simulation is trusted most.
+    #
+    # The fallback stops at application classes. In Entra a policy targets cloud apps OR user
+    # actions OR an authentication context — they are mutually exclusive on the target blade —
+    # so "All cloud apps" does NOT protect device registration or security-info registration.
+    # Letting the wildcard cover them would simulate those actions as already protected on
+    # almost every tenant, which is the opposite of the truth and the exact gap the
+    # `ca.device_join_unprotected` detector exists to report.
+    classes = set(policy.get("app_classes") or ())
+    if ctx.app_class not in classes:
+        if ctx.app_class in _NON_APP_CLASSES or "all_cloud_apps" not in classes:
+            return False
+        # Reached by the wildcard. Fall through to the remaining conditions - returning True
+        # here would skip the platform, location, client-app and risk checks entirely, which
+        # made a legacy-only block policy apply to a browser sign-in.
 
     conditions = policy.get("conditions") or {}
 

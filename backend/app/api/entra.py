@@ -16,6 +16,9 @@ Read-only: no endpoint here writes to the directory, and no Graph write scope is
 from __future__ import annotations
 
 import asyncio
+import csv
+import datetime as _dt
+import io
 import logging
 from typing import Any
 
@@ -27,8 +30,11 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.entra import DOMAINS, blastradius, ca_engine, ca_simulator, cache, demo as demo_mod, job, model, permissions_probe
+from app.entra import investigate
+from app.entra import investigate_activity as inv_activity
 from app.entra import scanners as scanners_mod
 from app.entra import export as entra_export
+from app.entra import ca_exposure as ca_exposure_mod
 from app.entra import signals as sig
 from app.entra import snapshot as snapshot_mod
 from app.entra import score as score_mod
@@ -694,7 +700,11 @@ async def ca_coverage(
         snapshot, cid,
         cohorts=coverage.get("cohorts") or [],
         app_classes=coverage.get("app_classes") or [],
+        derived_classes=coverage.get("derived_classes") or [],
         controls=coverage.get("controls") or [],
+        taxonomy_version=coverage.get("taxonomy_version") or "",
+        app_index=coverage.get("app_index") or {},
+        derived=coverage.get("derived") or {},
         matrix=[{**row, "cells": {k: {kk: vv for kk, vv in cell.items() if kk != "uncovered_sample"}
                                   for k, cell in (row.get("cells") or {}).items()}}
                 for row in coverage.get("matrix") or []],
@@ -721,12 +731,77 @@ async def ca_coverage_cell(
     if cell is None:
         raise HTTPException(status_code=404, detail="Unknown cell.")
     users = {str(u["id"]): u for u in (snapshot.get("data", {}).get("people") or {}).get("users") or []}
+    # Resolve the missing application ids to names. A drawer listing raw GUIDs tells the reader
+    # a number is wrong but not which application to go and fix.
+    sps = (snapshot.get("data", {}).get("apps") or {}).get("service_principals") or []
+    app_names = {str(s.get("app_id") or "").lower(): str(s.get("display_name") or "") for s in sps}
     return _envelope(
         snapshot, cid,
         cohort=row.get("label"), app_class=app_class, control=control, cell=cell,
+        apps_missing=[{"app_id": a, "name": app_names.get(str(a).lower()) or a}
+                      for a in cell.get("apps_missing") or []],
         uncovered=[{"id": i, "name": (users.get(i) or {}).get("upn") or i,
                     "mfa_registered": (users.get(i) or {}).get("mfa_registered")}
                    for i in cell.get("uncovered_sample") or []],
+    )
+
+
+def _exposure_findings(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Only the application-class exposure detectors.
+
+    Filtering on ``object_kind in ("app_class", "app")`` looks equivalent and is not: every
+    app-hygiene signal in the product emits ``object_kind="app"``, so a real tenant dragged in
+    277 expired-certificate and multi-tenant-consent findings. They key off an application GUID
+    rather than a class id, so they landed in no row while still inflating every count on the
+    page.
+    """
+    from app.entra.signal_defs import ca_appclass
+
+    wanted = {s.id for s in ca_appclass.SPECS}
+    return [f for f in _analysis(snapshot).get("findings") or [] if f.get("signal_id") in wanted]
+
+
+@router.get("/ca/exposure")
+async def ca_exposure(
+    cohort: str = "members",
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_read),
+) -> dict[str, Any]:
+    """One row per application class, ordered by what is actually exposed.
+
+    The matrix is the audit view; this is the work queue. It collapses the control axis and
+    joins the findings that fired so the first row is the one worth acting on."""
+    snapshot, tenant_id, cid = _snapshot(principal, connection_id)
+    analysis = _require_ca(snapshot)
+    coverage = analysis.get("coverage") or {}
+    return _envelope(snapshot, cid,
+                     **ca_exposure_mod.build(coverage, _exposure_findings(snapshot), cohort=cohort))
+
+
+@router.get("/ca/exposure/export")
+async def ca_exposure_export(
+    fmt: str = Query(default="csv", pattern="^(csv|json)$"),
+    cohort: str = "members",
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_read),
+):
+    snapshot, tenant_id, cid = _snapshot(principal, connection_id)
+    analysis = _require_ca(snapshot)
+    coverage = analysis.get("coverage") or {}
+    exposure = ca_exposure_mod.build(coverage, _exposure_findings(snapshot), cohort=cohort)
+    if fmt == "json":
+        return _envelope(snapshot, cid, **exposure)
+
+    rows = ca_exposure_mod.to_csv_rows(exposure)
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="ca-exposure.csv"'},
     )
 
 
@@ -1276,7 +1351,21 @@ async def privileged_principal(
     sps = {str(s["object_id"]): s for s in (data.get("apps") or {}).get("service_principals") or []}
     subject = users.get(principal_id) or sps.get(principal_id)
     if subject is None:
-        raise HTTPException(status_code=404, detail="Principal not found in the current snapshot.")
+        # NOT a 404. A principal the directory no longer holds is exactly what a reader
+        # clicks through to ask about — a deleted object whose assignments survive, or a
+        # group / managed identity this endpoint never indexed. Raising here threw away the
+        # answer and dead-ended every link into it. The dossier is empty and says so; the
+        # Investigate resolver is where the "why" lives.
+        return _envelope(
+            snapshot, cid,
+            principal={
+                "id": principal_id, "name": principal_id, "kind": "unknown",
+                "enabled": None, "user_type": "", "mfa_registered": None, "last_signin": "",
+                "resolution": investigate.NOT_FOUND,
+            },
+            roles=[], assignments=[], activations=[], azure=None,
+            findings=[f for f in analysis.get("findings") or [] if f.get("object_id") == principal_id],
+        )
 
     assignments = [a for a in (roles.get("assignments") or []) + (roles.get("group_derived") or [])
                    + (roles.get("eligible") or []) if a.get("principal_id") == principal_id]
@@ -1291,12 +1380,376 @@ async def privileged_principal(
             "user_type": subject.get("user_type", ""),
             "mfa_registered": subject.get("mfa_registered"),
             "last_signin": subject.get("last_signin", ""),
+            "resolution": investigate.RESOLVED,
         },
         roles=sorted(effective_role_names(roles, principal_id)),
         assignments=assignments,
         activations=sorted(activations, key=lambda a: a.get("created_at", ""), reverse=True)[:100],
         azure=(link.get("principals") or {}).get(principal_id),
         findings=[f for f in analysis.get("findings") or [] if f.get("object_id") == principal_id],
+    )
+
+
+# ==================================================================== Investigate (identity)
+# One principal, everything we already know about it. Owns no collectors: every section
+# reads a source another module fills. See docs/improvement-plans/identity-investigate/.
+require_investigate = require_permission("investigate.read")
+require_investigate_activity = require_permission("investigate.activity")
+
+
+async def _access_rows(tenant_id: str) -> list[dict[str, Any]]:
+    return await investigate.access_rows(tenant_id)
+
+
+async def _resolve_principal(
+    data: dict[str, Any], tenant_id: str, needle: str,
+) -> dict[str, Any]:
+    return await investigate.resolve(data, tenant_id, needle)
+
+
+@router.get("/investigate/resolve")
+async def investigate_resolve(
+    q: str = Query(..., min_length=1, max_length=256),
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+) -> dict[str, Any]:
+    """Resolve an object id, UPN, mail address or appId to a principal of any kind.
+
+    Never 404s: an unresolvable principal is the answer, with ``resolution`` saying which
+    kind of unresolvable it is."""
+    snapshot, tenant_id, cid = _snapshot(principal, connection_id)
+    data = snapshot.get("data") or {}
+    resolved = await _resolve_principal(data, tenant_id, q.strip())
+    return _envelope(snapshot, cid, **investigate.envelope(resolved))
+
+
+@router.get("/investigate/search")
+async def investigate_search(
+    q: str = Query(..., min_length=2, max_length=256),
+    limit: int = Query(default=25, ge=1, le=100),
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+) -> dict[str, Any]:
+    """Type-ahead across users, groups and service principals."""
+    snapshot, _tenant_id, cid = _snapshot(principal, connection_id)
+    results = investigate.search(snapshot.get("data") or {}, q.strip(), limit=limit)
+    return _envelope(snapshot, cid, results=results, query=q)
+
+
+@router.get("/investigate/recent")
+async def investigate_recent(
+    since: str | None = None,
+    limit: int = Query(default=8, ge=1, le=investigate.RECENT_LIMIT),
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """The principals THIS user investigated most recently, newest first.
+
+    Read back from the audit log rather than a second store: every dossier view already
+    records who looked at whom, so a separate history would be a duplicate record — and an
+    unaudited one.
+
+    Two constraints this endpoint exists to honour:
+
+    * it is gated on ``investigate.read``, NOT ``audit.read``, and hard-filters to the
+      caller's own ``actor_id``. Returning anyone else's history would turn a convenience
+      into "show me who the compliance team has been looking at";
+    * ``since`` is a client-side "cleared at" watermark. Clearing the strip HIDES entries,
+      it never deletes audit rows — a history you can erase is not an audit trail.
+    """
+    from sqlalchemy import select
+
+    snapshot, _tenant_id, cid = _snapshot(principal, connection_id)
+
+    stmt = (
+        select(AuditLog)
+        .where(
+            AuditLog.tenant_id == principal.tenant_id,
+            AuditLog.actor_id == principal.subject,
+            AuditLog.action == "investigate.view",
+        )
+        .order_by(AuditLog.created_at.desc())
+        # Over-fetch: the rows are per VIEW and collapse to one entry per principal, so a
+        # user who reloaded the same dossier twenty times would otherwise get one chip.
+        .limit(400)
+    )
+    if since:
+        try:
+            cutoff = _dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+            stmt = stmt.where(AuditLog.created_at > cutoff)
+        except ValueError:
+            pass  # an unparsable watermark must not hide the whole history
+
+    rows = list((await db.execute(stmt)).scalars().all())
+    entries = investigate.recent_entries(
+        [{"target": r.target, "metadata": r.metadata_json or {}, "at": r.created_at.isoformat()}
+         for r in rows],
+        connection_id=cid,
+        limit=limit,
+    )
+    entries = investigate.refresh_recent_names(snapshot.get("data") or {}, entries)
+    return _envelope(snapshot, cid, recent=entries)
+
+
+@router.get("/investigate/{principal_id}")
+async def investigate_dossier(
+    principal_id: str,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Everything already collected about one principal, converged.
+
+    Reads caches only — this endpoint makes no Graph or ARM call. Behavioural history
+    lives behind ``POST /investigate/{id}/activity`` and its own permission."""
+    snapshot, tenant_id, cid = _snapshot(principal, connection_id)
+    env, sections = await investigate.build_dossier(snapshot, tenant_id, principal_id.strip())
+    subject = env["principal"]
+
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="investigate.view", target=str(subject.get("id") or principal_id),
+        metadata_json={"kind": subject.get("kind"), "resolution": subject.get("resolution"),
+                       # Kept so the recency strip can still name a principal the directory
+                       # no longer holds — a deleted object is one you may well return to.
+                       "name": subject.get("display_name") or "",
+                       "connection_id": cid},
+    ))
+    await db.commit()
+
+    return _envelope(snapshot, cid, **env, sections=sections)
+
+
+@router.get("/investigate/{principal_id}/export")
+async def investigate_export(
+    principal_id: str,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The dossier as a workbook — one sheet per section.
+
+    Goes through the shared builder rather than hand-rolled CSV, which is what
+    neutralises formula injection: a display name beginning ``=`` is attacker-influenced
+    in a guest-heavy tenant and would otherwise execute on open."""
+    from app.core.xlsx import WorkbookBuilder, coerce
+    from app.iam import cpu as iam_cpu
+
+    snapshot, tenant_id, cid = _snapshot(principal, connection_id)
+    env, sections = await investigate.build_dossier(snapshot, tenant_id, principal_id.strip())
+    subject = env["principal"]
+
+    def _build() -> bytes:
+        wb = WorkbookBuilder()
+        sub = subject
+        wb.sheet(
+            "Identity",
+            ["Field", "Value"],
+            [[k, coerce(v)] for k, v in [
+                ("Name", sub.get("display_name")), ("Kind", sub.get("kind")),
+                ("Object id", sub.get("id")), ("UPN", sub.get("upn")),
+                ("App id", sub.get("app_id")), ("Enabled", sub.get("enabled")),
+                ("Resolution", sub.get("resolution")),
+                ("Managing tenant", (sub.get("managing_tenant") or {}).get("name") if sub.get("managing_tenant") else ""),
+                ("Tenant", snapshot.get("tenant_id", "")),
+                ("Directory collected at", snapshot.get("generated_at", "")),
+            ]],
+            note="Exported from Investigate. Sections the tenant could not read are named "
+                 "on the Provenance sheet rather than omitted.",
+        )
+
+        access = sections["access"]["data"]
+        wb.sheet("Directory roles", ["Role"], [[r] for r in access["directory_roles"]])
+        wb.sheet(
+            "Azure access",
+            ["Role", "Scope", "Scope type", "Path", "Eligible", "Effect", "Subscription"],
+            [[coerce(r.get("roleName")), coerce(r.get("scope")), coerce(r.get("scopeType")),
+              coerce(r.get("accessPath")), coerce(r.get("eligible")), coerce(r.get("effect")),
+              coerce(r.get("subscriptionName"))]
+             for r in access["azure_assignments"]],
+        )
+        wb.sheet(
+            "Findings", ["Severity", "Title", "Signal"],
+            [[coerce(f.get("severity")), coerce(f.get("title")), coerce(f.get("signal_id"))]
+             for f in sections["findings"]["data"]],
+        )
+        wb.sheet(
+            "Timeline", ["When", "Change", "Detail"],
+            [[coerce(e.get("at") or e.get("run_at")), coerce(e.get("kind") or e.get("change")),
+              coerce(e.get("detail") or e.get("summary"))]
+             for e in sections["timeline"]["data"]["events"]],
+        )
+        wb.sheet(
+            "Activations", ["Start", "End", "Role", "Scope", "Justification", "Ticket"],
+            [[coerce(a.get("start")), coerce(a.get("end")), coerce(a.get("role_name")),
+              coerce(a.get("scope_name")), coerce(a.get("justification")),
+              coerce(a.get("ticket_number"))]
+             for a in sections["activations"]["data"]],
+        )
+        # Provenance is a SHEET, not a footnote: an auditor reading "no findings" needs to
+        # know whether that means none were raised or the domain could not be read.
+        wb.sheet(
+            "Provenance", ["Section", "Source", "Collected at", "Truncated", "Unreadable", "Reason"],
+            [[name, coerce(s["provenance"]["source"]), coerce(s["provenance"]["collected_at"]),
+              coerce(s["provenance"]["truncated"]), coerce(s["provenance"]["unreadable"]),
+              coerce(s["provenance"]["reason"])]
+             for name, s in sections.items()],
+        )
+        return wb.to_bytes()
+
+    content = await iam_cpu.run(_build, label="investigate export")
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="investigate.export", target=str(subject.get("id") or principal_id),
+        metadata_json={"kind": subject.get("kind"), "connection_id": cid},
+    ))
+    await db.commit()
+    name = (str(subject.get("display_name") or subject.get("id") or "identity")
+            .replace(" ", "_")[:60])
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="investigate_{name}.xlsx"'},
+    )
+
+
+class InvestigateActivityBody(BaseModel):
+    types: list[str] = Field(default_factory=lambda: list(inv_activity.EAGER_TYPES))
+    days: int = Field(default=3, ge=1, le=365)
+    justification: str = Field(default="", max_length=512)
+
+
+@router.post("/investigate/{principal_id}/activity")
+async def investigate_activity(
+    principal_id: str,
+    body: InvestigateActivityBody,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_investigate_activity),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """What this principal actually DID, over a window.
+
+    POST rather than GET for three reasons: it is expensive, it carries a justification,
+    and it is a recorded act. Reading a named person's sign-in and audit history is
+    behavioural data, which is why it sits behind its own permission and why every call
+    lands in the audit log with who asked, about whom, and why.
+
+    The Azure Activity Log is never included unless explicitly asked for: it is
+    per-subscription and slow, and this screen is linked from dozens of places."""
+    from app.entra import activation_actions
+
+    connection, tenant_id, cid = _target(principal, connection_id)
+    snapshot = snapshot_mod.analyse(tenant_id)
+    data = snapshot.get("data") or {}
+
+    subject = await _resolve_principal(data, tenant_id, principal_id.strip())
+    caps = investigate.envelope(subject)["capabilities"]
+    subject_id = str(subject.get("id") or principal_id)
+
+    wanted = [t for t in body.types if t in inv_activity.ALL_TYPES]
+    notes: list[str] = []
+    # Asking for a section this kind cannot have is answered, not silently dropped.
+    refused = [t for t in wanted if t not in caps]
+    for t in refused:
+        notes.append(f"'{t}' does not apply to a {subject.get('kind')} and was not read.")
+    wanted = [t for t in wanted if t in caps]
+
+    days, clamp_note = inv_activity.clamp_days(body.days)
+    if clamp_note:
+        notes.append(clamp_note)
+    start_iso, end_iso = inv_activity.window(days)
+
+    sections: dict[str, Any] = {}
+
+    if connection is None:
+        notes.append("No Azure connection is attached, so no activity could be read.")
+        wanted = []
+
+    if inv_activity.TYPE_SIGNINS in wanted:
+        rows, err = await inv_activity.signins(connection, subject, start_iso, end_iso)
+        sections[inv_activity.TYPE_SIGNINS] = investigate.section(rows, investigate.provenance(
+            "Microsoft Graph /auditLogs/signIns", collected_at=end_iso,
+            unreadable=bool(err), reason=(f"Sign-in log {err}" if err else ""),
+            truncated=len(rows) >= inv_activity.MAX_SIGNIN_ROWS))
+
+    if inv_activity.TYPE_RISK in wanted:
+        rows, err = await inv_activity.risk_detections(connection, subject, start_iso, end_iso)
+        sections[inv_activity.TYPE_RISK] = investigate.section(rows, investigate.provenance(
+            "Microsoft Graph /identityProtection/riskDetections", collected_at=end_iso,
+            unreadable=bool(err), reason=(f"Risk detections {err}" if err else ""),
+            truncated=len(rows) >= inv_activity.MAX_RISK_ROWS))
+
+    planes: list[str] = []
+    if inv_activity.TYPE_AUDIT in wanted:
+        planes.append("entra")
+    subs: list[str] = []
+    if inv_activity.TYPE_AZURE in wanted:
+        planes.append("azure")
+        azure_days, azure_clamp = inv_activity.clamp_days(body.days, azure=True)
+        if azure_clamp:
+            notes.append(azure_clamp)
+        if azure_days != days:
+            # The Azure log reaches further back than Graph does; say so rather than
+            # quietly showing two different windows under one heading.
+            notes.append(f"The Azure Activity Log window is {azure_days} days; the Graph "
+                         f"sources are limited to {days}.")
+        try:
+            rows = await _access_rows(tenant_id)
+            subs = inv_activity.subscriptions_for(rows, subject_id)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"Subscriptions in scope could not be determined: {exc}")
+        if subs:
+            notes.append(
+                f"The Azure Activity Log was read for the {len(subs)} subscription(s) where "
+                "this principal currently holds access. Access removed since an action was "
+                "taken would put that subscription out of scope.")
+
+    if planes:
+        body_actions = await activation_actions.actions_in_window(
+            connection, subject_id, start_iso, end_iso, data,
+            subscriptions=subs, planes=tuple(planes),
+        )
+        entra_rows = [a for a in body_actions["actions"] if a.get("plane") == "entra"]
+        azure_rows = [a for a in body_actions["actions"] if a.get("plane") == "azure"]
+        if inv_activity.TYPE_AUDIT in wanted:
+            sections[inv_activity.TYPE_AUDIT] = investigate.section(
+                entra_rows, investigate.provenance(
+                    "Microsoft Graph /auditLogs/directoryAudits", collected_at=end_iso,
+                    truncated=bool(body_actions.get("truncated"))))
+        if inv_activity.TYPE_AZURE in wanted:
+            sections[inv_activity.TYPE_AZURE] = investigate.section(
+                azure_rows, investigate.provenance(
+                    "Azure Activity Log (per subscription)", collected_at=end_iso,
+                    unreadable=not subs, truncated=bool(body_actions.get("truncated")),
+                    reason=("" if subs else
+                            "No subscription is in scope for this principal, so no resource "
+                            "operations could be read.")))
+        notes.extend(body_actions.get("notes") or [])
+        attribution = {
+            "counts": body_actions["counts"],
+            "standing_entra_roles": body_actions["standing_entra_roles"],
+            "standing_azure_roles": body_actions["standing_azure_roles"],
+            "azure_link_available": body_actions["azure_link_available"],
+        }
+    else:
+        attribution = {}
+
+    db.add(AuditLog(
+        tenant_id=principal.tenant_id, actor_id=principal.subject,
+        action="investigate.activity", target=subject_id,
+        metadata_json={"types": wanted, "days": days, "justification": body.justification,
+                       "kind": subject.get("kind"), "connection_id": cid},
+    ))
+    await db.commit()
+
+    return _envelope(
+        snapshot, cid,
+        principal=subject,
+        window={"start": start_iso, "end": end_iso, "days": days},
+        sections=sections,
+        attribution=attribution,
+        notes=notes,
     )
 
 

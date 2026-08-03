@@ -2633,6 +2633,66 @@ export type IamAccessPage = {
 export type IamPivotItem = { label: string; count: number };
 export type IamPivots = { pivots: Record<string, IamPivotItem[]>; labels: Record<string, string> };
 
+/** One row of the Access Map fact table, after decoding. */
+export type IamFlowFact = {
+  principal: string; principal_id: string; principal_type: string;
+  group: string; group_id: string;
+  role: string; role_category: string; privileged: boolean;
+  surface: string; access_path: string; state: string; pim_managed: boolean;
+  management_group: string; subscription: string; subscription_id: string;
+  resource_group: string; resource_type: string; resource: string;
+  scope: string; scope_type: string; condition: boolean;
+  count: number;
+};
+
+export type IamFlowTotals = {
+  rows: number; facts: number; grants: number; eligible_rows: number;
+  deny_rows: number; group_rows_folded: number; unexpanded_groups: number;
+};
+
+export type IamFlow = {
+  facts: IamFlowFact[];
+  /** Deny assignments, kept OUT of the flow: a deny removes access, a ribbon adds it. */
+  denies: IamFlowFact[];
+  totals: IamFlowTotals;
+  truncated: boolean;
+  notes: string[];
+};
+
+/** The interned wire format. Never handled outside `decodeIamFlow`. */
+type IamFlowWire = {
+  columns: string[];
+  boolean_columns: string[];
+  labels: string[][];
+  facts: number[][];
+  denies: number[][];
+  totals: IamFlowTotals;
+  truncated: boolean;
+  notes: string[];
+};
+
+function decodeIamFlow(wire: IamFlowWire): IamFlow {
+  const booleans = new Set(wire.boolean_columns ?? []);
+  const decodeRows = (rows: number[][]): IamFlowFact[] =>
+    rows.map((row) => {
+      const fact: Record<string, unknown> = {};
+      wire.columns.forEach((column, i) => {
+        const text = wire.labels[i][row[i]];
+        fact[column] = booleans.has(column) ? text === "true" : text;
+      });
+      fact.count = row[wire.columns.length];
+      return fact as IamFlowFact;
+    });
+  return {
+    facts: decodeRows(wire.facts ?? []),
+    denies: decodeRows(wire.denies ?? []),
+    totals: wire.totals,
+    truncated: wire.truncated,
+    notes: wire.notes ?? [],
+  };
+}
+
+
 export type IamScopeNode = {
   id: string;
   name: string;
@@ -5727,8 +5787,12 @@ export const api = {
   entraCaCoverageCell: (
     params: { cohort: string; app_class: string; control: string },
     connectionId?: string | null,
-  ) => http<{ meta: EntraMeta; cohort: string; cell: EntraCaCell; uncovered: { id: string; name: string; mfa_registered: boolean | null }[] }>(
+  ) => http<{ meta: EntraMeta; cohort: string; cell: EntraCaCell; apps_missing: { app_id: string; name: string }[]; uncovered: { id: string; name: string; mfa_registered: boolean | null }[] }>(
     `/entra/ca/coverage/cell${entraQs(connectionId, params)}`),
+  entraCaExposure: (connectionId?: string | null, cohort = "members") =>
+    http<EntraCaExposure>(`/entra/ca/exposure${entraQs(connectionId, { cohort })}`),
+  entraCaExposureExportUrl: (connectionId?: string | null, cohort = "members") =>
+    `/api/entra/ca/exposure/export${entraQs(connectionId, { cohort, fmt: "csv" })}`,
   entraCaConflicts: (connectionId?: string | null) =>
     http<{ meta: EntraMeta; conflicts: EntraCaConflict[]; by_kind: Record<string, number> }>(
       `/entra/ca/conflicts${entraQs(connectionId)}`),
@@ -5793,6 +5857,33 @@ export const api = {
   entraPrivilegedPrincipal: (principalId: string, connectionId?: string | null) =>
     http<Record<string, unknown> & { meta: EntraMeta }>(
       `/entra/privileged/principal/${encodeURIComponent(principalId)}${entraQs(connectionId)}`),
+
+  // ---- Investigate (one identity, everything about it) ---------------------------
+  entraInvestigateResolve: (q: string, connectionId?: string | null) =>
+    http<InvestigateEnvelope>(
+      `/entra/investigate/resolve${entraQs(connectionId, { q })}`),
+  entraInvestigateSearch: (q: string, connectionId?: string | null, limit = 25) =>
+    http<{ meta: EntraMeta; results: InvestigateHit[]; query: string }>(
+      `/entra/investigate/search${entraQs(connectionId, { q, limit })}`),
+  entraInvestigateRecent: (
+    connectionId?: string | null,
+    opts: { limit?: number; since?: string } = {},
+  ) =>
+    http<{ meta: EntraMeta; recent: InvestigateRecent[] }>(
+      `/entra/investigate/recent${entraQs(connectionId, { limit: opts.limit, since: opts.since })}`),
+  entraInvestigate: (principalId: string, connectionId?: string | null) =>
+    http<InvestigateDossier>(
+      `/entra/investigate/${encodeURIComponent(principalId)}${entraQs(connectionId)}`),
+  entraInvestigateActivity: (
+    principalId: string,
+    body: { types: string[]; days: number; justification?: string },
+    connectionId?: string | null,
+  ) =>
+    http<InvestigateActivity>(
+      `/entra/investigate/${encodeURIComponent(principalId)}/activity${entraQs(connectionId)}`,
+      { method: "POST", body: JSON.stringify(body) }),
+  entraInvestigateExportUrl: (principalId: string, connectionId?: string | null) =>
+    `${API_BASE}/entra/investigate/${encodeURIComponent(principalId)}/export${entraQs(connectionId)}`,
 
   // ---- Application 360 (P4) -----------------------------------------------------
   entraApps: (
@@ -6421,6 +6512,24 @@ export const api = {
   },
   iamDiagnostics: (connectionId?: string | null) =>
     http<{ collectors: IamCollector[]; errors: Record<string, string>[]; directory: IamDirectoryFreshness }>(`/iam/diagnostics${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""}`),
+  /**
+   * Access Map facts.
+   *
+   * The server interns the fact table (per-column label dictionaries + rows of integers)
+   * because the object form measured 4 MiB on a real tenant against 520 KiB interned. Decoding
+   * here keeps that entirely a transport concern — every caller sees ordinary objects.
+   */
+  iamFlow: async (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string; principal_id?: string; connection_id?: string | null }): Promise<IamFlow> => {
+    const q = new URLSearchParams();
+    if (params?.scope_id) q.set("scope_id", params.scope_id);
+    if (params?.subscription_ids) q.set("subscription_ids", params.subscription_ids);
+    if (params?.workload_id) q.set("workload_id", params.workload_id);
+    if (params?.principal_id) q.set("principal_id", params.principal_id);
+    if (params?.connection_id) q.set("connection_id", params.connection_id);
+    const qs = q.toString();
+    const wire = await http<IamFlowWire>(`/iam/flow${qs ? `?${qs}` : ""}`);
+    return decodeIamFlow(wire);
+  },
   iamRefresh: (body: { scope?: string; mode?: string; display_name?: string; connection_id?: string | null }) =>
     http<IamJob & { already_running: boolean }>("/iam/refresh", { method: "POST", body: JSON.stringify(body) }),
   iamJob: (params: { scope?: string; mode?: string; connection_id?: string | null }) => {
@@ -9910,16 +10019,41 @@ export type EntraCaPolicy = {
   effective_user_count: number; excluded_user_count: number;
 };
 
+export type EntraCaCellState = "covered" | "partial" | "report_only_only" | "uncovered" | "n/a";
+
 export type EntraCaCell = {
-  state: "enforced" | "partial" | "report_only" | "none";
-  covered: number; size: number; policies: string[]; uncovered_total: number;
+  state: EntraCaCellState;
+  /** Absent on an `n/a` cell, which carries a `reason` instead. */
+  users_covered?: number; users_total?: number;
+  /** The second axis: a policy can reach every user and only some of the class's apps. */
+  apps_covered?: number; apps_total?: number;
+  apps_missing?: string[]; apps_missing_total?: number;
+  policies?: string[];
+  uncovered_total: number;
+  reason?: string;
+};
+
+export type EntraCaAppClass = {
+  id: string; label: string; description?: string; derived?: boolean;
+  severity?: string; exposure?: string;
 };
 
 export type EntraCaCoverage = {
   meta: EntraMeta;
   cohorts: { key: string; label: string; size: number }[];
-  app_classes: { key: string; label: string }[];
+  app_classes: EntraCaAppClass[];
+  /** Classes computed FROM the analysis; they have no control axis and are reported separately. */
+  derived_classes: EntraCaAppClass[];
   controls: { key: string; label: string }[];
+  taxonomy_version: string;
+  app_index: { app_count: number; members: Record<string, number> };
+  derived: {
+    shadowed_classes?: { classes: string[]; detail: Record<string, string[]> };
+    unattributed_apps?: {
+      measured: boolean; reason?: string; window_days?: number;
+      apps: { app_id: string; name: string }[]; total: number; active_total?: number;
+    };
+  };
   matrix: { cohort: string; label: string; size: number; cells: Record<string, EntraCaCell> }[];
   headline: {
     uncovered_users: number; uncovered_apps: number; total_users: number; total_apps: number;
@@ -9929,6 +10063,29 @@ export type EntraCaCoverage = {
     uncovered_app_sample: { app_id: string; name: string }[];
     assumptions: string[];
   };
+};
+
+export type EntraCaExposureRow = {
+  class_id: string; label: string; description: string; derived: boolean;
+  controls_total: number; controls_covered: number; controls_partial: number;
+  controls_report_only: number;
+  states: Record<string, EntraCaCellState | undefined>;
+  worst_severity: string; finding_count: number; exposure: number;
+  findings: {
+    signal_id: string; severity: string; title: string; detail: string;
+    impact: { impact: string; blast_radius: string; first_step: string } | null;
+  }[];
+};
+
+export type EntraCaExposure = {
+  meta: EntraMeta;
+  cohort: string;
+  taxonomy_version: string;
+  impact_copy_version: string;
+  rows: EntraCaExposureRow[];
+  unattributed: EntraCaCoverage["derived"]["unattributed_apps"];
+  shadowed: EntraCaCoverage["derived"]["shadowed_classes"];
+  app_index: { app_count: number; members: Record<string, number> };
 };
 
 export type EntraCaConflict = {
@@ -10024,6 +10181,103 @@ export type EntraCrossPlaneRow = {
   entra_roles: string[]; entra_permissions: string[];
   azure_roles: string[]; azure_all_roles: number;
   azure_broad_scopes: string[]; azure_subscriptions: string[]; both_planes: boolean;
+};
+
+// ---- Investigate (one identity) --------------------------------------------------
+/** Every principal kind the resolver can return. `platform` is Azure acting on its own
+ *  behalf — reachable as an actor, but there is nothing to investigate. */
+export type InvestigateKind =
+  | "user" | "guest" | "group" | "servicePrincipal" | "managedIdentity" | "platform" | "unknown";
+
+/** Why a principal could not be fully resolved. `deleted` and `unreadable` are DIFFERENT
+ *  facts — "the object is gone" versus "we could not look" — and must never be merged. */
+export type InvestigateResolution =
+  | "resolved" | "deleted" | "cross_tenant" | "unreadable" | "not_found";
+
+export type InvestigatePrincipal = {
+  id: string; kind: InvestigateKind; display_name: string; upn: string; app_id: string;
+  enabled: boolean | null; resolution: InvestigateResolution;
+  managing_tenant: { id: string; name: string } | null;
+  sub_kind: Record<string, unknown>;
+};
+
+/** Where a section came from, and whether to trust its emptiness. `unreadable` is the
+ *  load-bearing field: an empty list we could not read and an empty list that is genuinely
+ *  empty render identically, and they are opposite facts. */
+export type InvestigateProvenance = {
+  source: string; collected_at: string; truncated: boolean; unreadable: boolean; reason: string;
+};
+
+export type InvestigateSection<T = unknown> = { data: T; provenance: InvestigateProvenance };
+
+export type InvestigateEnvelope = {
+  meta: EntraMeta; principal: InvestigatePrincipal; capabilities: string[]; notes: string[];
+};
+
+export type InvestigateHit = {
+  id: string; kind: InvestigateKind; display_name: string; upn: string; app_id: string;
+  enabled: boolean | null;
+};
+
+/** One previously-investigated identity, read back from this user's own audit trail. */
+export type InvestigateRecent = {
+  id: string; kind: InvestigateKind; display_name: string;
+  resolution: InvestigateResolution; at: string;
+};
+
+export type InvestigateAccess = {
+  directory_roles: string[];
+  directory_assignments: Record<string, unknown>[];
+  azure: Record<string, unknown> | null;
+  azure_assignments: Record<string, unknown>[];
+  azure_assignment_count: number;
+};
+
+export type InvestigateDossier = InvestigateEnvelope & {
+  sections: {
+    access: InvestigateSection<InvestigateAccess>;
+    findings: InvestigateSection<Record<string, unknown>[]>;
+    timeline: InvestigateSection<{ events: Record<string, unknown>[]; runs_considered: number }>;
+    activations: InvestigateSection<Record<string, unknown>[]>;
+  };
+};
+
+export type InvestigateSignin = {
+  at: string; app: string; client_app: string; ip: string; city: string; country: string;
+  failure_code: number | null; failure_reason: string; success: boolean;
+  interactive: boolean | null; ca_status: string; risk_level: string;
+};
+
+export type InvestigateAction = {
+  plane: string; at: string; operation: string; category: string; result: string;
+  target: string; target_type: string; correlation_id: string;
+  /** required_activation | possible_without | unclassified — a claim about whether the
+   *  elevation was NEEDED, never about whether the person is guilty. */
+  attribution: string;
+  subscription_id?: string; actor_ip?: string;
+};
+
+export type InvestigateRisk = {
+  at: string; type: string; level: string; state: string; detail: string; ip: string; source: string;
+};
+
+export type InvestigateActivity = {
+  meta: EntraMeta;
+  principal: InvestigatePrincipal;
+  window: { start: string; end: string; days: number };
+  sections: Partial<{
+    signins: InvestigateSection<InvestigateSignin[]>;
+    audit: InvestigateSection<InvestigateAction[]>;
+    azure_activity: InvestigateSection<InvestigateAction[]>;
+    risk: InvestigateSection<InvestigateRisk[]>;
+  }>;
+  attribution: {
+    counts?: Record<string, number>;
+    standing_entra_roles?: string[];
+    standing_azure_roles?: string[];
+    azure_link_available?: boolean;
+  };
+  notes: string[];
 };
 
 // ---- Application 360 (P4) -------------------------------------------------------

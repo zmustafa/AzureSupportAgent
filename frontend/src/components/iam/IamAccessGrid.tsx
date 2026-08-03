@@ -11,6 +11,7 @@ import { useDebounced } from "../../utils/perf";
 import { AzureIcon } from "../AzureIcon";
 import { FilterRail } from "./IamFilterRail";
 import { IAM_PAGE, PATH_LABEL, PrivBadge, EffectChip, scopeCell, type AccessFilter, useIamConnectionId } from "./IamShared";
+import { InvestigateLink } from "../entra/InvestigateLink";
 import { WhyPanel } from "./IamWhyPanel";
 
 type WhyTarget = { principalId: string; principalName: string; scope: string };
@@ -77,6 +78,8 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
     // Keep the current grid visible while a new tab/search/filter loads, instead of
     // flashing an empty table on every keystroke/tab switch (the rows come from a
     // server-side computed cache, so refetches are common as filters change).
+    // NOT across a connection change: the tenant label updates instantly, so holding the old
+    // rows shows one tenant's access under another tenant's name for the length of the refetch.
     placeholderData: (prev) => prev,
     staleTime: 60 * 1000,
   });
@@ -195,7 +198,13 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
                   return (
                     <tr key={i} ref={rowVirt.measureElement} data-index={i} className={`border-b last:border-0 hover:bg-gray-50 ${r.effect === "Deny" ? "bg-red-50/60" : ""}`}>
                       <td className="px-3 py-1.5">
-                        <div className="font-medium text-gray-800">{who}</div>
+                        <div className="flex items-center gap-1">
+                          <span className="min-w-0 flex-1 truncate font-medium text-gray-800">{who}</span>
+                          <InvestigateLink
+                            principalId={(r.effectivePrincipalId || r.principalId || "") as string}
+                            label={who}
+                          />
+                        </div>
                         {upn && <div className="text-[11px] text-gray-400">{upn}</div>}
                       </td>
                       <td className="px-3 py-1.5 text-gray-600">{(r.effectivePrincipalType || r.principalType || "") as string}</td>

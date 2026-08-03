@@ -20,7 +20,7 @@ silently dropped.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -58,6 +58,10 @@ _SP_SELECT = [
     "appRoleAssignmentRequired", "publisherName", "verifiedPublisher", "homepage",
     "replyUrls", "tags", "appOwnerOrganizationId", "disabledByMicrosoftStatus",
     "passwordCredentials", "keyCredentials", "servicePrincipalNames", "preferredSingleSignOnMode",
+    # A system-assigned managed identity carries the ARM id of the resource that owns it in
+    # alternativeNames. It is the only link back from the principal to the thing it belongs to,
+    # and without it "what is this managed identity?" has no answer but its display name.
+    "alternativeNames",
 ]
 
 # ---------------------------------------------------------------- permission tiering
@@ -378,6 +382,64 @@ def _credentials(raw: list[Any], kind: str, now: datetime) -> list[dict[str, Any
     return out
 
 
+SIGNIN_WINDOW_DAYS = 30
+
+
+async def _signin_activity(client: GraphClient, ctx: CollectContext, now: datetime) -> dict[str, Any]:
+    """Which applications were actually signed into recently.
+
+    This exists to answer "is anyone USING the app nobody protects?". A gap on an application
+    that has not been touched in a year is housekeeping; the same gap on one with daily traffic
+    is live exposure, and the coverage matrix alone cannot tell them apart.
+
+    The return value ALWAYS carries ``measured``. When the tenant lacks the licence or the
+    permission for sign-in logs, the honest answer is "not measured", never an empty app list —
+    an empty list renders as "nothing unattributed", which is the reassuring reading of missing
+    data. The `ca.unattributed_apps` detector treats unmeasured as unavailable for the same
+    reason.
+    """
+    since = (now - timedelta(days=SIGNIN_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    await ctx.say("info", "Applications: sampling recent sign-in activity…")
+    # Prefer the per-service-principal aggregate. Scanning /auditLogs/signIns instead means
+    # paging every sign-in EVENT in the tenant — millions of rows for a large tenant — and then
+    # truncating, which quietly turns "we stopped reading" into "this app is not used". The
+    # aggregate is one row per application and cannot mislead that way.
+    try:
+        rows, truncated = await client.get_all(
+            "/reports/servicePrincipalSignInActivities",
+            top=999, max_items=ctx.max_apps, beta=True,
+        )
+        active: dict[str, str] = {}
+        for r in rows:
+            r = as_dict(r)
+            app_id = str(r.get("appId") or "").lower()
+            last = str(
+                (as_dict(r.get("lastSignInActivity")).get("lastSignInDateTime"))
+                or r.get("lastSignInActivity") or ""
+            )
+            if app_id and last and last >= since:
+                active[app_id] = last
+        await ctx.say("ok", f"Applications: {len(active):,} app(s) with sign-in activity")
+        return {
+            "measured": True,
+            "source": "servicePrincipalSignInActivities",
+            "window_days": SIGNIN_WINDOW_DAYS,
+            "active_app_ids": sorted(active),
+            "last_seen": active,
+            "complete": not truncated,
+        }
+    except Exception as exc:  # noqa: BLE001 - any Graph failure means "not measured"
+        await ctx.say("warn", f"Applications: sign-in activity unavailable ({clip(str(exc), 120)})")
+        return {
+            "measured": False,
+            "reason": "Sign-in activity could not be read for this tenant. This usually means the "
+                      "AuditLog.Read.All permission is missing, or the tenant has no Entra ID P1 "
+                      "licence. Applications with no policy coverage are still listed, but "
+                      "whether anyone is signing into them is unknown.",
+            "active_app_ids": [],
+        }
+
+
 async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
         notes: list[str] = []
@@ -430,6 +492,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
                 and owner_tenant.lower() not in MICROSOFT_TENANTS,
                 "disabled_by_microsoft": s.get("disabledByMicrosoftStatus", "") or "",
                 "sso_mode": s.get("preferredSingleSignOnMode", "") or "",
+                "alternative_names": [str(n) for n in as_list(s.get("alternativeNames"))],
                 "reply_urls": reply,
                 "reply_url_risks": [
                     {"uri": u, "risk": redirect_risk(u)} for u in reply if redirect_risk(u)
@@ -750,6 +813,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         data = {
             "applications": list(apps.values()),
             "service_principals": list(sp_by_object.values()),
+            "signin_activity": await _signin_activity(client, ctx, now),
             "permission_catalogue_size": len(catalogue),
             "capabilities": {
                 "granted_permissions": any(s["granted_app_permissions"] for s in sp_by_object.values())

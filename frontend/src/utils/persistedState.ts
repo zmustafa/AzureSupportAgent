@@ -51,6 +51,51 @@ export function migratePersistedKey(oldKey: string, newKey: string): void {
 }
 
 /**
+ * The Azure connection (tenant) the user is looking at, shared by every section.
+ *
+ * This used to be per-section: IAM, Entra, Inventory, Policy, Ownership and the Estate Graph
+ * each remembered their own. Switching tenant on one screen therefore left every other screen
+ * on the previous one — so a user who switched to another tenant in IAM and then opened Entra
+ * was shown the OLD tenant's posture, under a picker that said so only if they looked. "Switch
+ * tenant" is a statement about the session, not about one page.
+ *
+ * Sections are route-level and remount on navigation, and `usePersistedState` reads storage on
+ * mount, so sharing the key is enough to keep them in step without any cross-component plumbing.
+ */
+export const CONNECTION_KEY = "azsup.connectionId";
+
+/** The per-section keys this replaced, newest-intent first. */
+const LEGACY_CONNECTION_KEYS = [
+  "azsup.iam.connectionId",
+  "azsup.entra.connectionId",
+  "azsup.ownership.connectionId",
+  "azsup.graph.connection",
+  "azsup.rbac.connectionId",
+];
+
+/**
+ * Fold any previously per-section selection into the shared one.
+ *
+ * Takes the first non-empty legacy value rather than clearing them, so a user who had picked a
+ * tenant keeps looking at it instead of being silently dropped back to the default connection.
+ */
+export function migrateConnectionKeys(): void {
+  try {
+    const existing = localStorage.getItem(CONNECTION_KEY);
+    if (existing != null && JSON.parse(existing)) return;
+    for (const key of LEGACY_CONNECTION_KEYS) {
+      const raw = localStorage.getItem(key);
+      if (raw != null && JSON.parse(raw)) {
+        localStorage.setItem(CONNECTION_KEY, raw);
+        return;
+      }
+    }
+  } catch {
+    /* ignore malformed / unavailable storage */
+  }
+}
+
+/**
  * On first mount, if the URL carries `?workload_id=`, switch the screen's scope to that
  * workload. Powers Workload Mission Control deep links (e.g. /coverage?workload_id=…) so
  * the destination opens already scoped to the workload instead of the last-used scope.

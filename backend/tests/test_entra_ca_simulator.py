@@ -33,7 +33,7 @@ COMPLIANT = SignInContext("compliant", "Compliant device", client_app="browser",
 
 
 def _policy(pid, *, name="P", state="enabled", controls=("mfa",), effective=(), operator="OR",
-            app_classes=("all",), conditions=None, is_block=False):
+            app_classes=("all_cloud_apps",), conditions=None, is_block=False):
     base_conditions = {
         "include_users": ["All"], "exclude_users": [], "include_groups": [], "exclude_groups": [],
         "include_roles": [], "exclude_roles": [], "include_apps": ["All"], "exclude_apps": [],

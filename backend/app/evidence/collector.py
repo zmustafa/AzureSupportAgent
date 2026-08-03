@@ -57,6 +57,10 @@ async def _scope_predicate(scope: dict[str, Any], connection: dict[str, Any] | N
             return "", {"error": "No resource ids."}
         joined = ", ".join(f"'{_esc(i)}'" for i in ids)
         return f"id in~ ({joined})", {}
+    if kind == "identity":
+        # An identity is not a resource query. There is no KQL predicate, and that is not an
+        # error: the resource-shaped sections simply have nothing to say about a principal.
+        return "", {"principal_id": scope.get("id", ""), "identity": True}
     return "", {"error": "Unknown scope kind."}
 
 
@@ -225,4 +229,33 @@ async def collect_content(
         content["activity"] = _activity_section(arch)
     if "metrics" in inc:
         content["metrics"] = await _metrics_section(predicate, connection)
+    if "identity" in inc:
+        content["identity"] = await _identity_section(tenant_id, scope)
     return content
+
+
+async def _identity_section(tenant_id: str, scope: dict[str, Any]) -> dict[str, Any]:
+    """Freeze an identity investigation exactly as the screen composed it.
+
+    Calls the same builder the Investigate endpoint uses. A second implementation here
+    would drift, and an evidence pack that does not match the screen it was taken from is
+    worse than no evidence pack at all."""
+    principal_id = str(scope.get("id") or "")
+    if not principal_id:
+        return {"note": "No principal id in scope.", "principal": None, "sections": {}}
+    try:
+        from app.entra import investigate, snapshot as snapshot_mod
+
+        snap = snapshot_mod.analyse(tenant_id)
+        env, sections = await investigate.build_dossier(snap, tenant_id, principal_id)
+        return {
+            "principal": env["principal"],
+            "capabilities": env["capabilities"],
+            "notes": env["notes"],
+            "sections": sections,
+            "directory_generated_at": snap.get("generated_at", ""),
+        }
+    except Exception as exc:  # noqa: BLE001 - evidence collection is best-effort by design
+        log.warning("evidence: identity section failed: %s", exc)
+        return {"note": f"Identity investigation could not be captured: {exc}",
+                "principal": None, "sections": {}}

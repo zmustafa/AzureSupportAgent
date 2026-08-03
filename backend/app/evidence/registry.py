@@ -20,6 +20,10 @@ _BLOB_DIR = Path(__file__).resolve().parents[2] / ".data" / "evidence"
 RETENTION_CLASSES = ("standard", "audit")
 INCLUDE_KEYS = (
     "inventory", "properties", "changes", "metrics", "findings", "architecture", "memory", "activity",
+    # An identity investigation frozen at a point in time. Extending the existing section
+    # list rather than inventing a second snapshot type keeps diff, share and export working
+    # unchanged — an auditor's evidence pack should not care what it is about.
+    "identity",
 )
 
 

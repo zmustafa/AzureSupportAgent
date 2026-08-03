@@ -12,7 +12,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.entra import ca_engine
-from app.entra.ca_engine import CELL_ENFORCED, CELL_NONE, CELL_PARTIAL, CELL_REPORT_ONLY
+from app.entra.ca_coverage import (
+    CELL_COVERED,
+    CELL_PARTIAL,
+    CELL_REPORT_ONLY,
+    CELL_UNCOVERED,
+)
 
 NOW = datetime(2026, 7, 30, tzinfo=timezone.utc)
 GA_TEMPLATE = "62e90394-69f5-4237-9190-012177145e10"
@@ -182,7 +187,7 @@ def _coverage(snap):
     return ca_engine.build_coverage(policies, cohorts, snap), cohorts
 
 
-def _cell(coverage, cohort, app_class="all", control="mfa"):
+def _cell(coverage, cohort, app_class="all_cloud_apps", control="mfa"):
     row = next(r for r in coverage["matrix"] if r["cohort"] == cohort)
     return row["cells"][f"{app_class}|{control}"]
 
@@ -191,7 +196,7 @@ def test_cell_is_enforced_only_when_the_whole_cohort_is_covered():
     snap = _snapshot([_user("u1"), _user("u2")],
                      [_policy("p1", conditions={"include_users": ["All"]})])
     coverage, _ = _coverage(snap)
-    assert _cell(coverage, "members")["state"] == CELL_ENFORCED
+    assert _cell(coverage, "members")["state"] == CELL_COVERED
 
 
 def test_cell_is_partial_when_some_of_the_cohort_is_excluded():
@@ -200,7 +205,7 @@ def test_cell_is_partial_when_some_of_the_cohort_is_excluded():
     coverage, _ = _coverage(snap)
     cell = _cell(coverage, "members")
     assert cell["state"] == CELL_PARTIAL
-    assert cell["covered"] == 1 and cell["size"] == 2
+    assert cell["users_covered"] == 1 and cell["users_total"] == 2
     assert cell["uncovered_sample"] == ["u2"]
 
 
@@ -216,14 +221,14 @@ def test_disabled_policies_protect_nobody():
     snap = _snapshot([_user("u1")], [_policy("p1", state="disabled",
                                              conditions={"include_users": ["All"]})])
     coverage, _ = _coverage(snap)
-    assert _cell(coverage, "members")["state"] == CELL_NONE
+    assert _cell(coverage, "members")["state"] == CELL_UNCOVERED
 
 
 def test_policy_scoped_to_one_app_does_not_cover_all_cloud_apps():
     snap = _snapshot([_user("u1")],
                      [_policy("p1", conditions={"include_users": ["All"], "include_apps": ["some-app"]})])
     coverage, _ = _coverage(snap)
-    assert _cell(coverage, "members", app_class="all")["state"] == CELL_NONE
+    assert _cell(coverage, "members", app_class="all_cloud_apps")["state"] == CELL_UNCOVERED
 
 
 def test_headline_counts_only_enforced_policies_and_applies_exclusions():

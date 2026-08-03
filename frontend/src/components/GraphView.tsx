@@ -13,7 +13,7 @@ import {
   type GraphView,
 } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { CONNECTION_KEY, usePersistedState } from "../utils/persistedState";
 import {
   ALL_KINDS,
   KIND_META,
@@ -83,7 +83,7 @@ export function GraphPanel() {
   const historyPosRef = useRef(-1);
   const [histState, setHistState] = useState({ canUndo: false, canRedo: false });
 
-  const [connectionId, setConnectionId] = usePersistedState<string>("azsup.graph.connection", "");
+  const [connectionId, setConnectionId] = usePersistedState<string>(CONNECTION_KEY, "");
   const [lens, setLens] = usePersistedState<Lens>("azsup.graph.lens", "none");
   // Mirror of `lens` for use inside stable useCallbacks (avoids stale closures + dep churn).
   const lensRef = useRef(lens);

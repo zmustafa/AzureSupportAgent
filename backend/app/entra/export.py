@@ -303,17 +303,54 @@ def to_workbook(
         wb.sheet("CA policy conditions", ["Policy", "State", "Condition", "Value"], cond_rows)
 
         coverage = ca_analysis.get("coverage") or {}
+        class_labels = {c.get("id"): c.get("label", "") for c in (coverage.get("app_classes") or [])}
+        control_labels = {c.get("key"): c.get("label", "") for c in (coverage.get("controls") or [])}
         cov_rows: list[list[Any]] = []
         for row in (coverage.get("matrix") or []):
             cohort = row.get("label", "") or row.get("cohort", "")
             for cell_key, cell in (row.get("cells") or {}).items():
                 cell = cell if isinstance(cell, dict) else {}
+                class_id, _, control_key = str(cell_key).partition("|")
+                # These previously read `cell["count"]` and `cell["uncovered"]` — keys the cell
+                # has never carried — so both columns exported blank for every row. An empty
+                # "Uncovered" column in a spreadsheet reads as "nothing uncovered".
                 cov_rows.append([
-                    cohort, cell_key, cell.get("count", ""), cell.get("uncovered", ""),
+                    cohort,
+                    class_labels.get(class_id, class_id),
+                    control_labels.get(control_key, control_key),
+                    cell.get("state", ""),
+                    cell.get("users_covered", ""), cell.get("users_total", ""),
+                    cell.get("apps_covered", ""), cell.get("apps_total", ""),
+                    cell.get("uncovered_total", ""),
+                    ", ".join(str(a) for a in (cell.get("apps_missing") or [])),
                     ", ".join(str(p) for p in (cell.get("policies") or [])),
                 ])
-        wb.sheet("CA coverage matrix", ["Cohort", "App class | control", "In cohort",
-                                        "Uncovered", "Policies"], cov_rows)
+        wb.sheet("CA coverage matrix",
+                 ["Cohort", "Application class", "Control", "State",
+                  "Users covered", "Users in cohort", "Apps covered", "Apps in class",
+                  "Users uncovered", "Applications not reached", "Policies"],
+                 cov_rows,
+                 note="A cell is 'covered' only when the whole cohort AND every application in "
+                      "the class is reached. 'n/a' means Entra does not offer that control for "
+                      "that target — it is not a gap.")
+
+        derived = coverage.get("derived") or {}
+        shadowed = derived.get("shadowed_classes") or {}
+        unattributed = derived.get("unattributed_apps") or {}
+        derived_rows: list[list[Any]] = [
+            ["Shadowed class", class_labels.get(cid, cid),
+             ", ".join((shadowed.get("detail") or {}).get(cid, []))]
+            for cid in (shadowed.get("classes") or [])
+        ]
+        if unattributed.get("measured"):
+            derived_rows += [["Unattributed application", a.get("name", ""), a.get("app_id", "")]
+                             for a in (unattributed.get("apps") or [])]
+        else:
+            # NOT the same as "none found", and must not export as an empty section.
+            derived_rows.append(["Unattributed applications", "NOT MEASURED",
+                                 str(unattributed.get("reason") or "")])
+        wb.sheet("CA derived exposure", ["Kind", "Subject", "Detail"], derived_rows)
+
         wb.sheet(
             "CA cohorts", ["Cohort", "Key", "Size"],
             [[c.get("label", ""), c.get("key", ""), c.get("size", "")]

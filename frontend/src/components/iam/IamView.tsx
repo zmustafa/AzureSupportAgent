@@ -13,13 +13,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { formatError } from "../../utils/format";
-import { migratePersistedKey, usePersistedState } from "../../utils/persistedState";
+import { CONNECTION_KEY, migrateConnectionKeys, usePersistedState } from "../../utils/persistedState";
 import { Skeleton } from "../../utils/perf";
 import { IAM_NAV, type IamTab } from "../navConfig";
 import { ConnectionScopePicker } from "../ConnectionScopePicker";
 import { AccessGrid } from "./IamAccessGrid";
 import { DiagnosticsTab } from "./IamDiagnostics";
 import { EffectiveTab } from "./IamEffective";
+import { IamFlowTab } from "./IamFlowTab";
 import { EscalationTab } from "./IamEscalation";
 import { BypassTab } from "./IamBypass";
 import { CompareTab } from "./IamCompare";
@@ -35,13 +36,15 @@ import { RolesTab } from "./IamRoles";
 import { ScopesTab } from "./IamScopes";
 import { IAM_QUERY_KEYS, IamConnectionContext, RefreshConsole, useIamRefresh } from "./IamShared";
 
-// Renamed from /rbac. Carry the stored connection over once: losing it silently falls back to
-// the DEFAULT connection, so the reader could end up looking at another tenant without noticing.
-migratePersistedKey("azsup.rbac.connectionId", "azsup.iam.connectionId");
+// Renamed from /rbac, and later folded into the SHARED connection selection: a tenant switch is
+// a statement about the session, not about one page. Losing the stored value silently falls back
+// to the DEFAULT connection, so the reader could end up looking at another tenant without
+// noticing - hence the migration rather than a reset.
+migrateConnectionKeys();
 
 export function IamPanel({ tab = "overview" }: { tab?: IamTab }) {
   // The connection lives here so the provider can wrap everything that reads it.
-  const [connectionId, setConnectionId] = usePersistedState("azsup.iam.connectionId", "");
+  const [connectionId, setConnectionId] = usePersistedState(CONNECTION_KEY, "");
   return (
     <IamConnectionContext.Provider value={connectionId}>
       <IamPanelBody tab={tab} connectionId={connectionId} setConnectionId={setConnectionId} />
@@ -189,6 +192,8 @@ function IamPanelBody({
         <AccessGrid tab="effective" initialPrivOnly={tab === "privileged"} />
       ) : tab === "evaluate" ? (
         <EffectiveTab />
+      ) : tab === "accessmap" ? (
+        <IamFlowTab />
       ) : tab === "escalation" ? (
         <EscalationTab />
       ) : tab === "bypass" ? (
@@ -215,3 +220,4 @@ function IamPanelBody({
     </div>
   );
 }
+

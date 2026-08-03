@@ -1,0 +1,265 @@
+{
+  "version": "v1",
+  "generated_note": "Application-class taxonomy for Conditional Access coverage analysis. Versioned so a historical snapshot analysed today produces the same classes it did when it was taken.",
+  "sources": {
+    "targeting": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-cloud-apps",
+    "office365_contents": "https://learn.microsoft.com/en-us/entra/identity/conditional-access/reference-office-365-application-contents",
+    "first_party": "https://learn.microsoft.com/en-us/troubleshoot/entra/entra-id/governance/verify-first-party-apps-sign-in"
+  },
+  "confidence_levels": {
+    "verified": "The identifier is published on Microsoft Learn; `source` names the page.",
+    "supplied": "Provided by the operator of this repository and not found on a Learn page during authoring. Treated as a HINT only — membership still resolves from the tenant's own service principals.",
+    "tenant_resolved": "No static identifier. Membership comes entirely from the tenant's own service principals, which is what Microsoft Learn instructs (it publishes the Office 365 suite BY NAME and tells you to look up ids in your own tenant)."
+  },
+  "notes": [
+    "Microsoft Graph is an UMBRELLA resource and cannot be targeted individually in a Conditional Access policy — only via All resources. Source: targeting page, 'Microsoft cloud applications'.",
+    "The Microsoft Admin Portals grouping does NOT include the backend services those portals call. That gap is the whole point of the management_api_gap detector. Source: targeting page, 'Microsoft Admin Portals'.",
+    "Conditional Access supports exactly two user actions: register security information, and register or join devices. Source: targeting page, 'User actions'.",
+    "For the 'Register or join devices' user action, ONLY the MFA and authentication-strength controls are available; every other grant is disabled by Entra. Cells for other controls on that class are therefore n/a, not gaps. Source: targeting page, 'User actions'.",
+    "Authentication contexts are c1..c99 (99 maximum). Source: targeting page, 'Authentication context'."
+  ],
+  "classes": [
+    {
+      "id": "all_cloud_apps",
+      "label": "All cloud apps",
+      "basis": "The `All` target. A policy here covers every resource unless a resource is explicitly excluded.",
+      "derived": false,
+      "order": 10,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "office365_bundle",
+      "label": "Office 365 bundle",
+      "basis": "The `Office365` preset. Resolved SEPARATELY from its member apps — the divergence between the bundle and its members is what this class exists to expose.",
+      "derived": false,
+      "order": 20,
+      "members": [],
+      "members_note": "Deliberately empty. Microsoft defines the Office 365 suite's membership and does not publish stable GUIDs for it — the Learn page lists the apps BY NAME and instructs you to resolve the ids in your own tenant with Get-MgServicePrincipal. Hard-coding GUIDs here would be inventing data; the names below are what Learn actually publishes, so membership is resolved against this tenant's own service principals.",
+      "name_patterns": [
+        "office 365 exchange online",
+        "office 365 sharepoint online",
+        "office 365 search service",
+        "office 365 yammer",
+        "microsoft teams",
+        "microsoft forms",
+        "microsoft planner",
+        "microsoft stream",
+        "microsoft to-do",
+        "microsoft bookings",
+        "microsoft flow",
+        "microsoft powerapps",
+        "power bi",
+        "onedrive",
+        "office delve",
+        "office online",
+        "sway",
+        "skype for business online",
+        "microsoft 365 common data service"
+      ]
+    },
+    {
+      "id": "collaboration_content",
+      "label": "Collaboration & content",
+      "basis": "SharePoint Online, OneDrive, Teams, Exchange Online — the data-exfiltration surface, where session controls matter and not only MFA.",
+      "derived": false,
+      "order": 30,
+      "members": [
+        {
+          "app_id": "00000003-0000-0ff1-ce00-000000000000",
+          "name": "Office 365 SharePoint Online",
+          "confidence": "verified",
+          "source": "office365_contents"
+        },
+        {
+          "app_id": "00000002-0000-0ff1-ce00-000000000000",
+          "name": "Office 365 Exchange Online",
+          "confidence": "verified",
+          "source": "office365_contents"
+        },
+        {
+          "app_id": "cc15fd57-2c6c-4117-a88c-83b1d56b4bbe",
+          "name": "Microsoft Teams",
+          "confidence": "supplied",
+          "source": "operator",
+          "verify_note": "Not published on the Learn pages consulted; Learn lists 'Microsoft Teams' by NAME in the Office 365 suite and directs you to resolve the id in your own tenant. Verify before relying on the id alone."
+        }
+      ],
+      "name_patterns": [
+        "office 365 sharepoint online",
+        "office 365 exchange online",
+        "microsoft teams",
+        "onedrive"
+      ]
+    },
+    {
+      "id": "admin_planes",
+      "label": "Admin planes",
+      "basis": "The Microsoft Admin Portals preset plus the individual admin centres. Highest blast radius in the tenant.",
+      "derived": false,
+      "order": 40,
+      "members": [
+        {
+          "app_id": "497effe9-df71-4043-a8bb-14cf78c4b63b",
+          "name": "Exchange Admin Center",
+          "confidence": "verified",
+          "source": "targeting"
+        },
+        {
+          "app_id": "c44b4083-3bb0-49c1-b47d-974e53cbdf3c",
+          "name": "Azure portal",
+          "confidence": "verified",
+          "source": "targeting",
+          "verify_note": "Learn notes this app id also covers the Microsoft Entra admin center and the Microsoft Engage Center."
+        },
+        {
+          "app_id": "00000006-0000-0ff1-ce00-000000000000",
+          "name": "Microsoft Office 365 Portal",
+          "confidence": "verified",
+          "source": "targeting"
+        },
+        {
+          "app_id": "80ccca67-54bd-44ab-8625-4b79c4dc7775",
+          "name": "Microsoft 365 Security and Compliance Center",
+          "confidence": "verified",
+          "source": "targeting"
+        }
+      ],
+      "name_patterns": [
+        "admin center",
+        "admin centre",
+        "azure portal",
+        "microsoft 365 admin",
+        "intune",
+        "security and compliance"
+      ]
+    },
+    {
+      "id": "management_apis",
+      "label": "Management & automation APIs",
+      "basis": "Azure Service Management API, Microsoft Graph and the other first-party management APIs present in the tenant. Frequently the unprotected back door when only the portals are covered.",
+      "derived": false,
+      "order": 50,
+      "members": [
+        {
+          "app_id": "797f4846-ba00-4fd7-ba43-dac1f8f63013",
+          "name": "Windows Azure Service Management API",
+          "confidence": "verified",
+          "source": "targeting",
+          "verify_note": "Learn: targeting this app enforces policy for tokens issued to Azure Resource Manager, the Azure portal, Azure Data Lake, the Application Insights API and the Log Analytics API. It no longer covers Azure DevOps."
+        },
+        {
+          "app_id": "00000003-0000-0000-c000-000000000000",
+          "name": "Microsoft Graph",
+          "confidence": "verified",
+          "source": "targeting",
+          "verify_note": "UMBRELLA resource — cannot be targeted individually in a policy; only reachable via All resources."
+        },
+        {
+          "app_id": "00000002-0000-0000-c000-000000000000",
+          "name": "Windows Azure Active Directory (Azure AD Graph)",
+          "confidence": "verified",
+          "source": "targeting",
+          "verify_note": "Learn: an All-resources policy WITH exclusions maps low-privilege directory scopes to this resource. Rollout of that enforcement change began March 2026."
+        }
+      ],
+      "name_patterns": [
+        "azure service management",
+        "microsoft graph",
+        "azure active directory",
+        "log analytics",
+        "application insights",
+        "data lake",
+        "key vault"
+      ]
+    },
+    {
+      "id": "legacy_protocols",
+      "label": "Legacy auth surface",
+      "basis": "Derived from clientAppTypes (exchangeActiveSync, other) rather than from any app id. Covers EWS, POP, IMAP, SMTP AUTH and MAPI.",
+      "derived": false,
+      "client_app_based": true,
+      "order": 60,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "identity_lifecycle",
+      "label": "Device & identity lifecycle",
+      "basis": "The two Conditional Access user actions: register or join devices, and register security information. Not apps — and the most commonly missing policy.",
+      "derived": false,
+      "user_action_based": true,
+      "order": 70,
+      "user_actions": [
+        "urn:user:registerdevice",
+        "urn:user:registersecurityinfo"
+      ],
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "third_party_saas",
+      "label": "Third-party SaaS",
+      "basis": "Service principals owned by a tenant that is neither this tenant nor a Microsoft publisher tenant. The long tail, and the real coverage gap.",
+      "derived": false,
+      "tenant_resolved": true,
+      "order": 80,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "custom_lob",
+      "label": "Custom LOB apps",
+      "basis": "Service principals whose owning tenant is this tenant — the organisation's own app registrations. Often zero policy coverage.",
+      "derived": false,
+      "tenant_resolved": true,
+      "order": 90,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "scoped_constructs",
+      "label": "App-filter / auth-context scoped",
+      "basis": "applicationFilter and authentication contexts c1..c99. Signals maturity, and is also a source of false-looking coverage.",
+      "derived": false,
+      "order": 100,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "unattributed_apps",
+      "label": "Unattributed apps",
+      "basis": "Service principals with sign-in activity in the window that no policy matches, or that only an All-cloud-apps policy matches while excluding them.",
+      "derived": true,
+      "requires_signin_activity": true,
+      "order": 110,
+      "members": [],
+      "name_patterns": []
+    },
+    {
+      "id": "shadowed_classes",
+      "label": "Shadowed classes",
+      "basis": "Classes where every matching policy is disabled or report-only — the control exists on paper and enforces nothing.",
+      "derived": true,
+      "order": 120,
+      "members": [],
+      "name_patterns": []
+    }
+  ],
+  "microsoft_publisher_tenants": [
+    "f8cdef31-a31e-4b4a-93e4-5f571e91255a",
+    "72f988bf-86f1-41af-91ab-2d7cd011db47"
+  ],
+  "preset_targets": {
+    "All": "all_cloud_apps",
+    "Office365": "office365_bundle",
+    "MicrosoftAdminPortals": "admin_planes"
+  },
+  "control_applicability": {
+    "identity_lifecycle": [
+      "mfa",
+      "auth_strength",
+      "block"
+    ]
+  }
+}

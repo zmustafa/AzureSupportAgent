@@ -41,6 +41,9 @@ def _case_dict(c: Case) -> dict[str, Any]:
         "workload_name": c.workload_name or "",
         "connection_id": c.connection_id or "",
         "architecture_id": c.architecture_id or "",
+        "principal_id": c.principal_id or "",
+        "principal_name": c.principal_name or "",
+        "principal_kind": c.principal_kind or "",
         "finding_uids": c.finding_uids or [],
         "change_event_ids": c.change_event_ids or [],
         "investigation_chat_id": c.investigation_chat_id or "",
@@ -76,6 +79,9 @@ class CaseCreate(BaseModel):
     workload_name: str | None = None
     connection_id: str | None = None
     architecture_id: str | None = None
+    principal_id: str | None = None
+    principal_name: str | None = None
+    principal_kind: str | None = None
     investigation_chat_id: str | None = None
     investigation_message_id: str | None = None
     finding_uids: list[str] | None = None
@@ -96,6 +102,9 @@ class CaseUpdate(BaseModel):
     workload_id: str | None = None
     workload_name: str | None = None
     architecture_id: str | None = None
+    principal_id: str | None = None
+    principal_name: str | None = None
+    principal_kind: str | None = None
     investigation_chat_id: str | None = None
     investigation_message_id: str | None = None
     remediation_task_id: str | None = None
@@ -123,13 +132,14 @@ async def case_meta(_: Principal = Depends(read_dep)) -> dict:
 async def list_cases(
     status: str | None = Query(None),
     workload_id: str | None = Query(None),
+    principal_id: str | None = Query(None),
     open_only: bool = Query(False),
     principal: Principal = Depends(read_dep),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     cases = await store.list_cases(
         db, principal.tenant_id, status=status, workload_id=workload_id,
-        include_resolved=not open_only,
+        principal_id=principal_id, include_resolved=not open_only,
     )
     open_count = sum(1 for c in cases if c.status in ("open", "investigating", "remediating", "verifying"))
     return {"cases": [_case_dict(c) for c in cases], "summary": {"total": len(cases), "open": open_count}}
@@ -148,6 +158,8 @@ async def create_case(
         title=payload.title, summary=payload.summary or "", severity=payload.severity,
         workload_id=payload.workload_id, workload_name=payload.workload_name,
         connection_id=payload.connection_id, architecture_id=payload.architecture_id,
+        principal_id=payload.principal_id, principal_name=payload.principal_name,
+        principal_kind=payload.principal_kind,
         investigation_chat_id=payload.investigation_chat_id,
         investigation_message_id=payload.investigation_message_id,
         finding_uids=payload.finding_uids, change_event_ids=payload.change_event_ids,

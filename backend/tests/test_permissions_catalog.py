@@ -110,9 +110,18 @@ def test_auditor_is_read_only_oversight():
     auditor = set(roles["auditor"])
     assert set(READ_PERMISSIONS) <= auditor  # can view every read surface
     assert {"chat.use", "monitor.view", "audit.read"} <= auditor
-    # No write/run/manage capabilities leak into the auditor role.
+    # No write/run/manage capabilities leak into the auditor role. The allowlist is for reads
+    # that cannot be spelled ".read": `investigate.activity` reads a named person's sign-in and
+    # audit history, held apart from the structural reads precisely BECAUSE it is sensitive —
+    # but proving who held privileged access in a period and what they did with it is the
+    # auditor's job, so withholding it would defeat the role.
+    non_read_reads = {"chat.use", "monitor.view", "audit.read", "investigate.activity"}
     for p in auditor:
-        assert p.endswith(".read") or p in {"chat.use", "monitor.view", "audit.read"}, p
+        assert p.endswith(".read") or p in non_read_reads, p
+    # The guard that actually matters: nothing that mutates, runs or approves.
+    for p in auditor:
+        assert not any(p.endswith(suffix) for suffix in
+                       (".write", ".manage", ".approve", ".delete", ".exec", ".run")), p
 
 
 def test_user_role_is_minimal_self_service():

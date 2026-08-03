@@ -79,6 +79,8 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Incident response", [
         ("cases.read", "View durable case files and their timelines"),
         ("cases.write", "Open, update, attach to, and resolve case files"),
+        ("investigate.read", "Investigate one identity: who it is, what it can reach, and how that changed"),
+        ("investigate.activity", "Read a named identity's sign-in, audit and activity history (behavioural data)"),
     ]),
     ("Observability", [
         ("monitor.view", "View the Monitor dashboard"),
@@ -174,8 +176,12 @@ _ADMIN_ONLY: set[str] = {
 _OPERATOR_PERMISSIONS: list[str] = [p for p in ALL_PERMISSIONS if p not in _ADMIN_ONLY]
 
 # Auditor = read-only oversight across the whole product (+ audit log + monitor + chat).
+# ``investigate.activity`` is named explicitly because it does NOT end in ``.read``: reading a
+# named person's sign-in and audit history is behavioural data, deliberately held apart from the
+# structural reads. The auditor is nevertheless the persona that feature exists for — proving who
+# held privileged access in a period and what they did with it is the job.
 _AUDITOR_PERMISSIONS: list[str] = list(dict.fromkeys(
-    ["chat.use", "monitor.view", "audit.read", *READ_PERMISSIONS]
+    ["chat.use", "monitor.view", "audit.read", "investigate.activity", *READ_PERMISSIONS]
 ))
 
 # Standard user = chat plus the self-service reads.

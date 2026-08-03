@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, streamEntraRefresh, type EntraPillar, type EntraPosture, type EntraProgress } from "../api";
 import { formatError } from "../utils/format";
-import { usePersistedState } from "../utils/persistedState";
+import { CONNECTION_KEY, usePersistedState } from "../utils/persistedState";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { ENTRA_NAV, type EntraTab } from "./navConfig";
 import { EntraCaView } from "./entra/EntraCaView";
@@ -12,6 +12,7 @@ import { EntraGovernanceView } from "./entra/EntraGovernanceView";
 import { EntraGraphView } from "./entra/EntraGraphView";
 import { EntraPrivilegedView } from "./entra/EntraPrivilegedView";
 import { EntraScannersView } from "./entra/EntraScannersView";
+import { EntraInvestigateView } from "./entra/EntraInvestigateView";
 import { EntraSignalsView } from "./entra/EntraSignalsView";
 import { EntraSetupView } from "./entra/EntraSetupView";
 import { Bar, CoverageBanner, EntraEmpty, FreshnessBadge, ScoreRing, SevBadge, StateChip } from "./entra/EntraShared";
@@ -98,7 +99,7 @@ function TabScroller({ activeId, children }: { activeId: string; children: React
 export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [connectionId, setConnectionId] = usePersistedState("azsup.entra.connectionId", "");
+  const [connectionId, setConnectionId] = usePersistedState(CONNECTION_KEY, "");
   const cid = connectionId || null;
 
   const [refreshing, setRefreshing] = useState(false);
@@ -250,6 +251,7 @@ export function EntraPanel({ tab = "posture" }: { tab?: EntraTab }) {
         {tab === "governance" && <EntraGovernanceView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "graph" && <EntraGraphView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
         {tab === "findings" && <EntraScannersView connectionId={cid} onOpenSetup={() => setTab("setup")} />}
+        {tab === "investigate" && <EntraInvestigateView connectionId={cid ?? ""} />}
         {tab === "setup" && <EntraSetupView connectionId={cid} />}
       </div>
     </div>

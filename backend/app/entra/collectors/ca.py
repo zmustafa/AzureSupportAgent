@@ -161,6 +161,12 @@ def _slim_policy(p: dict[str, Any]) -> dict[str, Any]:
             "exclude_apps": [str(x) for x in as_list(apps.get("excludeApplications"))],
             "user_actions": [str(x) for x in as_list(apps.get("includeUserActions"))],
             "auth_contexts": [str(x) for x in as_list(apps.get("includeAuthenticationContextClassReferences"))],
+            # Application FILTER (custom security attributes on the resource), distinct from the
+            # device filter below. Collected because a policy scoped this way looks like it
+            # targets nothing when you read `includeApplications` alone — which is how an
+            # attribute-scoped policy silently reads as "no application in scope".
+            "application_filter_mode": str(as_dict(apps.get("applicationFilter")).get("mode") or ""),
+            "application_filter_rule": str(as_dict(apps.get("applicationFilter")).get("rule") or ""),
             "client_app_types": [str(x) for x in as_list(conditions.get("clientAppTypes"))],
             "platforms_include": [str(x) for x in as_list(platforms.get("includePlatforms"))],
             "platforms_exclude": [str(x) for x in as_list(platforms.get("excludePlatforms"))],

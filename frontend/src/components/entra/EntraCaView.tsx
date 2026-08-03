@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -17,12 +17,14 @@ import {
   SevBadge,
   SortTh,
   StateChip,
+  type SortState,
   cmp,
   useEntraSorted,
   useSortState,
   useSubTabRoute,
 } from "./EntraShared";
 import { EntraSimulatorView } from "./EntraSimulatorView";
+import { EntraCaExposureView } from "./EntraCaExposure";
 
 /**
  * Conditional Access Command Center.
@@ -32,12 +34,36 @@ import { EntraSimulatorView } from "./EntraSimulatorView";
  * screen exists — so it states its own assumptions rather than presenting a number on trust.
  */
 
+/**
+ * Cell presentation.
+ *
+ * Every state carries a glyph as well as a colour. The grid is dense enough that colour alone
+ * would be the only carrier of meaning, which fails for roughly one in twelve male readers and
+ * disappears entirely in a printed or screenshotted report — and this screen exists to be put
+ * in front of other people.
+ *
+ * `n/a` is a first-class state, not a gap: Entra offers only MFA and authentication strength on
+ * the device-registration user action, so rendering the rest as uncovered would invent work
+ * nobody can do.
+ */
 const CELL_STYLE: Record<string, { chip: string; label: string; title: string }> = {
-  enforced: { chip: "bg-green-100 text-green-800", label: "✓", title: "Enforced for the whole cohort" },
-  partial: { chip: "bg-amber-100 text-amber-800", label: "◐", title: "Enforced for part of the cohort" },
-  report_only: { chip: "bg-sky-100 text-sky-700", label: "R", title: "Only a report-only policy applies — protects nobody" },
-  none: { chip: "bg-red-100 text-red-700", label: "✕", title: "No enforced policy applies this control" },
+  covered: { chip: "bg-green-100 text-green-800", label: "✓", title: "Enforced for the whole cohort and every application in the class" },
+  partial: { chip: "bg-amber-100 text-amber-800", label: "◐", title: "Enforced for only part of the cohort, or only some of the class's applications" },
+  report_only_only: { chip: "bg-sky-100 text-sky-700", label: "R", title: "Only a report-only policy applies — protects nobody" },
+  uncovered: { chip: "bg-red-100 text-red-700", label: "✕", title: "No enforced policy applies this control" },
+  "n/a": { chip: "bg-gray-100 text-gray-400", label: "–", title: "Entra does not offer this control for this target" },
 };
+
+/** The tooltip for a cell, stating both axes rather than only the user count. */
+function cellTitle(cell: EntraCaCell | undefined): string {
+  if (!cell) return CELL_STYLE.uncovered.title;
+  const style = CELL_STYLE[cell.state] ?? CELL_STYLE.uncovered;
+  if (cell.state === "n/a") return cell.reason || style.title;
+  const parts: string[] = [];
+  if (cell.users_total != null) parts.push(`${cell.users_covered ?? 0}/${cell.users_total} users`);
+  if (cell.apps_total) parts.push(`${cell.apps_covered ?? 0}/${cell.apps_total} apps`);
+  return parts.length ? `${style.title} — ${parts.join(", ")}` : style.title;
+}
 
 // ------------------------------------------------------------------------- sorting
 // Comparators live at module scope on purpose: one redefined on every render would be a new
@@ -148,6 +174,7 @@ export function EntraCaView({
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "coverage" && <CoverageTab connectionId={connectionId} onOpenSetup={onOpenSetup} />}
+        {tab === "exposure" && <EntraCaExposureView connectionId={connectionId} onOpenSetup={onOpenSetup} />}
         {tab === "policies" && <PoliciesTab connectionId={connectionId} />}
         {tab === "conflicts" && <ConflictsTab connectionId={connectionId} />}
         {tab === "breakglass" && <BreakGlassTab connectionId={connectionId} />}
@@ -235,55 +262,18 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
 
       {/* Cohort × application-class × control matrix. */}
       {data.app_classes.map((appClass) => (
-        <div key={appClass.key} className="overflow-hidden rounded-lg border bg-white">
-          <div className="border-b bg-gray-50 px-3 py-2 text-[13px] font-semibold text-gray-700">
-            {appClass.label}
-          </div>
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b bg-gray-50/50 text-left text-xs text-gray-500">
-                <SortTh label="Cohort" col="cohort" sort={matrixSort} setSort={setMatrixSort}
-                        firstDir={1} className="px-3" />
-                <SortTh label="Size" col="size" sort={matrixSort} setSort={setMatrixSort}
-                        className="px-2" />
-                {/* Control columns are the other axis of the matrix and are never reordered. */}
-                {data.controls.map((c) => (
-                  <th key={c.key} className="px-2 py-1.5 text-center font-medium">
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrixRows.map((row) => (
-                <tr key={row.cohort} className="border-b last:border-b-0">
-                  <td className="px-3 py-1.5 text-gray-800">{row.label}</td>
-                  <td className="px-2 py-1.5 text-gray-500">{row.size.toLocaleString()}</td>
-                  {data.controls.map((c) => {
-                    const key = `${appClass.key}|${c.key}`;
-                    const cellData: EntraCaCell | undefined = row.cells[key];
-                    const style = CELL_STYLE[cellData?.state ?? "none"];
-                    return (
-                      <td key={c.key} className="px-2 py-1.5 text-center">
-                        <button
-                          title={`${style.title}${cellData ? ` — ${cellData.covered}/${cellData.size}` : ""}`}
-                          onClick={() => setCell({ cohort: row.cohort, app_class: appClass.key, control: c.key })}
-                          disabled={!row.size}
-                          className={`inline-flex h-6 min-w-[2.25rem] items-center justify-center rounded px-1 text-xs font-semibold ${
-                            row.size ? style.chip : "bg-gray-50 text-gray-300"
-                          }`}
-                        >
-                          {row.size ? style.label : "—"}
-                        </button>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ClassMatrix
+          key={appClass.id}
+          appClass={appClass}
+          rows={matrixRows}
+          controls={data.controls}
+          sort={matrixSort}
+          setSort={setMatrixSort}
+          onOpenCell={setCell}
+        />
       ))}
+
+      <DerivedClasses data={data} />
 
       <div className="flex flex-wrap gap-3 text-xs text-gray-500">
         {Object.entries(CELL_STYLE).map(([k, v]) => (
@@ -297,6 +287,218 @@ function CoverageTab({ connectionId, onOpenSetup }: { connectionId: string | nul
       </div>
 
       {cell && <CellDrawer cell={cell} connectionId={connectionId} onClose={() => setCell(null)} />}
+    </div>
+  );
+}
+
+/**
+ * One application class's cohort × control grid.
+ *
+ * Extracted so each grid owns its own roving-tabindex state. The matrix is 7 cohorts × 14
+ * controls, and there are ten of them on the page: left as plain buttons that is roughly a
+ * thousand tab stops between the top of the screen and anything below it, which makes the page
+ * unusable by keyboard and by screen reader. Exactly one cell per grid is in the tab order and
+ * the arrow keys move within it, per the ARIA grid pattern.
+ */
+function ClassMatrix({
+  appClass,
+  rows,
+  controls,
+  sort,
+  setSort,
+  onOpenCell,
+}: {
+  appClass: EntraCaCoverage["app_classes"][number];
+  rows: CoverageRow[];
+  controls: EntraCaCoverage["controls"];
+  sort: SortState<CoverageKey>;
+  setSort: (s: SortState<CoverageKey>) => void;
+  onOpenCell: (c: { cohort: string; app_class: string; control: string }) => void;
+}) {
+  const [focus, setFocus] = useState({ row: 0, col: 0 });
+  const activeCellRef = useRef<HTMLButtonElement | null>(null);
+  // Only pull focus when the user actually drove the move with a key. Focusing on every
+  // render would steal the caret from whatever else the page is doing.
+  const shouldRefocus = useRef(false);
+
+  useEffect(() => {
+    if (shouldRefocus.current) {
+      activeCellRef.current?.focus();
+      shouldRefocus.current = false;
+    }
+  }, [focus]);
+
+  function onGridKeyDown(e: React.KeyboardEvent, rowIdx: number, colIdx: number) {
+    const lastRow = rows.length - 1;
+    const lastCol = controls.length - 1;
+    let next: { row: number; col: number } | null = null;
+    switch (e.key) {
+      case "ArrowRight": next = { row: rowIdx, col: Math.min(lastCol, colIdx + 1) }; break;
+      case "ArrowLeft": next = { row: rowIdx, col: Math.max(0, colIdx - 1) }; break;
+      case "ArrowDown": next = { row: Math.min(lastRow, rowIdx + 1), col: colIdx }; break;
+      case "ArrowUp": next = { row: Math.max(0, rowIdx - 1), col: colIdx }; break;
+      case "Home": next = { row: rowIdx, col: e.ctrlKey ? 0 : 0 }; break;
+      case "End": next = { row: rowIdx, col: lastCol }; break;
+      default: return;
+    }
+    e.preventDefault();
+    shouldRefocus.current = true;
+    setFocus(next);
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-white">
+      <div className="border-b bg-gray-50 px-3 py-2">
+        <div className="text-[13px] font-semibold text-gray-700">{appClass.label}</div>
+        {appClass.description && (
+          <div className="mt-0.5 text-xs text-gray-500">{appClass.description}</div>
+        )}
+      </div>
+      {/* The control axis is 14 wide. Scroll it rather than shrinking the glyphs to the point
+          where the ✓/◐/✕ distinction stops being legible. */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[64rem] text-[13px]">
+          <caption className="sr-only">
+            {appClass.label}: coverage by cohort and control. Use the arrow keys to move between
+            cells.
+          </caption>
+          <thead>
+            <tr className="border-b bg-gray-50/50 text-left text-xs text-gray-500">
+              <SortTh label="Cohort" col="cohort" sort={sort} setSort={setSort}
+                      firstDir={1} className="px-3" />
+              <SortTh label="Size" col="size" sort={sort} setSort={setSort} className="px-2" />
+              {/* Control columns are the other axis of the matrix and are never reordered. */}
+              {controls.map((c) => (
+                <th key={c.key} scope="col" className="px-2 py-1.5 text-center font-medium">
+                  {c.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIdx) => (
+              <tr key={row.cohort} className="border-b last:border-b-0">
+                <th scope="row" className="px-3 py-1.5 text-left font-normal text-gray-800">
+                  {row.label}
+                </th>
+                <td className="px-2 py-1.5 text-gray-500">{row.size.toLocaleString()}</td>
+                {controls.map((c, colIdx) => {
+                  const cellData: EntraCaCell | undefined = row.cells[`${appClass.id}|${c.key}`];
+                  const state = cellData?.state ?? "uncovered";
+                  const style = CELL_STYLE[state] ?? CELL_STYLE.uncovered;
+                  const inert = !row.size || state === "n/a";
+                  const isActive = rowIdx === focus.row && colIdx === focus.col;
+                  return (
+                    <td key={c.key} className="px-2 py-1.5 text-center">
+                      <button
+                        ref={isActive ? activeCellRef : undefined}
+                        title={cellTitle(cellData)}
+                        aria-label={`${row.label}, ${appClass.label}, ${c.label}: ${cellTitle(cellData)}`}
+                        tabIndex={isActive ? 0 : -1}
+                        onFocus={() => setFocus({ row: rowIdx, col: colIdx })}
+                        onKeyDown={(e) => onGridKeyDown(e, rowIdx, colIdx)}
+                        onClick={() =>
+                          onOpenCell({ cohort: row.cohort, app_class: appClass.id, control: c.key })
+                        }
+                        disabled={inert}
+                        className={`inline-flex h-6 min-w-[2.25rem] items-center justify-center rounded px-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-1 ${
+                          inert ? "bg-gray-50 text-gray-300" : style.chip
+                        }`}
+                      >
+                        {!row.size ? "—" : style.label}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The two classes that are conclusions rather than targets.
+ *
+ * They sit outside the matrix because no policy can name them, so a row of red cells against
+ * them would imply work that cannot be done. They are labelled "Derived" in text — not merely
+ * styled differently — because the distinction changes what the reader is supposed to do next.
+ */
+function DerivedClasses({ data }: { data: EntraCaCoverage }) {
+  const shadowed = data.derived?.shadowed_classes;
+  const unattributed = data.derived?.unattributed_apps;
+  const labelOf = (id: string) =>
+    data.app_classes.find((c) => c.id === id)?.label ?? id;
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="rounded-lg border bg-white p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold text-gray-700">Shadowed classes</span>
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+            Derived
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Application classes where policies exist but every one of them is disabled or
+          report-only. On a policy list these read as covered.
+        </p>
+        {shadowed?.classes?.length ? (
+          <ul className="mt-2 space-y-1 text-[13px]">
+            {shadowed.classes.map((cid) => (
+              <li key={cid}>
+                <span className="font-medium text-gray-800">{labelOf(cid)}</span>
+                <span className="ml-1 text-gray-500">
+                  — {(shadowed.detail?.[cid] ?? []).join(", ") || "no enforcing policy"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="mt-2 text-[13px] text-emerald-700">
+            Every class with a policy has at least one enforcing.
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border bg-white p-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold text-gray-700">Unattributed applications</span>
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+            Derived
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Applications with recent sign-in activity that no enforced policy covers.
+        </p>
+        {/* "Not measured" must never render as "none found". An empty list here would be the
+            most reassuring possible way to present data nobody collected. */}
+        {!unattributed?.measured ? (
+          <div className="mt-2 rounded bg-amber-50 p-2 text-[13px] text-amber-900">
+            <span className="font-medium">Not measured. </span>
+            {unattributed?.reason ||
+              "Sign-in activity was not collected for this tenant, so unattributed applications cannot be identified."}
+          </div>
+        ) : unattributed.total ? (
+          <>
+            <div className="mt-2 text-[13px] font-medium text-red-700">
+              {unattributed.total.toLocaleString()} application
+              {unattributed.total === 1 ? "" : "s"} signed into with no enforced policy
+            </div>
+            <ul className="mt-1 space-y-0.5 text-[13px] text-gray-700">
+              {unattributed.apps.slice(0, 10).map((a) => (
+                <li key={a.app_id} className="truncate" title={a.app_id}>{a.name}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div className="mt-2 text-[13px] text-emerald-700">
+            Every application with recent sign-in activity is covered by an enforced policy.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -330,14 +532,41 @@ function CellDrawer({
             <div className="text-gray-500">
               {q.data.cohort} · {cell.app_class} · {cell.control}
             </div>
-            <div className="mt-2 font-medium">
-              {q.data.cell.covered} of {q.data.cell.size} covered
-            </div>
-            {q.data.cell.policies.length > 0 && (
+            {q.data.cell.state === "n/a" ? (
+              <div className="mt-2 rounded bg-gray-50 p-2 text-gray-600">
+                {q.data.cell.reason || "Entra does not offer this control for this target."}
+              </div>
+            ) : (
+              <div className="mt-2 space-y-0.5 font-medium">
+                <div>
+                  {q.data.cell.users_covered ?? 0} of {q.data.cell.users_total ?? 0} users covered
+                </div>
+                {/* The application axis. A cell can reach every user and still miss half the
+                    class — that is the whole reason this second number exists. */}
+                {!!q.data.cell.apps_total && (
+                  <div>
+                    {q.data.cell.apps_covered ?? 0} of {q.data.cell.apps_total} applications covered
+                  </div>
+                )}
+              </div>
+            )}
+            {q.data.apps_missing.length > 0 && (
+              <div className="mt-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  Applications not reached ({q.data.cell.apps_missing_total ?? q.data.apps_missing.length})
+                </div>
+                <ul className="mt-1 space-y-0.5 text-gray-700">
+                  {q.data.apps_missing.map((a) => (
+                    <li key={a.app_id} className="truncate" title={a.app_id}>{a.name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(q.data.cell.policies ?? []).length > 0 && (
               <div className="mt-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Policies applying</div>
                 <ul className="mt-1 list-disc pl-5 text-gray-700">
-                  {q.data.cell.policies.map((p) => (
+                  {(q.data.cell.policies ?? []).map((p) => (
                     <li key={p}>{p}</li>
                   ))}
                 </ul>

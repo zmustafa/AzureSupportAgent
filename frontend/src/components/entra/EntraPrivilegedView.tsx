@@ -6,6 +6,7 @@ import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
 import { PimReviewPanel } from "../PimReviewView";
 import { EntraActivationsView } from "./EntraActivationsView";
+import { InvestigateLink } from "./InvestigateLink";
 import {
   Bar, EntraEmpty, SevBadge, SortScopeNote, SortTh, cmp, useEntraSorted,
   useSortState, useSubTabRoute,
@@ -319,6 +320,8 @@ function Assignments({ connectionId }: { connectionId: string | null }) {
                   {a.source === "group" && (
                     <span className="ml-1 text-xs text-gray-400">via {a.source_group_name}</span>
                   )}
+                  <InvestigateLink principalId={a.principal_id}
+                                   label={a.principal_name || a.principal_upn || a.principal_id} />
                 </td>
                 <td className="px-2 py-1.5 text-gray-600">{a.principal_type}</td>
                 <td className="px-2 py-1.5 text-gray-800">{a.role_name}</td>

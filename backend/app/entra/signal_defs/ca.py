@@ -68,7 +68,7 @@ def _no_policies(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any
 
 
 def _cohort_uncovered(data: dict[str, Any], cohort_key: str, signal_id: str, severity: str,
-                      control: str = "mfa", app_class: str = "all") -> list[dict[str, Any]]:
+                      control: str = "mfa", app_class: str = "all_cloud_apps") -> list[dict[str, Any]]:
     analysis = _analysis(data)
     coverage = analysis.get("coverage") or {}
     row = next((r for r in coverage.get("matrix") or [] if r.get("cohort") == cohort_key), None)
@@ -85,7 +85,7 @@ def _cohort_uncovered(data: dict[str, Any], cohort_key: str, signal_id: str, sev
         title=f"{_name(data, uid)} is not covered by any enforced Conditional Access policy requiring MFA",
         detail="No enabled policy applies an MFA control to this principal for all cloud apps.",
         evidence={"cohort": row.get("label"), "cohort_size": row.get("size"),
-                  "covered": cell.get("covered"), "cell_state": cell.get("state")},
+                  "covered": cell.get("users_covered"), "cell_state": cell.get("state")},
         portal_link=model.portal_user(uid),
     ) for uid in sample]
 

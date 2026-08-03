@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousWithinConnection } from "../utils/queryPlaceholder";
+import { CONNECTION_KEY, usePersistedState } from "../utils/persistedState";
 import { useDebounced } from "../utils/perf";
 import { AzureIcon } from "./AzureIcon";
 import {
@@ -81,7 +83,7 @@ function effectTone(e: string): string {
 export function PolicyPanel({ tab }: { tab: PolicyTab }) {
   const navigate = useNavigate();
   const goTab = (t: PolicyTab) => navigate(`/policy/${t}`);
-  const [connectionId, setConnectionId] = useState<string>("");
+  const [connectionId, setConnectionId] = usePersistedState<string>(CONNECTION_KEY, "");
   const [withCompliance, setWithCompliance] = useState(false);
   // The selected workload scope is persisted (sessionStorage) so it survives a page refresh and
   // an explicit "Clear scope" stays cleared. "" = whole tenant/connection.
@@ -166,7 +168,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
     retry: false,
     staleTime: Infinity, // never auto-refetch; only Refresh/Scan re-pull from Azure
     gcTime: 60 * 60_000,
-    placeholderData: keepPreviousData, // keep showing data while compliance toggles
+    placeholderData: keepPreviousWithinConnection(effectiveConn, (key: readonly unknown[]) => key[1]), // keep data while compliance toggles - but not across tenants
   });
   const inv = invQ.data;
   // Prefer the server's "fetched_at" (when Azure was actually queried) over the client time.
