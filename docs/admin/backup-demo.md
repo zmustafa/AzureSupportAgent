@@ -2,7 +2,7 @@
 layout: default
 title: Backup & Restore and Demo Data
 parent: Administration
-nav_order: 10
+nav_order: 11
 description: Export or import tenant configuration safely and manage synthetic demonstration data.
 permalink: /admin/backup-demo/
 ---

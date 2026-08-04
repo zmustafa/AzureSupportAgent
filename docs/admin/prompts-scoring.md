@@ -2,7 +2,7 @@
 layout: default
 title: System Prompts & Assessments
 parent: Administration
-nav_order: 6
+nav_order: 7
 description: Govern system prompts, assessment weights and bands, execution tuning, and architecture colors.
 permalink: /admin/prompts-scoring/
 ---

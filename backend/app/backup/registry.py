@@ -93,6 +93,10 @@ FILE_SECTIONS: tuple[FileSection, ...] = (
     # --- Core configuration (no secrets) -----------------------------------------
     FileSection("app_settings", "Application settings", "config", "app_settings.json"),
     FileSection("auth_settings", "Security policy settings", "config", "auth_settings.json"),
+    # Network access control (IP allowlist). Carries no secrets — a CIDR is not a credential —
+    # but it IS security-relevant configuration, so losing it on a restore would silently drop
+    # the allowlist and leave the restored deployment open.
+    FileSection("network_access", "Network access control (IP allowlist)", "config", "network_access.json"),
     FileSection("ai_prompts", "System prompt overrides", "config", "ai_prompts.json"),
     FileSection("custom_agents", "Sub agents", "config", "custom_agents.json", "agents"),
     FileSection("workbooks", "Workbooks", "config", "workbooks.json", "workbooks"),
@@ -434,10 +438,37 @@ def _preserve_secrets(spec: FileSection, incoming: dict[str, Any], local: dict[s
     return out
 
 
+def _defuse_network_access(spec: FileSection, payload: Any) -> Any:
+    """Never let a RESTORE be the thing that locks an operator out of the application.
+
+    A backup taken on one deployment carries that deployment's allowlist. Restoring it
+    somewhere else — different office, different egress IP, a colleague's tenant — with
+    ``mode: enforce`` intact would start refusing the very administrator performing the
+    restore, on the very next request, from a screen they can no longer load.
+
+    The rules are preserved exactly; only the mode is downgraded to ``monitor``, so the
+    restored policy is visible and one click away from being enforced once its ranges have
+    been confirmed against the new environment.
+    """
+    if spec.id != "network_access" or not isinstance(payload, dict):
+        return payload
+    if payload.get("mode") != "enforce":
+        return payload
+    defused = dict(payload)
+    defused["mode"] = "monitor"
+    defused["confirm_by"] = None
+    logger.warning(
+        "Restore: network access was 'enforce' in the backup; imported as 'monitor' so the "
+        "restore cannot lock out the operator. Review the ranges, then enforce."
+    )
+    return defused
+
+
 def _restore_file(spec: FileSection, payload: Any, mode: str) -> dict[str, int]:
     """Apply a file section's payload to disk under the chosen conflict mode."""
     if payload is None:
         return {"created": 0, "updated": 0, "skipped": 0}
+    payload = _defuse_network_access(spec, payload)
     local = _read_json(spec.filename)
     local_exists = local is not None
 

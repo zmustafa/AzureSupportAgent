@@ -138,6 +138,33 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class IpBlockEvent(Base):
+    """Aggregated record of requests refused (or that would be refused) by the IP allowlist.
+
+    Deliberately NOT the audit log. A single internet scanner produces tens of thousands of
+    hits, which would bury genuine operator actions and make the audit view useless; this table
+    also needs its own retention and its own pagination for the "Recent blocks" panel.
+
+    One row per source IP per flush window, not one row per request, for the same reason.
+
+    ``mode`` distinguishes a real block from a monitor-mode *would-be* block. Those two are
+    opposite facts about the system and must never be conflated — a monitor-mode entry means
+    "this WOULD have been refused if you were enforcing", and reading it as a block would make
+    the whole point of monitor mode misleading.
+    """
+
+    __tablename__ = "ip_block_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    ip: Mapped[str] = mapped_column(String(64), index=True)
+    # "enforce" = actually refused. "monitor" = would have been refused.
+    mode: Mapped[str] = mapped_column(String(16), default="enforce", index=True)
+    hits: Mapped[int] = mapped_column(Integer, default=1)
+    last_path: Mapped[str] = mapped_column(String(512), default="")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class AlertManagerChange(Base):
     """Approval-gated Azure Monitor mutation with encrypted before/desired state.
 

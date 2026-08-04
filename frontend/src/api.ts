@@ -5227,6 +5227,22 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // --- Network access control (IP allowlist) ---
+  firewallConfig: () => http<FirewallConfig>("/admin/firewall"),
+  updateFirewall: (body: { mode: string; rules: FirewallRuleIn[] }) =>
+    http<FirewallConfig>("/admin/firewall", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  confirmFirewall: () =>
+    http<FirewallConfig>("/admin/firewall/confirm", { method: "POST", body: "{}" }),
+  firewallBlocks: (limit = 25, offset = 0) =>
+    http<{ total: number; items: FirewallBlock[] }>(
+      `/admin/firewall/blocks?limit=${limit}&offset=${offset}`,
+    ),
+  clearFirewallBlocks: () =>
+    http<{ ok: boolean }>("/admin/firewall/blocks", { method: "DELETE" }),
+
   // --- Workbooks (az / KQL / PowerShell snippets, AI'fied) ---
   workbooks: () => http<{ workbooks: Workbook[] }>("/workbooks"),
   upsertWorkbook: (body: Partial<Workbook>) =>
@@ -11204,6 +11220,49 @@ export interface AuthPolicies {
   session_absolute_minutes: number;
   sso_auto_provision: boolean;
   sso_default_role: string;
+}
+
+/** Network access control (IP allowlist). See /admin/firewall. */
+export type FirewallMode = "off" | "monitor" | "enforce";
+
+export interface FirewallRuleIn {
+  cidr: string;
+  label: string;
+  enabled: boolean;
+}
+
+export interface FirewallRule extends FirewallRuleIn {
+  /** Human summary of the rule's breadth, e.g. "256 addresses" — derived server-side. */
+  scope: string;
+  valid: boolean;
+  created_by?: string;
+  created_at?: string;
+}
+
+export interface FirewallConfig {
+  mode: FirewallMode;
+  /** Mode after break-glass and the commit-confirm timer are applied. May differ from `mode`. */
+  effective_mode: FirewallMode;
+  rules: FirewallRule[];
+  /** ISO instant at which an unconfirmed `enforce` reverts to `monitor`. */
+  confirm_by: string | null;
+  /** The caller's address AS THE SERVER RESOLVED IT — not what the browser believes. */
+  your_ip: string | null;
+  your_ip_covered: boolean;
+  your_ip_rule: string | null;
+  break_glass_active: boolean;
+  confirm_window_minutes: number;
+}
+
+export interface FirewallBlock {
+  id: string;
+  ip: string;
+  /** "enforce" = actually refused. "monitor" = WOULD have been refused. Never conflate them. */
+  mode: FirewallMode;
+  hits: number;
+  last_path: string;
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 export interface ConnectorFieldMeta {

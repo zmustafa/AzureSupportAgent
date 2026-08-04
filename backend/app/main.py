@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import (
@@ -34,6 +35,7 @@ from app.api import (
     dnsdebug,
     entra,
     evidence,
+    firewall,
     fmea,
     graph,
     iam,
@@ -462,6 +464,85 @@ class _SecurityHeaders:
         await self._app(scope, receive, _send)
 
 
+# ------------------------------------------------------- network access control (IP allowlist)
+#
+# Refuses requests from sources outside the configured allowlist BEFORE authentication runs, so
+# an unknown caller never reaches the sign-in page and cannot attempt credentials at all. The
+# existing per-IP lockout is reactive — it responds after failures; this stops the attempt.
+#
+# ORDERING (verified, not assumed): Starlette's `add_middleware` INSERTS AT THE FRONT of
+# `user_middleware`, and the stack is built so the FIRST entry is OUTERMOST — i.e. the LAST
+# middleware registered runs FIRST. This class is therefore registered BEFORE `_SecurityHeaders`
+# so that it ends up INSIDE it, which is what lets a 403 from here still carry CSP/HSTS/nosniff.
+# `test_netaccess.py` asserts this ordering, because a refactor that moved this outside the
+# header middleware, or after authentication, would weaken it with no other visible symptom.
+class _IpAllowlist:
+    """Enforce the configured IP allowlist.
+
+    Exempt paths are ONLY the platform probes and the build id. Everything else — including
+    `/api/auth/login`, the SSO routes and the SPA shell — is subject to the allowlist, because
+    keeping unknown sources away from the sign-in page is the entire purpose of the feature.
+    """
+
+    #: Never blocked. `/healthz` and `/readyz` are the Container Apps liveness/readiness probes;
+    #: blocking them would kill the revision and take the app down far more effectively than any
+    #: attacker. `/version` is a public build id the SPA polls.
+    EXEMPT_PATHS = frozenset({"/healthz", "/readyz", "/version"})
+
+    def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
+        self._app = app
+
+    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope.get("type") != "http" or scope.get("path", "") in self.EXEMPT_PATHS:
+            await self._app(scope, receive, send)
+            return
+
+        from app.core import netaccess
+
+        mode = netaccess.effective_mode()
+        if mode == "off":
+            await self._app(scope, receive, send)
+            return
+
+        from app.core.clientip import client_ip
+        from app.core.netaccess_events import record
+
+        cfg = netaccess.load_config()
+        # A lightweight Request wrapper: `client_ip` only needs `.client` and `.headers`, and
+        # building a full Starlette Request on every call would be wasted work on the hot path.
+        ip = client_ip(_ScopeRequest(scope))
+        if netaccess.matches(ip, cfg.get("rules", [])):
+            await self._app(scope, receive, send)
+            return
+
+        record(ip or "unknown", mode, scope.get("path", ""))
+        if mode == "monitor":
+            # Recorded, deliberately NOT blocked. This is what makes it safe to discover the
+            # right rules before committing to them.
+            await self._app(scope, receive, send)
+            return
+
+        # Bare 403: do not confirm what is here, do not name the feature, do not tell the caller
+        # their address is not on a list. A blocked scanner should learn nothing.
+        resp = PlainTextResponse("Forbidden", status_code=403)
+        await resp(scope, receive, send)
+
+
+class _ScopeRequest:
+    """Minimal `.client` / `.headers` view over a raw ASGI scope."""
+
+    __slots__ = ("client", "headers")
+
+    def __init__(self, scope) -> None:  # type: ignore[no-untyped-def]
+        peer = scope.get("client")
+        self.client = SimpleNamespace(host=peer[0]) if peer else None
+        self.headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])
+        }
+
+
+app.add_middleware(_IpAllowlist)
+
 app.add_middleware(_SecurityHeaders)
 
 
@@ -547,6 +628,7 @@ api.include_router(chats.router)
 api.include_router(charts.router)
 api.include_router(admin.router)
 api.include_router(admin_demo.router)
+api.include_router(firewall.router)
 api.include_router(connections.router)
 api.include_router(connectors.router)
 api.include_router(automations.router)

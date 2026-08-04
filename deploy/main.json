@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "9926749449610323461"
+      "templateHash": "3933550349967999096"
     }
   },
   "parameters": {
@@ -126,6 +126,42 @@
         "description": "VNet address space (CIDR) used only when Private networking = Yes. Pick a range that does not overlap your existing networks."
       }
     },
+    "allowedClientIpRanges": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Optional. Client IP ranges (CIDR) permitted to reach the application, enforced at the Container Apps ingress before any traffic reaches the container. Leave empty to allow the whole internet. Each entry: { name, description, ipAddressRange }."
+      }
+    },
+    "ipRestrictionMode": {
+      "type": "string",
+      "defaultValue": "Allow",
+      "allowedValues": [
+        "Allow",
+        "Deny"
+      ],
+      "metadata": {
+        "description": "How allowedClientIpRanges is applied. Allow = ONLY the listed ranges may connect (everything else is refused). Deny = the listed ranges are refused and everything else is permitted. All entries share this action; they cannot be mixed."
+      }
+    },
+    "allowlistSeed": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. Comma-separated IPs/CIDRs used to seed the IN-APP allowlist on first boot only, so a new deployment is not open to the internet while waiting for an administrator to configure it. Never overwrites what an admin later saves in the app. Example: 203.0.113.0/24,198.51.100.7"
+      }
+    },
+    "allowlistSeedMode": {
+      "type": "string",
+      "defaultValue": "enforce",
+      "allowedValues": [
+        "monitor",
+        "enforce"
+      ],
+      "metadata": {
+        "description": "Mode applied to the seeded in-app allowlist. Use monitor to observe what WOULD be blocked without blocking anything, then switch to enforce in the app once the ranges are proven correct. Ignored when allowlistSeed is empty."
+      }
+    },
     "infraSubnetPrefix": {
       "type": "string",
       "defaultValue": "10.42.0.0/23",
@@ -142,6 +178,18 @@
     }
   },
   "variables": {
+    "copy": [
+      {
+        "name": "ipSecurityRestrictions",
+        "count": "[length(parameters('allowedClientIpRanges'))]",
+        "input": {
+          "name": "[parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].name]",
+          "description": "[if(contains(parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')], 'description'), parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].description, '')]",
+          "ipAddressRange": "[parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].ipAddressRange]",
+          "action": "[parameters('ipRestrictionMode')]"
+        }
+      }
+    ],
     "isPrivate": "[equals(parameters('privateNetworking'), 'Yes')]",
     "allowPublicDatabaseAccess": "[and(not(variables('isPrivate')), equals(parameters('acknowledgePublicDatabaseAccess'), 'Yes'))]",
     "normalizedAppName": "[toLower(parameters('appName'))]",
@@ -498,18 +546,7 @@
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
         "configuration": {
           "activeRevisionsMode": "Single",
-          "ingress": {
-            "external": true,
-            "targetPort": 8000,
-            "transport": "auto",
-            "allowInsecure": false,
-            "traffic": [
-              {
-                "latestRevision": true,
-                "weight": 100
-              }
-            ]
-          },
+          "ingress": "[union(createObject('external', true(), 'targetPort', 8000, 'transport', 'auto', 'allowInsecure', false(), 'traffic', createArray(createObject('latestRevision', true(), 'weight', 100))), if(empty(parameters('allowedClientIpRanges')), createObject(), createObject('ipSecurityRestrictions', variables('ipSecurityRestrictions'))))]",
           "secrets": [
             {
               "name": "database-url",
@@ -546,6 +583,14 @@
                 {
                   "name": "TRUST_FORWARDED_HEADERS",
                   "value": "true"
+                },
+                {
+                  "name": "IP_ALLOWLIST_SEED",
+                  "value": "[parameters('allowlistSeed')]"
+                },
+                {
+                  "name": "IP_ALLOWLIST_SEED_MODE",
+                  "value": "[parameters('allowlistSeedMode')]"
                 },
                 {
                   "name": "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT",

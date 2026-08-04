@@ -24,6 +24,7 @@ Administration is role-gated. Use least privilege: most application configuratio
 
 - [Access Control]({{ site.baseurl }}/admin/access-control/)
 - [Security Policy and Active Sessions]({{ site.baseurl }}/admin/security-policy-sessions/)
+- [Network Access]({{ site.baseurl }}/admin/network-access/)
 - [Security documentation]({{ site.baseurl }}/security/)
 
 ## Tool preference and references

@@ -34,6 +34,7 @@ Open `/admin`, then select the required administration card.
    - [Change General settings]({{ site.baseurl }}/how-to/administration/general-settings/)
    - [Manage users, roles, groups, and SSO]({{ site.baseurl }}/how-to/administration/access-control/)
    - [Set policy and revoke sessions]({{ site.baseurl }}/how-to/administration/security-sessions/)
+- [Restrict network access by IP]({{ site.baseurl }}/how-to/administration/network-access/)
    - [Edit prompts and scoring]({{ site.baseurl }}/how-to/administration/prompts-scoring/)
    - [Maintain reference sets and requests]({{ site.baseurl }}/how-to/administration/reference-sets/)
    - [Review usage and audit history]({{ site.baseurl }}/how-to/administration/usage-audit/)

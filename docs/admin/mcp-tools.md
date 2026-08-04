@@ -2,7 +2,7 @@
 layout: default
 title: Azure & EntraID MCP Tools
 parent: Administration
-nav_order: 9
+nav_order: 10
 description: Review the live Azure MCP, built-in utility, and Microsoft Graph tool catalogs.
 permalink: /admin/mcp-tools/
 ---

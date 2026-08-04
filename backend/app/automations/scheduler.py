@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.automations.runner import run_target_task, run_task
 from app.automations.schedule import compute_next_run
 from app.core.db import SessionLocal
-from app.models import ScheduledTask
+from app.models import AuditLog, ScheduledTask
 
 logger = logging.getLogger("app.automations.scheduler")
 
@@ -69,6 +69,10 @@ class Scheduler:
                 await self._reservations_digest()
             except Exception as exc:  # noqa: BLE001 - never let the loop die
                 logger.warning("Reservations digest error: %s", exc)
+            try:
+                await self._network_access_maintenance()
+            except Exception as exc:  # noqa: BLE001 - never let the loop die
+                logger.warning("Network access maintenance error: %s", exc)
             self._tick_count += 1
             if self._tick_count % _HOUSEKEEPING_EVERY_TICKS == 0:
                 try:
@@ -80,12 +84,49 @@ class Scheduler:
             except asyncio.TimeoutError:
                 pass
 
+    async def _network_access_maintenance(self) -> None:
+        """Flush buffered IP-block counters and land an expired commit-confirm revert.
+
+        ``netaccess.effective_mode`` already degrades an unconfirmed ``enforce`` to ``monitor``
+        the moment the window lapses, so enforcement never outlives the timer even if this
+        never runs. This makes the revert *durable* — otherwise the stored config would keep
+        claiming "Enforcing" while behaving as monitor, which is exactly the sort of
+        disagreement between displayed and actual state that costs someone an afternoon.
+        """
+        from app.core import netaccess, netaccess_events
+
+        reverted = netaccess.revert_if_expired()
+        if reverted is not None:
+            logger.warning(
+                "Network access: enforcement was not confirmed in time; reverted to monitor"
+            )
+            async with SessionLocal() as db:
+                db.add(
+                    AuditLog(
+                        tenant_id="default",
+                        actor_id="system",
+                        action="firewall.auto_reverted",
+                        target="network_access",
+                        metadata_json={"reason": "confirm_window_expired"},
+                    )
+                )
+                await db.commit()
+
+        if netaccess_events.due_for_flush():
+            async with SessionLocal() as db:
+                await netaccess_events.flush(db)
+
     async def _housekeeping(self) -> None:
         """Periodic maintenance: purge expired/revoked auth sessions."""
         from app.auth.service import purge_stale_sessions
+        from app.core import netaccess_events
 
         async with SessionLocal() as db:
             removed = await purge_stale_sessions(db)
+        async with SessionLocal() as db:
+            pruned = await netaccess_events.purge(db)
+        if pruned:
+            logger.info("Housekeeping: pruned %d stale IP block records", pruned)
         if removed:
             logger.info("Housekeeping: purged %d stale sessions", removed)
 

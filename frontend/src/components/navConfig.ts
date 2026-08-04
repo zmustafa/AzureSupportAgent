@@ -10,7 +10,8 @@ export type SecuritySection =
   | "groups"
   | "identity"
   | "sessions"
-  | "policies";
+  | "policies"
+  | "firewall";
 
 export type AdminSection =
   | "overview"
@@ -45,6 +46,7 @@ export const SECURITY_NAV: { id: SecuritySection; label: string; icon: string }[
   { id: "identity", label: "Sign-in & SSO", icon: "🔑" },
   { id: "sessions", label: "Active Sessions", icon: "🖥️" },
   { id: "policies", label: "Security Policy", icon: "🔒" },
+  { id: "firewall", label: "Network Access", icon: "🛡️" },
 ];
 
 // Sub-tabs grouped under the "Access Control" page.
@@ -71,6 +73,7 @@ export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?:
   // Security & access
   { id: "access", label: "Access Control", icon: "🔐", group: "Security & access", desc: "Manage users, roles, groups and single sign-on (OIDC / SAML) providers." },
   { id: "policies", label: "Security Policy", icon: "🔒", desc: "Password rules, lockout, session lifetimes and SSO auto-provisioning defaults." },
+  { id: "firewall", label: "Network Access", icon: "🛡️", desc: "Restrict which IP addresses and ranges can reach this application at all." },
   { id: "sessions", label: "Active Sessions", icon: "🖥️", desc: "View and revoke active user sessions across the workspace." },
   // Tool preference — reference sets, change-request inboxes, prompts & scoring tuning.
   { id: "prompts", label: "System Prompts", icon: "📝", group: "Tool Preference", desc: "Edit the system prompts that steer the agent and its sub-agents." },

@@ -247,7 +247,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
     return wrap(<AccessControlPanel section={section} />);
   }
   // Standalone security sections (Active Sessions, Security Policy) keep their own panel.
-  if (section === "sessions" || section === "policies") {
+  if (section === "sessions" || section === "policies" || section === "firewall") {
     return wrap(<SecurityPanel section={section as SecuritySection} />);
   }
   // AMBA Reference Set gets a dedicated full-page two-pane rich editor.

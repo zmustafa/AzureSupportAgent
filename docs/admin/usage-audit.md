@@ -2,7 +2,7 @@
 layout: default
 title: Usage & Audit Log
 parent: Administration
-nav_order: 8
+nav_order: 9
 description: Review model token/cost estimates and searchable privileged-action history.
 permalink: /admin/usage-audit/
 ---

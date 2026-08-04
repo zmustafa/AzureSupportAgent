@@ -123,6 +123,12 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("settings.write", "Change application settings (general, tuning, providers, prompts, scoring)"),
         ("users.manage", "Manage users, groups, roles, identity providers, sessions"),
         ("audit.read", "View the audit log"),
+        # Deliberately NOT folded into settings.write: restricting which networks may reach the
+        # application has a completely different blast radius from tuning prompts or scoring,
+        # and a misconfiguration here takes the whole deployment offline. Split read/manage so
+        # an auditor can evidence the network policy without being able to change it.
+        ("firewall.read", "View network access control (IP allowlist)"),
+        ("firewall.manage", "Change network access control (IP allowlist)"),
         ("backup.manage", "Export / import the whole-tenant configuration"),
         ("demo.manage", "Load or remove demo data"),
     ]),
@@ -168,6 +174,7 @@ _ADMIN_ONLY: set[str] = {
     "settings.write",
     "users.manage",
     "audit.read",
+    "firewall.manage",
     "backup.manage",
     "demo.manage",
 }

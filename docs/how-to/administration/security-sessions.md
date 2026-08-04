@@ -70,6 +70,7 @@ Do not disable local login until SSO and recovery are proven. Complexity is not 
 ## Related docs
 
 - [Security Policy and Active Sessions reference]({{ site.baseurl }}/admin/security-policy-sessions/)
+- [Restrict network access by IP]({{ site.baseurl }}/how-to/administration/network-access/)
 - [Audit investigation]({{ site.baseurl }}/how-to/administration/usage-audit/)
 - [Security Policy reference]({{ site.baseurl }}/admin/security-policy-sessions/)
 - [Access Control recipe]({{ site.baseurl }}/how-to/administration/access-control/)

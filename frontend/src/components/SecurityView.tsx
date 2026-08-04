@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -9,9 +9,12 @@ import {
   type AcRole,
   type AcUser,
   type AuthPolicies,
+  type FirewallMode,
+  type FirewallRule,
   type IdpTestResult,
 } from "../api";
 import { apiBase } from "../api";
+import { useAuth } from "./AuthContext";
 import { roleLabel } from "../utils/roleLabel";
 import {
   ACCESS_NAV,
@@ -1330,6 +1333,14 @@ function PoliciesCard() {
       </div>
 
       <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-700">Brute-force protection</h3>
+      <p className="mb-2 text-xs text-slate-400">
+        These react <em>after</em> failed sign-ins. To stop unknown addresses reaching the sign-in
+        page at all, see{" "}
+        <Link to="/admin/firewall" className="font-semibold text-brand-dark hover:underline">
+          Network Access
+        </Link>
+        .
+      </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {numField("max_failed_attempts", "Max failed attempts (per account)", "After this many wrong passwords for the same user, the account is auto-locked.")}
         {numField("lockout_minutes", "Account lockout duration (minutes)", "Account auto-unlocks after this many minutes.")}
@@ -1378,6 +1389,578 @@ function PoliciesCard() {
   );
 }
 
+// ================================================================= Network Access (firewall)
+//
+// Restricts which source addresses may reach the application AT ALL. The Security Policy screen
+// above handles the reactive control (per-IP lockout after failed sign-ins); this one stops the
+// attempt from ever arriving.
+//
+// The screen is designed around one hazard: it is possible to lock yourself out of the very UI
+// you would use to undo the mistake. Hence monitor mode, the self-IP guard, the typed
+// confirmation, and the commit-confirm countdown.
+
+const MODE_HELP: Record<FirewallMode, { label: string; hint: string }> = {
+  off: { label: "Off", hint: "Anyone on the internet can reach this application." },
+  monitor: {
+    label: "Monitor",
+    hint: "Record what would be blocked, but block nothing. Start here.",
+  },
+  enforce: { label: "Enforce", hint: "Only the listed sources can reach this application." },
+};
+
+function useCountdown(deadline: string | null): string | null {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!deadline) return;
+    const t = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [deadline]);
+  if (!deadline) return null;
+  const ms = new Date(deadline).getTime() - Date.now();
+  if (ms <= 0) return null;
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function FirewallCard() {
+  const qc = useQueryClient();
+  const { has, isAdmin } = useAuth();
+  // Read is enough to LOAD this screen (an auditor must be able to evidence the network
+  // policy). Changing it needs firewall.manage. Render read-only rather than hiding the
+  // screen, and disable rather than silently 403 on save.
+  const canManage = isAdmin || has("firewall.manage");
+  const cfg = useQuery({ queryKey: ["firewall"], queryFn: api.firewallConfig });
+  const [draft, setDraft] = useState<{ mode: FirewallMode; rules: FirewallRule[] } | null>(null);
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newCidr, setNewCidr] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+
+  const server = cfg.data;
+  const mode = draft?.mode ?? server?.mode ?? "off";
+  const rules = draft?.rules ?? server?.rules ?? [];
+  const dirty = draft !== null;
+  const countdown = useCountdown(server?.confirm_by ?? null);
+
+  const mutate = (next: Partial<{ mode: FirewallMode; rules: FirewallRule[] }>) => {
+    setDraft({ mode, rules, ...next });
+    setSaved(false);
+  };
+
+  // The server is the authority on whether the caller is covered (it sees the real address),
+  // but while editing an unsaved draft only the client knows the pending rules — so the guard
+  // is recomputed locally against the draft to keep the warning honest before saving.
+  const coveredByDraft = useMemo(() => {
+    if (!dirty) return server?.your_ip_covered ?? false;
+    const ip = server?.your_ip;
+    if (!ip) return false;
+    return rules.some((r) => r.enabled && cidrCovers(r.cidr, ip));
+  }, [dirty, rules, server]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateFirewall({
+        mode,
+        rules: rules.map((r) => ({ cidr: r.cidr, label: r.label, enabled: r.enabled })),
+      }),
+    onSuccess: (fresh) => {
+      setDraft(null);
+      setConfirmText("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+      // Seed the cache from the mutation's own response BEFORE invalidating. Without this the
+      // card renders the previous server state for the duration of the refetch — which on this
+      // screen means briefly announcing "Off / no ranges", i.e. telling the operator they are
+      // unprotected at the exact moment they just protected themselves.
+      qc.setQueryData(["firewall"], fresh);
+      void qc.invalidateQueries({ queryKey: ["firewall"] });
+      void qc.invalidateQueries({ queryKey: ["firewall-blocks"] });
+    },
+    onError: (e) => setErr(errMsg(e)),
+  });
+
+  const confirmEnforcement = useMutation({
+    mutationFn: api.confirmFirewall,
+    onSuccess: (fresh) => {
+      qc.setQueryData(["firewall"], fresh);
+      void qc.invalidateQueries({ queryKey: ["firewall"] });
+    },
+    onError: (e) => setErr(errMsg(e)),
+  });
+
+  const addRule = (cidr: string, label: string) => {
+    const trimmed = cidr.trim();
+    if (!trimmed || !label.trim()) return;
+    mutate({
+      rules: [
+        ...rules,
+        { cidr: trimmed, label: label.trim(), enabled: true, scope: describeCidr(trimmed), valid: true },
+      ],
+    });
+    setNewCidr("");
+    setNewLabel("");
+    setAdding(false);
+  };
+
+  if (cfg.isLoading) {
+    return <Card title="Network access"><p className="text-sm text-slate-500">Loading…</p></Card>;
+  }
+
+  const enforceBlocked = mode === "enforce" && !coveredByDraft;
+  const needsTypedConfirm = mode === "enforce" && server?.mode !== "enforce";
+  const preview = newCidr.trim() ? describeCidr(newCidr) : "";
+  const previewCoversMe =
+    !!server?.your_ip && !!newCidr.trim() && cidrCovers(newCidr.trim(), server.your_ip);
+
+  return (
+    <div className="space-y-6">
+      <Card
+        title="Network access"
+        actions={
+          canManage ? (
+            <Btn
+              variant="primary"
+              disabled={!dirty || save.isPending || enforceBlocked || (needsTypedConfirm && confirmText !== "ENFORCE")}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </Btn>
+          ) : (
+            <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Read-only</span>
+          )
+        }
+      >
+        {err && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+        {saved && <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Network access saved.</div>}
+        {!canManage && (
+          <div className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            You can view the network access policy but not change it. Changing it requires the
+            <strong> Change network access control</strong> permission.
+          </div>
+        )}
+
+        {server?.break_glass_active && (
+          <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <strong>Break-glass is active.</strong> <code>IP_ALLOWLIST_DISABLED</code> is set on the
+            container, so no address is being blocked regardless of the settings below. Remove that
+            environment variable to resume enforcement.
+          </div>
+        )}
+
+        {countdown && (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span>
+              <strong>Enforcing provisionally</strong> — reverts to Monitor in {countdown} unless you
+              confirm you still have access.
+            </span>
+            <Btn variant="primary" disabled={confirmEnforcement.isPending || !canManage} onClick={() => confirmEnforcement.mutate()}>
+              Keep enforcing
+            </Btn>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {(Object.keys(MODE_HELP) as FirewallMode[]).map((m) => (
+            <label
+              key={m}
+              className={`flex cursor-pointer items-start gap-2 rounded border px-3 py-2 text-sm ${
+                mode === m ? "border-brand-dark bg-slate-50" : "bg-white"
+              }`}
+            >
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={mode === m}
+                disabled={!canManage}
+                onChange={() => mutate({ mode: m })}
+              />
+              <span>
+                <span className="font-medium text-slate-700">{MODE_HELP[m].label}</span>
+                <span className="block text-xs text-slate-400">{MODE_HELP[m].hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+
+        <div
+          className={`mt-4 rounded border px-3 py-2 text-sm ${
+            coveredByDraft
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-amber-300 bg-amber-50 text-amber-800"
+          }`}
+        >
+          {coveredByDraft ? (
+            <>
+              You are connecting from <code>{server?.your_ip}</code>
+              {server?.your_ip_rule && !dirty ? <> — covered by “{server.your_ip_rule}”.</> : " — covered by a rule below."}
+            </>
+          ) : (
+            <>
+              You are connecting from <code>{server?.your_ip ?? "an unknown address"}</code>.{" "}
+              <strong>No enabled rule covers this address.</strong> Enforcing now would lock you out.
+            </>
+          )}
+        </div>
+
+        {needsTypedConfirm && !enforceBlocked && (
+          <div className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+            <p className="font-semibold">Restrict access to this application?</p>
+            <p className="mt-1">
+              Everyone outside the {rules.filter((r) => r.enabled).length} enabled range(s) will get a
+              403 — <strong>including the sign-in page</strong>. Enforcement reverts to Monitor after{" "}
+              {server?.confirm_window_minutes ?? 15} minutes unless you confirm it is working.
+            </p>
+            <p className="mt-1">
+              If you lose access, run:{" "}
+              <code className="break-all">
+                az containerapp update -n &lt;app&gt; -g &lt;rg&gt; --set-env-vars IP_ALLOWLIST_DISABLED=true
+              </code>
+            </p>
+            <label className="mt-2 block">
+              <span className="mb-1 block font-medium">Type ENFORCE to confirm</span>
+              <input
+                className={inputCls}
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="ENFORCE"
+              />
+            </label>
+          </div>
+        )}
+
+        {enforceBlocked && (
+          <p className="mt-3 text-xs text-amber-700">
+            Add a range covering your address before enforcing.
+          </p>
+        )}
+
+        <p className="mt-4 text-xs text-slate-400">
+          This controls the application. Your Azure Container App may also restrict access at the
+          ingress, which this screen cannot see or change.
+        </p>
+      </Card>
+
+      <Card
+        title="Allowed sources"
+        actions={
+          canManage ? (
+            <div className="flex gap-2">
+              {server?.your_ip && (
+                <Btn onClick={() => addRule(`${server.your_ip}/32`, "My current address")}>
+                  + Add my IP
+                </Btn>
+              )}
+              <Btn variant="primary" onClick={() => setAdding((v) => !v)}>+ Add range</Btn>
+            </div>
+          ) : null
+        }
+      >
+        {adding && (
+          <div className="mb-4 rounded-lg border border-brand-dark/30 bg-slate-50 p-4">
+            <h3 className="mb-3 text-sm font-semibold">New allowed source</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="IP address or CIDR range">
+                <input
+                  className={inputCls}
+                  value={newCidr}
+                  placeholder="203.0.113.0/24"
+                  onChange={(e) => setNewCidr(e.target.value)}
+                />
+                {preview && (
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {preview}
+                    {previewCoversMe && (
+                      <span className="text-emerald-600"> · includes your current address</span>
+                    )}
+                  </span>
+                )}
+              </Field>
+              <Field label="Label">
+                <input
+                  className={inputCls}
+                  value={newLabel}
+                  placeholder="Office VPN"
+                  onChange={(e) => setNewLabel(e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Btn
+                variant="primary"
+                disabled={!newCidr.trim() || !newLabel.trim() || preview === "Not a valid range"}
+                onClick={() => addRule(newCidr, newLabel)}
+              >
+                Add
+              </Btn>
+              <Btn variant="ghost" onClick={() => setAdding(false)}>Cancel</Btn>
+            </div>
+          </div>
+        )}
+
+        {rules.length === 0 ? (
+          <p className="py-4 text-sm text-slate-500">
+            No ranges yet. In Enforce mode with no ranges, nobody can reach this application — add
+            your own address first.
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left text-slate-500">
+              <tr className="border-b">
+                <th className="py-1.5 pr-3 font-medium">Range</th>
+                <th className="py-1.5 pr-3 font-medium">Label</th>
+                <th className="py-1.5 pr-3 font-medium">Scope</th>
+                <th className="py-1.5 pr-3 font-medium">Status</th>
+                <th className="py-1.5 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((r, i) => (
+                <tr key={`${r.cidr}-${i}`} className="border-b last:border-0 hover:bg-gray-50">
+                  <td className="py-1.5 pr-3 font-mono text-slate-700">{r.cidr}</td>
+                  <td className="py-1.5 pr-3 text-slate-600">{r.label}</td>
+                  <td className="py-1.5 pr-3 text-slate-500">{r.scope}</td>
+                  <td className="py-1.5 pr-3">
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-xs ${
+                        r.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {r.enabled ? "Active" : "Disabled"}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {canManage && (
+                      <div className="flex justify-end gap-1">
+                        <Btn
+                          variant="ghost"
+                          onClick={() =>
+                            mutate({
+                              rules: rules.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)),
+                            })
+                          }
+                        >
+                          {r.enabled ? "Disable" : "Enable"}
+                        </Btn>
+                        <Btn
+                          variant="danger"
+                          onClick={() => {
+                            if (!confirm(`Remove ${r.cidr} (${r.label})?`)) return;
+                            mutate({ rules: rules.filter((_, j) => j !== i) });
+                          }}
+                        >
+                          Delete
+                        </Btn>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {dirty && (
+          <p className="mt-3 text-xs text-amber-700">Unsaved changes — press Save above to apply.</p>
+        )}
+      </Card>
+
+      <FirewallBlocksCard
+        effectiveMode={server?.effective_mode ?? "off"}
+        canManage={canManage}
+        onAllowRange={(ip) => {
+          // Closes the loop from observation to action: the operator reads an address off the
+          // blocks table and allows it without retyping a CIDR (the retyping is where the /24
+          // vs /32 slips happen).
+          setAdding(true);
+          setNewCidr(`${ip}/32`);
+          setNewLabel(`Allowed from blocks list`);
+        }}
+      />
+    </div>
+  );
+}
+
+/** Parse a CIDR/IP the same way the backend does, for live feedback before saving. */
+function parseCidr(value: string): { base: bigint; bits: number; version: 4 | 6 } | null {
+  const [addr, prefixRaw] = value.trim().split("/");
+  const v6 = addr.includes(":");
+  const max = v6 ? 128 : 32;
+  const prefix = prefixRaw === undefined ? max : Number(prefixRaw);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > max) return null;
+  let base: bigint;
+  if (v6) {
+    // Expand "::" and pad each hextet.
+    const [head, tail] = addr.split("::");
+    const h = head ? head.split(":") : [];
+    const t = tail ? tail.split(":") : [];
+    if (addr.split("::").length > 2) return null;
+    const missing = 8 - h.length - t.length;
+    if (missing < 0 || (missing > 0 && !addr.includes("::"))) return null;
+    const parts = [...h, ...Array(Math.max(0, missing)).fill("0"), ...t];
+    if (parts.length !== 8) return null;
+    base = 0n;
+    for (const p of parts) {
+      const n = parseInt(p || "0", 16);
+      if (Number.isNaN(n) || n < 0 || n > 0xffff) return null;
+      base = (base << 16n) | BigInt(n);
+    }
+  } else {
+    const octets = addr.split(".");
+    if (octets.length !== 4) return null;
+    base = 0n;
+    for (const o of octets) {
+      const n = Number(o);
+      if (!Number.isInteger(n) || n < 0 || n > 255 || o === "") return null;
+      base = (base << 8n) | BigInt(n);
+    }
+  }
+  const mask = ((1n << BigInt(prefix)) - 1n) << BigInt(max - prefix);
+  return { base: base & mask, bits: prefix, version: v6 ? 6 : 4 };
+}
+
+function describeCidr(value: string): string {
+  const parsed = parseCidr(value);
+  if (!parsed) return "Not a valid range";
+  if (parsed.version === 6) {
+    return parsed.bits === 128 ? "Single IPv6 address" : `IPv6 /${parsed.bits}`;
+  }
+  if (parsed.bits === 32) return "Single IP address";
+  const count = 2 ** (32 - parsed.bits);
+  return `${count.toLocaleString()} addresses`;
+}
+
+function cidrCovers(cidr: string, ip: string): boolean {
+  const net = parseCidr(cidr);
+  const addr = parseCidr(ip);
+  if (!net || !addr || net.version !== addr.version) return false;
+  const max = net.version === 6 ? 128 : 32;
+  const mask = ((1n << BigInt(net.bits)) - 1n) << BigInt(max - net.bits);
+  return (addr.base & mask) === net.base;
+}
+
+function FirewallBlocksCard({
+  effectiveMode,
+  canManage,
+  onAllowRange,
+}: {
+  effectiveMode: FirewallMode;
+  canManage: boolean;
+  onAllowRange: (ip: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [page, setPage] = useState(0);
+  const pageSize = 25;
+  const q = useQuery({
+    queryKey: ["firewall-blocks", page],
+    queryFn: () => api.firewallBlocks(pageSize, page * pageSize),
+    refetchInterval: 15000,
+  });
+  const items = q.data?.items ?? [];
+  const total = q.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  return (
+    <Card
+      title="Recent blocks"
+      actions={
+        <div className="flex items-center gap-2">
+          {effectiveMode === "monitor" && (
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+              MONITOR — WOULD HAVE BEEN BLOCKED
+            </span>
+          )}
+          {effectiveMode === "enforce" && (
+            <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+              BLOCKED
+            </span>
+          )}
+          {total > 0 && canManage && (
+            <Btn
+              variant="ghost"
+              onClick={() => {
+                if (!confirm("Clear the recorded block history?")) return;
+                void api.clearFirewallBlocks().then(() => {
+                  void qc.invalidateQueries({ queryKey: ["firewall-blocks"] });
+                });
+              }}
+            >
+              Clear
+            </Btn>
+          )}
+        </div>
+      }
+    >
+      {items.length === 0 ? (
+        <p className="py-4 text-sm text-slate-500">
+          {effectiveMode === "off"
+            ? "Nothing recorded — network access is Off, so no requests are being evaluated."
+            : "Nothing recorded yet."}
+        </p>
+      ) : (
+        <>
+          <table className="w-full text-xs">
+            <thead className="text-left text-gray-500">
+              <tr className="border-b">
+                <th className="py-1.5 pr-3 font-medium">Last seen</th>
+                <th className="py-1.5 pr-3 font-medium">Source IP</th>
+                <th className="py-1.5 pr-3 font-medium">Hits</th>
+                <th className="py-1.5 pr-3 font-medium">Last path</th>
+                <th className="py-1.5 pr-3 font-medium">Result</th>
+                <th className="py-1.5 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((b) => (
+                <tr key={b.id} className="border-b last:border-0 hover:bg-gray-50">
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-gray-400">
+                    {b.last_seen ? new Date(b.last_seen).toLocaleString() : "—"}
+                  </td>
+                  <td className="py-1.5 pr-3 font-mono text-gray-700">{b.ip}</td>
+                  <td className="py-1.5 pr-3 text-gray-600">{b.hits.toLocaleString()}</td>
+                  <td className="max-w-[240px] truncate py-1.5 pr-3 text-gray-600" title={b.last_path}>
+                    {b.last_path || "—"}
+                  </td>
+                  <td className="py-1.5 pr-3">
+                    <span
+                      className={`rounded px-1.5 py-0.5 ${
+                        b.mode === "enforce"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {b.mode === "enforce" ? "Blocked" : "Would block"}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {canManage && (
+                      <Btn variant="ghost" onClick={() => onAllowRange(b.ip)}>
+                        + Allow
+                      </Btn>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+            <span>
+              {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} of {total.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-1">
+              <Btn variant="ghost" disabled={page === 0} onClick={() => setPage(0)}>« First</Btn>
+              <Btn variant="ghost" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>‹ Prev</Btn>
+              <span>Page {page + 1} / {pageCount}</span>
+              <Btn variant="ghost" disabled={page >= pageCount - 1} onClick={() => setPage((p) => p + 1)}>Next ›</Btn>
+              <Btn variant="ghost" disabled={page >= pageCount - 1} onClick={() => setPage(pageCount - 1)}>Last »</Btn>
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ================================================================= Panel
 export function SecurityPanel({ section }: { section: SecuritySection }) {
   const body = useMemo(() => {
@@ -1388,6 +1971,7 @@ export function SecurityPanel({ section }: { section: SecuritySection }) {
       case "identity": return <IdentityProvidersCard />;
       case "sessions": return <SessionsCard />;
       case "policies": return <PoliciesCard />;
+      case "firewall": return <FirewallCard />;
       default: return <UsersCard />;
     }
   }, [section]);

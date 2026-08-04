@@ -71,28 +71,13 @@ async def _audit(db: AsyncSession, actor: str, action: str, meta: dict[str, Any]
 def _client_ip(request: Request) -> str | None:
     """Resolve the originating client IP.
 
-    Only honors ``X-Forwarded-For`` when the request's *direct* peer is a
-    pre-configured trusted reverse proxy (``settings.trusted_proxies``). Otherwise
-    the header is ignored so an attacker can't spoof their IP for audit logs or the
-    per-IP brute-force counter. With no proxy configured (default), we always fall
-    back to ``request.client.host``.
+    Thin alias over :func:`app.core.clientip.client_ip` — the network-access middleware has to
+    agree with the login throttle and the audit log about who is calling, so the logic lives in
+    one shared module. See that module for why the forwarded header is read right-to-left.
     """
-    direct = request.client.host if request.client else None
-    trusted = {ip.strip() for ip in (settings.trusted_proxies or "").split(",") if ip.strip()}
-    if settings.trust_forwarded_headers or (direct and direct in trusted):
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            # Standard format is `client, proxy1, proxy2, ...` — the first entry is
-            # the original client (the proxy chain prepends as it forwards).
-            first = xff.split(",")[0].strip()
-            if first:
-                import ipaddress
+    from app.core.clientip import client_ip
 
-                try:
-                    return str(ipaddress.ip_address(first))
-                except ValueError:
-                    pass
-    return direct
+    return client_ip(request)
 
 
 # --------------------------------------------------------------------------- config

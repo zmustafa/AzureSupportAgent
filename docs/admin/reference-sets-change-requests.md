@@ -2,7 +2,7 @@
 layout: default
 title: Reference Sets & Change Requests
 parent: Administration
-nav_order: 7
+nav_order: 8
 description: Curate AMBA, telemetry, Backup/DR, and retirement references and decide proposed changes.
 permalink: /admin/reference-sets-change-requests/
 ---

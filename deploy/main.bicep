@@ -84,6 +84,41 @@ param acknowledgePublicDatabaseAccess string
 @description('VNet address space (CIDR) used only when Private networking = Yes. Pick a range that does not overlap your existing networks.')
 param vnetAddressSpace string = '10.42.0.0/22'
 
+// ---------------------------------------------------------------------------------------------
+// Network access control. TWO INDEPENDENT LAYERS — they are not alternatives:
+//
+//   1. ipSecurityRestrictions (below) is enforced by the Azure Container Apps INGRESS. A refused
+//      caller never completes a TLS handshake with the app, never reaches Python, and therefore
+//      cannot attempt authentication at all. This is the layer that actually stops brute force.
+//   2. allowlistSeed seeds the IN-APPLICATION allowlist, which an administrator then manages from
+//      the Network Access screen without redeploying. It runs inside the container, so a blocked
+//      request has already been accepted by the ingress. It is a management capability, NOT an
+//      edge defence, and must not be relied on as one.
+//
+// SAFETY: an Allow list that omits your own address makes the application unreachable from your
+// browser. It does NOT lock you out of Azure — recovery is a control-plane call that is entirely
+// unaffected by the block:
+//   az containerapp ingress access-restriction remove -n <app> -g <rg> --rule-name <name>
+@description('Optional. Client IP ranges (CIDR) permitted to reach the application, enforced at the Container Apps ingress before any traffic reaches the container. Leave empty to allow the whole internet. Each entry: { name, description, ipAddressRange }.')
+param allowedClientIpRanges array = []
+
+@description('How allowedClientIpRanges is applied. Allow = ONLY the listed ranges may connect (everything else is refused). Deny = the listed ranges are refused and everything else is permitted. All entries share this action; they cannot be mixed.')
+@allowed([
+  'Allow'
+  'Deny'
+])
+param ipRestrictionMode string = 'Allow'
+
+@description('Optional. Comma-separated IPs/CIDRs used to seed the IN-APP allowlist on first boot only, so a new deployment is not open to the internet while waiting for an administrator to configure it. Never overwrites what an admin later saves in the app. Example: 203.0.113.0/24,198.51.100.7')
+param allowlistSeed string = ''
+
+@description('Mode applied to the seeded in-app allowlist. Use monitor to observe what WOULD be blocked without blocking anything, then switch to enforce in the app once the ranges are proven correct. Ignored when allowlistSeed is empty.')
+@allowed([
+  'monitor'
+  'enforce'
+])
+param allowlistSeedMode string = 'enforce'
+
 @description('Infrastructure subnet (CIDR) for the Container Apps Environment. Must be at least a /23 (Container Apps requirement) and inside the VNet address space. Used only when Private networking = Yes.')
 param infraSubnetPrefix string = '10.42.0.0/23'
 
@@ -113,6 +148,17 @@ var postgresServerName = '${namePrefix}-pg-${unique}'
 // absorbed into the host name and the app dies at startup with
 // "socket.gaierror: [Errno -2] Name or service not known".
 var databaseUrl = 'postgresql+asyncpg://${uriComponent(postgresAdminLogin)}:${uriComponent(postgresAdminPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDatabaseName}?ssl=require'
+
+// Ingress-level client IP restrictions. Hoisted into a variable because Bicep does not allow a
+// for-expression inside a function call such as union().
+var ipSecurityRestrictions = [
+  for r in allowedClientIpRanges: {
+    name: r.name
+    description: contains(r, 'description') ? r.description : ''
+    ipAddressRange: r.ipAddressRange
+    action: ipRestrictionMode
+  }
+]
 
 // Private-networking resource names + subnet resource IDs (only materialised when isPrivate).
 var vnetName = '${namePrefix}-vnet-${unique}'
@@ -436,18 +482,24 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: containerEnv.id
     configuration: {
       activeRevisionsMode: 'Single'
-      ingress: {
-        external: true
-        targetPort: 8000
-        transport: 'auto'
-        allowInsecure: false
-        traffic: [
-          {
-            latestRevision: true
-            weight: 100
-          }
-        ]
-      }
+      ingress: union(
+        {
+          external: true
+          targetPort: 8000
+          transport: 'auto'
+          allowInsecure: false
+          traffic: [
+            {
+              latestRevision: true
+              weight: 100
+            }
+          ]
+        },
+        // Only emit the property when ranges were supplied: an EMPTY ipSecurityRestrictions
+        // array is not the same as an absent one, and leaving the default deployment byte-identical
+        // to before matters more than template tidiness.
+        empty(allowedClientIpRanges) ? {} : { ipSecurityRestrictions: ipSecurityRestrictions }
+      )
       secrets: [
         {
           name: 'database-url'
@@ -482,10 +534,25 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'true'
             }
             {
-              // ACA ingress owns and rewrites X-Forwarded-For; trusting it restores the
-              // real client IP for global login throttling and security audit records.
+              // ACA ingress APPENDS the address it observed to X-Forwarded-For (measured
+              // 2026-08-04 — it does NOT replace the header, contrary to what this comment
+              // previously claimed). Trusting it restores the real client IP for the global
+              // login throttle, the audit records and the network access allowlist. The app
+              // reads the header RIGHT-to-LEFT precisely because of that append behaviour:
+              // anything a caller injects sits to the LEFT of the address ACA vouches for.
+              // See backend/app/core/clientip.py.
               name: 'TRUST_FORWARDED_HEADERS'
               value: 'true'
+            }
+            {
+              // First-boot seed for the in-app allowlist (see the allowlistSeed parameter).
+              // Empty string = no seed, and the app starts unrestricted.
+              name: 'IP_ALLOWLIST_SEED'
+              value: allowlistSeed
+            }
+            {
+              name: 'IP_ALLOWLIST_SEED_MODE'
+              value: allowlistSeedMode
             }
             {
               name: 'DOTNET_SYSTEM_GLOBALIZATION_INVARIANT'

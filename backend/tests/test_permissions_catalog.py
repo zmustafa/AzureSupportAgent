@@ -96,7 +96,16 @@ def test_admin_has_every_permission():
 
 def test_operator_is_admin_minus_the_admin_only_surface():
     roles = _roles()
-    admin_only = {"settings.write", "users.manage", "audit.read", "backup.manage", "demo.manage"}
+    # Spelled out rather than imported so that ADDING a capability to the admin-only set is a
+    # deliberate, reviewed act: this test failing is the intended signal.
+    admin_only = {
+        "settings.write",
+        "users.manage",
+        "audit.read",
+        "firewall.manage",
+        "backup.manage",
+        "demo.manage",
+    }
     operator = set(roles["operator"])
     # Operator is a strict subset of admin (nothing operator has that admin lacks).
     assert operator <= set(roles["admin"])

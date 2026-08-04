@@ -11,6 +11,10 @@ permalink: /admin/security-policy-sessions/
 
 **Permission:** `users.manage`
 
+The per-IP protection here is *reactive* — it responds after failed sign-ins. To stop unknown
+addresses reaching the sign-in page at all, see
+[Network Access]({{ site.baseurl }}/admin/network-access/).
+
 ## Purpose
 
 **App routes:** `/admin/policies`, `/admin/sessions`
