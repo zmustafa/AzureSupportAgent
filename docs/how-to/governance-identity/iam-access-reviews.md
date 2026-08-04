@@ -4,11 +4,11 @@ title: Review, scan, export, and investigate IAM
 parent: Governance and identity
 grand_parent: How-to guides
 nav_order: 7
-description: Use every IAM tab to review effective access, exposure, scopes, roles, insights, diagnostics, refreshes, exports, and investigations.
+description: Use every IAM tab to review effective access, exposure, scopes, roles, insights, diagnostics, refreshes, granted-versus-used analysis, exports, and investigations.
 permalink: /how-to/governance-identity/iam-access-reviews/
 redirect_from:
   - /how-to/governance-identity/rbac-access-reviews/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview]
+feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:leastprivilege, IAM_NAV:roles, IAM_NAV:insights, IAM_NAV:scopes, IAM_NAV:diagnostics]
 ---
 
 # Review, scan, export, and investigate IAM
@@ -22,26 +22,26 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview]
 
 ## Route
 
-`/rbac/overview`, `/rbac/effective`, `/rbac/privileged`, `/rbac/scopes`, `/rbac/roles`, `/rbac/insights`, and `/rbac/diagnostics`.
+`/iam` and `/iam/:tab` — including `/iam/overview`, `/iam/effective`, `/iam/privileged`, `/iam/leastprivilege`, `/iam/scopes`, `/iam/roles`, `/iam/insights`, and `/iam/diagnostics`. The former `/rbac` URLs redirect to their `/iam` equivalents, keeping the tab segment and query string.
 
 ![RBAC effective-access review]({{ site.baseurl }}/assets/identity.png)
 
 ## How to scan RBAC scopes and directory context
 
-1. Open `/rbac/overview`, select the connection, and inspect KPI and freshness badges.
+1. Open `/iam`, select the connection, and read the freshness indicator in the page header. It reports the **newest** collection across every scope, and names how many scopes lag when they genuinely disagree.
 
-2. Open `/rbac/scopes` to identify stale, failed, or unauthorized scope slices.
-3. Refresh one scope for a bounded Azure assignment update, **Directory** for principal/group/Entra context, or **All** only when necessary.
+2. Open `/iam/scopes` to identify stale, failed, or unauthorized scope slices.
+3. Refresh at the right granularity: one scope for a bounded Azure assignment update, **↻ Refresh directory** on Overview for principal/group/Entra context, or **↻ Rescan** in the page header for everything. Rescan is in the header, so it is reachable from whichever tab exposed the stale data.
 4. Follow background progress; the job can continue after navigation.
-5. Open `/rbac/diagnostics` and resolve collector-specific errors.
+5. Open `/iam/diagnostics` and resolve collector-specific errors.
 
 **Expected result:** Current scope slices and directory context with explicit status per collector.
 
-**Verification:** Generated times advance for the intended slices, Diagnostics is understood, and a known assignment/principal resolves correctly.
+**Verification:** Generated times advance for the intended slices, the header indicator drops back to a recent age with no stale split, Diagnostics is understood, and a known assignment/principal resolves correctly.
 
 ## How to review effective access
 
-1. Open `/rbac/effective`.
+1. Open `/iam/effective`.
 
 2. Narrow workload/scope, surface, and principal type before entering search text.
 3. Inspect principal, effective principal, role, role definition, assignment scope, assignment type, and access path.
@@ -54,20 +54,33 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview]
 
 ## How to investigate privileged and data-plane exposure
 
-1. Open `/rbac/privileged` and separate privileged classification from roles containing data actions.
+1. Open `/iam/privileged` and separate privileged classification from roles containing data actions.
 
 2. Prioritize broad scopes, cross-scope principals, standing users, external/unresolved principals, and nested groups.
-3. Open `/rbac/roles` to inspect role definitions and available principal records.
-4. Use `/rbac/insights` for pivots by role, principal, scope, surface, principal type, group inheritance, ownership, Entra role, eligibility, cross-scope, and orphaned state.
+3. Open `/iam/roles` to inspect role definitions and available principal records.
+4. Use `/iam/insights` for pivots by role, principal, scope, surface, principal type, group inheritance, ownership, Entra role, eligibility, cross-scope, and orphaned state.
 5. Establish business owner and intended use before proposing least-privilege or PIM changes.
 
 **Expected result:** A source-verified access-review candidate with impact and ownership.
 
 **Verification:** Validate role permissions, scope, deny/conditional controls, service ACLs, and recent use through authoritative systems.
 
+## How to measure granted access against access actually used
+
+1. Open `/iam/leastprivilege`. If it reports that usage was not measured, treat that as "we have not looked", not as "nothing is over-privileged".
+
+2. Open the window picker beside **Scan usage** and choose a preset — 7, 14, 30, 60, or 90 days — or enter a custom value between 1 and 90. The window is a lookback ending now; 90 days is the ceiling because that is what the Azure Activity Log retains.
+3. Run **Scan usage**. It reads the Activity Log per subscription, is slow, and is independent of every access refresh control.
+4. Read the window stated beside the figures, not the one in the picker. The picker sets what the *next* scan will read.
+5. Work the recommendations by confidence. Each states both numbers — actions used out of actions granted — and every narrower proposal names the residual risk it gives up.
+
+**Expected result:** A confidence-ranked list of over-privileged assignments, each with a narrower proposal and the capability that proposal removes.
+
+**Verification:** Confirm the principal's recent activity against the Azure activity log for the subscription in question, and confirm the proposed role's actions cover the operations the owner says are required. "Unused" is a statement about the measured window only.
+
 ## How to export and hand off an RBAC investigation
 
-1. Apply all intended filters in `/rbac/effective`.
+1. Apply all intended filters in `/iam/effective`.
 
 2. Use the available CSV, JSON, or workbook export control and record filter/scope/generated-time metadata.
 3. Open the file and confirm row and column completeness.
@@ -92,6 +105,9 @@ Page visits read disk-backed caches and never scan. Azure scopes and directory c
 | Symptom | Resolution |
 | --- | --- |
 | Overview is empty | Inspect Diagnostics and refresh the correct scope; page load is cache-only. |
+| The header reads `scanned just now` but the data looks old | The headline is the newest collection across all scopes. Check for the `N of M scopes stale` split, then read per-scope ages on Overview. |
+| Least Privilege reports that usage was not measured | No usage scan has run for this connection. Pick a window and use **Scan usage**. |
+| A usage window over 90 days will not apply | Azure Activity Log retention is the ceiling; the request is refused rather than silently shortened. |
 | Principal/group path is stale | Refresh Directory and verify Graph consent. |
 | Subscription is missing | Verify connection visibility and Reader at parent/subscription scope. |
 | Search is slow | Filter scope, surface, and principal type before typing. |

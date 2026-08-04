@@ -3,7 +3,7 @@ layout: default
 title: "Entra: findings and scanners"
 parent: Governance & Identity
 grand_parent: User guide
-nav_order: 12
+nav_order: 13
 description: Run the proactive Entra scanners against the current snapshot and work the resulting findings through a local inbox with severity, age, state and bulk actions.
 permalink: /user-guide/governance-identity/entra-findings-scanners/
 feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings]

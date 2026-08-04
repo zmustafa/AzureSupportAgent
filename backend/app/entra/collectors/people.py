@@ -218,7 +218,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
 
         # --- pass 5: resolve guest domains to partner tenants -------------------
         # The guest population is keyed by EMAIL DOMAIN; the cross-tenant access policy is
-        # keyed by TENANT ID. Without this join nobody can answer "we have 87 guests from
+        # keyed by TENANT ID. Without this join nobody can answer "we have N guests from
         # this company and no policy governing them", which is the whole point of the
         # partner view.
         #

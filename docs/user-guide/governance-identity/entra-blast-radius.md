@@ -3,7 +3,7 @@ layout: default
 title: "Entra: blast radius"
 parent: Governance & Identity
 grand_parent: User guide
-nav_order: 11
+nav_order: 12
 description: Build one scoped identity graph over the Entra snapshot and read the derived privilege-escalation paths that connect an entry point to tenant-level power.
 permalink: /user-guide/governance-identity/entra-blast-radius/
 feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:graph]

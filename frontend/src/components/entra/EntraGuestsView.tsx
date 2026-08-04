@@ -8,11 +8,12 @@
  *    somebody to revoke live access.
  *  - **Human and token activity are separate columns.** `lastNonInteractiveSignInDateTime`
  *    moves on refresh, so a guest who left the partner months ago passes any "last sign-in"
- *    report. Measured on a real tenant: 517 of 1,018 apparently-active guests had NO
- *    interactive sign-in in 30 days.
+ *    report. On a real estate this routinely accounts for a LARGE share of the apparently
+ *    active guest population.
  *  - **Partner governance shows `unknown` when the cross-tenant list could not be read.**
- *    Rendering 410 partners as "ungoverned" because a permission is missing would be the
- *    loudest false claim on the page.
+ *    Rendering every partner as "ungoverned" because we could not look would be the loudest
+ *    false claim on the page. A domain that simply has no Entra tenant behind it is a
+ *    separate, honestly-labelled case.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";

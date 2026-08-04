@@ -29,6 +29,7 @@ These views combine Azure Resource Manager, Policy Insights, and Microsoft Graph
 | [Applications and consent]({{ site.baseurl }}/user-guide/governance-identity/entra-applications/) | Assess app risk, credential expiry, ownership, granted permissions, and tenant consent posture. |
 | [Risk and sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/) | Interpret MFA registration, legacy authentication, failure clusters, and Identity Protection risk. |
 | [Governance]({{ site.baseurl }}/user-guide/governance-identity/entra-governance/) | Review access reviews, entitlement expiry, lifecycle workflows, and governance coverage. |
+| [Guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) | Review the external population as a lifecycle, roll it up per partner organisation, and see which partners no cross-tenant policy names. |
 | [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) | Trace derived escalation paths from an entry point to tenant-level power. |
 | [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/) | Work the inbox, run proactive scanners, and apply finding workflow state. |
 

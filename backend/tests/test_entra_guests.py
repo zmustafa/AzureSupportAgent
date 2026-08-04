@@ -152,8 +152,8 @@ def test_the_guest_threshold_is_honoured_not_the_employee_one():
 
 # ============================================================ interactive vs token
 def test_a_refresh_token_is_not_a_person():
-    """Measured live: 517 of 1,018 apparently-active guests had NO interactive sign-in in 30
-    days. Reporting only the combined figure hides half the dormant population."""
+    """On a real estate this routinely accounts for a large share of the apparently-active
+    guest population. Reporting only the combined figure hides all of it."""
     u = _guest(last_signin=_ago(300), last_noninteractive_signin=_ago(1))
     row = guests.project(u, now=NOW, stale_days=90)
     assert row["last_human_days_ago"] == 300
@@ -203,7 +203,7 @@ def test_a_resolved_partner_carries_its_real_name():
 
 # ============================================================ partner governance
 def test_an_unreadable_partner_list_reports_unknown_not_ungoverned():
-    """Saying 410 partners are ungoverned because we could not read the list would be the
+    """Saying every partner is ungoverned because we could not read the list would be the
     loudest false claim this screen could make."""
     doms = [{"domain": "contoso.com", "partner_tenant_id": "t-1"}]
     out = guests.annotate_partners(doms, {"known": False, "partners": []})

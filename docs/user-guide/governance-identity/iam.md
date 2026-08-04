@@ -8,7 +8,7 @@ description: Review effective Azure and Entra access, privileged/data-plane expo
 permalink: /user-guide/governance-identity/iam/
 redirect_from:
   - /user-guide/governance-identity/rbac/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:insights, IAM_NAV:overview, IAM_NAV:privileged, IAM_NAV:roles, IAM_NAV:scopes]
+feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:compare, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:findings, IAM_NAV:insights, IAM_NAV:leastprivilege, IAM_NAV:overview, IAM_NAV:pim, IAM_NAV:privileged, IAM_NAV:reviews, IAM_NAV:roles, IAM_NAV:scanners, IAM_NAV:scopes, IAM_NAV:simulator]
 ---
 
 # IAM
@@ -33,16 +33,40 @@ Azure Reader is enough to inspect many control-plane assignments but does not im
 
 ## Tabs and actions
 
+### The page header
+
+The header sits above the tab strip and stays on screen whichever tab is open. It carries the title, the freshness indicator, the full rescan control, and the connection picker.
+
+**Freshness** reads as `scanned 6h ago`, turning amber once anything is past the refresh window and red once anything is more than a day old. Two things about that number matter:
+
+- **The headline is the newest collection across every scope and the directory.** On a large estate one scope refreshing a minute ago would otherwise render "scanned just now" while everything else is days old. When the scopes genuinely disagree — some past the refresh window and some not — the indicator also names how many lag, as `N of M scopes stale`. When every scope is equally old the headline already tells the whole truth and no split is shown. Hover for the newest and oldest ages and the size of the refresh window.
+- **It reports when data was *collected*, not when it was *verified*.** A delta refresh that skips an unchanged scope records a verification time and leaves the collection time alone, precisely so "four days old, verified two minutes ago" stays distinguishable from "collected two minutes ago". This indicator is the collection.
+
+Before the overview resolves, and while a query is failing, the indicator renders nothing rather than asserting "never scanned" — no data yet is not the same as never scanned. A tenant that genuinely has no collection says `never scanned`.
+
+**↻ Rescan** re-collects every scope and the directory. It lives in the header, so it is reachable from every tab; a reader on Findings or PIM who sees stale data no longer has to navigate to Overview to act on it. The two narrower controls — **⚡ Quick refresh** and **↻ Refresh directory** — remain on the **Overview** tab beside the per-scope table they operate on.
+
 ### Tabs
 
-- **Overview**: unique-principal, privileged/data-plane, scope, and freshness KPIs.
-- **Effective Access**: server-filtered, paged, virtualized normalized rows with principal, role, scope, surface, assignment type, and access path.
+- **Overview**: unique-principal, privileged/data-plane, scope, and freshness KPIs, the per-scope table, and the narrow refresh controls.
+- **Findings**: access findings raised against the collected estate.
+- **Scanners**: named selections of those signals, with their cadence and last run.
+- **Access**: server-filtered, paged, virtualized normalized rows with principal, role, scope, surface, assignment type, and access path.
+- **Effective Access**: evaluates the effective permissions a principal holds at a scope.
 - **Access Map**: the same access drawn as a flow — principal ▸ via group ▸ role ▸ scope. See below.
-- **Privileged**: roles classified as privileged and/or containing data actions.
+- **Escalation**: paths by which one grant leads to a broader one.
+- **Shadow Access**: the doors that are not Azure RBAC — keys, tokens, and service-specific authorization that would still work if every role assignment were revoked.
+- **Least Privilege**: granted versus actually used, and narrower role proposals. See below.
+- **Simulator**: models a proposed access change before it is made anywhere.
+- **Compare**: what changed since the previous collection, and who did it where the Activity Log can attribute it.
+- **Reviews**: access-review and attestation state held locally.
+- **PIM**: eligible and active assignment state.
 - **Scopes**: management-group → subscription → resource-group hierarchy with grant counts and per-scope freshness.
 - **Roles**: role definitions and available directory principals.
 - **Insights**: pivots by role, principal, scope, surface, principal type, privilege, data plane, group inheritance, ownership, Entra roles, eligibility, cross-scope access, and orphaned identities.
 - **Diagnostics**: collector status, unauthorized/failed scopes, directory status, and partial errors.
+
+`/iam/privileged` remains a working URL and renders the Access grid with the privileged filter applied. It is no longer a separate tab in the strip.
 
 Search/filter controls include text, scope/workload, principal type, surface, access category, and privileged-only. Results are server-paged; filtering first is more reliable and efficient than browsing a large unfiltered estate.
 
@@ -69,13 +93,30 @@ Four things the diagram cannot express on its own are therefore reported beside 
 
 Selecting any bar lists the principals and roles behind it and links through to the Effective Access evaluator and the access grid, so the picture is a starting point rather than the end of the trail.
 
+### Least Privilege: granted versus used
+
+This tab compares the actions a principal's roles *can* authorize against the actions they were actually observed performing, and proposes a narrower grant. Four things about it are structural:
+
+- **Not measured is a wall, not an empty list.** A tenant that has never run a usage scan does not see "0 over-privileged principals", because that is the most reassuring possible rendering of "we have not looked".
+- **Usage carries its own age, separate from the access snapshot.** The access data can be minutes old while usage is weeks old, and a stale denominator changes what "unused" means. The usage collection time is stated beside the figures.
+- **Both numbers travel together, never the ratio alone.** "Used 12 of 8,000" is a fact; a bare percentage is a number designed to be quoted out of context.
+- **A proposal is never shown without its residual risk.** Every narrower proposal states what it gives up.
+
+**The usage window is a lookback ending now.** The picker beside **Scan usage** is a popover with presets of 7, 14, 30, 60, and 90 days plus a custom field accepting 1 to 90. The ceiling is Azure Activity Log retention: nothing older than 90 days can be measured, and the popover says so rather than silently clamping a larger request — "unused in 90 days" is a weaker claim than "unused in 180", and a control that quietly substituted one for the other would misstate the evidence behind an access removal.
+
+Absolute start and end dates are deliberately not offered. The refresh takes a **day count ending now**, not a date range, so any absolute range would have to collapse to a lookback from today — the control would name one window while the scan read another.
+
+The picker opens on the window the data on screen was actually measured over, not on a fixed default, so the number beside the figures and the number in the control always agree. Selecting a window only sets what the *next* scan will read; the window the current figures came from is stated to the left. **Scan usage** reads the Activity Log per subscription, is slow, and is separate from the access refresh.
+
 ## Freshness and scope behavior
 
 ### Refresh and freshness
 
-Page visits read disk-backed caches and never trigger Azure scans. Scope slices and the directory cache are refreshed independently. Header actions can refresh a single scope, directory context, or all. Refresh is a non-blocking background job with progress; it can continue if the browser closes.
+Page visits read disk-backed caches and never trigger Azure scans. Scope slices and the directory cache are refreshed independently. **↻ Rescan** in the page header re-collects everything and is available from every tab; the Overview tab additionally offers **⚡ Quick refresh**, **↻ Refresh directory**, and per-scope refresh. Refresh is a non-blocking background job with progress; it can continue if the browser closes.
 
 Check per-scope age and status. A fresh subscription slice combined with a stale directory cache can show current assignments with unresolved principals or outdated group paths. Refreshing directory alone does not refresh Azure assignments.
+
+Usage data on the Least Privilege tab has its own freshness and is not affected by any of the access refresh controls. It advances only when **Scan usage** runs.
 
 ## Workflow overview
 
@@ -124,6 +165,8 @@ Apply least privilege, but do not remove emergency access, deployment identities
 - The Access Map draws no deny assignments and, by default, no PIM-eligible grants. Both are counted and reported beside the diagram. Read a ribbon as "this access exists", never as "this is the complete set of things that decide the outcome".
 - Ribbon width weighted by *distinct principals* does not sum across columns. Do not read column totals off a principal-weighted map.
 - A folded "N more" bar carries a real total but no names. Narrow the focus before concluding that a specific person does or does not hold access.
+- The usage window cannot exceed 90 days, because the Azure Activity Log does not retain more. "Unused" is always a statement about the measured window, never about all time.
+- The header freshness figure is the newest collection across all scopes. Read the split indicator, or the per-scope table on Overview, before treating the whole estate as current.
 
 ## Troubleshooting
 
@@ -136,6 +179,11 @@ Apply least privilege, but do not remove emergency access, deployment identities
 | Search is slow | Filter scope, surface, and principal type first; use Insights pivots. |
 | Expected access path is absent | Check nested group collection, cache ages, role scope, assignment conditions, and unsupported authorization surfaces. |
 | Remediation action is unavailable | Expected: RBAC does not mutate Azure. Use an approved external/PIM/IaC workflow. |
+| The header says `scanned just now` but a tab shows old data | The headline is the newest collection across all scopes. Check for the `N of M scopes stale` split beside it, then open Overview for the per-scope ages. |
+| The header shows nothing where freshness should be | The overview has not resolved, or its query failed. That is not the same as never scanned, so nothing is asserted. Check Diagnostics. |
+| Least Privilege says usage was not measured | No usage scan has run for this connection. Set the window and use **Scan usage**; it is separate from every access refresh control. |
+| A usage window longer than 90 days will not apply | Azure Activity Log retention is the ceiling. The popover states it; the request is not silently shortened. |
+| The usage window in the picker differs from the window in the figures | Expected. The picker sets the window for the *next* scan; the figures state the window they were measured over. |
 
 ## Related pages
 

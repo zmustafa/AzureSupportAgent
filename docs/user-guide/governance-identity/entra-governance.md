@@ -32,16 +32,19 @@ Licensing gates most of this tab, and Microsoft answers a missing governance lic
 
 ## Tabs and actions
 
-Four sub-views, selected from the strip at the top of the tab. A banner above the strip reports snapshot coverage, and a counter on the right shows how many governance findings the current snapshot raised.
+Five sub-views, selected from the strip at the top of the tab. Each is a path segment, so `/entra/governance/guests` is a shareable link rather than component state. A banner above the strip reports snapshot coverage, and a counter on the right shows how many governance findings the current snapshot raised.
 
 | Sub-view | Reads | What it shows |
 | --- | --- | --- |
 | Coverage | `/governance/coverage` | One row per object class with its count, how many are reviewed, how many are governed by an access package, and the resulting gap. Expanding a row lists the objects in that class |
+| Guests (B2B) | `/governance/guests` | The whole external population as a lifecycle, a partner-organisation rollup with its cross-tenant policy verdict, and the domain classes guests arrive from. See [Entra: guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
 | Access reviews | `/governance/reviews` | Every review definition with status, recurrence, scope kind, days overdue, and named quality flags. An **Overdue only** checkbox filters the list |
 | Entitlement | `/governance/entitlement` | Access packages with resource and policy counts and hygiene markers, plus assignments expiring inside the window |
 | Lifecycle | `/governance/lifecycle` | Joiner, mover, and leaver workflows with category, enabled state, task count, run count, and failure rate |
 
 The governance overview read backing the header supplies the counts, the capability flags, and the governance-pillar findings for the snapshot.
+
+Guest lifecycle sits here rather than under the directory inventory because it is the same class of problem as the rest of this tab: an invitation nobody accepted and a partner nobody reviews are ungoverned access in exactly the way a review campaign that never runs is. Unlike the other four sub-views it needs no governance licence — it is derived from the people and tenant domains.
 
 Object classes on the **Coverage** table are fixed and each carries its own justification: privileged directory roles, role-assignable groups, guest accounts, high-privilege applications, and tenant-wide delegated consent.
 
@@ -98,8 +101,10 @@ Zero and unlicensed mean different things everywhere on this tab. Zero access pa
 ## Related pages
 
 - [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/)
+- [Entra: guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/)
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
 - [Entra: risk and sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/)
 - [Review identity, PIM, and app registrations]({{ site.baseurl }}/how-to/governance-identity/identity-reviews/)
+- [Review guest (B2B) access and clean up stale invitations]({{ site.baseurl }}/how-to/governance-identity/review-guest-access/)
 - [Review, scan, export, and investigate IAM]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/)
 - [Troubleshoot Entra collection and coverage]({{ site.baseurl }}/how-to/governance-identity/troubleshoot-entra-collection/)

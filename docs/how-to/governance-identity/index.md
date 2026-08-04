@@ -26,6 +26,7 @@ Use these guides to turn cached governance and access data into verified review 
 | Close a Conditional Access coverage gap | [Conditional Access coverage gaps]({{ site.baseurl }}/how-to/governance-identity/close-ca-coverage-gaps/) |
 | Review privileged assignments and activations | [Privileged access and activations]({{ site.baseurl }}/how-to/governance-identity/review-privileged-activity/) |
 | Diagnose a blind, stale, or throttled collection | [Troubleshoot Entra collection]({{ site.baseurl }}/how-to/governance-identity/troubleshoot-entra-collection/) |
+| Review external access and clear stale invitations | [Guest (B2B) access reviews]({{ site.baseurl }}/how-to/governance-identity/review-guest-access/) |
 
 ## Common operating pattern
 

@@ -301,7 +301,7 @@ def by_domain(rows: Iterable[dict[str, Any]],
               tenants: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Per partner organisation. This is the unit an enterprise actually decides on.
 
-    Nobody revokes 87 guests one at a time; they end an engagement with a supplier and want
+    Nobody revokes a supplier's guests one at a time; they end an engagement and want
     every identity that came with it. Sorted by guest count so the biggest exposure leads.
     """
     tenants = tenants or {}
@@ -340,13 +340,18 @@ def annotate_partners(domains: list[dict[str, Any]],
     """Mark each guest domain with whether a cross-tenant access policy governs it.
 
     This is the join no Entra blade offers: the partner list is keyed by TENANT ID, and the
-    guest population is keyed by EMAIL DOMAIN, so nobody sees "87 guests from this company
+    guest population is keyed by EMAIL DOMAIN, so nobody sees "N guests from this company
     and no policy naming them".
 
-    Resolving domain -> tenant id needs ``CrossTenantInformation.ReadBasic.All``, which is
-    tier-3 and may not be consented. Until it is, the honest answer is ``unknown`` for every
-    row, NOT ``ungoverned`` — telling an operator that 410 partners are ungoverned when we
-    simply could not look would be the loudest false claim this screen could make.
+    Resolution needs no extra consent: ``findTenantInformationByDomainName`` was verified
+    against v1.0 with the scopes this product already holds. So a domain that does NOT
+    resolve is a fact about the domain — a consumer mailbox, or an organisation with no
+    Entra tenant behind it — and not a permission problem. Saying otherwise would send an
+    operator to grant a scope that changes nothing.
+
+    ``unknown`` is reserved for the case where the partner list itself could not be read.
+    Reporting every partner as ungoverned because we could not look would be the loudest
+    false claim this screen could make.
     """
     known = bool(cross_tenant.get("known"))
     configured = {
@@ -362,8 +367,8 @@ def annotate_partners(domains: list[dict[str, Any]],
         elif not tid:
             d["governance"] = "unknown"
             d["governance_reason"] = (
-                "This domain has not been resolved to a partner tenant "
-                "(needs CrossTenantInformation.ReadBasic.All).")
+                "No Entra tenant is published for this domain, so no cross-tenant policy "
+                "can name it. Consumer mailboxes and organisations without Entra land here.")
         elif tid in configured:
             d["governance"] = "governed"
             d["governance_reason"] = "A cross-tenant access policy names this partner tenant."

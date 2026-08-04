@@ -46,6 +46,7 @@ The labels can evolve, but the following saved keys make every current setting s
 | Assessments and architecture | `assessment_severity_weights`, `assessment_score_good`, `assessment_score_warn`, `assessment_concurrency`, `assessment_check_timeout_s`, `assessment_run_budget_s`, `assessment_confidence_high_pct`, `architecture_category_colors` |
 | Monitoring/telemetry/Backup-DR | `amba_cache_ttl_s`, `amba_misconfig_counts_as_gap`, `amba_threshold_tolerance_pct`, `amba_tiers`, `amba_patterns`, `amba_severity_counts_as_gap`, `amba_honor_monitor_disable_tag`, `telemetry_cache_ttl_s`, `telemetry_per_resource_scan_cap`, `telemetry_scan_concurrency`, `telemetry_approved_workspaces`, `backupdr_cache_ttl_s`, `backupdr_stale_drill_days`, `backupdr_last_job_sla_hours` |
 | Identity and RBAC | `identity_expiry_days`, `identity_cache_ttl_s`, `identity_mfa_scan_cap`, `app_registrations_limit`, `rbac_cache_ttl_s`, `rbac_max_rows`, `rbac_tools_enabled` |
+| Entra ID | `entra_cache_ttl_s`, `entra_stale_days`, `entra_guest_stale_days`, `entra_expiry_window_days`, `entra_signin_lookback_days`, `entra_max_users`, `entra_enable_beta_endpoints` |
 | Policy and changes | `policy_exemption_require_justification`, `policy_exemption_max_expiry_days`, `policy_exemption_block_never_expires`, `changeexplorer_resolve_identities`, `changeexplorer_change_limit` |
 | Telemetry intelligence/performance | `teleintel_cache_ttl_s`, `teleintel_default_timespan`, `teleintel_max_rows`, `perfprofile_cache_ttl_s`, `perfprofile_window`, `perfprofile_interval`, `perfprofile_scan_cap` |
 | Quota | `quota_cache_ttl_s`, `quota_threshold_watch`, `quota_threshold_warning`, `quota_threshold_critical`, `quota_scan_concurrency`, `quota_hide_zero_usage` |
@@ -55,6 +56,21 @@ The labels can evolve, but the following saved keys make every current setting s
 | Workload discovery/health | `autopilot_autosave_confidence`, `autopilot_auto_assess`, `autopilot_auto_architecture`, `workload_health_weights`, `workload_nightly_refresh` |
 
 List editors are normalized and deduplicated. Time zones use IANA names, schedule times use `HH:MM`, durations use ISO-8601 values, and architecture colors use known categories with `#rrggbb` values. Numeric controls are bounded by backend validation; after save, re-open the section to confirm the effective value.
+
+### Entra ID dormancy windows
+
+Two separate dormancy bars decide what counts as an unused identity in Entra ID, and they are independent on purpose.
+
+| Setting | Default | Accepted range | Governs |
+| --- | --- | --- | --- |
+| `entra_stale_days` | 90 | 1–730 | Dormancy for members, applications, and admins |
+| `entra_guest_stale_days` | 90 | 1–730 | Dormancy for **guests only** |
+
+Guests have their own bar so external access can be held to a stricter standard than employee accounts — an account belonging to somebody else's organisation is usually worth expiring sooner than one belonging to yours. Lower `entra_guest_stale_days` without touching `entra_stale_days` to tighten external access alone.
+
+The guest value is read in one place and applied everywhere, so the Guests (B2B) screen, the exported guest sheets, and the `ppl.guest_accepted_never_used`, `ppl.guest_human_dormant`, and `ppl.guest_consumer_domain` signals cannot disagree about who is dormant. Changing it takes effect on the next read of the cached snapshot; no re-collection is required. See [Entra: guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/).
+
+Neither setting can make a guest dormant when sign-in activity was not collected. An unmeasured account is reported as **Not measured**, never as dormant, at any window.
 
 ## Freshness and scope behavior
 
