@@ -24,7 +24,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:le
 
 `/iam` and `/iam/:tab` — including `/iam/overview`, `/iam/effective`, `/iam/privileged`, `/iam/leastprivilege`, `/iam/scopes`, `/iam/roles`, `/iam/insights`, and `/iam/diagnostics`. The former `/rbac` URLs redirect to their `/iam` equivalents, keeping the tab segment and query string.
 
-![RBAC effective-access review]({{ site.baseurl }}/assets/identity.png)
+![IAM access review overview showing grant, principal and privileged counts with per-scope freshness]({{ site.baseurl }}/assets/iam.png)
 
 ## How to scan RBAC scopes and directory context
 

@@ -12,7 +12,7 @@ permalink: /how-to/lifecycle-investigation/telemetry-intelligence/
 
 **Exact route:** `/telemetry-intel`.
 
-![Telemetry coverage and query context]({{ site.baseurl }}/assets/telemetry-coverage.png)
+
 
 ## Prerequisites
 

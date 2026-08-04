@@ -19,7 +19,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:comp
 
 **App routes:** `/iam` and `/iam/:tab` (the former `/rbac` URLs redirect here)
 IAM composes Azure role assignments, role definitions, scope hierarchy, and available Entra directory/group/ownership context into effective-access rows. It is an access-review tool and does not add or remove assignments.
-![IAM review showing effective and privileged access analysis]({{ site.baseurl }}/assets/identity.png)
+![IAM access review overview showing grant, principal and privileged counts with per-scope freshness]({{ site.baseurl }}/assets/iam.png)
 
 ## Prerequisites and data sources
 

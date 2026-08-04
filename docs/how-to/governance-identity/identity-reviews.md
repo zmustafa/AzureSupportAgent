@@ -41,7 +41,7 @@ That last row is the one to watch. A bookmark to a path the redirect table does 
 
 The underlying API is unchanged, so the product permission is still `identity.read` even though you now arrive through an Entra tab.
 
-![Identity findings grouped by urgency]({{ site.baseurl }}/assets/identity.png)
+![Entra ID findings inbox, the entry point for the identity hygiene review]({{ site.baseurl }}/assets/entra-findings.png)
 
 ## How to refresh and triage identity findings
 

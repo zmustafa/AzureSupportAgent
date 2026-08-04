@@ -17,7 +17,7 @@ AI-driven Azure operations, investigation, governance, and proactive support—d
 [Explore every feature]({{ site.baseurl }}/user-guide/){: .btn .mr-2 }
 [View on GitHub](https://github.com/zmustafa/AzureSupportAgent){: .btn }
 
-![Azure Support Agent proactive-support experience]({{ site.baseurl }}/assets/proactive-support.png)
+![The Proactive Support tool directory, grouped by what each tool answers]({{ site.baseurl }}/assets/proactive-support.png)
 
 ## Start here
 
