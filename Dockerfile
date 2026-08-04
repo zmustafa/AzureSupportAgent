@@ -41,12 +41,29 @@ ENV APP_VERSION=$APP_VERSION
 ARG APP_RELEASE=
 ENV APP_RELEASE=$APP_RELEASE
 
-# Node.js (for `npx @azure/mcp`), the Azure CLI (DefaultAzureCredential), and the
+# Node.js (to run the Azure MCP server), the Azure CLI (DefaultAzureCredential), and the
 # networking CLIs the built-in utility tools shell out to (ping, traceroute, dig, etc.).
 # One layer.
 # `apt-get upgrade` pulls in the latest Debian security patches for the base image so a
 # rebuild closes known OS-package CVEs instead of inheriting whatever was current when
 # the base tag was published.
+#
+# npm is PINNED rather than `@latest`. An unpinned global upgrade makes the image
+# non-reproducible — two builds of the same commit can ship different npm trees — and npm
+# vendors its own dependency copies under /usr/lib/node_modules/npm/node_modules, so those
+# bundled packages are what image CVE scans report. Pinning makes that surface a deliberate,
+# reviewable choice; bump it on purpose after checking the scan.
+ARG NPM_VERSION=12.0.2
+# The Azure MCP server is INSTALLED AT BUILD TIME instead of being fetched by `npx` on every
+# cold start. Fetching it at runtime meant the container reached out to the public npm
+# registry from production — a supply-chain and availability dependency on a third party,
+# and the main path that exercised npm's own HTTP stack at runtime.
+#
+# Pinned to the exact version `@latest` resolved to when this was introduced, so this change
+# is only about WHEN the package is fetched, not WHICH version runs. NOTE: the package's
+# `latest` dist-tag currently points at a PRERELEASE (there is no stable tag), which is worth
+# a deliberate decision rather than inheriting it silently — see MCP_COMMAND below.
+ARG AZURE_MCP_VERSION=3.0.0-beta.31
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
@@ -57,9 +74,32 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && /opt/az/bin/python3 -m pip install --no-cache-dir "cryptography>=48.0.1" \
-    && npm install -g npm@latest \
+    && npm install -g "npm@${NPM_VERSION}" \
+    && npm install -g "@azure/mcp@${AZURE_MCP_VERSION}" \
+    && npm cache clean --force \
+    # npm is a BUILD-TIME tool here, not a runtime one: the only runtime consumer was
+    # `npx @azure/mcp`, which the pre-install above replaced with a real binary. Removing it
+    # deletes the whole /usr/lib/node_modules/npm/node_modules vendored tree, which is where
+    # every open image CVE in this project lives (undici, ip-address, brace-expansion). Those
+    # are bundled INSIDE npm, so they cannot be patched downstream — even the newest npm still
+    # ships the vulnerable copies. Deleting the surface is the only fix available to us.
+    #
+    # It also removes the ability to install anything from the public npm registry at runtime,
+    # which is a deliberate hardening rather than a side effect.
+    #
+    # TRADE-OFF: `npx` no longer exists in this image. The application's default
+    # `MCP_COMMAND=npx` (still correct for local development) is overridden to `azmcp` below;
+    # a deployment that forces MCP_COMMAND back to `npx` would not find it. Node itself stays,
+    # because `azmcp` needs it.
+    && rm -rf /usr/lib/node_modules/npm /usr/bin/npm /usr/bin/npx \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Run the pre-installed server binary directly. `npx -y @azure/mcp@latest` (the application
+# default, which stays correct for local development) would resolve and possibly download the
+# package on every cold start; `azmcp` is the bin the package installs and is already on PATH.
+ENV MCP_COMMAND=azmcp \
+    MCP_ARGS="server start --transport stdio"
 
 # Resource discovery uses `az graph query`, which needs the resource-graph CLI extension.
 # Each query runs in a throwaway AZURE_CONFIG_DIR (fresh SP login), so relying on runtime
