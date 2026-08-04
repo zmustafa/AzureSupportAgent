@@ -66,16 +66,34 @@ def upgrade() -> None:
     op.create_index("ix_iam_review_item_reviewer_id", "iam_review_item", ["reviewer_id"])
 
     # Bounded row retention on the run history: the newest run plus anything pinned.
+    _extend_rbac_scan_runs()
+
+
+# `rbac_scan_runs` is NOT created by any migration — it is owned by the app's `create_all()`
+# at startup. On a FRESH database `alembic upgrade head` runs BEFORE the app boots, so the
+# table does not exist yet and an unguarded ALTER kills the container with
+# `UndefinedTableError: relation "rbac_scan_runs" does not exist`. When the table is absent,
+# `create_all()` will later build it with these columns already present, so skipping is correct.
+def _extend_rbac_scan_runs() -> None:
+    inspector = sa.inspect(op.get_bind())
+    if "rbac_scan_runs" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("rbac_scan_runs")}
     with op.batch_alter_table("rbac_scan_runs") as batch:
-        batch.add_column(sa.Column("rows_json", sa.JSON(), nullable=True))
-        batch.add_column(sa.Column("pinned", sa.Boolean(), nullable=False, server_default=sa.false()))
-        batch.add_column(sa.Column("pin_reason", sa.String(256), nullable=False, server_default=""))
+        if "rows_json" not in existing:
+            batch.add_column(sa.Column("rows_json", sa.JSON(), nullable=True))
+        if "pinned" not in existing:
+            batch.add_column(sa.Column("pinned", sa.Boolean(), nullable=False, server_default=sa.false()))
+        if "pin_reason" not in existing:
+            batch.add_column(sa.Column("pin_reason", sa.String(256), nullable=False, server_default=""))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("rbac_scan_runs") as batch:
-        batch.drop_column("pin_reason")
-        batch.drop_column("pinned")
-        batch.drop_column("rows_json")
+    inspector = sa.inspect(op.get_bind())
+    if "rbac_scan_runs" in inspector.get_table_names():
+        with op.batch_alter_table("rbac_scan_runs") as batch:
+            batch.drop_column("pin_reason")
+            batch.drop_column("pinned")
+            batch.drop_column("rows_json")
     op.drop_table("iam_review_item")
     op.drop_table("iam_review_campaign")
