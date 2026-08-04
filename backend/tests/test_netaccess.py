@@ -99,19 +99,123 @@ def test_untrusted_peer_ignores_the_header_entirely(monkeypatch):
     assert client_ip(_Req("203.0.113.99", {"x-forwarded-for": "198.51.100.1"})) == "203.0.113.99"
 
 
-def test_unparseable_header_falls_back_to_the_socket_peer(monkeypatch):
+def test_unparseable_trusted_header_yields_no_client(monkeypatch):
+    """A trusted header that contains nothing usable must NOT fall back to the socket peer.
+
+    Behind a trusted proxy the socket peer IS the proxy, so falling back would hand back
+    infrastructure as "the client" — and let it satisfy an allowlist.
+    """
     from app.core.clientip import client_ip
 
     _with_managed_ingress(monkeypatch)
-    assert client_ip(_Req("10.0.0.8", {"x-forwarded-for": "not-an-ip"})) == "10.0.0.8"
+    assert client_ip(_Req("10.0.0.8", {"x-forwarded-for": "not-an-ip"})) is None
 
 
-def test_all_private_chain_returns_rightmost_private(monkeypatch):
-    """A wholly-internal deployment has no public entry; every caller must not collapse to one."""
+def test_all_private_chain_returns_no_client(monkeypatch):
+    """When every entry is infrastructure the caller cannot be identified — say so.
+
+    An earlier version fell back to the rightmost valid-but-internal entry, which meant a proxy
+    address could be handed back as "the client" and then satisfy an allowlist. Refusing to name
+    an unattributable caller is the correct direction for a security control.
+    """
     from app.core.clientip import client_ip
 
     _with_managed_ingress(monkeypatch)
-    assert client_ip(_Req("10.0.0.8", {"x-forwarded-for": "192.168.1.5, 10.0.0.8"})) == "10.0.0.8"
+    assert client_ip(_Req("10.0.0.8", {"x-forwarded-for": "192.168.1.5, 10.0.0.8"})) is None
+
+
+def test_unidentifiable_caller_is_never_allowed():
+    assert netaccess.matches(None, [_rule("10.0.0.0/8")]) is False
+
+
+# =============================================================== CGNAT / tailnet addresses
+#
+# 100.64.0.0/10 was originally skipped as "ingress fabric". That was wrong: a Tailscale address
+# is allocated from this range and is exactly the stable per-device identity an operator would
+# want to allowlist. Skipping it silently mis-attributed the request to the next entry.
+
+
+def test_cgnat_address_is_treated_as_a_client(monkeypatch):
+    from app.core.clientip import client_ip
+
+    _with_managed_ingress(monkeypatch)
+    assert client_ip(_Req("10.0.0.8", {"x-forwarded-for": "100.100.0.95"})) == "100.100.0.95"
+
+
+def test_tailnet_address_can_be_allowlisted():
+    assert netaccess.matches("100.100.0.95", [_rule("100.64.0.0/10")]) is True
+    assert netaccess.matches("100.83.207.78", [_rule("100.83.207.78/32")]) is True
+    assert netaccess.matches("100.100.0.95", [_rule("100.83.207.78/32")]) is False
+
+
+def test_cgnat_does_not_shadow_a_real_client(monkeypatch):
+    """A CGNAT hop appended AFTER the client must still lose to the rightmost rule."""
+    from app.core.clientip import client_ip
+
+    _with_managed_ingress(monkeypatch)
+    # Caller injected a value; the proxy appended the tailnet address it actually saw.
+    assert (
+        client_ip(_Req("10.0.0.8", {"x-forwarded-for": "203.0.113.1, 100.100.0.95"}))
+        == "100.100.0.95"
+    )
+
+
+# =============================================================== resolution diagnostic
+
+
+def test_describe_explains_a_normal_managed_ingress_request(monkeypatch):
+    from app.core.clientip import describe
+
+    _with_managed_ingress(monkeypatch)
+    out = describe(_Req("10.0.0.8", {"x-forwarded-for": "203.0.113.1, 198.51.100.9"}))
+    assert out["resolved_ip"] == "198.51.100.9"
+    assert out["socket_peer"] == "10.0.0.8"
+    assert out["forwarded_honoured"] is True
+    assert [e["classification"] for e in out["entries"]] == ["client", "client"]
+    assert [e["selected"] for e in out["entries"]] == [False, True]
+    assert "right-to-left" in out["reason"]
+
+
+def test_describe_flags_an_ignored_header(monkeypatch):
+    from app.core.clientip import describe
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trust_forwarded_headers", False, raising=False)
+    monkeypatch.setattr(settings, "trusted_proxies", "", raising=False)
+    out = describe(_Req("203.0.113.99", {"x-forwarded-for": "198.51.100.1"}))
+    assert out["forwarded_honoured"] is False
+    assert out["resolved_ip"] == "203.0.113.99"
+    assert "ignored" in out["reason"]
+
+
+def test_describe_reports_an_unidentifiable_caller(monkeypatch):
+    from app.core.clientip import describe
+
+    _with_managed_ingress(monkeypatch)
+    out = describe(_Req("10.0.0.8", {"x-forwarded-for": "10.1.1.1, 10.0.0.8"}))
+    assert out["resolved_ip"] is None
+    assert all(e["classification"] == "infrastructure" for e in out["entries"])
+    assert "refused" in out["reason"]
+
+
+def test_describe_marks_a_cgnat_entry_as_a_client(monkeypatch):
+    from app.core.clientip import describe
+
+    _with_managed_ingress(monkeypatch)
+    out = describe(_Req("10.0.0.8", {"x-forwarded-for": "100.100.0.95"}))
+    assert out["entries"][0]["classification"] == "client"
+    assert out["resolved_ip"] == "100.100.0.95"
+
+
+def test_describe_handles_a_missing_header(monkeypatch):
+    from app.core.clientip import describe
+
+    _with_managed_ingress(monkeypatch)
+    out = describe(_Req("203.0.113.5", {}))
+    assert out["forwarded_header"] is None
+    assert out["resolved_ip"] == "203.0.113.5"
+    assert out["entries"] == []
 
 
 # =============================================================== CIDR matching

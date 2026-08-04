@@ -119,6 +119,26 @@ param allowlistSeed string = ''
 ])
 param allowlistSeedMode string = 'enforce'
 
+// Ingress visibility. 'Internal' removes the public endpoint entirely — the app is then only
+// reachable from inside the VNet, which is the strongest possible answer to "restrict who can
+// reach it" because there is no public address to attack.
+//
+// REQUIREMENTS AND CONSEQUENCES — read before choosing 'Internal':
+//   * It requires a VNet-injected environment, i.e. Private networking = Yes. Choosing
+//     'Internal' without it fails the deployment with an Azure error rather than silently
+//     falling back, because a template that quietly ignored this would leave an operator
+//     believing they were private when they were not.
+//   * You must provide your own way in: a VPN, a Bastion/jump host, a private endpoint, or a
+//     subnet router (e.g. Tailscale) deployed inside the VNet. Nothing in this template does
+//     that for you, and after deployment the one-click URL will NOT be reachable from the
+//     internet — including from the machine that ran the deployment.
+@description('Whether the application has a public endpoint. External = reachable from the internet (default). Internal = no public endpoint; reachable only from inside the VNet, which REQUIRES Private networking = Yes and your own connectivity into that VNet (VPN, Bastion, private endpoint or a subnet router).')
+@allowed([
+  'External'
+  'Internal'
+])
+param ingressVisibility string = 'External'
+
 @description('Infrastructure subnet (CIDR) for the Container Apps Environment. Must be at least a /23 (Container Apps requirement) and inside the VNet address space. Used only when Private networking = Yes.')
 param infraSubnetPrefix string = '10.42.0.0/23'
 
@@ -484,7 +504,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: union(
         {
-          external: true
+          external: ingressVisibility == 'External'
           targetPort: 8000
           transport: 'auto'
           allowInsecure: false

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "3933550349967999096"
+      "templateHash": "8358295039279176778"
     }
   },
   "parameters": {
@@ -160,6 +160,17 @@
       ],
       "metadata": {
         "description": "Mode applied to the seeded in-app allowlist. Use monitor to observe what WOULD be blocked without blocking anything, then switch to enforce in the app once the ranges are proven correct. Ignored when allowlistSeed is empty."
+      }
+    },
+    "ingressVisibility": {
+      "type": "string",
+      "defaultValue": "External",
+      "allowedValues": [
+        "External",
+        "Internal"
+      ],
+      "metadata": {
+        "description": "Whether the application has a public endpoint. External = reachable from the internet (default). Internal = no public endpoint; reachable only from inside the VNet, which REQUIRES Private networking = Yes and your own connectivity into that VNet (VPN, Bastion, private endpoint or a subnet router)."
       }
     },
     "infraSubnetPrefix": {
@@ -546,7 +557,7 @@
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
         "configuration": {
           "activeRevisionsMode": "Single",
-          "ingress": "[union(createObject('external', true(), 'targetPort', 8000, 'transport', 'auto', 'allowInsecure', false(), 'traffic', createArray(createObject('latestRevision', true(), 'weight', 100))), if(empty(parameters('allowedClientIpRanges')), createObject(), createObject('ipSecurityRestrictions', variables('ipSecurityRestrictions'))))]",
+          "ingress": "[union(createObject('external', equals(parameters('ingressVisibility'), 'External'), 'targetPort', 8000, 'transport', 'auto', 'allowInsecure', false(), 'traffic', createArray(createObject('latestRevision', true(), 'weight', 100))), if(empty(parameters('allowedClientIpRanges')), createObject(), createObject('ipSecurityRestrictions', variables('ipSecurityRestrictions'))))]",
           "secrets": [
             {
               "name": "database-url",

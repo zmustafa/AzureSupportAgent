@@ -43,6 +43,40 @@ az containerapp ingress access-restriction set \
   --rule-name office --ip-address 203.0.113.0/24 --action Allow
 ```
 
+### No public endpoint at all
+
+If the application should not be reachable from the internet under any circumstances, deploy
+with `ingressVisibility = Internal`. That removes the public endpoint entirely rather than
+filtering it, so there is no public address to attack.
+
+It requires `privateNetworking = Yes`, and **you must provide your own way in** — a VPN, a
+Bastion or jump host, a private endpoint, or a subnet router such as Tailscale deployed inside
+the VNet. Nothing in the template does that for you, and after deployment the one-click URL will
+not resolve for anyone on the internet, including the machine that ran the deployment.
+
+## Which address the server sees
+
+The policy is evaluated against the address the **server** resolves, which is not always the one
+you expect:
+
+| How you connect | Address seen |
+|---|---|
+| Directly over the internet | Your public (ISP) address |
+| Over a VPN or Tailscale subnet router | The address of that tunnel, typically in `100.64.0.0/10` |
+| Via a Tailscale exit node | The exit node's public address |
+
+Addresses in `100.64.0.0/10` (carrier-grade NAT space, which includes every Tailscale address)
+are treated as a **real client**, not as infrastructure, so a tailnet address can be allowlisted
+directly. Tailnet addresses are stable per device, which makes them a better allowlist entry
+than a dynamic home IP.
+
+If the address shown is not what you expect, open **How was my address determined?** under the
+mode selector. It shows the raw `X-Forwarded-For` chain as received, the socket peer, how each
+entry was classified, which one was selected, and why.
+
+When no entry in a trusted forwarded header can be attributed to a client, the caller is treated
+as unidentifiable and refused in Enforce mode, rather than being attributed to a proxy.
+
 ## Modes
 
 | Mode | Behaviour |
@@ -119,6 +153,9 @@ applies **only on first boot** and never overwrites a policy saved later in the 
 Records are aggregated per source address, not one row per request, so a scanner cannot flood
 the view. The badge distinguishes **Blocked** (actually refused) from **Would block** (Monitor
 mode) — these are opposite facts and are never conflated.
+
+Rows keep the mode they were recorded under, so a "Would block" row can appear while enforcing.
+Those are historical entries from a Monitor period, not requests being allowed now.
 
 Records are pruned after 30 days.
 

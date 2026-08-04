@@ -45,8 +45,12 @@ def test_managed_ingress_client_ip_uses_valid_forwarded_address():
             headers={"x-forwarded-for": "198.51.100.42, 10.0.0.8"},
         )
         assert _client_ip(req) == "198.51.100.42"
+        # A TRUSTED header that yields no attributable address no longer falls back to the
+        # socket peer: behind a trusted proxy that peer IS the proxy, and returning it would
+        # let infrastructure be treated as the client (and satisfy an IP allowlist). See
+        # app/core/clientip.py and tests/test_netaccess.py.
         req.headers["x-forwarded-for"] = "not-an-ip"
-        assert _client_ip(req) == "10.0.0.8"
+        assert _client_ip(req) is None
     finally:
         settings.trust_forwarded_headers = saved
 

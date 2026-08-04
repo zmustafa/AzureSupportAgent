@@ -11239,6 +11239,23 @@ export interface FirewallRule extends FirewallRuleIn {
   created_at?: string;
 }
 
+/** How the server arrived at your address — the answer to "why does it think I'm that IP?". */
+export interface FirewallResolutionEntry {
+  value: string;
+  valid: boolean;
+  classification: "client" | "infrastructure" | "unparseable";
+  selected: boolean;
+}
+
+export interface FirewallResolution {
+  resolved_ip: string | null;
+  socket_peer: string | null;
+  forwarded_header: string | null;
+  forwarded_honoured: boolean;
+  entries: FirewallResolutionEntry[];
+  reason: string;
+}
+
 export interface FirewallConfig {
   mode: FirewallMode;
   /** Mode after break-glass and the commit-confirm timer are applied. May differ from `mode`. */
@@ -11252,6 +11269,7 @@ export interface FirewallConfig {
   your_ip_rule: string | null;
   break_glass_active: boolean;
   confirm_window_minutes: number;
+  resolution: FirewallResolution | null;
 }
 
 export interface FirewallBlock {

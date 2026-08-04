@@ -29,11 +29,17 @@ permalink: /how-to/administration/network-access/
 | Requirement | Use |
 | --- | --- |
 | Stop unknown sources reaching the app at all, including the TLS handshake | Container Apps ingress restrictions (`allowedClientIpRanges`, or `az containerapp ingress access-restriction`) |
+| No public endpoint whatsoever | Deploy with `ingressVisibility = Internal` (requires `privateNetworking = Yes` and your own route into the VNet) |
 | Self-service control with an audit trail, monitor mode, and no redeploy | This screen |
 | Both | Configure the ingress first, then this screen |
 
 This screen cannot see ingress-level rules. "Off" here does not mean the application is
 unrestricted at the edge.
+
+{: .warning }
+Check **How was my address determined?** before writing rules. If you reach the app over a VPN
+or a Tailscale subnet router, the server sees that tunnel's address (typically `100.64.0.0/10`),
+not your ISP address — and allowlisting the wrong one is how the first Enforce attempt fails.
 
 ## How to introduce an allowlist safely
 
@@ -120,12 +126,14 @@ az containerapp ingress access-restriction remove \
 
 | Symptom | Resolution |
 | --- | --- |
-| The address shown differs from what you expect | The server sees your egress address, not your local adapter. Use the value on screen; behind CGNAT or a proxy it will not match `ipconfig`. |
+| The address shown differs from what you expect | Open **How was my address determined?** to see the raw forwarded chain and how each entry was classified. A VPN or Tailscale subnet router changes the address the server sees; an exit node substitutes its own public address. |
+| The address is in 100.x.y.z | That is carrier-grade NAT space, which includes every Tailscale address. It is treated as a real client and can be allowlisted directly — and being stable per device, it is a better rule than a dynamic home IP. |
 | Save is disabled with "Add a range covering your address" | Enforce would lock you out. Add a covering rule, or use **+ Add my IP**. |
 | A range is rejected as allowing every address | `0.0.0.0/0` and `::/0` disable enforcement while the screen still reads "Enforcing". Remove it or use Off. |
 | Users drop off intermittently | The egress range is larger or more dynamic than listed. Return to Monitor and re-observe before narrowing. |
 | Enforcement reverted on its own | The commit-confirm window expired without confirmation. Re-enable and press **Keep enforcing**. |
 | Nothing appears in Recent blocks | Mode is Off, so no requests are evaluated. Switch to Monitor. |
+| "Would block" rows while enforcing | Rows keep the mode they were recorded under. Those are historical Monitor entries, not requests being allowed now. |
 | Blocked entries show one address for many users | Users share an egress NAT. Allow the range, not individual addresses. |
 | A restored backup is not enforcing | An imported `enforce` policy is restored as **Monitor** on purpose, because a backup carries the original deployment's ranges. Review the rules, then enforce. |
 

@@ -10,6 +10,7 @@ import {
   type AcUser,
   type AuthPolicies,
   type FirewallMode,
+  type FirewallResolution,
   type FirewallRule,
   type IdpTestResult,
 } from "../api";
@@ -1640,6 +1641,8 @@ function FirewallCard() {
           This controls the application. Your Azure Container App may also restrict access at the
           ingress, which this screen cannot see or change.
         </p>
+
+        <FirewallResolutionDetail resolution={server?.resolution ?? null} />
       </Card>
 
       <Card
@@ -1781,6 +1784,72 @@ function FirewallCard() {
   );
 }
 
+/** Shows how the server arrived at your address.
+ *
+ * "Which address does the server think I am, and how did it decide?" is the first question
+ * anyone debugging an allowlist asks. Without this, a mis-attributed address is only
+ * discoverable by noticing the number looks wrong — which is exactly how a CGNAT/tailnet
+ * address went unexplained until someone screenshotted it. */
+function FirewallResolutionDetail({ resolution }: { resolution: FirewallResolution | null }) {
+  const [open, setOpen] = useState(false);
+  if (!resolution) return null;
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="text-xs text-slate-500 underline hover:text-slate-700"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "Hide" : "How was my address determined?"}
+      </button>
+      {open && (
+        <div className="mt-2 rounded border bg-slate-50 p-3 text-xs text-slate-600">
+          <p className="mb-2">{resolution.reason}</p>
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+            <dt className="text-slate-500">Resolved as</dt>
+            <dd className="font-mono">{resolution.resolved_ip ?? "— (caller not identifiable)"}</dd>
+            <dt className="text-slate-500">Connection peer</dt>
+            <dd className="font-mono">{resolution.socket_peer ?? "—"}</dd>
+            <dt className="text-slate-500">X-Forwarded-For</dt>
+            <dd className="break-all font-mono">
+              {resolution.forwarded_header ?? "(not sent)"}
+              {resolution.forwarded_header && !resolution.forwarded_honoured && (
+                <span className="ml-1 text-amber-700">(not trusted here, ignored)</span>
+              )}
+            </dd>
+          </dl>
+          {resolution.entries.length > 0 && (
+            <table className="mt-2 w-full">
+              <thead className="text-left text-slate-500">
+                <tr className="border-b">
+                  <th className="py-1 pr-3 font-medium">Entry</th>
+                  <th className="py-1 pr-3 font-medium">Classified as</th>
+                  <th className="py-1 font-medium">Used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resolution.entries.map((e, i) => (
+                  <tr key={`${e.value}-${i}`} className="border-b last:border-0">
+                    <td className="py-1 pr-3 font-mono">{e.value}</td>
+                    <td className="py-1 pr-3">{e.classification}</td>
+                    <td className="py-1">{e.selected ? "✓" : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="mt-2 text-slate-400">
+            The header is read right-to-left because a caller can only prepend to it. Addresses in
+            carrier-grade NAT space (100.64.0.0/10), such as a Tailscale address, are treated as a
+            real client, not as infrastructure. “Connection peer” is what the server reports and
+            may itself be derived from the header when the app runs behind a managed ingress.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Parse a CIDR/IP the same way the backend does, for live feedback before saving. */
 function parseCidr(value: string): { base: bigint; bits: number; version: 4 | 6 } | null {
   const [addr, prefixRaw] = value.trim().split("/");
@@ -1899,6 +1968,15 @@ function FirewallBlocksCard({
         </p>
       ) : (
         <>
+          {effectiveMode === "enforce" && items.some((b) => b.mode === "monitor") && (
+            // Rows keep the mode they were recorded under, so a "Would block" row can legitimately
+            // appear while enforcing. Saying so is cheaper than letting someone conclude the
+            // policy is not being applied.
+            <p className="mb-2 text-xs text-slate-500">
+              Rows keep the mode they were recorded under. “Would block” entries are historical,
+              from a period when this was in Monitor — they are not requests being allowed now.
+            </p>
+          )}
           <table className="w-full text-xs">
             <thead className="text-left text-gray-500">
               <tr className="border-b">

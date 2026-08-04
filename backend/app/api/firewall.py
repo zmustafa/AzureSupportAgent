@@ -18,7 +18,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import netaccess, netaccess_events
-from app.core.clientip import client_ip
+from app.core.clientip import client_ip, describe as describe_client_ip
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.models import AuditLog, IpBlockEvent
@@ -53,7 +53,7 @@ async def _audit(db: AsyncSession, principal: Principal, action: str, meta: dict
     await db.commit()
 
 
-def _decorate(cfg: dict[str, Any], caller_ip: str | None) -> dict[str, Any]:
+def _decorate(cfg: dict[str, Any], caller_ip: str | None, request: Request | None = None) -> dict[str, Any]:
     """Add derived, display-only fields the UI needs to be safe to operate."""
     rules = []
     for rule in cfg.get("rules", []):
@@ -77,6 +77,9 @@ def _decorate(cfg: dict[str, Any], caller_ip: str | None) -> dict[str, Any]:
         "your_ip_rule": match.get("label") if match else None,
         "break_glass_active": netaccess.break_glass_active(),
         "confirm_window_minutes": netaccess.CONFIRM_WINDOW_MINUTES,
+        # How the address above was arrived at. Without this, a mis-attributed address is only
+        # discoverable by noticing the number looks wrong and asking someone.
+        "resolution": describe_client_ip(request) if request is not None else None,
     }
 
 
@@ -85,7 +88,7 @@ async def get_config(request: Request, _: Principal = Depends(require_read)):
     # Evaluate the commit-confirm timer on read so the screen never shows a stale "Enforcing"
     # after the window has lapsed.
     netaccess.revert_if_expired()
-    return _decorate(netaccess.load_config(), client_ip(request))
+    return _decorate(netaccess.load_config(), client_ip(request), request)
 
 
 @router.put("")
@@ -166,7 +169,7 @@ async def update_config(
             "actor_ip": caller_ip,
         },
     )
-    return _decorate(cfg, caller_ip)
+    return _decorate(cfg, caller_ip, request)
 
 
 @router.post("/confirm")
@@ -182,7 +185,7 @@ async def confirm_enforcement(
     cfg["confirm_by"] = None
     netaccess.write_config(cfg)
     await _audit(db, principal, "firewall.confirmed", {"actor_ip": client_ip(request)})
-    return _decorate(cfg, client_ip(request))
+    return _decorate(cfg, client_ip(request), request)
 
 
 @router.get("/blocks")
