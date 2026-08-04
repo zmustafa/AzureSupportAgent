@@ -62,6 +62,20 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         admin_consent = await _one(client, "/policies/adminConsentRequestPolicy", notes, "adminConsentRequestPolicy")
         cross_tenant = await _one(client, "/policies/crossTenantAccessPolicy/default", notes, "crossTenantAccessPolicy")
 
+        # Per-PARTNER cross-tenant configuration. The default policy says how you treat every
+        # organisation you have not named; this says which ones you HAVE named. Joined to the
+        # guest domain rollup it answers the question no Entra blade answers: "we have 87
+        # guests from this company and no policy governing them at all".
+        partners: list[dict[str, Any]] = []
+        partners_known = False
+        try:
+            partners, _ = await client.get_all("/policies/crossTenantAccessPolicy/partners", top=0)
+            partners_known = True
+        except GraphPermissionError as exc:
+            notes.append(f"crossTenantAccessPolicy/partners: not permitted ({clip(exc.message, 120)})")
+        except GraphError as exc:
+            notes.append(f"crossTenantAccessPolicy/partners: {clip(exc, 160)}")
+
         grant_policies: list[dict[str, Any]] = []
         try:
             grant_policies, _ = await client.get_all(
@@ -110,6 +124,14 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
                 "present": bool(admin_consent),
             },
             "cross_tenant_default": _cross_tenant(cross_tenant),
+            # `known` distinguishes "no partner is configured" from "we could not read the
+            # partner list" — an empty list under a permission failure would otherwise render
+            # as "every partner is ungoverned", which is a very loud false claim.
+            "cross_tenant_partners": {
+                "known": partners_known,
+                "count": len(partners),
+                "partners": [_partner(as_dict(p)) for p in partners],
+            },
             "permission_grant_policies": [
                 {"id": p.get("id", ""), "display_name": p.get("displayName", "")} for p in grant_policies
             ],
@@ -279,6 +301,27 @@ def _auth_methods(policy: dict[str, Any]) -> dict[str, Any]:
         "authenticator_enabled": bool(enabled.get("MicrosoftAuthenticator")),
         "tap_enabled": bool(enabled.get("TemporaryAccessPass")),
         "email_otp_enabled": bool(enabled.get("Email")),
+    }
+
+
+def _partner(policy: dict[str, Any]) -> dict[str, Any]:
+    """One named cross-tenant partner, flattened to what the guest rollup needs.
+
+    Only the tenant id is guaranteed; the collaboration blocks are null whenever the partner
+    inherits the default, which is itself the interesting fact (a partner entry that
+    configures nothing governs nothing).
+    """
+    inbound = as_dict(policy.get("b2bCollaborationInbound"))
+    trust = as_dict(policy.get("inboundTrust"))
+    return {
+        "tenant_id": str(policy.get("tenantId") or ""),
+        "is_service_provider": bool(policy.get("isServiceProvider")),
+        "in_multi_tenant_org": bool(policy.get("isInMultiTenantOrganization")),
+        # None (inherits default) is deliberately distinct from an explicit block.
+        "b2b_inbound_configured": bool(inbound),
+        "trust_mfa": bool(trust.get("isMfaAccepted")),
+        "trust_compliant_device": bool(trust.get("isCompliantDeviceAccepted")),
+        "trust_hybrid_joined": bool(trust.get("isHybridAzureADJoinedDeviceAccepted")),
     }
 
 

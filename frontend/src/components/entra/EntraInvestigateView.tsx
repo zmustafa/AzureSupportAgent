@@ -39,7 +39,7 @@ const KIND_GLYPH: Record<InvestigateKind, string> = {
  *  nothing when it does not apply. It leads `recertification` because that is the default
  *  lens for a group, and "who is in this thing" is the first question asked of one. */
 const LENSES = {
-  incident: { label: "Incident", order: ["activity", "access", "members", "findings", "timeline", "activations"] },
+  overview: { label: "Overview", order: ["activity", "access", "members", "findings", "timeline", "activations"] },
   offboarding: { label: "Offboarding", order: ["access", "members", "activations", "timeline", "findings", "activity"] },
   recertification: { label: "Recertification", order: ["members", "access", "activations", "findings", "timeline", "activity"] },
   workload: { label: "Workload identity", order: ["access", "findings", "activity", "timeline", "activations"] },
@@ -78,7 +78,7 @@ const CHANGE_CLASS: Record<string, { label: string; cls: string }> = {
 function defaultLens(kind: InvestigateKind): Lens {
   if (kind === "servicePrincipal" || kind === "managedIdentity") return "workload";
   if (kind === "group") return "recertification";
-  return "incident";
+  return "overview";
 }
 
 // ---------------------------------------------------------------- small building blocks
@@ -539,7 +539,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
   const caps = dossier?.capabilities ?? [];
   const [lens, setLens] = useState<Lens | "">("");
   const [notesOpen, setNotesOpen] = useState(false);
-  const activeLens: Lens = (lens || (principal ? defaultLens(principal.kind) : "incident")) as Lens;
+  const activeLens: Lens = (lens || (principal ? defaultLens(principal.kind) : "overview")) as Lens;
 
   const sectionOrder = useMemo(() => LENSES[activeLens].order, [activeLens]);
 

@@ -5969,6 +5969,8 @@ export const api = {
       `/entra/governance/lifecycle${entraQs(connectionId)}`),
   entraGovernanceCoverage: (connectionId?: string | null) =>
     http<EntraGovernanceCoverage>(`/entra/governance/coverage${entraQs(connectionId)}`),
+  entraGuests: (connectionId?: string | null) =>
+    http<EntraGuests>(`/entra/governance/guests${entraQs(connectionId)}`),
 
   // ---- Blast-radius graph (P7) ---------------------------------------------------
   entraGraphScopes: () =>
@@ -10601,6 +10603,53 @@ export type EntraGovernanceCoverage = {
 };
 
 // ---- Blast-radius graph (P7) --------------------------------------------------------
+// ---- Guest (B2B) hygiene -------------------------------------------------------------
+export type EntraGuestRow = {
+  id: string; display_name: string; upn: string; mail: string;
+  domain: string; domain_class: string; enabled: boolean;
+  external_user_state: string; creation_type: string;
+  /** pending | accepted_never_used | active | dormant | unknown */
+  lifecycle: string;
+  invited_at: string; invited_days_ago: number | null;
+  accepted_at: string; accepted_days_ago: number | null;
+  /** Interactive only — the one that evidences a person. */
+  last_human_signin: string; last_human_days_ago: number | null;
+  /** Includes non-interactive token refresh. Live, but not necessarily a human. */
+  last_any_signin: string; last_any_days_ago: number | null;
+  signin_known: boolean;
+  company_name: string; department: string; job_title: string;
+  sponsors: { id: string; display_name: string }[];
+  licence_count: number;
+};
+
+export type EntraGuestDomain = {
+  domain: string; domain_class: string;
+  partner_tenant_id: string; partner_name: string;
+  guests: number; enabled: number; disabled: number;
+  pending: number; never_used: number; dormant: number; active: number; not_measured: number;
+  oldest_invite_days: number | null; newest_invite_days: number | null;
+  /** governed | default_only | unknown */
+  governance?: string; governance_reason?: string;
+};
+
+export type EntraGuests = {
+  meta: EntraMeta;
+  generated_at: string;
+  stale_days: number;
+  counts: {
+    invited: number; pending: number; accepted: number;
+    never_used: number; dormant: number; active: number; not_measured: number;
+  };
+  by_class: Record<string, number>;
+  domain_count: number;
+  domains: EntraGuestDomain[];
+  guests: EntraGuestRow[];
+  signin_measured: number;
+  guest_access: Record<string, unknown>;
+  cross_tenant_known: boolean;
+  findings: EntraFinding[];
+};
+
 export type EntraGraphNode = {
   id: string; kind: string; label: string; data: Record<string, any>;
   badges: Record<string, any>; expandable: boolean;

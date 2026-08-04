@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.entra import guests as guests_mod
 from app.entra import model
 from app.entra.collectors import CollectContext, as_dict, as_list, batch_collection, clip, guarded
-from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError
+from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError, GraphRequest
 
 DOMAIN = "people"
 
@@ -29,6 +30,10 @@ _USER_SELECT = [
     "createdDateTime", "department", "companyName", "jobTitle", "employeeId",
     "onPremisesSyncEnabled", "onPremisesExtensionAttributes", "externalUserState",
     "externalUserStateChangeDateTime", "mail", "usageLocation", "assignedLicenses",
+    # "Invitation" for a B2B guest, "LocalAccount"/"" otherwise. Distinguishes an invited
+    # external identity from a guest-typed account that was created some other way, which
+    # matters because only the former has an invitation to chase.
+    "creationType",
 ]
 
 _GROUP_SELECT = [
@@ -83,10 +88,12 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
                 "extension_attributes": {k: v for k, v in ext.items() if v},
                 "external_user_state": u.get("externalUserState", "") or "",
                 "external_state_changed_at": u.get("externalUserStateChangeDateTime", "") or "",
+                "creation_type": u.get("creationType", "") or "",
                 "licence_count": len(as_list(u.get("assignedLicenses"))),
                 # filled by later passes
                 "last_signin": "",
                 "last_noninteractive_signin": "",
+                "last_successful_signin": "",
                 "signin_known": False,
                 "mfa_registered": None,
                 "mfa_capable": None,
@@ -96,6 +103,11 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
                 "phishing_resistant": None,
                 "is_admin_reported": None,
                 "manager_id": "",
+                # Real sponsor relationship (guests only, filled by a later pass). Distinct
+                # from the department/companyName proxy: an empty list here means "nobody is
+                # accountable for this guest", which is a reviewable fact.
+                "sponsors": [],
+                "sponsors_known": False,
             }
 
         # --- pass 2: sign-in activity (P1) -------------------------------------
@@ -114,6 +126,10 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
                 if uid in users:
                     users[uid]["last_signin"] = act.get("lastSignInDateTime", "") or ""
                     users[uid]["last_noninteractive_signin"] = act.get("lastNonInteractiveSignInDateTime", "") or ""
+                    # Verified present on v1.0. Distinguishes "last attempt" from "last time
+                    # they actually got in" — a run of failures leaves lastSignInDateTime
+                    # moving while nobody has successfully authenticated for months.
+                    users[uid]["last_successful_signin"] = act.get("lastSuccessfulSignInDateTime", "") or ""
                     users[uid]["signin_known"] = True
                     merged += 1
             signin_available = merged > 0
@@ -160,6 +176,96 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
             )
         except GraphError as exc:
             notes.append(f"MFA registration report unavailable: {clip(exc, 160)}")
+
+        # --- pass 4: guest sponsors --------------------------------------------
+        # ONE paged query for the whole guest population, not a per-guest lookup: on a tenant
+        # with 1,700 guests the per-object shape would be 1,700 round trips for a field most
+        # screens only aggregate. `$expand=sponsors` on a `userType eq 'Guest'` filter is
+        # accepted by v1.0 without ConsistencyLevel (verified live).
+        #
+        # `sponsors_known` exists for the usual reason: an empty sponsor list and a pass that
+        # never ran look identical once merged, and "nobody is accountable for this guest" is
+        # a finding while "we did not ask" is not.
+        try:
+            await ctx.say("info", "People: resolving guest sponsors…")
+            sponsored, sp_trunc = await client.get_all(
+                "/users", select=["id"], top=999, max_items=ctx.max_users,
+                filter="userType eq 'Guest'",
+                expand="sponsors($select=id,displayName)",
+            )
+            truncated = truncated or sp_trunc
+            seen = 0
+            for row in sponsored:
+                row = as_dict(row)
+                uid = str(row.get("id") or "")
+                if uid not in users:
+                    continue
+                users[uid]["sponsors"] = [
+                    {"id": str(as_dict(s).get("id") or ""),
+                     "display_name": str(as_dict(s).get("displayName") or "")}
+                    for s in as_list(row.get("sponsors"))
+                ]
+                users[uid]["sponsors_known"] = True
+                seen += 1
+            await ctx.say("ok", f"People: sponsor relationships for {seen:,} guest(s)")
+        except GraphPermissionError as exc:
+            notes.append(
+                "Guest sponsors unavailable (needs User.Read.All) — accountability is reported "
+                f"as unknown, not absent. {exc.message[:120]}"
+            )
+        except GraphError as exc:
+            notes.append(f"Guest sponsors unavailable: {clip(exc, 160)} — reported as unknown.")
+
+        # --- pass 5: resolve guest domains to partner tenants -------------------
+        # The guest population is keyed by EMAIL DOMAIN; the cross-tenant access policy is
+        # keyed by TENANT ID. Without this join nobody can answer "we have 87 guests from
+        # this company and no policy governing them", which is the whole point of the
+        # partner view.
+        #
+        # One `$batch` per 20 domains rather than a call each: ~400 distinct domains on a
+        # real tenant is 20 round trips, not 400. Verified live that the function works on
+        # v1.0 with the scopes already held, and it returns the partner's real display name
+        # ("Fabrikam"), which beats showing a bare domain.
+        guest_domains = sorted({
+            guests_mod.guest_domain(u) for u in users.values()
+            if str(u.get("user_type") or "").lower() == "guest"
+        } - {""})
+        tenant_by_domain: dict[str, dict[str, str]] = {}
+        if guest_domains:
+            await ctx.say("info", f"People: resolving {len(guest_domains):,} guest domain(s) to partner tenants…")
+            resolved = 0
+            try:
+                for start in range(0, len(guest_domains), 20):
+                    window = guest_domains[start:start + 20]
+                    reqs = [
+                        GraphRequest(
+                            id=str(n),
+                            url="/tenantRelationships/findTenantInformationByDomainName"
+                                f"(domainName='{d}')",
+                        )
+                        for n, d in enumerate(window)
+                    ]
+                    for req, resp in zip(reqs, await client.batch(reqs)):
+                        dom = window[int(req.id)]
+                        body = resp.body if isinstance(resp.body, dict) else {}
+                        tid = str(body.get("tenantId") or "")
+                        if not resp.ok or not tid:
+                            # A consumer domain or an org with no Entra tenant simply has no
+                            # answer. That is a fact about the domain, not a failure.
+                            continue
+                        tenant_by_domain[dom] = {
+                            "tenant_id": tid,
+                            "display_name": str(body.get("displayName") or ""),
+                            "default_domain": str(body.get("defaultDomainName") or ""),
+                        }
+                        resolved += 1
+                await ctx.say("ok", f"People: {resolved:,} of {len(guest_domains):,} guest domain(s) "
+                                    "map to a partner tenant")
+            except GraphPermissionError as exc:
+                notes.append("Guest domains could not be resolved to partner tenants "
+                             f"({clip(exc.message, 120)}) — partner governance shows as unknown.")
+            except GraphError as exc:
+                notes.append(f"Guest domain resolution unavailable: {clip(exc, 160)}.")
 
         # --- groups -------------------------------------------------------------
         await ctx.say("info", "People: collecting groups…")
@@ -226,10 +332,17 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         data = {
             "users": list(users.values()),
             "groups": list(groups.values()),
+            # domain -> {tenant_id, display_name, default_domain}. Only domains that actually
+            # resolve appear; a consumer domain or an org with no Entra tenant is simply
+            # absent, which the rollup reads as "no partner tenant", not as a failure.
+            "guest_domain_tenants": tenant_by_domain,
             "capabilities": {
                 "signin_activity": signin_available,
                 "mfa_registration_report": mfa_available,
                 "group_owners": bool(groups) and any(g["owners_known"] for g in groups.values()),
+                # Distinguishes "no guest has a sponsor" from "the sponsor pass never ran".
+                "guest_sponsors": any(u.get("sponsors_known") for u in users.values()),
+                "guest_domain_tenants": bool(tenant_by_domain),
             },
             "counts": {
                 "users": len(users),

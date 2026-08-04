@@ -235,6 +235,9 @@ DEFAULTS: dict[str, Any] = {
     "entra_cache_ttl_s": 21600,
     # Dormancy threshold (days) for stale users, guests, applications and admins.
     "entra_stale_days": 90,
+    # Dormancy bar for GUESTS specifically. Separate from entra_stale_days so external access
+    # can be held to a stricter standard than employee accounts.
+    "entra_guest_stale_days": 90,
     # Credential expiry window (days) for the secret / certificate expiry signals.
     "entra_expiry_window_days": 90,
     # Sign-in aggregation window (days). Bounded by the tenant's log retention (7d free, 30d P1).
@@ -529,6 +532,7 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     # Entra ID Support Agent: clamp cache TTL, windows and the collection cap.
     current["entra_cache_ttl_s"] = max(0, min(604800, int(current.get("entra_cache_ttl_s", 21600) or 21600)))
     current["entra_stale_days"] = max(1, min(730, int(current.get("entra_stale_days", 90) or 90)))
+    current["entra_guest_stale_days"] = max(1, min(730, int(current.get("entra_guest_stale_days", 90) or 90)))
     current["entra_expiry_window_days"] = max(1, min(365, int(current.get("entra_expiry_window_days", 90) or 90)))
     current["entra_signin_lookback_days"] = max(1, min(90, int(current.get("entra_signin_lookback_days", 30) or 30)))
     current["entra_max_users"] = max(100, min(2000000, int(current.get("entra_max_users", 250000) or 250000)))

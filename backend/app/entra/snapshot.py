@@ -67,6 +67,11 @@ def settings() -> dict[str, Any]:
     return {
         "ttl_s": int(s.get("entra_cache_ttl_s", 21600) or 21600),
         "stale_days": int(s.get("entra_stale_days", 90) or 90),
+        # Guests are held to their own bar. Employees drift in and out of a tenant for
+        # legitimate reasons (leave, secondment); an external identity that has not been used
+        # is simply standing access nobody is exercising, so the default is stricter and
+        # separately tunable rather than inheriting the employee threshold.
+        "guest_stale_days": int(s.get("entra_guest_stale_days", 90) or 90),
         "expiry_window_days": int(s.get("entra_expiry_window_days", 90) or 90),
         "signin_lookback_days": int(s.get("entra_signin_lookback_days", 30) or 30),
         "activation_lookback_days": int(s.get("entra_activation_lookback_days", 90) or 90),
@@ -81,6 +86,7 @@ def context_from_settings(tenant_id: str, suppressions: set[str] | None = None) 
     return sig.SignalContext(
         now=datetime.now(timezone.utc),
         stale_days=s["stale_days"],
+        guest_stale_days=s["guest_stale_days"],
         expiry_window_days=s["expiry_window_days"],
         signin_lookback_days=s["signin_lookback_days"],
         suppressions=suppressions or set(),

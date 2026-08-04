@@ -34,7 +34,7 @@ import { OverviewTab } from "./IamOverview";
 import { PimTab } from "./IamPim";
 import { RolesTab } from "./IamRoles";
 import { ScopesTab } from "./IamScopes";
-import { IAM_QUERY_KEYS, IamConnectionContext, RefreshConsole, useIamRefresh } from "./IamShared";
+import { IAM_QUERY_KEYS, IamConnectionContext, IamFreshness, RefreshConsole, useIamRefresh } from "./IamShared";
 
 // Renamed from /rbac, and later folded into the SHARED connection selection: a tenant switch is
 // a statement about the session, not about one page. Losing the stored value silently falls back
@@ -126,7 +126,21 @@ function IamPanelBody({
         <div className="mb-2 flex items-center gap-2">
           <h1 className="text-lg font-semibold text-gray-900">IAM — Access Review</h1>
           <span className="text-xs text-gray-500">Who can access what across Azure RBAC, Entra roles, groups &amp; ownership</span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <IamFreshness overview={data} />
+            {/* The scan control belongs next to the freshness it changes, and in the header so
+                it reaches every tab. It used to live only in the Overview toolbar, so a reader
+                on Findings or PIM who saw stale data had to navigate away to do anything about
+                it. The narrower variants (quick refresh, directory-only) stay on Overview
+                beside the per-scope table they operate on. */}
+            <button
+              onClick={refreshCtl.refreshAll}
+              disabled={refreshCtl.isBusy}
+              title="Re-collect every scope and the directory"
+              className="rounded border px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+            >
+              {refreshCtl.isBusy ? "Scanning…" : "↻ Rescan"}
+            </button>
             <ConnectionScopePicker value={connectionId} onChange={setConnectionId} />
           </div>
         </div>

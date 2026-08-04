@@ -31,6 +31,7 @@ from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.entra import DOMAINS, blastradius, ca_engine, ca_simulator, cache, demo as demo_mod, job, model, permissions_probe
 from app.entra import investigate
+from app.entra import guests as guests_mod
 from app.entra import investigate_activity as inv_activity
 from app.entra import scanners as scanners_mod
 from app.entra import export as entra_export
@@ -2444,6 +2445,43 @@ async def governance_overview(
         capabilities=gov.get("capabilities") or {},
         findings=[f for f in analysis.get("findings") or [] if f.get("pillar") == "gov"][:200],
         domain=(snapshot.get("domains") or {}).get("governance") or {},
+    )
+
+
+@router.get("/governance/guests")
+async def governance_guests(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_read),
+) -> dict[str, Any]:
+    """Guest (B2B) hygiene — the whole guest population, its lifecycle and its partner orgs.
+
+    Cache-only like every other read here. The per-guest rows are returned in full rather
+    than paged: a review campaign is exported and worked offline, and 1,700 flattened rows
+    is ~1MB, well inside what the other inventory endpoints already return.
+    """
+    snapshot, _tenant_id, cid = _snapshot(principal, connection_id)
+    data = snapshot.get("data") or {}
+    people = data.get("people") or {}
+    tenant = data.get("tenant") or {}
+    s = snapshot_mod.settings()
+    summary = guests_mod.summarise(people, stale_days=s["guest_stale_days"])
+    summary["domains"] = guests_mod.annotate_partners(
+        summary["domains"], tenant.get("cross_tenant_partners") or {})
+    analysis = _analysis(snapshot)
+    guest_signals = {"ppl.guest_stale", "ppl.guest_pending_invite", "ppl.guest_sprawl",
+                     "ppl.guest_no_sponsor", "ppl.guest_invite_anyone",
+                     "ppl.guest_full_directory_read", "ppl.guest_accepted_never_used",
+                     "ppl.guest_human_dormant", "ppl.guest_consumer_domain"}
+    return _envelope(
+        snapshot, cid,
+        **summary,
+        # Guest access level is a tenant-wide fact that changes what every row above MEANS,
+        # so it travels with them rather than sitting on another screen.
+        guest_access=(tenant.get("authorization_policy") or {}),
+        cross_tenant_known=bool((tenant.get("cross_tenant_partners") or {}).get("known")),
+        findings=[f for f in analysis.get("findings") or []
+                  if f.get("signal_id") in guest_signals][:500],
+        domain=(snapshot.get("domains") or {}).get("people") or {},
     )
 
 

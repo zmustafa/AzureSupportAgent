@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.entra import model
+from app.entra import guests, model
 from app.entra.collectors.roles import privileged_principal_ids
 from app.entra.collectors.tenant import (
     GUEST_ROLE_SAME_AS_MEMBER,
@@ -298,7 +298,143 @@ def _guest_full_directory_read(data: dict[str, Any], ctx: SignalContext) -> list
     )]
 
 
+# ------------------------------------------------------------------ guest hygiene (B2B)
+def _guest_accepted_never_used(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
+    """Accepted the invitation, then never actually signed in.
+
+    Distinct from `ppl.guest_pending_invite` (never accepted) and from `ppl.guest_stale`
+    (used it once, long ago). This one is the clearest possible "this access was never
+    needed" — somebody went to the trouble of accepting and then had no use for it.
+    """
+    _require_signin(data)
+    out = []
+    for u in guests.guests_of(domain(data, "people")):
+        if not u.get("signin_known"):
+            continue
+        if guests.lifecycle(u, now=ctx.now, stale_days=ctx.guest_stale_days) != guests.STATE_NEVER_USED:
+            continue
+        invited = guests.invited_at(u)
+        out.append(model.finding(
+            signal_id="ppl.guest_accepted_never_used", severity="medium", pillar="ppl",
+            object_kind="user", object_id=str(u["id"]), object_name=u.get("upn") or str(u["id"]),
+            title=f"Guest {u.get('mail') or u.get('upn')} accepted the invitation but has never signed in",
+            detail="The invitation was accepted, so the identity is live and carries whatever it "
+                   "was granted — but nobody has ever used it. This is standing external access "
+                   "that was never needed.",
+            evidence={"invited_at": invited, "invited_days_ago": ctx.days_since(invited),
+                      "accepted_at": guests.accepted_at(u),
+                      "domain": guests.guest_domain(u)},
+            portal_link=model.portal_user(str(u["id"])),
+        ))
+    return out
+
+
+def _guest_human_dormant(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
+    """No human sign-in for the guest window, but the token is still being refreshed.
+
+    `lastNonInteractiveSignInDateTime` moves on token refresh, so a guest who left the
+    partner months ago keeps looking active on any dashboard that reads "last sign-in"
+    without asking WHICH KIND. That is precisely the account an attacker inherits when a
+    departed contractor's device or session is not revoked.
+    """
+    _require_signin(data)
+    out = []
+    for u in guests.guests_of(domain(data, "people")):
+        if not u.get("enabled") or not u.get("signin_known"):
+            continue
+        human = guests.last_human_signin(u)
+        machine = str(u.get("last_noninteractive_signin") or "")
+        if not machine:
+            continue
+        human_age = ctx.days_since(human) if human else None
+        machine_age = ctx.days_since(machine)
+        # Token still warm, human long gone.
+        if machine_age is None or machine_age >= ctx.guest_stale_days:
+            continue
+        if human_age is not None and human_age < ctx.guest_stale_days:
+            continue
+        out.append(model.finding(
+            signal_id="ppl.guest_human_dormant", severity="medium", pillar="ppl",
+            object_kind="user", object_id=str(u["id"]), object_name=u.get("upn") or str(u["id"]),
+            title=f"Guest {u.get('mail') or u.get('upn')} has a live token but no human sign-in for "
+                  f"{human_age if human_age is not None else 'ever'}"
+                  + (" days" if human_age is not None else ""),
+            detail="Non-interactive activity is a refresh token, not a person. This identity looks "
+                   "active on any report that does not separate the two, while nobody has "
+                   "interactively signed in.",
+            evidence={"last_human_signin": human or "never", "last_human_days_ago": human_age,
+                      "last_noninteractive_signin": machine, "last_noninteractive_days_ago": machine_age,
+                      "domain": guests.guest_domain(u)},
+            portal_link=model.portal_user(str(u["id"])),
+        ))
+    return out
+
+
+def _guest_consumer_domain(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
+    """Guests on free consumer mailboxes, aggregated per domain.
+
+    One row per person would be 72 near-identical findings on a real tenant. The decision is
+    per domain anyway: nobody can de-provision a Gmail address when an engagement ends,
+    because there is no counterparty organisation to ask.
+    """
+    rows = [u for u in guests.guests_of(domain(data, "people")) if u.get("enabled")]
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for u in rows:
+        dom = guests.guest_domain(u)
+        if guests.classify_domain(dom) != guests.CLASS_CONSUMER:
+            continue
+        buckets.setdefault(dom, []).append(u)
+    out = []
+    for dom, items in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+        out.append(model.finding(
+            signal_id="ppl.guest_consumer_domain", severity="medium", pillar="ppl",
+            object_kind="domain", object_id=dom, object_name=dom,
+            title=f"{len(items):,} enabled guest(s) use the consumer mailbox domain {dom}",
+            detail="A consumer address has no owning organisation, so there is nobody to notify "
+                   "when the engagement ends and no partner admin who can disable it. Access "
+                   "outlives the relationship by default.",
+            evidence={"domain": dom, "guests": len(items),
+                      "sample": [str(i.get("upn") or i.get("mail") or "") for i in items[:10]]},
+            discriminator=dom,
+        ))
+    return out
+
+
 SPECS: list[SignalSpec] = [
+    SignalSpec(
+        id="ppl.guest_accepted_never_used", title="Guests who accepted but never signed in",
+        question="Which external identities were stood up and never used?",
+        why="The invitation was accepted, so the identity is live and carries whatever it was "
+            "granted — but nobody has ever used it.",
+        pillar="ppl", severity="medium", weight=5, object_kind="user",
+        domains=("people",), requires=("AuditLog.Read.All",), licence="p1",
+        impact=IMPACT_RATIO, population=pop_enabled_guests,
+        remediation="Remove the guest. If the access is still wanted, re-invite when it is needed.",
+        doc_link=GUEST_DOC, evaluate=_guest_accepted_never_used,
+    ),
+    SignalSpec(
+        id="ppl.guest_human_dormant", title="Guests kept alive by a token, not a person",
+        question="Which guests look active only because a refresh token keeps cycling?",
+        why="Non-interactive activity is not a human. These accounts pass every 'last sign-in' "
+            "report while nobody has actually signed in.",
+        pillar="ppl", severity="medium", weight=6, object_kind="user",
+        domains=("people",), requires=("AuditLog.Read.All",), licence="p1",
+        impact=IMPACT_RATIO, population=pop_enabled_guests,
+        remediation="Revoke the sign-in sessions, then disable or remove the guest.",
+        doc_link=GUEST_DOC, evaluate=_guest_human_dormant,
+    ),
+    SignalSpec(
+        id="ppl.guest_consumer_domain", title="Guests on consumer mailbox domains",
+        question="Which external access has no owning organisation behind it?",
+        why="Nobody can de-provision a personal Gmail address when an engagement ends — there is "
+            "no partner admin to ask and no leaver process to inherit.",
+        pillar="ppl", severity="medium", weight=5, object_kind="domain",
+        domains=("people",), requires=("User.Read.All",),
+        impact=IMPACT_BINARY,
+        remediation="Require a corporate address for external collaboration, or time-box these "
+                    "guests with an access review.",
+        doc_link=GUEST_DOC, evaluate=_guest_consumer_domain,
+    ),
     SignalSpec(
         id="ppl.stale_user", title="Dormant member accounts",
         question="Which enabled accounts nobody uses?",

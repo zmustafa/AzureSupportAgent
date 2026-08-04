@@ -13,11 +13,125 @@
  *  - **a proposal is never shown without its residual risk.** "Covers everything you did last
  *    quarter" and "safe" are different claims.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type IamRightsizeRecommendation } from "../../api";
 import { InvestigateLink, investigatableId } from "../entra/InvestigateLink";
 import { useIamConnectionId } from "./IamShared";
+
+/** The Azure Activity Log retains 90 days; `usage.MAX_WINDOW_DAYS` clamps anything longer. */
+const MAX_WINDOW_DAYS = 90;
+const WINDOW_PRESETS = [7, 14, 30, 60, 90];
+
+/**
+ * Usage-window picker — the popover pattern used by the Change Explorer's time range, but
+ * bounded to what this collector can actually deliver.
+ *
+ * It deliberately does NOT offer absolute start/end, sub-day, or multi-month ranges:
+ * `POST /iam/refresh-usage` takes a LOOKBACK IN DAYS ending at "now" (1..90, capped by Activity
+ * Log retention). A "Last 15 minutes" or "Between 1 and 3 June" option would have to collapse to
+ * a day count ending today, so the control would name one window while the scan read another —
+ * and this screen decides whether someone's access gets removed. The header beside it already
+ * had that bug once, where the selector read "90 days" next to data measured over 30.
+ */
+function UsageWindowPicker({
+  days,
+  onChange,
+  disabled,
+}: {
+  days: number;
+  onChange: (days: number) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState(String(days));
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  function apply(n: number) {
+    const clamped = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.round(n) || 1));
+    onChange(clamped);
+    setCustom(String(clamped));
+    setOpen(false);
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Usage window"
+        title="The window the NEXT usage scan will read. The window the figures below were measured over is stated on the left."
+        className="flex items-center gap-1.5 rounded border bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+      >
+        <span>🕒</span>
+        <span>Last {days} days</span>
+        <span className="text-gray-400">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-50 mt-1 w-72 rounded-xl border bg-white p-3 shadow-xl">
+          <div className="mb-2 text-[11px] text-gray-400">
+            Looking back from now · max {MAX_WINDOW_DAYS} days
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            {WINDOW_PRESETS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => apply(n)}
+                className={`rounded px-2 py-1.5 text-left text-sm ${
+                  n === days ? "bg-brand/10 font-medium text-brand" : "text-gray-700 hover:bg-brand/5 hover:text-brand"
+                }`}
+              >
+                Last {n} days
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 border-t pt-3">
+            <div className="text-xs text-gray-500">Custom</div>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="text-sm text-gray-600">Last</span>
+              <input
+                type="number"
+                min={1}
+                max={MAX_WINDOW_DAYS}
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && apply(Number(custom))}
+                aria-label="Custom usage window in days"
+                className="w-20 rounded border px-2 py-1 text-sm"
+              />
+              <span className="text-sm text-gray-600">days</span>
+              <button
+                type="button"
+                onClick={() => apply(Number(custom))}
+                className="ml-auto rounded bg-brand px-2 py-1 text-xs font-medium text-white hover:bg-brand-dark"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+          {/* Naming the ceiling is the point: silently clamping a 180-day request to 90 would
+              report a shorter window than the reader asked for, and "unused in 90 days" is a
+              weaker claim than "unused in 180". */}
+          <div className="mt-2 text-[11px] text-gray-400">
+            The Azure Activity Log only retains {MAX_WINDOW_DAYS} days, so nothing older can be measured.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const CONFIDENCE_CLASS: Record<string, string> = {
   high: "bg-red-100 text-red-800",
@@ -132,15 +246,7 @@ export function LeastPrivilegeTab() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-1">
-            <select
-              value={scanDays}
-              onChange={(e) => setDays(Number(e.target.value))}
-              aria-label="Usage window"
-              title="The window the NEXT usage scan will read. The window the figures below were measured over is stated on the left."
-              className="rounded border border-gray-300 px-1.5 py-0.5 text-xs"
-            >
-              {[30, 60, 90].map((n) => <option key={n} value={n}>{n} days</option>)}
-            </select>
+            <UsageWindowPicker days={scanDays} onChange={setDays} disabled={scan.isPending} />
             <button
               type="button"
               onClick={() => scan.mutate()}

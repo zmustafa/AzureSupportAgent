@@ -59,6 +59,10 @@ class SignalContext:
 
     now: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stale_days: int = 90
+    # Guests get their own dormancy bar (see snapshot.settings). Kept as a separate field so a
+    # tenant can tighten external access without also flagging every employee on parental
+    # leave as stale.
+    guest_stale_days: int = 90
     expiry_window_days: int = 90
     signin_lookback_days: int = 30
     max_global_admins: int = 5

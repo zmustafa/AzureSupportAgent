@@ -23,13 +23,9 @@ export function OverviewTab({
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4">
       <div className="mb-3 flex items-center gap-2">
-        <button
-          onClick={refreshCtl.refreshAll}
-          disabled={refreshCtl.isBusy}
-          className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
-        >
-          {refreshCtl.refreshing.has("__all__") ? "Scanning…" : "↻ Refresh all scopes"}
-        </button>
+        {/* "Refresh all scopes" moved to the page header, next to the freshness badge, so it is
+            reachable from every tab rather than this one. These two stay because they operate on
+            what is directly below them: the per-scope freshness table. */}
         <button
           onClick={refreshCtl.refreshChanged}
           disabled={refreshCtl.isBusy}
@@ -67,7 +63,14 @@ export function OverviewTab({
         </span>
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Thirteen tiles, and 13 is prime — so any fixed column count leaves an orphan row. At
+          six columns that was a third row holding ONE tile: 5 empty cells and 204px (a fifth of
+          the viewport) spent before the reader reaches the scope table.
+          Seven columns fits them in two rows, but ONLY from xl up: measured at 1024 it squeezed
+          the tile to 96px and truncated "Key Vault policies", "Classic admins" and "Deny
+          assignments" to ellipses. A KPI you cannot read is worse than one extra row, so the
+          column count steps down with the width rather than holding 7 everywhere. */}
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7">
         <KpiTile label="Total grants" value={k.total_assignments} />
         <KpiTile label="Principals" value={k.unique_principals} tone="sky" />
         <KpiTile label="Privileged" value={k.privileged} tone="red" />

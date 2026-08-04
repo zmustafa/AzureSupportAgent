@@ -6,7 +6,7 @@
  */
 import { createContext, useContext, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { streamIamRefresh, type IamProgress, type IamRow, type IamRunTiming, type IamScopeFreshness } from "../../api";
+import { streamIamRefresh, type IamOverview, type IamProgress, type IamRow, type IamRunTiming, type IamScopeFreshness } from "../../api";
 
 // Active connection/tenant scope for the whole IAM review. "" => default connection.
 // Shared via context so every tab + the refresh stream re-scope together without prop drilling.
@@ -37,6 +37,61 @@ export function agoText(seconds: number | null): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+/** "scanned 12m ago" for the IAM header — the same freshness affordance /entra carries.
+ *
+ * Two things this deliberately does NOT do, because either would overstate how current the
+ * picture is:
+ *
+ * 1. The overview's `generated_at` is `max()` across every scope plus the directory
+ *    (compose._latest_generated). On a 45-scope tenant, one scope refreshing a minute ago
+ *    would render "scanned just now" while the other 44 are days old. So the headline is the
+ *    newest, but anything lagging past the TTL is named next to it rather than hidden behind
+ *    the reassuring number.
+ * 2. Collected is not verified. A delta refresh that skips a scope records `verified_at` and
+ *    leaves `generated_at` alone (compose._scope_freshness), precisely so "4 days old,
+ *    verified 2 minutes ago" stays tellable from "collected 2 minutes ago". This reports the
+ *    collection.
+ */
+export function IamFreshness({ overview }: { overview?: IamOverview }) {
+  // No data yet (still loading, or the query failed) is NOT the same as never scanned. The
+  // header renders before the overview resolves, so asserting "never scanned" here would
+  // flash a false claim on every visit to a tenant that has been scanned for months.
+  if (!overview) return null;
+  if (overview.never_loaded) {
+    return <span className="text-xs text-gray-500">never scanned</span>;
+  }
+  const ages = (overview.scopes ?? [])
+    .map((s) => s.age_seconds)
+    .filter((a): a is number => a != null);
+  if (overview.directory?.age_seconds != null) ages.push(overview.directory.age_seconds);
+  if (!ages.length) return <span className="text-xs text-gray-500">never scanned</span>;
+
+  const newest = Math.min(...ages);
+  const oldest = Math.max(...ages);
+  const ttl = overview.ttl_s || 0;
+  const behind = ttl > 0 ? ages.filter((a) => a > ttl).length : 0;
+  const tone = oldest > 86400 ? "text-red-600" : behind ? "text-amber-600" : "text-gray-500";
+  // Only worth naming when the scopes genuinely DISAGREE. If every scope is equally old the
+  // headline already tells the whole truth, and "46 of 46 older" is noise that invites the
+  // question "older than what?". The split case is the one the headline would misrepresent.
+  const split = behind > 0 && behind < ages.length;
+
+  return (
+    <span
+      className={`text-xs ${tone}`}
+      title={
+        `Newest collection ${agoText(newest)}; oldest ${agoText(oldest)}.` +
+        (behind ? ` ${behind} of ${ages.length} past the ${Math.round(ttl / 60)}m refresh window.` : "") +
+        (overview.demo ? " Demo dataset." : "")
+      }
+    >
+      {overview.demo ? "demo data · " : ""}
+      scanned {agoText(newest)}
+      {split && ` · ${behind} of ${ages.length} scopes stale`}
+    </span>
+  );
 }
 
 const STATUS_CLS: Record<string, string> = {
@@ -115,14 +170,14 @@ export function KpiTile({ label, value, tone }: { label: string; value: number |
   // this product must never produce.
   const missing = value == null;
   return (
-    <div className="rounded-lg border bg-white px-3 py-2">
+    <div className="rounded-lg border bg-white px-2.5 py-1.5">
       <div
-        className={`text-xl font-semibold ${missing ? "text-gray-400" : toneCls}`}
+        className={`text-lg font-semibold leading-tight ${missing ? "text-gray-400" : toneCls}`}
         title={missing ? "Not measured — no value was collected for this." : undefined}
       >
         {missing ? "—" : value.toLocaleString()}
       </div>
-      <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="truncate text-[10px] uppercase leading-tight tracking-wide text-gray-500" title={label}>{label}</div>
     </div>
   );
 }

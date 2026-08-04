@@ -4,11 +4,15 @@ import { api } from "../../api";
 import type { EntraAccessReview, EntraEntitlement, EntraGovernanceCoverage, EntraWorkflow } from "../../api";
 import { formatError } from "../../utils/format";
 import { Bar, cmp, CoverageBanner, EntraEmpty, SevBadge, SortTh, useEntraSorted, useSortState, useSubTabRoute } from "./EntraShared";
+import { EntraGuestsView } from "./EntraGuestsView";
 
-type Tab = "coverage" | "reviews" | "entitlement" | "lifecycle";
+type Tab = "coverage" | "guests" | "reviews" | "entitlement" | "lifecycle";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "coverage", label: "Coverage" },
+  // Guest lifecycle IS governance: an invitation nobody accepted and a partner nobody
+  // reviews are the same class of problem as an access review that never runs.
+  { id: "guests", label: "Guests (B2B)" },
   { id: "reviews", label: "Access reviews" },
   { id: "entitlement", label: "Entitlement" },
   { id: "lifecycle", label: "Lifecycle" },
@@ -439,6 +443,7 @@ export function EntraGovernanceView({ connectionId, onOpenSetup }:
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "coverage" && <CoverageTab connectionId={connectionId} />}
+        {tab === "guests" && <EntraGuestsView connectionId={connectionId} />}
         {tab === "reviews" && <ReviewsTab connectionId={connectionId} />}
         {tab === "entitlement" && <EntitlementTab connectionId={connectionId} />}
         {tab === "lifecycle" && <LifecycleTab connectionId={connectionId} />}

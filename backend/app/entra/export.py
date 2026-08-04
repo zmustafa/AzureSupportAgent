@@ -770,6 +770,56 @@ def to_workbook(
 
     # ---------------------------------------------------------------- governance
     wb.section("Governance", SECTION_COLOURS["Governance"])
+    # --- guest (B2B) hygiene -------------------------------------------------------
+    # Exported here rather than under Directory because a review campaign is a governance
+    # act: these two sheets ARE the working document for "which external access do we still
+    # want", which is why the whole population is written rather than a capped page.
+    people_blind = _blind_reason(snapshot, "people")
+    if people_blind:
+        wb.blind_sheet("Guests", people_blind)
+    else:
+        from app.entra import guests as guests_mod
+        from app.entra import snapshot as snapshot_mod
+
+        g = guests_mod.summarise(data.get("people") or {},
+                                 stale_days=snapshot_mod.settings()["guest_stale_days"])
+        g["domains"] = guests_mod.annotate_partners(
+            g["domains"], (data.get("tenant") or {}).get("cross_tenant_partners") or {})
+        wb.sheet(
+            "Guests",
+            ["Guest", "Sign-in address", "Organisation", "Domain class", "Lifecycle",
+             "Account", "Invited", "Invited (days)", "Accepted", "Last human sign-in",
+             "Human (days)", "Last any activity", "Any (days)", "Sign-in measured",
+             "Sponsors", "Company", "Licences"],
+            [[r["display_name"], r["mail"] or r["upn"], r["domain"], r["domain_class"],
+              guests_mod.LIFECYCLE_LABEL.get(r["lifecycle"], r["lifecycle"]),
+              "Enabled" if r["enabled"] else "Disabled",
+              r["invited_at"], r["invited_days_ago"], r["accepted_at"],
+              # "never" and "not measured" are DIFFERENT and must stay different in the
+              # export too — a reviewer sorting this column would otherwise revoke access
+              # that was simply never looked at.
+              (r["last_human_signin"] or "never") if r["signin_known"] else "not measured",
+              r["last_human_days_ago"],
+              (r["last_any_signin"] or "never") if r["signin_known"] else "not measured",
+              r["last_any_days_ago"],
+              "yes" if r["signin_known"] else "no",
+              "; ".join(s.get("display_name", "") for s in r["sponsors"]),
+              r["company_name"], r["licence_count"]]
+             for r in g["guests"]],
+            note=_caveat(snapshot, "people"),
+        )
+        wb.sheet(
+            "Guest partner orgs",
+            ["Organisation", "Domain", "Partner tenant", "Domain class", "Guests",
+             "Enabled", "Disabled", "Pending", "Never used", "Dormant", "Active",
+             "Not measured", "Oldest invite (days)", "Cross-tenant policy", "Why"],
+            [[d.get("partner_name") or d["domain"], d["domain"], d.get("partner_tenant_id", ""),
+              d["domain_class"], d["guests"], d["enabled"], d["disabled"], d["pending"],
+              d["never_used"], d["dormant"], d["active"], d["not_measured"],
+              d["oldest_invite_days"], d.get("governance", ""), d.get("governance_reason", "")]
+             for d in g["domains"]],
+        )
+
     gov_blind = _blind_reason(snapshot, "governance")
     gov = data.get("governance") or {}
     if gov_blind:
