@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 6
 description: Refresh identity snapshots, triage findings, review PIM and app registrations, and create safe handoffs.
 permalink: /how-to/governance-identity/identity-reviews/
-feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:overview]
+feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:privileged, ENTRA_NAV:applications]
 ---
 
 # Review identity, PIM, and app registrations
@@ -20,13 +20,32 @@ feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:overview]
 
 ## Route
 
-`/identity/overview`, `/identity/pim`, and `/identity/app-registrations`.
+These three reviews used to be a separate **Identity** screen. That screen was absorbed into **Entra ID**, and each of its views is now a sub-tab:
+
+| This review | Open | Sub-tab |
+| --- | --- | --- |
+| Identity findings | `/entra/findings` | **Identity hygiene** |
+| PIM and JIT posture | `/entra/privileged` | **JIT hygiene** |
+| App registrations | `/entra/applications` | **registrations** |
+
+The old URLs still work and redirect, so existing bookmarks and links are not broken:
+
+| Legacy URL | Lands on |
+| --- | --- |
+| `/identity` | `/entra/findings/hygiene` |
+| `/identity/pim` | `/entra/privileged/jit-hygiene` |
+| `/identity/app-registrations` | `/entra/applications/registrations` |
+| Anything else under `/identity/` | `/entra` — the tenant posture tab, **without** a sub-tab |
+
+That last row is the one to watch. A bookmark to a path the redirect table does not name specifically — `/identity/overview`, for instance — lands on Entra ID's posture tab rather than the view you wanted, and nothing on screen explains why. Navigate from the table above instead.
+
+The underlying API is unchanged, so the product permission is still `identity.read` even though you now arrive through an Entra tab.
 
 ![Identity findings grouped by urgency]({{ site.baseurl }}/assets/identity.png)
 
 ## How to refresh and triage identity findings
 
-1. Open `/identity/overview`, select the connection, and choose a 30-, 60-, 90-, or custom-day window.
+1. Open `/entra/findings` and select the **Identity hygiene** sub-tab, select the connection, and choose a 30-, 60-, 90-, or custom-day window.
 
 2. Check generated time, `never loaded`, errors, sampled counts, and workload mapping.
 3. Select **Refresh** once and wait; the slow collection does not run automatically.
@@ -41,7 +60,7 @@ feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:overview]
 
 ## How to review PIM and JIT posture
 
-1. Open `/identity/pim` and inspect the PIM snapshot age.
+1. Open `/entra/privileged`, select the **JIT hygiene** sub-tab, and inspect the PIM snapshot age.
 
 2. Run **Refresh** when absent or stale.
 3. Review standing access, stale eligible, stale active, and recent activation records.
@@ -55,7 +74,7 @@ feature_ids: [PROACTIVE_NAV:identity, IDENTITY_NAV:overview]
 
 ## How to review and export app registrations
 
-1. Open `/identity/app-registrations` and select **Refresh** if never loaded or stale.
+1. Open `/entra/applications`, select the **registrations** sub-tab, and select **Refresh** if never loaded or stale.
 
 2. Follow background progress; navigating away does not cancel the job.
 3. Filter by owner, permission, audience, risk indicator, or credential state.
