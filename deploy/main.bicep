@@ -107,7 +107,12 @@ var storageAccountName = toLower(replace('azsup${unique}', '-', ''))
 var fileShareName = 'appdata'
 var managedEnvStorageName = 'appdata'
 var postgresServerName = '${namePrefix}-pg-${unique}'
-var databaseUrl = 'postgresql+asyncpg://${postgresAdminLogin}:${postgresAdminPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDatabaseName}?ssl=require'
+// SECURITY/CORRECTNESS: the login and password MUST be percent-encoded before being embedded
+// in the connection URL. A generated password containing '@', '#', '/' or ':' otherwise breaks
+// URL parsing — SQLAlchemy splits the userinfo at the FIRST '@', so the rest of the password is
+// absorbed into the host name and the app dies at startup with
+// "socket.gaierror: [Errno -2] Name or service not known".
+var databaseUrl = 'postgresql+asyncpg://${uriComponent(postgresAdminLogin)}:${uriComponent(postgresAdminPassword)}@${postgres.properties.fullyQualifiedDomainName}:5432/${postgresDatabaseName}?ssl=require'
 
 // Private-networking resource names + subnet resource IDs (only materialised when isPrivate).
 var vnetName = '${namePrefix}-vnet-${unique}'
