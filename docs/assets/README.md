@@ -35,7 +35,8 @@ Sanitized screenshots used by the repository overview and public documentation. 
 | `ai-providers.png` | AI providers — bring your own model; each one stays disabled until configured |
 | `backup-coverage.png` | Backup & DR coverage — RTO/RPO protection posture with Bicep/runbook gap fixes |
 | `retirement-coverage.png` | Retirement radar — service retirements & breaking changes mapped to workloads, owners, and deadlines |
-| `identity.png` | Identity — expiring credentials, ownerless apps, MFA & conditional-access gaps, ranked by severity |
+| `entra-findings.png` | Entra ID &mdash; identity findings inbox ranked by severity (standing admins, expiring credentials, ownerless apps, CA gaps) |
+| `iam.png` | IAM access review &mdash; grant, principal & privileged counts with per-scope freshness |
 
 ### Other
 

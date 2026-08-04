@@ -243,7 +243,7 @@ connections.
 </tr>
 <tr>
 <td width="50%"><img src="docs/assets/retirement-coverage.png" alt="Retirement and breaking-change radar"><br/><sub><b>Retirement radar</b> — service retirements &amp; breaking changes mapped to workloads, owners, and deadlines.</sub></td>
-<td width="50%"><img src="docs/assets/identity.png" alt="Identity risks"><br/><sub><b>Identity</b> — expiring credentials, ownerless apps, MFA &amp; conditional-access gaps, ranked by severity.</sub></td>
+<td width="50%"><img src="docs/assets/entra-findings.png" alt="Entra ID findings inbox"><br/><sub><b>Entra ID</b> &mdash; identity findings ranked by severity: standing global admins, expiring credentials, ownerless apps, MFA &amp; conditional-access gaps.</sub></td>
 </tr>
 </table>
 
