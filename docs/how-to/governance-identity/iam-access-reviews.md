@@ -117,5 +117,8 @@ Page visits read disk-backed caches and never scan. Azure scopes and directory c
 ## Related docs
 
 - [IAM reference]({{ site.baseurl }}/user-guide/governance-identity/iam/)
+- [Work the IAM scanner inbox]({{ site.baseurl }}/how-to/governance-identity/iam-scanner-inbox/)
+- [Run an IAM escalation review]({{ site.baseurl }}/how-to/governance-identity/iam-escalation-review/)
+- [Find what access changed and who changed it]({{ site.baseurl }}/how-to/governance-identity/iam-compare-attribute-changes/)
 - [Identity reviews and handoffs]({{ site.baseurl }}/how-to/governance-identity/identity-reviews/)
 - [Case Files]({{ site.baseurl }}/how-to/lifecycle-investigation/case-files/)

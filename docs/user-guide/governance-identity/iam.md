@@ -48,27 +48,54 @@ Before the overview resolves, and while a query is failing, the indicator render
 
 ### Tabs
 
-- **Overview**: unique-principal, privileged/data-plane, scope, and freshness KPIs, the per-scope table, and the narrow refresh controls.
-- **Findings**: access findings raised against the collected estate.
-- **Scanners**: named selections of those signals, with their cadence and last run.
-- **Access**: server-filtered, paged, virtualized normalized rows with principal, role, scope, surface, assignment type, and access path.
-- **Effective Access**: evaluates the effective permissions a principal holds at a scope.
-- **Access Map**: the same access drawn as a flow — principal ▸ via group ▸ role ▸ scope. See below.
-- **Escalation**: paths by which one grant leads to a broader one.
-- **Shadow Access**: the doors that are not Azure RBAC — keys, tokens, and service-specific authorization that would still work if every role assignment were revoked.
-- **Least Privilege**: granted versus actually used, and narrower role proposals. See below.
-- **Simulator**: models a proposed access change before it is made anywhere.
-- **Compare**: what changed since the previous collection, and who did it where the Activity Log can attribute it.
-- **Reviews**: access-review and attestation state held locally.
-- **PIM**: eligible and active assignment state.
-- **Scopes**: management-group → subscription → resource-group hierarchy with grant counts and per-scope freshness.
-- **Roles**: role definitions and available directory principals.
-- **Insights**: pivots by role, principal, scope, surface, principal type, privilege, data plane, group inheritance, ownership, Entra roles, eligibility, cross-scope access, and orphaned identities.
-- **Diagnostics**: collector status, unauthorized/failed scopes, directory status, and partial errors.
+Seventeen tabs, in strip order. Four are documented in full on this page; the rest have their own reference page, linked below.
 
-`/iam/privileged` remains a working URL and renders the Access grid with the privileged filter applied. It is no longer a separate tab in the strip.
+| Tab | Route | What it is |
+| --- | --- | --- |
+| **Overview** | `/iam` | Thirteen KPI tiles, the per-scope freshness table, the narrow refresh controls, and the workbook export. Below |
+| **Findings** | `/iam/findings` | Access findings raised against the collected estate, grouped and worked as an inbox. [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/iam-findings-scanners/) |
+| **Scanners** | `/iam/scanners` | Named selections of those checks, with a cadence, a severity floor and a delta. [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/iam-findings-scanners/) |
+| **Access** | `/iam/effective` | Server-filtered, paged, virtualized normalized grant rows. Below |
+| **Effective Access** | `/iam/evaluate` | Evaluates whether a principal can perform an action on a scope, and why. [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) |
+| **Access Map** | `/iam/accessmap` | The same access drawn as a flow — principal ▸ via group ▸ role ▸ scope. Below |
+| **Escalation** | `/iam/escalation` | The routes by which one grant leads to full control. [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) |
+| **Shadow Access** | `/iam/bypass` | The doors that are not Azure RBAC and would still work if every role assignment were revoked. [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) |
+| **Least Privilege** | `/iam/leastprivilege` | Granted versus actually used, and narrower role proposals. Below |
+| **Simulator** | `/iam/simulator` | Models a proposed access change before it is made anywhere. [Change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) |
+| **Compare** | `/iam/compare` | What changed since the previous collection, and who did it where the Activity Log can attribute it. [Change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) |
+| **Reviews** | `/iam/reviews` | Certification campaigns, decisions, remediation scripts and evidence packs, held locally. [Reviews and PIM]({{ site.baseurl }}/user-guide/governance-identity/iam-reviews-pim/) |
+| **PIM** | `/iam/pim` | Standing privilege against just-in-time eligibility, and active elevations. [Reviews and PIM]({{ site.baseurl }}/user-guide/governance-identity/iam-reviews-pim/) |
+| **Scopes** | `/iam/scopes` | Every cached scope with its status, grant count, freshness and per-scope refresh. [Insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) |
+| **Roles** | `/iam/roles` | Role definitions and the resolved principal directory. [Insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) |
+| **Insights** | `/iam/insights` | Thirteen counted pivots over the access rows, scoped by the filter rail. [Insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) |
+| **Diagnostics** | `/iam/diagnostics` | Collector status per scope, the deny-assignment warning, and every partial or failed collection. [Insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) |
 
-Search/filter controls include text, scope/workload, principal type, surface, access category, and privileged-only. Results are server-paged; filtering first is more reliable and efficient than browsing a large unfiltered estate.
+`/iam/privileged` remains a working URL and renders the Access grid with the privileged lens applied. It is no longer a separate tab in the strip — it turned out to be the Access grid with one checkbox ticked — but it stays routable so existing links and bookmarks land on the view they promised.
+
+The tab id `effective` carries the label **Access** and the tab id `evaluate` carries the label **Effective Access**. The mismatch is deliberate: `effective` has always been the raw grant grid, and renaming its id would change what an existing `/iam/effective` URL means, so the label moved to the tab that evaluates effective permissions and the id stayed where the URL is.
+
+### Overview KPIs
+
+Thirteen tiles, served by `GET /api/iam/overview`: total grants, principals, privileged, data-plane, via groups, service-principal owners, Entra roles, PIM eligible, Key Vault policies, classic admins, deny assignments, scopes and subscriptions.
+
+Two rules govern how they render, and both exist to stop a reassuring number being produced from an absence:
+
+- **Deny assignments are not counted in *Total grants*.** A deny *removes* access, so folding denies into the headline would inflate it with rows that mean the opposite. They are counted on their own tile, and they have their own surface on the access grid and their own warning banner on Diagnostics. Every other tile on this row is computed over grants only.
+- **A missing figure renders as an em dash, never as 0.** A hard zero on a tenant that was never scanned is the most reassuring possible way to say *we did not look*, and it is the one rendering this product must not produce. The tile carries a *not measured* tooltip when it is showing a dash. Three tiles — Key Vault policies, classic admins and deny assignments — default an absent value to zero in the client rather than dashing it; the overview endpoint always computes all three, so in practice a zero on those tiles is a measured zero.
+
+A connection with no collection at all does not reach the tiles: the tab renders a wall offering **↻ Run access scan** and **🎬 Seed demo data** instead. The demo dataset is synthetic and is labelled with a `demo dataset` pill; the control to remove it appears only once demo data is loaded, and seeding is offered only on that empty state — an adjacent "load fake data" button in the main toolbar would be one mis-click from making a review of a live tenant unreadable.
+
+### The Access grid
+
+The **Access** tab is the raw grant grid, served by `GET /api/iam/access`. Rows are normalized across every surface — Azure RBAC, Entra ID RBAC, Key Vault access policies, classic administrators, deny assignments and Lighthouse delegations — and carry the principal, the effective principal where a group was expanded, the role, the assignment scope, the surface, the assignment state and the access path.
+
+Access path is one of three values: **Direct** (assigned to the principal), **GroupTransitive** (inherited through group membership) or **Owner** (an application or service-principal ownership path where modeled).
+
+Filtering is server-side and results are paged, so filtering first is both more reliable and cheaper than browsing a large unfiltered estate. Available narrowing: free-text search, the scope and workload filter rail, principal type, surface, access category and privileged-only.
+
+**The export applies the same filters through the same code as the grid.** `GET /api/iam/export` takes the identical parameter set — including the search term and the privileged toggle — so a download cannot quietly contain rows the screen above it did not show. An export that disagrees with the screen it was launched from is worse than no export, because it is the artifact that gets attached to the audit.
+
+Lighthouse delegations are a surface of their own rather than being folded into Azure RBAC, because those grants do not appear in the portal's Access control (IAM) blade at all — folding them in would make the grid disagree with the portal for the one kind of access an operator is least likely to already know about.
 
 ### The Access Map
 
@@ -97,10 +124,12 @@ Selecting any bar lists the principals and roles behind it and links through to 
 
 This tab compares the actions a principal's roles *can* authorize against the actions they were actually observed performing, and proposes a narrower grant. Four things about it are structural:
 
-- **Not measured is a wall, not an empty list.** A tenant that has never run a usage scan does not see "0 over-privileged principals", because that is the most reassuring possible rendering of "we have not looked".
+- **Not measured is a wall, not an empty list.** A tenant that has never run a usage scan does not see "0 over-privileged principals", because that is the most reassuring possible rendering of "we have not looked". There are two distinct walls, and they carry different instructions: usage was never collected, or usage *was* collected but not one assignment could be compared against it because the actions its role grants were never collected. The second is rendered in red and tells you to run a full access refresh to re-collect the role definitions before re-running the usage scan.
 - **Usage carries its own age, separate from the access snapshot.** The access data can be minutes old while usage is weeks old, and a stale denominator changes what "unused" means. The usage collection time is stated beside the figures.
 - **Both numbers travel together, never the ratio alone.** "Used 12 of 8,000" is a fact; a bare percentage is a number designed to be quoted out of context.
 - **A proposal is never shown without its residual risk.** Every narrower proposal states what it gives up.
+
+The header states how many of the assessed assignments are over-privileged, and against how many distinct actions this tenant's roles can grant. It separately reports assignments that could **not** be assessed because their role's actions were never collected, and break-glass accounts, which are reported but never recommended for removal. A **What this cannot see** panel lists the exclusions and limitations above the recommendations.
 
 **The usage window is a lookback ending now.** The picker beside **Scan usage** is a popover with presets of 7, 14, 30, 60, and 90 days plus a custom field accepting 1 to 90. The ceiling is Azure Activity Log retention: nothing older than 90 days can be measured, and the popover says so rather than silently clamping a larger request — "unused in 90 days" is a weaker claim than "unused in 180", and a control that quietly substituted one for the other would misstate the evidence behind an access removal.
 
@@ -122,15 +151,15 @@ Usage data on the Least Privilege tab has its own freshness and is not affected 
 
 ### Access-review workflow
 
-1. Select the correct connection and inspect Overview/Scopes freshness.
-2. Refresh stale failed scopes and directory context as needed.
-3. On **Effective Access**, narrow scope, principal type, and surface before searching.
+1. Select the correct connection and inspect Overview/Scopes freshness, then open **Diagnostics** before reading anything — a collector reporting `Unauthorized` invalidates everything derived from that scope.
+2. Refresh stale and failed scopes and directory context as needed.
+3. On the **Access** grid, narrow scope, principal type, and surface before searching.
 4. Inspect role name and definition, assignment scope, effective principal, and access path:
    - **Direct** is assigned to the principal;
    - **Group/transitive** is inherited through group membership;
    - **Owner** reflects an application/service-principal ownership path where modeled.
-5. Use **Privileged** to prioritize Owner/admin-style roles and roles with data actions.
-6. Use **Insights** to find cross-scope, group-derived, orphaned, and unusually broad access.
+5. Use `/iam/privileged` — the Access grid with the privileged lens on — to prioritize Owner/admin-style roles and roles with data actions.
+6. Use **Insights** to find cross-scope, group-derived, orphaned, and unusually broad access, and **Effective Access** to turn a candidate row into a verdict with its evidence chain.
 7. Verify each candidate against source Azure/Entra state and business ownership.
 8. Remediate through the organization's approved Azure/Entra/PIM process, then refresh the relevant scope and directory.
 
@@ -182,11 +211,25 @@ Apply least privilege, but do not remove emergency access, deployment identities
 | The header says `scanned just now` but a tab shows old data | The headline is the newest collection across all scopes. Check for the `N of M scopes stale` split beside it, then open Overview for the per-scope ages. |
 | The header shows nothing where freshness should be | The overview has not resolved, or its query failed. That is not the same as never scanned, so nothing is asserted. Check Diagnostics. |
 | Least Privilege says usage was not measured | No usage scan has run for this connection. Set the window and use **Scan usage**; it is separate from every access refresh control. |
+| Least Privilege says the role catalogue is missing | Usage was collected but no assignment could be compared against it, because the actions its role grants were never collected. Run **↻ Rescan** to re-collect role definitions, then re-run **Scan usage**. This is not a clean result. |
+| A KPI tile shows `—` | That figure was not measured. It is deliberately not rendered as 0. Check Diagnostics for the collector that could not read. |
+| *Total grants* looks lower than the number of rows in the grid | Deny assignments are excluded from *Total grants* because a deny removes access. They have their own tile and their own surface filter. |
 | A usage window longer than 90 days will not apply | Azure Activity Log retention is the ceiling. The popover states it; the request is not silently shortened. |
 | The usage window in the picker differs from the window in the figures | Expected. The picker sets the window for the *next* scan; the figures state the window they were measured over. |
 
 ## Related pages
 
+### IAM deep dives
+
+- [IAM: findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/iam-findings-scanners/) — the findings inbox, its two-level grouping and server tallies, and the ten scanners and their deltas.
+- [IAM: access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) — Effective Access, Escalation and Shadow Access.
+- [IAM: change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) — Compare, its attribution, and the what-if Simulator.
+- [IAM: reviews and PIM]({{ site.baseurl }}/user-guide/governance-identity/iam-reviews-pim/) — certification campaigns, evidence, and standing privilege against JIT.
+- [IAM: insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) — the pivots and the reference and health tabs.
+
+### Elsewhere
+
 - [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/)
 - [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)
+- [Review, scan, export, and investigate IAM]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/)

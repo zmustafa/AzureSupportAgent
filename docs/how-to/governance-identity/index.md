@@ -27,6 +27,9 @@ Use these guides to turn cached governance and access data into verified review 
 | Review privileged assignments and activations | [Privileged access and activations]({{ site.baseurl }}/how-to/governance-identity/review-privileged-activity/) |
 | Diagnose a blind, stale, or throttled collection | [Troubleshoot Entra collection]({{ site.baseurl }}/how-to/governance-identity/troubleshoot-entra-collection/) |
 | Review external access and clear stale invitations | [Guest (B2B) access reviews]({{ site.baseurl }}/how-to/governance-identity/review-guest-access/) |
+| Triage IAM findings and run the access scanners | [Work the IAM scanner inbox]({{ site.baseurl }}/how-to/governance-identity/iam-scanner-inbox/) |
+| Trace and close a route from ordinary access to full control | [Run an IAM escalation review]({{ site.baseurl }}/how-to/governance-identity/iam-escalation-review/) |
+| Establish what access changed between collections, and who changed it | [Find what access changed and who changed it]({{ site.baseurl }}/how-to/governance-identity/iam-compare-attribute-changes/) |
 
 ## Common operating pattern
 

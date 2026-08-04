@@ -33,4 +33,14 @@ These views combine Azure Resource Manager, Policy Insights, and Microsoft Graph
 | [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) | Trace derived escalation paths from an entry point to tenant-level power. |
 | [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/) | Work the inbox, run proactive scanners, and apply finding workflow state. |
 
+### IAM deep dives
+
+| Guide | Use it to |
+| --- | --- |
+| [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/iam-findings-scanners/) | Work the access-findings inbox, read its two-level grouping and server tallies, and run the ten scanners without consuming their delta. |
+| [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) | Evaluate an action against a scope, trace the routes to full control, and inventory the doors that are not Azure RBAC. |
+| [Change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) | Read the classified access diff and its Activity Log attribution, and model a change before making it. |
+| [Reviews and PIM]({{ site.baseurl }}/user-guide/governance-identity/iam-reviews-pim/) | Run certification campaigns with evidence and rollback-carrying scripts, and read standing privilege against JIT eligibility. |
+| [Insights, scopes, roles and diagnostics]({{ site.baseurl }}/user-guide/governance-identity/iam-insights-diagnostics/) | Read the thirteen pivots, inspect per-scope freshness and the directory layer, and diagnose collectors that could not read. |
+
 Before drawing conclusions, check the selected connection, cache age, partial-collection errors, and [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/).
