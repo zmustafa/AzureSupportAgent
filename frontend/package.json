@@ -19,7 +19,7 @@
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
-    "@types/dompurify": "^3.0.5",
+    "@types/dompurify": "^3.2.0",
     "@xyflow/react": "^12.11.0",
     "clsx": "^2.1.1",
     "cytoscape": "^3.34.0",
