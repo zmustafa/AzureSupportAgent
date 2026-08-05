@@ -20,7 +20,7 @@ investigate, monitor, and remediate.
 
 </div>
 
-> 🆕 **Latest (v54):** a Workloads cockpit (health scores, fleet board, per-workload command center, Autopilot discovery), an **Estate Graph** knowledge map, and **Ownership**, **Tag Intelligence** & **Change Explorer** — all under a new **Proactive Support** hub.
+> 🆕 **Latest:** a ten-tab **Entra ID** identity workbench (Conditional Access simulator, PIM, app credentials, and Investigate for any principal), **IAM** access review (effective permissions, escalation paths, least-privilege, review campaigns), **Backup Manager** and **Alerts Manager** — both with approval-gated, reversible changes — and **AI Insight Packs** that watch your estate on a schedule and notify you only when something material happens.
 
 ![Architecture designer reverse-engineering live Azure resources with AI rationale](docs/assets/architecture-designer.png)
 
@@ -126,6 +126,29 @@ assessment behind any node.
 <tr>
 <td width="50%" valign="top">
 
+### 🆔 Entra ID
+A ten-tab identity workbench: **posture** scoring, **Conditional Access** (coverage,
+exposure, conflicts, break-glass, and a policy **simulator**), **privileged access** and
+PIM, **app registrations** and credential expiry, sign-in **signals**, guest and access
+**governance**, an identity graph, and a findings ledger. **Investigate** any user, guest,
+group, service principal or managed identity — including deleted ones — with provenance on
+every section, so "unreadable" never looks like "empty".
+
+</td>
+<td width="50%" valign="top">
+
+### 🔑 IAM
+Azure RBAC you can actually reason about: **effective permissions** for any principal,
+an **access map**, **privilege-escalation** and **bypass** path detection,
+**least-privilege** recommendations, a **what-if simulator**, snapshot **compare**,
+scope and role explorers, and **access review campaigns** with reviewer routing,
+delegation, and evidence.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
 ### 🪪 Ownership
 A federated **owner directory** scoped by tenant, subscription or workload. **Export**
 owners, **import** any CSV/Excel with AI column-inference and a preview, then **apply as
@@ -162,6 +185,42 @@ finding lifecycle, and ticketing. Plus Policy compliance, baselines, and AI advi
 <tr>
 <td width="50%" valign="top">
 
+### 🗄️ Backup Manager
+Beyond coverage reporting: a live **backup inventory**, job health, policy and vault
+management, and **DR drills**. Changes are **approval-gated**, encrypted before/after
+state is retained, and every apply has a **rollback** path.
+
+</td>
+<td width="50%" valign="top">
+
+### 🚨 Alerts Manager
+A fired-alert inbox with action-group management, **overlap** and routing analysis, and
+baseline gap detection. Rule and action-group edits follow the same approval-gated,
+audited, **reversible** path as Backup Manager.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🗂️ Inventory
+One unified, filterable resource grid across every connected tenant, with overview,
+location, **cost** and optimization views, plus a change feed — the flat estate view the
+Portal never quite gives you.
+
+</td>
+<td width="50%" valign="top">
+
+### 🧾 Evidence & Case Files
+An **Evidence Locker** of investigation snapshots with diffs, sharing and export, and
+durable **Case Files** that keep an incident's timeline, findings and the identity it
+concerns in one place — including cases opened straight from an identity investigation.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
 ### 📈 Monitoring & resilience
 **Monitor 2.0** customizable dashboards with AI authoring and ping history; **AMBA**
 baseline-alert coverage with one-click Bicep/Terraform gap remediation; **Performance
@@ -182,9 +241,18 @@ Sumo Logic, CrowdStrike NG-SIEM, AWS Security Hub, Grafana, Azure Logic Apps, an
 <td width="50%" valign="top">
 
 ### 🛡️ Proactive Support hub
-One categorized landing page that unifies every posture & forensic dashboard — coverage,
-assessments, identity, ownership, tagging, change forensics and the estate graph — so
-nothing about your estate is more than a click away.
+One categorized landing page that unifies **every** posture and forensic dashboard, in the
+same clusters the product and the docs use:
+
+- **Daily intelligence** — AI Insight Packs
+- **Design & ownership** — Architectures · Know-Me · Ownership · Estate Graph
+- **Assessment & performance** — Assessments · Performance Profiler · FMEA
+- **Coverage** — Monitoring (AMBA) · Alerts Manager · Telemetry · Backup & DR ·
+  Backup Manager · Connection Capability
+- **Estate intelligence** — Inventory · Tag Intelligence · Change Explorer
+- **Governance & identity** — Azure Policy · Entra ID · IAM
+- **Lifecycle & investigation** — Retirement Radar · Reservations · Quota ·
+  Telemetry Intelligence · Evidence Locker · Case Files
 
 </td>
 <td width="50%" valign="top">
@@ -203,8 +271,8 @@ Opus 4.8)**, Ollama, LM Studio — switchable at runtime with live model catalog
 
 🔐 Read-only Azure by default · ✅ approval-gated writes · 🧾 full audit log ·
 👥 RBAC (users / roles / groups) · 🔑 OIDC + SAML SSO · 🗝️ encrypted connection
-credentials · 🖥️ Sandbox VMs for private-endpoint diagnostics · 🧩 multi-tenant Azure
-connections.
+credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint diagnostics ·
+🧩 multi-tenant Azure connections.
 
 ## 📸 Screenshots
 
@@ -341,6 +409,7 @@ For local dev nothing is deployed to Azure — the MCP server reaches your real 
 - **Read-only by default.** The Azure MCP server starts with `--read-only`; write-capable tools are classified, **approval-gated**, and **audited**.
 - **AI providers off until configured.** A fresh install ships every provider disabled; a provider only becomes selectable once you add a key (or sign in / set a local base URL).
 - **Identity & SSO.** Local users with RBAC (users / roles / groups), plus OIDC and SAML SSO. Forced password change on first admin login.
+- **Network access.** Restrict which source addresses can reach the application at all — an in-app IP allowlist with a monitor mode that shows what *would* be blocked before you enforce it, Container Apps ingress restrictions, or no public endpoint at all.
 - **Secrets.** Connection credentials are encrypted at rest and never returned to the UI. `.env`, `backend/.data/`, and keys are git-ignored.
 - **Found a vulnerability?** Please follow **[SECURITY.md](SECURITY.md)** — don't open a public issue.
 
