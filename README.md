@@ -259,8 +259,7 @@ same clusters the product and the docs use:
 
 ### 🔌 Bring your own AI
 A dozen+ providers — OpenAI, Azure OpenAI, Anthropic Claude, Google Gemini, GitHub
-Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), **Claude OAuth (Pro/Max, incl.
-Opus 4.8)**, Ollama, LM Studio — switchable at runtime with live model catalogs.
+Copilot/Models, Grok, Mistral, OpenRouter, ChatGPT (OAuth), **Claude OAuth (Pro/Max)**, Ollama, LM Studio — switchable at runtime with live model catalogs.
 **Disabled until you set them up.**
 
 </td>
