@@ -216,7 +216,23 @@ function ArchitecturesList() {
   function renderCard(a: Architecture) {
     return (
       <div key={a.id} className="group rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md">
-        <button onClick={() => navigate(`/architectures/${a.id}`)} className="block w-full text-left">
+        {/* Deliberately a div with role="button" rather than a real <button>. The thumbnail below
+            renders an @xyflow/react canvas, and ReactFlow's <Controls> emits its own <button>
+            elements — nesting those inside a <button> is invalid HTML and an a11y violation.
+            React 18 rendered it silently; React 19 reports it ("<button> cannot contain a nested
+            <button>"). Keyboard access is preserved explicitly via tabIndex + Enter/Space. */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => navigate(`/architectures/${a.id}`)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              navigate(`/architectures/${a.id}`);
+            }
+          }}
+          className="block w-full cursor-pointer text-left"
+        >
           {showThumbs && a.nodes.length > 0 && (
             <div className="mb-2 h-28 overflow-hidden rounded-lg border bg-gray-50/50">
               <div className="pointer-events-none h-full w-full">
@@ -239,7 +255,7 @@ function ArchitecturesList() {
             {(a.updated_by || a.created_by) && <span>· by {a.updated_by || a.created_by}</span>}
             {a.updated_at && <span className="ml-auto">{formatTimestamp(a.updated_at)}</span>}
           </div>
-        </button>
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <StateSelect value={a.state ?? "draft"} onChange={(s) => void changeState(a.id, s)} />
           <CategorySelect value={a.category_id || ""} collections={collections} onChange={(c) => void changeCategory(a.id, c)} />

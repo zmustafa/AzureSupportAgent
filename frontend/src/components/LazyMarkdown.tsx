@@ -1,4 +1,6 @@
-import { lazy, Suspense, type ComponentType, type ReactNode } from "react";
+// React 19 removed the global `JSX` namespace that React 18's types declared ambiently, so
+// the `JSX.Element` return type below must now be imported explicitly from "react".
+import { lazy, Suspense, type ComponentType, type JSX, type ReactNode } from "react";
 
 // Single shared dynamic-import boundary for react-markdown + remark-gfm so they
 // only load when something actually renders markdown. Without this every panel
