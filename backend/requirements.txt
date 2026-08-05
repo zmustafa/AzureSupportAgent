@@ -111,7 +111,7 @@ redis==8.1.0
 referencing==0.37.0
 requests==2.34.2
 rich==15.0.0
-rich-rst==2.0.1
+rich-rst==2.1.0
 rpds-py==2026.5.1
 ruff==0.15.16
 s3transfer==0.18.0
