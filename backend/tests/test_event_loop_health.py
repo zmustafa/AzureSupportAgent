@@ -58,6 +58,8 @@ _MUST_BE_THREADED = {
     "graph_for_tenant",
     "evaluate_all",
     "to_workbook",
+    "build_leavers",
+    "to_disabled_workbook",
 }
 
 _ROOT = Path(__file__).resolve().parents[1] / "app"

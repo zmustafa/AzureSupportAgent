@@ -65,6 +65,12 @@ def _host_error(url: str) -> str | None:
 # fast, while staying well under Graph throttling limits.
 _GRAPH_FANOUT = 8
 
+# Ceiling on how many groups one expansion will touch, counting nested ones. Entra rejects
+# membership cycles, but a directory that has been through a migration can still surprise you,
+# and a scan is not the place to find out. Nesting is genuinely shallow in practice, so this is
+# a safety net rather than a working limit.
+MAX_GROUP_EXPANSION = 5000
+
 
 @dataclass
 class CollectorStatus:
@@ -92,13 +98,27 @@ def _status_for_http(code: int) -> str:
     return schema.STATUS_FAILED
 
 
-async def _get_all(token: str, url: str, params: dict[str, str] | None = None) -> tuple[list[dict[str, Any]], str | None, int]:
-    """GET a paged ARM/Graph collection following nextLink. Returns (value, error, http_code)."""
+async def _get_all(
+    token: str,
+    url: str,
+    params: dict[str, str] | None = None,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    max_items: int = 0,
+) -> tuple[list[dict[str, Any]], str | None, int]:
+    """GET a paged ARM/Graph collection following nextLink. Returns (value, error, http_code).
+
+    ``extra_headers`` exists for Microsoft Graph *advanced queries* (``ConsistencyLevel:
+    eventual``), which several ``$filter`` expressions require. ``max_items`` caps the sweep;
+    the caller must treat a capped result as an incomplete answer, never as a complete one."""
     # Fail closed BEFORE the token is attached. Callers interpolate caller-supplied scopes and
     # resource ids directly after the host, so the target host is not trustworthy until parsed.
     if bad := _host_error(url):
         return [], f"request refused: {bad}", 0
     headers = {"Authorization": f"Bearer {token}"}
+    if extra_headers:
+        # Never let a caller override the Authorization header via this hook.
+        headers.update({k: v for k, v in extra_headers.items() if k.lower() != "authorization"})
     out: list[dict[str, Any]] = []
     next_url: str | None = url
     next_params = dict(params or {})
@@ -122,11 +142,41 @@ async def _get_all(token: str, url: str, params: dict[str, str] | None = None) -
                     return out, f"HTTP {code}: {str(detail)[:300]}", code
                 body = resp.json()
                 out.extend(body.get("value", []) or [])
+                if max_items and len(out) >= max_items:
+                    del out[max_items:]
+                    return out, None, code
                 next_url = body.get("nextLink") or body.get("@odata.nextLink")
                 next_params = {}  # nextLink already encodes paging
     except httpx.HTTPError as exc:
         return out, f"request error: {exc}", 0
     return out, None, code
+
+
+async def _get_object(
+    token: str, url: str, params: dict[str, str] | None = None
+) -> tuple[dict[str, Any], str | None, int]:
+    """GET a SINGLE Graph/ARM entity.
+
+    `_get_all` reads `body["value"]`, so pointed at an entity response it returns an empty list
+    and no error — a silent empty answer, which is the exact failure shape this module keeps
+    having to design against."""
+    if bad := _host_error(url):
+        return {}, f"request refused: {bad}", 0
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(
+                url, headers={"Authorization": f"Bearer {token}"}, params=params or None
+            )
+            if resp.status_code != 200:
+                try:
+                    detail = resp.json().get("error", {}).get("message", resp.text)
+                except (ValueError, AttributeError):
+                    detail = resp.text
+                return {}, f"HTTP {resp.status_code}: {str(detail)[:300]}", resp.status_code
+            body = resp.json()
+            return (body if isinstance(body, dict) else {}), None, resp.status_code
+    except httpx.HTTPError as exc:
+        return {}, f"request error: {exc}", 0
 
 
 def _role_def_guid(role_definition_id: str) -> str:
@@ -312,36 +362,81 @@ async def collect_entra_roles(token: str, tenant_id: str) -> tuple[list[dict[str
 
 
 async def collect_group_expansion(token: str, group_ids: list[str]) -> tuple[dict[str, Any], CollectorStatus]:
-    """Transitive membership for each group id -> {id: {name, members:[principal dict]}}.
+    """Transitive membership for each group id -> {id: {name, members:[principal dict], nested}}.
 
-    The per-group Graph calls run concurrently (bounded) since a tenant can have many groups."""
+    NESTED GROUPS ARE KEPT. `transitiveMembers` flattens the nesting away, and the flattened
+    answer is the wrong one for remediation: `az ad group member remove` only ever removes a
+    DIRECT membership, so a removal aimed at the group that holds the assignment fails with
+    "Resource '<group>' does not exist or one of its queried reference-property objects are not
+    present" whenever the person is really a member of a child group. Reported from a real run.
+    Recording which groups are nested lets compose find the group the membership is actually in.
+
+    The per-group Graph calls run concurrently (bounded) since a tenant can have many groups.
+
+    WHETHER THE MEMBERSHIP CAN BE EDITED AT ALL is collected alongside the members, because
+    three kinds of group refuse the removal for reasons no permission grant can fix:
+    role-assignable groups (`isAssignableToRole`) need the caller's APP to hold
+    `RoleManagement.ReadWrite.Directory` — which neither the Azure CLI nor the Cloud Shell
+    portal app has, so the command fails for a Global Administrator exactly as it does for
+    anyone else; dynamic groups compute membership from a rule; and AD-mastered groups are
+    read-only in Entra. All three were reported from real runs as bare 403s and 404s.
+    These properties are only returned when asked for BY NAME, so the default entity the
+    principal directory already resolves does not carry them."""
     st = CollectorStatus("GroupExpansion")
     graph: dict[str, Any] = {}
     errors = 0
     sem = asyncio.Semaphore(_GRAPH_FANOUT)
+    props_select = (
+        "id,displayName,isAssignableToRole,groupTypes,membershipRule,onPremisesSyncEnabled"
+    )
 
-    async def _one(gid: str) -> tuple[str, list[dict[str, Any]] | None]:
+    async def _one(gid: str) -> tuple[str, list[dict[str, Any]] | None, dict[str, Any]]:
         async with sem:
             members, err, _code = await _get_all(token, f"{_GRAPH}/groups/{gid}/transitiveMembers")
-        return gid, (None if err else members)
+            props, perr, _pcode = await _get_object(
+                token, f"{_GRAPH}/groups/{gid}", {"$select": props_select}
+            )
+        return gid, (None if err else members), ({} if perr else props)
 
-    for gid, members in await asyncio.gather(*[_one(g) for g in group_ids]):
-        if members is None:
-            errors += 1
-            continue
-        graph[gid] = {
-            "name": "",
-            "members": [
-                {
-                    "principalId": m.get("id", ""),
-                    "principalType": (m.get("@odata.type", "").split(".")[-1] or "User").replace("user", "User").replace("servicePrincipal", "ServicePrincipal"),
-                    "principalDisplayName": m.get("displayName", ""),
-                    "principalUserPrincipalName": m.get("userPrincipalName", ""),
-                }
-                for m in members
-                if "group" not in (m.get("@odata.type", "").lower())
-            ],
-        }
+    def _is_group(member: dict[str, Any]) -> bool:
+        return "group" in str(member.get("@odata.type", "")).lower()
+
+    pending = [g for g in dict.fromkeys(group_ids) if g]
+    # `transitiveMembers` already returns descendants at every depth, so the second round picks
+    # up every nested group and the third finds nothing new. The loop is bounded anyway: a
+    # membership cycle or a pathological directory must not turn a scan into an outage.
+    while pending and len(graph) < MAX_GROUP_EXPANSION:
+        for gid, members, props in await asyncio.gather(*[_one(g) for g in pending]):
+            if members is None:
+                errors += 1
+                continue
+            graph[gid] = {
+                "name": str(props.get("displayName") or ""),
+                # Tri-state for the same reason every other collected fact is: "we did not read
+                # this group" and "this group is ordinary" lead to different scripts.
+                "roleAssignable": _tristate(props.get("isAssignableToRole")) if props else schema.ENABLED_UNKNOWN,
+                "dynamic": (
+                    _tristate(any("dynamic" in str(t).lower() for t in (props.get("groupTypes") or [])))
+                    if props
+                    else schema.ENABLED_UNKNOWN
+                ),
+                "onPremSynced": _tristate(props.get("onPremisesSyncEnabled")) if props else schema.ENABLED_UNKNOWN,
+                "members": [
+                    {
+                        "principalId": m.get("id", ""),
+                        "principalType": (m.get("@odata.type", "").split(".")[-1] or "User").replace("user", "User").replace("servicePrincipal", "ServicePrincipal"),
+                        "principalDisplayName": m.get("displayName", ""),
+                        "principalUserPrincipalName": m.get("userPrincipalName", ""),
+                    }
+                    for m in members
+                    if not _is_group(m)
+                ],
+                # Ids only; each one is expanded in its own right on the next round, so its own
+                # entry carries the name and the members.
+                "nested": [m.get("id", "") for m in members if _is_group(m) and m.get("id")],
+            }
+        nxt = [n for g in pending if g in graph for n in graph[g]["nested"]]
+        pending = [n for n in dict.fromkeys(nxt) if n not in graph]
     if errors:
         st.status = schema.STATUS_PARTIAL if graph else schema.STATUS_UNAUTHORIZED
         st.message = f"{errors} group(s) could not be expanded."
@@ -481,6 +576,15 @@ async def collect_principal_directory(token: str, principal_ids: list[str]) -> t
                     "displayName": obj.get("displayName", ""),
                     "userPrincipalName": obj.get("userPrincipalName", "") or obj.get("mail", ""),
                     "appId": obj.get("appId", ""),
+                    # Account state, WHEN getByIds happens to return it. It is the default
+                    # entity representation, so whether `accountEnabled` is present varies by
+                    # object type and tenant — hence the tri-state rather than `bool(...)`,
+                    # which would silently report every principal as disabled on a tenant where
+                    # the property is simply absent from the payload.
+                    "accountEnabled": _tristate(obj.get("accountEnabled")),
+                    "onPremSynced": _tristate(obj.get("onPremisesSyncEnabled")),
+                    "userType": obj.get("userType", "") or "",
+                    "servicePrincipalType": obj.get("servicePrincipalType", "") or "",
                     "source": "MicrosoftGraph",
                 }
             )
@@ -488,6 +592,206 @@ async def collect_principal_directory(token: str, principal_ids: list[str]) -> t
         st.status = schema.STATUS_PARTIAL if out else _status_for_http(last_code)
         st.message = f"{errors} principal batch(es) could not be resolved."
     st.rows_added = len(out)
+    return out, st
+
+
+# The inverted disabled-principal sweep is bounded. A tenant can hold far more disabled accounts
+# than it holds access grants (every leaver since the tenant was created), and the sweep exists
+# only to answer "which of the principals holding access are disabled". Hitting the cap makes
+# the answer INCOMPLETE, so unmatched principals must stay `unknown` rather than being declared
+# enabled — see collect_principal_state.
+MAX_DISABLED_SWEEP = 20000
+
+
+def _tristate(value: Any) -> str:
+    """Graph boolean -> the row schema's three-state string. ``None``/absent is ``unknown``."""
+    if value is True:
+        return schema.ENABLED_TRUE
+    if value is False:
+        return schema.ENABLED_FALSE
+    return schema.ENABLED_UNKNOWN
+
+
+async def collect_principal_state(
+    token: str,
+    principals: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], CollectorStatus]:
+    """Resolve whether each principal holding access is **enabled or disabled** in Entra ID.
+
+    This is the fact the disabled-access report is built on. Azure keeps every role assignment a
+    principal holds when the account is disabled: the grant is not revoked, it is dormant, and
+    re-enabling the account restores it in full with no approval and no access review.
+
+    Two sources, cheapest first:
+
+    1. ``directoryObjects/getByIds`` \u2014 already called by
+       :func:`collect_principal_directory` to resolve names, and its payload sometimes carries
+       ``accountEnabled``. When it does, this costs **zero additional Graph calls** and is scoped
+       to exactly the principals that hold access (nothing else is read).
+    2. An **inverted sweep** for the remainder: ``/users?$filter=accountEnabled eq false`` and
+       the same on ``/servicePrincipals``. Asking "who is disabled?" returns the (small) disabled
+       population in one paged call; asking "is each of these 5,500 principals disabled?" would
+       be 5,500 lookups. Both require Graph *advanced query* headers.
+
+    The honesty rule that makes step 2 safe: a principal is only declared ``true`` (enabled) when
+    the sweep **completed** \u2014 succeeded, and did not hit :data:`MAX_DISABLED_SWEEP`. A capped or
+    failed sweep leaves every unmatched principal ``unknown``, because "not in the part of the
+    disabled list we managed to read" is not evidence of being enabled.
+
+    Returns ``({principalId_lower: {accountEnabled, onPremSynced, userType,
+    servicePrincipalType}}, status)``."""
+    st = CollectorStatus("PrincipalState")
+    started = time.monotonic()
+    state: dict[str, dict[str, Any]] = {}
+    for p in principals:
+        pid = str(p.get("principalId") or "").lower()
+        if not pid:
+            continue
+        ptype = str(p.get("principalType") or "")
+        if ptype and ptype not in schema.ACCOUNT_BEARING_TYPES:
+            # A group is not an account and cannot be disabled. Saying "unknown" here would
+            # report the product as unable to check something there is nothing to check.
+            enabled = schema.ENABLED_NA
+        else:
+            enabled = str(p.get("accountEnabled") or schema.ENABLED_UNKNOWN)
+        state[pid] = {
+            "accountEnabled": enabled,
+            "onPremSynced": str(p.get("onPremSynced") or schema.ENABLED_UNKNOWN),
+            "userType": str(p.get("userType") or ""),
+            "servicePrincipalType": str(p.get("servicePrincipalType") or ""),
+            "principalType": ptype,
+        }
+
+    unresolved = [pid for pid, s in state.items() if s["accountEnabled"] == schema.ENABLED_UNKNOWN]
+    if not state:
+        st.duration_seconds = time.monotonic() - started
+        return state, st
+    if not unresolved:
+        # getByIds answered it for every account-bearing principal — no extra calls needed.
+        st.rows_added = len(state)
+        st.duration_seconds = time.monotonic() - started
+        st.message = "Account state read from the directory resolution (no extra calls)."
+        return state, st
+
+    # --- step 2: the inverted sweep -----------------------------------------------------
+    adv = {"ConsistencyLevel": "eventual"}
+    disabled_ids: set[str] = set()
+    facts: dict[str, dict[str, Any]] = {}
+    complete = True
+    problems: list[str] = []
+
+    sweeps = (
+        (
+            "users",
+            f"{_GRAPH}/users",
+            {
+                "$filter": "accountEnabled eq false",
+                "$select": "id,accountEnabled,userType,onPremisesSyncEnabled",
+                "$count": "true",
+                "$top": "999",
+            },
+        ),
+        (
+            "servicePrincipals",
+            f"{_GRAPH}/servicePrincipals",
+            {
+                "$filter": "accountEnabled eq false",
+                "$select": "id,accountEnabled,servicePrincipalType",
+                "$count": "true",
+                "$top": "999",
+            },
+        ),
+    )
+    last_code = 200
+    for label, url, params in sweeps:
+        rows, err, code = await _get_all(
+            token, url, params, extra_headers=adv, max_items=MAX_DISABLED_SWEEP
+        )
+        if err:
+            complete = False
+            last_code = code
+            problems.append(f"{label}: {err}")
+            continue
+        if len(rows) >= MAX_DISABLED_SWEEP:
+            # Capped. We hold a PREFIX of the disabled population, so absence from it proves
+            # nothing at all.
+            complete = False
+            problems.append(
+                f"{label}: more than {MAX_DISABLED_SWEEP} disabled objects; the sweep was capped."
+            )
+        for obj in rows:
+            oid = str(obj.get("id") or "").lower()
+            if not oid:
+                continue
+            disabled_ids.add(oid)
+            facts[oid] = {
+                "onPremSynced": _tristate(obj.get("onPremisesSyncEnabled")),
+                "userType": str(obj.get("userType") or ""),
+                "servicePrincipalType": str(obj.get("servicePrincipalType") or ""),
+            }
+
+    for pid in unresolved:
+        if pid in disabled_ids:
+            entry = state[pid]
+            entry["accountEnabled"] = schema.ENABLED_FALSE
+            extra = facts.get(pid, {})
+            if extra.get("onPremSynced") and entry["onPremSynced"] == schema.ENABLED_UNKNOWN:
+                entry["onPremSynced"] = extra["onPremSynced"]
+            if extra.get("userType") and not entry["userType"]:
+                entry["userType"] = extra["userType"]
+            if extra.get("servicePrincipalType") and not entry["servicePrincipalType"]:
+                entry["servicePrincipalType"] = extra["servicePrincipalType"]
+        elif complete:
+            # The disabled population was read in full and this principal is not in it.
+            state[pid]["accountEnabled"] = schema.ENABLED_TRUE
+        # else: stays unknown, deliberately.
+
+    st.rows_added = sum(1 for s in state.values() if s["accountEnabled"] != schema.ENABLED_UNKNOWN)
+    if not complete:
+        still_unknown = sum(1 for s in state.values() if s["accountEnabled"] == schema.ENABLED_UNKNOWN)
+        st.status = schema.STATUS_PARTIAL if disabled_ids else _status_for_http(last_code)
+        st.message = (
+            f"{still_unknown} principal(s) could not be checked. " + " ".join(problems)
+        ).strip()
+    st.duration_seconds = time.monotonic() - started
+    return state, st
+
+
+async def collect_deleted_principals(token: str) -> tuple[dict[str, str], CollectorStatus]:
+    """Principals sitting in the Entra ID **recycle bin** — soft-deleted, still restorable.
+
+    A deleted directory object is retained for 30 days and can be restored by an administrator.
+    Its role assignments were never revoked, so restoring the account restores every one of them
+    at once. That is materially different from a hard deletion, where the assignment is dead
+    weight pointing at an id that will never resolve again.
+
+    Without this, both land on ``principalExists=false`` and get the same advice \u2014 "delete the
+    assignment, there is no principal left to lose access" \u2014 which is simply untrue for the
+    first 30 days and is the window in which an offboarding is most likely to be reversed.
+
+    Returns ``({principalId_lower: deletedDateTime}, status)``. A tenant that does not grant the
+    directory-recycle-bin read gets an empty map and a recorded status, never an exception.
+    """
+    st = CollectorStatus("DeletedPrincipals")
+    started = time.monotonic()
+    out: dict[str, str] = {}
+    for entity in ("microsoft.graph.user", "microsoft.graph.servicePrincipal"):
+        rows, err, code = await _get_all(
+            token,
+            f"{_GRAPH}/directory/deletedItems/{entity}",
+            {"$select": "id,deletedDateTime", "$top": "999"},
+            max_items=MAX_DISABLED_SWEEP,
+        )
+        if err:
+            st.status = schema.STATUS_PARTIAL if out else _status_for_http(code)
+            st.message = f"{entity}: {err}"
+            continue
+        for obj in rows:
+            oid = str(obj.get("id") or "").lower()
+            if oid:
+                out[oid] = str(obj.get("deletedDateTime") or "")
+    st.rows_added = len(out)
+    st.duration_seconds = time.monotonic() - started
     return out, st
 
 

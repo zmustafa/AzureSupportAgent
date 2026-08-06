@@ -243,7 +243,7 @@ async def test_run_aborts_fast_when_connection_token_expired(monkeypatch):
     monkeypatch.setattr(runner, "get_workload", lambda _wid: {"name": "AP Public Website - Dev", "connection_id": "c1", "nodes": []})
     monkeypatch.setattr(
         "app.core.azure_connections.resolve_connection",
-        lambda _cid: {"id": "c1", "display_name": "lu", "auth_method": "az_cli_token"},
+        lambda _cid: {"id": "c1", "display_name": "contoso-prod", "auth_method": "az_cli_token"},
     )
 
     async def _ok_session(_conn):

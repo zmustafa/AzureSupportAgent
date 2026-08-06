@@ -189,7 +189,7 @@ export function PimTab() {
       <div className="rounded-lg border bg-white">
         <div className="border-b px-3 py-2 text-sm font-semibold text-gray-800">
           {/* The KPI above counts eligible AND PRIVILEGED; this grid lists EVERY eligible
-              assignment. On the live `lu` tenant that is 137 against 174 — two numbers a reader
+              assignment. On a real tenant that is 137 against 174 — two numbers a reader
               would take for the same measure, sitting a few inches apart under near-identical
               labels. Both are correct; only the labelling was wrong, so the grid states its own
               scope rather than hiding the 37 non-privileged rows to make the numbers agree. */}

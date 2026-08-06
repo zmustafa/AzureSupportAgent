@@ -344,6 +344,7 @@ export type IamTab =
   | "escalation"
   | "bypass"
   | "leastprivilege"
+  | "leavers"
   | "simulator"
   | "compare"
   | "reviews"
@@ -374,6 +375,11 @@ export const IAM_NAV: { id: IamTab; label: string; icon: string }[] = [
   { id: "escalation", label: "Escalation", icon: "\u26A1" },
   { id: "bypass", label: "Shadow Access", icon: "\u{1F6AA}" },
   { id: "leastprivilege", label: "Least Privilege", icon: "\u{1F4C9}" },
+  // The only PERSON-centric tab in this feature. Everything above is one row per grant, which
+  // is the right shape for "what is granted" and the wrong one for "who should not still be
+  // here". If it were only the Access grid with a filter applied it would not deserve a tab —
+  // that is exactly why `privileged` stopped being one.
+  { id: "leavers", label: "Disabled Access", icon: "\u{1F6AB}" },
   { id: "simulator", label: "Simulator", icon: "\u{1F9EA}" },
   { id: "compare", label: "Compare", icon: "\u{1F552}" },
   { id: "reviews", label: "Reviews", icon: "\u2705" },

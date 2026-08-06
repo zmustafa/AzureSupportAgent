@@ -195,7 +195,7 @@ def test_right_sizing_over_unmeasured_usage_returns_unmeasured_not_an_empty_list
 
 
 def test_right_sizing_with_no_resolvable_role_is_not_reported_as_a_clean_result():
-    """The failure that produced a false all-clear on the live `lu` tenant.
+    """The failure that produced a false all-clear on a real tenant.
 
     A directory refresh wiped the collected role definitions, so `build_role_index` was empty,
     every row fell out of the loop on "role actions unknown", and `analyse` returned an empty
@@ -864,7 +864,7 @@ def test_a_role_used_across_several_subscriptions_needs_its_wide_assignable_scop
 async def test_a_directory_refresh_does_not_delete_the_collected_role_definitions(
     isolated_cache, monkeypatch
 ):
-    """The root cause of the false all-clear on the live `lu` tenant.
+    """The root cause of the false all-clear on a real tenant.
 
     Role definitions live in the directory blob but are collected only by `refresh_all`.
     `refresh_directory` rewrites that blob wholesale, and two of its three callers (the

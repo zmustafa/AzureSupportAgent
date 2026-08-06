@@ -8,7 +8,7 @@ description: Review effective Azure and Entra access, privileged/data-plane expo
 permalink: /user-guide/governance-identity/iam/
 redirect_from:
   - /user-guide/governance-identity/rbac/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:compare, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:findings, IAM_NAV:insights, IAM_NAV:leastprivilege, IAM_NAV:overview, IAM_NAV:pim, IAM_NAV:privileged, IAM_NAV:reviews, IAM_NAV:roles, IAM_NAV:scanners, IAM_NAV:scopes, IAM_NAV:simulator]
+feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:compare, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:findings, IAM_NAV:insights, IAM_NAV:leastprivilege, IAM_NAV:leavers, IAM_NAV:overview, IAM_NAV:pim, IAM_NAV:privileged, IAM_NAV:reviews, IAM_NAV:roles, IAM_NAV:scanners, IAM_NAV:scopes, IAM_NAV:simulator]
 ---
 
 # IAM
@@ -48,7 +48,7 @@ Before the overview resolves, and while a query is failing, the indicator render
 
 ### Tabs
 
-Seventeen tabs, in strip order. Four are documented in full on this page; the rest have their own reference page, linked below.
+Eighteen tabs, in strip order. Four are documented in full on this page; the rest have their own reference page, linked below.
 
 | Tab | Route | What it is |
 | --- | --- | --- |
@@ -61,6 +61,7 @@ Seventeen tabs, in strip order. Four are documented in full on this page; the re
 | **Escalation** | `/iam/escalation` | The routes by which one grant leads to full control. [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) |
 | **Shadow Access** | `/iam/bypass` | The doors that are not Azure RBAC and would still work if every role assignment were revoked. [Access paths]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) |
 | **Least Privilege** | `/iam/leastprivilege` | Granted versus actually used, and narrower role proposals. Below |
+| **Disabled Access** | `/iam/leavers` | Accounts disabled in Entra ID that still hold access, rolled up per person rather than per grant. [Export disabled accounts that still hold access]({{ site.baseurl }}/how-to/governance-identity/iam-disabled-access/) |
 | **Simulator** | `/iam/simulator` | Models a proposed access change before it is made anywhere. [Change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) |
 | **Compare** | `/iam/compare` | What changed since the previous collection, and who did it where the Activity Log can attribute it. [Change and simulation]({{ site.baseurl }}/user-guide/governance-identity/iam-change-simulation/) |
 | **Reviews** | `/iam/reviews` | Certification campaigns, decisions, remediation scripts and evidence packs, held locally. [Reviews and PIM]({{ site.baseurl }}/user-guide/governance-identity/iam-reviews-pim/) |

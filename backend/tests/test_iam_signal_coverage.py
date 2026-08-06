@@ -568,7 +568,7 @@ def test_every_collector_a_signal_requires_is_one_something_actually_emits():
     """A signal gated on a collector name nothing produces is permanently unmeasured.
 
     It never fires, never errors, and shows up only as a grey "not collected" row that looks
-    like a permissions problem on the customer's side. Measured on the live `lu` tenant before
+    like a permissions problem on the customer's side. Measured on a real tenant before
     this guard existed: **six signals were unmeasurable on every real tenant** — the
     managed-identity and federated-credential escalation checks, which are the most
     security-relevant detections in the product.

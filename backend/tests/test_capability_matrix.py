@@ -106,7 +106,7 @@ def test_managed_identity_can_get_graph_token_but_is_blind_on_entra_mcp(monkeypa
     from app.mcp.client import entra_graph_config_error
 
     conns = [{
-        "id": "mi1", "display_name": "LU", "auth_method": "default_chain",
+        "id": "mi1", "display_name": "contoso-prod", "auth_method": "default_chain",
         "tenant_id": "t1", "log_analytics_workspace_id": "ws", "read_only": True,
     }]
     m = _matrix(conns, monkeypatch)

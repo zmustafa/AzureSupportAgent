@@ -35,7 +35,7 @@ from typing import Any
 from sqlalchemy import desc, func, select
 
 from app.core.db import SessionLocal
-from app.iam import compose, diff as diff_mod, schema
+from app.iam import compose, diff as diff_mod, leavers, schema
 from app.models import IamReviewCampaign, IamReviewItem
 
 log = logging.getLogger("app.iam.campaigns")
@@ -71,7 +71,13 @@ class CampaignError(ValueError):
 
 
 # --------------------------------------------------------------------------- selectors
-def select_rows(rows: list[dict[str, Any]], selector: dict[str, Any], findings: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def select_rows(
+    rows: list[dict[str, Any]],
+    selector: dict[str, Any],
+    findings: list[dict[str, Any]] | None = None,
+    *,
+    tenant_id: str = "",
+) -> list[dict[str, Any]]:
     """Apply a campaign selector to the composed access rows.
 
     Deny rows are excluded from every selector: a deny assignment grants nothing, so asking a
@@ -91,6 +97,52 @@ def select_rows(rows: list[dict[str, Any]], selector: dict[str, Any], findings: 
     elif kind == "principal_type":
         types = {str(t).lower() for t in (selector.get("types") or [])}
         out = [r for r in live if str(r.get("effectivePrincipalType", "") or r.get("principalType", "")).lower() in types]
+    elif kind == "disabled":
+        # Access held by accounts that are DISABLED in Entra ID.
+        #
+        # Only a known ``false`` qualifies. ``unknown`` must never be swept into a certification
+        # campaign: a cache that predates the account-state collector would otherwise put the
+        # entire estate in front of a reviewer under the heading "these people have left", and
+        # the reviewer would rightly stop trusting the tool after the first wrong name.
+        out = [r for r in live if schema.is_disabled(r)]
+        # …then narrowed by the SAME filter set the screen applies. This selector previously
+        # understood two of the sixteen filters, so a campaign started from a screen showing 3
+        # identities covered all 78 — the artifact not matching the screen it was launched from,
+        # which is the exact defect the export path was built to avoid.
+        #
+        # Two of them are derivable from the rows alone and are applied here. The rest need the
+        # per-identity rollup, which needs a tenant. When one of those is present WITHOUT a
+        # tenant, this RAISES rather than quietly ignoring it: a selector that silently drops
+        # half its own filters recreates the bug in a form nobody can see.
+        if selector.get("privileged_only"):
+            out = [r for r in out if r.get("roleIsPrivileged")]
+        if str(selector.get("tier", "")).strip() == "live_now":
+            # Owns a service principal — the only sub-population whose access is exercisable
+            # today rather than one re-enable away.
+            owners = {
+                str(r.get("effectivePrincipalId", "")).lower()
+                for r in out
+                if r.get("accessPath") == schema.PATH_OWNER
+            }
+            out = [r for r in out if str(r.get("effectivePrincipalId", "")).lower() in owners]
+
+        rollup_keys = {
+            k for k in selector
+            if k in leavers.FILTER_KEYS and k not in ("privileged_only", "tier", "signin_kind")
+            and selector[k] not in (None, "", False, [])
+        }
+        if rollup_keys:
+            if not tenant_id:
+                raise CampaignError(
+                    "these filters need the identity rollup and cannot be applied without a "
+                    f"tenant: {', '.join(sorted(rollup_keys))}"
+                )
+            leaver_filter = {k: v for k, v in selector.items() if k in leavers.FILTER_KEYS}
+            keep = leavers.selected_principal_ids(tenant_id, leaver_filter)
+            out = [
+                r for r in out
+                if str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower() in keep
+            ]
     elif kind == "signal":
         wanted = set(selector.get("signal_ids") or [])
         subjects = {
@@ -233,6 +285,49 @@ def build_context(row: dict[str, Any], *, escalation: dict[str, Any] | None = No
 
 
 # --------------------------------------------------------------------------- lifecycle
+def _dedupe_by_review_key(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+    """Collapse rows that are the SAME review decision, keeping every path that produced them.
+
+    ``diff.row_key`` is (principal, role, scope, surface, state) and deliberately excludes the
+    access path — "same access, different governance". ``iam_review_item`` is UNIQUE on
+    (campaign_id, row_key), so any selector that returns one principal holding one role at one
+    scope through **two different groups** produced two items with the same key and the whole
+    campaign died with an IntegrityError, as a 500, after the rows had been chosen.
+
+    Nothing existing hit it because no previous selector was principal-centric; the disabled
+    -account selector is, and on a real tenant 53 of 78 leavers hold their access through
+    groups, where overlapping membership is completely ordinary.
+
+    De-duplicating is also the right REVIEW semantics: "should this person have this access" is
+    one decision, not one per group that grants it. But the folded paths must not be lost —
+    revoking one group membership while another still grants the same role leaves the access in
+    place — so they are carried on the surviving row for the remediation step. A DIRECT row wins
+    over a group-derived one, because its remediation (delete the assignment) differs from the
+    group's (remove the member)."""
+    best: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    folded: dict[str, list[str]] = {}
+    for row in rows:
+        key = diff_mod.row_key(row)
+        via = str(row.get("sourceGroupName") or row.get("sourceGroupId") or "") or str(
+            row.get("accessPath") or ""
+        )
+        prev = best.get(key)
+        if prev is None:
+            best[key] = row
+            order.append(key)
+            folded[key] = [via]
+            continue
+        if via not in folded[key]:
+            folded[key].append(via)
+        if prev.get("accessPath") == schema.PATH_GROUP and row.get("accessPath") != schema.PATH_GROUP:
+            best[key] = row
+    out = [best[k] for k in order]
+    return out, {k: v for k, v in folded.items() if len(v) > 1}
+
+
 async def create(
     tenant_id: str,
     *,
@@ -256,9 +351,13 @@ async def create(
         raise CampaignError("a campaign needs a name")
 
     rows = compose.build_master_rows(tenant_id)
-    chosen = select_rows(rows, selector, findings)
+    chosen = select_rows(rows, selector, findings, tenant_id=tenant_id)
     if not chosen:
         raise CampaignError("that selector matched no access rows — nothing to certify")
+    scoped_principals = {
+        str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower() for r in chosen
+    } - {""}
+    chosen, folded = _dedupe_by_review_key(chosen)
     truncated = len(chosen) > MAX_ITEMS
     chosen = chosen[:MAX_ITEMS]
 
@@ -284,24 +383,38 @@ async def create(
             reviewer, source = resolve_reviewer(
                 row, strategy=reviewer_strategy, tenant_id=tenant_id, fallback=reviewer_fallback_id
             )
+            key = diff_mod.row_key(row)
+            context = build_context(row, escalation=escalation, findings=findings)
+            if key in folded:
+                # Every path that grants this same access. Revoking one while another still
+                # grants it leaves the access exactly where it was.
+                context["alsoGrantedVia"] = folded[key]
             db.add(
                 IamReviewItem(
                     campaign_id=campaign.id,
                     tenant_id=tenant_id,
-                    row_key=diff_mod.row_key(row),
+                    row_key=key,
                     row_snapshot_json=row,
-                    context_json=build_context(row, escalation=escalation, findings=findings),
+                    context_json=context,
                     reviewer_id=reviewer,
                     reviewer_source=source,
                 )
             )
-        campaign.stats_json = _stats(chosen, truncated=truncated)
+        campaign.stats_json = _stats(
+            chosen, truncated=truncated, principals=len(scoped_principals), selector=selector
+        )
         await db.commit()
         await db.refresh(campaign)
         return _public(campaign)
 
 
-def _stats(rows: list[dict[str, Any]], *, truncated: bool = False) -> dict[str, Any]:
+def _stats(
+    rows: list[dict[str, Any]],
+    *,
+    truncated: bool = False,
+    principals: int = 0,
+    selector: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "total": len(rows),
         "privileged": sum(1 for r in rows if r.get("roleIsPrivileged")),
@@ -309,6 +422,15 @@ def _stats(rows: list[dict[str, Any]], *, truncated: bool = False) -> dict[str, 
         "by_decision": {d: 0 for d in DECISIONS},
         "truncated": truncated,
         "cap": MAX_ITEMS,
+        # What this campaign was scoped to WHEN IT WAS CREATED.
+        #
+        # The selector is re-evaluated on refresh, which is the property that lets a standing
+        # review notice a new leaver — but it also means the list a reviewer sees can differ
+        # from the one the operator was looking at when they created it. Recording the original
+        # population makes that visible instead of surprising.
+        "scoped_principals": principals,
+        "scoped_at_creation": len(rows),
+        "scope_filter": {k: v for k, v in (selector or {}).items() if v not in (None, "", False)},
     }
 
 

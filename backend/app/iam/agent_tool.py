@@ -405,7 +405,12 @@ def _make_who_can_reach_resource(tenant_id: str):
             )
             flag = " ⚠privileged" if p["privileged"] else ""
             dead = " [DELETED PRINCIPAL]" if p["principalExists"] == schema.EXISTS_FALSE else ""
-            lines.append(f"- {p['principalName'] or p['principalId']}{flag}{dead}: {grants}")
+            off = (
+                " [DISABLED ACCOUNT — dormant, restored on re-enable]"
+                if p.get("principalAccountEnabled") == schema.ENABLED_FALSE
+                else ""
+            )
+            lines.append(f"- {p['principalName'] or p['principalId']}{flag}{dead}{off}: {grants}")
         bypass = out.get("bypass") or {}
         if not bypass.get("measured"):
             lines += ["", f"! {bypass.get('reason')}"]

@@ -162,7 +162,7 @@ def main() -> int:
 
     conns = (get_json("/azure/connections") or {}).get("connections", [])
     by_name = {c["display_name"]: c["id"] for c in conns}
-    iam_cid = args.iam_connection or by_name.get("lu") or (conns[0]["id"] if conns else "")
+    iam_cid = args.iam_connection or (conns[0]["id"] if conns else "")
     entra_cid = args.entra_connection or iam_cid
 
     print(f"connections: {', '.join(f'{c['display_name']}={c['status']}' for c in conns)}")

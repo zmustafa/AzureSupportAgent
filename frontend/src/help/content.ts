@@ -57,7 +57,7 @@ export const DESTINATIONS: Destination[] = [
   { label: "Retirement Radar", path: "/radar", group: "Proactive Support", icon: "📡", keywords: "retirement breaking change deprecation", adminOnly: true },
   { label: "Reservations Monitor", path: "/reservations", group: "Proactive Support", icon: "🏷️", keywords: "reserved instances savings plan", adminOnly: true },
   { label: "Entra ID", path: "/entra", group: "Proactive Support", icon: "🔑", keywords: "entra aad identity mfa secrets certificates conditional access pim privileged app registrations", adminOnly: true },
-  { label: "IAM / Access Review", path: "/iam", group: "Proactive Support", icon: "🛂", keywords: "rbac roles access who can do what privileged pim", adminOnly: true },
+  { label: "IAM / Access Review", path: "/iam", group: "Proactive Support", icon: "\u{1F6C2}", keywords: "rbac roles access who can do what privileged pim disabled leavers offboarding stale accounts", adminOnly: true },
   { label: "Telemetry Intelligence", path: "/telemetry-intel", group: "Proactive Support", icon: "📈", keywords: "log analytics noise cost", adminOnly: true },
   { label: "Evidence Locker", path: "/evidence", group: "Proactive Support", icon: "🗄️", keywords: "snapshot forensic audit hash", adminOnly: true },
   { label: "Change Explorer", path: "/change-explorer", group: "Proactive Support", icon: "🧭", keywords: "what changed who changed it forensic activity log resource graph actor timeline drift", adminOnly: true },

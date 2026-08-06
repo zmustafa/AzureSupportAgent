@@ -297,7 +297,10 @@ def test_standing_ratio_over_demo_data(isolated_cache_for_ratio):
 
     demo.seed_demo("t1")
     k = compose.compute_overview("t1")["kpis"]
-    assert k["eligible_privileged"] == 3      # 2 Azure PIM + 1 Entra directory-role eligibility
+    # 3 Azure PIM + 1 Entra directory-role eligibility. The third Azure one belongs to a
+    # DISABLED account (Oscar, permanently eligible for Owner) — an eligibility survives
+    # offboarding, which is precisely why it is counted here rather than ignored.
+    assert k["eligible_privileged"] == 4
     assert k["active_elevations"] == 1        # Eve is elevated right now
     assert k["standing_privileged"] > 0
     # The elevated row is active but must NOT be counted as standing privilege.

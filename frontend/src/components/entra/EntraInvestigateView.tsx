@@ -212,9 +212,9 @@ function RecentStrip({
   onClear: () => void;
 }) {
   if (!entries.length) return null;
-  // Display names are not unique — a real tenant has several objects called "Liberty". Three
-  // identical chips pointing at three different principals is a lie the tooltip cannot undo,
-  // so collisions get a short id suffix.
+  // Display names are not unique — a real tenant routinely has several objects sharing one
+  // name. Three identical chips pointing at three different principals is a lie the tooltip
+  // cannot undo, so collisions get a short id suffix.
   const nameCounts = entries.reduce<Record<string, number>>((acc, e) => {
     acc[e.display_name] = (acc[e.display_name] ?? 0) + 1;
     return acc;

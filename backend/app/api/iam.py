@@ -29,7 +29,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.iam import attribution, bypass, cache, campaigns, compose, cpu, dataplane, demo, diff, effective, escalation, export, findings, flow, frameworks, importer, job, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
+from app.iam import attribution, bypass, cache, campaigns, compose, cpu, dataplane, demo, diff, effective, escalation, export, findings, flow, frameworks, importer, job, leavers, pivots, progress, remediation, rightsize, scanner_jobs, scanners, schema, signals, simulator, store, usage
 from app.iam import scopes as scope_filters
 from app.iam import resource_access as resource_access_mod
 from app.iam import score as score_mod
@@ -90,6 +90,7 @@ def _apply_grid_filters(
     surface: str | None = None,
     principal_type: str | None = None,
     privileged_only: bool = False,
+    disabled_only: bool = False,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
     """The access grid's row filters, in one place.
@@ -109,6 +110,10 @@ def _apply_grid_filters(
         rows = [r for r in rows if (r.get("effectivePrincipalType") or r.get("principalType")) == principal_type]
     if privileged_only:
         rows = [r for r in rows if r.get("roleIsPrivileged")]
+    if disabled_only:
+        # KNOWN-disabled only. `unknown` is never included: a cache that predates the
+        # account-state collector would otherwise turn this lens into "show me everything".
+        rows = [r for r in rows if schema.is_disabled(r)]
     if search:
         q = search.lower()
         rows = [
@@ -177,6 +182,7 @@ async def access(
     principal_type: str | None = None,
     search: str | None = None,
     privileged_only: bool = False,
+    disabled_only: bool = False,
     scope_id: str | None = None,
     subscription_ids: str | None = None,
     workload_id: str | None = None,
@@ -205,6 +211,7 @@ async def access(
         surface=surface,
         principal_type=principal_type,
         privileged_only=privileged_only,
+        disabled_only=disabled_only,
         search=search,
     )
     total = len(rows)
@@ -1125,6 +1132,312 @@ async def campaign_evidence(
     return {"evidence": snapshot, "digest": campaigns.content_digest(content)}
 
 
+# --------------------------------------------------------------------------- disabled access
+# The filter vocabulary lives in `app.iam.leavers`, not here, because three callers need it and
+# only one of them is an HTTP endpoint: the report, the export, and the review-campaign
+# selector. When it lived beside the endpoints, the campaign selector understood two of the
+# sixteen filters and silently created a review 26 times larger than the screen it came from.
+ON_PREM_ANY = leavers.ON_PREM_ANY
+ON_PREM_CLOUD = leavers.ON_PREM_CLOUD
+ON_PREM_SYNCED = leavers.ON_PREM_SYNCED
+ON_PREM_UNKNOWN = leavers.ON_PREM_UNKNOWN
+SIGNIN_KINDS = leavers.SIGNIN_KINDS
+
+_signin_at = leavers.signin_at
+
+
+def _apply_leavers_filters(identities: list[dict[str, Any]], **kw: Any) -> list[dict[str, Any]]:
+    """Thin wrapper over :func:`leavers.filter_identities`, kept for call-site readability."""
+    return leavers.filter_identities(identities, kw)
+
+
+def _leavers_counts(identities: list[dict[str, Any]], signin_kind: str = "any") -> dict[str, Any]:
+    return leavers.count_identities(identities, signin_kind)
+
+
+class LeaversQuery(BaseModel):
+    """Every filter this screen can apply, in ONE object.
+
+    A single model rather than a dozen loose parameters because the report endpoint and the
+    export endpoint must accept exactly the same set — the moment one of them understands fewer
+    filters, a download silently contains rows the screen was not showing."""
+
+    tier: str | None = None
+    principal_type: str | None = None
+    privileged_only: bool = False
+    on_prem_synced: bool = False          # legacy boolean; `on_prem` supersedes it
+    on_prem: str | None = None            # "" | cloud | onprem | unknown
+    via_group_only: bool = False
+    soft_deleted: bool = False
+    has_owned_sp: bool = False
+    pim_eligible: bool = False
+    never_used: bool = False
+    dormancy: str | None = None
+    signin_kind: str = "any"
+    subscription: str | None = None
+    role: str | None = None
+    plane: str | None = None
+    group: str | None = None
+    search: str | None = None
+    #: Explicit selection from the screen. An ADDITIONAL constraint on the filters, never a
+    #: replacement, so a stale id cannot resurrect an identity a later scan has excluded.
+    principal_ids: list[str] | None = None
+
+
+def _leavers_query(**kw: Any) -> LeaversQuery:
+    return LeaversQuery(**kw)
+
+
+def _leavers_filter_summary(q: LeaversQuery) -> dict[str, Any]:
+    """The applied filters, for the workbook's Summary sheet. A download with no record of what
+    was filtered out cannot be audited."""
+    return {k: v for k, v in q.model_dump().items() if v not in (None, "", False, "any")}
+
+
+@router.get("/leavers")
+async def leavers_report(
+    tier: str | None = None,
+    principal_type: str | None = None,
+    privileged_only: bool = False,
+    on_prem_synced: bool = False,
+    on_prem: str | None = None,
+    via_group_only: bool = False,
+    soft_deleted: bool = False,
+    has_owned_sp: bool = False,
+    pim_eligible: bool = False,
+    never_used: bool = False,
+    dormancy: str | None = None,
+    signin_kind: str = "any",
+    subscription: str | None = None,
+    role: str | None = None,
+    plane: str | None = None,
+    group: str | None = None,
+    search: str | None = None,
+    principal_ids: str | None = None,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Disabled accounts that still hold access, rolled up per person.
+
+    Person-centric on purpose — every other lens in this feature is one row per grant, and a
+    leaver with Contributor on four subscriptions is one offboarding task, not four findings.
+
+    ``measured`` is the gate the UI must render on: false means account state has never been
+    collected for this tenant, and an empty ``identities`` list then means "we have not looked",
+    not "nobody". Those are opposite findings.
+
+    ``counts`` is computed over the whole FILTERED set, server-side, so a group header can
+    never disagree with the section under it."""
+    _conn, tenant_id, _cid = _target(principal, connection_id)
+    q = _leavers_query(
+        tier=tier, principal_type=principal_type, privileged_only=privileged_only,
+        on_prem_synced=on_prem_synced, on_prem=on_prem, via_group_only=via_group_only,
+        soft_deleted=soft_deleted, has_owned_sp=has_owned_sp, pim_eligible=pim_eligible,
+        never_used=never_used, dormancy=dormancy, signin_kind=signin_kind,
+        subscription=subscription, role=role, plane=plane, group=group, search=search,
+        principal_ids=[p for p in (principal_ids or "").split(",") if p.strip()] or None,
+    )
+    report = await cpu.run(leavers.build_leavers, tenant_id, label="disabled access report")
+    filtered = _apply_leavers_filters(report.get("identities") or [], **q.model_dump())
+    out = dict(report)
+    out["identities"] = filtered
+    out["counts"] = _leavers_counts(filtered, q.signin_kind)
+    # The unfiltered population, so the screen can say "12 of 34" rather than implying the
+    # filter found everything there is.
+    out["total_identities"] = len(report.get("identities") or [])
+    out["filtered"] = len(filtered) != out["total_identities"]
+    # Every value the filter dropdowns can offer, derived from the UNFILTERED set so choosing
+    # one option never empties the others out of existence.
+    everything = report.get("identities") or []
+    out["facets"] = {
+        "subscriptions": sorted({s for i in everything for s in (i.get("subscriptions") or [])}),
+        "roles": sorted({str(i.get("highestRole") or "") for i in everything} - {""}),
+        "planes": sorted({p for i in everything for p in (i.get("planes") or [])}),
+        "groups": sorted({g for i in everything for g in (i.get("groupsGrantingAccess") or [])}),
+        "signin_kinds": list(SIGNIN_KINDS),
+    }
+    return out
+
+
+@router.get("/leavers/export")
+async def leavers_export(
+    fmt: str = Query("csv", pattern="^(csv|xlsx)$"),
+    shape: str = Query("identities", pattern="^(identities|grants)$"),
+    tier: str | None = None,
+    principal_type: str | None = None,
+    privileged_only: bool = False,
+    on_prem_synced: bool = False,
+    on_prem: str | None = None,
+    via_group_only: bool = False,
+    soft_deleted: bool = False,
+    has_owned_sp: bool = False,
+    pim_eligible: bool = False,
+    never_used: bool = False,
+    dormancy: str | None = None,
+    signin_kind: str = "any",
+    subscription: str | None = None,
+    role: str | None = None,
+    plane: str | None = None,
+    group: str | None = None,
+    search: str | None = None,
+    principal_ids: str | None = None,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> Response:
+    """Download the disabled-access report.
+
+    ``shape=identities`` is one row per person — "who do I go and offboard". ``shape=grants`` is
+    one row per assignment in the full schema — "what exactly do I delete", and it round-trips
+    through the same writers as the main access export so a remediation script can be built from
+    it without a second collection.
+
+    Both shapes go through :func:`_apply_leavers_filters`, so the file always contains exactly
+    what the screen showed."""
+    _conn, tenant_id, _cid = _target(principal, connection_id)
+    q = _leavers_query(
+        tier=tier, principal_type=principal_type, privileged_only=privileged_only,
+        on_prem_synced=on_prem_synced, on_prem=on_prem, via_group_only=via_group_only,
+        soft_deleted=soft_deleted, has_owned_sp=has_owned_sp, pim_eligible=pim_eligible,
+        never_used=never_used, dormancy=dormancy, signin_kind=signin_kind,
+        subscription=subscription, role=role, plane=plane, group=group, search=search,
+        principal_ids=[p for p in (principal_ids or "").split(",") if p.strip()] or None,
+    )
+    report = await cpu.run(leavers.build_leavers, tenant_id, label="disabled access export")
+    filtered = _apply_leavers_filters(report.get("identities") or [], **q.model_dump())
+    keep = {str(i.get("principalId", "")).lower() for i in filtered}
+    rows = await cpu.run(compose.build_master_rows, tenant_id, label="disabled access rows")
+    grants = [
+        r for r in leavers.disabled_grant_rows(rows)
+        if str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower() in keep
+    ]
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+
+    if fmt == "xlsx":
+        payload = dict(report)
+        payload["identities"] = filtered
+        applied = _leavers_filter_summary(q)
+        # Evaluate every argument BEFORE handing the call to the worker: a threaded call whose
+        # arguments are computed in the argument list runs those arguments on the event loop.
+        body = await cpu.run(
+            export.to_disabled_workbook,
+            report=payload, grants=grants, tenant_id=tenant_id, filters=applied,
+            label="disabled access workbook",
+        )
+        return Response(
+            content=body,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=iam-disabled-access-{stamp}.xlsx"},
+        )
+
+    if shape == "grants":
+        body_csv = await cpu.run(export.to_csv, grants, label="disabled access grants csv")
+        return Response(
+            content=body_csv,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=iam-disabled-access-grants-{stamp}.csv"},
+        )
+    tiers = report.get("tiers") or {}
+    body_csv = await cpu.run(export.to_identity_csv, filtered, tiers, label="disabled access csv")
+    return Response(
+        content=body_csv,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=iam-disabled-access-identities-{stamp}.csv"},
+    )
+
+
+@router.get("/leavers/remediation")
+async def leavers_remediation(
+    fmt: str = Query("az"),
+    tier: str | None = None,
+    principal_type: str | None = None,
+    privileged_only: bool = False,
+    on_prem_synced: bool = False,
+    on_prem: str | None = None,
+    via_group_only: bool = False,
+    soft_deleted: bool = False,
+    has_owned_sp: bool = False,
+    pim_eligible: bool = False,
+    never_used: bool = False,
+    dormancy: str | None = None,
+    signin_kind: str = "any",
+    subscription: str | None = None,
+    role: str | None = None,
+    plane: str | None = None,
+    group: str | None = None,
+    search: str | None = None,
+    principal_ids: str | None = None,
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """The ordered revocation script for the identities currently selected.
+
+    Read-only, and it does NOT create a campaign. "What would it cost me to clean these three
+    up" is a question people ask before committing to a review, and forcing a campaign first
+    made it unanswerable.
+
+    Nothing here writes to Azure. The script is text for the operator to read and run through
+    their own change process, and every step carries a dry run, a ``breaks if`` and a rollback.
+
+    Ordering is not cosmetic: group-derived access is revoked BEFORE direct assignments, because
+    revoking a direct grant while the principal still inherits the same access through a group
+    looks successful and changes nothing — which is how "we revoked it" and "they still have it"
+    end up both being true."""
+    if fmt not in remediation.FORMATS:
+        raise HTTPException(status_code=400, detail=f"format must be one of {remediation.FORMATS}")
+    _conn, tenant_id, _cid = _target(principal, connection_id)
+    q = _leavers_query(
+        tier=tier, principal_type=principal_type, privileged_only=privileged_only,
+        on_prem_synced=on_prem_synced, on_prem=on_prem, via_group_only=via_group_only,
+        soft_deleted=soft_deleted, has_owned_sp=has_owned_sp, pim_eligible=pim_eligible,
+        never_used=never_used, dormancy=dormancy, signin_kind=signin_kind,
+        subscription=subscription, role=role, plane=plane, group=group, search=search,
+        principal_ids=[p for p in (principal_ids or "").split(",") if p.strip()] or None,
+    )
+
+    def _build() -> dict[str, Any]:
+        report = leavers.build_leavers(tenant_id)
+        if not report.get("measured"):
+            return {
+                "measured": False,
+                "reason": report.get("reason", ""),
+                "script": "",
+                "action_count": 0,
+                "identities": 0,
+            }
+        picked = leavers.filter_identities(report.get("identities") or [], q.model_dump())
+        keep = {str(i.get("principalId", "")).lower() for i in picked}
+        rows = [
+            r for r in leavers.disabled_grant_rows(compose.build_master_rows(tenant_id))
+            if str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower() in keep
+        ]
+        actions = [a for a in (remediation.revoke_assignment(r, fmt) for r in rows) if a]
+        bundle = remediation.build_bundle(
+            actions,
+            fmt,
+            title=f"Remove access held by {len(keep)} disabled account(s)",
+        )
+        bundle["measured"] = True
+        bundle["identities"] = len(keep)
+        bundle["grants"] = len(rows)
+        # How many steps land on each API. The action count alone is misleading once duplicate
+        # group memberships are folded — 527 grants collapse to far fewer steps — and an operator
+        # needs to know up front that some steps need Graph rather than ARM.
+        planes: dict[str, int] = {}
+        for a in bundle["actions"]:
+            key = str(a.get("plane") or remediation.PLANE_AZURE_RBAC)
+            planes[key] = planes.get(key, 0) + 1
+        bundle["planes"] = planes
+        # The same caveats the screen carries. A script pasted into a change record outlives
+        # every banner that was on screen when it was generated.
+        bundle["limitations"] = report.get("limitations") or []
+        return bundle
+
+    try:
+        return await cpu.run(_build, label="disabled access remediation")
+    except remediation.SecretLeak as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 # --------------------------------------------------------------------------- export
 @router.get("/export")
 async def export_rows(
@@ -1137,6 +1450,7 @@ async def export_rows(
     surface: str | None = None,
     principal_type: str | None = None,
     privileged_only: bool = False,
+    disabled_only: bool = False,
     search: str | None = None,
     connection_id: str | None = None,
     principal: Principal = Depends(require_admin),
@@ -1169,6 +1483,7 @@ async def export_rows(
         surface=surface,
         principal_type=principal_type,
         privileged_only=privileged_only,
+        disabled_only=disabled_only,
         search=search,
     )
     if fmt == "scanner":
@@ -1249,6 +1564,7 @@ async def export_workbook(
             scanners=scanner_cards,
             score=score_mod.compute(results),
             dataplane=dataplane.public_catalogue(),
+            leavers=leavers.build_leavers(tenant_id),
         )
 
     content = await cpu.run(_build_workbook, label="workbook export")

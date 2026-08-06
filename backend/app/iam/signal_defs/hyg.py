@@ -193,6 +193,321 @@ def _collectors_needing_attention(ctx: SignalContext) -> list[Finding]:
     return out
 
 
+# --------------------------------------------------------------------------- disabled access
+def _state_measured(ctx: SignalContext) -> bool:
+    """Was Entra account state actually collected for this tenant?
+
+    The gate on every check below. A cache written before the account-state collector existed
+    contains no disabled principals at all, and "no disabled principal holds access" is the most
+    reassuring sentence in this whole feature — so it must never be produced by not having
+    looked. Same rule that stopped `standing_ratio` reporting 100% standing privilege on tenants
+    where PIM had simply never been collected."""
+    return bool(ctx.directory.get("principal_state"))
+
+
+_DISABLED_REASON = (
+    "Entra account state was not collected for this tenant, so a principal cannot be called "
+    "disabled. Refresh the directory layer with a connection that can read Microsoft Graph."
+)
+
+
+def _disabled_grants(ctx: SignalContext) -> list[dict[str, Any]]:
+    return [r for r in ctx.grants if schema.is_disabled(r)]
+
+
+def _disabled_principal_access(ctx: SignalContext) -> list[Finding]:
+    """Access still held by principals whose Entra account is disabled.
+
+    Disabling an account does not revoke a single role assignment. Azure keeps every one of
+    them, so the access is not gone — it is dormant, and re-enabling the account (a helpdesk
+    action, with no approval and no access review) restores all of it instantly.
+
+    Aggregated per PRINCIPAL rather than per scope, because the unit of remediation here is a
+    person, not a scope: you offboard Mallory once, not once per subscription."""
+    ctx.require(_state_measured(ctx), _DISABLED_REASON)
+    by_principal: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in _disabled_grants(ctx):
+        pid = str(r.get("effectivePrincipalId") or r.get("principalId") or "")
+        if pid:
+            by_principal[pid].append(r)
+    out: list[Finding] = []
+    for pid, rows in by_principal.items():
+        privileged = sum(1 for r in rows if r.get("roleIsPrivileged"))
+        on_prem = any(str(r.get("principalOnPremSynced")) == schema.ENABLED_TRUE for r in rows)
+        scopes = sorted({str(r.get("scopeDisplayName") or r.get("scope") or "") for r in rows})
+        out.append(
+            Finding(
+                signal_id="hyg.disabled_principal_access",
+                title="A disabled account still holds access",
+                severity="error" if privileged else "warning",
+                pillar="hyg",
+                object_kind="principal",
+                subject=pid,
+                subject_label=_who(rows[0]),
+                detail=(
+                    f"{_who(rows[0])} is disabled in Entra ID but still holds {len(rows)} "
+                    f"assignment(s)"
+                    + (f", {privileged} of them privileged" if privileged else "")
+                    + ". Azure does not revoke role assignments when an account is disabled, so "
+                    "re-enabling the account restores all of this access with no approval and "
+                    "no access review."
+                    + (
+                        " This account is synchronised from on-premises Active Directory: it "
+                        "must be remediated there, or the next sync cycle reverts the change."
+                        if on_prem
+                        else ""
+                    )
+                ),
+                count=len(rows),
+                evidence={
+                    "roles": sorted({str(r.get("roleName")) for r in rows})[:10],
+                    "scopes": scopes[:10],
+                    "privileged": privileged,
+                    "on_prem_synced": on_prem,
+                    "upn": str(
+                        rows[0].get("effectivePrincipalUserPrincipalName")
+                        or rows[0].get("principalUserPrincipalName")
+                        or ""
+                    ),
+                },
+                remediation=(
+                    "Remove the assignments as part of offboarding. If the account was disabled "
+                    "on purpose and is expected back, the access should be re-granted on return, "
+                    "not left standing."
+                ),
+                frameworks=("NIST:AC-2(3)", "CIS-Azure:1.3", "ISO:A.5.18"),
+            )
+        )
+    return out
+
+
+def _disabled_privileged(ctx: SignalContext) -> list[Finding]:
+    """The same population, narrowed to privileged roles and raised to its own severity.
+
+    A disabled account holding Reader is untidy. A disabled account holding Owner is a dormant
+    administrator that any helpdesk password reset re-arms."""
+    ctx.require(_state_measured(ctx), _DISABLED_REASON)
+    rows = [r for r in _disabled_grants(ctx) if r.get("roleIsPrivileged")]
+    if not rows:
+        return []
+    people = sorted({str(r.get("effectivePrincipalId") or r.get("principalId")) for r in rows})
+    return [
+        Finding(
+            signal_id="hyg.disabled_privileged_access",
+            title="Disabled accounts still hold privileged roles",
+            severity="error",
+            pillar="hyg",
+            object_kind="tenant",
+            subject=ctx.tenant_id,
+            subject_label="This tenant",
+            detail=(
+                f"{len(people)} disabled principal(s) hold {len(rows)} privileged assignment(s). "
+                f"Each one is a dormant administrator: enabling the account is a single helpdesk "
+                f"action and reinstates the privilege in full."
+            ),
+            count=len(rows),
+            evidence={
+                "roles": sorted({str(r.get("roleName")) for r in rows})[:10],
+                "principals": sorted({_who(r) for r in rows})[:10],
+                "total_principals": len(people),
+            },
+            remediation="Remove these first — they are the highest-value dormant access in the tenant.",
+            frameworks=("NIST:AC-2(3)", "CIS-Azure:1.3"),
+        )
+    ]
+
+
+def _disabled_via_group(ctx: SignalContext) -> list[Finding]:
+    """Disabled members sitting inside groups that grant access.
+
+    Its own signal because the REMEDIATION is different and getting it wrong breaks other
+    people: the assignment belongs to the group and serves every other member, so the fix is to
+    remove the disabled member from the group, never to delete the assignment. This is also the
+    least visible case in the product — an assignment-centric view shows a healthy group holding
+    a role, and nobody opens it."""
+    ctx.require(_state_measured(ctx), _DISABLED_REASON)
+    by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in _disabled_grants(ctx):
+        if r.get("accessPath") == schema.PATH_GROUP and r.get("sourceGroupId"):
+            by_group[str(r["sourceGroupId"])].append(r)
+    out: list[Finding] = []
+    for gid, rows in by_group.items():
+        members = sorted({_who(r) for r in rows})
+        privileged = sum(1 for r in rows if r.get("roleIsPrivileged"))
+        gname = str(rows[0].get("sourceGroupName") or gid)
+        out.append(
+            Finding(
+                signal_id="hyg.disabled_via_group",
+                title="A group grants access to disabled accounts",
+                severity="error" if privileged else "warning",
+                pillar="hyg",
+                object_kind="principal",
+                subject=gid,
+                subject_label=gname,
+                detail=(
+                    f"{len(members)} disabled account(s) are members of {gname}, which holds "
+                    f"{len(rows)} grant(s). The group itself is healthy, so this access does not "
+                    f"appear anywhere an assignment is listed — only the membership shows it."
+                ),
+                count=len(rows),
+                evidence={
+                    "members": members[:10],
+                    "member_count": len(members),
+                    "roles": sorted({str(r.get("roleName")) for r in rows})[:10],
+                },
+                remediation=(
+                    "Remove the disabled members from the group. Do NOT delete the group's role "
+                    "assignment — it serves every other member."
+                ),
+                frameworks=("NIST:AC-2(3)", "ISO:A.5.18"),
+            )
+        )
+    return out
+
+
+def _disabled_owns_credential(ctx: SignalContext) -> list[Finding]:
+    """Disabled accounts that own a service principal.
+
+    The only case in this family that is exploitable **right now**. Everything else here is
+    dormant: a disabled user cannot obtain a token, so their own grants are one re-enable away
+    from being live but are not live today. An owned service principal is different — it
+    authenticates with its own secret or certificate, which disabling the owner's account does
+    nothing to. If the owner left under a cloud, or their credentials were the reason the
+    account was disabled, that secret is still working."""
+    ctx.require(_state_measured(ctx), _DISABLED_REASON)
+    rows = [
+        r for r in _disabled_grants(ctx)
+        if r.get("accessPath") == schema.PATH_OWNER
+    ]
+    if not rows:
+        return []
+    owners = sorted({_who(r) for r in rows})
+    return [
+        Finding(
+            signal_id="hyg.disabled_owns_credential",
+            title="Disabled accounts own service principals",
+            severity="error",
+            pillar="hyg",
+            object_kind="tenant",
+            subject=ctx.tenant_id,
+            subject_label="This tenant",
+            detail=(
+                f"{len(owners)} disabled account(s) own {len(rows)} service principal(s). A "
+                f"service principal signs in with its own credential, so disabling the owner's "
+                f"user account does not stop it. Unlike the rest of this pillar, this access is "
+                f"live now rather than one re-enable away."
+            ),
+            count=len(rows),
+            evidence={
+                "owners": owners[:10],
+                "service_principals": sorted({str(r.get("principalDisplayName")) for r in rows})[:10],
+            },
+            remediation=(
+                "Reassign ownership to a current employee, then roll the service principal's "
+                "credentials. Removing the owner alone leaves the existing secret valid."
+            ),
+            frameworks=("NIST:AC-2(3)", "NIST:IA-5"),
+        )
+    ]
+
+
+def _soft_deleted_restorable(ctx: SignalContext) -> list[Finding]:
+    """Principals in the Entra ID recycle bin that still hold access.
+
+    Its own signal because the ADVICE elsewhere is wrong for these. ``hyg.orphaned_assignment``
+    tells an operator to delete the assignment because "there is no principal left to lose
+    access" — true for a hard deletion, false for the 30 days a soft-deleted object can be
+    restored by any administrator, which brings every one of these grants back at once. That
+    window is also exactly when an offboarding is most likely to be reversed."""
+    state = ctx.directory.get("principal_state") or {}
+    ctx.require(bool(state), _DISABLED_REASON)
+    bin_ids = {
+        pid for pid, s in state.items()
+        if isinstance(s, dict) and s.get("deletedDateTime")
+    }
+    if not bin_ids:
+        return []
+    rows = [
+        r for r in ctx.grants
+        if str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower() in bin_ids
+    ]
+    if not rows:
+        return []
+    privileged = sum(1 for r in rows if r.get("roleIsPrivileged"))
+    people = sorted({
+        str(r.get("effectivePrincipalId") or r.get("principalId")).lower() for r in rows
+    })
+    return [
+        Finding(
+            signal_id="hyg.deleted_principal_restorable",
+            title="Deleted accounts in the recycle bin still hold access",
+            severity="error" if privileged else "warning",
+            pillar="hyg",
+            object_kind="tenant",
+            subject=ctx.tenant_id,
+            subject_label="This tenant",
+            detail=(
+                f"{len(people)} principal(s) holding {len(rows)} grant(s)"
+                + (f", {privileged} of them privileged" if privileged else "")
+                + " are in the Entra ID recycle bin. They are recoverable for 30 days, and "
+                "restoring the object restores all of this access at once — so these must not "
+                "be treated as harmless orphans."
+            ),
+            count=len(rows),
+            evidence={
+                "roles": sorted({str(r.get("roleName")) for r in rows})[:10],
+                "principals": sorted({_who(r) for r in rows})[:10],
+            },
+            remediation=(
+                "Remove the assignments now rather than waiting for the retention window to "
+                "expire. If the account is restored, the access returns with it."
+            ),
+            frameworks=("NIST:AC-2(3)", "ISO:A.5.18"),
+        )
+    ]
+
+
+def _disabled_eligible(ctx: SignalContext) -> list[Finding]:
+    """Disabled accounts that are still PIM-eligible.
+
+    An eligibility is not access, which is why it gets its own, lower severity — but it is a
+    standing invitation that survives offboarding entirely, and a permanent eligibility survives
+    it forever."""
+    ctx.require(_state_measured(ctx), _DISABLED_REASON)
+    rows = [
+        r for r in _disabled_grants(ctx)
+        if r.get("assignmentState") == schema.STATE_ELIGIBLE
+    ]
+    if not rows:
+        return []
+    permanent = sum(1 for r in rows if r.get("isPermanentEligible"))
+    return [
+        Finding(
+            signal_id="hyg.disabled_pim_eligible",
+            title="Disabled accounts are still eligible to activate roles",
+            severity="warning",
+            pillar="hyg",
+            object_kind="tenant",
+            subject=ctx.tenant_id,
+            subject_label="This tenant",
+            detail=(
+                f"{len(rows)} PIM eligibility/eligibilities belong to disabled accounts"
+                + (f", {permanent} of them permanent" if permanent else "")
+                + ". Eligibility is not access — but it outlives offboarding, and re-enabling "
+                "the account makes it activatable again."
+            ),
+            count=len(rows),
+            evidence={
+                "roles": sorted({str(r.get("roleName")) for r in rows})[:10],
+                "principals": sorted({_who(r) for r in rows})[:10],
+                "permanent": permanent,
+            },
+            remediation="Remove the eligibility as part of offboarding, alongside active assignments.",
+            frameworks=("NIST:AC-2(3)",),
+        )
+    ]
+
+
 SIGNALS: list[SignalSpec] = [
     SignalSpec(
         id="hyg.orphaned_assignment",
@@ -235,5 +550,59 @@ SIGNALS: list[SignalSpec] = [
         why="Absence of a finding on an unread surface is not evidence of absence.",
         remediation="Check Diagnostics, grant the missing permission, refresh.",
         evaluate=_collectors_needing_attention,
+    ),
+    SignalSpec(
+        id="hyg.disabled_principal_access",
+        title="Disabled accounts that still hold access",
+        pillar="hyg", severity="warning", weight=8, object_kind="principal",
+        why="Azure keeps every role assignment when an account is disabled; re-enabling restores all of it with no approval.",
+        remediation="Remove the assignments as part of offboarding.",
+        frameworks=("NIST:AC-2(3)", "CIS-Azure:1.3", "ISO:A.5.18"),
+        evaluate=_disabled_principal_access,
+    ),
+    SignalSpec(
+        id="hyg.disabled_privileged_access",
+        title="Disabled accounts holding privileged roles",
+        pillar="hyg", severity="error", weight=10, object_kind="tenant",
+        why="A dormant administrator that a single helpdesk action re-arms.",
+        remediation="Remove these first.",
+        frameworks=("NIST:AC-2(3)", "CIS-Azure:1.3"),
+        evaluate=_disabled_privileged,
+    ),
+    SignalSpec(
+        id="hyg.disabled_via_group",
+        title="Groups granting access to disabled accounts",
+        pillar="hyg", severity="warning", weight=6, object_kind="principal",
+        why="The assignment belongs to a healthy group, so this access is invisible in every assignment-centric view.",
+        remediation="Remove the disabled members from the group; never delete the group's assignment.",
+        frameworks=("NIST:AC-2(3)", "ISO:A.5.18"),
+        evaluate=_disabled_via_group,
+    ),
+    SignalSpec(
+        id="hyg.disabled_owns_credential",
+        title="Disabled accounts owning service principals",
+        pillar="hyg", severity="error", weight=9, object_kind="tenant",
+        why="A service principal has its own credential; disabling its owner does not stop it. This access is live now.",
+        remediation="Reassign ownership, then roll the credential.",
+        frameworks=("NIST:AC-2(3)", "NIST:IA-5"),
+        evaluate=_disabled_owns_credential,
+    ),
+    SignalSpec(
+        id="hyg.disabled_pim_eligible",
+        title="Disabled accounts still eligible to activate roles",
+        pillar="hyg", severity="warning", weight=4, object_kind="tenant",
+        why="Eligibility outlives offboarding and becomes activatable the moment the account is re-enabled.",
+        remediation="Remove the eligibility alongside active assignments.",
+        frameworks=("NIST:AC-2(3)",),
+        evaluate=_disabled_eligible,
+    ),
+    SignalSpec(
+        id="hyg.deleted_principal_restorable",
+        title="Recycle-bin accounts that still hold access",
+        pillar="hyg", severity="warning", weight=6, object_kind="tenant",
+        why="A soft-deleted object is restorable for 30 days, and restoring it restores every grant it held.",
+        remediation="Remove the assignments now; do not wait for the retention window.",
+        frameworks=("NIST:AC-2(3)", "ISO:A.5.18"),
+        evaluate=_soft_deleted_restorable,
     ),
 ]

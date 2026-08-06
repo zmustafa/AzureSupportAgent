@@ -59,8 +59,26 @@ P = {
     "julia": _principal("u-julia", "User", "Julia Keys", "julia@contoso.example"),
     "ken": _principal("u-ken", "User", "Ken Classic", "ken@contoso.example"),
     "gary": _principal("u-gary", "User", "Gary Owner", "gary@contoso.example"),
+    # --- leavers: disabled in Entra ID, still holding access -------------------------
+    # The four shapes the disabled-access report has to separate, because each has a
+    # different remediation and a different urgency.
+    # 1. Disabled, holds a privileged role DIRECTLY. Restored the moment anyone re-enables.
+    "mallory": _principal("u-mallory", "User", "Mallory Leaver", "mallory@contoso.example"),
+    # 2. Disabled, holds access ONLY through a group. The group is healthy; nobody looks
+    #    inside it; deleting the assignment would break access for everyone else in it.
+    "nina": _principal("u-nina", "User", "Nina Nomore", "nina@contoso.example"),
+    # 3. Disabled, but OWNS a service principal that has its own credentials. This access is
+    #    live right now — the SP authenticates with a secret, not with Nina's account.
+    "oscar": _principal("u-oscar", "User", "Oscar Offboarded", "oscar@contoso.example"),
+    # 4. A disabled service principal that still carries a role assignment.
+    "sp_retired": _principal("sp-retired", "ServicePrincipal", "legacy-batch-job", app_id="app-retired-999"),
+    "sp_orphan_owned": _principal("sp-orphan-owned", "ServicePrincipal", "orphan-owned-app", app_id="app-orphan-777"),
     "grp_admins": _principal("g-platform-admins", "Group", "Platform Admins"),
     "grp_readers": _principal("g-data-readers", "Group", "Data Readers"),
+    # A cloud group whose members arrive through an AD-mastered CHILD group. Extremely common,
+    # and the case that breaks both of the obvious remediations: the membership is not in the
+    # group that holds the assignment, and the group it IS in cannot be edited in Entra.
+    "grp_readers_eu": _principal("g-data-readers-eu", "Group", "Data Readers EU"),
     "sp_deploy": _principal("sp-deploy", "ServicePrincipal", "deploy-pipeline", app_id="app-deploy-123"),
     # Managed identities. They appear in the grid as ordinary service principals — which is
     # exactly the problem the identity inventory solves: without it these read as unexplained
@@ -487,12 +505,81 @@ def _groups() -> dict[str, Any]:
         P["grp_admins"]["principalId"]: {
             "name": P["grp_admins"]["principalDisplayName"],
             "members": [P["alice"], P["eve"]],
+            # A group that can be granted directory roles. Entra will not let ANY caller edit
+            # its membership without RoleManagement.ReadWrite.Directory on the calling app —
+            # which the Azure CLI does not have, so no CLI command can ever work against it.
+            "roleAssignable": schema.ENABLED_TRUE,
+            "dynamic": schema.ENABLED_FALSE,
+            "nested": [],
         },
         P["grp_readers"]["principalId"]: {
             "name": P["grp_readers"]["principalDisplayName"],
-            "members": [P["carol"], P["frank"]],
+            # Nina is disabled and is in this group. Her access is invisible in every
+            # assignment-centric view: the assignment is the group's, and the group is fine.
+            # Note she is here TRANSITIVELY, through the nested group below — which is exactly
+            # why `az ad group member remove --group <this group>` 404s for her.
+            "members": [P["carol"], P["frank"], P["nina"]],
+            "roleAssignable": schema.ENABLED_FALSE,
+            "dynamic": schema.ENABLED_FALSE,
+            "nested": [P["grp_readers_eu"]["principalId"]],
+        },
+        P["grp_readers_eu"]["principalId"]: {
+            "name": P["grp_readers_eu"]["principalDisplayName"],
+            "members": [P["nina"]],
+            "roleAssignable": schema.ENABLED_FALSE,
+            "dynamic": schema.ENABLED_FALSE,
+            "nested": [],
         },
     }
+
+
+# --- Entra account state (which principals are disabled) ------------------------------
+# What a real refresh writes from Graph. Present here so the demo estate exercises the same
+# compose path a live tenant does — without it every disabled-access test would be vacuous,
+# which is exactly how `ext.guest_access` shipped a broken signal id (the demo estate had no
+# guests at all, so the test asserting on it could never fail).
+_DISABLED = {"u-mallory", "u-nina", "u-oscar", "sp-retired", "sp-orphan-owned"}
+# Mallory came from on-prem AD: the fix is in AD, not Entra, or the next sync reverts it.
+# `g-data-readers-eu` is an AD-mastered SECURITY GROUP nested inside a cloud group, which is a
+# different fact about a different object: Entra refuses every membership change to it, so the
+# remediation for Nina (who reaches the assignment only through it) has no runnable command at
+# all. Without a synced group in the estate that branch is untestable — the same vacuous-fixture
+# trap as the unknown sync state above.
+_ON_PREM = {"u-mallory", "g-data-readers-eu"}
+# Nina is in the Entra ID recycle bin: deleted, but restorable for 30 days — and restoring the
+# object restores every grant she holds. Materially different from a hard deletion, where the
+# usual advice ("delete the assignment, there is nobody left to lose access") is correct.
+_SOFT_DELETED = {"u-nina": _iso(3)}
+
+
+def _principal_state() -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for p in P.values():
+        pid = p["principalId"]
+        ptype = p["principalType"]
+        if ptype not in schema.ACCOUNT_BEARING_TYPES:
+            enabled = schema.ENABLED_NA
+        elif pid in _DISABLED:
+            enabled = schema.ENABLED_FALSE
+        else:
+            enabled = schema.ENABLED_TRUE
+        out[pid.lower()] = {
+            "accountEnabled": enabled,
+            # Three-state, and the third state is REAL: a service principal is not synced from
+            # anywhere, so Graph reports nothing for it. Seeding only true/false here made the
+            # "unknown sync state" filter untestable — the estate contained no case it could
+            # distinguish, so a mutation that filed unknown under cloud-only survived.
+            "onPremSynced": (
+                schema.ENABLED_TRUE if pid in _ON_PREM
+                else schema.ENABLED_UNKNOWN if ptype == "ServicePrincipal"
+                else schema.ENABLED_FALSE
+            ),
+            "userType": ("Member" if ptype == "User" else ""),
+            "servicePrincipalType": ("Application" if ptype == "ServicePrincipal" else ""),
+            "principalType": ptype,
+            "deletedDateTime": _SOFT_DELETED.get(pid, ""),
+        }
+    return out
 
 
 # --- per-scope slices -----------------------------------------------------------------
@@ -525,6 +612,10 @@ def _scope_slices() -> list[dict[str, Any]]:
         _az_row(scope=SCOPE_PROD, principal=P["grp_admins"], role="Owner", privileged=True, sub_name=prod),
         _az_row(scope=SCOPE_PROD, principal=P["sp_deploy"], role="Contributor", privileged=True, sub_name=prod),
         _az_row(scope=SCOPE_PROD, principal=P["henry"], role="User Access Administrator", privileged=True, sub_name=prod),
+        # Mallory left the company: her account is disabled, her Contributor assignment is not.
+        _az_row(scope=SCOPE_PROD, principal=P["mallory"], role="Contributor", privileged=True, sub_name=prod),
+        # A retired batch job's service principal, disabled but still assigned.
+        _az_row(scope=SCOPE_PROD, principal=P["sp_retired"], role="Reader", privileged=False, sub_name=prod),
         _classic_row(scope=SCOPE_PROD, principal=P["ken"], sub_name=prod),
         mg_inherited_prod,
         # A Blueprint-style deny wall over the locked resource group.
@@ -536,6 +627,11 @@ def _scope_slices() -> list[dict[str, Any]]:
         _eligible_row(
             scope=SCOPE_PROD, principal=P["henry"], role="User Access Administrator", sub_name=prod,
             permanent=True, requires_approval=False, requires_mfa=False, max_hours="24",
+        ),
+        # Oscar is disabled AND permanently eligible for Owner. Re-enabling the account is
+        # enough to activate it — an eligibility is not access, but it is a standing invitation.
+        _eligible_row(
+            scope=SCOPE_PROD, principal=P["oscar"], role="Owner", sub_name=prod, permanent=True,
         ),
     ]
     data_rows = [
@@ -608,6 +704,13 @@ def _directory_rows() -> list[dict[str, Any]]:
         _entra_row(principal=P["henry"], role="User Administrator"),
         _entra_row(principal=P["ivan"], role="Security Administrator", state=schema.STATE_ELIGIBLE),
         _owner_row(sp=P["sp_deploy"], owner=P["gary"]),
+        # Mallory kept a directory role too — disabled accounts keep Entra role assignments
+        # exactly as they keep Azure ones, and both planes have to appear in one report.
+        _entra_row(principal=P["mallory"], role="Application Administrator"),
+        # Oscar is disabled and owns an app with its own credentials. This is the one case that
+        # is exploitable TODAY: the service principal signs in with a secret, and disabling its
+        # owner's user account does nothing to that secret.
+        _owner_row(sp=P["sp_orphan_owned"], owner=P["oscar"]),
     ]
 
 
@@ -694,6 +797,7 @@ def seed_demo(tenant_id: str) -> dict[str, Any]:
                 {"collector": "PimDirectoryAssignments", "status": schema.STATUS_SUCCEEDED, "rowsAdded": 1, "durationSeconds": 1.0, "message": ""},
                 {"collector": "ServicePrincipalOwners", "status": schema.STATUS_SUCCEEDED, "rowsAdded": 1, "durationSeconds": 1.0, "message": ""},
                 {"collector": "GroupExpansion", "status": schema.STATUS_SUCCEEDED, "rowsAdded": 4, "durationSeconds": 1.0, "message": ""},
+                {"collector": "PrincipalState", "status": schema.STATUS_SUCCEEDED, "rowsAdded": len(_principal_state()), "durationSeconds": 1.0, "message": ""},
             ],
         },
         rows=dir_rows,
@@ -702,6 +806,7 @@ def seed_demo(tenant_id: str) -> dict[str, Any]:
         groups=_groups(),
         identities=IDENTITIES,
         federated=FEDERATED,
+        principal_state=_principal_state(),
     )
 
     # The bypass sweep, assessed through the real code path so the demo exercises the same

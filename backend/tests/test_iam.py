@@ -250,22 +250,28 @@ def test_cache_age_helpers():
 # --------------------------------------------------------------------------- demo + compose
 def test_demo_seed_and_master_rows(isolated_cache):
     summary = demo.seed_demo("t1")
-    assert summary["scopes"] == 3 and summary["directory_rows"] == 4
+    assert summary["scopes"] == 3 and summary["directory_rows"] == 6
     master = compose.build_master_rows("t1")
-    # 19 direct scope rows (13 grants + 3 escalation fixtures + 1 deny + 2 PIM-eligible; the two
-    # inherited copies of the MG assignment are deduped away) + 4 directory rows
-    # + 4 group-expanded = 27
-    assert len(master) == 27
+    # 22 direct scope rows (15 grants + 3 escalation fixtures + 1 deny + 3 PIM-eligible; the two
+    # inherited copies of the MG assignment are deduped away) + 6 directory rows
+    # + 5 group-expanded = 33.
+    #
+    # The disabled-access fixtures account for the difference from the previous 27: Mallory
+    # (Contributor) and the retired batch-job service principal (Reader) are direct prod grants,
+    # Oscar is permanently eligible for Owner, Mallory holds an Entra directory role and Oscar
+    # owns a service principal (2 directory rows), and Nina is a disabled member of Data Readers
+    # (1 more group expansion).
+    assert len(master) == 33
     assert all(set(r.keys()) == set(schema.COLUMNS) for r in master)
     group_rows = [r for r in master if r["accessPath"] == schema.PATH_GROUP]
-    assert len(group_rows) == 4  # 2 groups x 2 members
+    assert len(group_rows) == 5  # Platform Admins x2 + Data Readers x3 (Carol, Frank, Nina)
     # group-derived rows carry the member as effective principal + the group as source
     assert all(r["effectivePrincipalId"] and r["sourceGroupName"] for r in group_rows)
     owners = [r for r in master if r["accessPath"] == schema.PATH_OWNER]
-    assert len(owners) == 1
+    assert len(owners) == 2  # Gary owns deploy-pipeline; disabled Oscar owns orphan-owned-app
     eligible = [r for r in master if r["assignmentState"] == schema.STATE_ELIGIBLE]
-    # 1 Entra directory-role eligibility + 2 Azure PIM eligibilities.
-    assert len(eligible) == 3
+    # 1 Entra directory-role eligibility + 3 Azure PIM eligibilities.
+    assert len(eligible) == 4
 
 
 def test_expand_group_rows_only_known_groups():
@@ -285,9 +291,11 @@ def test_compute_overview_kpis(isolated_cache):
     demo.seed_demo("t1")
     ov = compose.compute_overview("t1")
     k = ov["kpis"]
-    # 27 master rows less the 1 deny and the 3 eligible ones, which are not current grants.
-    assert k["total_assignments"] == 26
-    assert k["privileged"] >= 1 and k["owners"] == 1 and k["group_derived"] == 4
+    # 33 master rows less the 1 deny assignment. A deny REMOVES access, so counting it as a
+    # grant would report a control as the risk. (Eligible rows ARE counted here — the old
+    # comment claimed they were excluded, and the arithmetic never matched that claim.)
+    assert k["total_assignments"] == 32
+    assert k["privileged"] >= 1 and k["owners"] == 2 and k["group_derived"] == 5
     assert k["subscriptions"] == 2 and k["scopes"] == 3
     assert ov["group_severity"]["privileged"] == "error"
     assert ov["never_loaded"] is False and ov["demo"] is True
@@ -307,10 +315,10 @@ def test_pivots_thirteen_sections(isolated_cache):
     master = compose.build_master_rows("t1")
     piv = pivots.compute_pivots(master)
     assert len(piv) == 13
-    assert {"label": "Owner", "count": 6} in piv["by_role"]
+    assert {"label": "Owner", "count": 7} in piv["by_role"]
     # PIM eligible vs active counts
     pim = {d["label"]: d["count"] for d in piv["pim_eligible_vs_active"]}
-    assert pim["Eligible"] == 3 and pim["Active"] >= 1
+    assert pim["Eligible"] == 4 and pim["Active"] >= 1
     # privileged-by-principal only counts privileged grants
     assert all(isinstance(d["count"], int) for d in piv["privileged_by_principal"])
 
@@ -498,7 +506,7 @@ def test_principal_index_and_apply_names():
 
 
 def test_a_principal_the_directory_could_not_name_is_not_declared_to_exist():
-    """Orphan detection was structurally dead on the live `lu` tenant.
+    """Orphan detection was structurally dead on a real tenant.
 
     `_principal_index` builds partly FROM the assignment rows, so a deleted principal's own
     orphaned assignment puts its GUID into the index. Existence was then tested with
@@ -641,17 +649,18 @@ def test_build_scope_tree_demo(isolated_cache):
     assert tree["demo"] is True
     assert tree["subscription_count"] == 2 and tree["mg_count"] == 1
     root = tree["root"]
-    assert root["type"] == "root" and root["count"] == 27
+    assert root["type"] == "root" and root["count"] == 33
     # Single management group → both subscriptions nested under it (inferred).
     assert len(root["children"]) == 1
     mg = root["children"][0]
     assert mg["type"] == "managementGroup" and mg["inferred"] is True
-    assert mg["count"] == 23  # 1 MG-level grant + 19 (prod) + 3 (dev)
+    assert mg["count"] == 27  # 1 MG-level grant + 23 (prod) + 3 (dev)
     sub_ids = {c["id"]: c for c in mg["children"]}
     assert scopes.sub_scope_id(demo.SUB_PROD) in sub_ids
     prod = sub_ids[scopes.sub_scope_id(demo.SUB_PROD)]
     dev = sub_ids[scopes.sub_scope_id(demo.SUB_DEV)]
-    assert prod["count"] == 19 and dev["count"] == 3  # prod incl 4 group-expanded + 1 deny + 2 eligible + 3 escalation
+    # prod incl 5 group-expanded + 1 deny + 3 eligible + 3 escalation + 2 disabled-principal grants
+    assert prod["count"] == 23 and dev["count"] == 3
     assert set(mg["subscriptionIds"]) == {demo.SUB_PROD, demo.SUB_DEV}
 
 
@@ -701,9 +710,10 @@ async def test_filter_rows_by_subscription(isolated_cache):
     # By subscription scope prefix (Dev): only the 3 Dev subscription-level grants.
     dev = await scopes.filter_rows(master, scope_id=scopes.sub_scope_id(demo.SUB_DEV))
     assert len(dev) == 3 and all(r["subscriptionId"] == demo.SUB_DEV for r in dev)
-    # By subscription id list (Prod): 9 direct + 1 deny + 2 eligible + 4 group-expanded = 16.
+    # By subscription id list (Prod): 11 direct + 1 deny + 3 eligible + 5 group-expanded + 3
+    # escalation fixtures = 23.
     prod = await scopes.filter_rows(master, subscription_ids=[demo.SUB_PROD])
-    assert len(prod) == 19 and all(r["subscriptionId"] == demo.SUB_PROD for r in prod)
+    assert len(prod) == 23 and all(r["subscriptionId"] == demo.SUB_PROD for r in prod)
     # Directory (Entra/owner) rows have no subscription → excluded by a scope filter.
     assert all(r["surface"] != schema.SURFACE_ENTRA for r in prod)
 
@@ -717,7 +727,7 @@ async def test_filter_rows_by_management_group(isolated_cache):
         scope_id=scopes.mg_scope_id(demo.MG_ID),
         subscription_ids=[demo.SUB_PROD, demo.SUB_DEV],
     )
-    assert len(rows) == 23  # 1 MG-level + 19 prod + 3 dev
+    assert len(rows) == 27  # 1 MG-level + 23 prod + 3 dev
     # The management-group inherited grant is included.
     assert any(schema.SCOPE_MANAGEMENT_GROUP == r["scopeType"] for r in rows)
 

@@ -75,7 +75,7 @@ def _scopes_with_directory(tenant_id: str) -> list[dict[str, Any]]:
     ``ServicePrincipalOwners``, ``GroupExpansion``, ``PrincipalDirectory``) was invisible to
     every signal, and any signal gated on one could never be measured.
 
-    Measured on the live `lu` tenant before this fix: **six signals were permanently unmeasured
+    Measured on a real tenant before this fix: **six signals were permanently unmeasured
     on every real tenant** — `esc.mi_privileged`, `esc.mi_shared`,
     `esc.identity_hijack_available`, `esc.fic_loose_subject`, `esc.fic_unknown_issuer` and
     `gov.drift_out_of_band`. Those are the managed-identity and federated-credential escalation

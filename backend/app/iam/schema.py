@@ -112,12 +112,68 @@ EXTRA_COLUMNS: tuple[str, ...] = (
     # is precisely the fact a reader needs: *which* outside organisation holds this access.
     "managingTenantId",
     "managingTenantName",
+    # --- Entra account state (disabled-access report) -----------------------------------
+    # "true" | "false" | "unknown" | "notApplicable" (a STRING, for exactly the reason
+    # `principalExists` is one). A disabled account cannot sign in, but Azure keeps every role
+    # assignment it holds — so the grant is restored in full the moment someone re-enables the
+    # account, with no approval and no access review. "the account is enabled" and "we never
+    # looked" are opposite facts, and a boolean would force one of them to be a lie: an
+    # un-refreshed cache would report every leaver in the estate as a current employee.
+    "principalAccountEnabled",
+    # Carried on the row so the export does not have to re-join the directory.
+    # `principalOnPremSynced` decides WHERE the fix goes: an account synced from on-premises
+    # Active Directory must be remediated there, or the next sync cycle reverts the change.
+    "principalOnPremSynced",
+    "principalUserType",
+    # The SOURCE GROUP's own sync state, which is NOT the member's. Entra refuses to edit the
+    # membership of a group mastered in on-premises AD ("Unable to update the specified
+    # properties for on-premises mastered Directory Sync objects"), and that is a property of
+    # the GROUP: a cloud-only member of a synced group still cannot be removed in Entra. Without
+    # this column the remediation generator emits a removal that can only ever fail.
+    # "" when the row has no source group, so it never inflates the "could not check" count.
+    #
+    # It is keyed on the MEMBERSHIP group below, not on `sourceGroupId`: the removal targets the
+    # group the membership is in, so that is the group whose sync state decides whether it can
+    # work at all.
+    "membershipGroupOnPremSynced",
+    # WHERE THE MEMBERSHIP ACTUALLY IS. A role assignment held by a group reaches everyone in its
+    # nesting tree, but a membership exists in exactly one group, and `az ad group member remove`
+    # only deletes a DIRECT one. Aimed at the assignment-holding group it 404s for anybody who is
+    # really in a child group. `membershipGroupResolution` is direct | nested | ambiguous |
+    # unknown — the last two mean no single removal is correct and the step has to say so.
+    "membershipGroupId",
+    "membershipGroupName",
+    "membershipGroupResolution",
+    # WHY A REMOVAL MAY BE REFUSED regardless of who runs it.
+    # `isAssignableToRole` groups can be granted directory roles, so Entra requires the CALLING
+    # APP to hold `RoleManagement.ReadWrite.Directory` to touch their membership. Neither the
+    # Azure CLI nor the Cloud Shell portal app has it, so the removal returns 403
+    # Authorization_RequestDenied for a Global Administrator exactly as it does for anyone else
+    # — confirmed against a live tenant with a GA token. Activating a role cannot fix it.
+    # A dynamic group computes its membership from a rule; there is no membership to delete.
+    "membershipGroupRoleAssignable",
+    "membershipGroupDynamic",
 )
 
 # principalExists values. Only ``false`` is an orphan; ``unknown`` means we could not look.
 EXISTS_TRUE = "true"
 EXISTS_FALSE = "false"
 EXISTS_UNKNOWN = "unknown"
+
+# principalAccountEnabled values. Deliberately the same three-state vocabulary, and deliberately
+# NOT reusing the EXISTS_* names: a row can perfectly well have a principal that exists and is
+# disabled, and one constant serving both questions is how the two get conflated.
+ENABLED_TRUE = "true"
+ENABLED_FALSE = "false"
+ENABLED_UNKNOWN = "unknown"
+# Groups, and classic administrators keyed by e-mail, have no account state at all. Without a
+# fourth value they land in ``unknown`` and inflate the "could not be checked" denominator on
+# the disabled-access report — which is the one number that decides whether the report is
+# trustworthy. "There is nothing to check here" is not "we failed to check".
+ENABLED_NA = "notApplicable"
+
+# Principal types that actually HAVE an account-enabled state in Entra ID.
+ACCOUNT_BEARING_TYPES = frozenset({"User", "ServicePrincipal", "Application"})
 
 COLUMNS: tuple[str, ...] = (*SCANNER_COLUMNS, *EXTRA_COLUMNS)
 
@@ -234,6 +290,15 @@ _BOOL_COLUMNS = frozenset({
 })
 
 
+def is_disabled(row: dict[str, Any]) -> bool:
+    """True only when the principal is KNOWN to be disabled.
+
+    ``unknown`` is never disabled. Every count on the disabled-access report is built from this
+    predicate precisely so that an un-refreshed cache produces an empty report next to an
+    explicit "not measured" banner, rather than a confident zero."""
+    return str(row.get("principalAccountEnabled") or "") == ENABLED_FALSE
+
+
 def is_standing_privilege(row: dict[str, Any]) -> bool:
     """True when the row is *permanent* privileged access — the thing PIM exists to eliminate.
 
@@ -266,6 +331,8 @@ def make_row(**values: Any) -> dict[str, Any]:
             row[col] = values.get(col) or EFFECT_ALLOW
         elif col == "principalExists":
             row[col] = values.get(col) or EXISTS_UNKNOWN
+        elif col in ("principalAccountEnabled", "principalOnPremSynced"):
+            row[col] = values.get(col) or ENABLED_UNKNOWN
         else:
             val = values.get(col, "")
             row[col] = "" if val is None else val

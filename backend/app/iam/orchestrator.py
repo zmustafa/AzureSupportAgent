@@ -444,6 +444,7 @@ async def refresh_directory(
             tenant_id, meta=meta, rows=[], role_defs=_preserve_role_defs(tenant_id, role_defs),
             principals=[], groups={}, management_groups=mg_names,
             identities=identities, federated=federated,
+            principal_state=_preserve_principal_state(tenant_id, None),
         )
 
     statuses: list[collectors.CollectorStatus] = []
@@ -490,6 +491,73 @@ async def refresh_directory(
         if not grp.get("name"):
             grp["name"] = _pmap.get(str(gid).lower(), "")
 
+    # Which of these principals are DISABLED. A disabled account keeps every role assignment it
+    # holds — Azure does not revoke them — so without this the grid cannot tell a current
+    # employee's access from a leaver's dormant access, and both read as "has Contributor".
+    #
+    # GROUP MEMBERS ARE INCLUDED, and that is not a detail. `principal_ids` above deliberately
+    # omits them: the expansion graph already carries each member's display name, so resolving
+    # them through getByIds would buy nothing. Account state is different — it has to be looked
+    # up per principal, and a member who never appears as an assignee would otherwise never be
+    # checked. Measured on a live tenant before this was fixed: the state map covered 379 of the
+    # 1,227 principals holding access and found 26 disabled, while a full sweep found 78. The
+    # missing 52 were reachable only through group membership — which is precisely the case this
+    # feature exists to surface, and it was the one silently excluded.
+    state_seed: list[dict[str, Any]] = list(principals)
+    seen_state_ids = {str(p.get("principalId", "")).lower() for p in principals}
+    for grp in groups.values():
+        for m in grp.get("members", []) or []:
+            mid = str(m.get("principalId", "")).strip()
+            if not mid or mid.lower() in seen_state_ids:
+                continue
+            seen_state_ids.add(mid.lower())
+            state_seed.append({
+                "principalId": mid,
+                "principalType": m.get("principalType", ""),
+                # Unknown by construction — the expansion API does not return account state, so
+                # these are exactly the ids the inverted sweep has to answer for.
+                "accountEnabled": schema.ENABLED_UNKNOWN,
+            })
+    extra = len(state_seed) - len(principals)
+    await progress(
+        "info",
+        f"Reading account state for {len(state_seed)} principal(s) "
+        f"({extra} reachable only through group membership)…",
+    )
+    principal_state, state_status = await collectors.collect_principal_state(token, state_seed)
+    statuses.append(state_status)
+
+    # The recycle bin. A soft-deleted principal keeps its role assignments AND can be restored
+    # by an administrator for 30 days, which restores all of them at once — so "delete the
+    # assignment, there is nobody left to lose access" is untrue for exactly the window in which
+    # an offboarding is most likely to be reversed.
+    deleted_map, del_status = await collectors.collect_deleted_principals(token)
+    statuses.append(del_status)
+    _restorable = 0
+    for pid, when in deleted_map.items():
+        entry = principal_state.get(pid)
+        if entry is None:
+            continue  # in the bin but holds no access here — not this report's business
+        entry["deletedDateTime"] = when
+        # A deleted account is certainly not an enabled one. Stating it explicitly stops a
+        # stale `true` from a previous sweep outliving the deletion.
+        entry["accountEnabled"] = schema.ENABLED_FALSE
+        _restorable += 1
+    if _restorable:
+        await progress(
+            "info",
+            f"{_restorable} principal(s) holding access are in the directory recycle bin "
+            f"(restorable, with their access).",
+        )
+    _disabled = sum(
+        1 for s in principal_state.values() if s.get("accountEnabled") == schema.ENABLED_FALSE
+    )
+    await progress(
+        "info",
+        f"{state_status.rows_added} principal state(s) resolved, {_disabled} disabled "
+        f"[{state_status.status}].",
+    )
+
     overall = schema.STATUS_SUCCEEDED
     for s in statuses:
         if s.status in schema.ATTENTION_STATUSES:
@@ -510,6 +578,7 @@ async def refresh_directory(
         management_groups=mg_names,
         identities=identities,
         federated=federated,
+        principal_state=_preserve_principal_state(tenant_id, principal_state),
     )
     await progress("ok", "Directory layer cached.")
     return written
@@ -539,7 +608,7 @@ def _preserve_role_defs(
     refresh had collected. Two of the three callers (the standalone directory job and the
     missions system) pass none, so an ordinary directory refresh silently destroyed them.
 
-    Measured on the live `lu` tenant: the action universe collapsed from 5,055 actions to 125
+    Measured on a real tenant: the action universe collapsed from 5,055 actions to 125
     and right-sizing went from 2,185 over-privileged assignments to **zero**, which the UI then
     rendered as "Nothing crossed the over-privilege threshold" — a clean bill of health produced
     by having lost the data. Effective Access, escalation, the simulator and the agent tool read
@@ -554,6 +623,26 @@ def _preserve_role_defs(
         (dict(rd) for rd in existing),
         key=lambda rd: str(rd.get("roleName", "")),
     )
+
+
+def _preserve_principal_state(
+    tenant_id: str, principal_state: dict[str, dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Principal account state for the directory blob, carrying the cached map forward when this
+    refresh did not collect one.
+
+    Exactly the hazard :func:`_preserve_role_defs` documents, applied to the newer map: the
+    no-Graph-token branch of ``refresh_directory`` still rewrites the whole directory blob, so
+    passing nothing would DELETE the account state a previous refresh collected. The disabled
+    -access report would then show zero disabled principals — rendered as a clean bill of health
+    produced entirely by having lost the data, which is the same defect shape that once wiped
+    the role catalogue and took right-sizing from 2,185 findings to zero.
+
+    A refresh that did not look at account state has no business deleting it."""
+    if principal_state:
+        return {str(k): dict(v) for k, v in principal_state.items()}
+    existing = cache.read_directory(tenant_id).get("principal_state") or {}
+    return {str(k): dict(v) for k, v in existing.items() if isinstance(v, dict)}
 
 
 async def collect_bulk(

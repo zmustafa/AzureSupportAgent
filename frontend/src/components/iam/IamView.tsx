@@ -25,6 +25,7 @@ import { EscalationTab } from "./IamEscalation";
 import { BypassTab } from "./IamBypass";
 import { CompareTab } from "./IamCompare";
 import { LeastPrivilegeTab } from "./IamLeastPrivilege";
+import { LeaversTab } from "./IamLeavers";
 import { SimulatorTab } from "./IamSimulator";
 import { ReviewsTab } from "./IamReviews";
 import { FindingsTab } from "./IamFindings";
@@ -214,6 +215,8 @@ function IamPanelBody({
         <BypassTab />
       ) : tab === "leastprivilege" ? (
         <LeastPrivilegeTab />
+      ) : tab === "leavers" ? (
+        <LeaversTab />
       ) : tab === "simulator" ? (
         <SimulatorTab />
       ) : tab === "compare" ? (

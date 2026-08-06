@@ -30,7 +30,7 @@ async def test_rebuild_fails_fast_on_expired_token(monkeypatch):
     # A linked workload exists…
     monkeypatch.setattr("app.workloads.registry.get_workload", lambda _wid: {"name": "Demo workload", "connection_id": "c1"})
     # …and resolves to a real connection object…
-    monkeypatch.setattr("app.core.azure_connections.resolve_connection", lambda _cid: {"name": "lu", "auth_method": "az_cli_token"})
+    monkeypatch.setattr("app.core.azure_connections.resolve_connection", lambda _cid: {"name": "contoso-prod", "auth_method": "az_cli_token"})
     # …whose ARM token is expired.
     async def _expired(_conn):
         return None, "Pasted token has expired — paste a fresh one."
@@ -47,7 +47,7 @@ async def test_rebuild_fails_fast_on_expired_token(monkeypatch):
     await mgr._run(job)
 
     assert job.status == "error"
-    assert "lu" in job.error                      # names the offending connection
+    assert "contoso-prod" in job.error            # names the offending connection
     assert "expired" in job.error.lower()         # surfaces the real reason
     assert "Settings" in job.error                # actionable next step
 
@@ -55,7 +55,7 @@ async def test_rebuild_fails_fast_on_expired_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_rebuild_proceeds_when_token_valid(monkeypatch):
     monkeypatch.setattr("app.workloads.registry.get_workload", lambda _wid: {"name": "Demo workload", "connection_id": "c1"})
-    monkeypatch.setattr("app.core.azure_connections.resolve_connection", lambda _cid: {"name": "lu", "auth_method": "az_cli_token"})
+    monkeypatch.setattr("app.core.azure_connections.resolve_connection", lambda _cid: {"name": "contoso-prod", "auth_method": "az_cli_token"})
 
     async def _ok(_conn):
         return "valid-token", None

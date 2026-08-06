@@ -26,6 +26,54 @@ GROUPS = (
 )
 
 
+def _has_member(grp: dict[str, Any] | None, member_id: str) -> bool:
+    return any(
+        str(m.get("principalId", "")).lower() == member_id
+        for m in ((grp or {}).get("members") or [])
+    )
+
+
+def membership_group(
+    groups: dict[str, Any], source_gid: str, member_id: str
+) -> tuple[str, str, str]:
+    """Which group the membership is ACTUALLY in -> (group id, group name, resolution).
+
+    A role assignment held by group G reaches everyone in G's nesting tree, but a membership
+    only ever exists in ONE group. `az ad group member remove --group G` deletes a DIRECT
+    membership and nothing else, so aimed at G it fails outright — "Resource 'G' does not exist
+    or one of its queried reference-property objects are not present" — when the person is
+    really a member of a child. Reported from a real run.
+
+    `nested` is the TRANSITIVE set of descendant groups, so the group the member is directly in
+    is the deepest candidate: the one that contains no other candidate.
+
+    Resolution is one of `direct` (the member is in G itself), `nested`, `ambiguous` (the member
+    sits directly in more than one child, so no single removal is enough) or `unknown` (part of
+    the nesting could not be expanded, so any answer would be a guess)."""
+    member_id = (member_id or "").lower()
+    src = groups.get(source_gid) or {}
+    nested = [n for n in (src.get("nested") or []) if n]
+    candidates = [n for n in nested if _has_member(groups.get(n), member_id)]
+    # A group we never managed to expand could hold the membership without us knowing.
+    incomplete = any(n not in groups for n in nested)
+
+    if not candidates:
+        if incomplete:
+            return "", "", "unknown"
+        # Nothing nested holds them, so the membership is in the assignment group itself.
+        return source_gid, str(src.get("name") or ""), "direct"
+
+    cset = set(candidates)
+    deepest = [h for h in candidates if not (cset & set((groups.get(h) or {}).get("nested") or []))]
+    if len(deepest) != 1:
+        names = "; ".join(sorted(str((groups.get(h) or {}).get("name") or h) for h in deepest)) or ""
+        return "", names, "ambiguous"
+    if incomplete:
+        return "", "", "unknown"
+    only = deepest[0]
+    return only, str((groups.get(only) or {}).get("name") or only), "nested"
+
+
 def expand_group_rows(scope_rows: list[dict[str, Any]], groups: dict[str, Any]) -> list[dict[str, Any]]:
     """For each row assigned to a Group that the directory graph knows, emit one effective row
     per transitive member (accessPath=GroupTransitive), carrying the member as the effective
@@ -43,13 +91,27 @@ def expand_group_rows(scope_rows: list[dict[str, Any]], groups: dict[str, Any]) 
             eff = dict(row)
             eff["accessPath"] = schema.PATH_GROUP
             eff["assignmentType"] = "GroupMembership"
-            eff["groupChain"] = gname
             eff["sourceGroupId"] = gid
             eff["sourceGroupName"] = gname
             eff["effectivePrincipalId"] = member.get("principalId", "")
             eff["effectivePrincipalType"] = member.get("principalType", "")
             eff["effectivePrincipalName"] = member.get("principalDisplayName", "")
             eff["effectivePrincipalUserPrincipalName"] = member.get("principalUserPrincipalName", "")
+            mid, mname, how = membership_group(groups, gid, member.get("principalId", ""))
+            eff["membershipGroupId"] = mid
+            eff["membershipGroupName"] = mname
+            eff["membershipGroupResolution"] = how
+            # Read from the GROUP, not from the principal directory: a nested child holds no
+            # assignment, so it is not among the principals that get resolved, and every one of
+            # these would read "unknown" for exactly the groups the removal now targets.
+            mgrp = groups.get(mid) or {}
+            eff["membershipGroupRoleAssignable"] = str(mgrp.get("roleAssignable") or schema.ENABLED_UNKNOWN)
+            eff["membershipGroupDynamic"] = str(mgrp.get("dynamic") or schema.ENABLED_UNKNOWN)
+            if mgrp.get("onPremSynced"):
+                eff["membershipGroupOnPremSynced"] = str(mgrp["onPremSynced"])
+            # The chain is what a reader needs to understand the row, and until now it was just
+            # the assignment group repeated — a "chain" of one that hid the nesting entirely.
+            eff["groupChain"] = f"{gname} > {mname}" if how == "nested" and mname else gname
             out.append(eff)
     return out
 
@@ -207,7 +269,7 @@ def _apply_principal_existence(
     built partly from the assignment rows themselves (`_principal_index` step 3), so every
     principal id — including a deleted one — has a key in it, keyed there by its own orphaned
     assignment. Testing `pid in index` therefore returned True for literally every row: measured
-    on the live `lu` tenant, all 5,506 rows were classified ``true`` and orphan detection could
+    on a real tenant, all 5,506 rows were classified ``true`` and orphan detection could
     not fire at all. Graph confirmed 26 of those principals return 404 Request_ResourceNotFound
     — 100 live role assignments, including Contributor, held by identities that no longer exist.
     A nameless index entry is the absence of evidence, not evidence of existence."""
@@ -225,6 +287,77 @@ def _apply_principal_existence(
         else:
             r["principalExists"] = schema.EXISTS_UNKNOWN
     return rows
+
+
+def _apply_principal_state(
+    rows: list[dict[str, Any]], principal_state: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Stamp each row with whether its principal's Entra account is enabled or disabled.
+
+    Keyed on the **effective** principal, falling back to the assignee. That distinction is the
+    whole point: when a group holds the assignment, ``principalId`` is the group (which has no
+    account state at all) and ``effectivePrincipalId`` is the human member who actually receives
+    the access. Keying on the assignee would report every group-derived grant as uncheckable and
+    hide the single most overlooked case — a disabled leaver still sitting in a group that grants
+    production access, which nobody looks at because the group itself is perfectly healthy.
+
+    Rows whose principal is absent from the map stay ``unknown``. That is not a formality: a
+    cache collected before this column existed has no map, and defaulting to "enabled" there
+    would silently report every leaver in the estate as a current employee."""
+    for r in rows:
+        pid = str(r.get("effectivePrincipalId") or r.get("principalId") or "").strip().lower()
+        ptype = str(r.get("effectivePrincipalType") or r.get("principalType") or "")
+        # Stamped BEFORE the early exits below, because it answers a different question about a
+        # different object: not "is this person synced" but "can this group's membership be
+        # edited in Entra at all". Keyed on the group the REMOVAL will target — the membership
+        # group — falling back to the assignment group when the nesting could not be resolved.
+        # Left "" when there is no group at all so the column never claims to have checked
+        # something that does not exist.
+        gid = str(r.get("membershipGroupId") or r.get("sourceGroupId") or "").strip().lower()
+        if gid and not r.get("membershipGroupOnPremSynced"):
+            g_entry = principal_state.get(gid)
+            r["membershipGroupOnPremSynced"] = str(
+                (g_entry or {}).get("onPremSynced") or schema.ENABLED_UNKNOWN
+                if isinstance(g_entry, dict)
+                else schema.ENABLED_UNKNOWN
+            )
+        entry = principal_state.get(pid) if pid else None
+        if isinstance(entry, dict):
+            r["principalAccountEnabled"] = str(entry.get("accountEnabled") or schema.ENABLED_UNKNOWN)
+            r["principalOnPremSynced"] = str(entry.get("onPremSynced") or schema.ENABLED_UNKNOWN)
+            r["principalUserType"] = str(entry.get("userType") or r.get("principalUserType") or "")
+            continue
+        # No entry. Normalise the row anyway so the grid never renders a ragged column, and
+        # distinguish "there is no account to check" (a group, a classic admin keyed by e-mail)
+        # from "we did not manage to check".
+        #
+        # The test here is against UNKNOWN specifically, not truthiness: `make_row` already
+        # defaults this column to the string "unknown", which is truthy, so a truthiness guard
+        # skipped every single row and no group was ever marked notApplicable.
+        current = str(r.get("principalAccountEnabled") or schema.ENABLED_UNKNOWN)
+        if current != schema.ENABLED_UNKNOWN:
+            continue
+        r["principalAccountEnabled"] = (
+            schema.ENABLED_UNKNOWN
+            if (not ptype or ptype in schema.ACCOUNT_BEARING_TYPES)
+            else schema.ENABLED_NA
+        )
+        if not r.get("principalOnPremSynced"):
+            r["principalOnPremSynced"] = schema.ENABLED_UNKNOWN
+        if not r.get("principalUserType"):
+            r["principalUserType"] = ""
+    return rows
+
+
+def principal_state_measured(tenant_id: str) -> bool:
+    """Did any refresh actually collect account state for this tenant?
+
+    The gate for every disabled-access number in the product. An empty result with this False
+    means "we have not looked"; an empty result with it True means "we looked and everyone who
+    holds access is enabled". Those are opposite findings and the UI must be able to tell them
+    apart — the same rule that stopped ``standing_ratio`` reporting 100% standing privilege on
+    tenants where PIM had simply never been collected."""
+    return bool(cache.read_directory(tenant_id).get("principal_state"))
 
 
 def build_master_rows(tenant_id: str) -> list[dict[str, Any]]:
@@ -311,6 +444,9 @@ def _build_master_rows_uncached(tenant_id: str) -> list[dict[str, Any]]:
     )
     all_rows = [*scope_rows, *dir_rows, *expanded]
     _apply_principal_existence(all_rows, index, directory_readable)
+    # Account state runs over every row, INCLUDING the group-expanded ones, so it must come
+    # after the expansion — the member is only a row's effective principal once it exists.
+    _apply_principal_state(all_rows, directory.get("principal_state", {}) or {})
     return all_rows
 
 
@@ -376,6 +512,19 @@ def compute_overview(tenant_id: str, *, days: int = 0) -> dict[str, Any]:
     # the truth is that nobody looked. Only report a ratio when PIM was actually collected.
     pim_collected = _pim_was_collected(scopes)
 
+    # Disabled principals that still hold access. Same gate, same reason: a tenant whose cache
+    # predates the account-state collector has an empty disabled set, and "0 disabled principals
+    # hold access" is a reassuring headline produced by never having asked.
+    state_measured = bool((directory_meta or {}).get("principal_state_count")) or bool(
+        cache.read_directory(tenant_id).get("principal_state")
+    )
+    disabled_rows = [r for r in grants if schema.is_disabled(r)]
+    disabled_privileged = [r for r in disabled_rows if r.get("roleIsPrivileged")]
+    disabled_principals = {
+        str(r.get("effectivePrincipalId") or r.get("principalId") or "").lower()
+        for r in disabled_rows
+    } - {""}
+
     kpis = {
         "total_assignments": len(grants),
         "unique_principals": len(_effective_principals(grants)),
@@ -394,6 +543,12 @@ def compute_overview(tenant_id: str, *, days: int = 0) -> dict[str, Any]:
         # Whether the PIM collectors ran at all for the cached scopes. The UI needs this to tell
         # "no eligible access exists" apart from "eligibility was never collected".
         "pim_collected": pim_collected,
+        # Whether account state was collected at all. Every disabled_* number below is
+        # meaningless without it, so it travels with them rather than being inferred.
+        "account_state_collected": state_measured,
+        "disabled_principals": len(disabled_principals) if state_measured else None,
+        "disabled_assignments": len(disabled_rows) if state_measured else None,
+        "disabled_privileged": len(disabled_privileged) if state_measured else None,
         # Share of privileged access that is PERMANENT. None when PIM was not collected, or when
         # there is no privileged access at all — a 0% or 100% figure derived from an unmeasured
         # surface is worse than no figure.

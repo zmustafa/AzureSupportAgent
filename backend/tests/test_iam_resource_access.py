@@ -85,7 +85,7 @@ def test_access_inherited_from_a_management_group_is_reported(isolated_cache, mo
 
     `/providers/Microsoft.Management/managementGroups/root` is not a string prefix of
     `/subscriptions/...`, so `scope_covers` alone reports that an MG Owner cannot reach anything
-    inside it. On the live `lu` tenant that hid 300 grants — the broadest in the estate — from
+    inside it. On a real tenant that hid 300 grants — the broadest in the estate — from
     every resource, making each one look less exposed than it is."""
     _seed(monkeypatch, [_row(scope=MG)], mg_rows=_mg_ancestry())
     out = resource_access.for_resource("t1", RES)

@@ -294,7 +294,7 @@ def test_no_two_findings_ever_share_a_fingerprint(isolated_cache):
     It keys the suppression table, the scanner's new/resolved delta and the React list. Two
     findings sharing a fingerprint therefore means: suppressing one silently suppresses the
     other, the scanner's `total` stops equalling `new + persisting`, and the grid throws
-    duplicate-key errors. Measured on the live `lu` tenant before this was enforced: 1,007
+    duplicate-key errors. Measured on a real tenant before this was enforced: 1,007
     findings held only 908 distinct fingerprints — `priv.eligible_without_controls` used
     `assignmentId`, which every transitive member of a group-granted eligibility inherits (10
     principals to one id), and `lp.role_notactions_illusion` emitted several findings all keyed
@@ -320,7 +320,7 @@ def test_a_group_granted_eligibility_does_not_collapse_its_members_into_one_find
     """The exact live shape the estate-wide test above cannot see.
 
     The demo estate has no group-granted PIM eligibility, so the collision that produced 1,007
-    findings from 908 fingerprints on tenant `lu` reproduces only synthetically. Every
+    findings from 908 fingerprints on a real tenant reproduces only synthetically. Every
     transitive member of a group-granted eligibility inherits the GROUP's
     roleEligibilityScheduleInstance id, so keying the finding on `assignmentId` gave ten
     different people one identity — and one suppression."""

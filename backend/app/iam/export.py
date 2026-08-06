@@ -131,6 +131,7 @@ def to_workbook(
     scanners: list[dict[str, Any]] | None = None,
     score: dict[str, Any] | None = None,
     dataplane: list[dict[str, Any]] | None = None,
+    leavers: dict[str, Any] | None = None,
 ) -> bytes:
     """Build the multi-sheet ``.xlsx`` workbook: everything the review screen can show.
 
@@ -411,6 +412,288 @@ def to_workbook(
                 "; ".join(s.get("doors") or []),
             ] for s in dataplane],
         )
+
+    if leavers is not None:
+        # Disabled accounts that still hold access. A blind sheet when account state was never
+        # collected — an empty "Disabled Access" grid is the most reassuring page in the whole
+        # workbook and must never be produced by not having looked.
+        if not leavers.get("measured"):
+            _blind_sheet("Disabled Access", str(leavers.get("reason") or "Account state not collected."))
+        else:
+            flat = flatten_identities(leavers.get("identities") or [], leavers.get("tiers") or {})
+            keys = [k for k, _ in IDENTITY_HEADERS]
+            _sheet(
+                "Disabled Access",
+                [label for _, label in IDENTITY_HEADERS],
+                [[row.get(k, "") for k in keys] for row in flat],
+            )
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+# ------------------------------------------------------- disabled-but-entitled export
+# One row per PERSON. The main access export is one row per grant, which answers "what is
+# granted"; this answers "who should not still be here", and a leaver holding Contributor on
+# four subscriptions is one offboarding task rather than four findings.
+IDENTITY_HEADERS: tuple[tuple[str, str], ...] = (
+    ("displayName", "Name"),
+    ("userPrincipalName", "User principal name"),
+    ("principalType", "Type"),
+    ("userType", "Member or guest"),
+    ("accountEnabled", "Account enabled"),
+    ("onPremSynced", "Synced from on-prem AD"),
+    ("softDeleted", "In the recycle bin"),
+    ("deletedDateTime", "Deleted at"),
+    ("tierLabel", "Exposure"),
+    ("lastSignIn", "Last sign-in"),
+    ("signInInteractive", "Last interactive sign-in"),
+    ("signInNonInteractive", "Last non-interactive sign-in"),
+    ("signInSuccessful", "Last successful sign-in"),
+    ("signInServicePrincipal", "Owned app last sign-in"),
+    ("dormancyLabel", "Dormancy"),
+    ("dormancyDays", "Days since last sign-in"),
+    ("lastSignInSource", "Sign-in source"),
+    ("lastActivity", "Last used (Activity Log)"),
+    ("activityEvents", "Operations recorded"),
+    ("oldestGrantAt", "Oldest grant"),
+    ("newestGrantAt", "Newest grant"),
+    ("grants", "Grants"),
+    ("privilegedGrants", "Privileged grants"),
+    ("highestRole", "Highest role"),
+    ("planesText", "Planes"),
+    ("directGrants", "Held directly"),
+    ("groupGrants", "Held via group"),
+    ("groupsText", "Groups granting access"),
+    ("pimEligible", "PIM eligible"),
+    ("permanentlyEligible", "Permanently eligible"),
+    ("ownedText", "Owns service principals"),
+    ("subscriptionsText", "Subscriptions"),
+    ("scopesText", "Scopes"),
+    ("principalId", "Object id"),
+)
+
+
+def flatten_identities(identities: list[dict[str, Any]], tiers: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project the report's identity records into flat, spreadsheet-shaped dicts.
+
+    The list-valued fields are joined here rather than in the caller so the CSV and the XLSX
+    cannot drift apart in what they show."""
+    from app.iam.leavers import DORMANCY_LABELS
+
+    out: list[dict[str, Any]] = []
+    for i in identities:
+        flat = dict(i)
+        flat["tierLabel"] = str((tiers.get(i.get("tier"), {}) or {}).get("label") or i.get("tier") or "")
+        flat["planesText"] = "; ".join(i.get("planes") or [])
+        flat["groupsText"] = "; ".join(i.get("groupsGrantingAccess") or [])
+        flat["ownedText"] = "; ".join(i.get("ownedServicePrincipals") or [])
+        flat["subscriptionsText"] = "; ".join(i.get("subscriptions") or [])
+        flat["scopesText"] = "; ".join(i.get("scopes") or [])
+        sign = i.get("signIn") or {}
+        flat["signInInteractive"] = sign.get("interactive", "")
+        flat["signInNonInteractive"] = sign.get("nonInteractive", "")
+        flat["signInSuccessful"] = sign.get("successful", "")
+        flat["signInServicePrincipal"] = sign.get("servicePrincipal", "")
+        # The LABEL, not the key: "Not measured" has to survive into the file, because a blank
+        # cell in a spreadsheet reads as zero and this one means the opposite.
+        flat["dormancyLabel"] = DORMANCY_LABELS.get(str(i.get("dormancyBucket") or ""), "")
+        flat["dormancyDays"] = i.get("dormancyDays") if i.get("dormancyDays") is not None else ""
+        if not i.get("activityMeasured"):
+            flat["lastActivity"] = "not measured"
+            flat["activityEvents"] = ""
+        out.append(flat)
+    return out
+
+
+def to_identity_csv(identities: list[dict[str, Any]], tiers: dict[str, Any]) -> str:
+    """One row per disabled identity, formula-injection neutralised like every other export."""
+    flat = flatten_identities(identities, tiers)
+    keys = [k for k, _ in IDENTITY_HEADERS]
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    writer.writerow([label for _, label in IDENTITY_HEADERS])
+    for row in flat:
+        writer.writerow([_csv_safe(row.get(k, "")) for k in keys])
+    return buf.getvalue()
+
+
+def to_disabled_workbook(
+    *,
+    report: dict[str, Any],
+    grants: list[dict[str, Any]],
+    tenant_id: str = "",
+    filters: dict[str, Any] | None = None,
+) -> bytes:
+    """The disabled-access workbook.
+
+    The **Not measured** sheet is mandatory and is written even when it is empty of problems.
+    A spreadsheet gets forwarded, filtered and pasted into a ticket long after it has left the
+    screen that produced it, and every caveat the UI renders is gone by then. If the limits of
+    the data are not IN the file, the file misrepresents itself the moment it is downloaded —
+    so the denominator, the collection date and everything this report cannot see travel with
+    the rows rather than beside them."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="0F6CBD")
+
+    def _sheet(title: str, headers: list[str], data: list[list[Any]]) -> None:
+        ws = wb.create_sheet(_safe_sheet_title(title))
+        ws.append(headers)
+        for c in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=c)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(vertical="center")
+        for r in data:
+            ws.append([_coerce(v) for v in r])
+        ws.freeze_panes = "A2"
+        for ci, h in enumerate(headers, start=1):
+            width = len(str(h))
+            for r in data[:200]:
+                if ci - 1 < len(r):
+                    width = max(width, len(str(_coerce(r[ci - 1]))))
+            ws.column_dimensions[get_column_letter(ci)].width = min(60, max(10, width + 2))
+        if data:
+            ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(data) + 1}"
+
+    tiers = report.get("tiers") or {}
+    identities = report.get("identities") or []
+    denom = report.get("denominator") or {}
+    totals = report.get("totals") or {}
+    counts = report.get("tier_counts") or {}
+    measured = bool(report.get("measured"))
+
+    # 1. Summary — the headline, its denominator, and what the tiers actually mean.
+    summary: list[list[Any]] = [
+        ["Report", "Disabled accounts that still hold access"],
+        ["Tenant", tenant_id],
+        ["Generated (UTC)", report.get("generated_at", "")],
+        ["Account state collected", "yes" if measured else "NO — see Not measured"],
+        ["", ""],
+    ]
+    if measured:
+        summary += [
+            ["Disabled identities holding access", totals.get("identities", 0)],
+            ["Grants they hold", totals.get("grants", 0)],
+            ["…of which privileged", totals.get("privileged_grants", 0)],
+            ["Subscriptions touched", totals.get("subscriptions_touched", 0)],
+            ["Held only through a group", totals.get("via_group_only", 0)],
+            ["Synced from on-prem AD (fix in AD)", totals.get("on_prem_synced", 0)],
+            ["Still PIM-eligible", totals.get("pim_eligible", 0)],
+            ["", ""],
+        ]
+        for key, meta in tiers.items():
+            summary.append([f"{meta.get('label', key)} — identities", counts.get(key, 0)])
+            summary.append(["", meta.get("detail", "")])
+        summary.append(["", ""])
+    summary += [
+        ["DENOMINATOR", ""],
+        ["Principals holding access", denom.get("principals_with_access", 0)],
+        ["…account state resolved", denom.get("state_resolved", 0)],
+        ["…could NOT be checked", denom.get("state_unknown", 0)],
+        ["…no account state applies (groups etc.)", denom.get("not_applicable", 0)],
+    ]
+    if filters:
+        summary.append(["", ""])
+        summary.append(["FILTERS APPLIED", ""])
+        for k, v in filters.items():
+            if v not in (None, "", False):
+                summary.append([k, v])
+    _sheet("Summary", ["Field", "Value"], summary)
+
+    # 2. Identities.
+    flat = flatten_identities(identities, tiers)
+    id_keys = [k for k, _ in IDENTITY_HEADERS]
+    _sheet(
+        "Identities",
+        [label for _, label in IDENTITY_HEADERS],
+        [[row.get(k, "") for k in id_keys] for row in flat],
+    )
+
+    # 3. Grants — the row-level record, in the same friendly column order the main access
+    #    workbook uses so the two are comparable, plus the account-state columns.
+    grant_headers = (*_ACCESS_HEADERS, "principalAccountEnabled", "principalOnPremSynced")
+    _sheet(
+        "Grants",
+        list(grant_headers),
+        [[r.get(h, "") for h in grant_headers] for r in grants],
+    )
+
+    # 4. Via groups — its own sheet because its remediation is the opposite of the others':
+    #    remove the member, never the assignment.
+    group_rows: list[list[Any]] = []
+    for i in identities:
+        for g in i.get("groupsGrantingAccess") or []:
+            group_rows.append([
+                g, i.get("displayName", ""), i.get("userPrincipalName", ""),
+                i.get("groupGrants", 0), i.get("privilegedGrants", 0),
+            ])
+    group_rows.sort(key=lambda r: (str(r[0]).lower(), str(r[1]).lower()))
+    _sheet(
+        "Via groups",
+        ["Group", "Disabled member", "User principal name", "Grants via this path", "Privileged grants"],
+        group_rows,
+    )
+
+    # 5. Owns credentials — the only tier that is exploitable today.
+    owner_rows = [
+        [
+            i.get("displayName", ""), i.get("userPrincipalName", ""), o.get("name", ""),
+            o.get("appId", ""),
+            o.get("lastSignIn") or ("not measured" if not o.get("lastSignInKnown") else "not seen in window"),
+            i.get("privilegedGrants", 0),
+        ]
+        for i in identities
+        for o in (i.get("ownedDetail") or [])
+    ]
+    _sheet(
+        "Owns credentials",
+        ["Disabled owner", "User principal name", "Service principal", "App id",
+         "App last sign-in", "Privileged grants"],
+        owner_rows,
+    )
+
+    # 6. Resources — one row per (person, scope), keeping the ARM structure. The Identities
+    #    sheet joins scopes into one cell, which is unusable the moment somebody holds access
+    #    on forty of them; this is the sheet you filter and pivot.
+    resource_rows = [
+        [
+            i.get("displayName", ""), i.get("userPrincipalName", ""),
+            r.get("scopeType", ""), r.get("subscriptionName", ""), r.get("resourceGroup", ""),
+            r.get("resourceType", ""), r.get("resourceName", "") or r.get("scopeDisplayName", ""),
+            "; ".join(r.get("roles") or []), r.get("grants", 0), r.get("privileged", 0),
+            "direct" if r.get("direct") else "; ".join(r.get("viaGroups") or []),
+            r.get("scope", ""),
+        ]
+        for i in identities
+        for r in (i.get("resources") or [])
+    ]
+    _sheet(
+        "Resources",
+        ["Person", "User principal name", "Scope type", "Subscription", "Resource group",
+         "Resource type", "Resource", "Roles", "Grants", "Privileged", "Held via", "Scope id"],
+        resource_rows,
+    )
+
+    # 7. Not measured — MANDATORY, always written.
+    limits: list[list[Any]] = []
+    if not measured:
+        limits.append(["Account state", report.get("reason", "Not collected.")])
+    for text in report.get("limitations") or []:
+        limits.append(["Limitation", text])
+    if not limits:
+        limits.append(["", "Nothing was withheld: every principal holding access was checked."])
+    _sheet("Not measured", ["Scope", "What this report cannot tell you"], limits)
+
+    # openpyxl creates a default sheet; drop it so the workbook opens on Summary.
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
 
     bio = io.BytesIO()
     wb.save(bio)

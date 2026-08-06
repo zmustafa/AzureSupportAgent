@@ -2723,6 +2723,232 @@ export type IamJob = {
   error: string;
 } | null;
 
+/** One scope a disabled identity reaches, with its ARM structure intact.
+ *
+ * The rollup used to flatten these to display strings and the UI truncated them to six with a
+ * "+N more" that was not a control — so the reader could neither group by resource type nor
+ * recover the full id of the thing they were being asked to act on. */
+export type IamLeaverResource = {
+  scope: string;
+  scopeType: string;
+  scopeDisplayName: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  resourceType: string;
+  resourceName: string;
+  managementGroupName: string;
+  roles: string[];
+  grants: number;
+  privileged: number;
+  viaGroups: string[];
+  direct: boolean;
+};
+
+/** One actual grant behind the aggregate numbers. */
+export type IamLeaverGrant = {
+  roleName: string;
+  roleIsPrivileged: boolean;
+  roleHasDataActions: boolean;
+  surface: string;
+  accessPath: string;
+  sourceGroupName: string;
+  scope: string;
+  scopeType: string;
+  scopeDisplayName: string;
+  subscriptionName: string;
+  resourceGroup: string;
+  resourceType: string;
+  resourceName: string;
+  assignmentId: string;
+  roleDefinitionId: string;
+  assignmentCreatedOn: string;
+  assignmentState: string;
+  pimManaged: boolean;
+  isPermanentEligible: boolean;
+};
+
+export type IamLeaverOwnedApp = {
+  name: string;
+  principalId: string;
+  appId: string;
+  /** Empty means "not seen inside the report's window", NEVER "never used". */
+  lastSignIn: string;
+  lastSignInKnown: boolean;
+};
+
+/** One disabled identity that still holds access, rolled up across every grant it holds.
+ *
+ * Person-centric on purpose: a leaver with Contributor on four subscriptions is ONE offboarding
+ * task, not four findings, and the remediation is performed once against the person. */
+export type IamLeaverIdentity = {
+  principalId: string;
+  displayName: string;
+  userPrincipalName: string;
+  principalType: string;
+  userType: string;
+  accountEnabled: string;
+  onPremSynced: string;
+  softDeleted: boolean;
+  deletedDateTime: string;
+  tier: string;
+  grants: number;
+  privilegedGrants: number;
+  highestRole: string;
+  highestRoleIsPrivileged: boolean;
+  planes: string[];
+  directGrants: number;
+  groupGrants: number;
+  groupsGrantingAccess: string[];
+  ownedServicePrincipals: string[];
+  ownedDetail: IamLeaverOwnedApp[];
+  pimEligible: number;
+  permanentlyEligible: number;
+  scopes: string[];
+  subscriptions: string[];
+  resources: IamLeaverResource[];
+  grantDetail: IamLeaverGrant[];
+  grantDetailTruncated: boolean;
+  signIn: {
+    interactive: string;
+    nonInteractive: string;
+    successful: string;
+    servicePrincipal: string;
+    known: boolean;
+  };
+  lastSignIn: string;
+  lastSignInSource: string;
+  dormancyBucket: string;
+  dormancyDays: number | null;
+  lastActivity: string;
+  activityEvents: number;
+  activityMeasured: boolean;
+  /** Whether a "never used" conclusion is available for THIS account. False means the window
+   *  cannot answer the question (it predates the account's last sign-in, or the sweep was
+   *  truncated) — which is not the same as answering "no". */
+  activityConclusive: boolean;
+  activityWindowCovers: boolean;
+  oldestGrantAt: string;
+  newestGrantAt: string;
+  /** Paths to full control that START at this principal. `escalationMeasured` is the gate:
+   *  without it, 0 means "no graph has been built", not "cannot escalate". */
+  escalationPaths: number;
+  escalationMeasured: boolean;
+};
+
+/** `measured` is the gate the UI must render on.
+ *
+ * false means Entra account state has never been collected for this tenant, and an empty
+ * `identities` list then means "we have not looked", NOT "nobody". Those are opposite findings,
+ * and "0 disabled accounts hold access" is the most reassuring sentence this feature can
+ * produce — it must never come from having failed to ask. */
+export type IamLeaversReport = {
+  measured: boolean;
+  reason: string;
+  identities: IamLeaverIdentity[];
+  denominator: {
+    principals_with_access: number;
+    state_resolved: number;
+    state_unknown: number;
+    not_applicable: number;
+  };
+  tiers: Record<string, { key: string; label: string; detail: string }>;
+  tier_counts: Record<string, number>;
+  totals: Record<string, number>;
+  limitations: string[];
+  dormancy_labels: Record<string, string>;
+  signin: { available: boolean; generated_at: string; sp_window_days: number };
+  usage: {
+    available: boolean;
+    window_days: number;
+    start?: string;
+    end: string;
+    truncated: boolean;
+  };
+  escalation: { available: boolean };
+  generated_at: string;
+  total_identities: number;
+  filtered: boolean;
+  /** Counts over the WHOLE filtered set, computed server-side. A header count derived from the
+   *  loaded page shrinks as the reader scrolls. */
+  counts: Record<string, Record<string, number>>;
+  /** Every value the dropdowns can offer, from the UNFILTERED set, so choosing one option does
+   *  not delete the others from existence. */
+  facets: {
+    subscriptions: string[];
+    roles: string[];
+    planes: string[];
+    groups: string[];
+    signin_kinds: string[];
+  };
+};
+
+export type IamLeaversFilter = {
+  tier?: string;
+  principal_type?: string;
+  privileged_only?: boolean;
+  on_prem?: string;
+  via_group_only?: boolean;
+  soft_deleted?: boolean;
+  has_owned_sp?: boolean;
+  pim_eligible?: boolean;
+  never_used?: boolean;
+  dormancy?: string;
+  signin_kind?: string;
+  subscription?: string;
+  role?: string;
+  plane?: string;
+  group?: string;
+  search?: string;
+  /** Explicit selection from the screen. An ADDITIONAL constraint on the filters, never a
+   *  replacement — a stale id must not resurrect an identity a later scan has excluded. */
+  principal_ids?: string[];
+  connection_id?: string | null;
+};
+
+/** Serialise the leaver filters ONCE, so the screen's query and the download's href cannot
+ * disagree about what is being asked for. */
+export function iamLeaversQuery(params?: IamLeaversFilter): string {
+  const q = new URLSearchParams();
+  const p = params ?? {};
+  const put = (k: keyof IamLeaversFilter) => {
+    const v = p[k];
+    if (v === undefined || v === null || v === "" || v === false) return;
+    q.set(k, v === true ? "true" : String(v));
+  };
+  ([
+    "tier", "principal_type", "privileged_only", "on_prem", "via_group_only", "soft_deleted",
+    "has_owned_sp", "pim_eligible", "never_used", "dormancy", "subscription", "role", "plane",
+    "group", "search", "connection_id",
+  ] as (keyof IamLeaversFilter)[]).forEach(put);
+  // Only meaningful alongside a dormancy bucket, and "any" is the server default.
+  if (p.signin_kind && p.signin_kind !== "any") q.set("signin_kind", p.signin_kind);
+  if (p.principal_ids && p.principal_ids.length) q.set("principal_ids", p.principal_ids.join(","));
+  const qs = q.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** An ordered revocation script for the current selection. Read-only: the product never runs
+ *  it, and every step carries a dry run, a "breaks if" and a rollback. */
+export type IamLeaversRemediation = {
+  measured: boolean;
+  reason?: string;
+  format?: string;
+  generator?: string;
+  action_count: number;
+  /** The whole document: revoke, then the rollback. Kept for anything that stored one script. */
+  script: string;
+  /** The two halves, separately copyable — they are run at different times by different people. */
+  revoke_script?: string;
+  rollback_script?: string;
+  identities: number;
+  grants: number;
+  /** Step count per removal API. Group-derived access, directory roles and PIM eligibility are
+   *  each removed by a different call — a single `role assignment delete` covers none of them. */
+  planes?: Record<string, number>;
+  limitations?: string[];
+};
+
 export type IamRun = {
   id: string;
   scope: string;
@@ -6571,10 +6797,30 @@ export const api = {
   },
   iamRuns: () => http<{ runs: IamRun[] }>("/iam/runs"),
   iamRun: (id: string) => http<{ run: IamRun | null }>(`/iam/run/${encodeURIComponent(id)}`),
+  iamLeavers: (params?: IamLeaversFilter) =>
+    http<IamLeaversReport>(`/iam/leavers${iamLeaversQuery(params)}`),
+  iamLeaversRemediation: (fmt: string, params?: IamLeaversFilter) => {
+    const qs = iamLeaversQuery(params);
+    return http<IamLeaversRemediation>(
+      `/iam/leavers/remediation${qs}${qs ? "&" : "?"}fmt=${encodeURIComponent(fmt)}`,
+    );
+  },
+  // The export takes the SAME filters as the screen and routes them through the same server
+  // -side function. A file that disagrees with the screen it was launched from is the artifact
+  // that reaches the identity team, so the two must not be able to drift.
+  iamLeaversExportUrl: (
+    fmt: "csv" | "xlsx",
+    shape: "identities" | "grants",
+    params?: IamLeaversFilter,
+  ) => {
+    const qs = iamLeaversQuery(params);
+    const sep = qs ? "&" : "?";
+    return `${API_BASE}/iam/leavers/export${qs}${sep}fmt=${fmt}&shape=${shape}`;
+  },
   // Every filter the access grid can apply must be representable here. When it could only
   // carry the scope/workload narrowing, a CSV taken with a search term or the privileged
   // toggle active silently contained rows the grid was not showing.
-  iamExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null; scope?: string; surface?: string; principal_type?: string; privileged_only?: boolean; search?: string }) => {
+  iamExportUrl: (fmt: "csv" | "json", tab: string, filter?: { scope_id?: string; subscription_ids?: string; workload_id?: string; connection_id?: string | null; scope?: string; surface?: string; principal_type?: string; privileged_only?: boolean; disabled_only?: boolean; search?: string }) => {
     const q = new URLSearchParams({ fmt, tab });
     if (filter?.scope_id) q.set("scope_id", filter.scope_id);
     if (filter?.subscription_ids) q.set("subscription_ids", filter.subscription_ids);
@@ -6583,6 +6829,7 @@ export const api = {
     if (filter?.surface) q.set("surface", filter.surface);
     if (filter?.principal_type) q.set("principal_type", filter.principal_type);
     if (filter?.privileged_only) q.set("privileged_only", "true");
+    if (filter?.disabled_only) q.set("disabled_only", "true");
     if (filter?.search) q.set("search", filter.search);
     if (filter?.connection_id) q.set("connection_id", filter.connection_id);
     return `${API_BASE}/iam/export?${q.toString()}`;

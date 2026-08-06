@@ -42,9 +42,9 @@ def mg_subscriptions(tenant_id: str) -> dict[str, set[str]]:
     """Management-group scope -> the subscription ids beneath it.
 
     Needed because **management-group scopes are not string prefixes of the resources they
-    govern**. `/providers/Microsoft.Management/managementGroups/es-liberty` does not start
+    govern**. `/providers/Microsoft.Management/managementGroups/<name>` does not start
     `/subscriptions/...`, so pure scope arithmetic reports that an MG Owner cannot reach
-    anything. On the live `lu` tenant that silently hid 300 grants — the broadest and most
+    anything. On one real tenant that silently hid 300 grants — the broadest and most
     privileged in the estate — from every resource in it.
 
     The ancestry is derived from the collection itself rather than a second Azure call: ARM
@@ -171,6 +171,10 @@ def for_resource(tenant_id: str, resource_id: str) -> dict[str, Any]:
             "principalName": r.get("effectivePrincipalName") or "",
             "principalType": r.get("effectivePrincipalType") or "",
             "principalExists": r.get("principalExists") or schema.EXISTS_UNKNOWN,
+            # Carried for the same reason as principalExists: "Contributor" reads as live
+            # access whether the account behind it can sign in or not, and the reader has no
+            # other way to tell. Disabled is not deleted — the grant is dormant, not gone.
+            "principalAccountEnabled": r.get("principalAccountEnabled") or schema.ENABLED_UNKNOWN,
             "privileged": False,
             "grants": [],
         })

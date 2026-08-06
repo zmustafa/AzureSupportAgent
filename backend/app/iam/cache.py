@@ -418,18 +418,22 @@ def write_directory(
     management_groups: dict[str, str] | None = None,
     identities: dict[str, Any] | None = None,
     federated: list[dict[str, Any]] | None = None,
+    principal_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the tenant directory layer (Entra roles + SP-owner rows + the reference sets).
 
     ``groups`` is the group-expansion graph (group id → effective members) used to derive
     GroupTransitive effective rows when composing. ``management_groups`` maps a management-group
-    id (lower-cased) → its display name so the scope tree + MG-scoped rows show names not GUIDs."""
+    id (lower-cased) → its display name so the scope tree + MG-scoped rows show names not GUIDs.
+    ``principal_state`` maps a principal id → its Entra account state (enabled/disabled, on-prem
+    sync, user type), which is what makes "disabled but still entitled" answerable."""
     entry = dict(meta)
     entry["generated_at"] = entry.get("generated_at") or _now_iso()
     entry["row_count"] = len(rows)
     entry["role_def_count"] = len(role_defs or [])
     entry["principal_count"] = len(principals or [])
     entry["group_count"] = len(groups or {})
+    entry["principal_state_count"] = len(principal_state or {})
     entry["rows_ref"] = DIRECTORY_KEY
     _write_blob(
         tenant_id,
@@ -444,6 +448,8 @@ def write_directory(
             # service principal in the grid into "the identity of vm-prod-01".
             "identities": identities or {},
             "federated": federated or [],
+            # principalId -> {accountEnabled, onPremSynced, userType, servicePrincipalType}.
+            "principal_state": principal_state or {},
         },
     )
     data = _read_index()
@@ -470,6 +476,7 @@ def read_directory(tenant_id: str) -> dict[str, Any]:
         "management_groups": payload.get("management_groups") or {},
         "identities": payload.get("identities") or {},
         "federated": payload.get("federated") or [],
+        "principal_state": payload.get("principal_state") or {},
     }
 
 
