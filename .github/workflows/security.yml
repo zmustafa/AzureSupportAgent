@@ -31,13 +31,24 @@ jobs:
       # commits are the same. TruffleHog won't scan anything" whenever they coincide --
       # which is a scan that never ran being reported as a security failure. Scanning the
       # checked-out repo explicitly is deterministic and matches what is run locally.
-      # --results=verified actively validates candidates against the issuing provider, so
-      # a hit here is a live credential, not a pattern match.
+      #
+      # --results=verified normally means a hit is a live credential rather than a pattern
+      # match. DO NOT TRUST THAT FOR EVERY DETECTOR -- the Lob detector disproves it. A Lob
+      # API key is literally `test_` + 35 chars, which is also the shape of a long pytest
+      # function name, so `test_auto_chart_type_picks_by_data_shape` matches. Worse, Lob's
+      # verifier returned Verified=true for all of them, so 96 pytest names in
+      # backend/tests were reported as live secrets and failed this job for two days.
+      # Reproduce: `trufflehog filesystem backend/tests --results=verified` -> 315 Lob hits.
+      #
+      # Excluding the detector (we do not use Lob anywhere) is scoped, NOT a mute-all:
+      # verified with the same flag, a planted RSA private key is still reported by the
+      # PrivateKey detector, and the full-history scan still covers all 8652 chunks.
       - name: TruffleHog (verified secrets only)
         run: |
           docker run --rm -v "${{ github.workspace }}:/repo" \
             trufflesecurity/trufflehog:latest \
-            git file:///repo --results=verified --fail --no-update
+            git file:///repo --results=verified --fail --no-update \
+            --exclude-detectors=Lob
 
   codeql:
     name: codeql
