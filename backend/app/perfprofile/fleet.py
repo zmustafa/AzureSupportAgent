@@ -435,6 +435,7 @@ class FleetWorker:
                             PerfProfileFleetBatch.created_at.asc(),
                             PerfProfileFleetItem.workload_name.asc(),
                         )
+                        .with_for_update(skip_locked=True, of=PerfProfileFleetItem)
                         .limit(1)
                     )
                 ).scalar_one_or_none()

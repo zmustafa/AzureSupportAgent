@@ -631,6 +631,7 @@ async def get_metrics(
     start_time: str | None = None,
     end_time: str | None = None,
     dimension_filter: str | None = None,
+    metric_namespace: str | None = None,
 ) -> tuple[str, str | None]:
     """Azure Monitor metrics for a resource via ARM REST. Returns ``(json_text, error)`` where
     ``json_text`` matches ``az monitor metrics list`` stdout — the full ``{value:[…]}`` object
@@ -651,6 +652,8 @@ async def get_metrics(
         params["timespan"] = f"{start_time}/{end_time or _utc_now_iso()}"
     if dimension_filter:
         params["$filter"] = dimension_filter
+    if metric_namespace:
+        params["metricnamespace"] = metric_namespace
     data, err = await _get(token, f"{resource_id}/providers/microsoft.insights/metrics", params)
     if err:
         return "", err

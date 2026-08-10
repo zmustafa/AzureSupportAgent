@@ -181,6 +181,23 @@ def latest_successful_run(
     return None
 
 
+def latest_usable_run(
+    tenant_id: str, scope_kind: str, scope_id: str
+) -> dict[str, Any] | None:
+    """Newest trusted success, or the newest partial observation when no success exists."""
+    bucket = _read().get(tenant_id or "default", {})
+    partial: dict[str, Any] | None = None
+    for run in bucket.get(_key(scope_kind, scope_id), []):
+        if run.get("deleted_at"):
+            continue
+        status = _status(run)
+        if status == "succeeded":
+            return run
+        if status == "partial" and partial is None:
+            partial = run
+    return partial
+
+
 def find_run_by_trigger(
     tenant_id: str, scope_kind: str, scope_id: str, trigger: str
 ) -> dict[str, Any] | None:
@@ -206,10 +223,19 @@ def latest_runs_for_scopes(
     out: dict[str, dict[str, Any]] = {}
     for scope_kind, scope_id in scopes:
         k = _key(scope_kind, scope_id)
+        partial: dict[str, Any] | None = None
         for r in bucket.get(k, []):  # newest-first; first active wins
-            if not r.get("deleted_at") and _status(r) == "succeeded":
+            if r.get("deleted_at"):
+                continue
+            status = _status(r)
+            if status == "succeeded":
                 out[k] = _summary(r)
                 break
+            if status == "partial" and partial is None:
+                partial = r
+        else:
+            if partial is not None:
+                out[k] = _summary(partial)
     return out
 
 

@@ -36,6 +36,14 @@ _STATE_RANK = {STATE_BREACHING: 0, STATE_APPROACHING: 1, STATE_HEALTHY: 2, STATE
 
 # A metric is "approaching" once it passes this fraction of its threshold (toward breach).
 _APPROACH_FRAC = 0.70
+_MAX_METRICS_PER_REQUEST = 20
+_AGGREGATIONS = {
+    "average": "Average",
+    "maximum": "Maximum",
+    "minimum": "Minimum",
+    "total": "Total",
+    "count": "Count",
+}
 
 # --- Managed disk performance ------------------------------------------------------------
 # A managed disk's own metrics are absolute throughput counters (Composite Disk Read/Write
@@ -98,15 +106,37 @@ def _series_key(rec: dict[str, Any]) -> str:
     filter is folded into the key to keep their series distinct. Alerts that share a metric
     AND its dimensions (differing only by threshold) intentionally share one series."""
     metric = rec.get("metric", "")
-    dim = (rec.get("dimension_filter") or "").strip()
-    if not dim:
-        parts = []
-        for dimension in rec.get("dimensions") or []:
-            if isinstance(dimension, dict) and dimension.get("name"):
-                values = ",".join(sorted(str(v) for v in dimension.get("values") or []))
-                parts.append(f"{dimension['name']}={values}")
-        dim = ";".join(sorted(parts))
+    dim = _dimension_filter(rec)
     return f"{metric}|{dim}" if dim else metric
+
+
+def _metric_aggregation(rec: dict[str, Any], arm_type: str) -> str:
+    """Use AMBA's declared aggregation, falling back only when the catalog omits it."""
+    declared = _AGGREGATIONS.get(str(rec.get("time_aggregation") or "").lower())
+    if declared:
+        return declared
+    return str(metric_semantics(arm_type, rec.get("metric", ""), rec.get("unit", ""))["aggregation"])
+
+
+def _dimension_filter(rec: dict[str, Any]) -> str:
+    """Translate explicit AMBA dimension criteria to an Azure Monitor OData filter."""
+    explicit = str(rec.get("dimension_filter") or "").strip()
+    if explicit:
+        return explicit
+    clauses: list[str] = []
+    for dimension in rec.get("dimensions") or []:
+        if not isinstance(dimension, dict):
+            continue
+        name = str(dimension.get("name") or "").strip()
+        values = [str(value) for value in (dimension.get("values") or []) if str(value) != "*"]
+        if not name or not values:
+            continue
+        exclude = str(dimension.get("operator") or "Include").lower() == "exclude"
+        operator = "ne" if exclude else "eq"
+        joiner = " and " if exclude else " or "
+        terms = [f"{name} {operator} '{_esc(value)}'" for value in values]
+        clauses.append(f"({joiner.join(terms)})" if len(terms) > 1 else terms[0])
+    return " and ".join(clauses)
 
 
 def _duration_seconds(value: str) -> int | None:
@@ -156,6 +186,45 @@ def _metric_resource_id(res: dict[str, Any], rec: dict[str, Any]) -> str:
     return resource_id
 
 
+def _metric_target_type(source_type: str, rec: dict[str, Any]) -> str:
+    """Return the resource type whose ID Azure Monitor expects for this metric."""
+    source = str(source_type or "").lower()
+    namespace = str(rec.get("metric_namespace") or "").lower()
+    if source == "microsoft.storage/storageaccounts" and namespace.startswith(f"{source}/"):
+        return source
+    return namespace or source
+
+
+def _metric_reference_types(reference_types: dict[str, Any]) -> dict[str, Any]:
+    """Build the profiler reference by effective metric target instead of policy parent."""
+    out: dict[str, dict[str, Any]] = {}
+    seen: dict[str, set[tuple[str, str, str]]] = {}
+    for source_type, source_spec in reference_types.items():
+        for rec in source_spec.get("alerts") or []:
+            if rec.get("signal", "metric") != "metric" or not rec.get("metric"):
+                continue
+            target_type = _metric_target_type(source_type, rec)
+            target_meta = reference_types.get(target_type) or source_spec
+            spec = out.setdefault(
+                target_type,
+                {
+                    "display": target_meta.get("display") or target_type,
+                    "category": target_meta.get("category") or source_spec.get("category", "other"),
+                    "alerts": [],
+                },
+            )
+            identity = (
+                str(rec.get("key") or ""),
+                str(rec.get("metric") or ""),
+                str(rec.get("metric_namespace") or "").lower(),
+            )
+            if identity in seen.setdefault(target_type, set()):
+                continue
+            seen[target_type].add(identity)
+            spec["alerts"].append(rec)
+    return out
+
+
 def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, Any]]) -> dict[str, Any]:
     """Evaluate one AMBA metric alert against a metric series → a profile cell."""
     metric = rec.get("metric", "")
@@ -163,6 +232,7 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
     threshold = rec.get("threshold")
     operator = rec.get("operator", "GreaterThan")
     sem = metric_semantics(arm_type, metric, unit)
+    sem["aggregation"] = _metric_aggregation(rec, arm_type)
     higher_is_worse = sem["higher_is_worse"]
     # Operator overrides the default direction when present.
     if operator in ("LessThan", "LessThanOrEqual"):
@@ -174,7 +244,7 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
     # A dimension-filtered error COUNT (e.g. Transactions split to ResponseType 403/503)
     # returns an EMPTY series when zero such errors occurred — which is the HEALTHY case, not
     # "no data". Treat that as an observed 0 so a clean resource shows green ✓ rather than grey.
-    if stats["current"] is None and rec.get("dimension_filter") and threshold == 0:
+    if stats["current"] is None and _dimension_filter(rec) and threshold == 0:
         stats = {"current": 0.0, "peak": 0.0, "avg": 0.0, "trend_pct": 0.0}
         series = [{"timestamp": "", "value": 0.0}]
     # The value we compare = the worst observed in the direction of concern.
@@ -240,7 +310,7 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
         "unit": unit,
         "operator": operator,
         "threshold": threshold,
-        "aggregation": sem["aggregation"],
+        "aggregation": _metric_aggregation(rec, arm_type),
         "higher_is_worse": higher_is_worse,
         "current": stats["current"],
         "peak": stats["peak"],
@@ -286,7 +356,7 @@ def compute_profile(
     [{timestamp,value}]}. Returns scorecard + per-resource rows + ranked bottlenecks +
     heatmap matrix."""
     ref = reference if reference is not None else load_reference()
-    ref_types: dict[str, Any] = ref.get("types", {})
+    ref_types = _metric_reference_types(ref.get("types", {}))
 
     rows: list[dict[str, Any]] = []
     bottlenecks: list[dict[str, Any]] = []
@@ -294,11 +364,12 @@ def compute_profile(
 
     for res in resources:
         rtype = str(res.get("type", "")).lower()
-        spec = ref_types.get(rtype)
-        if not spec:
-            continue
+        spec = ref_types.get(rtype) or {}
         rid = str(res.get("id", "")).lower()
-        metric_alerts = [a for a in (spec.get("alerts") or []) if a.get("signal", "metric") == "metric" and a.get("metric")]
+        metric_alerts = [
+            alert for alert in (spec.get("alerts") or [])
+            if alert.get("signal", "metric") == "metric" and alert.get("metric")
+        ]
         if not metric_alerts:
             continue
         series_map = metrics_by_resource.get(rid, {})
@@ -594,6 +665,7 @@ async def profile_workload(
         "metric_checks_total": 0,
         "metric_checks_succeeded": 0,
         "metric_checks_no_data": 0,
+        "metric_checks_unsupported": 0,
         "metric_checks_failed": 0,
         "metric_requests_total": 0,
         "metric_request_attempts": 0,
@@ -616,7 +688,7 @@ async def profile_workload(
         except RuntimeError as exc:
             return _empty(scope_kind, scope_id, error=str(exc)[:1000], collection=collection)
 
-        ref_types = load_reference().get("types", {})
+        ref_types = _metric_reference_types(load_reference().get("types", {}))
         eligible = [r for r in resources if str(r.get("type", "")).lower() in ref_types]
         targets = eligible[:scan_cap]
         collection.update(
@@ -722,19 +794,35 @@ async def profile_workload(
             else:
                 # Azure accepts several metric names in one request.  Group checks that share
                 # aggregation + dimension filter, then parse each metric back out separately.
-                groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+                groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
                 for rec in alerts:
-                    semantics = metric_semantics(rtype, rec.get("metric", ""), rec.get("unit", ""))
                     groups.setdefault(
                         (
                             _metric_resource_id(res, rec),
-                            semantics["aggregation"],
-                            str(rec.get("dimension_filter") or ""),
+                            _metric_aggregation(rec, rtype),
+                            _dimension_filter(rec),
                             _metric_interval(rec, interval),
+                            str(rec.get("metric_namespace") or ""),
                         ),
                         [],
                     ).append(rec)
-                for (metric_resource_id, aggregation, dimension_filter, metric_interval), records in groups.items():
+
+                async def _collect_group(
+                    records: list[dict[str, Any]], *, metric_resource_id: str,
+                    aggregation: str, dimension_filter: str, metric_interval: str,
+                    metric_namespace: str,
+                ) -> None:
+                    if len(records) > _MAX_METRICS_PER_REQUEST:
+                        for offset in range(0, len(records), _MAX_METRICS_PER_REQUEST):
+                            await _collect_group(
+                                records[offset : offset + _MAX_METRICS_PER_REQUEST],
+                                metric_resource_id=metric_resource_id,
+                                aggregation=aggregation,
+                                dimension_filter=dimension_filter,
+                                metric_interval=metric_interval,
+                                metric_namespace=metric_namespace,
+                            )
+                        return
                     metric_names = list(dict.fromkeys(str(rec.get("metric", "")) for rec in records))
                     cap = await _capture_metrics(
                         res, metric_names,
@@ -742,18 +830,68 @@ async def profile_workload(
                         aggregation=aggregation, interval=metric_interval,
                         timespan=eff_start or None, end_time=eff_end or None,
                         dimension_filter=dimension_filter or None,
+                        metric_namespace=metric_namespace or None,
+                    )
+                    if cap.ok:
+                        for rec in records:
+                            series = _parse_metric_series(
+                                cap.stdout, aggregation, str(rec.get("metric", ""))
+                            )
+                            out[_series_key(rec)] = series
+                            collection[
+                                "metric_checks_succeeded" if series else "metric_checks_no_data"
+                            ] += 1
+                        return
+
+                    message = (cap.error or cap.stderr or "Metric request failed.").strip()
+                    lowered = message.lower()
+                    splittable = any(
+                        marker in lowered
+                        for marker in (
+                            "badrequest", "bad request", "failed to find metric configuration",
+                            "invalid metric", "metric configuration", "valid metrics:",
+                        )
+                    )
+                    if len(records) > 1 and splittable:
+                        middle = len(records) // 2
+                        for subset in (records[:middle], records[middle:]):
+                            await _collect_group(
+                                subset,
+                                metric_resource_id=metric_resource_id,
+                                aggregation=aggregation,
+                                dimension_filter=dimension_filter,
+                                metric_interval=metric_interval,
+                                metric_namespace=metric_namespace,
+                            )
+                        return
+
+                    unsupported = any(
+                        marker in lowered
+                        for marker in (
+                            "failed to find metric configuration", "metric is not supported",
+                            "metric configuration was not found", "valid metrics:",
+                        )
                     )
                     for rec in records:
-                        if not cap.ok:
+                        if unsupported:
+                            out[_series_key(rec)] = []
+                            collection["metric_checks_no_data"] += 1
+                            collection["metric_checks_unsupported"] += 1
+                        else:
                             collection["metric_checks_failed"] += 1
-                            continue
-                        series = _parse_metric_series(
-                            cap.stdout, aggregation, str(rec.get("metric", ""))
-                        )
-                        out[_series_key(rec)] = series
-                        collection[
-                            "metric_checks_succeeded" if series else "metric_checks_no_data"
-                        ] += 1
+
+                for (
+                    metric_resource_id, aggregation, dimension_filter, metric_interval,
+                    metric_namespace,
+                ), records in groups.items():
+                    await _collect_group(
+                        records,
+                        metric_resource_id=metric_resource_id,
+                        aggregation=aggregation,
+                        dimension_filter=dimension_filter,
+                        metric_interval=metric_interval,
+                        metric_namespace=metric_namespace,
+                    )
             metrics_by_resource[rid] = out
             collection["resources_completed"] += 1
             if progress is not None:
@@ -782,6 +920,10 @@ async def profile_workload(
         if collection["metric_checks_failed"]:
             warning_parts.append(
                 f"{collection['metric_checks_failed']} of {total_checks} metric checks failed."
+            )
+        if collection["metric_checks_unsupported"]:
+            warning_parts.append(
+                f"{collection['metric_checks_unsupported']} metric checks are unavailable on these resource SKUs."
             )
         hard_error = ""
         if status == "failed":

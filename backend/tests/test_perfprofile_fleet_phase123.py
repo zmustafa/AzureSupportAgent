@@ -318,6 +318,172 @@ def test_mixed_metric_success_and_failure_is_partial_with_completeness(monkeypat
     assert snapshot["warning"]
 
 
+def test_metric_groups_chunk_at_twenty_and_use_declared_aggregation(monkeypatch):
+    alerts = [
+        {
+            "key": f"m{i}", "metric": f"Metric {i}", "name": f"Metric {i}",
+            "signal": "metric", "threshold": 10, "operator": "GreaterThan",
+            "severity": "warning", "unit": "Count", "time_aggregation": "Total",
+            "metric_namespace": "Microsoft.Test/widgets",
+        }
+        for i in range(26)
+    ]
+    reference = {"types": {"microsoft.test/widgets": {"display": "Widget", "alerts": alerts}}}
+    calls: list[tuple[list[str], str, str | None]] = []
+
+    async def query(*_args, **_kwargs):
+        return [{"id": "/r1", "name": "r1", "type": "microsoft.test/widgets"}]
+
+    async def metric_capture(_rid, metrics, _connection, **kwargs):
+        calls.append((list(metrics), kwargs["aggregation"], kwargs.get("metric_namespace")))
+        return CaptureResult(
+            ok=True,
+            stdout=json.dumps(
+                {
+                    "value": [
+                        {
+                            "name": {"value": metric},
+                            "timeseries": [{"data": [{"timeStamp": "t", "total": 1}]}],
+                        }
+                        for metric in metrics
+                    ]
+                }
+            ),
+        )
+
+    monkeypatch.setattr("app.core.app_settings.load_settings", lambda: _settings())
+    monkeypatch.setattr("app.exec.command_runner.open_sp_session", lambda _c: asyncio.sleep(0, result=(None, None)))
+    monkeypatch.setattr("app.exec.command_runner.close_sp_session", lambda _session: None)
+    monkeypatch.setattr("app.exec.command_runner.run_metrics_capture", metric_capture)
+    monkeypatch.setattr(collector, "_query_resources", query)
+    monkeypatch.setattr(collector, "_hydrate_disk_limits", lambda *_a, **_k: asyncio.sleep(0))
+    monkeypatch.setattr(collector, "load_reference", lambda: reference)
+
+    snapshot = asyncio.run(
+        collector.profile_workload(None, scope_kind="subscription", scope_id="sub", workload=None)
+    )
+    assert snapshot["status"] == "succeeded"
+    assert [len(metrics) for metrics, _aggregation, _namespace in calls] == [20, 6]
+    assert {aggregation for _metrics, aggregation, _namespace in calls} == {"Total"}
+    assert {namespace for _metrics, _aggregation, namespace in calls} == {"Microsoft.Test/widgets"}
+    assert snapshot["collection"]["metric_checks_succeeded"] == 26
+    assert snapshot["collection"]["metric_checks_failed"] == 0
+
+
+def test_bad_group_is_bisected_and_unsupported_metric_is_no_data(monkeypatch):
+    reference = {
+        "types": {
+            "microsoft.test/widgets": {
+                "display": "Widget",
+                "alerts": [
+                    {"key": key, "metric": metric, "name": metric, "signal": "metric", "threshold": 10, "operator": "GreaterThan", "severity": "warning", "unit": "Count", "time_aggregation": "Total"}
+                    for key, metric in (("good-a", "Good A"), ("bad", "Bad"), ("good-b", "Good B"))
+                ],
+            }
+        }
+    }
+
+    async def query(*_args, **_kwargs):
+        return [{"id": "/r1", "name": "r1", "type": "microsoft.test/widgets"}]
+
+    async def metric_capture(_rid, metrics, _connection, **_kwargs):
+        if "Bad" in metrics:
+            return CaptureResult(
+                ok=False,
+                error="ERROR: (BadRequest) Failed to find metric configuration; Valid metrics: Good A,Good B",
+            )
+        return CaptureResult(
+            ok=True,
+            stdout=json.dumps(
+                {
+                    "value": [
+                        {"name": {"value": metric}, "timeseries": [{"data": [{"timeStamp": "t", "total": 1}]}]}
+                        for metric in metrics
+                    ]
+                }
+            ),
+        )
+
+    monkeypatch.setattr("app.core.app_settings.load_settings", lambda: _settings())
+    monkeypatch.setattr("app.exec.command_runner.open_sp_session", lambda _c: asyncio.sleep(0, result=(None, None)))
+    monkeypatch.setattr("app.exec.command_runner.close_sp_session", lambda _session: None)
+    monkeypatch.setattr("app.exec.command_runner.run_metrics_capture", metric_capture)
+    monkeypatch.setattr(collector, "_query_resources", query)
+    monkeypatch.setattr(collector, "_hydrate_disk_limits", lambda *_a, **_k: asyncio.sleep(0))
+    monkeypatch.setattr(collector, "load_reference", lambda: reference)
+
+    snapshot = asyncio.run(
+        collector.profile_workload(None, scope_kind="subscription", scope_id="sub", workload=None)
+    )
+    assert snapshot["status"] == "succeeded"
+    assert snapshot["collection"]["metric_checks_succeeded"] == 2
+    assert snapshot["collection"]["metric_checks_no_data"] == 1
+    assert snapshot["collection"]["metric_checks_unsupported"] == 1
+    assert snapshot["collection"]["metric_checks_failed"] == 0
+    assert "unavailable on these resource SKUs" in snapshot["warning"]
+
+
+def test_parent_catalog_metric_targets_actual_child_resource(monkeypatch):
+    reference = {
+        "types": {
+            "microsoft.sql/servers": {
+                "display": "SQL Server",
+                "alerts": [
+                    {
+                        "key": "db-failures", "metric": "connection_failed", "name": "Failures",
+                        "signal": "metric", "metric_namespace": "Microsoft.Sql/servers/databases",
+                        "time_aggregation": "Total", "threshold": 1, "operator": "GreaterThan",
+                        "severity": "warning", "unit": "Count",
+                    }
+                ],
+            }
+        }
+    }
+    calls: list[tuple[str, str | None]] = []
+    database_id = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Sql/servers/sql/databases/db"
+
+    async def query(*_args, **_kwargs):
+        return [
+            {"id": database_id.rsplit("/databases/", 1)[0], "name": "sql", "type": "microsoft.sql/servers"},
+            {"id": database_id, "name": "db", "type": "microsoft.sql/servers/databases"},
+        ]
+
+    async def metric_capture(resource_id, metrics, _connection, **kwargs):
+        calls.append((resource_id, kwargs.get("metric_namespace")))
+        return CaptureResult(
+            ok=True,
+            stdout=json.dumps(
+                {"value": [{"name": {"value": metrics[0]}, "timeseries": [{"data": [{"timeStamp": "t", "total": 0}]}]}]}
+            ),
+        )
+
+    monkeypatch.setattr("app.core.app_settings.load_settings", lambda: _settings())
+    monkeypatch.setattr("app.exec.command_runner.open_sp_session", lambda _c: asyncio.sleep(0, result=(None, None)))
+    monkeypatch.setattr("app.exec.command_runner.close_sp_session", lambda _session: None)
+    monkeypatch.setattr("app.exec.command_runner.run_metrics_capture", metric_capture)
+    monkeypatch.setattr(collector, "_query_resources", query)
+    monkeypatch.setattr(collector, "_hydrate_disk_limits", lambda *_a, **_k: asyncio.sleep(0))
+    monkeypatch.setattr(collector, "load_reference", lambda: reference)
+
+    snapshot = asyncio.run(
+        collector.profile_workload(None, scope_kind="subscription", scope_id="sub", workload=None)
+    )
+    assert calls == [(database_id, "Microsoft.Sql/servers/databases")]
+    assert [row["resource_type"] for row in snapshot["resources"]] == ["microsoft.sql/servers/databases"]
+
+
+def test_amba_dimensions_translate_to_filter_and_wildcards_do_not():
+    assert collector._dimension_filter(
+        {"dimensions": [{"name": "Status", "operator": "Include", "values": ["Failed", "429"]}]}
+    ) == "(Status eq 'Failed' or Status eq '429')"
+    assert collector._dimension_filter(
+        {"dimensions": [{"name": "Status", "operator": "Exclude", "values": ["Completed"]}]}
+    ) == "Status ne 'Completed'"
+    assert collector._dimension_filter(
+        {"dimensions": [{"name": "ShardId", "operator": "Include", "values": ["*"]}]}
+    ) == ""
+
+
 def test_metric_gate_is_process_wide_and_never_exceeds_two(monkeypatch):
     from app.perfprofile.limits import current_gate_snapshot, metric_slot, reset_gate_observed
 
@@ -395,6 +561,26 @@ def test_latest_success_is_preserved_when_newer_attempt_fails(monkeypatch, tmp_p
     attempts = runs.latest_attempts_for_scopes("t1", [("workload", "w1")])
     assert trusted["workload:w1"]["status"] == "succeeded"
     assert attempts["workload:w1"]["status"] == "failed"
+
+
+def test_latest_partial_is_usable_when_no_complete_success_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(runs, "_PATH", tmp_path / "runs.json")
+    partial = runs.save_run(
+        "t1", "workload", "w1",
+        {"status": "partial", "scorecard": {"workload_score": 62}, "collection": {"completeness_pct": 45}},
+        record_trend=False,
+    )
+    failed = runs.save_run(
+        "t1", "workload", "w1",
+        {"status": "failed", "error": "timeout", "scorecard": {"workload_score": None}},
+        record_trend=False,
+    )
+    assert runs.latest_run("t1", "workload", "w1")["id"] == failed["id"]
+    assert runs.latest_successful_run("t1", "workload", "w1") is None
+    assert runs.latest_usable_run("t1", "workload", "w1")["id"] == partial["id"]
+    trusted = runs.latest_runs_for_scopes("t1", [("workload", "w1")])
+    assert trusted["workload:w1"]["status"] == "partial"
+    assert trusted["workload:w1"]["workload_score"] == 62
 
 
 def _fleet_env(monkeypatch, tmp_path):

@@ -80,13 +80,14 @@ def test_run_metrics_capture_pasted_token_uses_rest(monkeypatch):
     monkeypatch.setattr(creds, "get_arm_token", _arm_token_ok())
 
     seen = {}
-    async def _fake_get_metrics(token, resource_id, *, metricnames, aggregations, interval, start_time, end_time, dimension_filter):
-        seen.update(token=token, rid=resource_id, metricnames=metricnames, aggregations=aggregations)
+    async def _fake_get_metrics(token, resource_id, *, metricnames, aggregations, interval, start_time, end_time, dimension_filter, metric_namespace):
+        seen.update(token=token, rid=resource_id, metricnames=metricnames, aggregations=aggregations, namespace=metric_namespace)
         return json.dumps({"value": [{"timeseries": [{"data": [{"average": 1.0}]}]}]}), None
     monkeypatch.setattr(arm, "get_metrics", _fake_get_metrics)
 
-    res = asyncio.run(cr.run_metrics_capture("/subscriptions/s/rg/r", ["Cpu"], PASTED, aggregation="Average"))
+    res = asyncio.run(cr.run_metrics_capture("/subscriptions/s/rg/r", ["Cpu"], PASTED, aggregation="Average", metric_namespace="Microsoft.Test/widgets"))
     assert res.ok and seen["token"] == "TOK" and seen["metricnames"] == ["Cpu"]
+    assert seen["namespace"] == "Microsoft.Test/widgets"
     data = json.loads(res.stdout)
     assert data["value"][0]["timeseries"][0]["data"][0]["average"] == 1.0
 
@@ -225,13 +226,14 @@ def test_get_metrics_builds_rest_params(monkeypatch):
     text, err = asyncio.run(arm.get_metrics(
         "TOK", "/subscriptions/s/rg/r", metricnames=["A", "B"], aggregations=["Total", "Average"],
         interval="PT5M", start_time="2026-06-21T00:00:00Z", end_time="2026-06-21T01:00:00Z",
-        dimension_filter="StatusCode eq '403'"))
+        dimension_filter="StatusCode eq '403'", metric_namespace="Microsoft.Test/widgets"))
     assert err is None
     assert seen["path"].endswith("/providers/microsoft.insights/metrics")
     assert seen["params"]["metricnames"] == "A,B"
     assert seen["params"]["aggregation"] == "Total,Average"
     assert seen["params"]["timespan"] == "2026-06-21T00:00:00Z/2026-06-21T01:00:00Z"
     assert seen["params"]["$filter"] == "StatusCode eq '403'"
+    assert seen["params"]["metricnamespace"] == "Microsoft.Test/widgets"
 
 
 def test_get_metric_definitions_unwraps_value_to_bare_list(monkeypatch):

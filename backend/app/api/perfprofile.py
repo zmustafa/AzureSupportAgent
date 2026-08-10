@@ -127,12 +127,12 @@ async def profile(
     from app.perfprofile import runs
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
-    latest = runs.latest_successful_run(principal.tenant_id or "default", scope_kind, scope_id)
+    latest = runs.latest_usable_run(principal.tenant_id or "default", scope_kind, scope_id)
     if latest is None:
         return {
             "scope_kind": scope_kind, "scope_id": scope_id, "scope_name": scope_id,
             "no_runs": True, "resources": [], "bottlenecks": [], "top_bottleneck": None,
-            "scorecard": {"workload_score": 100, "resources_profiled": 0, "breaching": 0, "approaching": 0, "healthy": 0, "bottleneck_count": 0},
+            "scorecard": {"workload_score": None, "resources_profiled": 0, "breaching": 0, "approaching": 0, "healthy": 0, "bottleneck_count": 0},
         }
     return latest
 
@@ -491,7 +491,7 @@ async def _resolve_run_snapshot(
     if demo.is_demo_scope(scope_kind, scope_id):
         snap = await _get_snapshot(principal, scope_kind, scope_id, force=False)
         return snap
-    return runs.latest_successful_run(tenant_id, scope_kind, scope_id)
+    return runs.latest_usable_run(tenant_id, scope_kind, scope_id)
 
 
 def _trend_for(snap: dict[str, Any], tenant_id: str) -> dict[str, Any]:
@@ -659,7 +659,7 @@ async def trend(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     tenant_id = principal.tenant_id or "default"
     if demo.is_demo_scope(scope_kind, scope_id) and not coverage_trends.series("performance", tenant_id, scope_kind, scope_id):
-        latest = runs.latest_successful_run(tenant_id, scope_kind, scope_id)
+        latest = runs.latest_usable_run(tenant_id, scope_kind, scope_id)
         score = (latest or {}).get("scorecard", {}).get("workload_score") if latest else None
         if score is None:
             # No runs yet for the demo scope — seed the demo profile to get a current score.
@@ -797,7 +797,7 @@ async def resource_detail(
     snap = runs.get_run(tenant_id, run_id) if run_id else None
     if snap is None:
         scope_kind, scope_id = _scope(workload_id, subscription_id)
-        snap = runs.latest_successful_run(tenant_id, scope_kind, scope_id)
+        snap = runs.latest_usable_run(tenant_id, scope_kind, scope_id)
     for r in (snap or {}).get("resources", []):
         if r.get("resource_id") == resource_id:
             return {"ok": True, "resource": r}

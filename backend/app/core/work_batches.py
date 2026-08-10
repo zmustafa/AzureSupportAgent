@@ -989,6 +989,7 @@ class WorkBatchWorker:
                                 WorkBatch.cancel_requested.is_(False),
                             )
                             .order_by(WorkBatch.created_at, WorkBatchItem.workload_name, WorkBatchItem.item_key)
+                            .with_for_update(skip_locked=True, of=WorkBatchItem)
                             .limit(100)
                         )
                     ).all()
