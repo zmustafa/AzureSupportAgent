@@ -10,6 +10,7 @@ Read-only. Results are cached per tenant + connection because the query is slow.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -106,7 +107,11 @@ def _col_index(columns: list[dict[str, Any]], *names: str) -> int:
 
 
 async def _subscription_cost(
-    connection: dict[str, Any] | None, sub_id: str, body: dict[str, Any]
+    connection: dict[str, Any] | None,
+    sub_id: str,
+    body: dict[str, Any],
+    *,
+    progress=None,
 ) -> tuple[dict[str, float], str, str]:
     """Trailing-30-days actual cost per resource for one subscription, via the Cost Management
     REST API. Returns (cost_by_resource_id_lower, currency, error).
@@ -131,7 +136,19 @@ async def _subscription_cost(
         if not err:
             break
         if "429" in err or "Too Many Requests" in err or "throttl" in err.lower():
-            await asyncio.sleep(2 + attempt * 4)  # 2s, 6s, 10s
+            delay = 2 + attempt * 4  # 2s, 6s, 10s
+            await _notify(
+                progress,
+                {
+                    "type": "subscription_retry",
+                    "subscription_id": sub_id,
+                    "attempt": attempt + 2,
+                    "max_attempts": 4,
+                    "delay_seconds": delay,
+                    "message": "Azure Cost Management rate-limited this subscription; backing off before retry.",
+                },
+            )
+            await asyncio.sleep(delay)
             continue
         break
     if err:
@@ -165,6 +182,15 @@ async def _subscription_cost(
     return out, currency, ""
 
 
+async def _notify(progress, event: dict[str, Any]) -> None:
+    """Invoke an optional sync/async progress callback without coupling collection to SSE."""
+    if progress is None:
+        return
+    result = progress(event)
+    if inspect.isawaitable(result):
+        await result
+
+
 def peek_cost(tenant_id: str, connection_id: str, scope: str = "") -> dict[str, Any] | None:
     """Return the permanently-cached cost payload if one exists, WITHOUT ever running the slow
     Cost Management query. Used to auto-restore cached cost on a fresh page load."""
@@ -180,6 +206,7 @@ async def get_cost(
     *,
     force: bool = False,
     scope: str = "",
+    progress=None,
 ) -> dict[str, Any]:
     """Aggregate trailing-30-days cost across the given subscriptions, attributed per resource.
 
@@ -206,19 +233,83 @@ async def get_cost(
     # The Cost Management query body is identical per subscription.
     body = _query_body()
     targets = subscriptions[:_COST_MAX_SUBSCRIPTIONS]
+    await _notify(
+        progress,
+        {
+            "type": "started",
+            "subscriptions_total": len(targets),
+            "subscriptions_visible": len(subscriptions),
+            "subscriptions_omitted": max(0, len(subscriptions) - len(targets)),
+            "concurrency": _COST_CONCURRENCY,
+            "period": _period_label(),
+            "message": f"Preparing Cost Management queries for {len(targets)} subscription(s).",
+        },
+    )
     # IP7 — fan the (slow, throttled) per-subscription cost queries out with bounded concurrency.
     # A semaphore caps simultaneous calls and a small per-slot stagger avoids hitting the API in
     # lockstep; the 429 retry/backoff lives inside ``_subscription_cost``.
     sem = asyncio.Semaphore(_COST_CONCURRENCY)
+    progress_lock = asyncio.Lock()
+    completed = 0
 
     async def _one(idx: int, sub: str) -> tuple[str, dict[str, float], str, str]:
+        nonlocal completed
         async with sem:
             if idx % _COST_CONCURRENCY:
                 await asyncio.sleep((idx % _COST_CONCURRENCY) * 0.25)
-            costs, cur, err = await _subscription_cost(connection, sub, body)
+            started = time.monotonic()
+            await _notify(
+                progress,
+                {
+                    "type": "subscription_started",
+                    "subscription_id": sub,
+                    "index": idx + 1,
+                    "subscriptions_total": len(targets),
+                    "message": f"Querying subscription {idx + 1} of {len(targets)}.",
+                },
+            )
+            if progress is None:
+                costs, cur, err = await _subscription_cost(connection, sub, body)
+            else:
+                costs, cur, err = await _subscription_cost(
+                    connection, sub, body, progress=progress
+                )
+            duration_ms = int((time.monotonic() - started) * 1000)
+            async with progress_lock:
+                completed += 1
+                done_count = completed
+            await _notify(
+                progress,
+                {
+                    "type": "subscription_error" if err else "subscription_done",
+                    "subscription_id": sub,
+                    "index": idx + 1,
+                    "subscriptions_total": len(targets),
+                    "subscriptions_done": done_count,
+                    "resource_cost_rows": len(costs),
+                    "subscription_total": round(sum(costs.values()), 2),
+                    "currency": cur,
+                    "duration_ms": duration_ms,
+                    "error": err,
+                    "message": (
+                        f"Subscription {idx + 1} failed: {err}"
+                        if err
+                        else f"Subscription {idx + 1} complete ({len(costs)} cost row(s))."
+                    ),
+                },
+            )
             return sub, costs, cur, err
 
     results = await asyncio.gather(*[_one(i, sub) for i, sub in enumerate(targets)])
+    await _notify(
+        progress,
+        {
+            "type": "aggregating",
+            "subscriptions_done": len(results),
+            "subscriptions_total": len(targets),
+            "message": "Combining subscription results and reconciling resource costs.",
+        },
+    )
     for sub, costs, cur, err in results:
         if err:
             errors.append(f"{sub[:8]}…: {err}")
@@ -251,7 +342,27 @@ async def get_cost(
         global _mem
         _mem = cache
         _persist()
-    return {**payload, "cached": False}
+    result = {**payload, "cached": False}
+    await _notify(
+        progress,
+        {
+            "type": "done",
+            "subscriptions_done": len(results),
+            "subscriptions_total": len(targets),
+            "subscriptions_succeeded": len(results) - len(errors),
+            "subscriptions_failed": len(errors),
+            "resource_cost_rows": len(by_resource),
+            "total": payload["total"],
+            "currency": payload["currency"],
+            "cached": bool(available and not errors),
+            "message": (
+                f"Cost refresh completed with {len(errors)} subscription error(s)."
+                if errors
+                else "Cost refresh completed and the shared cache was updated."
+            ),
+        },
+    )
+    return result
 
 
 def build_rollup(cost_payload: dict[str, Any], resources: list[dict[str, Any]]) -> dict[str, Any]:

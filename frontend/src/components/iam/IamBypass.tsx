@@ -78,9 +78,9 @@ function Row({ r }: { r: IamBypassRow }) {
                   <ul className="mt-1 space-y-0.5">
                     {r.reachableBy.map((h) => {
                       // Real tenants contain distinct principals with identical display names
-                      // (the live estate has two "Zeeshan Mustafa" objects). Rendering the name
-                      // alone produced two identical lines that read as a duplicate-row bug, so
-                      // the id is shown only where it is actually needed to tell them apart.
+                      // (for example, two "Alex Morgan" objects). Rendering the name alone can
+                      // produce identical lines that read as a duplicate-row bug, so the id is
+                      // shown only where it is actually needed to tell them apart.
                       const ambiguous =
                         r.reachableBy.filter((o) => o.principalName === h.principalName).length > 1;
                       return (

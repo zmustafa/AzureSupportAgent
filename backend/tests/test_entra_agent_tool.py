@@ -211,12 +211,12 @@ async def test_ca_evaluate_refuses_an_ambiguous_principal_by_naming_the_candidat
 
     monkeypatch.setattr(at, "_snapshot", lambda _t: {"data": {}, "_analysis": {}})
     monkeypatch.setattr(sim, "build_principals", lambda *a, **k: [
-        sim.SimPrincipal(id="1", label="Zeeshan Mustafa", kind="user"),
-        sim.SimPrincipal(id="2", label="Zeeshan Mustafa", kind="user"),
+        sim.SimPrincipal(id="1", label="Alex Morgan", kind="user"),
+        sim.SimPrincipal(id="2", label="Alex Morgan", kind="user"),
     ])
 
     handler = at._make_ca_evaluate("t", _P({"investigate.read"}))
-    out = await handler({}, {"principal": "Zeeshan Mustafa"})
+    out = await handler({}, {"principal": "Alex Morgan"})
     assert _refused(out)
     assert "matches 2 principals" in str(out)
     assert "1" in str(out) and "2" in str(out)

@@ -155,12 +155,20 @@ export function startBackgroundProfile(opts: {
       _runningProfiles.delete(opts.scopeKey);
       _profileErrors.set(opts.scopeKey, m);
       _bumpRuns();
+      // The backend persists terminal failed attempts for diagnosis even though they do not
+      // replace the latest successful score. Refresh history/Fleet so that status is visible.
+      void queryClient.invalidateQueries({ queryKey: opts.runsKey });
+      void queryClient.invalidateQueries({ queryKey: ["perf-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["perfFleet"] });
       opts.onError(m);
     },
   }).catch((err) => {
     _runningProfiles.delete(opts.scopeKey);
     _profileErrors.set(opts.scopeKey, formatError(err));
     _bumpRuns();
+    void queryClient.invalidateQueries({ queryKey: opts.runsKey });
+    void queryClient.invalidateQueries({ queryKey: ["perf-runs"] });
+    void queryClient.invalidateQueries({ queryKey: ["perfFleet"] });
     opts.onError(formatError(err));
   });
 }
@@ -232,7 +240,8 @@ function windowCell(r: PerfRunSummary): React.ReactNode {
   return r.window;
 }
 
-function scoreTone(score: number): string {
+function scoreTone(score: number | null | undefined): string {
+  if (typeof score !== "number") return "text-gray-400";
   if (score >= 80) return "text-green-600";
   if (score >= 50) return "text-amber-600";
   return "text-red-600";
@@ -505,14 +514,15 @@ export function PerformancePanel() {
     if (hmHideNoData) rows = rows.filter((r) => r.state !== "no_data");
     if (hmTypes.length) rows = rows.filter((r) => hmTypes.includes(r.resource_type));
     if (hmRegion) rows = rows.filter((r) => (r.region || "") === hmRegion);
-    if (hmScore === "crit") rows = rows.filter((r) => r.score < 50);
-    else if (hmScore === "risk") rows = rows.filter((r) => r.score >= 50 && r.score < 80);
-    else if (hmScore === "healthy") rows = rows.filter((r) => r.score >= 80);
+    if (hmScore === "crit") rows = rows.filter((r) => r.score != null && r.score < 50);
+    else if (hmScore === "risk") rows = rows.filter((r) => r.score != null && r.score >= 50 && r.score < 80);
+    else if (hmScore === "healthy") rows = rows.filter((r) => r.score != null && r.score >= 80);
     const q = dHmSearch.trim().toLowerCase();
     if (q) rows = rows.filter((r) => r.resource_name.toLowerCase().includes(q) || r.display.toLowerCase().includes(q) || r.resource_type.toLowerCase().includes(q));
     const sorted = [...rows];
-    if (hmSort === "score") sorted.sort((a, b) => a.score - b.score || a.resource_name.localeCompare(b.resource_name));
-    else if (hmSort === "breaching") sorted.sort((a, b) => breachCellCount(b) - breachCellCount(a) || a.score - b.score);
+    const scoreValue = (row: PerfResourceRow) => row.score ?? 101;
+    if (hmSort === "score") sorted.sort((a, b) => scoreValue(a) - scoreValue(b) || a.resource_name.localeCompare(b.resource_name));
+    else if (hmSort === "breaching") sorted.sort((a, b) => breachCellCount(b) - breachCellCount(a) || scoreValue(a) - scoreValue(b));
     else sorted.sort((a, b) => a.resource_name.localeCompare(b.resource_name));
     return sorted;
   }, [data, hmPosture, hmHideNoData, hmTypes, hmRegion, hmScore, dHmSearch, hmSort]);
@@ -854,7 +864,7 @@ export function PerformancePanel() {
         </div>
         {data?.scorecard && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <Stat label="Performance score" value={`${data.scorecard.workload_score}`} tone={scoreTone(data.scorecard.workload_score)} />
+            <Stat label="Performance score" value={data.scorecard.workload_score == null ? "—" : `${data.scorecard.workload_score}`} tone={scoreTone(data.scorecard.workload_score)} />
             <Stat label="Resources profiled" value={`${data.scorecard.resources_profiled}`} />
             <Stat label="Breaching" value={`${data.scorecard.breaching}`} tone={data.scorecard.breaching ? "text-red-600" : undefined} />
             <Stat label="Approaching" value={`${data.scorecard.approaching}`} tone={data.scorecard.approaching ? "text-amber-600" : undefined} />
@@ -911,7 +921,7 @@ export function PerformancePanel() {
           onEmptyTrash={() => void emptyTrash()}
           emptyingTrash={busy === "empty-trash"}
           columns={[
-            { header: "Run time", className: "text-gray-700", render: (r) => <div className="leading-tight"><div className="whitespace-nowrap">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</div><div className="text-[11px] text-gray-400">{fmtAgo(r.run_at)}</div></div> },
+            { header: "Run time", className: "text-gray-700", render: (r) => <div className="leading-tight"><div className="whitespace-nowrap">{fmtTime(r.run_at)}{r.demo ? " · demo" : ""}</div><div className={`text-[11px] ${r.status === "failed" ? "text-red-600" : r.status === "partial" ? "text-amber-600" : "text-gray-400"}`}>{r.status && r.status !== "succeeded" ? `${r.status}${r.completeness_pct != null ? ` · ${r.completeness_pct}% complete` : ""}` : fmtAgo(r.run_at)}</div></div> },
             { header: "Window", className: "text-gray-500", render: (r) => windowCell(r) },
             { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
             { header: "Breach / Approach / Healthy", render: (r) => <><span className="text-red-600">{r.breaching}</span> / <span className="text-amber-600">{r.approaching}</span> / <span className="text-green-600">{r.healthy}</span></> },
@@ -969,6 +979,20 @@ export function PerformancePanel() {
               Showing run from {fmtTime(data.run_at || data.generated_at)} · {data.demo ? "demo data · " : data.connection_configured ? "" : "no Azure connection · "}window {data.window}
               {data.error ? ` · ${data.error}` : ""}
             </div>
+            {data.status === "failed" && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                <div className="font-semibold">⚠ Profile collection failed</div>
+                <div className="mt-0.5 text-xs">{data.error || "No metric check completed successfully."}</div>
+              </div>
+            )}
+            {data.status === "partial" && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <div className="font-semibold">⚠ Partial profile — do not treat missing metrics as healthy</div>
+                <div className="mt-0.5 text-xs">
+                  {data.warning || `${data.collection?.completeness_pct ?? 0}% of metric checks completed.`}
+                </div>
+              </div>
+            )}
             {/* Bottleneck banner */}
             {data.top_bottleneck ? (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
@@ -979,6 +1003,10 @@ export function PerformancePanel() {
                   {data.top_bottleneck.observed}{data.top_bottleneck.unit} vs threshold {data.top_bottleneck.threshold}{data.top_bottleneck.unit}
                   {" "}({data.top_bottleneck.pct_of_threshold}% of threshold{data.top_bottleneck.trend_pct ? `, trending ${data.top_bottleneck.trend_pct > 0 ? "+" : ""}${data.top_bottleneck.trend_pct}%` : ""}) — {data.top_bottleneck.state}
                 </div>
+              </div>
+            ) : data.status === "partial" || data.scorecard.workload_score == null ? (
+              <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                No binding bottleneck can be confirmed from the successfully returned metric data.
               </div>
             ) : (
               <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
@@ -1238,7 +1266,7 @@ export function PerformancePanel() {
                           </div>
                           <div className="truncate text-[10px] text-gray-400">{r.display}</div>
                         </td>
-                        <td className={`px-2 py-1.5 font-semibold ${scoreTone(r.score)}`}>{r.score}</td>
+                        <td className={`px-2 py-1.5 font-semibold ${scoreTone(r.score)}`}>{r.score ?? "—"}</td>
                         {metricCols.map((mc, i) => {
                           const firstInGroup = i === 0 || metricCols[i - 1].type !== mc.type;
                           const border = firstInGroup ? "border-l border-gray-100" : "";
@@ -1281,7 +1309,7 @@ export function PerformancePanel() {
                   <span className={`inline-block h-2.5 w-2.5 rounded-full ${STATE_TONE[drawer.state]}`} />
                   <h3 className="text-base font-semibold text-gray-900">{drawer.resource_name}</h3>
                   <PortalLink resourceId={drawer.resource_id} className="text-base text-gray-400" />
-                  <span className={`text-sm font-semibold ${scoreTone(drawer.score)}`}>{drawer.score}/100</span>
+                  <span className={`text-sm font-semibold ${scoreTone(drawer.score)}`}>{drawer.score == null ? "—" : `${drawer.score}/100`}</span>
                 </div>
                 <div className="text-[11px] text-gray-400">{drawer.display} · {drawer.region}</div>
               </div>

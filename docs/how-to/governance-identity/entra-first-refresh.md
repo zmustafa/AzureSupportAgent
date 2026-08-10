@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 8
 description: Grant the read-only Microsoft Graph consent tiers, verify them, run the first tenant collection, and read the resulting domain coverage table.
 permalink: /how-to/governance-identity/entra-first-refresh/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup]
+feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 ---
 
 # Set up and run the first Entra collection
@@ -75,6 +75,18 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup]
 **Expected result:** A documented decision about which tier to add next, based on which domains are blind rather than on the headline score.
 
 **Verification:** After the next collection, the domains you targeted move from `blind` to `measured` and the coverage percentage on `/entra` rises.
+
+## How to interpret the posture score
+
+1. Open `/entra/posture` only after the freshness badge shows a completed collection.
+2. Read the coverage percentage beside the score before comparing it with an earlier run; a score over a different measured set is not a like-for-like trend.
+3. Open each pillar and trace material deductions to its source finding and evidence.
+4. Treat blind, partial, unlicensed, and stale domains as limitations, not passing controls.
+5. Validate any AI or derived explanation against the source policy, principal, credential, or finding evidence before using it in a decision.
+
+**Expected result:** The posture score is interpreted together with snapshot age, measured coverage, and source findings.
+
+**Verification:** Every quoted deduction resolves to a current finding and authoritative directory evidence; unexplored domains remain explicitly excluded from conclusions.
 
 ## Safety and rollback
 

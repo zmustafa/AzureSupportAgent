@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 6
 description: Read the Conditional Access coverage matrix, the normalized policy list, detected conflicts, break-glass candidates, the policy-as-code export and the offline change simulator.
 permalink: /user-guide/governance-identity/entra-conditional-access/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access]
+feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:coverage, ENTRA_CA_NAV:exposure, ENTRA_CA_NAV:policies, ENTRA_CA_NAV:conflicts, ENTRA_CA_NAV:breakglass, ENTRA_CA_NAV:simulate]
 ---
 
 # Entra: Conditional Access

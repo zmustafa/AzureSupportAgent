@@ -56,8 +56,7 @@ def _summarize(snap: dict[str, Any]) -> str:
 
 async def _run_performance_profile(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     """Profile a workload against AMBA performance thresholds and return a summary."""
-    from app.perfprofile import demo
-    from app.perfprofile.collector import profile_workload
+    from app.perfprofile.service import execute_profile
     from app.workloads.registry import get_workload
 
     workload_id = str(args.get("workload_id") or config.get("workload_id") or "").strip()
@@ -72,33 +71,22 @@ async def _run_performance_profile(config: dict[str, Any], args: dict[str, Any])
     actor = str(config.get("actor") or "investigation")
 
     try:
-        if demo.is_demo_scope("workload", workload_id):
-            snap = demo.build_demo_snapshot(scope_id=workload_id)
-            snap["window"] = timespan
-        else:
-            workload = get_workload(workload_id)
-            if workload is None:
-                return err(f"Workload '{workload_id}' not found.")
-            snap = await profile_workload(
-                connection,
-                scope_kind="workload",
-                scope_id=workload_id,
-                workload=workload,
-                timespan=timespan,
-                interval=interval,
-                scan_cap=scan_cap,
-            )
+        workload = get_workload(workload_id)
+        if workload is None:
+            return err(f"Workload '{workload_id}' not found.")
+        snap = await execute_profile(
+            tenant_id=tenant_id, actor=actor,
+            scope_kind="workload", scope_id=workload_id,
+            connection=connection, workload=workload,
+            window=timespan, interval=interval, scan_cap=scan_cap,
+            trigger="agent_tool",
+        )
     except Exception as exc:  # noqa: BLE001 - tool failures are reported, never crash the turn
         log.info("run_performance_profile failed: %s", exc)
         return err(f"Performance profile failed: {str(exc)[:300]}")
 
-    # Persist to run history so it surfaces on the Performance Profiler screen.
-    try:
-        from app.perfprofile import runs
-
-        runs.save_run(tenant_id, "workload", workload_id, snap, actor=actor)
-    except Exception as exc:  # noqa: BLE001 - history is best-effort
-        log.info("run_performance_profile: save_run failed: %s", exc)
+    if snap.get("status") == "failed":
+        return err(f"Performance profile failed: {snap.get('error') or 'collection failed'}")
 
     return ok(_summarize(snap))
 

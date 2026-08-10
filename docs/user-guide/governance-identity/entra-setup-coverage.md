@@ -106,7 +106,7 @@ Below that, the **hybrid** row reports directory synchronisation, its last run, 
 
 A tenant with no federated domains gets a single sentence saying every domain authenticates in Entra ID — that is the good outcome, not an empty table. If the domain list itself cannot be read, the card says so rather than implying a clean perimeter. A snapshot collected before this check existed is labelled as such and asks for a refresh, which is a different statement again from a permission problem.
 
-The same facts are carried, in one line, to the two screens whose own numbers depend on them: the [Posture](entra-posture) header and the auth methods sub-view of [Risk & sign-ins](entra-signals). The federation scope of [Blast radius](entra-blast-radius) draws the consequence.
+The same facts are carried, in one line, to the two screens whose own numbers depend on them: the [Posture]({{ site.baseurl }}/user-guide/governance-identity/entra-posture/) header and the auth methods sub-view of [Risk & sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/). The federation scope of [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) draws the consequence.
 
 ## Tabs and actions
 

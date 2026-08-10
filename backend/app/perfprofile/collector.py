@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -105,6 +107,53 @@ def _series_key(rec: dict[str, Any]) -> str:
                 parts.append(f"{dimension['name']}={values}")
         dim = ";".join(sorted(parts))
     return f"{metric}|{dim}" if dim else metric
+
+
+def _duration_seconds(value: str) -> int | None:
+    """Small ISO-8601 duration subset used by metric intervals (PnD/PTnH/PTnM)."""
+    match = re.match(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$", (value or "").upper())
+    if not match or not any(match.groups()):
+        return None
+    return (
+        int(match.group(1) or 0) * 86400
+        + int(match.group(2) or 0) * 3600
+        + int(match.group(3) or 0) * 60
+    )
+
+
+def _metric_interval(rec: dict[str, Any], default: str) -> str:
+    """Use the coarser of the configured grain and an alert's minimum evaluation window.
+
+    Azure capacity/count metrics commonly support hourly grains only. Sending the global
+    PT15M interval makes the entire grouped request fail with BadRequest, so preserve the
+    configured grain where supported and widen only the checks whose reference window is
+    coarser.
+    """
+    requested = str(default or "PT15M").upper()
+    minimum = str(rec.get("window_size") or "").upper()
+    requested_s = _duration_seconds(requested)
+    minimum_s = _duration_seconds(minimum)
+    if minimum_s is not None and (requested_s is None or minimum_s > requested_s):
+        return minimum
+    return requested
+
+
+def _metric_resource_id(res: dict[str, Any], rec: dict[str, Any]) -> str:
+    """Map storage service namespaces to their real Azure Monitor subresource IDs."""
+    resource_id = str(res.get("id", ""))
+    resource_type = str(res.get("type", "")).lower()
+    namespace = str(rec.get("metric_namespace") or "").lower()
+    if resource_type == "microsoft.storage/storageaccounts":
+        services = {
+            "microsoft.storage/storageaccounts/blobservices": "blobServices/default",
+            "microsoft.storage/storageaccounts/fileservices": "fileServices/default",
+            "microsoft.storage/storageaccounts/queueservices": "queueServices/default",
+            "microsoft.storage/storageaccounts/tableservices": "tableServices/default",
+        }
+        suffix = services.get(namespace)
+        if suffix:
+            return f"{resource_id.rstrip('/')}/{suffix}"
+    return resource_id
 
 
 def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, Any]]) -> dict[str, Any]:
@@ -206,12 +255,14 @@ def _evaluate_metric(rec: dict[str, Any], arm_type: str, series: list[dict[str, 
     }
 
 
-def _resource_score(cells: list[dict[str, Any]]) -> int:
+def _resource_score(cells: list[dict[str, Any]]) -> int | None:
     """Severity-weighted 0-100 performance score for a resource. Breaching costs the full
     weight, approaching costs half, healthy/no-data cost nothing."""
     scored = [c for c in cells if c["state"] != STATE_NODATA]
     if not scored:
-        return 100
+        # No observations is not perfect health.  Returning 100 here made a fully throttled
+        # profile look green; None keeps the unknown state explicit all the way to Fleet.
+        return None
     total_w = sum(_SEV_WEIGHT.get(c["severity"], 1) for c in scored)
     if total_w == 0:
         return 100
@@ -301,10 +352,10 @@ def compute_profile(
     bottlenecks.sort(
         key=lambda b: (_STATE_RANK.get(b["state"], 3), -(b.get("pct_of_threshold") or 0), _SEV_WEIGHT.get(b["severity"], 0) * -1)
     )
-    rows.sort(key=lambda r: (r["score"], r["resource_name"]))
+    rows.sort(key=lambda r: (r["score"] is None, r["score"] if r["score"] is not None else 101, r["resource_name"]))
 
     scored_rows = [r for r in rows if r["state"] != STATE_NODATA]
-    workload_score = round(sum(r["score"] for r in scored_rows) / len(scored_rows)) if scored_rows else 100
+    workload_score = round(sum(r["score"] for r in scored_rows) / len(scored_rows)) if scored_rows else None
 
     return {
         "generated_at": _now_iso(),
@@ -323,17 +374,22 @@ def compute_profile(
 
 
 # --------------------------------------------------------------------------- live gather
-async def _query_resources(predicates: list[str], connection: dict[str, Any] | None) -> list[dict[str, Any]]:
+async def _query_resources(
+    predicates: list[str], connection: dict[str, Any] | None, *, session_dir: str | None = None
+) -> list[dict[str, Any]]:
     from app.assessments.runner import query_resources_batched
 
     return await query_resources_batched(
         predicates,
         connection,
         projection="id, name, type, resourceGroup, subscriptionId, location, sku",
+        session_dir=session_dir,
     )
 
 
-def _parse_metric_series(stdout: str, aggregation: str) -> list[dict[str, Any]]:
+def _parse_metric_series(
+    stdout: str, aggregation: str, metric_name: str | None = None
+) -> list[dict[str, Any]]:
     """Parse an `az monitor metrics list` JSON blob into [{timestamp, value}].
 
     A dimension filter (e.g. status code) can return MULTIPLE timeseries; for count-style
@@ -347,6 +403,12 @@ def _parse_metric_series(stdout: str, aggregation: str) -> list[dict[str, Any]]:
     sum_mode = agg in ("total", "count")
     acc: dict[str, float] = {}
     for m in data.get("value", []) or []:
+        if metric_name:
+            raw_name = m.get("name", "")
+            if isinstance(raw_name, dict):
+                raw_name = raw_name.get("value") or raw_name.get("localizedValue") or ""
+            if raw_name and str(raw_name).lower() != metric_name.lower():
+                continue
         for ts in (m.get("timeseries") or []):
             for pt in (ts.get("data") or []):
                 t = pt.get("timeStamp") or pt.get("timestamp")
@@ -392,7 +454,9 @@ def _parse_combined_series(stdout: str) -> list[dict[str, Any]]:
     return [{"timestamp": t, "value": acc[t]} for t in sorted(acc)]
 
 
-async def _hydrate_disk_limits(targets: list[dict[str, Any]], connection: dict[str, Any] | None) -> None:
+async def _hydrate_disk_limits(
+    targets: list[dict[str, Any]], connection: dict[str, Any] | None, *, session_dir: str | None = None
+) -> None:
     """Backfill provisioned IOPS / MB-per-second onto in-scope managed-disk resources.
 
     The main resource query stays light (no `properties`); this runs ONE supplementary ARG
@@ -412,6 +476,7 @@ async def _hydrate_disk_limits(targets: list[dict[str, Any]], connection: dict[s
         rows = await query_resources_batched(
             [pred], connection,
             projection="id, provisioned_iops=properties.diskIOPSReadWrite, provisioned_mbps=properties.diskMBpsReadWrite",
+            session_dir=session_dir,
         )
     except RuntimeError:
         return
@@ -431,8 +496,8 @@ async def _disk_saturation_series(
     interval: str,
     start: str,
     end: str,
-    sem_lock: "asyncio.Semaphore",
     run_metrics_capture,
+    sem_lock: "asyncio.Semaphore | None" = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Derive a managed disk's IOPS + throughput saturation as a % of its provisioned limits.
 
@@ -445,12 +510,11 @@ async def _disk_saturation_series(
     out: dict[str, list[dict[str, Any]]] = {}
 
     if iops_limit and iops_limit > 0:
-        async with sem_lock:
-            cap = await run_metrics_capture(
-                rid, [_DISK_READ_OPS, _DISK_WRITE_OPS], connection,
-                aggregation="Average", interval=interval,
-                timespan=start or None, end_time=end or None,
-            )
+        cap = await run_metrics_capture(
+            rid, [_DISK_READ_OPS, _DISK_WRITE_OPS], connection,
+            aggregation="Average", interval=interval,
+            timespan=start or None, end_time=end or None,
+        )
         if cap.ok:
             total = _parse_combined_series(cap.stdout)
             out[DISK_IOPS_SAT] = [
@@ -459,12 +523,11 @@ async def _disk_saturation_series(
             ]
 
     if mbps_limit and mbps_limit > 0:
-        async with sem_lock:
-            cap = await run_metrics_capture(
-                rid, [_DISK_READ_BYTES, _DISK_WRITE_BYTES], connection,
-                aggregation="Average", interval=interval,
-                timespan=start or None, end_time=end or None,
-            )
+        cap = await run_metrics_capture(
+            rid, [_DISK_READ_BYTES, _DISK_WRITE_BYTES], connection,
+            aggregation="Average", interval=interval,
+            timespan=start or None, end_time=end or None,
+        )
         if cap.ok:
             total = _parse_combined_series(cap.stdout)
             # bytes/sec → MB/sec (÷1e6) → % of provisioned MB/sec.
@@ -489,7 +552,14 @@ async def profile_workload(
     progress=None,
 ) -> dict[str, Any]:
     from app.assessments.runner import _resolve_scope, scope_predicate_batches
-    from app.exec.command_runner import run_metrics_capture
+    from app.core.app_settings import load_settings
+    from app.exec.command_runner import (
+        CaptureResult,
+        close_sp_session,
+        open_sp_session,
+        run_metrics_capture,
+    )
+    from app.perfprofile.limits import metric_slot
 
     # Resolve the effective metric window. An explicit start/end range wins; otherwise the
     # duration window (e.g. P1D) is converted to an absolute --start-time for correctness.
@@ -512,70 +582,233 @@ async def profile_workload(
     else:
         return _empty(scope_kind, scope_id, error="No resolvable scope.")
 
+    settings = load_settings()
+    max_attempts = max(1, int(settings.get("perfprofile_metric_max_attempts", 3) or 3))
+    collection: dict[str, Any] = {
+        "status": "running",
+        "resources_discovered": 0,
+        "resources_eligible": 0,
+        "resources_selected": 0,
+        "resources_completed": 0,
+        "scan_cap_reached": False,
+        "metric_checks_total": 0,
+        "metric_checks_succeeded": 0,
+        "metric_checks_no_data": 0,
+        "metric_checks_failed": 0,
+        "metric_requests_total": 0,
+        "metric_request_attempts": 0,
+        "metric_requests_succeeded": 0,
+        "metric_requests_failed": 0,
+        "metric_requests_retried": 0,
+        "metric_requests_throttled": 0,
+        "metric_requests_timed_out": 0,
+        "completeness_pct": 0,
+        "errors": [],
+    }
+
+    session_dir, session_error = await open_sp_session(connection)
+    if session_error:
+        return _empty(scope_kind, scope_id, error=session_error, collection=collection)
+
     try:
-        resources = await _query_resources(predicates, connection)
-    except RuntimeError as exc:
-        return _empty(scope_kind, scope_id, error=str(exc)[:300])
+        try:
+            resources = await _query_resources(predicates, connection, session_dir=session_dir)
+        except RuntimeError as exc:
+            return _empty(scope_kind, scope_id, error=str(exc)[:1000], collection=collection)
 
-    ref_types = load_reference().get("types", {})
-    targets = [r for r in resources if str(r.get("type", "")).lower() in ref_types][:scan_cap]
-    # Managed disks evaluate against their own provisioned IOPS/MB-per-second, so hydrate
-    # those limits for any in-scope disks before gathering metrics.
-    await _hydrate_disk_limits(targets, connection)
+        ref_types = load_reference().get("types", {})
+        eligible = [r for r in resources if str(r.get("type", "")).lower() in ref_types]
+        targets = eligible[:scan_cap]
+        collection.update(
+            {
+                "resources_discovered": len(resources),
+                "resources_eligible": len(eligible),
+                "resources_selected": len(targets),
+                "scan_cap_reached": len(eligible) > len(targets),
+            }
+        )
+        # Managed disks evaluate against their own provisioned IOPS/MB-per-second, so hydrate
+        # those limits for any in-scope disks before gathering metrics.
+        await _hydrate_disk_limits(targets, connection, session_dir=session_dir)
 
-    sem_lock = asyncio.Semaphore(6)
-    metrics_by_resource: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        metrics_by_resource: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        retryable_markers = (
+            "429", "rate limit", "too many requests", "throttl", "500", "502", "503",
+            "504", "timed out", "timeout", "temporarily unavailable", "connection reset",
+            "request error",
+        )
 
-    async def _gather(res: dict[str, Any]) -> None:
-        rtype = str(res.get("type", "")).lower()
-        spec = ref_types.get(rtype) or {}
-        alerts = [a for a in (spec.get("alerts") or []) if a.get("signal", "metric") == "metric" and a.get("metric")]
-        rid = str(res.get("id", "")).lower()
-        out: dict[str, list[dict[str, Any]]] = {}
-        if rtype == DISK_TYPE:
-            # Disks: derive saturation % from the Composite counters + provisioned limits.
-            out = await _disk_saturation_series(
-                res, connection, interval=interval, start=eff_start, end=eff_end,
-                sem_lock=sem_lock, run_metrics_capture=run_metrics_capture,
-            )
-        else:
-            for rec in alerts:
-                metric = rec.get("metric", "")
-                sem = metric_semantics(rtype, metric, rec.get("unit", ""))
-                async with sem_lock:
-                    cap = await run_metrics_capture(
-                        res.get("id", ""), [metric], connection,
-                        aggregation=sem["aggregation"], interval=interval,
+        def _request_error(
+            res: dict[str, Any], metrics: list[str], message: str, *, throttled: bool, timed_out: bool
+        ) -> None:
+            errors = collection["errors"]
+            if len(errors) < 50:
+                errors.append(
+                    {
+                        "resource_id": str(res.get("id", "")),
+                        "resource_name": str(res.get("name", "")),
+                        "metrics": metrics,
+                        "code": "throttled" if throttled else "timeout" if timed_out else "request_failed",
+                        "message": message[:1000],
+                    }
+                )
+
+        async def _capture_metrics(
+            res: dict[str, Any], metrics: list[str], **kwargs: Any
+        ) -> CaptureResult:
+            resource_id = str(kwargs.pop("resource_id", "") or res.get("id", ""))
+            collection["metric_requests_total"] += 1
+            last = CaptureResult(ok=False, error="Metric request failed.")
+            for attempt in range(max_attempts):
+                collection["metric_request_attempts"] += 1
+                if attempt:
+                    collection["metric_requests_retried"] += 1
+                try:
+                    async with metric_slot():
+                        last = await run_metrics_capture(
+                            resource_id, metrics, connection,
+                            session_config_dir=session_dir, **kwargs,
+                        )
+                except Exception as exc:  # noqa: BLE001 - normalize transport failures
+                    last = CaptureResult(ok=False, error=str(exc))
+                if last.ok:
+                    collection["metric_requests_succeeded"] += 1
+                    return last
+                message = (last.error or last.stderr or "Metric request failed.").strip()
+                lowered = message.lower()
+                throttled = any(marker in lowered for marker in ("429", "rate limit", "too many requests", "throttl"))
+                timed_out = "timed out" in lowered or "timeout" in lowered
+                if throttled:
+                    collection["metric_requests_throttled"] += 1
+                if timed_out:
+                    collection["metric_requests_timed_out"] += 1
+                retryable = any(marker in lowered for marker in retryable_markers)
+                if retryable and attempt + 1 < max_attempts:
+                    retry_after = re.search(r"retry[- ]after\D{0,8}(\d+(?:\.\d+)?)", lowered)
+                    delay = float(retry_after.group(1)) if retry_after else min(8.0, 2.0 ** attempt) + random.uniform(0, 0.35)
+                    await asyncio.sleep(delay)
+                    continue
+                collection["metric_requests_failed"] += 1
+                _request_error(res, metrics, message, throttled=throttled, timed_out=timed_out)
+                return last
+            return last
+
+        async def _gather(res: dict[str, Any]) -> None:
+            rtype = str(res.get("type", "")).lower()
+            spec = ref_types.get(rtype) or {}
+            alerts = [a for a in (spec.get("alerts") or []) if a.get("signal", "metric") == "metric" and a.get("metric")]
+            collection["metric_checks_total"] += len(alerts)
+            rid = str(res.get("id", "")).lower()
+            out: dict[str, list[dict[str, Any]]] = {}
+            if rtype == DISK_TYPE:
+                # Disks: derive saturation % from the Composite counters + provisioned limits.
+                out = await _disk_saturation_series(
+                    res, connection, interval=interval, start=eff_start, end=eff_end,
+                    run_metrics_capture=lambda _rid, metrics, _conn, **kw: _capture_metrics(res, metrics, **kw),
+                )
+                for rec in alerts:
+                    key = _series_key(rec)
+                    if key in out:
+                        counter = "metric_checks_succeeded" if out[key] else "metric_checks_no_data"
+                    else:
+                        metric = str(rec.get("metric", ""))
+                        limit_present = (
+                            metric == DISK_IOPS_SAT and bool(_num(res.get("provisioned_iops")))
+                        ) or (
+                            metric == DISK_BW_SAT and bool(_num(res.get("provisioned_mbps")))
+                        )
+                        counter = "metric_checks_failed" if limit_present else "metric_checks_no_data"
+                    collection[counter] += 1
+            else:
+                # Azure accepts several metric names in one request.  Group checks that share
+                # aggregation + dimension filter, then parse each metric back out separately.
+                groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+                for rec in alerts:
+                    semantics = metric_semantics(rtype, rec.get("metric", ""), rec.get("unit", ""))
+                    groups.setdefault(
+                        (
+                            _metric_resource_id(res, rec),
+                            semantics["aggregation"],
+                            str(rec.get("dimension_filter") or ""),
+                            _metric_interval(rec, interval),
+                        ),
+                        [],
+                    ).append(rec)
+                for (metric_resource_id, aggregation, dimension_filter, metric_interval), records in groups.items():
+                    metric_names = list(dict.fromkeys(str(rec.get("metric", "")) for rec in records))
+                    cap = await _capture_metrics(
+                        res, metric_names,
+                        resource_id=metric_resource_id,
+                        aggregation=aggregation, interval=metric_interval,
                         timespan=eff_start or None, end_time=eff_end or None,
-                        dimension_filter=rec.get("dimension_filter") or None,
+                        dimension_filter=dimension_filter or None,
                     )
-                if cap.ok:
-                    out[_series_key(rec)] = _parse_metric_series(cap.stdout, sem["aggregation"])
-        metrics_by_resource[rid] = out
-        if progress is not None:
-            await progress(res.get("name", ""), rtype)
+                    for rec in records:
+                        if not cap.ok:
+                            collection["metric_checks_failed"] += 1
+                            continue
+                        series = _parse_metric_series(
+                            cap.stdout, aggregation, str(rec.get("metric", ""))
+                        )
+                        out[_series_key(rec)] = series
+                        collection[
+                            "metric_checks_succeeded" if series else "metric_checks_no_data"
+                        ] += 1
+            metrics_by_resource[rid] = out
+            collection["resources_completed"] += 1
+            if progress is not None:
+                await progress(res.get("name", ""), rtype)
 
-    await asyncio.gather(*[_gather(r) for r in targets])
+        await asyncio.gather(*[_gather(r) for r in targets])
 
-    snap = compute_profile(targets, metrics_by_resource)
-    snap["all_resources"] = build_all_resources(resources, ref_types)
-    snap.update(
-        {
-            "scope_kind": scope_kind,
-            "scope_id": scope_id,
-            "scope_name": (workload or {}).get("name") if scope_kind == "workload" else scope_id,
-            "connection_configured": connection is not None,
-            "source": "azure_monitor_metrics",
-            "window": window_label,
-            "requested_window": requested_window,
-            "requested_start": start_time,
-            "requested_end": end_time,
-            "interval": interval,
-            "demo": False,
-            "error": "",
-        }
-    )
-    return snap
+        evaluated = collection["metric_checks_succeeded"] + collection["metric_checks_no_data"]
+        total_checks = collection["metric_checks_total"]
+        collection["completeness_pct"] = round(100 * evaluated / total_checks) if total_checks else 100
+        if collection["metric_checks_failed"] and evaluated == 0:
+            status = "failed"
+        elif collection["metric_checks_failed"] or collection["scan_cap_reached"]:
+            status = "partial"
+        else:
+            status = "succeeded"
+        collection["status"] = status
+
+        snap = compute_profile(targets, metrics_by_resource)
+        snap["all_resources"] = build_all_resources(resources, ref_types)
+        warning_parts: list[str] = []
+        if collection["scan_cap_reached"]:
+            warning_parts.append(
+                f"Profiled {len(targets)} of {len(eligible)} eligible resources (scan cap)."
+            )
+        if collection["metric_checks_failed"]:
+            warning_parts.append(
+                f"{collection['metric_checks_failed']} of {total_checks} metric checks failed."
+            )
+        hard_error = ""
+        if status == "failed":
+            first = (collection["errors"] or [{}])[0].get("message", "")
+            hard_error = first or "No metric check completed successfully."
+        snap.update(
+            {
+                "scope_kind": scope_kind,
+                "scope_id": scope_id,
+                "scope_name": (workload or {}).get("name") if scope_kind == "workload" else scope_id,
+                "connection_configured": connection is not None,
+                "source": "azure_monitor_metrics",
+                "window": window_label,
+                "requested_window": requested_window,
+                "requested_start": start_time,
+                "requested_end": end_time,
+                "interval": interval,
+                "demo": False,
+                "status": status,
+                "collection": collection,
+                "warning": " ".join(warning_parts),
+                "error": hard_error,
+            }
+        )
+        return snap
+    finally:
+        close_sp_session(session_dir)
 
 
 def _window_to_start(window: str) -> str:
@@ -596,14 +829,31 @@ def _window_to_start(window: str) -> str:
     return start.replace(microsecond=0).isoformat()
 
 
-def _empty(scope_kind: str, scope_id: str, *, error: str) -> dict[str, Any]:
+def _empty(
+    scope_kind: str,
+    scope_id: str,
+    *,
+    error: str,
+    collection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     snap = compute_profile([], {})
     snap["all_resources"] = []
+    detail = dict(collection or {})
+    detail.update(
+        {
+            "status": "failed",
+            "completeness_pct": 0,
+            "errors": detail.get("errors") or [
+                {"code": "collection_failed", "message": str(error)[:1000]}
+            ],
+        }
+    )
     snap.update(
         {
             "scope_kind": scope_kind, "scope_id": scope_id, "scope_name": scope_id,
             "connection_configured": False, "source": "azure_monitor_metrics", "window": "",
-            "demo": False, "error": error,
+            "demo": False, "status": "failed", "collection": detail,
+            "warning": "", "error": str(error)[:1000],
         }
     )
     return snap

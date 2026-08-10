@@ -81,7 +81,9 @@ async def _get(token: str, path: str, params: dict[str, str]) -> tuple[Any, str 
                 detail = resp.json().get("error", {}).get("message", resp.text)
             except (ValueError, AttributeError):
                 detail = resp.text
-            return None, f"ARM {resp.status_code}: {str(detail)[:300]}"
+            retry_after = _retry_after_seconds(resp)
+            retry_hint = f" Retry-After: {retry_after:g}s." if retry_after is not None else ""
+            return None, f"ARM {resp.status_code}: {str(detail)[:300]}{retry_hint}"
         return resp.json(), None
     except httpx.HTTPError as e:  # noqa: BLE001
         return None, f"ARM request error: {e}"

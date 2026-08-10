@@ -47,7 +47,7 @@ Only one connection is default. Prefer **Disabled** over deletion while assessin
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| A connection resolves the wrong tenant or subscription set | Disable it, verify tenant and client identifiers plus the selected default, then retest before enabling dependent scans. |
 | Test cannot acquire an ARM token | Check tenant/client identifiers, credential validity, authority, clock, and network egress. |
 | No subscriptions are visible | Check Azure RBAC and tenant selection; authentication success alone grants no resource scope. |
 | Entra validation is unavailable | Use a service-principal secret or certificate connection; host-chain and pasted ARM token methods do not provide application Graph authentication here. |

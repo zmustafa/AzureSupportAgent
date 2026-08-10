@@ -2145,9 +2145,31 @@ export type PerfResourceRow = {
   resource_group: string;
   subscription_id: string;
   region: string;
-  score: number;
+  score: number | null;
   state: "healthy" | "approaching" | "breaching" | "no_data";
   cells: PerfMetricCell[];
+};
+
+export type PerfCollection = {
+  status: "running" | "succeeded" | "partial" | "failed";
+  resources_discovered: number;
+  resources_eligible: number;
+  resources_selected: number;
+  resources_completed: number;
+  scan_cap_reached: boolean;
+  metric_checks_total: number;
+  metric_checks_succeeded: number;
+  metric_checks_no_data: number;
+  metric_checks_failed: number;
+  metric_requests_total: number;
+  metric_request_attempts: number;
+  metric_requests_succeeded: number;
+  metric_requests_failed: number;
+  metric_requests_retried: number;
+  metric_requests_throttled: number;
+  metric_requests_timed_out: number;
+  completeness_pct: number;
+  errors: Array<{ resource_id?: string; resource_name?: string; metrics?: string[]; code: string; message: string }>;
 };
 
 export type PerfBottleneck = {
@@ -2175,9 +2197,12 @@ export type PerfProfile = {
   source: string;
   window: string;
   demo: boolean;
+  status?: "succeeded" | "partial" | "failed";
   error: string;
+  warning?: string;
+  collection?: PerfCollection;
   scorecard: {
-    workload_score: number;
+    workload_score: number | null;
     resources_profiled: number;
     breaching: number;
     approaching: number;
@@ -2257,6 +2282,11 @@ export type PerfRunSummary = {
   healthy: number;
   top_bottleneck: { resource_name: string; metric_name: string; pct_of_threshold: number | null; state: string } | null;
   demo: boolean;
+  status?: "succeeded" | "partial" | "failed";
+  warning?: string;
+  error?: string;
+  collection?: PerfCollection;
+  completeness_pct?: number | null;
   triggered_by: string;
   deleted_at?: string;
 };
@@ -2281,6 +2311,11 @@ export type PerfFleetRow = {
   demo: boolean;
   age_seconds: number | null;
   stale: boolean;
+  last_attempt_status: "" | "succeeded" | "partial" | "failed";
+  last_attempt_at: string;
+  last_attempt_error: string;
+  last_attempt_warning: string;
+  last_attempt_collection: Partial<PerfCollection>;
 };
 export type PerfFleet = {
   workloads: PerfFleetRow[];
@@ -2288,6 +2323,44 @@ export type PerfFleet = {
   default_window: string;
   total: number;
   profiled: number;
+};
+
+export type PerfFleetBatchItem = {
+  id: string;
+  batch_id: string;
+  workload_id: string;
+  workload_name: string;
+  connection_id: string;
+  status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
+  run_id: string;
+  resources_completed: number;
+  resources_total: number;
+  collection: Partial<PerfCollection>;
+  error: string;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number | null;
+};
+
+export type PerfFleetBatch = {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
+  window: string;
+  start_time: string;
+  end_time: string;
+  total: number;
+  completed: number;
+  succeeded: number;
+  partial: number;
+  failed: number;
+  cancelled: number;
+  cancel_requested: boolean;
+  error: string;
+  triggered_by: string;
+  created_at: string;
+  started_at: string;
+  ended_at: string;
+  items: PerfFleetBatchItem[];
 };
 
 // ---- Coverage / posture trend (shared by the 4 dashboards) ----------------------
@@ -7616,6 +7689,27 @@ export const api = {
     }),
   // Performance Profiler
   perfFleet: () => http<PerfFleet>("/performance/fleet"),
+  perfFleetLatestBatch: (activeOnly = false) =>
+    http<{ batch: PerfFleetBatch | null }>(`/performance/fleet/batches/latest?active_only=${activeOnly ? "true" : "false"}`),
+  perfFleetBatch: (batchId: string) =>
+    http<{ batch: PerfFleetBatch }>(`/performance/fleet/batches/${encodeURIComponent(batchId)}`),
+  createPerfFleetBatch: (body: {
+    workload_ids: string[];
+    start_time: string;
+    end_time: string;
+    window: string;
+    idempotency_key: string;
+    connection_id?: string;
+  }) => http<{ batch: PerfFleetBatch }>("/performance/fleet/batches", { method: "POST", body: JSON.stringify(body) }),
+  cancelPerfFleetBatch: (batchId: string) =>
+    http<{ batch: PerfFleetBatch }>(`/performance/fleet/batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST", body: "{}" }),
+  deletePerfFleetBatch: (batchId: string) =>
+    http<{ ok: boolean }>(`/performance/fleet/batches/${encodeURIComponent(batchId)}`, { method: "DELETE" }),
+  retryPerfFleetBatch: (batchId: string, idempotencyKey: string) =>
+    http<{ batch: PerfFleetBatch }>(`/performance/fleet/batches/${encodeURIComponent(batchId)}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    }),
   // --- Cleanup tab (cross-scope) — one set per feature prefix ---
   cleanupList: (prefix: string) => http<CleanupData>(`${prefix}/cleanup`),
   cleanupTrash: (prefix: string, ids: string[]) =>
@@ -7932,6 +8026,15 @@ export const api = {
     http<InventoryCost>(
       `/inventory/cost?force=${force ? 1 : 0}&cached_only=${cachedOnly ? 1 : 0}` + (connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
+  startInventoryCostRefresh: (connectionId?: string | null, force = true, scope = "") =>
+    http<{ job: InventoryCostRefreshJob }>("/inventory/cost/refresh", {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connectionId ?? "", force, scope }),
+    }),
+  inventoryCostRefreshStatus: (connectionId?: string | null, scope = "") => {
+    const q = new URLSearchParams({ connection_id: connectionId ?? "", scope });
+    return http<{ job: InventoryCostRefreshJob | null }>(`/inventory/cost/refresh/status?${q.toString()}`);
+  },
   inventoryCostRollup: (connectionId?: string | null, force = false, cachedOnly = false) =>
     http<InventoryCostRollup>(
       `/inventory/cost-rollup?force=${force ? 1 : 0}&cached_only=${cachedOnly ? 1 : 0}` + (connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""),
@@ -8840,6 +8943,53 @@ export interface InventoryCost {
   total: number;
   errors: string[];
   cached: boolean;
+}
+
+export interface InventoryCostRefreshEvent {
+  type: string;
+  at: string;
+  message: string;
+  subscription_id?: string;
+  index?: number;
+  subscriptions_total?: number;
+  subscriptions_done?: number;
+  resource_cost_rows?: number;
+  subscription_total?: number;
+  currency?: string;
+  duration_ms?: number;
+  error?: string;
+  attempt?: number;
+  max_attempts?: number;
+  delay_seconds?: number;
+}
+
+export interface InventoryCostRefreshJob {
+  id: string;
+  connection_id: string;
+  scope: string;
+  force: boolean;
+  status: "queued" | "running" | "succeeded" | "partial" | "failed";
+  message: string;
+  subscriptions_total: number;
+  subscriptions_visible: number;
+  subscriptions_omitted: number;
+  subscriptions_done: number;
+  subscriptions_succeeded: number;
+  subscriptions_failed: number;
+  active_subscriptions: Array<{
+    subscription_id: string;
+    index?: number;
+    started_at: string;
+    attempt?: number;
+    retry_delay_seconds?: number;
+  }>;
+  recent_events: InventoryCostRefreshEvent[];
+  result: InventoryCost | null;
+  error: string;
+  created_at: string;
+  started_at: string;
+  ended_at: string;
+  elapsed_ms: number;
 }
 
 export interface InventoryCostBucket {
@@ -9792,6 +9942,7 @@ export async function streamPerfRefresh(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let terminal = false;
   while (true) {
     let value: Uint8Array | undefined;
     let done = false;
@@ -9799,7 +9950,8 @@ export async function streamPerfRefresh(
       ({ value, done } = await reader.read());
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return;
-      throw err;
+      handlers.onError?.(err instanceof Error ? err.message : String(err));
+      return;
     }
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -9821,9 +9973,12 @@ export async function streamPerfRefresh(
       }
       if (event === "start") handlers.onStart?.(parsed as never);
       else if (event === "progress") handlers.onProgress?.(parsed as never);
-      else if (event === "done") handlers.onDone?.(parsed as unknown as PerfProfile);
-      else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Profiling failed.");
+      else if (event === "done") { terminal = true; handlers.onDone?.(parsed as unknown as PerfProfile); }
+      else if (event === "error") { terminal = true; handlers.onError?.((parsed.message as string) ?? "Profiling failed."); }
     }
+  }
+  if (!terminal && !signal?.aborted) {
+    handlers.onError?.("Performance profile stream disconnected before completion.");
   }
 }
 
@@ -12626,6 +12781,12 @@ export interface AppSettings {
   arg_rate_limit_enabled?: boolean;
   arg_max_queries_per_window?: number;
   arg_rate_window_seconds?: number;
+  // Performance Profiler durable-fleet and process-wide Azure Monitor safety controls.
+  perfprofile_fleet_concurrency?: number;
+  perfprofile_fleet_start_delay_ms?: number;
+  perfprofile_metric_concurrency?: number;
+  perfprofile_metric_max_attempts?: number;
+  perfprofile_workload_timeout_s?: number;
 }
 
 export interface ChatgptStatus {

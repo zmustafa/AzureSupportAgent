@@ -44,7 +44,7 @@ Only public HTTPS endpoints are accepted; private/internal destinations are bloc
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Receiver executes an unintended action from **Send test** | Disable the connector, inspect the receiver's idempotency and test-route controls, reverse the downstream action, and rotate any exposed secret. |
 | Test succeeds but no request arrives | Test checks only URL presence; inspect DNS, firewall, certificate, and receiver logs. |
 | URL rejected | use HTTPS and a publicly resolvable non-private destination. |
 | Authentication fails | verify header formatting and rotate/re-enter the credential. |

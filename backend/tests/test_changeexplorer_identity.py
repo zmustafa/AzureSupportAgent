@@ -12,13 +12,13 @@ from app.changeexplorer import identity, insights as insights_mod
 
 # --------------------------------------------------------------------------- classify_actor
 def test_classify_user_by_upn():
-    kind, platform = identity.classify_actor("P-Zeeshan.Mustafa@contoso.com", {"idtyp": "user"})
+    kind, platform = identity.classify_actor("P-Alex.Morgan@contoso.com", {"idtyp": "user"})
     assert kind == "User"
     assert platform is False
 
 
 def test_classify_user_by_idtyp_without_at():
-    kind, _ = identity.classify_actor("Zeeshan Mustafa", {"idtyp": "user"})
+    kind, _ = identity.classify_actor("Alex Morgan", {"idtyp": "user"})
     assert kind == "User"
 
 
@@ -57,7 +57,7 @@ def test_classify_platform_known_appid():
 
 def test_is_guid():
     assert identity.is_guid("e1dd8f92-9741-4a3c-83de-edcc6dc0977a")
-    assert not identity.is_guid("P-Zeeshan.Mustafa@contoso.com")
+    assert not identity.is_guid("P-Alex.Morgan@contoso.com")
     assert not identity.is_guid("")
 
 

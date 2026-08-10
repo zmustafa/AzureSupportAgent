@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 10
 description: Read the Conditional Access coverage matrix, identify who is uncovered, check conflicts and exclusions, model the change offline, and confirm the result after the change is made in Entra.
 permalink: /how-to/governance-identity/close-ca-coverage-gaps/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access]
+feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:coverage, ENTRA_CA_NAV:exposure, ENTRA_CA_NAV:policies, ENTRA_CA_NAV:conflicts, ENTRA_CA_NAV:breakglass, ENTRA_CA_NAV:simulate]
 ---
 
 # Close a Conditional Access coverage gap
@@ -21,7 +21,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access]
 
 ## Route
 
-`/entra/conditional-access`, with the **Coverage**, **Policies**, **Conflicts**, **Break-glass** and **Simulate** sub-tabs.
+`/entra/conditional-access`, with URL-backed **Coverage**, **Exposure**, **Policies**, **Conflicts**, **Break-glass** and **Simulate** sub-tabs at `/entra/conditional-access/:sub`.
 
 ## How to find the weakest cell and name who is exposed
 
@@ -36,6 +36,18 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access]
 **Expected result:** One cohort, one application class and one control identified as the gap, with named examples of who is exposed.
 
 **Verification:** Open the policies named in the drawer on the **Policies** sub-tab and confirm their state and scope in the Microsoft Entra admin center before you plan a change.
+
+## How to prioritize application-class exposure
+
+1. Open `/entra/conditional-access/exposure` after confirming the snapshot age.
+2. Start with the first application class: rows rank the worst open severity first and use uncovered-control proportion only as a tie-break.
+3. Expand the row and read each finding's exposure, blast radius, and reviewed first step.
+4. Export the exposure rows to CSV when a review artifact is required; retain the snapshot time with it.
+5. Return to `/entra/conditional-access/coverage` and verify the corresponding cohort, application class, and control cells before proposing a change.
+
+**Expected result:** A severity-ordered application class and its specific exposed controls are selected for review.
+
+**Verification:** The expanded finding and Coverage cell identify the same application class and gap; verify the involved policies in Entra before acting.
 
 ## How to check conflicts, exclusions and break-glass exposure
 

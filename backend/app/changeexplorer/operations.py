@@ -2,7 +2,7 @@
 
 - ``group_operations`` (A1): collapse many changes that share a ``correlationId`` (or, lacking
   one, the same actor within a short time burst) into a single *operation* — e.g. "1 deployment by
-  Zeeshan → 12 resources". Turns a flat 1,500-row list into a handful of meaningful actions.
+    Example Operator → 12 resources". Turns a flat 1,500-row list into a handful of meaningful actions.
 - ``build_narrative`` (A2): an ordered, plain-English story of the window built from those
   operations, so a reviewer reads a sequence of events rather than a table.
 """

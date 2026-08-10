@@ -22,8 +22,13 @@ Postgres, or Redis containers are required.
   on an Azure Files volume to persist across revisions. Postgres is still supported by
   pointing `DATABASE_URL` at it.
 - **Redis**: not on the request path; omit it.
-- **MCP servers**: spawned in-process over stdio (`npx @azure/mcp`, EntraID FastMCP) — the
-  image already includes Node 20 + Azure CLI.
+- **MCP servers**: spawned in-process over stdio. The production image runs its pinned,
+  build-time Azure MCP installation through `azmcp`; the EntraID FastMCP server uses its
+  isolated image venv. The image includes Node 22 and Azure CLI.
+- **Azure Resource Graph extension**: production bakes `resource-graph` into
+  `/opt/az-extensions` and sets `AZURE_EXTENSION_DIR` to that stable path. Temporary
+  service-principal CLI sessions therefore do not download an extension into each throwaway
+  `AZURE_CONFIG_DIR`.
 - **Dependencies**: pinned in the backend requirements file
   (frozen from a working environment, Windows-only packages removed) and installed before
   `pip install --no-deps .` so every runtime import resolves.
@@ -47,6 +52,15 @@ API routes from colliding with the SPA's client-side routes (`/inventory`, `/adm
 The MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Write-capable tools are
 classified, approval-gated, and audited.
 
+### Local Azure CLI extensions
+
+Temporary service-principal sign-ins use an isolated `AZURE_CONFIG_DIR`. The command runner
+preserves an explicitly configured `AZURE_EXTENSION_DIR`; when it is unset and the user's
+`~/.azure/cliextensions` directory exists, the runner points the temporary session at that
+shared directory. Install `resource-graph` once in the normal local Azure CLI profile before
+running Resource Graph-backed features. If neither a configured nor shared directory exists,
+Azure CLI dynamic installation remains a fallback and can recur for later temporary sessions.
+
 ## Key env vars (production)
 
 | Variable | Purpose |
@@ -55,6 +69,7 @@ classified, approval-gated, and audited.
 | `DATABASE_URL` | `sqlite+aiosqlite:///./.data/app.db` (Azure Files) or a Postgres URL (`?ssl=require` for Azure PostgreSQL) |
 | `COOKIE_SECURE` | `true` (HTTPS ingress) |
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Service-principal identity for MCP (or use a managed identity) — there is no `~/.azure` mount in ACA |
+| `AZURE_EXTENSION_DIR` | Stable Azure CLI extension location. The production image and Bicep deployment use `/opt/az-extensions`, which already contains `resource-graph`. |
 | `LLM_API_KEY` (or configure in Settings) | LLM provider key |
 
 ## Deploy from scratch (PowerShell)
@@ -101,7 +116,8 @@ az containerapp update -n $APP -g $RG `
 
 - **Cheapest** posture: Basic ACR + Consumption Container App, `min-replicas 0`
   (scale-to-zero → no compute charge when idle), `0.5 vCPU / 1 GiB`. The first request
-  after idle pays a cold-start (plus a one-time `npx @azure/mcp` fetch).
+  after idle pays a cold-start, but the Azure MCP package and Resource Graph extension are
+  already present in the image and are not fetched at runtime.
 - **Single replica only** while using SQLite or in-container state (it's stateful). Set
   `--min-replicas 1` to avoid cold starts (costs more).
 
@@ -116,6 +132,10 @@ az containerapp update -n $APP -g $RG `
   `acr build` → `containerapp create` flow above instead.
 - The Dockerfile **copies `backend/` before `pip install`** because
   `setuptools packages=["app"]` validates the package dir at build time.
+- **`az graph` is reported as missing in a service-principal session**: verify the revision
+  was built from the root Dockerfile and retains `AZURE_EXTENSION_DIR=/opt/az-extensions`.
+  Do not work around it with repeated dynamic installs inside temporary config directories;
+  rebuild the image so the baked `resource-graph` extension is present.
 - The container imports the whole API at startup, so a **missing dependency crashes
   uvicorn immediately** — keep `backend/requirements.txt` complete.
 

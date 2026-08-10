@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.azure_connections import resolve_connection
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.inventory import ai, cache, cost, service, snapshots
+from app.inventory import ai, cache, cost, cost_jobs, service, snapshots
 from app.inventory import optimization as optimization_mod
 from app.models import AssessmentRun
 from app.policy import collector as policy_collector
@@ -326,6 +326,61 @@ async def post_findings(req: FindingsReq, principal: Principal = Depends(require
 
 
 # ============================================================ cost / FinOps (Theme 4)
+class CostRefreshRequest(BaseModel):
+    connection_id: str = ""
+    scope: str = ""
+    force: bool = True
+
+
+@router.post("/cost/refresh", status_code=202)
+async def start_cost_refresh(
+    req: CostRefreshRequest,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Start (or reattach to) a detached Cost Management refresh.
+
+    The returned job is server-owned: it keeps running when the initiating browser request
+    ends or the user navigates away. The Cost tab polls `/cost/refresh/status` for detailed
+    per-subscription progress and receives the normal InventoryCost payload at completion.
+    """
+    conn = _conn(req.connection_id or None)
+    subscriptions = await _scope_subscriptions(conn, req.scope)
+    job = cost_jobs.manager.start(
+        tenant_id=principal.tenant_id,
+        connection_id=req.connection_id,
+        scope=req.scope,
+        force=req.force,
+        connection=conn,
+        subscriptions=subscriptions,
+    )
+    return {"job": job}
+
+
+@router.get("/cost/refresh/status")
+async def cost_refresh_status(
+    connection_id: str = "",
+    scope: str = "",
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Newest progress snapshot for this tenant + connection + scope, if retained."""
+    return {
+        "job": cost_jobs.manager.latest(
+            principal.tenant_id, connection_id, scope
+        )
+    }
+
+
+@router.get("/cost/refresh/{job_id}")
+async def get_cost_refresh_job(
+    job_id: str,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    job = cost_jobs.manager.get(job_id, principal.tenant_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Cost refresh job not found.")
+    return {"job": job}
+
+
 @router.get("/cost")
 async def get_cost(connection_id: str | None = None, force: int = 0, cached_only: int = 0, scope: str = "", principal: Principal = Depends(require_admin)):
     """Best-effort trailing-30-days Azure cost per resource (Cost Management). Returns an empty,

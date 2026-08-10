@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from app.core.app_settings import load_settings
@@ -213,6 +214,15 @@ def _run_env(conn: dict[str, Any] | None, config_dir: str | None) -> dict[str, s
             env["AZURE_SUBSCRIPTION_ID"] = conn["default_subscription"]
     if config_dir:
         env["AZURE_CONFIG_DIR"] = config_dir
+        # A throwaway AZURE_CONFIG_DIR otherwise gets its own empty `cliextensions` folder.
+        # That makes every service-principal profile dynamically download resource-graph and
+        # occasionally exposes `az graph is misspelled` while extension discovery/install races.
+        # Production already pins AZURE_EXTENSION_DIR to the image-baked extension.  Local
+        # development should similarly reuse the user's stable extension directory.
+        if not env.get("AZURE_EXTENSION_DIR"):
+            shared_extensions = Path.home() / ".azure" / "cliextensions"
+            if shared_extensions.is_dir():
+                env["AZURE_EXTENSION_DIR"] = str(shared_extensions)
     # Make az emit plain, non-paged output.
     env["AZURE_CORE_NO_COLOR"] = "true"
     env["AZURE_CORE_ONLY_SHOW_ERRORS"] = "false"

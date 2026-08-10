@@ -37,8 +37,8 @@ def _audit_row() -> dict:
         "result": "success",
         "initiatedBy": {"user": {"id": ACTOR}},
         "targetResources": [{
-            "id": ACTOR, "type": "User", "displayName": "P-Zeeshan",
-            "userPrincipalName": "p-zeeshan@example.com",
+            "id": ACTOR, "type": "User", "displayName": "P-Alex",
+            "userPrincipalName": "p-alex@example.com",
         }],
     }
 
@@ -65,7 +65,7 @@ def _sess(*, sid, start, end="", justification="", detail_known=True, source="en
 def test_the_audit_target_is_the_account_whose_privilege_was_raised():
     who = _audit_principal(_audit_row())
     assert who["id"] == ACTOR
-    assert who["upn"] == "p-zeeshan@example.com"
+    assert who["upn"] == "p-alex@example.com"
 
 
 def test_a_row_with_no_usable_target_returns_nothing_rather_than_guessing():

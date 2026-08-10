@@ -21,6 +21,10 @@ Disabling an account does not revoke a single role assignment. Azure keeps every
 - A completed access collection **including the directory layer**. Account state is read there; without it the screen reports *Not measured* rather than an empty list.
 - A connection that can read Microsoft Graph directory data. No additional consent beyond what principal-name resolution already requires.
 
+## Route
+
+Open `/iam/leavers` and select **Disabled Access**.
+
 ## Read the headline before the list
 
 The first two lines are the whole report:
@@ -89,7 +93,7 @@ The filter is greyed out unless a "never used" answer is actually available, and
 
 The practical effect is that this filter usually returns **fewer** people than you might expect, and sometimes none at all. That is the intended behaviour: the screen would rather tell you it cannot answer than hand you a list that looks like a decision.
 
-## Export the list
+## How to export the disabled-access list
 
 Three downloads, all carrying the filters currently applied on screen:
 
@@ -102,6 +106,10 @@ Three downloads, all carrying the filters currently applied on screen:
 The workbook's sheets are **Summary**, **Identities**, **Grants**, **Via groups**, **Owns credentials**, **Resources** and **Not measured**. *Resources* is one row per person-and-scope with the ARM structure intact — the sheet you filter and pivot when somebody holds access on forty resource groups. The last one is always written, even when nothing was withheld. A spreadsheet outlives the screen it came from — it gets forwarded, filtered and pasted into a ticket long after every caveat the UI rendered is gone — so the denominator, the collection date and the limits of the data travel inside the file rather than beside it.
 
 The same lens is available on the main **Access** grid and its export as `disabled_only`, if you want the grants alongside everything else.
+
+**Expected result:** The selected CSV or workbook contains the current filters, identity and grant evidence, collection time, and not-measured denominator.
+
+**Verification:** Match the exported identity and grant counts to the on-screen filtered totals and confirm the **Not measured** sheet or denominator is present.
 
 ## Findings raised
 
@@ -116,7 +124,7 @@ The same lens is available on the main **Access** grid and its export as `disabl
 
 Every one of them reports **not measured** rather than a clean pass when account state was never collected. *No disabled account holds access* is the most reassuring sentence this feature can produce, and it is never produced by failing to ask.
 
-## Start a review
+## How to start a review
 
 **Start a review** creates a certification campaign over the current selection, using the existing Reviews workflow rather than a second one here. The selector is evaluated server-side and re-checked when the campaign is refreshed, so a campaign started today does not freeze a list that has since been fixed.
 
@@ -128,7 +136,11 @@ A selection only counts while the rows are still on screen. Narrow the filter af
 
 One decision per *access*, not per group that grants it: a principal who reaches the same role at the same scope through two groups is one item, and the folded paths are kept on the item so the remediation does not miss one.
 
-## Preview the revocation script
+**Expected result:** A certification campaign contains exactly the identities and access paths represented by the current filters and selection.
+
+**Verification:** Open the campaign scope note and compare its identity count, filter, and folded access paths with the source screen.
+
+## How to preview the revocation and rollback scripts
 
 **Preview script** renders the ordered revocation for the current selection without creating a campaign first — useful when you want to see the size and shape of the change before committing anybody to a review.
 
@@ -226,10 +238,10 @@ Insufficient privileges to complete the operation.
 What works is Microsoft Graph PowerShell. The sign-in is emitted **once**, at the top of the script, rather than repeated on every affected step — on a real tenant there were twelve of them, and a six-line connect block twelve times buries the single line that differs between them. Two ways in:
 
 ```powershell
-# Option A — interactive, as yourself (delegated):
+#Option A — interactive, as yourself (delegated):
 Connect-MgGraph -Scopes 'RoleManagement.ReadWrite.Directory','GroupMember.ReadWrite.All'
 
-# Option B — unattended, as a service principal (app-only):
+#Option B — unattended, as a service principal (app-only):
 $secure = ConvertTo-SecureString $env:GRAPH_CLIENT_SECRET -AsPlainText -Force
 $cred   = [System.Management.Automation.PSCredential]::new('<app-id>', $secure)
 Connect-MgGraph -TenantId '<tenant-id>' -ClientSecretCredential $cred
@@ -252,4 +264,30 @@ Both properties are only returned by Graph when asked for **by name**, which is 
 - It does not tell you *when* an account was disabled, or which accounts are still inside the residual-token window.
 - Last sign-in dates come from the separate Entra identity scan, and "last used" from the separate Activity Log usage sweep. If either has not run, the column is blank rather than zero, and the report says so.
 - It will not tell you that somebody never used their access unless the usage data can actually support that claim. See [*"Last used" and the "Never used the access" filter*](#last-used-and-the-never-used-the-access-filter) above.
+
+**Expected result:** Script preview produces separate removal and rollback blocks, with manual-only comments for access that the selected tool cannot safely revoke.
+
+**Verification:** Confirm every selected access path maps to the correct control plane, every ARM step names its subscription, group access removes membership rather than the group's assignment, and the rollback is captured before execution outside the product.
+
+## Safety and rollback
+
+This feature reads and exports access evidence; it does not execute the generated script. Treat exports as sensitive identity and authorization data. Review every command, preserve the separate rollback block in the approved change record, and run removal only through the organization's change process. Group membership removal can revoke more than one role, while deleting a group assignment can affect every member; never substitute one operation for the other.
+
+## Troubleshooting
+
+| Symptom | Cause and resolution |
+| --- | --- |
+| Disabled identities list is empty but the denominator says principals were not checked | Directory state was not collected. Refresh the directory layer and verify Microsoft Graph read access before concluding there is no residual access. |
+| **Never used the access** is disabled | The Activity Log usage sweep is absent, truncated, or does not cover a period when the account could sign in. Run a shorter complete sweep and re-evaluate. |
+| Group-member removal returns an on-premises sync error | The group is mastered in Active Directory. Remove the member at the source directory and allow Entra Connect to synchronize. |
+| Group-member removal returns `403 Authorization_RequestDenied` | Role-assignable groups need `RoleManagement.ReadWrite.Directory`; use the reviewed Microsoft Graph PowerShell path with approved delegated or application permissions. |
+| A nested-group removal returns a missing-reference error | The principal is not a direct member of the assignment-holding group. Use the resolved child group, or stop when membership is ambiguous or unknown. |
+| Export counts differ from the review campaign | Filters or selected rows changed. Re-open the campaign scope note and recreate it from the intended stable selection. |
+
+## Related docs
+
+- [IAM reference]({{ site.baseurl }}/user-guide/governance-identity/iam/)
+- [IAM access reviews]({{ site.baseurl }}/how-to/governance-identity/iam-access-reviews/)
+- [Review privileged activity]({{ site.baseurl }}/how-to/governance-identity/review-privileged-activity/)
+- [Auditing]({{ site.baseurl }}/security/auditing/)
 

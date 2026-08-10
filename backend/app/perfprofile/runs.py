@@ -40,6 +40,14 @@ def _key(scope_kind: str, scope_id: str) -> str:
     return f"{scope_kind}:{scope_id}"
 
 
+def _status(run: dict[str, Any]) -> str:
+    """Normalize old runs (which predate explicit statuses) and current attempts."""
+    explicit = str(run.get("status") or "").lower()
+    if explicit in {"succeeded", "partial", "failed"}:
+        return explicit
+    return "failed" if run.get("error") else "succeeded"
+
+
 def _summary(run: dict[str, Any]) -> dict[str, Any]:
     sc = run.get("scorecard", {}) or {}
     top = run.get("top_bottleneck") or {}
@@ -69,17 +77,31 @@ def _summary(run: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "demo": run.get("demo", False),
+        "status": _status(run),
+        "warning": run.get("warning", ""),
+        "error": run.get("error", ""),
+        "collection": run.get("collection") or {},
+        "completeness_pct": (run.get("collection") or {}).get("completeness_pct"),
         "triggered_by": run.get("triggered_by", ""),
         "deleted_at": run.get("deleted_at", ""),
     }
 
 
-def save_run(tenant_id: str, scope_kind: str, scope_id: str, snapshot: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
+def save_run(
+    tenant_id: str,
+    scope_kind: str,
+    scope_id: str,
+    snapshot: dict[str, Any],
+    *,
+    actor: str = "",
+    record_trend: bool | None = None,
+) -> dict[str, Any]:
     """Persist a snapshot as a new run; returns the stored run (with id + run_at)."""
     data = _read()
     bucket = data.setdefault(tenant_id or "default", {})
     runs = bucket.setdefault(_key(scope_kind, scope_id), [])
     run = dict(snapshot)
+    run["status"] = _status(run)
     run["id"] = uuid.uuid4().hex[:16]
     run["run_at"] = _now()
     run["triggered_by"] = actor
@@ -91,19 +113,22 @@ def save_run(tenant_id: str, scope_kind: str, scope_id: str, snapshot: dict[str,
         for i in sorted(active_positions[_MAX_PER_SCOPE:], reverse=True):
             del runs[i]
     _write(data)
-    # Record a compact trend point (performance score over time) for the trend chart.
-    try:
-        from app.core import coverage_trends
+    # Only complete, successful observations belong in the score trend.  A partial scan is
+    # retained for diagnosis/history but must never move the estate's trend line.
+    should_record = run["status"] == "succeeded" if record_trend is None else record_trend
+    if should_record:
+        try:
+            from app.core import coverage_trends
 
-        sc = snapshot.get("scorecard", {}) or {}
-        coverage_trends.record(
-            "performance", tenant_id or "default", scope_kind, scope_id,
-            pct=sc.get("workload_score"),
-            extra={k: sc.get(k) for k in ("breaching", "approaching", "healthy", "resources_profiled")},
-            demo=bool(snapshot.get("demo")),
-        )
-    except Exception:  # noqa: BLE001 - trend recording must never break a profile save
-        pass
+            sc = snapshot.get("scorecard", {}) or {}
+            coverage_trends.record(
+                "performance", tenant_id or "default", scope_kind, scope_id,
+                pct=sc.get("workload_score"),
+                extra={k: sc.get(k) for k in ("breaching", "approaching", "healthy", "resources_profiled")},
+                demo=bool(snapshot.get("demo")),
+            )
+        except Exception:  # noqa: BLE001 - trend recording must never break a profile save
+            pass
     return run
 
 
@@ -145,6 +170,30 @@ def latest_run(tenant_id: str, scope_kind: str, scope_id: str) -> dict[str, Any]
     return None
 
 
+def latest_successful_run(
+    tenant_id: str, scope_kind: str, scope_id: str
+) -> dict[str, Any] | None:
+    """Newest complete success; failed/partial attempts never displace the trusted result."""
+    bucket = _read().get(tenant_id or "default", {})
+    for run in bucket.get(_key(scope_kind, scope_id), []):
+        if not run.get("deleted_at") and _status(run) == "succeeded":
+            return run
+    return None
+
+
+def find_run_by_trigger(
+    tenant_id: str, scope_kind: str, scope_id: str, trigger: str
+) -> dict[str, Any] | None:
+    """Find an attempt by durable-worker idempotency trigger."""
+    if not trigger:
+        return None
+    bucket = _read().get(tenant_id or "default", {})
+    for run in bucket.get(_key(scope_kind, scope_id), []):
+        if run.get("trigger") == trigger:
+            return run
+    return None
+
+
 def latest_runs_for_scopes(
     tenant_id: str, scopes: list[tuple[str, str]]
 ) -> dict[str, dict[str, Any]]:
@@ -158,8 +207,23 @@ def latest_runs_for_scopes(
     for scope_kind, scope_id in scopes:
         k = _key(scope_kind, scope_id)
         for r in bucket.get(k, []):  # newest-first; first active wins
-            if not r.get("deleted_at"):
+            if not r.get("deleted_at") and _status(r) == "succeeded":
                 out[k] = _summary(r)
+                break
+    return out
+
+
+def latest_attempts_for_scopes(
+    tenant_id: str, scopes: list[tuple[str, str]]
+) -> dict[str, dict[str, Any]]:
+    """Newest attempt of any status per scope, used for Fleet status/error overlays."""
+    bucket = _read().get(tenant_id or "default", {})
+    out: dict[str, dict[str, Any]] = {}
+    for scope_kind, scope_id in scopes:
+        k = _key(scope_kind, scope_id)
+        for run in bucket.get(k, []):
+            if not run.get("deleted_at"):
+                out[k] = _summary(run)
                 break
     return out
 

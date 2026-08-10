@@ -14,7 +14,7 @@ permalink: /how-to/core-workloads/dashboard-chat/
 
 ## Prerequisites
 
-- `chat.use`, an active AI provider/model, and a readable Azure connection for live evidence.
+- An authenticated session with a non-empty effective application role, an active AI provider/model, and a readable Azure connection for live evidence. Built-in chat roles include `chat.use`; current chat endpoints are authenticated and user-owned rather than guarded by that feature-specific dependency.
 - A workload is strongly recommended for scope control.
 - Graph or Log Analytics access is required only when the investigation needs those sources.
 - A configured Jira, ServiceNow, or XSOAR connector is required for the corresponding ticket handoff.

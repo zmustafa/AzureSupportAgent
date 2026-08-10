@@ -39,6 +39,7 @@ The supported command sequence, production variables, and platform notes are mai
 - Protect database credentials and the application's secrets-encryption key.
 - Use one replica when depending on SQLite or in-memory coordination. A shared database alone does not make every in-memory workflow horizontally scalable.
 - Keep Azure MCP read-only unless a reviewed workflow requires writes; product write paths remain permission- and approval-gated.
+- Keep the root image's `AZURE_EXTENSION_DIR=/opt/az-extensions` setting. The image bakes the `resource-graph` Azure CLI extension there so temporary service-principal sessions do not install it dynamically.
 - Restrict ingress and outbound traffic deliberately if private networking is required.
 
 ## Validate the result
@@ -59,7 +60,8 @@ The supported command sequence, production variables, and platform notes are mai
 | Data disappears after a revision | Azure Files mount or PostgreSQL connection; SQLite must not live only in the image filesystem |
 | Deep links return 404 | Requests must reach FastAPI's SPA fallback, not a static host without rewrite rules |
 | Azure tools cannot authenticate | Managed-identity assignment or service-principal variables and RBAC scope |
-| First request is slow | Scale-to-zero cold start and initial MCP process/package startup |
+| `az graph` is missing intermittently | Confirm the current image contains `/opt/az-extensions` and the revision sets `AZURE_EXTENSION_DIR` to it; rebuild rather than dynamically installing into each temporary CLI profile |
+| First request is slow | Scale-to-zero cold start and initial MCP process startup; production packages are already image-baked |
 
 ## Related pages
 

@@ -73,7 +73,7 @@ Avoid namespace-wide manage keys where a Send-only policy suffices. Disable the 
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Message or object lands in the wrong queue, topic, bucket, or prefix | Disable the connector, verify the destination identifier and credential scope, then remove only the controlled test artifact under its retention policy. |
 | A successful Test proves only field presence | Check namespace FQDN, queue name, policy scope, key, firewall/private networking, and consumer dead-letter behavior. |
 | [Connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) | Review connector configuration and retry. |
 

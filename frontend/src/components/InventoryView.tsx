@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   api,
   type InventoryCost,
+  type InventoryCostRefreshJob,
   type InventoryFilter,
   type InventoryResource,
   type InventoryResponse,
@@ -335,16 +336,45 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
     staleTime: Infinity,
   });
   const cost = costQ.data;
-  const [costLoading, setCostLoading] = useState(false);
-  async function loadCost(force: boolean) {
-    setCostLoading(true);
-    try {
-      const data = await api.inventoryCost(connectionId || null, force, false);
-      qc.setQueryData(["inventoryCost", connectionId], data);
-    } finally {
-      setCostLoading(false);
+  const costRefreshKey = ["inventoryCostRefresh", connectionId] as const;
+  const costRefreshQ = useQuery({
+    queryKey: costRefreshKey,
+    queryFn: () => api.inventoryCostRefreshStatus(connectionId || null),
+    retry: false,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const status = query.state.data?.job?.status;
+      return status === "queued" || status === "running" ? 1000 : false;
+    },
+  });
+  const costJob = costRefreshQ.data?.job ?? null;
+  const costRefreshMutation = useMutation({
+    mutationKey: ["inventory-cost-refresh-start", connectionId],
+    mutationFn: async ({ force }: { force: boolean }) => {
+      const response = await api.startInventoryCostRefresh(connectionId || null, force);
+      // Cache the server-owned job inside the mutationFn so the handoff lands even if this
+      // component unmounts immediately after the click.
+      qc.setQueryData(costRefreshKey, response);
+      return response;
+    },
+  });
+  const costStarting = useIsMutating({ mutationKey: ["inventory-cost-refresh-start", connectionId] }) > 0;
+  const costLoading = costStarting || costJob?.status === "queued" || costJob?.status === "running";
+
+  // A completed job carries the normal InventoryCost payload. Applying it to the shared query
+  // cache here means returning from another route immediately renders the finished result.
+  useEffect(() => {
+    if (costJob?.result && ["succeeded", "partial"].includes(costJob.status)) {
+      qc.setQueryData(["inventoryCost", connectionId], costJob.result);
     }
+  }, [connectionId, costJob?.id, costJob?.result, costJob?.status, qc]);
+
+  function loadCost(force: boolean) {
+    if (costLoading) return;
+    costRefreshMutation.mutate({ force });
   }
+
+  const costRefreshError = costRefreshMutation.error || costRefreshQ.error;
 
   const subName = useMemo(() => {
     const m: Record<string, string> = {};
@@ -716,6 +746,8 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
             onClearFilters={clearAll}
             onLoadCost={loadCost}
             loading={costLoading}
+            refreshJob={costJob}
+            refreshError={costRefreshError ? formatError(costRefreshError) : ""}
             invFetchedAt={inv.fetched_at}
           />
         ) : view === "changes" ? (
@@ -2173,7 +2205,106 @@ function OptimizationMode({ connectionId, onLoadCost, costLoading }: {
   );
 }
 
-function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilters, onLoadCost, loading, invFetchedAt }: {
+function shortDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function CostRefreshProgress({ job, subName, error }: {
+  job: InventoryCostRefreshJob | null;
+  subName: Record<string, string>;
+  error: string;
+}) {
+  if (!job && !error) return null;
+  if (!job) {
+    return <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">Cost refresh could not start: {error}</div>;
+  }
+  const active = job.status === "queued" || job.status === "running";
+  const pct = job.subscriptions_total
+    ? Math.min(100, Math.round((job.subscriptions_done / job.subscriptions_total) * 100))
+    : 0;
+  const tone = job.status === "failed"
+    ? "border-red-200 bg-red-50 text-red-800"
+    : job.status === "partial"
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : job.status === "succeeded"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+        : "border-blue-200 bg-blue-50 text-blue-800";
+  const recent = [...job.recent_events]
+    .filter((event) => ["subscription_done", "subscription_error", "subscription_retry"].includes(event.type))
+    .slice(-6)
+    .reverse();
+  const subscriptionLabel = (id?: string) => id ? (subName[id] || `${id.slice(0, 8)}…`) : "Subscription";
+
+  return (
+    <div data-testid="inventory-cost-progress" className={`rounded-xl border px-4 py-3 shadow-sm ${tone}`}>
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${active ? "animate-pulse bg-blue-500" : job.status === "succeeded" ? "bg-emerald-500" : job.status === "partial" ? "bg-amber-500" : "bg-red-500"}`} />
+            <span className="text-sm font-semibold">Cost refresh {job.status}</span>
+            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium">{shortDuration(job.elapsed_ms)}</span>
+          </div>
+          <p className="mt-1 text-[12px] opacity-90">{job.message}</p>
+          {active && (
+            <p className="mt-1 text-[11px] font-medium opacity-75">
+              Safe to navigate away — this refresh is owned by the server and continues in the background.
+            </p>
+          )}
+        </div>
+        <div className="text-right text-[11px] tabular-nums">
+          <div className="text-sm font-semibold">{job.subscriptions_done}/{job.subscriptions_total || "—"}</div>
+          <div className="opacity-75">subscriptions complete</div>
+        </div>
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/70">
+        <div className={`h-full rounded-full transition-all duration-500 ${active ? "bg-blue-500" : job.status === "failed" ? "bg-red-500" : job.status === "partial" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] opacity-80">
+        <span>{pct}% complete</span>
+        <span>{job.subscriptions_succeeded} succeeded</span>
+        <span>{job.subscriptions_failed} failed</span>
+        {job.subscriptions_omitted > 0 && <span>{job.subscriptions_omitted} omitted by the 25-subscription safety cap</span>}
+      </div>
+
+      {job.active_subscriptions.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wide opacity-60">Currently querying</div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {job.active_subscriptions.map((subscription) => (
+              <span key={subscription.subscription_id} className="rounded-md border border-current/20 bg-white/70 px-2 py-1 text-[11px]">
+                ↻ {subscriptionLabel(subscription.subscription_id)}
+                {subscription.attempt && subscription.attempt > 1 ? ` · attempt ${subscription.attempt}` : ""}
+                {subscription.retry_delay_seconds ? ` · retrying in ${subscription.retry_delay_seconds}s` : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {recent.length > 0 && (
+        <div className="mt-3 border-t border-current/10 pt-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide opacity-60">Recent subscription updates</div>
+          <div className="mt-1 grid gap-1 lg:grid-cols-2">
+            {recent.map((event, index) => (
+              <div key={`${event.at}-${event.subscription_id}-${index}`} className="flex min-w-0 items-center gap-2 rounded bg-white/60 px-2 py-1 text-[11px]">
+                <span>{event.type === "subscription_done" ? "✓" : event.type === "subscription_retry" ? "↻" : "⚠"}</span>
+                <span className="min-w-0 flex-1 truncate" title={event.error || event.message}>{subscriptionLabel(event.subscription_id)}</span>
+                {event.resource_cost_rows != null && <span className="shrink-0 opacity-70">{event.resource_cost_rows} rows</span>}
+                {event.duration_ms != null && <span className="shrink-0 opacity-70">{shortDuration(event.duration_ms)}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(job.error || error) && <div className="mt-2 text-[11px] font-medium text-red-700">{job.error || error}</div>}
+    </div>
+  );
+}
+
+function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilters, onLoadCost, loading, refreshJob, refreshError, invFetchedAt }: {
   cost?: InventoryCost;
   resources: InventoryResource[];
   subName: Record<string, string>;
@@ -2182,6 +2313,8 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
   onClearFilters: () => void;
   onLoadCost: (force: boolean) => void;
   loading: boolean;
+  refreshJob: InventoryCostRefreshJob | null;
+  refreshError: string;
   invFetchedAt?: string;
 }) {
   // Roll the (server-cached) per-resource cost up over the CURRENTLY FILTERED resources, so the
@@ -2243,10 +2376,14 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
               title="Re-run the Azure Cost Management query and refresh cached cost"
               className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
             >
-              {loading ? "↻ Refreshing cost…" : "↻ Refresh cost"}
+              {loading
+                ? `↻ Refreshing cost…${refreshJob?.subscriptions_total ? ` ${refreshJob.subscriptions_done}/${refreshJob.subscriptions_total}` : ""}`
+                : "↻ Refresh cost"}
             </button>
           </div>
         </div>
+
+        <CostRefreshProgress job={refreshJob} subName={subName} error={refreshError} />
 
         {/* Active filters — removable one-by-one, same as the Grid tab. */}
         {(chipProps.kqlText || hasFilters) && (
@@ -2274,7 +2411,9 @@ function CostMode({ cost, resources, subName, hasFilters, chipProps, onClearFilt
             </button>
           </div>
         ) : busy && notLoaded ? (
-          <div className="flex h-40 items-center justify-center text-sm text-gray-400">Querying Azure Cost Management…</div>
+          <div className="flex h-32 items-center justify-center text-sm text-gray-400">
+            Azure queries are running on the server — detailed progress is shown above.
+          </div>
         ) : unavailable ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-700">
             Cost Management data isn't available for this connection{cost?.errors[0] ? ` (${cost.errors[0]})` : ""}.

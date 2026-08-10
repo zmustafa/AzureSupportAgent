@@ -43,7 +43,7 @@ The callback URL contains a SAS signature and must be treated as a secret. Send 
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Logic App receives a request but runs the wrong branch | Compare the test envelope and headers with the trigger schema, then use a guarded non-production branch before another **Send test**. |
 | Test succeeds but trigger fails | Test checks only field presence. |
 | URL rejected | use HTTPS and the supported `logic.azure.com` callback host. |
 | Run fails | inspect trigger schema, static payload/header parsing, action permissions, and Logic App run history. |

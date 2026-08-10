@@ -319,6 +319,16 @@ DEFAULTS: dict[str, Any] = {
     "perfprofile_window": "P1D",
     "perfprofile_interval": "PT15M",
     "perfprofile_scan_cap": 200,
+    # Fleet work is durable and server-driven.  One workload at a time is intentionally
+    # conservative for the one-CPU production container; admins may raise it only after
+    # measuring their Azure Monitor quota and host capacity.
+    "perfprofile_fleet_concurrency": 1,
+    "perfprofile_fleet_start_delay_ms": 1000,
+    # Process-wide Azure Monitor gate shared by Fleet, single-scope runs, Mission Control,
+    # and the investigation tool.  This is NOT per workload.
+    "perfprofile_metric_concurrency": 2,
+    "perfprofile_metric_max_attempts": 3,
+    "perfprofile_workload_timeout_s": 1200,
     # --- IAM / Access Review (per-scope access scanner) ----------------------------
     # Server-side cache TTL (seconds) after which a scope's slice is badged stale. Default 6h.
     "iam_cache_ttl_s": 21600,
@@ -595,6 +605,11 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     _pi = str(current.get("perfprofile_interval", "PT15M") or "PT15M").strip().upper()
     current["perfprofile_interval"] = _pi if re.match(r"^PT\d+[MH]$", _pi) else "PT15M"
     current["perfprofile_scan_cap"] = max(1, min(2000, int(current.get("perfprofile_scan_cap", 200) or 200)))
+    current["perfprofile_fleet_concurrency"] = max(1, min(3, int(current.get("perfprofile_fleet_concurrency", 1) or 1)))
+    current["perfprofile_fleet_start_delay_ms"] = max(0, min(30000, int(current.get("perfprofile_fleet_start_delay_ms", 1000) or 0)))
+    current["perfprofile_metric_concurrency"] = max(1, min(12, int(current.get("perfprofile_metric_concurrency", 2) or 2)))
+    current["perfprofile_metric_max_attempts"] = max(1, min(6, int(current.get("perfprofile_metric_max_attempts", 3) or 3)))
+    current["perfprofile_workload_timeout_s"] = max(60, min(7200, int(current.get("perfprofile_workload_timeout_s", 1200) or 1200)))
     # IAM / Access Review: clamp cache TTL + row cap. (The pre-rename `rbac_*` keys are
     # adopted on load — see LEGACY_SETTING_KEYS — so only the current keys exist here.)
     current["iam_cache_ttl_s"] = max(0, min(604800, int(current.get("iam_cache_ttl_s", 21600) or 21600)))

@@ -35,6 +35,7 @@ Plan two kinds of authorization:
 2. **Application permissions** control which product features a signed-in user can use.
 
 Built-in application roles include administrator, operator, auditor, user, and no-access. For example, chat requires `chat.use`, workload viewing requires `workloads.read`, and workload editing requires `workloads.write`.
+Built-in application roles include administrator, operator, auditor, user, and no-access. Workload viewing requires `workloads.read` and workload editing requires `workloads.write`. The catalog includes `chat.use` for built-in role composition, while current chat endpoints use authenticated, user-owned access rather than a feature-specific permission dependency.
 
 ### Browser and network
 

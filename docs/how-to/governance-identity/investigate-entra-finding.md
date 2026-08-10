@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 9
 description: Filter the Entra findings inbox to a working set, investigate a finding against its signal definition, apply workflow state individually or in bulk, and confirm closure in the next collection.
 permalink: /how-to/governance-identity/investigate-entra-finding/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings]
+feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:investigate]
 ---
 
 # Investigate and close an Entra finding
@@ -50,6 +50,18 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings]
 **Expected result:** A finding in the acknowledged state with an owner, and a validated understanding of what has to change in Entra.
 
 **Verification:** The row's state changes in the inbox and the assignee appears beneath it. Confirm the underlying object still matches the evidence in the Microsoft Entra admin center.
+
+## How to investigate one principal across identity evidence
+
+1. Open `/entra/investigate` from a finding or select the principal directly.
+2. Confirm the principal identity and object type before reading access, group, application, sign-in, or activity evidence.
+3. Separate structural access from behavioural history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
+4. Follow handoffs to IAM or Conditional Access only when the destination preserves the same principal or scope.
+5. Validate significant conclusions against the named source record and the current Entra portal state.
+
+**Expected result:** One principal's identity, structural reach, and available activity evidence are correlated without treating missing domains as clean results.
+
+**Verification:** The selected object remains the same across each handoff, timestamps are current enough for the decision, and every conclusion cites source evidence.
 
 ## How to snooze or suppress deliberately
 

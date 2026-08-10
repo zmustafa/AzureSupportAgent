@@ -422,6 +422,72 @@ class MissionRun(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # soft-delete (trash)
 
 
+class PerfProfileFleetBatch(Base):
+    """Durable server-owned Performance Profiler fleet request.
+
+    The browser submits one batch and may then disappear; the worker advances the item rows from
+    SQL, so queued workloads survive navigation, reloads, and process restarts.
+    """
+
+    __tablename__ = "perf_profile_fleet_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    window: Mapped[str] = mapped_column(String(64), default="P1D")
+    start_time: Mapped[str] = mapped_column(String(64), default="")
+    end_time: Mapped[str] = mapped_column(String(64), default="")
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    completed: Mapped[int] = mapped_column(Integer, default=0)
+    succeeded: Mapped[int] = mapped_column(Integer, default=0)
+    partial: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    cancelled: Mapped[int] = mapped_column(Integer, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_perf_fleet_tenant_idempotency"),
+        Index("ix_perf_fleet_tenant_created", "tenant_id", "created_at"),
+        Index("ix_perf_fleet_status_created", "status", "created_at"),
+    )
+
+
+class PerfProfileFleetItem(Base):
+    """One workload within a durable profiler fleet batch."""
+
+    __tablename__ = "perf_profile_fleet_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("perf_profile_fleet_batches.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    workload_id: Mapped[str] = mapped_column(String(36), index=True)
+    workload_name: Mapped[str] = mapped_column(String(256), default="")
+    connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    resources_completed: Mapped[int] = mapped_column(Integer, default=0)
+    resources_total: Mapped[int] = mapped_column(Integer, default=0)
+    collection_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("batch_id", "workload_id", name="uq_perf_fleet_batch_workload"),
+        Index("ix_perf_fleet_items_batch_status", "batch_id", "status"),
+        Index("ix_perf_fleet_items_status_started", "status", "started_at"),
+    )
+
+
 class WorkbookRun(Base):
     """One execution of a workbook (az/KQL/PowerShell snippet) with AI'fied output.
 

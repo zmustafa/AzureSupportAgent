@@ -13,7 +13,7 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
 
 ## Prerequisites
 
-- `notifications.manage`.
+- An authenticated session for in-app review; `notifications.manage` for routing-rule operations.
 - At least one enabled, provider-verified connector for external delivery.
 - A known producer event type and source.
 - An authenticated user in the intended tenant.
@@ -66,10 +66,10 @@ Start with narrow event and severity filters and a non-production destination. D
 | Connector absent from the form | enable and save it first. |
 | Duplicate delivery | inspect overlapping rules and task-level connector destinations. |
 | External failure | follow the connector's provider-specific guide and recheck endpoint policy and permissions. |
-| [Notifications overview]({{ site.baseurl }}/user-guide/automations/notifications/) | Review connector configuration and retry. |
-| [Manage connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) | Review connector configuration and retry. |
 
 ## Related docs
 
+- [Notifications overview]({{ site.baseurl }}/user-guide/automations/notifications/)
+- [Manage connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/)
 - [Scheduled tasks]({{ site.baseurl }}/how-to/automations-connectors/scheduled-tasks/)
 - [Workbooks]({{ site.baseurl }}/how-to/automations-connectors/workbooks/)

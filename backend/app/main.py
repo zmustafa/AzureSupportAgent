@@ -297,6 +297,12 @@ async def _startup() -> None:
 
     backup_lro_poller.start()
 
+    # Durable Performance Profiler Fleet worker. Queued/running SQL rows are recovered before
+    # its runner starts, so browser reloads and container restarts cannot drop the batch tail.
+    from app.perfprofile.fleet import worker as perf_fleet_worker
+
+    await perf_fleet_worker.start()
+
     # Warm the Azure MCP tool catalog in the background so the FIRST chat message
     # doesn't pay the `npx @azure/mcp` cold-start (node spawn + package resolve),
     # which the orchestrator awaits before streaming any token. Non-blocking.
@@ -343,6 +349,9 @@ async def _shutdown() -> None:
     from app.monitor.sampler import sampler as monitor_sampler
 
     await monitor_sampler.stop()
+    from app.perfprofile.fleet import worker as perf_fleet_worker
+
+    await perf_fleet_worker.stop()
     from app.backup_manager.lro import poller as backup_lro_poller
 
     await backup_lro_poller.stop()

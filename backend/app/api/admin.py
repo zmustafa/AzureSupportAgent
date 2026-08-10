@@ -127,6 +127,12 @@ class AppSettingsUpdate(BaseModel):
     arg_rate_limit_enabled: bool | None = None
     arg_max_queries_per_window: int | None = Field(default=None, ge=1, le=100)
     arg_rate_window_seconds: int | None = Field(default=None, ge=1, le=60)
+    # Performance Profiler fleet/metric safety controls.
+    perfprofile_fleet_concurrency: int | None = Field(default=None, ge=1, le=3)
+    perfprofile_fleet_start_delay_ms: int | None = Field(default=None, ge=0, le=30000)
+    perfprofile_metric_concurrency: int | None = Field(default=None, ge=1, le=12)
+    perfprofile_metric_max_attempts: int | None = Field(default=None, ge=1, le=6)
+    perfprofile_workload_timeout_s: int | None = Field(default=None, ge=60, le=7200)
 
 
 @router.get("/settings")

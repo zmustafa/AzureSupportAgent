@@ -114,7 +114,7 @@ Use a test index first. Disable the connector, delete/expire the event according
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Splunk reports success but the event is not searchable | Confirm HEC index routing, token index permission, event timestamp, and ingestion delay in Splunk before resending. |
 | Check HEC enablement, endpoint path/port, token, TLS trust, index permission, and ingestion delay | Configuration success does not contact Splunk. |
 | [Connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) | Review connector configuration and retry. |
 

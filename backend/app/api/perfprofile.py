@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,7 +99,8 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             timespan=window, interval=interval, scan_cap=cap,
         )
-        cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
+        if fresh.get("status", "succeeded") == "succeeded":
+            cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl)
 
 
@@ -126,7 +127,7 @@ async def profile(
     from app.perfprofile import runs
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
-    latest = runs.latest_run(principal.tenant_id or "default", scope_kind, scope_id)
+    latest = runs.latest_successful_run(principal.tenant_id or "default", scope_kind, scope_id)
     if latest is None:
         return {
             "scope_kind": scope_kind, "scope_id": scope_id, "scope_name": scope_id,
@@ -137,6 +138,178 @@ async def profile(
 
 
 # ----------------------------------------------------------------------- fleet (all workloads)
+class PerfFleetBatchRequest(BaseModel):
+    workload_ids: list[str] = Field(default_factory=list, max_length=500)
+    start_time: str = ""
+    end_time: str = ""
+    window: str = "P1D"
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    connection_id: str | None = None
+
+
+class PerfFleetRetryRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+def _validate_fleet_window(start_time: str, end_time: str) -> tuple[str, str]:
+    from datetime import datetime
+
+    start, end = start_time.strip(), end_time.strip()
+    if bool(start) != bool(end):
+        raise HTTPException(status_code=422, detail="Provide both start_time and end_time, or neither.")
+    if start and end:
+        try:
+            if datetime.fromisoformat(start.replace("Z", "+00:00")) >= datetime.fromisoformat(end.replace("Z", "+00:00")):
+                raise HTTPException(status_code=422, detail="start_time must be earlier than end_time.")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="start_time/end_time must be ISO-8601 timestamps.") from exc
+    return start, end
+
+
+async def _fleet_batch_response(batch_id: str, tenant_id: str) -> dict[str, Any]:
+    from app.perfprofile import fleet as perf_fleet
+
+    batch = await perf_fleet.get_batch(batch_id, tenant_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Performance fleet batch not found.")
+    return {"batch": batch}
+
+
+@router.post("/fleet/batches", status_code=202)
+async def create_fleet_batch(
+    payload: PerfFleetBatchRequest,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Persist a server-owned fleet batch and return immediately; the worker runs it later."""
+    from app.perfprofile import fleet as perf_fleet
+    from app.workloads.registry import get_workload
+
+    workload_ids = list(dict.fromkeys(wid.strip() for wid in payload.workload_ids if wid.strip()))
+    if not workload_ids:
+        raise HTTPException(status_code=400, detail="Select at least one workload.")
+    start, end = _validate_fleet_window(payload.start_time, payload.end_time)
+    if payload.connection_id:
+        from app.core.azure_connections import get_connection
+
+        connection = get_connection(payload.connection_id)
+        if connection is None or connection.get("disabled"):
+            raise HTTPException(status_code=404, detail="Azure connection not found.")
+    workloads: list[dict[str, Any]] = []
+    for workload_id in workload_ids:
+        workload = get_workload(workload_id)
+        if workload is None:
+            continue
+        item = dict(workload)
+        if payload.connection_id:
+            item["connection_id"] = payload.connection_id
+        workloads.append(item)
+    if not workloads:
+        raise HTTPException(status_code=404, detail="None of the selected workloads were found.")
+    batch, created = await perf_fleet.create_batch(
+        db,
+        tenant_id=principal.tenant_id or "default",
+        actor=principal.subject,
+        idempotency_key=payload.idempotency_key,
+        workloads=workloads,
+        window=(payload.window or "P1D").strip(),
+        start_time=start,
+        end_time=end,
+    )
+    if created:
+        db.add(
+            AuditLog(
+                tenant_id=principal.tenant_id,
+                actor_id=principal.subject,
+                action="performance.fleet.launch",
+                target=batch.id,
+                metadata_json={"count": len(workloads), "window": batch.window},
+            )
+        )
+        await db.commit()
+        await perf_fleet.worker.ensure_running()
+    return await _fleet_batch_response(batch.id, principal.tenant_id or "default")
+
+
+@router.get("/fleet/batches/latest")
+async def get_latest_fleet_batch(
+    active_only: bool = Query(default=False),
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    from app.perfprofile import fleet as perf_fleet
+
+    return {"batch": await perf_fleet.latest_batch(principal.tenant_id or "default", active_only=active_only)}
+
+
+@router.get("/fleet/batches/{batch_id}")
+async def get_fleet_batch(
+    batch_id: str, principal: Principal = Depends(require_admin)
+) -> dict[str, Any]:
+    return await _fleet_batch_response(batch_id, principal.tenant_id or "default")
+
+
+@router.post("/fleet/batches/{batch_id}/cancel")
+async def cancel_fleet_batch(
+    batch_id: str, principal: Principal = Depends(require_admin)
+) -> dict[str, Any]:
+    from app.perfprofile import fleet as perf_fleet
+
+    if not await perf_fleet.cancel_batch(batch_id, principal.tenant_id or "default"):
+        raise HTTPException(status_code=409, detail="Batch was not found or is already complete.")
+    return await _fleet_batch_response(batch_id, principal.tenant_id or "default")
+
+
+@router.delete("/fleet/batches/{batch_id}")
+async def delete_fleet_batch(
+    batch_id: str, principal: Principal = Depends(require_admin)
+) -> dict[str, bool]:
+    from app.perfprofile import fleet as perf_fleet
+
+    if not await perf_fleet.delete_batch(batch_id, principal.tenant_id or "default"):
+        raise HTTPException(status_code=409, detail="Batch was not found or is still running.")
+    return {"ok": True}
+
+
+@router.post("/fleet/batches/{batch_id}/retry", status_code=202)
+async def retry_fleet_batch(
+    batch_id: str,
+    payload: PerfFleetRetryRequest,
+    principal: Principal = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.perfprofile import fleet as perf_fleet
+
+    original = await perf_fleet.get_batch(batch_id, principal.tenant_id or "default")
+    if original is None:
+        raise HTTPException(status_code=404, detail="Performance fleet batch not found.")
+    workloads = await perf_fleet.retryable_workloads(batch_id, principal.tenant_id or "default")
+    if not workloads:
+        raise HTTPException(status_code=409, detail="Batch has no failed, partial, or cancelled workloads to retry.")
+    batch, created = await perf_fleet.create_batch(
+        db,
+        tenant_id=principal.tenant_id or "default",
+        actor=principal.subject,
+        idempotency_key=payload.idempotency_key,
+        workloads=workloads,
+        window=original.get("window") or "P1D",
+        start_time=original.get("start_time") or "",
+        end_time=original.get("end_time") or "",
+    )
+    if created:
+        db.add(
+            AuditLog(
+                tenant_id=principal.tenant_id,
+                actor_id=principal.subject,
+                action="performance.fleet.retry",
+                target=batch.id,
+                metadata_json={"source_batch_id": batch_id, "count": len(workloads)},
+            )
+        )
+        await db.commit()
+        await perf_fleet.worker.ensure_running()
+    return await _fleet_batch_response(batch.id, principal.tenant_id or "default")
+
+
 @router.get("/fleet")
 async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
     """Summarize the LATEST performance-profile run for EVERY active workload — drives the
@@ -152,10 +325,12 @@ async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]
     workloads = list_workloads()
     scopes = [("workload", w["id"]) for w in workloads]
     latest = runs.latest_runs_for_scopes(tenant_id, scopes)
+    attempts = runs.latest_attempts_for_scopes(tenant_id, scopes)
 
     rows: list[dict[str, Any]] = []
     for w in workloads:
         summ = latest.get(f"workload:{w['id']}")
+        attempt = attempts.get(f"workload:{w['id']}") or {}
         run_at = (summ or {}).get("run_at") or ""
         age: float | None = None
         if run_at:
@@ -183,6 +358,11 @@ async def fleet(principal: Principal = Depends(require_admin)) -> dict[str, Any]
             "demo": (summ or {}).get("demo", False),
             "age_seconds": int(age) if age is not None else None,
             "stale": (summ is None) or (age is None) or (age >= ttl),
+            "last_attempt_status": attempt.get("status", ""),
+            "last_attempt_at": attempt.get("run_at", ""),
+            "last_attempt_error": attempt.get("error", ""),
+            "last_attempt_warning": attempt.get("warning", ""),
+            "last_attempt_collection": attempt.get("collection") or {},
         })
     # Worst first: never-profiled last, then most breaching, then lowest score.
     rows.sort(
@@ -311,7 +491,7 @@ async def _resolve_run_snapshot(
     if demo.is_demo_scope(scope_kind, scope_id):
         snap = await _get_snapshot(principal, scope_kind, scope_id, force=False)
         return snap
-    return runs.latest_run(tenant_id, scope_kind, scope_id)
+    return runs.latest_successful_run(tenant_id, scope_kind, scope_id)
 
 
 def _trend_for(snap: dict[str, Any], tenant_id: str) -> dict[str, Any]:
@@ -479,7 +659,7 @@ async def trend(
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     tenant_id = principal.tenant_id or "default"
     if demo.is_demo_scope(scope_kind, scope_id) and not coverage_trends.series("performance", tenant_id, scope_kind, scope_id):
-        latest = runs.latest_run(tenant_id, scope_kind, scope_id)
+        latest = runs.latest_successful_run(tenant_id, scope_kind, scope_id)
         score = (latest or {}).get("scorecard", {}).get("workload_score") if latest else None
         if score is None:
             # No runs yet for the demo scope — seed the demo profile to get a current score.
@@ -501,9 +681,7 @@ async def refresh_stream(
 ):
     """Live profiling over SSE: start → progress* → done. Saves the result to run history
     and returns it (with run id) in the done payload."""
-    from app.perfprofile import runs
-    from app.perfprofile.collector import profile_workload
-    from app.perfprofile.narrative import narrate
+    from app.perfprofile.service import execute_profile
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     _ttl, default_window, interval, cap = _settings()
@@ -515,52 +693,50 @@ async def refresh_stream(
     async def _gen():
         try:
             yield {"event": "start", "data": json.dumps({"scope_kind": scope_kind, "scope_id": scope_id, "window": eff_window})}
-            if demo.is_demo_scope(scope_kind, scope_id):
-                snap = demo.build_demo_snapshot(scope_id=scope_id)
-                if st and et:
-                    snap["window"] = f"{st} → {et}"
-                    snap["requested_start"] = st
-                    snap["requested_end"] = et
-                else:
-                    snap["window"] = eff_window
-                    snap["requested_window"] = eff_window
-                for r in snap.get("resources", []):
-                    yield {"event": "progress", "data": json.dumps({"resource": r["resource_name"], "type": r["resource_type"]})}
+            connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+            async def _collect(name: str, rtype: str):
+                await queue.put({"resource": name, "type": rtype})
+
+            async def _run() -> dict[str, Any]:
+                try:
+                    return await execute_profile(
+                        tenant_id=tenant_id, actor=principal.subject,
+                        scope_kind=scope_kind, scope_id=scope_id,
+                        connection=connection, workload=workload,
+                        window=eff_window, interval=interval, scan_cap=cap,
+                        start_time=st, end_time=et, progress=_collect,
+                        sli_context=_sli_context(scope_kind, scope_id, tenant_id),
+                        trigger="manual",
+                    )
+                finally:
+                    await queue.put(None)
+
+            task = asyncio.create_task(_run())
+            while True:
+                ev = await queue.get()
+                if ev is None:
+                    break
+                yield {"event": "progress", "data": json.dumps(ev)}
+            stored = await task
+            if stored.get("status") == "failed":
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "message": str(stored.get("error") or "Profiling failed.")[:1000],
+                            "run_id": stored.get("id"),
+                            "status": "failed",
+                            "collection": stored.get("collection") or {},
+                        }
+                    ),
+                }
             else:
-                # PP4 — stream per-resource progress LIVE (not replayed after the scan): the
-                # collector's progress callback pushes onto a queue that we drain concurrently
-                # while the profile runs in a background task.
-                connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
-                queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-                async def _collect(name: str, rtype: str):
-                    await queue.put({"resource": name, "type": rtype})
-
-                async def _run() -> dict[str, Any]:
-                    try:
-                        return await profile_workload(
-                            connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
-                            timespan=eff_window, interval=interval, scan_cap=cap,
-                            start_time=st, end_time=et, progress=_collect,
-                        )
-                    finally:
-                        await queue.put(None)  # sentinel: scan finished
-
-                task = asyncio.create_task(_run())
-                while True:
-                    ev = await queue.get()
-                    if ev is None:
-                        break
-                    yield {"event": "progress", "data": json.dumps(ev)}
-                snap = await task
-            snap = dict(snap)
-            snap["narrative"] = await narrate(snap, sli_context=_sli_context(scope_kind, scope_id, tenant_id))
-            cache.write_snapshot(tenant_id, scope_kind, scope_id, snap)
-            stored = runs.save_run(tenant_id, scope_kind, scope_id, snap, actor=principal.subject)
-            yield {"event": "done", "data": json.dumps(stored)}
+                yield {"event": "done", "data": json.dumps(stored)}
         except Exception as exc:  # noqa: BLE001
             log.exception("performance refresh failed")
-            yield {"event": "error", "data": json.dumps({"message": str(exc)[:300]})}
+            yield {"event": "error", "data": json.dumps({"message": str(exc)[:1000]})}
 
     return EventSourceResponse(_gen())
 
@@ -577,9 +753,7 @@ async def refresh(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Non-streaming profile + save to history (returns the stored run)."""
-    from app.perfprofile import runs
-    from app.perfprofile.collector import profile_workload
-    from app.perfprofile.narrative import narrate
+    from app.perfprofile.service import execute_profile
 
     scope_kind, scope_id = _scope(workload_id, subscription_id)
     _ttl, default_window, interval, cap = _settings()
@@ -588,28 +762,20 @@ async def refresh(
     et = (end_time or "").strip()
     tenant_id = principal.tenant_id or "default"
 
-    if demo.is_demo_scope(scope_kind, scope_id):
-        snap = demo.build_demo_snapshot(scope_id=scope_id)
-        snap["window"] = f"{st} → {et}" if (st and et) else eff_window
-        if st and et:
-            snap["requested_start"] = st
-            snap["requested_end"] = et
-        else:
-            snap["requested_window"] = eff_window
-    else:
-        connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
-        snap = await profile_workload(
-            connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
-            timespan=eff_window, interval=interval, scan_cap=cap, start_time=st, end_time=et,
-        )
-    snap = dict(snap)
-    snap["narrative"] = await narrate(snap, sli_context=_sli_context(scope_kind, scope_id, tenant_id))
-    cache.write_snapshot(tenant_id, scope_kind, scope_id, snap)
-    stored = runs.save_run(tenant_id, scope_kind, scope_id, snap, actor=principal.subject)
+    connection, workload = _conn_and_workload(scope_kind, scope_id, connection_id)
+    stored = await execute_profile(
+        tenant_id=tenant_id, actor=principal.subject,
+        scope_kind=scope_kind, scope_id=scope_id,
+        connection=connection, workload=workload,
+        window=eff_window, interval=interval, scan_cap=cap,
+        start_time=st, end_time=et,
+        sli_context=_sli_context(scope_kind, scope_id, tenant_id),
+        trigger="manual",
+    )
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id, actor_id=principal.subject, action="performance.refresh",
-            target=f"{scope_kind}:{scope_id}", metadata_json={"run_id": stored.get("id"), "score": snap.get("scorecard", {}).get("workload_score")},
+            target=f"{scope_kind}:{scope_id}", metadata_json={"run_id": stored.get("id"), "status": stored.get("status"), "score": stored.get("scorecard", {}).get("workload_score")},
         )
     )
     await db.commit()
@@ -631,7 +797,7 @@ async def resource_detail(
     snap = runs.get_run(tenant_id, run_id) if run_id else None
     if snap is None:
         scope_kind, scope_id = _scope(workload_id, subscription_id)
-        snap = runs.latest_run(tenant_id, scope_kind, scope_id)
+        snap = runs.latest_successful_run(tenant_id, scope_kind, scope_id)
     for r in (snap or {}).get("resources", []):
         if r.get("resource_id") == resource_id:
             return {"ok": True, "resource": r}

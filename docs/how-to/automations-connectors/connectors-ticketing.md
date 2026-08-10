@@ -74,7 +74,7 @@ Do not use a production project for first validation. Disable the connector and 
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| A controlled test creates a production incident or issue | Disable the connector, close the controlled record, verify the configured project/table/routing key, and move first validation to a test destination. |
 | Check Cloud base URL, email/token pairing, token status, project key, issue type, and browse/create permissions | Absence of Send test is expected. |
 | [Connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) | Review connector configuration and retry. |
 

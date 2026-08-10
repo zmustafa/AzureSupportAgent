@@ -8,7 +8,7 @@ description: Use every IAM tab to review effective access, exposure, scopes, rol
 permalink: /how-to/governance-identity/iam-access-reviews/
 redirect_from:
   - /how-to/governance-identity/rbac-access-reviews/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:leastprivilege, IAM_NAV:roles, IAM_NAV:insights, IAM_NAV:scopes, IAM_NAV:diagnostics]
+feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:accessmap, IAM_NAV:leastprivilege, IAM_NAV:pim, IAM_NAV:roles, IAM_NAV:insights, IAM_NAV:scopes, IAM_NAV:diagnostics]
 ---
 
 # Review, scan, export, and investigate IAM
@@ -51,6 +51,18 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:le
 **Expected result:** A bounded list of known direct, group-derived, ownership, Azure, and Entra access paths.
 
 **Verification:** Check assignment ID/scope, group chain, principal state, role actions/data actions, and inheritance. This is not a complete authorization-engine simulation.
+
+## How to trace access paths and PIM eligibility
+
+1. Open `/iam/accessmap` and select the intended principal or resource scope.
+2. Follow each rendered edge back to its assignment, group, ownership, or eligible-role source; do not infer a grant from the diagram label alone.
+3. Open `/iam/pim` for eligible and active assignment context, including schedule and activation state available in the cached scan.
+4. Compare the path with `/iam/effective` and the source assignment in Azure or Entra.
+5. Refresh the affected scope and directory context after an external access change.
+
+**Expected result:** The effective principal, source assignment, transitive path, and PIM state are distinguished rather than collapsed into one grant.
+
+**Verification:** The source assignment and group or eligible-role chain agree across Access Map, Effective Access, and the authoritative portal.
 
 ## How to investigate privileged and data-plane exposure
 

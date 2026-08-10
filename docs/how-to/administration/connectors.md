@@ -44,7 +44,7 @@ Treat webhook URLs, SAS-signed Logic App URLs, tokens, passwords, connection str
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| **Send test** creates an unintended external event | Disable the connector, inspect destination logs, reverse or close the controlled event, and rotate the credential when it may have been exposed. |
 | Stored secret appears blank | This is expected masking. Leave it blank to keep it; enter a new value only to rotate. |
 | Test passes but delivery fails | The test may only validate configuration. Use **Send test** where offered and inspect destination permissions/logs. |
 | URL is rejected | Use the HTTPS and host pattern required by the connector; webhook-like connectors enforce SSRF protection. |

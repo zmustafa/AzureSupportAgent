@@ -44,7 +44,7 @@ Commands run on the remote host and may be irreversible. Keep strict mode on, us
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Command ran on the wrong sandbox VM | Stop further runs, verify the selected VM and workload links, inspect run history, reverse the remote change, and rotate credentials if output exposed them. |
 | SSH test fails | Check DNS, route, firewall/NSG, port, username, key format, and source-network allowlisting. |
 | Host key differs | Stop and verify the expected fingerprint before accepting a changed host. |
 | Tool is missing | Install it through the VM's approved maintenance process; automatic installation changes the host. |

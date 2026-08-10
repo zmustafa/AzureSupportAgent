@@ -88,7 +88,7 @@ Treat the webhook URL as a secret. Delete the test post if policy requires, disa
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| A test message reaches the wrong channel or mailbox | Recheck the configured Team/channel, Slack channel, or recipient and use a dedicated non-production destination before sending again. |
 | A webhook Test success does not check reachability | For Graph errors, verify the Azure connection, Team/channel IDs, and application permissions. For delivery errors, confirm the app/workflow may post to that channel. |
 | [Notifications]({{ site.baseurl }}/how-to/automations-connectors/notifications/) | Review connector configuration and retry. |
 | [Connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) | Review connector configuration and retry. |

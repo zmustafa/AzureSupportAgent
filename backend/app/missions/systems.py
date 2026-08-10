@@ -718,27 +718,29 @@ async def _state_fmea(ctx: MissionContext) -> dict[str, Any] | None:
 
 # --------------------------------------------------------------------------- performance
 async def _run_performance(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
-    from app.api.perfprofile import _get_snapshot
+    from app.api.perfprofile import _settings
+    from app.perfprofile.service import execute_profile
 
     if progress:
         await progress("Profiling performance metrics…")
-    snap = await _get_snapshot(_admin_principal(ctx.tenant_id, ctx.actor), "workload", ctx.workload_id, force=True)
+    _ttl, window, interval, cap = _settings()
+    snap = await execute_profile(
+        tenant_id=ctx.tenant_id or "default", actor=ctx.actor,
+        scope_kind="workload", scope_id=ctx.workload_id,
+        connection=ctx.connection, workload=ctx.workload,
+        window=window, interval=interval, scan_cap=cap,
+        trigger="mission",
+    )
     link = f"/performance?workload_id={ctx.workload_id}"
-    if snap.get("error"):
+    if snap.get("status") == "failed":
         return SystemResult(status="fail", headline=str(snap["error"])[:140], error=str(snap["error"]), attention=True, link=link)
-    # Persist a run (which also records the performance trend point) so this scan shows up on the
-    # dashboard performance lens + the Performance screen history, like a screen-launched refresh.
-    try:
-        from app.perfprofile import runs as perf_runs
-
-        perf_runs.save_run(ctx.tenant_id or "default", "workload", ctx.workload_id, snap, actor=ctx.actor)
-    except Exception:  # noqa: BLE001 - trend/run recording must never break a mission
-        logger.warning("performance trend recording failed", exc_info=True)
     sc = snap.get("scorecard") or {}
     score = sc.get("workload_score")
     breaching = int(sc.get("breaching") or 0)
-    attention = breaching > 0 or (isinstance(score, (int, float)) and score < 70)
-    head = f"score {score} · {breaching} breaching" if score is not None else f"{breaching} breaching"
+    partial = snap.get("status") == "partial"
+    attention = partial or breaching > 0 or (isinstance(score, (int, float)) and score < 70)
+    prefix = "Partial · " if partial else ""
+    head = prefix + (f"score {score} · {breaching} breaching" if score is not None else f"{breaching} breaching")
     return SystemResult(
         status="done",
         headline=head,

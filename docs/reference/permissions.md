@@ -9,14 +9,14 @@ permalink: /reference/permissions/
 
 # Permissions
 
-Permissions are explicit strings checked by API routes. Custom roles select them in Settings → Access Control → Roles. The live catalog is authoritative.
+Permissions are explicit strings in the canonical role catalog. Feature routes normally enforce them through API dependencies; session/profile, user-owned chat, chart-artifact, active-connection, and in-app notification-feed endpoints intentionally use authenticated access without a feature-specific dependency. Custom roles select catalog capabilities in Settings → Access Control → Roles. The live implementation is authoritative.
 
 | Area | Capabilities |
 | --- | --- |
 | Agent | `chat.use` |
 | Automation | `agents.read`, `agents.write`, `tasks.read`, `tasks.write`, `tasks.run`, `workbooks.read`, `workbooks.write`, `playbooks.read`, `playbooks.write`, `insights.read`, `insights.write`, `insights.run`, `notifications.read`, `notifications.manage` |
 | Workloads/design | `workloads.read`, `workloads.write`, `architectures.read`, `architectures.write`, `missions.read`, `missions.run`, `ownership.read`, `ownership.write` |
-| Estate/investigation | `inventory.read`, `graph.read`, `changeexplorer.read`, `reservations.read`, `perfprofile.read`, `radar.read`, `quota.read`, `quota.run`, `tagintel.read`, `tagintel.write`, `evidence.read`, `evidence.write`, `cases.read`, `cases.write` |
+| Estate/investigation | `inventory.read`, `graph.read`, `changeexplorer.read`, `reservations.read`, `perfprofile.read`, `radar.read`, `quota.read`, `quota.run`, `tagintel.read`, `tagintel.write`, `evidence.read`, `evidence.write`, `cases.read`, `cases.write`, `investigate.read`, `investigate.activity` |
 | Governance | `assessments.read`, `assessments.run`, `policy.read`, `policy.write`, `iam.read`, `identity.read` |
 | Observability | `monitor.view`, `coverage.read`, `coverage.manage`, `teleintel.read`, `alert_analysis.read`, `alert_analysis.manage`, action-specific `alerts_manager.*` capabilities, and `backup_manager.read`, `backup_manager.protect_write`, `backup_manager.policy_write`, `backup_manager.vault_write`, `backup_manager.ondemand`, `backup_manager.drill_write`, `backup_manager.reference_write`, `backup_manager.approve` |
 | Diagnostics | `sandbox.exec`, `netdiag.run` |

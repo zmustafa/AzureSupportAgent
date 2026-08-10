@@ -148,7 +148,7 @@ Provider configuration is admin-editable at runtime via `app/core/llm_config.py`
 
 `app/mcp/client.py` spawns and manages MCP tool catalogs.
 
-- Azure MCP server is launched over stdio using `npx @azure/mcp server start --transport stdio`.
+- The production image pins and installs Azure MCP at build time, then launches `azmcp server start --transport stdio`. Local development retains the configurable `npx` default.
 - EntraID MCP server is vendored under `third_party/entraid-mcp-server` and also runs over stdio.
 - Tool catalogs are cached and classified as read/write.
 - Write-capable tools are gated by approval policy and audit logging.
@@ -156,7 +156,11 @@ Provider configuration is admin-editable at runtime via `app/core/llm_config.py`
 
 Azure CLI and Resource Graph execution is handled by `app/exec/command_runner.py`.
 It validates commands, rejects shell operators, classifies destructive verbs, supports
-service-principal session reuse, and captures output with bounded size.
+service-principal session reuse, and captures output with bounded size. Temporary local
+service-principal sessions reuse the user's stable `~/.azure/cliextensions` when
+`AZURE_EXTENSION_DIR` is not already set and that shared directory exists. Production sets that variable to the image-baked
+`/opt/az-extensions`, which contains `resource-graph`; neither path needs a fresh dynamic
+extension install for every throwaway `AZURE_CONFIG_DIR`.
 
 ### 4.4 Core Services
 
@@ -336,6 +340,24 @@ Inventory provides:
 - Location tab with real map tiles, multi-region selection, zoom/pan, responsive layout.
 - AI natural-language inventory search.
 - Staleness indicators for inventory and cost refreshes.
+- A detached Inventory Cost refresh contract: `POST /api/inventory/cost/refresh` accepts or
+  reattaches to a server-owned job, and `GET /api/inventory/cost/refresh/status` exposes the
+  newest tenant/connection/scope snapshot for one-second polling while queued or running.
+- Per-subscription progress with completed/total, succeeded/failed, percentage, elapsed time,
+  active subscriptions, retry attempts/backoff, and recent outcomes with row counts and
+  durations. Collection uses four-way concurrency and an explicit 25-subscription cap;
+  omitted or failed subscriptions must be treated as partial scope, and the terminal snapshot
+  distinguishes complete, partial, and failed results.
+- Two distinct retention layers: terminal job telemetry is in memory for one hour and is not
+  recovered after restart; complete cost payloads are cached permanently on disk with no TTL
+  until an explicit refresh replaces them. Partial refresh results never overwrite that file.
+
+After acceptance, browser navigation or Inventory component unmount does not cancel the server
+job; it only stops that component's polling. The active progress UI explicitly tells the user it
+is safe to navigate away because the server-owned refresh continues in the background. A
+completed or partial `InventoryCost` response is
+also copied into the frontend's shared React Query cache. Application shutdown can interrupt the
+task, and there is no persisted job queue or restart recovery.
 
 ### 9.4 Assessments
 

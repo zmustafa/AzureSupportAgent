@@ -240,7 +240,7 @@ def test_scored_full_coverage_is_high_confidence():
 async def test_run_aborts_fast_when_connection_token_expired(monkeypatch):
     """An expired pasted token must fail the whole run with ONE clear message before the
     100+ controls run — not surface an 'error' row on every control."""
-    monkeypatch.setattr(runner, "get_workload", lambda _wid: {"name": "AP Public Website - Dev", "connection_id": "c1", "nodes": []})
+    monkeypatch.setattr(runner, "get_workload", lambda _wid: {"name": "Example Web App - Dev", "connection_id": "c1", "nodes": []})
     monkeypatch.setattr(
         "app.core.azure_connections.resolve_connection",
         lambda _cid: {"id": "c1", "display_name": "contoso-prod", "auth_method": "az_cli_token"},

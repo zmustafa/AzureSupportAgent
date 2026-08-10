@@ -299,7 +299,7 @@ import pytest
 
 def _roles_data() -> dict[str, Any]:
     common = {
-        "principal_id": "u1", "principal_type": "User", "principal_name": "P - Zeeshan",
+        "principal_id": "u1", "principal_type": "User", "principal_name": "P - Alex",
         "role_privileged": True, "role_tier": "tier0",
     }
     return {
@@ -330,8 +330,8 @@ async def _access(monkeypatch) -> dict[str, Any]:
     monkeypatch.setattr(inv, "access_rows", _no_rows)
 
     async def _resolve(_data, _tenant, needle):
-        return {"id": "u1", "kind": "user", "display_name": "P - Zeeshan",
-                "resolution": "resolved", "upn": "p-zeeshan@example.com"}
+        return {"id": "u1", "kind": "user", "display_name": "P - Alex",
+            "resolution": "resolved", "upn": "p-alex@example.com"}
 
     monkeypatch.setattr(inv, "resolve", _resolve)
     snapshot = {"data": {"roles": _roles_data()}, "_analysis": {}, "domains": {}}

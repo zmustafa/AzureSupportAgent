@@ -71,15 +71,18 @@ Open `/inventory` or a tab route: `/inventory/grid`, `/inventory/overview`, `/in
 
 ## How to load and analyze the Cost tab
 
-1. Open **Cost**. Cost has a separate persistent cache and does not refresh with inventory.
-2. Select **Load cost** when no cost has been collected, or **Refresh cost** to re-run the trailing-30-day Cost Management query.
-3. Review total and rollups by subscription, type, location, resource group, or workload.
-4. Check unallocated/unmapped values and subscription query errors.
-5. Refresh cost when it predates the current inventory or decision.
+1. Open `/inventory/cost` for the intended tenant connection. Cost has a separate cache and does not refresh with inventory.
+2. Select **Load cost** when no cost has been collected, or **Refresh cost** to submit `POST /inventory/cost/refresh`. Wait until the start is accepted before a hard navigation if confirmation matters.
+3. While the job is queued or running, inspect the card that the page refreshes from `GET /inventory/cost/refresh/status` every second. Review completed/total subscriptions, succeeded/failed totals, percentage, elapsed time, active subscriptions, current attempt/retry delay, and recent success/error/retry outcomes with row counts and duration where available.
+4. Check **omitted**. One refresh queries at most 25 subscriptions with concurrency four. Omitted subscriptions make totals incomplete even if the job says succeeded.
+5. When the active card says **Safe to navigate away — this refresh is owned by the server and continues in the background**, navigate elsewhere if needed. The accepted job continues; leaving Inventory only stops this component's polling. Return with the same tenant connection to reattach to the newest retained tenant+connection+scope job.
+6. Review total and rollups by subscription, type, location, resource group, or workload. A succeeded or partial terminal result is copied into the shared frontend `inventoryCost` cache.
+7. Check the terminal complete, partial, or failed state, unallocated values, subscription errors, row counts, and durations. A partial result is displayed but is not written over the permanent server cache; only a complete available result is persisted without a TTL.
+8. Refresh cost when it predates the inventory or decision. Remember that terminal progress is retained in memory for one hour, is lost on application restart, and an interrupted shutdown job is not recovered.
 
-**Expected result:** Available trailing-period cost is mapped to resources and rollups; missing data remains visible as incomplete rather than zero.
+**Expected result:** Available trailing-30-day cost is mapped to resources and rollups, with queried, failed, and omitted subscription outcomes visible rather than represented as zero.
 
-**Verification:** Check currency, period, fetched time, error count, and a sample against Cost Management.
+**Verification:** Check currency, period, fetched time, 25-subscription cap/omitted count, succeeded/failed count, and a sample against Cost Management. Reopen the same route to confirm terminal data appears from the shared cache or newest retained job.
 
 ## How to review Optimization candidates safely
 
@@ -106,7 +109,7 @@ Open `/inventory` or a tab route: `/inventory/grid`, `/inventory/overview`, `/in
 
 ## Safety and rollback
 
-- Inventory is read-only; there is no Azure rollback operation.
+- Inventory and cost collection are read-only. The owner drawer is the exception: when ownership write-back is enabled, confirming **Write owner tag to Azure** mutates the resource tag. Record the previous value for rollback.
 - Resource Graph is eventually consistent and does not expose every data-plane object.
 - Cost data lags usage and may be partial.
 - Snapshot deletion removes local comparison data; preserve required evidence elsewhere.
@@ -118,7 +121,10 @@ Open `/inventory` or a tab route: `/inventory/grid`, `/inventory/overview`, `/in
 | --- | --- |
 | Never loaded | Select an ARM-capable connection and select **Refresh inventory**. |
 | Resource missing | Check scope, Reader role, Resource Graph visibility, filters, and truncation. |
-| Cost blank | Load/refresh cost and verify Cost Management Reader and billing availability. |
+| Cost refresh no longer appears | Return with the same tenant connection. Terminal job telemetry expires after one hour and is lost on application restart; the permanent complete cost payload can still load independently. |
+| Cost reports omitted subscriptions | The 25-subscription cap was reached. Treat totals as partial and use a narrower backend scope or separate connection; the current Inventory page selects only the tenant connection. |
+| Cost refresh is partial | Inspect failed subscription outcomes, correct Cost Management Reader access or wait for throttling to clear, then refresh. Partial results do not replace the permanent file cache. |
+| Cost blank | Load/refresh cost and verify Cost Management Reader and billing availability. Do not interpret unavailable cost as zero. |
 | Optimization stale | Refresh Inventory first. |
 | Workload attribution wrong | Review workload definitions and overlaps. |
 | Grid slow | Narrow by subscription/type and reduce grouping/columns. |

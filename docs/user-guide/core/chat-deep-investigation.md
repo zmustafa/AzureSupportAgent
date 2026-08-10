@@ -30,7 +30,7 @@ Deep mode can involve networking, identity, compute, storage, security, reliabil
 
 ### Prerequisites and permissions
 
-- Application permission `chat.use`.
+- An authenticated session with a non-empty effective application role. Current chat endpoints are user/tenant scoped but do not apply a feature-specific permission dependency; `chat.use` remains the catalog capability granted by the built-in chat roles.
 - A configured and active AI provider/model.
 - For live evidence, an Azure connection that can read the selected scope.
 - Microsoft Graph permissions for Entra-specific evidence and Log Analytics access for relevant log queries.

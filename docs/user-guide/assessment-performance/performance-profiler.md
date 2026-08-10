@@ -4,108 +4,149 @@ title: Performance Profiler
 parent: Assessment & Performance
 grand_parent: User guide
 nav_order: 2
-description: Rank Azure Monitor bottlenecks with heatmaps, trends, findings, and evidence exports.
+description: Rank Azure Monitor bottlenecks with durable Fleet batches, completeness-aware scoring, heatmaps, trends, findings, and evidence exports.
 permalink: /user-guide/assessment-performance/performance-profiler/
 ---
 
 # Performance Profiler
 
+**Application route:** `/performance`<br>
+**Product permission:** `perfprofile.read`
+
 ## Purpose
 
-Performance Profiler queries Azure Monitor metrics for a workload or subscription, compares observations with metric baselines, and ranks potential bottlenecks. Its heatmap and resource drill-down help identify where investigation should start; they do not establish root cause on their own.
-
-**Application route:** `/performance`.
+Performance Profiler reads Azure Monitor metrics for a workload or subscription, evaluates the observations against AMBA-aligned metric definitions, and ranks possible bottlenecks. It is a read-only Azure analysis surface: a high-ranked metric identifies where to investigate, not the root cause by itself.
 
 ![Performance Profiler heatmap showing workload bottleneck scores]({{ site.baseurl }}/assets/performance-profiler.png)
 
-## Common use cases
+## Prerequisites and data sources
 
-- Identify highly utilized resources before an incident or release.
-- Compare workload performance over one, seven, or thirty days.
-- Review bottleneck posture across the workload fleet.
-- Register a metric concern as a finding or external ticket.
-- Preserve a profiler result as evidence and export a PDF report.
-
-## Prerequisites, permissions, and data
-
-- `perfprofile.read` is required. Profiling reads metrics; the application does not require a separate profiler write permission.
-- Select a workload or subscription and an Azure connection with access to Azure Monitor metrics for the resources.
-- Current workload inventory determines what can be scanned.
-- Metric definitions and thresholds use the supported baseline/reference set, including AMBA-aligned definitions where available.
-- AI narrative requires a configured AI provider.
-- Default settings commonly use a one-day window, 15-minute aggregation interval, six-hour server cache, and a bounded resource scan cap; administrators can change these values.
+- The user needs `perfprofile.read` for every profiler, Fleet, history, cleanup, report, evidence, finding, and ticket endpoint.
+- The selected Azure connection must be enabled and able to read Resource Graph and Azure Monitor metrics for the scope.
+- Workload profiling uses the workload's connection unless an explicit connection is selected. Subscription profiling uses the selected subscription and connection.
+- Resource discovery comes from Azure Resource Graph. Metric observations come from Azure Monitor. Metric definitions, thresholds, severity, aggregation, and direction come from the active AMBA reference.
+- A configured AI provider is optional and supplies the narrative only. Scores and collection status do not depend on AI.
+- Jira or ServiceNow is required only for the **Ticket** handoff. Evidence and Performance findings are application artifacts.
 
 ## Tabs and actions
 
 ### Profiler
 
-Choose a workload or subscription, then select the metric time window. **Run** starts a streamed refresh with progress.
+Choose a workload or subscription, connection, and exact time range, then select **Run profile**. The screen streams per-resource progress and keeps the stream active while navigating within the same browser tab.
 
-The **Analysis** sub-tab displays metrics as rows and resources as columns. Color indicates baseline state, and resources can be ordered by bottleneck score. Select a cell or resource to inspect metric detail and supporting values.
+**Heatmap** shows resource-by-metric cells, resource scores, the binding bottleneck, ranked bottlenecks, filters, and resource detail. **All Resources** includes in-scope resources that do not have a supported metric definition; those resources are inventory context, not scored rows.
 
-The **All Resources** sub-tab provides a searchable, filterable, virtualized table of resource, type, region, current value, threshold, utilization, and trend where supplied.
+Run actions include:
 
-The AI narrative can summarize the whole result or a selected resource. Use it to form hypotheses, then inspect metric and service evidence.
+- open an historical run by its `run` deep link;
+- download a run-specific PDF;
+- capture an immutable Evidence Locker snapshot;
+- register current bottlenecks as Performance-pillar findings;
+- create a Jira or ServiceNow ticket for a bottleneck;
+- hand a bottleneck to the chat War Room;
+- move a run to Trash, restore it, or permanently purge it.
 
 ### Fleet
 
-Review the latest available score, status, resource count, and trend for each workload. Select a workload to return to its focused profile. Fleet comparisons can be misleading when workloads have different metric coverage or run times.
+Fleet reads the newest **successful** profile for every active workload and overlays the newest attempt status. It supports workload search, sortable score/resource/breach columns, multi-select, one shared time range, and a maximum of 500 workload IDs per submitted batch.
+
+A Fleet submission returns `202 Accepted` after creating a SQL-backed batch. The UI polls the latest batch once per second while it is `queued` or `running`. Batch and item states are:
+
+- `queued`: persisted and waiting for a worker;
+- `running`: one worker has claimed the workload;
+- `succeeded`: collection completed without failed metric checks or a scan-cap truncation;
+- `partial`: at least one metric check failed or the resource scan cap was reached;
+- `failed`: collection failed, timed out, or no metric check completed successfully;
+- `cancelled`: the workload was cancelled before collection started.
+
+**Cancel pending** marks queued items cancelled. A workload already running is allowed to finish safely. **Retry failed/partial** creates a new durable batch for failed, partial, or cancelled items; the backend retry preserves the original time window. Tenant-scoped idempotency keys prevent a duplicate submit from creating a second batch.
+
+The SQL batch is independent of profile history. Deleting a terminal batch control record does not delete its completed profile runs.
 
 ### Cleanup
 
-Manage retained or soft-deleted runs. Restore required records before purge; permanent deletion cannot be undone.
+Cleanup lists active and trashed profiler attempts across all scopes with approximate stored size. Trash is reversible. Purge and empty-trash operations permanently remove run history and cannot be rolled back; Evidence Locker snapshots remain separate artifacts.
 
-## Workflow
+## Freshness and scope behavior
 
-1. Select the correct connection and a workload or subscription—not both.
-2. Confirm inventory and choose a window appropriate to the issue. Short windows reveal spikes; longer windows can hide them through aggregation.
-3. Run a refresh and monitor streamed progress.
-4. Start with the highest bottleneck score, then inspect red and amber heatmap cells.
-5. Compare current value, threshold, trend, region, and resource type.
-6. Correlate with incidents, deployments, scaling events, logs, and dependencies.
-7. Register a validated finding, create a ticket, or preserve evidence.
-8. Re-profile after remediation using a comparable window.
+- Opening `/performance` reads history and stored results; it does not start an Azure scan.
+- The trusted Fleet score, profile fallback, report fallback, cache, and trend use only complete `succeeded` runs.
+- Failed and partial attempts remain in history and appear as the latest-attempt overlay. They do not replace the latest successful score, cache entry, or trend point.
+- The successful-result freshness default is six hours. Fleet badges a successful result stale after that TTL; a stale badge does not start collection.
+- The default metric window is one day, configured interval is 15 minutes, and resource scan cap is 200. A custom start and end must both be supplied, be valid ISO-8601 timestamps, and have start earlier than end.
+- The collector uses the coarser of the configured interval and each AMBA alert's `window_size`. For example, an hourly capacity or count check runs at `PT1H` even when the configured interval is `PT15M`; checks whose reference window is finer continue to use `PT15M`. This changes the aggregation grain for that check, not the selected profile time range.
+- Resources without a supported reference entry are not scored. If eligible resources exceed the scan cap, collection is `partial` and reports the selected and eligible counts.
+- Run history retains at most 30 active attempts per tenant and scope. Trashed attempts are retained until restored or purged.
 
-## Interpret results
+### Collection completeness
 
-- **Red/critical** means a metric crossed its configured critical condition.
-- **Amber/warning** indicates elevated risk or approaching threshold.
-- **Green/OK** means the observed metric did not cross its baseline; it does not prove that the service is healthy.
-- **Bottleneck score** is a prioritization aid across available metrics, not a probability of failure.
-- **No data** can mean an unsupported metric, provider delay, inaccessible resource, wrong time grain, or no observations.
-- **Trend** reflects stored comparable runs or time-series points and should be checked for window consistency.
+Each attempt records discovered, eligible, selected, and completed resources plus metric-check and request counters. `completeness_pct` is the percentage of checks that either returned observations or returned a valid no-data result. A request failure is different from no data:
 
-## Exports, history, and integrations
+- **No data** means the metric request completed but produced no observations. It is not counted as healthy and its score is unknown.
+- **Failed check** means the metric could not be evaluated after retries. Missing values from that check must not be interpreted as healthy.
+- **Partial** means some conclusions are available but the attempt is not trusted as current posture.
+- **Succeeded with an unknown score** is possible when all supported requests complete but every metric has no observations.
 
-- Download a PDF for a focused run or supported fleet report.
-- View run history and score trend for the selected scope.
-- Create an evidence snapshot from a run or scoped profile.
-- Register a bottleneck as a product finding, create a ticket through configured connectors, or pin it into an investigation/War Room workflow where available.
-- The profiler consumes Azure Monitor and baseline reference data but does not change Azure resources or thresholds.
+## Workflow overview
+
+1. Resolve the scope and open one service-principal Azure CLI session for the profile when service-principal authentication is used. Non-service-principal connections use their supported REST or ambient authentication path.
+2. Discover resources, select supported types up to the scan cap, and hydrate managed-disk provisioned limits when needed.
+3. For each resource, group compatible metric checks by metric target, aggregation, dimension filter, and effective interval. Multiple metric names in a compatible group are fetched in one Azure Monitor request and parsed back into separate checks. Managed disks use grouped read/write counters to derive IOPS and throughput saturation.
+4. Route storage-account service metrics to the Azure Monitor resource identified by `metric_namespace`: `blobServices/default`, `queueServices/default`, `fileServices/default`, or `tableServices/default`. Account-level namespaces continue to query the storage-account resource itself.
+5. Admit every metric request through one process-wide gate shared by Fleet, focused profiler runs, Mission Control, and the profiler agent tool.
+6. Retry transient `429`, `500`, `502`, `503`, and `504` responses, timeouts, connection resets, and temporary request errors. The collector honors a reported `Retry-After`; otherwise it uses exponential backoff with jitter.
+7. Compute resource states and scores, derive collection status, generate the optional narrative, and persist the attempt.
+8. Replace the trusted cache and append a trend point only when the attempt status is `succeeded`.
+
+## Interpretation of results
+
+- **Breaching** means the worst observation crossed the configured threshold.
+- **Approaching** begins at 70% of a higher-is-worse threshold, or within the risk side of the supported operating range for lower-is-worse metrics.
+- **Healthy** means an observation was returned and stayed on the healthy side of that metric's threshold.
+- **No data** is unknown. A resource with no observed metric cells has a blank score, not `100`.
+- Resource score is severity-weighted: a breach applies the full metric weight and approaching applies half. No-data cells are excluded rather than rewarded.
+- Workload score is the average of resource rows with observations. If no row is observed, the workload score is blank.
+- A green score does not establish service health. Validate it against SLOs, logs, dependencies, deployment events, and user-impact telemetry for the same window.
+
+## Exports, history, scheduling, and integrations
+
+- Full profile attempts are retained on the application's durable data volume; Fleet batch and queue state are retained in SQL.
+- On server startup, an interrupted `running` Fleet item is re-queued. Already terminal items are preserved, and an item-specific trigger prevents duplicate history persistence after restart recovery.
+- PDF reports and Evidence Locker captures can target a specific run or the latest successful run for a scope.
+- Findings are stored as a lightweight Performance assessment run. Tickets are real external connector deliveries.
+- Mission Control and the profiler investigation tool use the same execution, timeout, retry, completeness, persistence, cache, and trend rules.
 
 ## Safety and limitations
 
-- Metrics are delayed, aggregated, and subject to Azure Monitor retention and throttling.
-- A threshold can be unsuitable for a particular workload. Validate against SLOs and service guidance.
-- Correlation is not causation; the highest score may be a symptom of a downstream issue.
-- Cached profiles can be up to the configured TTL old. Run refresh when current evidence is required.
-- Scan caps can omit resources from very large scopes; inspect completion and resource counts.
-- AI narrative may invent causal explanations. Treat it only as a hypothesis.
+- Profiling issues read-only Resource Graph and Azure Monitor requests. Findings, Evidence, and tickets create application or external artifacts but do not tune thresholds or resize Azure resources.
+- Default Fleet workload concurrency is `1`; the accepted range is 1–3. Starts are separated by 1,000 ms by default.
+- Azure Monitor request concurrency is process-wide, defaults to `2`, and accepts 1–12. It is process-local because the deployed application is designed for one replica; multiple replicas would each enforce their own limit.
+- Metric attempts default to `3` total attempts, including the first, and accept 1–6. Retry exhaustion produces failed checks rather than false green cells.
+- One workload collection has a default 1,200-second timeout and accepted range of 60–7,200 seconds. A timeout is retained as failed history and does not displace trusted posture.
+- A reference `window_size` can make one metric's effective interval coarser than the configured interval. Compare values with Azure Monitor at that effective grain; do not assume every heatmap cell used 15-minute buckets.
+- Raising Fleet or metric concurrency can multiply Azure throttling and Azure CLI processes. Increase gradually and observe collection counters and host capacity.
+- Changing Fleet workload concurrency changes worker count only after an application restart. Start delay, metric concurrency, attempts, and workload timeout are read during subsequent work.
+- Single-scope browser progress is not the durable Fleet queue. Use Fleet when work must survive a browser reload or server restart.
 
 ## Troubleshooting
 
-| Symptom | Checks |
-|---|---|
-| No resources appear | Verify scope, inventory freshness, connection, and metric-read access. |
-| Many cells show no data | Check metric support for each resource type, time window, aggregation grain, and provider delay. |
-| Refresh fails or is slow | Narrow scope/window, check Azure throttling, and inspect streamed error detail before retrying. |
-| Result looks stale | Compare run time and cache TTL, then start an explicit refresh. |
-| Score conflicts with user experience | Review service-level metrics, logs, dependencies, and baseline suitability. |
-| PDF or evidence is unavailable | Open a completed persisted run and verify permission/storage health. |
+| Symptom | Cause and resolution |
+| --- | --- |
+| A Fleet batch remains queued | Confirm database migration `0007_perf_profile_fleet` is applied and the profiler Fleet worker started. Verify the workload still exists and the batch was not cancelled. Restarting the application reclaims durable queued work. |
+| A batch reappears as queued after a server restart | The worker deliberately re-queues an interrupted item. Continue polling; completed items are not repeated, and the item trigger prevents a duplicate run record. |
+| **Cancel pending** leaves one workload running | Cancellation affects queued items. The already claimed workload finishes unless server shutdown interrupts it; wait for the terminal batch status. |
+| Metric counters show throttling or transient failures | Review `metric_requests_throttled`, retries, and the bounded error list. Lower process-wide metric concurrency, increase Fleet start delay, allow `Retry-After` to elapse, and retry failed/partial items. |
+| The latest attempt is partial but Fleet still shows an older score | This is intentional reliability behavior. Open the partial attempt to review completeness/errors; the score, cache, and trend remain on the latest complete success until a new successful run finishes. |
+| The attempt succeeded but score is blank | Requests completed but all supported metric cells had no observations. Check Azure Monitor metric support, window, aggregation, provider delay, and access; unknown is not 100. |
+| Storage capacity or count metrics show no data or `BadRequest` | Confirm the active AMBA entry has the service-level `metric_namespace` and its supported `window_size`. Storage blob, queue, file, and table metrics are automatically sent to their `/blobServices/default`, `/queueServices/default`, `/fileServices/default`, or `/tableServices/default` target, and a coarser reference window widens only that check's interval. |
+| Every metric check failed or the workload timed out | Validate the Azure connection, Resource Graph access, Azure Monitor metric access, service-principal credentials, and host `az` availability. Narrow the scope/window or adjust the bounded timeout before retrying. |
+| A service principal authenticates repeatedly during one profile | The collector should open one temporary session per profile and reuse it. Check worker logs for session setup failures; a failed login prevents reuse and produces a retained failed attempt. Temporary sessions also reuse the stable local Azure CLI extension directory, while the production image uses its baked extension directory. |
+| Changing Fleet workload concurrency has no immediate effect | Worker count is created at application startup. Save the setting, restart the application, and verify that the SQL-backed batch resumes before increasing load further. |
 
-## Related docs
+## Related pages
 
+- [Run Performance Profiler]({{ site.baseurl }}/how-to/design-assessment/performance-profiler/)
+- [General settings]({{ site.baseurl }}/admin/general-settings/)
 - [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/)
-- [FMEA]({{ site.baseurl }}/user-guide/assessment-performance/fmea/)
-- [Estate Graph]({{ site.baseurl }}/user-guide/design-ownership/estate-graph/)
-- [AI Insight Packs]({{ site.baseurl }}/user-guide/design-ownership/ai-insight-packs/)
+- [Evidence Locker]({{ site.baseurl }}/user-guide/lifecycle-investigation/evidence-locker/)
+- [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)

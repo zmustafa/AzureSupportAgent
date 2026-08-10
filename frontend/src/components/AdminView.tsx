@@ -3226,6 +3226,11 @@ function ScoringTaxonomyCard() {
         arg_rate_limit_enabled: form.arg_rate_limit_enabled,
         arg_max_queries_per_window: form.arg_max_queries_per_window,
         arg_rate_window_seconds: form.arg_rate_window_seconds,
+        perfprofile_fleet_concurrency: form.perfprofile_fleet_concurrency,
+        perfprofile_fleet_start_delay_ms: form.perfprofile_fleet_start_delay_ms,
+        perfprofile_metric_concurrency: form.perfprofile_metric_concurrency,
+        perfprofile_metric_max_attempts: form.perfprofile_metric_max_attempts,
+        perfprofile_workload_timeout_s: form.perfprofile_workload_timeout_s,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -3812,6 +3817,66 @@ function AppSettingsCard() {
             step={500}
             suffix="changes"
             onChange={(v) => set({ changeexplorer_change_limit: v })}
+          />
+        </div>
+      </Card>
+
+      <Card title="Performance Profiler capacity">
+        <p className="mb-2 text-xs text-gray-500">
+          Fleet batches are durable and run on the server. These conservative defaults prevent
+          dozens of selected workloads from multiplying Azure Monitor calls and Azure CLI
+          processes. Increase them only after measuring both Azure throttling and host capacity.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <NumberField
+            label="Fleet workloads in parallel"
+            hint="Default 1. This is the number of workload profiles the durable Fleet worker may run at once."
+            value={form.perfprofile_fleet_concurrency ?? 1}
+            min={1}
+            max={3}
+            step={1}
+            suffix="workloads"
+            onChange={(v) => set({ perfprofile_fleet_concurrency: v })}
+          />
+          <NumberField
+            label="Delay between Fleet starts"
+            hint="Spreads new workload starts so authentication and discovery do not burst simultaneously."
+            value={form.perfprofile_fleet_start_delay_ms ?? 1000}
+            min={0}
+            max={30000}
+            step={250}
+            suffix="ms"
+            onChange={(v) => set({ perfprofile_fleet_start_delay_ms: v })}
+          />
+          <NumberField
+            label="Azure Monitor calls in parallel"
+            hint="Process-wide across Fleet, single-scope runs, Mission Control, and agent tools. Default 2."
+            value={form.perfprofile_metric_concurrency ?? 2}
+            min={1}
+            max={12}
+            step={1}
+            suffix="calls"
+            onChange={(v) => set({ perfprofile_metric_concurrency: v })}
+          />
+          <NumberField
+            label="Metric request attempts"
+            hint="Total attempts for throttled or transient Azure Monitor requests, including the first call."
+            value={form.perfprofile_metric_max_attempts ?? 3}
+            min={1}
+            max={6}
+            step={1}
+            suffix="attempts"
+            onChange={(v) => set({ perfprofile_metric_max_attempts: v })}
+          />
+          <NumberField
+            label="Workload timeout"
+            hint="Hard ceiling for one workload profile. A timeout is recorded as a failed attempt and never replaces the latest successful result."
+            value={form.perfprofile_workload_timeout_s ?? 1200}
+            min={60}
+            max={7200}
+            step={60}
+            suffix="seconds"
+            onChange={(v) => set({ perfprofile_workload_timeout_s: v })}
           />
         </div>
       </Card>

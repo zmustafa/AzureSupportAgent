@@ -45,7 +45,7 @@ Provider requests can transmit prompts and retrieved context outside the applica
 
 | Symptom | Resolution |
 | --- | --- |
-| Unexpected result | Re-check route, permissions, and latest refresh state before retrying. |
+| Test response comes from an unintended provider or model | Reopen the active-provider selection, verify endpoint and model entitlement, save the intended provider, and repeat the minimal test. |
 | DNS or connection stage fails | Check the visible endpoint, container egress, proxy/firewall, and TLS trust. |
 | Authentication fails | Re-enter the key or complete OAuth again; confirm account scope and expiry. |
 | Model list is empty | Refresh, check account entitlement, and clear hidden or free-only filters. |
