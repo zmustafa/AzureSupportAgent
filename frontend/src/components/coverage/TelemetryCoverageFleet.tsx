@@ -1,22 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TelemetryCoverageFleetRow } from "../../api";
-import { queryClient } from "../../queryClient";
 import { formatError } from "../../utils/format";
-import { isRefreshing, peekRefreshError, startBackgroundRefresh, subscribeBackgroundRefresh, useBackgroundRefresh } from "../../utils/backgroundRefresh";
 import { Skeleton } from "../../utils/perf";
-import { enqueueFleet, fleetOutstanding, fleetQueuedKeys, useFleetQueue } from "../fleetScheduler";
-
-const MAX_PARALLEL = 3;
-const STAGGER_MS = 400;
-const QUEUE_ID = "telemetryCoverageFleet";
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
 type SortKey = "worst" | "coverage" | "resources" | "with_diag" | "all_categories" | "unknown" | "run_at" | "name";
 type SortDir = "asc" | "desc";
-
-function refreshKey(row: TelemetryCoverageFleetRow): string {
-  return `telemetry:workload:${row.workload_id}:${row.connection_id || ""}`;
-}
 
 function relTime(iso: string): string {
   if (!iso) return "never";
@@ -36,8 +26,7 @@ function PercentPill({ value }: { value: number | null }) {
 }
 
 export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string, connectionId: string) => void }) {
-  useBackgroundRefresh();
-  useFleetQueue();
+  const durable = useDurableBatch("coverage_telemetry", [["telemetryFleet"], ["telemetry-trend"], ["coverage-runs", "telemetry"]]);
   const fleetQ = useQuery({ queryKey: ["telemetryFleet"], queryFn: api.telemetryCoverageFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -45,7 +34,7 @@ export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (wo
   const [sortKey, setSortKey] = useState<SortKey>("worst");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [message, setMessage] = useState<string | null>(null);
-  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
+  const [busy, setBusy] = useState<"" | "launch" | "retry" | "cancel">("");
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -88,38 +77,21 @@ export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (wo
     });
   }
 
-  function enqueueRows(chosen: TelemetryCoverageFleetRow[]) {
-    enqueueFleet(QUEUE_ID, chosen.map((row) => ({
-      key: refreshKey(row),
-      run: () => startBackgroundRefresh(refreshKey(row), async () => {
-        const connectionId = row.connection_id || "";
-        const snapshot = await api.refreshTelemetry({ workload_id: row.workload_id, connection_id: connectionId || undefined });
-        queryClient.setQueryData(["telemetry", "workload", row.workload_id, "", connectionId], snapshot);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["telemetryFleet"] }),
-          queryClient.invalidateQueries({ queryKey: ["telemetry", "workload", row.workload_id] }),
-          queryClient.invalidateQueries({ queryKey: ["telemetry-trend", "workload", row.workload_id] }),
-          queryClient.invalidateQueries({ queryKey: ["coverage-runs", "telemetry", "workload", row.workload_id] }),
-        ]);
-      }),
-    })), { maxParallel: MAX_PARALLEL, staggerMs: STAGGER_MS, isRunning: isRefreshing, subscribe: subscribeBackgroundRefresh });
-  }
-
   function launch() {
     const chosen = rows.filter((row) => selected.has(row.workload_id));
     if (!chosen.length) return;
-    enqueueRows(chosen);
-    setMessage(`Launched telemetry coverage scans for ${chosen.length} workload${chosen.length === 1 ? "" : "s"}. Running ${MAX_PARALLEL} at a time…`);
+    setBusy("launch");
+    void durable.launch(chosen.map((row) => row.workload_id))
+      .then(() => setMessage(`Queued telemetry coverage scans for ${chosen.length} workload${chosen.length === 1 ? "" : "s"}. The server owns the complete batch.`))
+      .catch((error) => setMessage(formatError(error))).finally(() => setBusy(""));
     setSelected(new Set());
   }
 
-  const failedRows = rows.filter((row) => {
-    const key = refreshKey(row);
-    return !!peekRefreshError(key) && !isRefreshing(key) && !queuedKeys.has(key);
-  });
+  const failedRows = rows.filter((row) => ["failed", "partial", "cancelled"].includes(durable.itemsByWorkload.get(row.workload_id)?.status || ""));
   function retryFailed() {
-    enqueueRows(failedRows);
-    setMessage(`Retrying ${failedRows.length} failed telemetry scan${failedRows.length === 1 ? "" : "s"}…`);
+    setBusy("retry");
+    void durable.retry().then(() => setMessage(`Queued ${failedRows.length} failed/partial telemetry scan${failedRows.length === 1 ? "" : "s"} for retry.`))
+      .catch((error) => setMessage(formatError(error))).finally(() => setBusy(""));
   }
   function clickSort(key: SortKey, defaultDirection: SortDir = "desc") {
     if (sortKey === key) setSortDir((current) => current === "asc" ? "desc" : "asc");
@@ -133,7 +105,7 @@ export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (wo
 
   const scanned = fleetQ.data?.scanned ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const outstanding = fleetOutstanding(QUEUE_ID);
+  const outstanding = durable.active && durable.batch ? durable.batch.total - durable.batch.completed : 0;
 
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="border-b bg-white px-5 py-3">
@@ -145,10 +117,11 @@ export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (wo
           <select value={sortKey} onChange={(event) => { const key = event.target.value as SortKey; setSortKey(key); setSortDir(key === "coverage" || key === "name" ? "asc" : "desc"); }} className="rounded-md border px-2 py-1 text-xs text-gray-600">
             <option value="worst">Sort: worst first</option><option value="coverage">Sort: lowest coverage</option><option value="with_diag">Sort: most with diagnostics</option><option value="all_categories">Sort: all categories</option><option value="unknown">Sort: unknown destinations</option><option value="run_at">Sort: newest scan</option><option value="name">Sort: name</option>
           </select>
-          {failedRows.length > 0 && <button onClick={retryFailed} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100">↻ Retry failed ({failedRows.length})</button>}
-          <button onClick={launch} disabled={!selected.size} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Scan {selected.size || ""} selected</button>
+          {failedRows.length > 0 && <button onClick={retryFailed} disabled={durable.active || busy !== ""} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">↻ Retry failed ({failedRows.length})</button>}
+          <button onClick={launch} disabled={!selected.size || durable.active || busy !== ""} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Scan {selected.size || ""} selected</button>
         </div>
       </div>
+      <DurableBatchBar batch={durable.batch} cancelling={busy === "cancel"} onCancel={() => { setBusy("cancel"); void durable.cancel().finally(() => setBusy("")); }} />
       {message && <div className="mt-2 rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-700">{message}</div>}
     </div>
     <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
@@ -156,7 +129,7 @@ export function TelemetryCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (wo
         <table className="w-full text-[12px]"><thead className="sticky top-0 z-10 bg-gray-50 text-left text-gray-500"><tr className="border-b">
           <th className="w-8 px-2 py-2"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all shown workloads" /></th><SortHeader label="Workload" value="name" defaultDirection="asc" /><SortHeader label="Coverage" value="coverage" defaultDirection="asc" /><SortHeader label="Resources" value="resources" /><SortHeader label="With diag" value="with_diag" /><SortHeader label="All categories" value="all_categories" /><SortHeader label="Unknown dest." value="unknown" /><SortHeader label="Last scan" value="run_at" /><th className="px-2 py-2" />
         </tr></thead><tbody>{filtered.map((row) => {
-          const key = refreshKey(row); const running = isRefreshing(key); const queued = queuedKeys.has(key); const error = !running && !queued ? peekRefreshError(key) : undefined;
+          const item = durable.itemsByWorkload.get(row.workload_id); const running = item?.status === "running"; const queued = item?.status === "queued"; const error = item?.status === "failed" ? item.error : undefined;
           return <tr key={row.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(row.workload_id) ? "bg-brand/5" : ""}`}>
             <td className="px-2 py-1.5"><input type="checkbox" checked={selected.has(row.workload_id)} onChange={() => toggleOne(row.workload_id)} aria-label={`Select ${row.name}`} /></td>
             <td className="px-2 py-1.5"><button onClick={() => onOpenWorkload(row.workload_id, row.connection_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button><div className="flex gap-1 text-[10px] text-gray-400">{row.environment && <span>{row.environment}</span>}{row.stale && row.has_scan && <span className="rounded bg-amber-50 px-1 text-amber-600">stale</span>}</div></td>

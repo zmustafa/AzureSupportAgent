@@ -19,6 +19,7 @@ import {
 } from "../../api";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
 type Tone = "gray" | "green" | "amber" | "red" | "indigo";
 
@@ -367,6 +368,9 @@ export function WorkloadGroupDetailPanel() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const missionBatch = useDurableBatch("mission", [["missions"], ["missionLatest"]]);
+  const assessmentBatch = useDurableBatch("assessment", [["assessmentFleet"], ["assessmentRuns"]]);
+  const architectureBatch = useDurableBatch("architecture", [["architectures"]]);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -411,8 +415,8 @@ export function WorkloadGroupDetailPanel() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api.runFleet({ workload_ids: members.map((m) => m.id) });
-      setMsg({ text: `🚀 Launched ${r.launched} mission${r.launched === 1 ? "" : "s"}. Open a member's Mission Control to watch progress.`, ok: true });
+      const batch = await missionBatch.launch(members.map((m) => m.id));
+      setMsg({ text: `🚀 Queued ${batch.total} durable mission${batch.total === 1 ? "" : "s"}. Open a member's Mission Control to watch progress.`, ok: true });
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -425,8 +429,8 @@ export function WorkloadGroupDetailPanel() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api.enqueueAssessments({ workload_ids: members.map((m) => m.id), pack: "waf" });
-      setMsg({ text: `🛡 Queued ${r.queued} WAF assessment${r.queued === 1 ? "" : "s"}. Track progress on the Assessments page.`, ok: true });
+      const batch = await assessmentBatch.launch(members.map((m) => m.id), { pack: "waf", use_ai: true });
+      setMsg({ text: `🛡 Queued ${batch.total} durable WAF assessment${batch.total === 1 ? "" : "s"}. Track progress on the Assessments page.`, ok: true });
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -439,8 +443,8 @@ export function WorkloadGroupDetailPanel() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api.createArchitectureJobs(members.map((m) => m.id));
-      setMsg({ text: `🏛 Queued ${r.queued} architecture build${r.queued === 1 ? "" : "s"}. Track progress on the Architectures page.`, ok: true });
+      const batch = await architectureBatch.launch(members.map((m) => m.id));
+      setMsg({ text: `🏛 Queued ${batch.total} durable architecture build${batch.total === 1 ? "" : "s"}. Track progress on the Architectures page.`, ok: true });
     } catch (e) {
       setMsg({ text: formatError(e), ok: false });
     } finally {
@@ -547,6 +551,9 @@ export function WorkloadGroupDetailPanel() {
         {msg && (
           <div className={`mt-2 rounded-lg border px-3 py-1.5 text-xs ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>
         )}
+        <DurableBatchBar batch={missionBatch.batch} onCancel={() => { void missionBatch.cancel(); }} onRetry={() => { void missionBatch.retry(); }} />
+        <DurableBatchBar batch={assessmentBatch.batch} onCancel={() => { void assessmentBatch.cancel(); }} onRetry={() => { void assessmentBatch.retry(); }} />
+        <DurableBatchBar batch={architectureBatch.batch} onCancel={() => { void architectureBatch.cancel(); }} onRetry={() => { void architectureBatch.retry(); }} />
       </header>
 
       {/* Body */}

@@ -287,11 +287,12 @@ def _identity_resolution_enabled() -> bool:
 
 async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
                          start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
-                         force_demo: bool = False, run_ai: bool = True) -> Any:
+                         force_demo: bool = False, run_ai: bool = True,
+                         run_id: str | None = None) -> Any:
     """The change-analysis pipeline as an async generator that yields progress dicts while it
     works (``{"phase","message",...}``) and finally yields the completed run
     (``{"phase":"done","run":<run dict>}``). Used by the SSE endpoint; ``analyze`` drains it."""
-    run_id = new_id()
+    run_id = run_id or new_id()
     workload_id = workload.get("id", "")
     workload_name = workload.get("name", "workload")
     created = now_iso()
@@ -390,13 +391,14 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
 
 async def analyze(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
                   start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
-                  force_demo: bool = False, run_ai: bool = True) -> dict[str, Any]:
+                  force_demo: bool = False, run_ai: bool = True,
+                  run_id: str | None = None) -> dict[str, Any]:
     """Run the full pipeline and return a serialized ChangeAnalysisRun (dict). Drains the stream."""
     final: dict[str, Any] = {}
     async for ev in analyze_stream(
         tenant_id=tenant_id, workload=workload, connection=connection,
         start_iso=start_iso, end_iso=end_iso, scope_mode=scope_mode,
-        requested_by=requested_by, force_demo=force_demo, run_ai=run_ai,
+        requested_by=requested_by, force_demo=force_demo, run_ai=run_ai, run_id=run_id,
     ):
         if ev.get("phase") == "done":
             final = ev["run"]

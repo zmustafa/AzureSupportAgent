@@ -224,10 +224,11 @@ class _Manager:
         force: bool,
         trigger: str,
         system_keys: list[str],
+        mission_id: str | None = None,
     ) -> dict[str, Any]:
         self._prune()
         mission = _Mission(
-            id=str(uuid.uuid4()),
+            id=mission_id or str(uuid.uuid4()),
             tenant_id=tenant_id,
             workload_id=workload_id,
             workload_name=workload_name,
@@ -406,8 +407,9 @@ class _Manager:
 
         try:
             async with SessionLocal() as db:
-                db.add(
-                    MissionRun(
+                existing = await db.get(MissionRun, mission.id)
+                if existing is None:
+                    db.add(MissionRun(
                         id=mission.id,
                         tenant_id=mission.tenant_id,
                         workload_id=mission.workload_id,
@@ -421,8 +423,22 @@ class _Manager:
                         force=mission.force,
                         triggered_by=mission.actor,
                         trigger=mission.trigger,
-                    )
-                )
+                    ))
+                else:
+                    existing.status = "queued"
+                    existing.readiness = "unknown"
+                    existing.systems_total = len(mission.system_keys)
+                    existing.systems_done = 0
+                    existing.systems_attention = 0
+                    existing.systems_json = [mission.systems[k] for k in mission.system_keys]
+                    existing.log_json = list(mission.log)
+                    existing.error = None
+                    existing.force = mission.force
+                    existing.triggered_by = mission.actor
+                    existing.trigger = mission.trigger
+                    existing.started_at = _now()
+                    existing.ended_at = None
+                    existing.duration_ms = None
                 await db.commit()
         except Exception:  # noqa: BLE001
             logger.warning("Mission row create failed for %s", mission.id, exc_info=True)

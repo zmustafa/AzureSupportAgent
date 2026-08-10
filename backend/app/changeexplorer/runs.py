@@ -46,7 +46,16 @@ def save_run(tenant_id: str, workload_id: str, run: dict[str, Any]) -> dict[str,
     data = _read()
     bucket = data.setdefault(tenant_id or "default", {})
     runs = bucket.setdefault(workload_id or "default", [])
-    runs.insert(0, run)
+    run_id = str(run.get("runId") or "")
+    replaced = False
+    if run_id:
+        for index, existing in enumerate(runs):
+            if existing.get("runId") == run_id:
+                runs[index] = run
+                replaced = True
+                break
+    if not replaced:
+        runs.insert(0, run)
     active = [i for i, r in enumerate(runs) if not r.get("deleted_at")]
     if len(active) > _MAX_PER_WORKLOAD:
         for i in sorted(active[_MAX_PER_WORKLOAD:], reverse=True):

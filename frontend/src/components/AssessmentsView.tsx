@@ -1355,8 +1355,13 @@ function RunFlow({ onQueued, preselectWorkloadId = "" }: { onQueued: () => void;
     if (selectedWl.length === 0 || pillars.length === 0) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const res = await api.enqueueAssessments({ workload_ids: selectedWl, pillars, pack: activePack || null, use_ai: useAi });
-      setNotice(`Queued ${res.queued} assessment${res.queued === 1 ? "" : "s"} — running in the background. Track progress in History below.`);
+      const { batch } = await api.createWorkBatch({
+        feature: "assessment",
+        workload_ids: selectedWl,
+        config: { pillars, pack: activePack || null, use_ai: useAi },
+        idempotency_key: `assessment:${crypto.randomUUID()}`,
+      });
+      setNotice(`Queued ${batch.total} durable assessment${batch.total === 1 ? "" : "s"} — the server resumes unfinished work after restart. Track progress in Fleet and History.`);
       onQueued();
     } catch (e) {
       setError(formatError(e));

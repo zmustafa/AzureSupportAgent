@@ -4,6 +4,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { api, type Architecture, type ArchitectureCollection, type ArchitectureJob, type ArchitectureRevision, type ArchitectureState, type Workload } from "../api";
 import { formatError, formatTimestamp } from "../utils/format";
 import { ArchitectureCanvas, ArchitecturePreview } from "./ArchitectureCanvas";
+import { DurableBatchBar, useDurableBatch } from "./DurableBatch";
 // Memory editor is a sizeable module — lazy-load so the architectures LIST page
 // doesn't ship the markdown editor + revisions UI.
 const MemoryEditor = lazy(() => import("./ArchitectureMemoryView").then((m) => ({ default: m.MemoryEditor })));
@@ -414,6 +415,7 @@ function ArchitecturesList() {
 
 function FromWorkloadModal({ onClose, onQueued }: { onClose: () => void; onQueued: (n: number) => void }) {
   const qc = useQueryClient();
+  const durable = useDurableBatch("architecture", [["architectures"]]);
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const workloads = (wlQ.data?.workloads ?? []) as Workload[];
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -440,9 +442,9 @@ function FromWorkloadModal({ onClose, onQueued }: { onClose: () => void; onQueue
     if (selected.size === 0) return;
     setBusy(true); setError("");
     try {
-      const res = await api.createArchitectureJobs([...selected]);
+      const batch = await durable.launch([...selected]);
       qc.invalidateQueries({ queryKey: ["architectureJobs"] });
-      onQueued(res.queued);
+      onQueued(batch.total);
     } catch (e) { setError(formatError(e)); setBusy(false); }
   }
 
@@ -495,6 +497,7 @@ function FromWorkloadModal({ onClose, onQueued }: { onClose: () => void; onQueue
 function GenerationJobs() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const durable = useDurableBatch("architecture", [["architectures"]]);
   const seenDone = useRef<Set<string>>(new Set());
   const q = useQuery({
     queryKey: ["architectureJobs"],
@@ -527,7 +530,7 @@ function GenerationJobs() {
     qc.invalidateQueries({ queryKey: ["architectureJobs"] });
   }
 
-  if (jobs.length === 0) return null;
+  if (jobs.length === 0 && !durable.batch) return null;
   const active = jobs.filter((j) => j.status === "queued" || j.status === "running");
   const finished = jobs.filter((j) => j.status !== "queued" && j.status !== "running");
 
@@ -539,6 +542,7 @@ function GenerationJobs() {
           <button onClick={() => finished.forEach((j) => void dismiss(j.id))} className="text-xs text-gray-400 hover:text-gray-700">Clear finished</button>
         )}
       </div>
+      <DurableBatchBar batch={durable.batch} onCancel={() => { void durable.cancel(); }} onRetry={() => { void durable.retry(); }} />
       <div className="space-y-2">
         {jobs.map((j) => (
           <JobRow key={j.id} job={j}
@@ -598,6 +602,7 @@ function StatusPill({ status }: { status: ArchitectureJob["status"] }) {
 function ArchitectureEditor({ id }: { id: string }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const durableRebuild = useDurableBatch("architecture", [["architecture", id], ["architectures"], ["architectureRevisions", id]]);
   const q = useQuery({ queryKey: ["architecture", id], queryFn: () => api.architecture(id) });
   const collQ = useQuery({ queryKey: ["architectureCollections"], queryFn: api.architectureCollections });
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
@@ -638,8 +643,8 @@ function ArchitectureEditor({ id }: { id: string }) {
     if (!workloadId) { setRebuildMsg("Link a workload first, then rebuild."); return; }
     setRebuildMsg("");
     try {
-      const { job } = await api.rebuildArchitecture(id, workloadId);
-      setRebuildJobId(job.id);
+      const batch = await durableRebuild.launch([workloadId], { target_architecture_id: id });
+      setRebuildJobId(batch.id);
     } catch (e) {
       setRebuildMsg(e instanceof Error ? e.message : "Failed to start rebuild.");
     }
@@ -650,21 +655,21 @@ function ArchitectureEditor({ id }: { id: string }) {
     let cancelled = false;
     const tick = async () => {
       try {
-        const { jobs } = await api.architectureJobs();
-        const job = jobs.find((j) => j.id === rebuildJobId);
-        if (!job) return;
-        if (job.status === "done") {
+        const { batch } = await api.workBatch(rebuildJobId);
+        const item = batch.items[0];
+        if (!item) return;
+        if (item.status === "succeeded" || item.status === "partial") {
           setRebuildJobId(null);
           setRebuildMsg("");
           await qc.invalidateQueries({ queryKey: ["architecture", id] });
           qc.invalidateQueries({ queryKey: ["architectures"] });
           qc.invalidateQueries({ queryKey: ["architectureRevisions", id] });
           setRestoreKey((k) => k + 1);
-        } else if (job.status === "error" || job.status === "canceled") {
+        } else if (item.status === "failed" || item.status === "cancelled") {
           setRebuildJobId(null);
-          setRebuildMsg(job.error || "Rebuild did not complete.");
+          setRebuildMsg(item.error || "Rebuild did not complete.");
         } else {
-          setRebuildMsg(job.message || "Rebuilding…");
+          setRebuildMsg(item.message || "Rebuilding…");
         }
       } catch { /* keep polling */ }
     };

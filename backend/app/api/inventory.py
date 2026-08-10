@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.azure_connections import resolve_connection
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.inventory import ai, cache, cost, cost_jobs, service, snapshots
+from app.inventory import ai, cache, cost, service, snapshots
 from app.inventory import optimization as optimization_mod
 from app.models import AssessmentRun
 from app.policy import collector as policy_collector
@@ -332,6 +333,67 @@ class CostRefreshRequest(BaseModel):
     force: bool = True
 
 
+def _cost_batch_job(batch: dict[str, Any] | None) -> dict[str, Any] | None:
+    if batch is None:
+        return None
+    items = batch.get("items") or []
+    aggregate = next(
+        (
+            (item.get("result") or {}).get("aggregate")
+            for item in items
+            if isinstance((item.get("result") or {}).get("aggregate"), dict)
+        ),
+        None,
+    )
+    active = [
+        {
+            "subscription_id": item.get("item_key", ""),
+            "attempt": item.get("attempt", 0),
+            "started_at": item.get("started_at", ""),
+        }
+        for item in items
+        if item.get("status") == "running"
+    ]
+    recent = [
+        {
+            "type": item.get("status", ""),
+            "subscription_id": item.get("item_key", ""),
+            "at": item.get("ended_at") or item.get("started_at") or "",
+            "message": item.get("message") or item.get("error") or "",
+            "error": item.get("error") or "",
+        }
+        for item in items
+        if item.get("status") != "queued" or item.get("message")
+    ][-12:]
+    config = batch.get("config") or {}
+    return {
+        "id": batch["id"],
+        "connection_id": str(config.get("connection_id") or ""),
+        "scope": str(config.get("scope") or ""),
+        "force": bool(config.get("force", True)),
+        "status": batch["status"],
+        "message": batch.get("error") or (
+            "Cost refresh complete." if batch["status"] in {"succeeded", "partial"}
+            else "Cost refresh failed." if batch["status"] == "failed"
+            else "Querying Azure Cost Management."
+        ),
+        "subscriptions_total": batch["total"],
+        "subscriptions_visible": batch["total"],
+        "subscriptions_omitted": 0,
+        "subscriptions_done": batch["completed"],
+        "subscriptions_succeeded": batch["succeeded"],
+        "subscriptions_failed": batch["failed"] + batch["partial"],
+        "active_subscriptions": active,
+        "recent_events": recent,
+        "result": aggregate if batch["status"] in {"succeeded", "partial", "failed"} else None,
+        "error": batch.get("error") or "",
+        "created_at": batch["created_at"],
+        "started_at": batch["started_at"],
+        "ended_at": batch["ended_at"],
+        "elapsed_ms": max((item.get("duration_ms") or 0) for item in items) if items else 0,
+    }
+
+
 @router.post("/cost/refresh", status_code=202)
 async def start_cost_refresh(
     req: CostRefreshRequest,
@@ -345,15 +407,33 @@ async def start_cost_refresh(
     """
     conn = _conn(req.connection_id or None)
     subscriptions = await _scope_subscriptions(conn, req.scope)
-    job = cost_jobs.manager.start(
-        tenant_id=principal.tenant_id,
-        connection_id=req.connection_id,
-        scope=req.scope,
-        force=req.force,
-        connection=conn,
-        subscriptions=subscriptions,
+    if not subscriptions:
+        raise HTTPException(status_code=422, detail="No accessible subscriptions were found for this scope.")
+    from app.core import work_batches
+
+    active = await work_batches.latest_batch_for_config(
+        principal.tenant_id, "inventory_cost",
+        {"connection_id": req.connection_id, "scope": req.scope}, active_only=True,
     )
-    return {"job": job}
+    if active:
+        return {"job": _cost_batch_job(active)}
+    batch, _ = await work_batches.create_batch(
+        tenant_id=principal.tenant_id,
+        feature="inventory_cost",
+        actor=principal.subject,
+        idempotency_key=f"cost:{uuid.uuid4()}",
+        items=[
+            {
+                "item_key": subscription_id,
+                "workload_name": f"Subscription {subscription_id[:8]}…",
+                "connection_id": req.connection_id,
+            }
+            for subscription_id in subscriptions
+        ],
+        config={"connection_id": req.connection_id, "scope": req.scope, "force": req.force},
+        trigger="manual",
+    )
+    return {"job": _cost_batch_job(batch)}
 
 
 @router.get("/cost/refresh/status")
@@ -363,11 +443,13 @@ async def cost_refresh_status(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """Newest progress snapshot for this tenant + connection + scope, if retained."""
-    return {
-        "job": cost_jobs.manager.latest(
-            principal.tenant_id, connection_id, scope
-        )
-    }
+    from app.core import work_batches
+
+    batch = await work_batches.latest_batch_for_config(
+        principal.tenant_id, "inventory_cost",
+        {"connection_id": connection_id, "scope": scope},
+    )
+    return {"job": _cost_batch_job(batch)}
 
 
 @router.get("/cost/refresh/{job_id}")
@@ -375,10 +457,12 @@ async def get_cost_refresh_job(
     job_id: str,
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
-    job = cost_jobs.manager.get(job_id, principal.tenant_id)
-    if job is None:
+    from app.core import work_batches
+
+    batch = await work_batches.get_batch(job_id, principal.tenant_id)
+    if batch is None or batch.get("feature") != "inventory_cost":
         raise HTTPException(status_code=404, detail="Cost refresh job not found.")
-    return {"job": job}
+    return {"job": _cost_batch_job(batch)}
 
 
 @router.get("/cost")

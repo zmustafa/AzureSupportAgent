@@ -488,6 +488,79 @@ class PerfProfileFleetItem(Base):
     )
 
 
+class WorkBatch(Base):
+    """Generic durable control plane for non-profiler fleet/background work.
+
+    Feature-specific results stay in their native stores. These rows own admission, progress,
+    retry, cancellation and restart recovery so a browser or process restart cannot lose the
+    unstarted tail of a multi-item operation.
+    """
+
+    __tablename__ = "work_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    feature: Mapped[str] = mapped_column(String(48), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    completed: Mapped[int] = mapped_column(Integer, default=0)
+    succeeded: Mapped[int] = mapped_column(Integer, default=0)
+    partial: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    cancelled: Mapped[int] = mapped_column(Integer, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str] = mapped_column(String(128), default="")
+    trigger: Mapped[str] = mapped_column(String(24), default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "feature", "idempotency_key", name="uq_work_batch_tenant_feature_idempotency"),
+        Index("ix_work_batch_tenant_feature_created", "tenant_id", "feature", "created_at"),
+        Index("ix_work_batch_status_created", "status", "created_at"),
+    )
+
+
+class WorkBatchItem(Base):
+    """One durable unit of work within a :class:`WorkBatch`."""
+
+    __tablename__ = "work_batch_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("work_batches.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    item_key: Mapped[str] = mapped_column(String(256))
+    workload_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    workload_name: Mapped[str] = mapped_column(String(256), default="")
+    connection_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")
+    result_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("batch_id", "item_key", name="uq_work_batch_item_key"),
+        Index("ix_work_batch_items_batch_status", "batch_id", "status"),
+        Index("ix_work_batch_items_status_started", "status", "started_at"),
+        Index("ix_work_batch_items_status_available", "status", "available_at"),
+        Index("ix_work_batch_items_lane", "tenant_id", "connection_id", "status"),
+    )
+
+
 class WorkbookRun(Base):
     """One execution of a workbook (az/KQL/PowerShell snippet) with AI'fied output.
 

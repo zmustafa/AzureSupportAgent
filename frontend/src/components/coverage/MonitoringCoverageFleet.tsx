@@ -1,26 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type AmbaCoverageFleetRow } from "../../api";
-import { queryClient } from "../../queryClient";
 import { formatError } from "../../utils/format";
-import { isRefreshing, peekRefreshError, startBackgroundRefresh, subscribeBackgroundRefresh, useBackgroundRefresh } from "../../utils/backgroundRefresh";
 import { Skeleton } from "../../utils/perf";
-import { enqueueFleet, fleetOutstanding, fleetQueuedKeys, useFleetQueue } from "../fleetScheduler";
-
-const MAX_PARALLEL = 3;
-const STAGGER_MS = 400;
-const QUEUE_ID = "ambaCoverageFleet";
-// Azure's Resource Graph query budget refills in seconds, so a throttled scan is worth one
-// automatic retry before bothering the operator. Long enough for the window to reset and for
-// sibling scans in the batch to finish drawing on the same budget.
-const AUTO_RETRY_MS = 15_000;
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
 type SortKey = "worst" | "coverage" | "missing" | "misconfigured" | "resources" | "name" | "run_at";
 type SortDir = "asc" | "desc";
-
-function refreshKey(row: AmbaCoverageFleetRow): string {
-  return `amba:workload:${row.workload_id}:${row.connection_id || ""}`;
-}
 
 function relTime(iso: string): string {
   if (!iso) return "never";
@@ -40,8 +26,7 @@ function CoveragePill({ value }: { value: number | null }) {
 }
 
 export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string, connectionId: string) => void }) {
-  useBackgroundRefresh();
-  useFleetQueue();
+  const durable = useDurableBatch("coverage_amba", [["ambaFleet"], ["amba-trend"], ["coverage-runs", "amba"]]);
   const fleetQ = useQuery({ queryKey: ["ambaFleet"], queryFn: api.ambaCoverageFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -49,7 +34,7 @@ export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (w
   const [sortKey, setSortKey] = useState<SortKey>("worst");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
-  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
+  const [busy, setBusy] = useState<"" | "launch" | "retry" | "cancel">("");
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -94,76 +79,25 @@ export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (w
     });
   }
 
-  function enqueueRows(chosen: AmbaCoverageFleetRow[]) {
-    enqueueFleet(
-      QUEUE_ID,
-      chosen.map((row) => ({
-        key: refreshKey(row),
-        run: () => startBackgroundRefresh(refreshKey(row), async () => {
-          const snapshot = await api.refreshAmba({ workload_id: row.workload_id, connection_id: row.connection_id || undefined });
-          queryClient.setQueryData(["amba", "workload", row.workload_id, "", row.connection_id || ""], snapshot);
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["ambaFleet"] }),
-            queryClient.invalidateQueries({ queryKey: ["amba-trend", "workload", row.workload_id] }),
-            queryClient.invalidateQueries({ queryKey: ["coverage-runs", "amba", "workload", row.workload_id] }),
-          ]);
-          // A scan that couldn't complete still returns 200 — failures are never cached, so the
-          // body is the PREVIOUS snapshot. Raise it as an error so the row lands in "Retry
-          // failed" instead of silently looking like a successful rescan.
-          const failure = snapshot.scan_error || snapshot.error;
-          if (failure) {
-            throw new Error(
-              snapshot.scan_throttled || snapshot.throttled
-                ? "Azure throttled this scan — retrying shortly."
-                : failure,
-            );
-          }
-        }),
-      })),
-      { maxParallel: MAX_PARALLEL, staggerMs: STAGGER_MS, isRunning: isRefreshing, subscribe: subscribeBackgroundRefresh },
-    );
-  }
-
   function launch() {
     const chosen = rows.filter((row) => selected.has(row.workload_id));
     if (!chosen.length) return;
-    enqueueRows(chosen);
-    setMessage({ text: `Launched monitoring coverage scans for ${chosen.length} workload${chosen.length === 1 ? "" : "s"}. Running ${MAX_PARALLEL} at a time…`, ok: true });
+    setBusy("launch");
+    void durable.launch(chosen.map((row) => row.workload_id))
+      .then(() => setMessage({ text: `Queued monitoring coverage scans for ${chosen.length} workload${chosen.length === 1 ? "" : "s"}. The server continues through navigation, reload, and restart.`, ok: true }))
+      .catch((error) => setMessage({ text: formatError(error), ok: false }))
+      .finally(() => setBusy(""));
     setSelected(new Set());
   }
 
-  const failedRows = rows.filter((row) => {
-    const key = refreshKey(row);
-    return !!peekRefreshError(key) && !isRefreshing(key) && !queuedKeys.has(key);
-  });
+  const failedRows = rows.filter((row) => ["failed", "partial", "cancelled"].includes(durable.itemsByWorkload.get(row.workload_id)?.status || ""));
   function retryFailed() {
-    enqueueRows(failedRows);
-    setMessage({ text: `Retrying ${failedRows.length} failed coverage scan${failedRows.length === 1 ? "" : "s"}…`, ok: true });
+    setBusy("retry");
+    void durable.retry()
+      .then(() => setMessage({ text: `Queued ${failedRows.length} failed/partial coverage scan${failedRows.length === 1 ? "" : "s"} for retry.`, ok: true }))
+      .catch((error) => setMessage({ text: formatError(error), ok: false }))
+      .finally(() => setBusy(""));
   }
-
-  // Throttling is transient, so requeue throttled workloads automatically — ONCE each, after a
-  // pause. The ref makes the retry idempotent per workload so a scan that keeps getting
-  // throttled falls back to the manual "Retry failed" button instead of looping forever.
-  const autoRetried = useRef<Set<string>>(new Set());
-  const throttledKeys = rows
-    .map(refreshKey)
-    .filter((key) => (
-      !isRefreshing(key) && !queuedKeys.has(key) && !autoRetried.current.has(key)
-      && /throttl/i.test(peekRefreshError(key) || "")
-    ))
-    .join("|");
-  useEffect(() => {
-    if (!throttledKeys) return;
-    const keys = new Set(throttledKeys.split("|"));
-    const timer = window.setTimeout(() => {
-      keys.forEach((key) => autoRetried.current.add(key));
-      enqueueRows(rows.filter((row) => keys.has(refreshKey(row))));
-      setMessage({ text: `Azure throttled ${keys.size} scan${keys.size === 1 ? "" : "s"}. Retrying automatically…`, ok: true });
-    }, AUTO_RETRY_MS);
-    return () => window.clearTimeout(timer);
-    // `throttledKeys` is a stable joined string, so this re-arms only when the set changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [throttledKeys]);
 
   function clickSort(key: SortKey, defaultDirection: SortDir = "desc") {
     if (sortKey === key) setSortDir((current) => current === "asc" ? "desc" : "asc");
@@ -177,7 +111,7 @@ export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (w
 
   const scanned = fleetQ.data?.scanned ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const outstanding = fleetOutstanding(QUEUE_ID);
+  const outstanding = durable.active && durable.batch ? durable.batch.total - durable.batch.completed : 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -198,10 +132,11 @@ export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (w
               <option value="run_at">Sort: newest scan</option>
               <option value="name">Sort: name</option>
             </select>
-            {failedRows.length > 0 && <button onClick={retryFailed} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100">↻ Retry failed ({failedRows.length})</button>}
-            <button onClick={launch} disabled={!selected.size} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Scan {selected.size || ""} selected</button>
+            {failedRows.length > 0 && <button onClick={retryFailed} disabled={durable.active || busy !== ""} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">↻ Retry failed ({failedRows.length})</button>}
+            <button onClick={launch} disabled={!selected.size || durable.active || busy !== ""} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Scan {selected.size || ""} selected</button>
           </div>
         </div>
+        <DurableBatchBar batch={durable.batch} cancelling={busy === "cancel"} onCancel={() => { setBusy("cancel"); void durable.cancel().finally(() => setBusy("")); }} />
         {message && <div className={`mt-2 rounded-md border px-3 py-1.5 text-xs ${message.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{message.text}</div>}
       </div>
 
@@ -225,10 +160,10 @@ export function MonitoringCoverageFleet({ onOpenWorkload }: { onOpenWorkload: (w
               <th className="px-2 py-2" />
             </tr></thead>
             <tbody>{filtered.map((row) => {
-              const key = refreshKey(row);
-              const running = isRefreshing(key);
-              const queued = queuedKeys.has(key);
-              const error = !running && !queued ? peekRefreshError(key) : undefined;
+              const item = durable.itemsByWorkload.get(row.workload_id);
+              const running = item?.status === "running";
+              const queued = item?.status === "queued";
+              const error = item?.status === "failed" ? item.error : undefined;
               return <tr key={row.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(row.workload_id) ? "bg-brand/5" : ""}`}>
                 <td className="px-2 py-1.5"><input type="checkbox" checked={selected.has(row.workload_id)} onChange={() => toggleOne(row.workload_id)} aria-label={`Select ${row.name}`} /></td>
                 <td className="px-2 py-1.5"><button onClick={() => onOpenWorkload(row.workload_id, row.connection_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button><div className="flex gap-1 text-[10px] text-gray-400">{row.environment && <span>{row.environment}</span>}{row.stale && row.has_scan && <span className="rounded bg-amber-50 px-1 text-amber-600">stale</span>}</div></td>

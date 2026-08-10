@@ -45,6 +45,32 @@ broader Azure operations workbench with these major surfaces:
 | Hosting target | Azure Container Apps only |
 | Local dev | Native backend/frontend or Docker Compose |
 
+### 2.1 Durable multi-item work control plane
+
+Every long-running multi-workload operation except Performance Profiler uses the shared SQL
+`work_batches` / `work_batch_items` control plane. Performance Profiler keeps its dedicated,
+already-proven tables. The shared worker currently dispatches Assessments, Change Explorer,
+Monitoring Coverage, Telemetry Coverage, Backup & DR Coverage, Backup Manager, Architecture
+generation/rebuild, Mission Control, Inventory Cost, Deep Review, and nightly workload refresh.
+
+- The initiating browser submits the full selection once and then polls status; it never owns
+  the unstarted tail of the queue.
+- Item transitions and progress are persisted. Navigation, browser reload/close, and client
+  network loss cannot cancel queued work.
+- On application startup, interrupted `running` items return to `queued`; already-terminal
+  siblings stay complete. The unfinished item reruns from its beginning under the same stable
+  item/result ID.
+- Admission is bounded per feature and to one running item per tenant + Azure connection lane.
+  Independent connections can progress concurrently without one identity self-throttling.
+- Transient 429, timeout, connection-reset, and 5xx failures use bounded exponential backoff.
+- Batch states are `queued`, `running`, `succeeded`, `partial`, `failed`, and `cancelled`.
+  Operators can cancel pending items or create an idempotent retry batch containing only
+  failed, partial, or cancelled items.
+- Feature results remain in their native history/cache tables. The generic rows hold control,
+  progress, error classification, and result references rather than duplicating full payloads.
+- Trusted last-success behavior is preserved: failed coverage attempts do not replace a valid
+  snapshot or create a false trend/history point.
+
 ## 3. Repository Layout
 
 ```text

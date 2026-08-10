@@ -1,29 +1,19 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type AssessmentFleetRow } from "../../api";
-import { queryClient } from "../../queryClient";
-import { isRefreshing, peekRefreshError, startBackgroundRefresh, subscribeBackgroundRefresh, useBackgroundRefresh } from "../../utils/backgroundRefresh";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
-import { enqueueFleet, fleetOutstanding, fleetQueuedKeys, useFleetQueue } from "../fleetScheduler";
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
-const MAX_PARALLEL = 3;
-const STAGGER_MS = 400;
-const QUEUE_ID = "assessmentFleet";
 const PILLARS = ["security", "reliability", "cost", "operations", "performance"] as const;
 const PACKS = [
   { id: "waf", label: "WAF", pillars: [...PILLARS] },
   { id: "wara", label: "WARA", pillars: ["reliability"] },
   { id: "wasa", label: "WASA", pillars: ["security"] },
 ] as const;
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
 type SortKey = "worst" | "name" | "score" | "failed" | "resources" | "run_at";
 type SortDir = "asc" | "desc";
-
-function refreshKey(row: AssessmentFleetRow): string {
-  return `assessment:${row.workload_id}:${row.connection_id || ""}`;
-}
 
 function relTime(iso: string): string {
   if (!iso) return "never";
@@ -34,10 +24,6 @@ function relTime(iso: string): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function ScorePill({ value }: { value: number | null }) {
@@ -56,8 +42,7 @@ function Status({ row, running, queued, launchError }: { row: AssessmentFleetRow
 }
 
 export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport: (runId: string) => void; onOpenWorkload: (workloadId: string) => void }) {
-  useBackgroundRefresh();
-  useFleetQueue();
+  const durable = useDurableBatch("assessment", [["assessmentFleet"], ["assessmentRuns"], ["assessmentPortfolio"]]);
   const fleetQ = useQuery({
     queryKey: ["assessmentFleet"],
     queryFn: api.assessmentFleet,
@@ -72,7 +57,7 @@ export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport
   const [pack, setPack] = useState("waf");
   const [useAi, setUseAi] = useState(true);
   const [message, setMessage] = useState("");
-  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
+  const [busy, setBusy] = useState<"" | "launch" | "retry" | "cancel">("");
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -99,56 +84,42 @@ export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport
     return next;
   });
 
-  function enqueueRows(chosen: AssessmentFleetRow[]) {
+  async function launchRows(chosen: AssessmentFleetRow[], kind: "launch" | "retry") {
+    if (!chosen.length) return;
     const preset = PACKS.find((item) => item.id === pack) ?? PACKS[0];
-    enqueueFleet(QUEUE_ID, chosen.map((row) => ({
-      key: refreshKey(row),
-      run: () => startBackgroundRefresh(refreshKey(row), async () => {
-        const created = await api.enqueueAssessments({ workload_ids: [row.workload_id], pillars: [...preset.pillars], pack: preset.id, connection_id: row.connection_id || null, use_ai: useAi });
-        const runId = created.runs[0]?.id;
-        if (!runId) throw new Error("The assessment was not queued.");
-        const deadline = Date.now() + 35 * 60_000;
-        while (Date.now() < deadline) {
-          const result = await api.assessmentRuns(row.workload_id);
-          const run = result.runs.find((item) => item.id === runId);
-          queryClient.setQueryData(["assessmentRuns"], (current: { runs?: typeof result.runs } | undefined) => {
-            if (!current?.runs) return current;
-            return { ...current, runs: current.runs.map((item) => item.id === runId && run ? run : item) };
-          });
-          await queryClient.invalidateQueries({ queryKey: ["assessmentFleet"] });
-          if (run && TERMINAL_STATUSES.has(run.status)) {
-            if (run.status === "failed") throw new Error(run.summary || `Assessment failed for ${row.name}.`);
-            if (run.status === "cancelled") throw new Error(`Assessment was cancelled for ${row.name}.`);
-            break;
-          }
-          await delay(2500);
-        }
-        if (Date.now() >= deadline) throw new Error(`Assessment timed out for ${row.name}.`);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["assessmentFleet"] }),
-          queryClient.invalidateQueries({ queryKey: ["assessmentRuns"] }),
-          queryClient.invalidateQueries({ queryKey: ["assessmentPortfolio"] }),
-          queryClient.invalidateQueries({ queryKey: ["assessmentTrend", row.workload_id] }),
-        ]);
-      }),
-    })), { maxParallel: MAX_PARALLEL, staggerMs: STAGGER_MS, isRunning: isRefreshing, subscribe: subscribeBackgroundRefresh });
+    setBusy(kind);
+    try {
+      await durable.launch(chosen.map((row) => row.workload_id), { pillars: [...preset.pillars], pack: preset.id, use_ai: useAi });
+      setMessage(`${kind === "retry" ? "Retrying" : "Queued"} ${chosen.length} ${pack.toUpperCase()} assessment${chosen.length === 1 ? "" : "s"}. The server continues after navigation, reload, or restart.`);
+    } catch (error) {
+      setMessage(formatError(error));
+    } finally {
+      setBusy("");
+    }
   }
 
   function launch() {
     const chosen = rows.filter((row) => selected.has(row.workload_id));
     if (!chosen.length) return;
-    enqueueRows(chosen);
-    setMessage(`Launching ${chosen.length} ${pack.toUpperCase()} assessment${chosen.length === 1 ? "" : "s"}, up to ${MAX_PARALLEL} at a time.`);
+    void launchRows(chosen, "launch");
     setSelected(new Set());
   }
 
   const failedRows = rows.filter((row) => {
-    const key = refreshKey(row);
-    return !!peekRefreshError(key) && !isRefreshing(key) && !queuedKeys.has(key);
+    const item = durable.itemsByWorkload.get(row.workload_id);
+    return ["failed", "partial", "cancelled"].includes(item?.status || row.current_status);
   });
+  async function retryFailed() {
+    setBusy("retry");
+    try {
+      await durable.retry();
+      setMessage(`Queued ${failedRows.length} failed/partial assessment${failedRows.length === 1 ? "" : "s"} for retry.`);
+    } catch (error) { setMessage(formatError(error)); }
+    finally { setBusy(""); }
+  }
   const scanned = fleetQ.data?.scanned ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const outstanding = fleetOutstanding(QUEUE_ID);
+  const outstanding = durable.active && durable.batch ? durable.batch.total - durable.batch.completed : 0;
 
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="border-b bg-white px-5 py-3">
@@ -160,10 +131,11 @@ export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport
           <select value={sortKey} onChange={(event) => { const key = event.target.value as SortKey; setSortKey(key); setSortDir(key === "name" || key === "score" ? "asc" : "desc"); }} className="rounded-md border px-2 py-1 text-xs text-gray-600"><option value="worst">Sort: worst first</option><option value="score">Sort: lowest score</option><option value="failed">Sort: failed controls</option><option value="resources">Sort: resources</option><option value="run_at">Sort: newest run</option><option value="name">Sort: name</option></select>
           <select value={pack} onChange={(event) => setPack(event.target.value)} className="rounded-md border px-2 py-1 text-xs text-gray-600">{PACKS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
           <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={useAi} onChange={(event) => setUseAi(event.target.checked)} /> AI summary</label>
-          {failedRows.length > 0 && <button onClick={() => enqueueRows(failedRows)} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700">↻ Retry failed ({failedRows.length})</button>}
-          <button onClick={launch} disabled={!selected.size} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Run {selected.size || ""} selected</button>
+          {failedRows.length > 0 && <button onClick={() => void retryFailed()} disabled={durable.active || busy !== ""} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 disabled:opacity-50">↻ Retry failed ({failedRows.length})</button>}
+          <button onClick={launch} disabled={!selected.size || durable.active || busy !== ""} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">▶ Run {selected.size || ""} selected</button>
         </div>
       </div>
+      <DurableBatchBar batch={durable.batch} cancelling={busy === "cancel"} onCancel={() => { setBusy("cancel"); void durable.cancel().finally(() => setBusy("")); }} />
       {message && <div className="mt-2 rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-700">{message}</div>}
     </div>
     <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
@@ -171,7 +143,7 @@ export function AssessmentFleet({ onOpenReport, onOpenWorkload }: { onOpenReport
         <table className="w-full min-w-[1050px] text-[12px]"><thead className="sticky top-0 z-10 bg-gray-50 text-left text-gray-500"><tr className="border-b">
           <th className="w-8 px-2 py-2"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all shown workloads" /></th><th className="px-2 py-2 font-medium">Workload</th><th className="px-2 py-2 font-medium">Score</th>{PILLARS.map((pillar) => <th key={pillar} className="px-2 py-2 font-medium capitalize">{pillar === "operations" ? "Operations" : pillar}</th>)}<th className="px-2 py-2 font-medium">Failed</th><th className="px-2 py-2 font-medium">Critical / high</th><th className="px-2 py-2 font-medium">Resources</th><th className="px-2 py-2 font-medium">Completeness</th><th className="px-2 py-2 font-medium">Status</th><th className="px-2 py-2 font-medium">Last run</th><th className="px-2 py-2" />
         </tr></thead><tbody>{filtered.map((row) => {
-          const key = refreshKey(row); const running = isRefreshing(key); const queued = queuedKeys.has(key); const launchError = !running && !queued ? peekRefreshError(key) : undefined;
+          const item = durable.itemsByWorkload.get(row.workload_id); const running = item?.status === "running"; const queued = item?.status === "queued"; const launchError = item?.status === "failed" ? item.error : undefined;
           return <tr key={row.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(row.workload_id) ? "bg-brand/5" : ""}`}>
             <td className="px-2 py-1.5"><input type="checkbox" checked={selected.has(row.workload_id)} onChange={() => toggleOne(row.workload_id)} aria-label={`Select ${row.name}`} /></td>
             <td className="px-2 py-1.5"><button onClick={() => onOpenWorkload(row.workload_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">{row.name}</button><div className="flex gap-1 text-[10px] text-gray-400">{row.environment && <span>{row.environment}</span>}{row.criticality && <span>· {row.criticality}</span>}{row.stale && row.has_scan && <span className="rounded bg-amber-50 px-1 text-amber-600">stale</span>}</div></td>

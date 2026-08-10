@@ -8,13 +8,7 @@ import { api } from "../../api";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
 import { TimeRangePicker } from "./TimeRangePicker";
-import { peekAnalysis, startAnalysis, useAnalysisVersion, subscribeAnalysis, peekAnalysisError } from "../ChangeExplorerView";
-import { enqueueFleet, fleetQueuedKeys, fleetOutstanding, useFleetQueue } from "../fleetScheduler";
-
-const MAX_PARALLEL = 3;
-const MAX_PARALLEL_AI = 2;   // AI analysis adds an AOAI pass — lower concurrency to avoid throttling.
-const STAGGER_MS = 400;
-const QUEUE_ID = "changeFleet";
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
 function pad(n: number): string { return String(n).padStart(2, "0"); }
 function toLocalInput(d: Date): string {
@@ -52,9 +46,7 @@ type SortKey = "worst" | "changes" | "critical" | "high" | "medium" | "low" | "n
 type SortDir = "asc" | "desc";
 
 export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
-  // Re-render on analysis-registry changes (live "analyzing…" rows) and queue changes.
-  useAnalysisVersion();
-  useFleetQueue();
+  const durable = useDurableBatch("changeexplorer", [["changeFleet"], ["changeExplorerRuns"]]);
   const fleetQ = useQuery({ queryKey: ["changeFleet"], queryFn: api.changeExplorerFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
 
@@ -68,8 +60,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
   const [end, setEnd] = useState(() => defaultEnd());
   const [rangeLabel, setRangeLabel] = useState("Last 24 hours");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
-
-  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
+  const [busy, setBusy] = useState<"" | "launch" | "retry" | "cancel">("");
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -134,25 +125,6 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
       <span className="ml-0.5 text-[9px] text-gray-400">{sortKey === sk ? (sortDir === "asc" ? "▲" : "▼") : "↕"}</span>
     </th>
   );
-  function enqueueRows(chosen: typeof rows, startIso: string, endIso: string, mode: string, ai: boolean) {
-    enqueueFleet(
-      QUEUE_ID,
-      chosen.map((row) => ({
-        key: `workload:${row.workload_id}`,
-        run: () =>
-          startAnalysis(`workload:${row.workload_id}`, {
-            workload_id: row.workload_id,
-            connection_id: row.connection_id || "",
-            start_time: startIso,
-            end_time: endIso,
-            scope_mode: mode,
-            run_ai: ai,
-          }),
-      })),
-      { maxParallel: ai ? MAX_PARALLEL_AI : MAX_PARALLEL, staggerMs: STAGGER_MS, isRunning: (k) => !!peekAnalysis(k), subscribe: subscribeAnalysis },
-    );
-  }
-
   function launch() {
     const chosen = rows.filter((r) => selected.has(r.workload_id));
     if (chosen.length === 0 || !start || !end) return;
@@ -162,25 +134,28 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
     const endIso = toIso(end);
     const mode = scopeMode;
     const ai = runAi;
-    enqueueRows(chosen, startIso, endIso, mode, ai);
-    const cap = ai ? MAX_PARALLEL_AI : MAX_PARALLEL;
-    setMsg({ text: `Launched ${ai ? "AI" : "fast"} change analysis on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${rangeLabel}). Running ${cap} at a time…`, ok: true });
+    setBusy("launch");
+    void durable.launch(chosen.map((row) => row.workload_id), { start_time: startIso, end_time: endIso, scope_mode: mode, run_ai: ai })
+      .then(() => setMsg({ text: `Queued ${ai ? "AI" : "fast"} change analysis on ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${rangeLabel}). The server owns the complete batch.`, ok: true }))
+      .catch((error) => setMsg({ text: formatError(error), ok: false }))
+      .finally(() => setBusy(""));
     setSelected(new Set());
   }
 
   // Rows whose most recent attempt failed (e.g. Azure throttling) — not running, not queued.
-  const failedRows = rows.filter(
-    (r) => !!peekAnalysisError(`workload:${r.workload_id}`) && !peekAnalysis(`workload:${r.workload_id}`) && !queuedKeys.has(`workload:${r.workload_id}`),
-  );
+  const failedRows = rows.filter((row) => ["failed", "partial", "cancelled"].includes(durable.itemsByWorkload.get(row.workload_id)?.status || ""));
   function retryFailed() {
-    if (failedRows.length === 0 || !start || !end) return;
-    enqueueRows(failedRows, toIso(start), toIso(end), scopeMode, runAi);
-    setMsg({ text: `Retrying ${failedRows.length} failed workload${failedRows.length === 1 ? "" : "s"}…`, ok: true });
+    if (failedRows.length === 0) return;
+    setBusy("retry");
+    void durable.retry()
+      .then(() => setMsg({ text: `Queued ${failedRows.length} failed/partial workload${failedRows.length === 1 ? "" : "s"} for retry.`, ok: true }))
+      .catch((error) => setMsg({ text: formatError(error), ok: false }))
+      .finally(() => setBusy(""));
   }
 
   const analyzed = fleetQ.data?.analyzed ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const activeRuns = fleetOutstanding(QUEUE_ID);
+  const activeRuns = durable.active && durable.batch ? durable.batch.total - durable.batch.completed : 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -239,19 +214,20 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
             </div>
             <TimeRangePicker start={start} end={end} label={rangeLabel} onApply={(s, e, lbl) => { setStart(s); setEnd(e); setRangeLabel(lbl); }} />
             {failedRows.length > 0 && (
-              <button onClick={retryFailed} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100" title="Re-run the workloads whose last analysis failed (e.g. Azure throttling)">
+              <button onClick={retryFailed} disabled={durable.active || busy !== ""} className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50" title="Re-run the workloads whose last analysis failed (e.g. Azure throttling)">
                 ↻ Retry failed ({failedRows.length})
               </button>
             )}
             <button
               onClick={launch}
-              disabled={selected.size === 0 || !start || !end}
+              disabled={selected.size === 0 || !start || !end || durable.active || busy !== ""}
               className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
             >
               {runAi ? "✨" : "⚡"} Analyze {selected.size || ""} selected{runAi ? " with AI" : ""}
             </button>
           </div>
         </div>
+        <DurableBatchBar batch={durable.batch} cancelling={busy === "cancel"} onCancel={() => { setBusy("cancel"); void durable.cancel().finally(() => setBusy("")); }} />
         {msg && (
           <div className={`mt-2 rounded-md border px-3 py-1.5 text-xs ${msg.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>
         )}
@@ -284,10 +260,10 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const scopeKey = `workload:${r.workload_id}`;
-                const running = peekAnalysis(scopeKey);
-                const queued = queuedKeys.has(scopeKey);
-                const err = !running && !queued ? peekAnalysisError(scopeKey) : undefined;
+                const item = durable.itemsByWorkload.get(r.workload_id);
+                const running = item?.status === "running" ? item : undefined;
+                const queued = item?.status === "queued";
+                const err = item?.status === "failed" ? item.error : undefined;
                 return (
                   <tr key={r.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(r.workload_id) ? "bg-brand/5" : ""}`}>
                     <td className="px-2 py-1.5">
@@ -318,7 +294,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                     <td className="px-2 py-1.5"><CountCell n={r.has_runs ? r.low_count : 0} cls="text-blue-600" /></td>
                     <td className="px-2 py-1.5 text-gray-500" title={err || r.run_at || ""}>
                       {running ? (
-                        <span className="truncate text-[11px] text-brand">{running.progress?.message || "starting…"}</span>
+                        <span className="truncate text-[11px] text-brand">{running.message || "starting…"}</span>
                       ) : err ? (
                         <span className="text-[11px] text-red-600">failed — retry</span>
                       ) : (

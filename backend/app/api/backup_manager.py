@@ -591,6 +591,63 @@ async def get_snapshot(
     return stored
 
 
+async def run_refresh_analysis(
+    *,
+    principal: Principal,
+    connection_id: str = "",
+    workload_id: str = "",
+    subscription_id: str = "",
+    management_group_id: str = "",
+    progress: ProgressFn,
+) -> dict[str, Any]:
+    """Run and persist one Backup Manager analysis independently of an HTTP request."""
+    scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
+    if _is_demo(workload_id):
+        raise ValueError("Demo scopes are generated on read and need no analysis.")
+    if scope_kind == "none":
+        raise ValueError("Select a workload, subscription, or management group first.")
+    connection = _connection(connection_id, workload_id)
+    tenant = _tenant(principal)
+    effective_connection = str(connection.get("id") or "")
+
+    await progress("start", "Starting a server-side backup estate analysis. It continues if you navigate away.")
+    if _analysis_slots.locked():
+        await progress("start", f"Waiting for a free analysis slot ({ANALYSIS_CONCURRENCY} run at a time)…")
+    async with _analysis_slots:
+        lock = snapshot_store.get_lock(tenant, effective_connection, scope_kind, scope_id)
+        async with lock:
+            snapshot = await analysis_ops.build_snapshot(
+                connection, tenant_id=tenant, scope_kind=scope_kind, scope_id=scope_id,
+                workload_id=workload_id, subscription_id=subscription_id,
+                management_group_id=management_group_id, progress=progress,
+            )
+            await progress("save", "Saving the analysis so every tab reads the same numbers…")
+            snapshot_store.write_snapshot(tenant, effective_connection, scope_kind, scope_id, snapshot)
+            async with SessionLocal() as db:
+                db.add(_audit(principal, "backup_manager.analyze", f"{scope_kind}:{scope_id}", {
+                    "counts": snapshot.get("counts", {}),
+                    "errors": sorted((snapshot.get("errors") or {}).keys()),
+                }))
+                await db.commit()
+                snapshot["summary"]["actionable_changes"] = await _actionable_changes(
+                    db, tenant, effective_connection,
+                )
+            _record_analysis(
+                principal, snapshot, tenant=tenant, connection_id=effective_connection,
+                scope_kind=scope_kind, scope_id=scope_id, workload_id=workload_id,
+            )
+    counts = snapshot.get("counts", {})
+    await progress(
+        "done",
+        f"Analysis complete — {counts.get('protected_items', 0):,} protected item(s) in "
+        f"{counts.get('vaults', 0):,} vault(s), {counts.get('jobs', 0):,} job(s), "
+        f"{counts.get('gaps', 0):,} gap(s)."
+        + (f" Some sources failed: {', '.join(sorted((snapshot.get('errors') or {}).keys()))}."
+           if snapshot.get("errors") else ""),
+    )
+    return snapshot
+
+
 @router.post("/refresh/start")
 async def refresh_start(
     connection_id: str = Query(default=""),
@@ -615,42 +672,14 @@ async def refresh_start(
     key = _job_key(tenant, effective_connection, scope_kind, scope_id)
 
     async def runner(progress: ProgressFn) -> dict[str, Any]:
-        await progress("start", "Starting a server-side backup estate analysis. It continues if you navigate away.")
-        if _analysis_slots.locked():
-            await progress("start", f"Waiting for a free analysis slot ({ANALYSIS_CONCURRENCY} run at a time)…")
-        async with _analysis_slots:
-            lock = snapshot_store.get_lock(tenant, effective_connection, scope_kind, scope_id)
-            async with lock:
-                snapshot = await analysis_ops.build_snapshot(
-                    connection, tenant_id=tenant, scope_kind=scope_kind, scope_id=scope_id,
-                    workload_id=workload_id, subscription_id=subscription_id,
-                    management_group_id=management_group_id, progress=progress,
-                )
-                await progress("save", "Saving the analysis so every tab reads the same numbers…")
-                snapshot_store.write_snapshot(tenant, effective_connection, scope_kind, scope_id, snapshot)
-                async with SessionLocal() as db:
-                    db.add(_audit(principal, "backup_manager.analyze", f"{scope_kind}:{scope_id}", {
-                        "counts": snapshot.get("counts", {}),
-                        "errors": sorted((snapshot.get("errors") or {}).keys()),
-                    }))
-                    await db.commit()
-                    snapshot["summary"]["actionable_changes"] = await _actionable_changes(
-                        db, tenant, effective_connection,
-                    )
-                _record_analysis(
-                    principal, snapshot, tenant=tenant, connection_id=effective_connection,
-                    scope_kind=scope_kind, scope_id=scope_id, workload_id=workload_id,
-                )
-        counts = snapshot.get("counts", {})
-        await progress(
-            "done",
-            f"Analysis complete — {counts.get('protected_items', 0):,} protected item(s) in "
-            f"{counts.get('vaults', 0):,} vault(s), {counts.get('jobs', 0):,} job(s), "
-            f"{counts.get('gaps', 0):,} gap(s)."
-            + (f" Some sources failed: {', '.join(sorted((snapshot.get('errors') or {}).keys()))}."
-               if snapshot.get("errors") else ""),
+        return await run_refresh_analysis(
+            principal=principal,
+            connection_id=connection_id,
+            workload_id=workload_id,
+            subscription_id=subscription_id,
+            management_group_id=management_group_id,
+            progress=progress,
         )
-        return snapshot
 
     return _job_response(_refresh_jobs.start(key, runner))
 

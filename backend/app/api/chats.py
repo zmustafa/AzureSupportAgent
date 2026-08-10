@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -1882,95 +1883,152 @@ def _resolve_deep_review_workloads(workload_ids: list[str]) -> list[dict[str, An
     return workloads
 
 
+async def run_deep_review_workload(
+    *, workload_id: str, principal: Principal, chat_id: str,
+) -> dict[str, Any]:
+    """Run one durable-batch deep review and wait for its background turn to finish.
+
+    ``chat_id`` is the batch item id. Re-running an interrupted item therefore reuses the same
+    chat and regenerates its unfinished assistant turn instead of creating duplicate chats.
+    """
+    from app.agent.deep_agents import public_catalog
+    from app.core.azure_connections import connection_for_workload
+    from app.core.db import SessionLocal
+    from app.workloads import registry as workload_registry
+
+    workload = workload_registry.get_workload(workload_id)
+    if workload is None:
+        return {"ok": False, "chat_id": chat_id, "error": "Workload not found."}
+    agent_ids = [agent["id"] for agent in public_catalog()]
+    if len(agent_ids) != 8:
+        return {"ok": False, "chat_id": chat_id, "error": "The eight-agent deep-review roster is unavailable."}
+    connection = connection_for_workload(workload)
+    connection_id = str(connection.get("id")) if connection and connection.get("id") else None
+
+    async with SessionLocal() as db:
+        chat = await db.get(Chat, chat_id)
+        regenerate = False
+        if chat is not None and (chat.tenant_id != principal.tenant_id or chat.user_id != principal.subject):
+            return {"ok": False, "chat_id": chat_id, "error": "Deep-review chat ownership mismatch."}
+        if chat is None:
+            workload_name = str(workload.get("name") or workload_id)
+            chat = Chat(
+                id=chat_id,
+                tenant_id=principal.tenant_id,
+                user_id=principal.subject,
+                title=f"Deep review: {workload_name}"[:256],
+                provider=_active_provider(),
+                model=active_model() or settings.llm_model,
+                connection_id=connection_id,
+                thinking_level="deep",
+                workload_id=workload_id,
+            )
+            db.add(chat)
+            await db.commit()
+        else:
+            existing_user = (
+                await db.execute(
+                    select(Message.id)
+                    .where(Message.chat_id == chat.id, Message.role == "user")
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            regenerate = existing_user is not None
+        run = await _start_message_turn(
+            chat.id,
+            MessageCreate(
+                content=DEEP_RELIABILITY_REVIEW_PROMPT,
+                thinking_level="deep",
+                deep_agents=agent_ids,
+                workload_id=workload_id,
+                connection_id=connection_id,
+                regenerate=regenerate,
+            ),
+            principal,
+            db,
+            worker_gate=_deep_review_fleet_gate,
+        )
+        if run.task is not None:
+            await run.task
+        assistant = (
+            await db.execute(
+                select(Message)
+                .where(Message.chat_id == chat.id, Message.role == "assistant")
+                .order_by(Message.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if assistant is None or not (assistant.content or "").strip():
+            return {"ok": False, "chat_id": chat.id, "error": "Deep review produced no assistant result."}
+        return {"ok": True, "chat_id": chat.id, "error": ""}
+
+
 @router.post("/deep-reviews/fleet")
 async def launch_deep_review_fleet(
     payload: DeepReviewFleetRequest,
     principal: Principal = Depends(get_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create and start one all-specialist deep review per selected workload."""
-    from app.agent.deep_agents import public_catalog
-    from app.core.azure_connections import connection_for_workload
+    """Queue one durable all-specialist deep review per selected workload."""
+    from app.core import work_batches
 
     workloads = _resolve_deep_review_workloads(payload.workload_ids)
-    agent_ids = [agent["id"] for agent in public_catalog()]
-    if len(agent_ids) != 8:  # Guard the product contract if the catalog changes later.
-        raise HTTPException(status_code=500, detail="The eight-agent deep-review roster is unavailable.")
+    items = [
+        {
+            "item_key": str(workload["id"]),
+            "workload_id": str(workload["id"]),
+            "workload_name": str(workload.get("name") or workload["id"]),
+            "connection_id": str(workload.get("connection_id") or ""),
+        }
+        for workload in workloads
+    ]
+    batch, _ = await work_batches.create_batch(
+        tenant_id=principal.tenant_id,
+        feature="deep_review",
+        actor=principal.subject,
+        idempotency_key=f"deep-review:{uuid.uuid4()}",
+        items=items,
+        config={},
+        trigger="fleet",
+        start_worker=False,
+    )
 
-    launches: list[tuple[Chat, dict[str, Any], str | None]] = []
-    for workload in workloads:
-        workload_name = str(workload.get("name") or workload.get("id") or "Workload")
-        connection = connection_for_workload(workload)
-        connection_id = str(connection.get("id")) if connection and connection.get("id") else None
-        chat = Chat(
+    workloads_by_id = {str(workload["id"]): workload for workload in workloads}
+    for item in batch["items"]:
+        workload = workloads_by_id[item["workload_id"]]
+        db.add(Chat(
+            id=item["id"],
             tenant_id=principal.tenant_id,
             user_id=principal.subject,
-            title=f"Deep review: {workload_name}"[:256],
+            title=f"Deep review: {item['workload_name']}"[:256],
             provider=_active_provider(),
             model=active_model() or settings.llm_model,
-            connection_id=connection_id,
+            connection_id=item["connection_id"] or None,
             thinking_level="deep",
             workload_id=str(workload["id"]),
-        )
-        db.add(chat)
-        launches.append((chat, workload, connection_id))
+        ))
 
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
             actor_id=principal.subject,
             action="chats.deep_review_fleet",
-            target=None,
+            target=batch["id"],
             metadata_json={"workload_ids": [str(w["id"]) for w in workloads], "agent_count": 8},
         )
     )
     await db.commit()
-    for chat, _, _ in launches:
-        await db.refresh(chat)
-
-    results: list[dict[str, Any]] = []
-    launched = 0
-    for chat, workload, connection_id in launches:
-        status = "running"
-        error = ""
-        try:
-            await _start_message_turn(
-                chat.id,
-                MessageCreate(
-                    content=DEEP_RELIABILITY_REVIEW_PROMPT,
-                    thinking_level="deep",
-                    deep_agents=agent_ids,
-                    workload_id=str(workload["id"]),
-                    connection_id=connection_id,
-                ),
-                principal,
-                db,
-                worker_gate=_deep_review_fleet_gate,
-            )
-            launched += 1
-        except Exception as exc:  # noqa: BLE001 - preserve other fleet launches
-            status = "error"
-            error = format_error(exc, max_len=500)
-            db.add(
-                Message(
-                    chat_id=chat.id,
-                    role="assistant",
-                    content=f"⚠️ The deep review could not start: {error}",
-                )
-            )
-            await db.commit()
-        results.append(
-            {
-                "chat_id": chat.id,
-                "workload_id": str(workload["id"]),
-                "workload_name": str(workload.get("name") or workload["id"]),
-                "title": chat.title,
-                "status": status,
-                "error": error or None,
-            }
-        )
-
-    return {"launched": launched, "agent_count": len(agent_ids), "chats": results}
+    await work_batches.worker.ensure_running()
+    results = [
+        {
+            "chat_id": item["id"], "workload_id": item["workload_id"],
+            "workload_name": item["workload_name"],
+            "title": f"Deep review: {item['workload_name']}"[:256],
+            "status": "queued", "error": None,
+        }
+        for item in batch["items"]
+    ]
+    return {"launched": len(results), "agent_count": 8, "chats": results, "batch_id": batch["id"]}
 
 
 async def _sse_from_run(run) -> Any:

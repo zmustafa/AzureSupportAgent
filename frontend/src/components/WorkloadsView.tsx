@@ -10,6 +10,7 @@ import { WorkloadCard } from "./workloads/WorkloadCard";
 import { FleetCockpit, matchesFleetFilter } from "./workloads/FleetCockpit";
 import { WorkloadTable, WorkloadBoard } from "./workloads/WorkloadTableBoard";
 import { ConstellationMap } from "./workloads/ConstellationMap";
+import { DurableBatchBar, useDurableBatch } from "./DurableBatch";
 
 const input =
   "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
@@ -560,6 +561,8 @@ function GroupedCards({
 export function WorkloadsPanel() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const missionBatch = useDurableBatch("mission", [["missionLatest"], ["missions"]]);
+  const deepReviewBatch = useDurableBatch("deep_review", [["chats"], ["activeTurns"]]);
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   // Preserve the page scroll position across navigation (e.g. open a workload then hit Back).
   const scrollRef = useRef<HTMLDivElement>(null);  const [editing, setEditing] = useState<Partial<Workload> | null>(null);
@@ -843,8 +846,8 @@ export function WorkloadsPanel() {
     setMsg("");
     setNotice("");
     try {
-      const r = await api.runFleet({ workload_ids: Array.from(selected) });
-      setNotice(`⏳ Queued ${r.queued} mission${r.queued === 1 ? "" : "s"}. Central Azure admission runs one mission per connection at a time to prevent throttling.`);
+      const batch = await missionBatch.launch(Array.from(selected));
+      setNotice(`⏳ Queued ${batch.total} durable mission${batch.total === 1 ? "" : "s"}. Central Azure admission runs one item per connection and resumes unfinished work after restart.`);
       setSelected(new Set());
     } catch (e) {
       setMsg(formatError(e));
@@ -859,22 +862,10 @@ export function WorkloadsPanel() {
     setMsg("");
     setNotice("");
     try {
-      const result = await api.deepReviewFleet(Array.from(selected));
-      const started = result.chats.filter((chat) => chat.status === "running");
-      const failed = result.chats.length - started.length;
+      const batch = await deepReviewBatch.launch(Array.from(selected));
       setSelected(new Set());
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["chats"] }),
-        qc.invalidateQueries({ queryKey: ["activeTurns"] }),
-      ]);
-      if (started.length > 0) {
-        navigate(`/c/${started[0].chat_id}`);
-      } else {
-        setMsg(result.chats[0]?.error || "The selected deep reviews could not be started.");
-      }
-      if (failed > 0 && started.length > 0) {
-        setNotice(`Started ${started.length} deep review${started.length === 1 ? "" : "s"}; ${failed} failed to start.`);
-      }
+      setNotice(`Queued ${batch.total} durable deep review${batch.total === 1 ? "" : "s"}. Chats are created by the server and unfinished reviews rerun safely after restart.`);
+      void qc.invalidateQueries({ queryKey: ["chats"] });
     } catch (e) {
       setMsg(formatError(e));
     } finally {
@@ -1035,6 +1026,8 @@ export function WorkloadsPanel() {
           </div>
         )}
         {msg && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>}
+        <DurableBatchBar batch={missionBatch.batch} onCancel={() => { void missionBatch.cancel(); }} onRetry={() => { void missionBatch.retry(); }} />
+        <DurableBatchBar batch={deepReviewBatch.batch} onCancel={() => { void deepReviewBatch.cancel(); }} onRetry={() => { void deepReviewBatch.retry(); }} />
         {!showTrash && overlapCount > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <span>⚠</span>

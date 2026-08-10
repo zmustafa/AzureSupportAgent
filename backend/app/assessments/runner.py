@@ -134,6 +134,10 @@ async def _set_run_status(run_id: str | None, status: str, *, error: str | None 
         if run is None:
             return
         run.status = status
+        if status == "running":
+            run.error = None
+            run.ended_at = None
+            run.duration_ms = None
         if error is not None:
             run.error = error[:2000]
         if status in ("succeeded", "failed"):

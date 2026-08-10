@@ -94,6 +94,14 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
             connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload,
             sla_hours=sla, stale_drill_days=stale, scan_cap=cap,
         )
+        if str(fresh.get("error") or "").strip():
+            previous = cache.read_snapshot(tenant_id, scope_kind, scope_id)
+            if previous:
+                out = _decorate(previous, ttl)
+                out["scan_error"] = fresh.get("error", "")
+                out["scan_throttled"] = bool(fresh.get("throttled"))
+                return out
+            return _decorate(fresh, ttl)
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl)
 
@@ -235,21 +243,23 @@ async def refresh(
     # Shield the compute so it finishes (and writes the cache) even if the client navigates
     # away or the connection drops mid-refresh — the result is picked up on the next visit.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id))
+    scan_failed = bool(str(snap.get("scan_error") or snap.get("error") or "").strip())
     # Record a compact trend point (% protected) so this scan can be charted over time.
     from app.core import coverage_trends, coverage_runs
 
     sc = snap.get("scorecard", {}) or {}
-    coverage_trends.record(
-        "backupdr", principal.tenant_id or "default", scope_kind, scope_id,
-        pct=sc.get("pct_protected"),
-        extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
-        demo=bool(snap.get("demo")),
-    )
-    coverage_runs.save_run(
-        "backupdr", principal.tenant_id or "default", scope_kind, scope_id, snap,
-        headline=sc.get("pct_protected"), counts=sc,
-        resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
-    )
+    if not scan_failed:
+        coverage_trends.record(
+            "backupdr", principal.tenant_id or "default", scope_kind, scope_id,
+            pct=sc.get("pct_protected"),
+            extra={k: sc.get(k) for k in ("pct_offsite", "pct_recent_job", "dr_pairs")},
+            demo=bool(snap.get("demo")),
+        )
+        coverage_runs.save_run(
+            "backupdr", principal.tenant_id or "default", scope_kind, scope_id, snap,
+            headline=sc.get("pct_protected"), counts=sc,
+            resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
+        )
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id, actor_id=principal.subject, action="backupdr.refresh",

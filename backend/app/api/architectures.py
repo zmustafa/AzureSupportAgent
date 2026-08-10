@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -145,11 +146,47 @@ async def create_generation_jobs_endpoint(
     """Queue one background AI reverse-engineering job per selected workload. Returns the
     job records immediately; poll GET /architectures/jobs for live progress."""
     from app.architectures.jobs import manager
+    from app.core import work_batches
 
     if not payload.workload_ids:
         raise HTTPException(status_code=400, detail="Select at least one workload.")
+    unique_ids = list(dict.fromkeys(payload.workload_ids))
+    if len(unique_ids) > 1:
+        items = []
+        for wid in unique_ids:
+            wl = get_workload(wid)
+            if wl is not None:
+                items.append({
+                    "item_key": wid,
+                    "workload_id": wid,
+                    "workload_name": wl.get("name", "workload"),
+                    "connection_id": payload.connection_id or wl.get("connection_id") or "",
+                })
+        if not items:
+            raise HTTPException(status_code=404, detail="None of the selected workloads were found.")
+        batch, _ = await work_batches.create_batch(
+            tenant_id=principal.tenant_id,
+            feature="architecture",
+            actor=principal.subject,
+            idempotency_key=f"architecture:{uuid.uuid4()}",
+            items=items,
+            config={},
+            trigger="fleet",
+        )
+        jobs = [
+            {
+                "id": item["id"], "workload_id": item["workload_id"],
+                "workload_name": item["workload_name"], "status": item["status"],
+                "phase": "queued", "progress": 0, "message": "Queued in durable batch.",
+                "architecture_id": "", "architecture_name": "", "resource_count": 0,
+                "target_architecture_id": item["id"], "error": "",
+                "created_at": batch["created_at"], "started_at": "", "ended_at": "",
+            }
+            for item in batch["items"]
+        ]
+        return {"jobs": jobs, "queued": len(jobs), "batch_id": batch["id"]}
     created: list[dict[str, Any]] = []
-    for wid in payload.workload_ids:
+    for wid in unique_ids:
         wl = get_workload(wid)
         if wl is None:
             continue
@@ -591,7 +628,7 @@ async def rebuild_architecture_endpoint(
     """Queue a background job that re-reverse-engineers this architecture from the current
     Azure state of a workload, overwriting its diagram in place (id/name/state preserved).
     Poll GET /architectures/jobs for live progress; the job's target_architecture_id is this id."""
-    from app.architectures.jobs import manager
+    from app.core import work_batches
 
     arch = _tenant_arch_or_404(architecture_id, principal)
     workload_id = payload.workload_id or arch.get("workload_id") or ""
@@ -608,15 +645,29 @@ async def rebuild_architecture_endpoint(
         arch_registry.set_workload(
             architecture_id, workload_id, wl.get("name", ""), _actor(principal)
         )
-    job = manager.create(
+    batch, _ = await work_batches.create_batch(
         tenant_id=principal.tenant_id,
-        workload_id=workload_id,
-        workload_name=wl.get("name", "workload"),
-        connection_id=payload.connection_id or wl.get("connection_id") or "",
-        created_by=_actor(principal),
-        target_architecture_id=architecture_id,
+        feature="architecture",
+        actor=principal.subject,
+        idempotency_key=f"architecture-rebuild:{uuid.uuid4()}",
+        items=[{
+            "item_key": workload_id,
+            "workload_id": workload_id,
+            "workload_name": wl.get("name", "workload"),
+            "connection_id": payload.connection_id or wl.get("connection_id") or "",
+        }],
+        config={"target_architecture_id": architecture_id},
+        trigger="rebuild",
     )
-    return {"job": job}
+    item = batch["items"][0]
+    return {"job": {
+        "id": batch["id"], "workload_id": workload_id, "workload_name": item["workload_name"],
+        "status": item["status"], "phase": "queued", "progress": 0,
+        "message": "Queued in durable batch.", "architecture_id": architecture_id,
+        "architecture_name": arch.get("name", ""), "resource_count": 0,
+        "target_architecture_id": architecture_id, "error": "",
+        "created_at": batch["created_at"], "started_at": "", "ended_at": "",
+    }, "batch_id": batch["id"]}
 
 
 # ------------------------------------------------------------- Architecture Memory (CRUD)

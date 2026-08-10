@@ -1,39 +1,18 @@
 // Backup Manager — Fleet.
 //
-// One row per workload, showing the headline of its LAST analysis, and a bounded launcher that
-// sweeps many workloads in the background. Two things make this different from the coverage
-// fleets it mirrors:
-//
-//  1. An analysis is a detached server-side job, not a blocking request. Per-row state
-//     therefore comes from the batched job endpoint (one poll for the whole grid) rather than
-//     from an in-flight fetch registry.
-//  2. A poll that doesn't mention a job we just started must NOT read as "idle" — that is
-//     exactly how a running sweep ends up looking like nothing happened. Locally-launched
-//     scopes are remembered until the server confirms them terminal, with a grace window.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BackupManagerFleetRow, type BackupManagerJobState } from "../../api";
+// One row per workload, showing the headline of its LAST analysis. The SQL batch worker owns
+// the complete selected tail and survives navigation, reloads, and process restarts.
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api, type BackupManagerFleetRow } from "../../api";
 import { queryKeys } from "../../queryKeys";
 import { formatError } from "../../utils/format";
 import { Skeleton } from "../../utils/perf";
-import { enqueueFleet, fleetOutstanding, fleetQueuedKeys, useFleetQueue } from "../fleetScheduler";
-
-/** Analyses are heavy (nine ARG sources per subscription + vault, cost and pricing calls), so
- *  the client launches fewer at once than a coverage scan and spaces the starts further. The
- *  server enforces its own cap as well; this just keeps the queue honest. */
-const MAX_PARALLEL = 2;
-const STAGGER_MS = 800;
-const QUEUE_ID = "backupManagerFleet";
-/** How long a locally-started scope stays "analyzing" while the server never reports it. */
-const LOST_JOB_GRACE_MS = 30_000;
+import { DurableBatchBar, useDurableBatch } from "../DurableBatch";
 
 type SortKey =
   | "worst" | "name" | "protected" | "gaps" | "failed" | "rpo" | "posture" | "cost" | "run_at";
 type SortDir = "asc" | "desc";
-
-function jobKey(row: BackupManagerFleetRow): string {
-  return `${row.connection_id || "default"}|workload|${row.workload_id.toLowerCase()}`;
-}
 
 function relTime(iso: string): string {
   if (!iso) return "never";
@@ -68,73 +47,26 @@ function PercentPill({ value }: { value: number | null }) {
 export function BackupManagerFleet({ onOpenWorkload }: {
   onOpenWorkload: (workloadId: string, connectionId: string) => void;
 }) {
-  const qc = useQueryClient();
-  useFleetQueue();
-  const [started, setStarted] = useState<Map<string, number>>(new Map());
-  const startedRef = useRef(started);
-  useEffect(() => { startedRef.current = started; }, [started]);
+  const durable = useDurableBatch("backup_manager", [queryKeys.backupManager.fleet, queryKeys.backupManager.snapshotRoot, queryKeys.backupManager.cleanup]);
 
   const fleetQ = useQuery({
     queryKey: queryKeys.backupManager.fleet,
     queryFn: api.backupManagerFleet,
     refetchOnWindowFocus: false,
   });
-  const jobsQ = useQuery({
-    queryKey: queryKeys.backupManager.analyzeJobs,
-    queryFn: api.backupManagerAnalyzeJobs,
-    staleTime: 0,
-    refetchOnMount: "always",
-    // Poll while anything is running server-side OR while we are waiting for a launch to show
-    // up. Stopping the poll on a single quiet response is what makes a live sweep look dead.
-    refetchInterval: (query) => {
-      const jobs = query.state.data?.jobs ?? {};
-      const running = Object.values(jobs).some((job) => job.status === "running");
-      return running || startedRef.current.size > 0 ? 2000 : false;
-    },
-  });
-  const jobs = useMemo(() => jobsQ.data?.jobs ?? {}, [jobsQ.data]);
-
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("worst");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [message, setMessage] = useState<string | null>(null);
-  const queuedKeys = fleetQueuedKeys(QUEUE_ID);
-
-  // Retire a locally-started scope once the server reports it finished (or it goes missing for
-  // long enough that nobody is going to report it).
-  const doneRef = useRef(new Set<string>());
-  useEffect(() => {
-    if (!started.size) return;
-    let changed = false;
-    const next = new Map(started);
-    let finished = 0;
-    for (const [key, at] of started) {
-      const job = jobs[key] as BackupManagerJobState | undefined;
-      if (job && job.status !== "running") {
-        next.delete(key);
-        changed = true;
-        if (!doneRef.current.has(job.id)) { doneRef.current.add(job.id); finished += 1; }
-      } else if (!job && Date.now() - at > LOST_JOB_GRACE_MS) {
-        next.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) setStarted(next);
-    if (finished) {
-      void qc.invalidateQueries({ queryKey: queryKeys.backupManager.fleet });
-      void qc.invalidateQueries({ queryKey: queryKeys.backupManager.snapshotRoot });
-      void qc.invalidateQueries({ queryKey: queryKeys.backupManager.cleanup });
-    }
-  }, [jobs, started, qc]);
+  const [busy, setBusy] = useState<"" | "launch" | "retry" | "cancel">("");
 
   const stateOf = (row: BackupManagerFleetRow): { state: "running" | "queued" | "failed" | "idle"; error?: string } => {
-    const key = jobKey(row);
-    const job = jobs[key];
-    if (job?.status === "running" || started.has(key)) return { state: "running" };
-    if (queuedKeys.has(key)) return { state: "queued" };
-    if (job?.status === "error") return { state: "failed", error: job.error };
+    const item = durable.itemsByWorkload.get(row.workload_id);
+    if (item?.status === "running") return { state: "running" };
+    if (item?.status === "queued") return { state: "queued" };
+    if (item && ["failed", "partial", "cancelled"].includes(item.status)) return { state: "failed", error: item.error || item.message };
     return { state: "idle" };
   };
 
@@ -181,48 +113,21 @@ export function BackupManagerFleet({ onOpenWorkload }: {
     });
   }
 
-  function enqueueRows(chosen: BackupManagerFleetRow[]) {
-    const launching = chosen.filter((row) => !row.demo);
-    if (!launching.length) return;
-    enqueueFleet(QUEUE_ID, launching.map((row) => ({
-      key: jobKey(row),
-      run: () => {
-        const key = jobKey(row);
-        setStarted((current) => new Map(current).set(key, Date.now()));
-        void api.backupManagerAnalyzeStart({
-          connection_id: row.connection_id, workload_id: row.workload_id,
-        }).then(() => {
-          void jobsQ.refetch();
-        }).catch(() => {
-          // The job never started; drop the marker so the row doesn't spin forever.
-          setStarted((current) => { const next = new Map(current); next.delete(key); return next; });
-        });
-      },
-    })), {
-      maxParallel: MAX_PARALLEL,
-      staggerMs: STAGGER_MS,
-      // A scope counts as running while the server says so OR while we are still waiting for
-      // it to appear, so the scheduler never over-fills its slots.
-      isRunning: (key) => startedRef.current.has(key) || jobs[key]?.status === "running",
-      subscribe: (cb) => {
-        const timer = window.setInterval(cb, 1500);
-        return () => window.clearInterval(timer);
-      },
-    });
-  }
-
   function launch() {
     const chosen = rows.filter((row) => selected.has(row.workload_id));
     if (!chosen.length) return;
-    enqueueRows(chosen);
-    setMessage(`Analyzing ${chosen.length} workload${chosen.length === 1 ? "" : "s"} — ${MAX_PARALLEL} at a time. Analyses continue on the server if you navigate away.`);
+    setBusy("launch");
+    void durable.launch(chosen.filter((row) => !row.demo).map((row) => row.workload_id))
+      .then(() => setMessage(`Queued ${chosen.length} backup analysis${chosen.length === 1 ? "" : "es"}. The SQL worker owns the complete batch.`))
+      .catch((error) => setMessage(formatError(error))).finally(() => setBusy(""));
     setSelected(new Set());
   }
 
   const failedRows = rows.filter((row) => stateOf(row).state === "failed");
   function retryFailed() {
-    enqueueRows(failedRows);
-    setMessage(`Retrying ${failedRows.length} failed analysis${failedRows.length === 1 ? "" : "es"}…`);
+    setBusy("retry");
+    void durable.retry().then(() => setMessage(`Queued ${failedRows.length} failed/partial analysis${failedRows.length === 1 ? "" : "es"} for retry.`))
+      .catch((error) => setMessage(formatError(error))).finally(() => setBusy(""));
   }
 
   function clickSort(key: SortKey, defaultDirection: SortDir = "desc") {
@@ -240,7 +145,7 @@ export function BackupManagerFleet({ onOpenWorkload }: {
 
   const analyzed = fleetQ.data?.analyzed ?? 0;
   const total = fleetQ.data?.total ?? rows.length;
-  const outstanding = fleetOutstanding(QUEUE_ID) + started.size;
+  const outstanding = durable.active && durable.batch ? durable.batch.total - durable.batch.completed : 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -250,7 +155,7 @@ export function BackupManagerFleet({ onOpenWorkload }: {
             <h2 className="text-sm font-semibold text-gray-900">Fleet backup posture</h2>
             <p className="text-[11px] text-gray-500">
               The last analysis of every workload, from cache. Select workloads to analyze them as one
-              background sweep — {MAX_PARALLEL} run at a time so a large estate does not throttle Azure.
+              durable background sweep with server-side Azure admission control.
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -278,17 +183,18 @@ export function BackupManagerFleet({ onOpenWorkload }: {
               <option value="name">Sort: name</option>
             </select>
             {failedRows.length > 0 && (
-              <button onClick={retryFailed}
-                className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100">
+              <button onClick={retryFailed} disabled={durable.active || busy !== ""}
+                className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">
                 ↻ Retry failed ({failedRows.length})
               </button>
             )}
-            <button onClick={launch} disabled={!selected.size}
+            <button onClick={launch} disabled={!selected.size || durable.active || busy !== ""}
               className="rounded-md bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-50">
               ▶ Analyze {selected.size || ""} selected
             </button>
           </div>
         </div>
+        <DurableBatchBar batch={durable.batch} cancelling={busy === "cancel"} onCancel={() => { setBusy("cancel"); void durable.cancel().finally(() => setBusy("")); }} />
         {message && <div className="mt-2 rounded-md border border-green-200 bg-green-50 px-3 py-1.5 text-xs text-green-700">{message}</div>}
       </div>
 
@@ -318,8 +224,7 @@ export function BackupManagerFleet({ onOpenWorkload }: {
                   <tbody>
                     {filtered.map((row) => {
                       const { state, error } = stateOf(row);
-                      const key = jobKey(row);
-                      const job = jobs[key];
+                      const item = durable.itemsByWorkload.get(row.workload_id);
                       return (
                         <tr key={row.workload_id} className={`border-b hover:bg-gray-50 ${selected.has(row.workload_id) ? "bg-brand/5" : ""}`}>
                           <td className="px-2 py-1.5">
@@ -350,8 +255,8 @@ export function BackupManagerFleet({ onOpenWorkload }: {
                             {row.has_analysis ? <span title={`${row.red_vaults} vault(s) at risk`}>{row.posture_score}{row.red_vaults ? <span className="ml-1 text-red-600">· {row.red_vaults} red</span> : null}</span> : "—"}
                           </td>
                           <td className="px-2 py-1.5 tabular-nums text-gray-600">{row.has_analysis ? fmtMoney(row.monthly_cost, row.currency) : "—"}</td>
-                          <td className="px-2 py-1.5 text-gray-500" title={job?.last_message || row.run_at}>
-                            {state === "running" ? (job?.last_message ? job.last_message.slice(0, 42) : "starting…")
+                          <td className="px-2 py-1.5 text-gray-500" title={item?.message || row.run_at}>
+                            {state === "running" ? (item?.message ? item.message.slice(0, 42) : "starting…")
                               : state === "failed" ? "failed — retry"
                                 : relTime(row.run_at)}
                           </td>

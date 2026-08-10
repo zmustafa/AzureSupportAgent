@@ -106,6 +106,14 @@ async def _get_snapshot(
             scan_cap=cap,
             progress=progress,
         )
+        if str(fresh.get("error") or "").strip():
+            previous = cache.read_snapshot(tenant_id, scope_kind, scope_id)
+            if previous:
+                out = _decorate(previous, ttl)
+                out["scan_error"] = fresh.get("error", "")
+                out["scan_throttled"] = bool(fresh.get("throttled"))
+                return out
+            return _decorate(fresh, ttl)
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl)
 
@@ -241,18 +249,20 @@ async def refresh(
     scope_kind, scope_id = _resolve_scope_params(workload_id, subscription_id)
     # Shield so the compute finishes + caches even if the client navigates away mid-refresh.
     snap = await asyncio.shield(_get_snapshot(principal, scope_kind, scope_id, force=True, connection_id=connection_id))
+    scan_failed = bool(str(snap.get("scan_error") or snap.get("error") or "").strip())
     # Record a compact trend point so this scan can be charted over time.
     from app.core import coverage_trends, coverage_runs
 
-    coverage_trends.record(
-        "telemetry", principal.tenant_id or "default", scope_kind, scope_id,
-        pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
-    )
-    coverage_runs.save_run(
-        "telemetry", principal.tenant_id or "default", scope_kind, scope_id, snap,
-        headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
-        resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
-    )
+    if not scan_failed:
+        coverage_trends.record(
+            "telemetry", principal.tenant_id or "default", scope_kind, scope_id,
+            pct=snap.get("coverage_pct"), extra=snap.get("kpis") or {}, demo=bool(snap.get("demo")),
+        )
+        coverage_runs.save_run(
+            "telemetry", principal.tenant_id or "default", scope_kind, scope_id, snap,
+            headline=snap.get("coverage_pct"), counts=snap.get("kpis") or {},
+            resource_count=len(snap.get("all_resources") or []), actor=principal.subject,
+        )
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,

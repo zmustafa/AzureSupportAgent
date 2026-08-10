@@ -13,6 +13,7 @@ streaming flow); everything else is cheap-ish cached scans.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("app.workloads.nightly")
@@ -69,26 +70,32 @@ async def _refresh_one(principal, wid: str, cid: str) -> int:
 
 
 async def refresh_all() -> dict[str, int]:
-    """Refresh every active workload's profile caches. Returns {workloads, signals}."""
+    """Queue durable nightly refresh batches grouped by tenant."""
+    from app.core import work_batches
     from app.workloads.registry import list_workloads
 
     workloads = list_workloads()
-    total_signals = 0
+    by_tenant: dict[str, list[dict[str, Any]]] = {}
     for wl in workloads:
-        cid = wl.get("connection_id") or ""
         tenant = wl.get("tenant_id") or "default"
-        principal = _admin_principal(tenant)
-        try:
-            total_signals += await _refresh_one(principal, wl["id"], cid)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("nightly refresh failed for workload %s: %s", wl.get("id"), exc)
-        # Record a composite-score trend point now that the caches are warm.
-        try:
-            from app.core.app_settings import load_settings
-            from app.workloads import profile as wl_profile
-
-            wl_profile.record_trend(wl, tenant, load_settings())
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("nightly trend record failed for workload %s: %s", wl.get("id"), exc)
-    logger.info("Nightly workload refresh: %d workloads, %d signals warmed", len(workloads), total_signals)
-    return {"workloads": len(workloads), "signals": total_signals}
+        by_tenant.setdefault(tenant, []).append({
+            "item_key": str(wl["id"]),
+            "workload_id": str(wl["id"]),
+            "workload_name": str(wl.get("name") or wl["id"]),
+            "connection_id": str(wl.get("connection_id") or ""),
+        })
+    queued = 0
+    day = datetime.now(timezone.utc).date().isoformat()
+    for tenant, items in by_tenant.items():
+        await work_batches.create_batch(
+            tenant_id=tenant,
+            feature="nightly",
+            actor="scheduler",
+            idempotency_key=f"nightly:{day}",
+            items=items,
+            config={"day": day},
+            trigger="schedule",
+        )
+        queued += len(items)
+    logger.info("Nightly workload refresh queued: %d workload(s) across %d tenant(s)", queued, len(by_tenant))
+    return {"workloads": len(workloads), "signals": 0, "queued": queued}

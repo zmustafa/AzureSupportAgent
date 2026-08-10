@@ -59,6 +59,7 @@ from app.api import (
     users,
     vms,
     workbooks,
+    work_batches,
     workloads,
 )
 from app.core.config import get_settings
@@ -303,6 +304,12 @@ async def _startup() -> None:
 
     await perf_fleet_worker.start()
 
+    # Shared durable worker for Assessment, Change Explorer, coverage, Backup Manager,
+    # Architecture, Mission, Cost, Deep Review and nightly batches.
+    from app.core.work_batches import worker as work_batch_worker
+
+    await work_batch_worker.start()
+
     # Warm the Azure MCP tool catalog in the background so the FIRST chat message
     # doesn't pay the `npx @azure/mcp` cold-start (node spawn + package resolve),
     # which the orchestrator awaits before streaming any token. Non-blocking.
@@ -352,6 +359,9 @@ async def _shutdown() -> None:
     from app.perfprofile.fleet import worker as perf_fleet_worker
 
     await perf_fleet_worker.stop()
+    from app.core.work_batches import worker as work_batch_worker
+
+    await work_batch_worker.stop()
     from app.backup_manager.lro import poller as backup_lro_poller
 
     await backup_lro_poller.stop()
@@ -646,6 +656,7 @@ api.include_router(workbooks.router)
 api.include_router(playbooks.router)
 api.include_router(notifications.router)
 api.include_router(workloads.router)
+api.include_router(work_batches.router)
 api.include_router(assessments.router)
 api.include_router(architectures.router)
 api.include_router(fmea.router)

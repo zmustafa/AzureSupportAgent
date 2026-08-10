@@ -2363,6 +2363,50 @@ export type PerfFleetBatch = {
   items: PerfFleetBatchItem[];
 };
 
+export type WorkBatchStatus = "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
+export type WorkBatchItem = {
+  id: string;
+  batch_id: string;
+  item_key: string;
+  workload_id: string;
+  workload_name: string;
+  connection_id: string;
+  status: WorkBatchStatus;
+  attempt: number;
+  max_attempts: number;
+  progress_current: number;
+  progress_total: number;
+  message: string;
+  result_ref: { kind?: string; id?: string } | null;
+  result: Record<string, unknown>;
+  error: string;
+  retryable: boolean;
+  available_at: string;
+  started_at: string;
+  ended_at: string;
+  duration_ms: number | null;
+};
+export type WorkBatch = {
+  id: string;
+  feature: string;
+  status: WorkBatchStatus;
+  config: Record<string, unknown>;
+  total: number;
+  completed: number;
+  succeeded: number;
+  partial: number;
+  failed: number;
+  cancelled: number;
+  cancel_requested: boolean;
+  error: string;
+  triggered_by: string;
+  trigger: string;
+  created_at: string;
+  started_at: string;
+  ended_at: string;
+  items: WorkBatchItem[];
+};
+
 // ---- Coverage / posture trend (shared by the 4 dashboards) ----------------------
 export type CoverageTrendPoint = { at: string; pct: number | null; extra?: Record<string, number>; demo?: boolean };
 export type CoverageTrend = {
@@ -7710,6 +7754,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ idempotency_key: idempotencyKey }),
     }),
+  workBatchLatest: (feature: string, activeOnly = false) =>
+    http<{ batch: WorkBatch | null }>(`/work-batches/latest?feature=${encodeURIComponent(feature)}&active_only=${activeOnly ? "true" : "false"}`),
+  workBatch: (batchId: string) =>
+    http<{ batch: WorkBatch }>(`/work-batches/${encodeURIComponent(batchId)}`),
+  createWorkBatch: (body: {
+    feature: string;
+    workload_ids?: string[];
+    connection_id?: string;
+    config?: Record<string, unknown>;
+    idempotency_key: string;
+  }) => http<{ batch: WorkBatch }>("/work-batches", { method: "POST", body: JSON.stringify(body) }),
+  cancelWorkBatch: (batchId: string) =>
+    http<{ batch: WorkBatch }>(`/work-batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST", body: "{}" }),
+  retryWorkBatch: (batchId: string, idempotencyKey: string) =>
+    http<{ batch: WorkBatch }>(`/work-batches/${encodeURIComponent(batchId)}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    }),
+  deleteWorkBatch: (batchId: string) =>
+    http<{ ok: boolean }>(`/work-batches/${encodeURIComponent(batchId)}`, { method: "DELETE" }),
   // --- Cleanup tab (cross-scope) — one set per feature prefix ---
   cleanupList: (prefix: string) => http<CleanupData>(`${prefix}/cleanup`),
   cleanupTrash: (prefix: string, ids: string[]) =>

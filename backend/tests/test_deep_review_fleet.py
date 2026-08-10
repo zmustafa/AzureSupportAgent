@@ -56,7 +56,7 @@ def test_resolve_deep_review_workloads_deduplicates_and_validates(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_fleet_creates_named_chats_and_starts_all_eight_agents(
+async def test_fleet_creates_named_chats_and_queues_durable_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workloads = {
@@ -73,6 +73,28 @@ async def test_fleet_creates_named_chats_and_starts_all_eight_agents(
     )
     monkeypatch.setattr(chats, "_active_provider", lambda: "test-provider")
     monkeypatch.setattr(chats, "active_model", lambda: "test-model")
+
+    captured: dict[str, Any] = {}
+
+    async def fake_create_batch(**kwargs):
+        captured.update(kwargs)
+        return ({
+            "id": "batch-1", "created_at": "now",
+            "items": [
+                {"id": "item-1", "workload_id": "w1", "workload_name": "Analytics", "connection_id": "conn-1", "status": "queued"},
+                {"id": "item-2", "workload_id": "w2", "workload_name": "Billing", "connection_id": "conn-2", "status": "queued"},
+            ],
+        }, True)
+
+    class FakeWorker:
+        started = False
+
+        async def ensure_running(self):
+            self.started = True
+
+    fake_worker = FakeWorker()
+    monkeypatch.setattr("app.core.work_batches.create_batch", fake_create_batch)
+    monkeypatch.setattr("app.core.work_batches.worker", fake_worker)
 
     started: list[tuple[str, Any, Any]] = []
 
@@ -99,18 +121,7 @@ async def test_fleet_creates_named_chats_and_starts_all_eight_agents(
 
     assert result["launched"] == 2
     assert result["agent_count"] == 8
-    assert len(started) == 2
-    for _, payload, gate in started:
-        assert payload.content == chats.DEEP_RELIABILITY_REVIEW_PROMPT
-        assert payload.thinking_level == "deep"
-        assert payload.deep_agents == [
-            "networking",
-            "identity",
-            "compute",
-            "storage",
-            "security",
-            "reliability",
-            "cost",
-            "monitoring",
-        ]
-        assert gate is chats._deep_review_fleet_gate
+    assert started == []
+    assert captured["feature"] == "deep_review"
+    assert captured["start_worker"] is False
+    assert fake_worker.started is True

@@ -7,6 +7,7 @@ Also a fleet endpoint to launch missions for several workloads at once. Admin-ga
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -136,26 +137,40 @@ async def run_fleet(
         connection = get_connection(payload.connection_id)
         if connection is None or connection.get("disabled"):
             raise HTTPException(status_code=404, detail="Azure connection not found.")
-    launched = []
+    from app.core import work_batches
+
+    items = []
     for wid in dict.fromkeys(payload.workload_ids):
         wl, conn_id = _resolve(wid, payload.connection_id)
         if wl is None:
             continue
-        mission = orchestrator.manager.create(
-            tenant_id=principal.tenant_id,
-            workload_id=wid,
-            workload_name=wl.get("name", "workload"),
-            connection_id=conn_id,
-            actor=principal.subject,
-            force=payload.force,
-            trigger="fleet",
-            system_keys=payload.systems or [],
-        )
-        launched.append(mission)
-    if not launched:
+        items.append({
+            "item_key": wid,
+            "workload_id": wid,
+            "workload_name": wl.get("name", "workload"),
+            "connection_id": conn_id or "",
+        })
+    if not items:
         raise HTTPException(status_code=404, detail="None of the selected workloads were found.")
-    await _audit(db, principal, "mission.fleet", ",".join(payload.workload_ids)[:128], count=len(launched), force=payload.force)
-    return {"missions": launched, "launched": len(launched), "queued": len(launched)}
+    batch, _ = await work_batches.create_batch(
+        tenant_id=principal.tenant_id,
+        feature="mission",
+        actor=principal.subject,
+        idempotency_key=f"mission:{uuid.uuid4()}",
+        items=items,
+        config={"systems": payload.systems or [], "force": payload.force},
+        trigger="fleet",
+    )
+    await _audit(db, principal, "mission.fleet", batch["id"], count=len(items), force=payload.force)
+    missions = [
+        {
+            "id": item["id"], "workload_id": item["workload_id"],
+            "workload_name": item["workload_name"], "connection_id": item["connection_id"],
+            "status": item["status"], "trigger": "fleet", "systems": [], "log": [],
+        }
+        for item in batch["items"]
+    ]
+    return {"missions": missions, "launched": len(items), "queued": len(items), "batch_id": batch["id"]}
 
 
 @router.get("/queue")

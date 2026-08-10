@@ -9,7 +9,9 @@ import csv
 import io
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -218,6 +220,41 @@ async def enqueue_assessments_endpoint(
     if not pillars:
         raise HTTPException(status_code=400, detail="Select at least one assessment type.")
     trigger = payload.pack if (payload.pack and pack_pillars is not None) else "manual"
+
+    unique_ids = list(dict.fromkeys(payload.workload_ids))
+    if len(unique_ids) > 1:
+        from app.core import work_batches
+
+        items: list[dict[str, Any]] = []
+        for wid in unique_ids:
+            wl = get_workload(wid)
+            if wl is not None:
+                items.append({
+                    "item_key": wid,
+                    "workload_id": wid,
+                    "workload_name": wl.get("name", "workload"),
+                    "connection_id": payload.connection_id or wl.get("connection_id") or "",
+                })
+        if not items:
+            raise HTTPException(status_code=404, detail="None of the selected workloads were found.")
+        batch, _ = await work_batches.create_batch(
+            tenant_id=principal.tenant_id,
+            feature="assessment",
+            actor=principal.subject,
+            idempotency_key=f"assessment:{uuid.uuid4()}",
+            items=items,
+            config={"pillars": pillars, "pack": payload.pack, "use_ai": payload.use_ai},
+            trigger="fleet",
+        )
+        runs = [
+            {
+                "id": item["id"], "workload_id": item["workload_id"],
+                "workload_name": item["workload_name"], "status": item["status"],
+                "pillars": pillars, "trigger": trigger,
+            }
+            for item in batch["items"]
+        ]
+        return {"runs": runs, "queued": len(runs), "batch_id": batch["id"]}
 
     # Create all queued run rows in the request's own session (single SQLite writer) so
     # we don't deadlock against a separate write transaction.
