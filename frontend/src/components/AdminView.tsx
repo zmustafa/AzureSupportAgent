@@ -1571,18 +1571,25 @@ function AzureMcpToolsCard() {
         search, skills, and custom-agent expansion.
       </p>
       {routingQ.data && (
-        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {[
-            ["Catalog", routingQ.data.routing.available],
-            ["Initially exposed", routingQ.data.routing.selected],
-            ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
-            ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
-          ].map(([statLabel, value]) => (
-            <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
-              <div className="text-lg font-semibold text-gray-800">{value}</div>
-              <div className="text-[11px] text-gray-500">{statLabel}</div>
-            </div>
-          ))}
+        <div className="mb-4 space-y-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Catalog", routingQ.data.routing.available],
+              ["Initially exposed", routingQ.data.routing.selected],
+              ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
+              ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
+            ].map(([statLabel, value]) => (
+              <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
+                <div className="text-lg font-semibold text-gray-800">{value}</div>
+                <div className="text-[11px] text-gray-500">{statLabel}</div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            {routingQ.data.provider.id} · {routingQ.data.provider.model || "default model"} uses <span className="font-semibold">{routingQ.data.provider.api.replaceAll("_", " ")}</span>
+            {routingQ.data.provider.responses_required_for_tools ? " (required for function tools)" : ""}.
+            {routingQ.data.provider.native_tool_search ? " Native tool search is supported independently." : " Local bounded routing remains active."}
+          </div>
         </div>
       )}
       {saving && <p className="mb-2 text-xs text-gray-400">Saving…</p>}
@@ -1836,18 +1843,25 @@ function EntraToolsCard() {
         )}
 
         {routingQ.data && (
-          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              ["Catalog", routingQ.data.routing.available],
-              ["Initially exposed", routingQ.data.routing.selected],
-              ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
-              ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
-            ].map(([statLabel, value]) => (
-              <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
-                <div className="text-lg font-semibold text-gray-800">{value}</div>
-                <div className="text-[11px] text-gray-500">{statLabel}</div>
-              </div>
-            ))}
+          <div className="mb-4 space-y-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Catalog", routingQ.data.routing.available],
+                ["Initially exposed", routingQ.data.routing.selected],
+                ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
+                ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
+              ].map(([statLabel, value]) => (
+                <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
+                  <div className="text-lg font-semibold text-gray-800">{value}</div>
+                  <div className="text-[11px] text-gray-500">{statLabel}</div>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              {routingQ.data.provider.id} · {routingQ.data.provider.model || "default model"} uses <span className="font-semibold">{routingQ.data.provider.api.replaceAll("_", " ")}</span>
+              {routingQ.data.provider.responses_required_for_tools ? " (required for function tools)" : ""}.
+              {routingQ.data.provider.native_tool_search ? " Native tool search is supported independently." : " Local bounded routing remains active."}
+            </div>
           </div>
         )}
         {routingQ.data && routingQ.data.routing.available > routingQ.data.provider.max_tool_definitions && (

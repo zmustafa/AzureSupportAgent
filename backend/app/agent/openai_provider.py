@@ -9,12 +9,42 @@ from typing import Any
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSpec
-from app.agent.provider_capabilities import ToolDefinitionLimitError, validate_tool_count
+from app.agent.provider_capabilities import (
+    ToolDefinitionLimitError,
+    capabilities_for,
+    validate_tool_count,
+)
 
 # Models (e.g. Azure gpt-5 / o-series) that reject `max_tokens` and require
 # `max_completion_tokens` instead. Learned at runtime so the failed first call is paid
 # only once per process, then the correct param is sent up front.
 _NEEDS_MAX_COMPLETION_TOKENS: set[str] = set()
+# Runtime-learned compatibility is keyed by provider+model so one definitive 400 is
+# paid at most once per process. Static profiles remain the first source of truth.
+_RESPONSES_REQUIRED_FOR_TOOLS: set[tuple[str, str]] = set()
+_CHAT_TOOLS_REQUIRE_REASONING_NONE: set[tuple[str, str]] = set()
+
+
+def _tool_reasoning_requires_responses(message: str) -> bool:
+    value = (message or "").lower()
+    return (
+        "function tools with reasoning_effort are not supported" in value
+        and "/v1/chat/completions" in value
+        and "/v1/responses" in value
+    )
+
+
+def _token_cap_retry(message: str) -> str:
+    """Return `max_completion_tokens`, `drop`, or empty for a non-cap error."""
+    value = (message or "").lower()
+    unsupported = "unsupported" in value or "not supported" in value
+    if not unsupported:
+        return ""
+    if "max_tokens" in value and "max_completion_tokens" in value:
+        return "max_completion_tokens"
+    if "max_tokens" in value or "max_completion_tokens" in value:
+        return "drop"
+    return ""
 
 
 class OpenAIProvider(LLMProvider):
@@ -102,6 +132,65 @@ class OpenAIProvider(LLMProvider):
         }
 
     @staticmethod
+    def _to_responses_input(
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Translate Chat-style history to native Responses input items.
+
+        The orchestrator stores assistant calls and tool results in the shared Chat
+        shape. Responses requires matching `function_call` / `function_call_output`
+        items; converting them to prose loses call identity and breaks multi-round tools.
+        """
+        instructions: list[str] = []
+        inputs: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = message.get("content")
+            if role in {"system", "developer"}:
+                if isinstance(content, str) and content.strip():
+                    instructions.append(content.strip())
+                continue
+            if role == "tool":
+                output = content if isinstance(content, str) else json.dumps(content)
+                inputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": str(message.get("tool_call_id") or ""),
+                        "output": output,
+                    }
+                )
+                continue
+
+            if isinstance(content, list):
+                parts: list[dict[str, Any]] = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") == "text" and item.get("text"):
+                        parts.append({"type": "input_text", "text": item["text"]})
+                    elif item.get("type") == "image_url":
+                        url = (item.get("image_url") or {}).get("url", "")
+                        if url:
+                            parts.append({"type": "input_image", "image_url": url})
+                if parts:
+                    inputs.append({"role": role, "content": parts})
+            elif isinstance(content, str) and content.strip():
+                inputs.append({"role": role, "content": content})
+
+            if role == "assistant":
+                for call in message.get("tool_calls") or []:
+                    function = call.get("function") or {}
+                    inputs.append(
+                        {
+                            "type": "function_call",
+                            "call_id": str(call.get("id") or ""),
+                            "name": str(function.get("name") or ""),
+                            "arguments": str(function.get("arguments") or "{}"),
+                        }
+                    )
+        return "\n\n".join(instructions), inputs
+
+    @staticmethod
     def _search_deferred_tools(
         tools: list[ToolSpec], arguments: Any, *, limit: int = 8
     ) -> list[ToolSpec]:
@@ -137,40 +226,45 @@ class OpenAIProvider(LLMProvider):
         positive = [tool for tool in ranked if score(tool)[0] > 0]
         return (positive or ranked)[: max(1, min(12, limit))]
 
-    async def _stream_responses_with_tool_search(
+    async def _stream_responses(
         self,
         messages: list[dict[str, Any]],
-        tools: list[ToolSpec],
+        tools: list[ToolSpec] | None,
         *,
         max_tokens: int | None,
+        enable_tool_search: bool = False,
+        emit_connecting: bool = True,
     ) -> AsyncIterator[StreamEvent]:
-        """Use OpenAI Responses tool search without exposing an HTTP MCP server.
+        """Stream through OpenAI Responses with ordinary and optionally deferred tools.
 
-        OpenAI requests a search; this client ranks the already-authorized local catalog
-        and returns only matching function definitions. Tool execution remains in the
-        orchestrator over local stdio/connector handlers.
+        The bounded local router is the baseline. Native search is an independent
+        optimization: when enabled, OpenAI requests a search and this client returns
+        only matching definitions from the already-authorized local catalog. Execution
+        always remains in the orchestrator over local stdio/connector handlers.
         """
-        from app.agent.codex_provider import _split_system_and_convo
         from app.core.app_settings import generation_params
 
-        instructions, inputs = _split_system_and_convo(messages)
+        instructions, inputs = self._to_responses_input(messages)
         cap = int(max_tokens) if max_tokens else generation_params()["max_tokens"]
-        response_tools = [self._to_responses_tool(tool) for tool in tools]
-        response_tools.append(
-            {
-                "type": "tool_search",
-                "execution": "client",
-                "description": "Search the application's authorized deferred tool catalog.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 12},
+        available_tools = list(tools or [])
+        has_deferred = enable_tool_search and any(tool.defer_loading for tool in available_tools)
+        response_tools = [self._to_responses_tool(tool) for tool in available_tools]
+        if has_deferred:
+            response_tools.append(
+                {
+                    "type": "tool_search",
+                    "execution": "client",
+                    "description": "Search the application's authorized deferred tool catalog.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 12},
+                        },
+                        "required": ["query"],
                     },
-                    "required": ["query"],
-                },
-            }
-        )
+                }
+            )
 
         next_input: Any = inputs or [{"role": "user", "content": "Continue."}]
         previous_response_id: str | None = None
@@ -178,16 +272,18 @@ class OpenAIProvider(LLMProvider):
         total_completion = 0
         yielded_request_status = False
 
-        yield StreamEvent(type="status", phase="connecting", text=f"Connecting to {self._label()}…")
-        for _ in range(4):
+        if emit_connecting:
+            yield StreamEvent(type="status", phase="connecting", text=f"Connecting to {self._label()}…")
+        for _ in range(4 if has_deferred else 1):
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "input": next_input,
-                "tools": response_tools,
                 "stream": True,
-                "store": True,
+                "store": has_deferred,
                 "max_output_tokens": cap,
             }
+            if response_tools:
+                kwargs["tools"] = response_tools
             if instructions and previous_response_id is None:
                 kwargs["instructions"] = instructions
             if previous_response_id:
@@ -269,7 +365,9 @@ class OpenAIProvider(LLMProvider):
                 arguments = getattr(item, "arguments", {})
                 args = arguments if isinstance(arguments, dict) else {}
                 requested_limit = int(args.get("limit") or 8) if args else 8
-                selected = self._search_deferred_tools(tools, arguments, limit=requested_limit)
+                selected = self._search_deferred_tools(
+                    available_tools, arguments, limit=requested_limit
+                )
                 outputs.append(
                     {
                         "type": "tool_search_output",
@@ -292,11 +390,20 @@ class OpenAIProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        if tools and any(tool.defer_loading for tool in tools):
-            async for event in self._stream_responses_with_tool_search(
+        caps = capabilities_for(self._provider, self._model)
+        key = (self._provider, self._model)
+        deferred_search = bool(tools and any(tool.defer_loading for tool in tools))
+        use_responses = (
+            caps.api == "responses"
+            or (bool(tools) and key in _RESPONSES_REQUIRED_FOR_TOOLS)
+            or (deferred_search and caps.supports_responses and caps.native_tool_search)
+        )
+        if use_responses:
+            async for event in self._stream_responses(
                 messages,
                 tools,
                 max_tokens=max_tokens,
+                enable_tool_search=deferred_search and caps.native_tool_search,
             ):
                 yield event
             return
@@ -321,6 +428,8 @@ class OpenAIProvider(LLMProvider):
         # generation and the provider connection probe both pass tools=None.
         if openai_tools:
             kwargs["tools"] = openai_tools
+            if key in _CHAT_TOOLS_REQUIRE_REASONING_NONE:
+                kwargs["reasoning_effort"] = "none"
         # gpt-5 / o-series Azure models use `max_completion_tokens`; everything else uses
         # `max_tokens`. Pick up front for known models so we don't fail-then-retry.
         cap_param = (
@@ -335,9 +444,7 @@ class OpenAIProvider(LLMProvider):
         yield StreamEvent(type="status", phase="connecting", text=f"Connecting to {self._label()}…")
         try:
             stream = await self._client.chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - retry once on token-param rejection
-            # Move the cap to `max_completion_tokens` when the model demands it (Azure
-            # gpt-5 / o-series); otherwise drop the cap entirely and retry.
+        except Exception as exc:  # noqa: BLE001 - classified compatibility retries only
             msg = str(exc).lower()
             if (
                 "array_above_max_length" in msg
@@ -348,12 +455,34 @@ class OpenAIProvider(LLMProvider):
                     len(openai_tools or []),
                     128,
                 ) from exc
-            cap_val = kwargs.pop("max_tokens", None)
-            cap_val = kwargs.pop("max_completion_tokens", cap_val)
-            if cap_val and "max_completion_tokens" in msg:
-                _NEEDS_MAX_COMPLETION_TOKENS.add(self._model)
-                kwargs["max_completion_tokens"] = cap_val
-            stream = await self._client.chat.completions.create(**kwargs)
+
+            if openai_tools and _tool_reasoning_requires_responses(msg):
+                if caps.supports_responses:
+                    _RESPONSES_REQUIRED_FOR_TOOLS.add(key)
+                    async for event in self._stream_responses(
+                        messages,
+                        tools,
+                        max_tokens=max_tokens,
+                        enable_tool_search=False,
+                        emit_connecting=False,
+                    ):
+                        yield event
+                    return
+                # The endpoint itself explicitly offered `reasoning_effort=none` as
+                # the alternative. Cache and retry once for gateways with no Responses.
+                _CHAT_TOOLS_REQUIRE_REASONING_NONE.add(key)
+                kwargs["reasoning_effort"] = "none"
+                stream = await self._client.chat.completions.create(**kwargs)
+            else:
+                cap_retry = _token_cap_retry(msg)
+                if not cap_retry:
+                    raise
+                cap_val = kwargs.pop("max_tokens", None)
+                cap_val = kwargs.pop("max_completion_tokens", cap_val)
+                if cap_retry == "max_completion_tokens" and cap_val:
+                    _NEEDS_MAX_COMPLETION_TOKENS.add(self._model)
+                    kwargs["max_completion_tokens"] = cap_val
+                stream = await self._client.chat.completions.create(**kwargs)
         yield StreamEvent(type="status", phase="request_sent", text="Request sent · awaiting response…")
 
         prompt_tokens = 0

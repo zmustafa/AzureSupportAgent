@@ -4251,6 +4251,12 @@ function formatChatProviderError(detail: string): { message: string; hint: strin
       hint: "Lower the initial or per-turn tool budget, then retry. No tools were executed.",
     };
   }
+  if (lower.includes("function tools with reasoning_effort are not supported")) {
+    return {
+      message: "This model requires a different API transport when function tools are enabled.",
+      hint: "The provider adapter should switch to Responses automatically. Retry once; if it persists, select another model and report the provider/model combination.",
+    };
+  }
   return {
     message: detail,
     hint: "Try again, or switch models with the picker below.",

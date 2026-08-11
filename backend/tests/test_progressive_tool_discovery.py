@@ -10,7 +10,11 @@ import pytest
 from app.agent.openai_provider import OpenAIProvider
 from app.agent.orchestrator import Orchestrator
 from app.agent.provider import LLMProvider, StreamEvent, ToolSpec
-from app.agent.provider_capabilities import ToolDefinitionLimitError, validate_tool_count
+from app.agent.provider_capabilities import (
+    ToolDefinitionLimitError,
+    capabilities_for,
+    validate_tool_count,
+)
 from app.agent.skills import get_skill, list_skills
 from app.agent.tool_catalog import ToolCatalog, ToolNameCollisionError, make_entry
 from app.agent.tool_results import ToolArtifactStore, prepare_tool_result
@@ -167,6 +171,20 @@ def test_provider_limit_guard_stops_129_tools():
         validate_tool_count("openai", "gpt-4.1", tools)
     assert exc.value.offered == 129
     assert exc.value.limit == 128
+
+
+def test_openai_transport_and_native_search_are_independent_capabilities():
+    sol = capabilities_for("openai", "gpt-5.6-sol")
+    assert sol.api == "responses"
+    assert sol.supports_responses is True
+    assert sol.responses_required_for_tools is True
+    assert sol.native_tool_search is False
+
+    prior = capabilities_for("openai", "gpt-5.5")
+    assert prior.api == "chat_completions"
+    assert prior.supports_responses is True
+    assert prior.responses_required_for_tools is False
+    assert prior.native_tool_search is True
 
 
 def test_large_result_is_valid_json_and_resumable():

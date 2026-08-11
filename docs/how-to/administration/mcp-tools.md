@@ -79,6 +79,8 @@ harmless read with the approved execution role and connection.
 5. Confirm every selected/expanded count remains below the configured ceiling and provider limit.
 6. Review the `chat.turn` audit metadata for source/domain counts, schema bytes, selected names,
 	and selection reasons. Prompt contents and tool arguments are not recorded as routing telemetry.
+7. Verify the provider transport label. Direct OpenAI models that require Responses for function
+	tools should say `responses`; this is independent from the optional native tool-search toggle.
 
 **Expected result:** The Entra page reports an enabled, configured catalog and the intended tool can authenticate to Microsoft Graph.
 
@@ -102,6 +104,7 @@ Catalog content depends on the connected server version. Keep MCP read-only enab
 | Tool is visible but unauthorized | Grant only the exact Azure role and scope required, then retest. |
 | Catalog is visible but a toggle returns forbidden | The active role has `settings.read` only. Switch to an approved role containing `settings.write` as well. |
 | Provider reports an oversized tools array | Keep progressive routing enabled and lower the initial/per-turn budgets if customized. The provider adapter now rejects over-limit requests before sending them. |
+| Provider says function tools and reasoning are incompatible in Chat Completions | The adapter should retry once through Responses when supported, or once with `reasoning_effort=none` for compatible gateways that lack Responses. It must not silently remove tools. |
 
 ## Related docs
 

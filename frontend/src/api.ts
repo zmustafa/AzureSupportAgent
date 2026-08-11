@@ -11832,6 +11832,10 @@ export interface ToolRoutingDiagnostics {
     max_tool_definitions: number;
     native_tool_search: boolean;
     api: string;
+    supports_responses: boolean;
+    responses_required_for_tools: boolean;
+    chat_tools_reasoning_effort_none: boolean;
+    capability_source: string;
   };
   routing: {
     available: number;

@@ -18,8 +18,15 @@ class ProviderCapabilities:
     max_tool_definitions: int
     recommended_initial_tools: int = 24
     recommended_max_tools: int = 32
-    native_tool_search: bool = False
+    # Preferred transport for ordinary calls. This is independent from native tool
+    # search: a model may require Responses for function tools without supporting the
+    # hosted/client-executed `tool_search` capability.
     api: str = "chat_completions"
+    supports_responses: bool = False
+    responses_required_for_tools: bool = False
+    chat_tools_reasoning_effort_none: bool = False
+    native_tool_search: bool = False
+    capability_source: str = "built_in"
 
 
 _OPENAI_CHAT_PROVIDERS = frozenset({
@@ -36,16 +43,29 @@ def _openai_native_search_model(model: str) -> bool:
     return value.startswith(("gpt-5.4", "gpt-5.5"))
 
 
+def _openai_responses_required_model(model: str) -> bool:
+    """Models that reject function tools on Chat Completions at default reasoning.
+
+    Keep this separate from native tool search. `gpt-5.6-sol` explicitly instructs
+    callers to use `/v1/responses` for function tools, but that does not establish
+    support for deferred `tool_search`.
+    """
+    return (model or "").lower().startswith("gpt-5.6-sol")
+
+
 def capabilities_for(provider: str | None, model: str | None = None) -> ProviderCapabilities:
     name = (provider or "openai").strip().lower()
     model_name = (model or "").strip()
     if name in {"openai", "openai_eu"}:
+        responses_required = _openai_responses_required_model(model_name)
         return ProviderCapabilities(
             provider=name,
             model=model_name,
             max_tool_definitions=128,
+            api="responses" if responses_required else "chat_completions",
+            supports_responses=True,
+            responses_required_for_tools=responses_required,
             native_tool_search=_openai_native_search_model(model_name),
-            api="responses" if _openai_native_search_model(model_name) else "chat_completions",
         )
     if name in _OPENAI_CHAT_PROVIDERS:
         return ProviderCapabilities(name, model_name, 128)

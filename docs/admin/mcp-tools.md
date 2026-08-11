@@ -89,6 +89,14 @@ Advanced settings control the initial budget, per-turn ceiling, tools per search
 the experimental direct-OpenAI native tool-search path. The provider-independent local router
 remains the fallback for every provider and unsupported model.
 
+Provider transport is selected independently per provider and model. A model can require the
+OpenAI Responses API for ordinary function tools without supporting native deferred
+`tool_search`. For example, direct OpenAI `gpt-5.6-sol` uses Responses automatically with the
+same bounded local surface, while older Chat-compatible models keep Chat Completions. Claude,
+GitHub Copilot, and ChatGPT Codex retain their provider-specific adapters. A definitive
+compatibility error can teach the process one transport fallback; the same rejected endpoint
+is not retried indefinitely.
+
 ## Interpretation of results
 
 - `read` and `write` describe the tool's operation class; they are not role grants.
@@ -121,6 +129,7 @@ tokens, or certificate private material into documentation or tool prompts.
 | Write tool absent | `mcp_read_only` may intentionally hide it. |
 | Catalog exceeds the provider limit | Keep progressive routing enabled. Review the initial/per-turn budgets and global bundle policy; do not restore a full eager catalog. |
 | Relevant tool was not initially exposed | The agent can call `search_tools`; confirm the tool was not globally disabled or excluded by the custom agent. |
+| Model says tools require `/v1/responses` | The direct OpenAI adapter should select Responses automatically. Verify the provider/model transport shown on the tool page; native `tool_search` can remain disabled. |
 | Catalog opens but an enable toggle returns forbidden | The active role has `settings.read` but lacks `settings.write`. Switch to an approved role containing both keys. |
 
 ## Related pages

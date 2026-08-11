@@ -446,3 +446,24 @@ Validation completed locally:
 - Deferred-search E2E: `search_tools` expanded the surface, then `find_ownerless_applications` executed successfully.
 - Backend fast suite: 5,517 passed, 16 skipped, 8 expected failures.
 - Frontend TypeScript and production Vite build passed.
+
+## Adaptive provider transport follow-up
+
+Release 17 exposed a second, independent compatibility issue before it reached Azure Container
+Apps: direct OpenAI `gpt-5.6-sol` rejects function tools with its default reasoning effort on
+Chat Completions and requires Responses (or reasoning disabled). The public release-17 image was
+published but never imported into ACR and never rolled live.
+
+The release-18 hotfix separates provider/model transport from native tool search:
+
+- `preferred API`, `supports Responses`, `Responses required for tools`, Chat reasoning-none
+   compatibility, native `tool_search`, and hard tool limits are independent capability facts.
+- Direct OpenAI `gpt-5.6-sol` uses Responses automatically with bounded locally selected tools;
+   native deferred `tool_search` remains independently disabled/unverified.
+- Responses history preserves native `function_call` and `function_call_output` items and call ids
+   across tool rounds instead of flattening them into prose.
+- Exact unknown-model compatibility errors trigger one Responses fallback and are cached for the
+   process. A compatible gateway without Responses retries once with `reasoning_effort=none`.
+- Unrelated deterministic errors are no longer retried after removing token-limit parameters.
+- Administration reports the effective model transport and whether Responses is required for
+   tools separately from native tool-search support.
