@@ -40,7 +40,7 @@ Evidence Locker creates write-once point-in-time bundles and records a SHA-256 d
 4. Select **standard** or **audit** retention and add non-sensitive tags.
 5. Create the snapshot and record its ID, digest, generated time, size, and section counts in the case.
 
-Standard and audit retention periods are administrator-configurable. Audit class is longer-lived; it is not a substitute for an external legal-hold system.
+Standard and audit retention periods are deployment-configurable. Audit class is longer-lived; it is not a substitute for an external legal-hold system.
 
 ### Review, diff, and hand off
 
@@ -60,7 +60,7 @@ No dedicated export, history, scheduling, or integration controls are documented
 
 ### Immutability and deletion
 
-Snapshots are not edited in place. Delete moves an item to Trash; restore returns it. Permanent purge is an administrator action and should follow retention and evidence policy. A digest mismatch means integrity verification failed and must be investigated rather than ignored.
+Snapshots are not edited in place. Delete moves an item to Trash; restore returns it. Delete, restore, and permanent purge require `evidence.write`; purge is irreversible and should follow retention and evidence policy. A digest mismatch means integrity verification failed and must be investigated rather than ignored.
 
 ## Troubleshooting
 

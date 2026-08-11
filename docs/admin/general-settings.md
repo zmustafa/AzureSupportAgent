@@ -10,7 +10,7 @@ permalink: /admin/general-settings/
 # General settings
 
 **App route:** `/admin/settings`<br>
-**Product permission:** `settings.write`
+**Product permissions:** `settings.read` to inspect; `settings.write` to change
 
 ## Purpose
 
@@ -40,6 +40,8 @@ The single scrolling page contains:
 - **Azure Resource Graph pacing:** application-side per-principal query pacing.
 
 Select **Save settings**, then reload the page to confirm the effective values returned by the backend.
+
+With `settings.read` but not `settings.write`, the page displays a read-only banner and disables the settings fieldset. A direct PUT still requires `settings.write` at the backend.
 
 ### Performance Profiler capacity
 

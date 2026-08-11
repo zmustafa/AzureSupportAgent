@@ -6,16 +6,17 @@ grand_parent: User guide
 nav_order: 1
 description: Track Azure service retirements, breaking changes, impacted resources, owners, and migration work.
 permalink: /user-guide/lifecycle-investigation/retirement-radar/
+feature_ids: [PROACTIVE_NAV:radar]
 ---
 
 # Retirement Radar
 
-**Permission:** `radar.read`
+**Permissions:** `radar.read` to view cached snapshots, event detail, reference history, and digest preview; `radar.manage` to refresh, change state, curate/restore/reset the reference, generate a runbook, register findings, create a ticket, or seed demo data
 
 ## Purpose
 
 **App route:** `/radar`
-Retirement Radar combines cached Service Health and Advisor signals with an administrator-maintained classification and model-lifecycle reference. It maps announcements to workload resources, deadlines, owners, and action state.
+Retirement Radar combines cached Service Health and Advisor signals with a `radar.manage`-maintained classification and model-lifecycle reference. It maps announcements to workload resources, deadlines, owners, and action state.
 ![Retirement and lifecycle coverage dashboard]({{ site.baseurl }}/assets/retirement-coverage.png)
 
 ## Prerequisites and data sources
@@ -65,13 +66,14 @@ The view can draft migration guidance, register reliability findings, create sup
 
 ### Safety
 
-Refresh is explicit to avoid unnecessary Azure calls. Treat public-feed items as supplementary and potentially delayed. State changes, ticketing, and reference edits are auditable; reference editing is an administrator workflow described in [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/).
+Refresh is explicit to avoid unnecessary Azure calls. Treat public-feed items as supplementary and potentially delayed. State changes, ticketing, and reference edits require `radar.manage` and are auditable; reference editing is described in [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/).
 
 ## Troubleshooting
 
 
 | Symptom | Resolution |
 | --- | --- |
+| Page is visible but a change returns forbidden | `radar.read` permits inspection only. Switch to an assigned role containing `radar.manage` before refresh, state, runbook, finding, ticket, demo, or reference actions. |
 | No events and never loaded | Confirm the connection and scope, then select **Refresh**. |
 | Snapshot is stale | Compare cache age with configured TTL and refresh. |
 | Event has no impacted resources | Refresh inventory and verify workload scope/resource matching. |

@@ -12,7 +12,10 @@ permalink: /how-to/administration/mcp-tools/
 
 ## Prerequisites
 
-- Access to the Admin tool catalog and a running Azure MCP server configuration.
+- Product permission `settings.read` to open the Admin tool catalogs.
+- Both `settings.read` and `settings.write` to change built-in utility enablement, per-tool
+	disablement, or default-assistant Entra exposure.
+- A running Azure MCP server configuration.
 - A working deployment identity or Azure credential chain.
 - Entra MCP enabled in General settings.
 - A default service-principal Azure connection using a client secret or certificate.
@@ -35,6 +38,23 @@ permalink: /how-to/administration/mcp-tools/
 **Expected result:** The required tool is visible with an understood classification and policy boundary.
 
 **Verification:** Run one harmless read and confirm its scope and result. A `write` label does not grant permission or automatic execution; approval, connection policy, product permission, and Azure RBAC still apply.
+
+## How to change tool exposure safely
+
+1. Open `/admin/tools` or `/admin/entratools` with an active role containing both
+	`settings.read` and `settings.write`.
+2. Record the current global and per-tool state and the workflows that depend on it.
+3. Change one built-in utility toggle or the default-assistant Entra exposure switch.
+4. Reload the page and confirm the saved state.
+5. Start a new bounded chat and verify the intended tool is present or absent. Do not use a
+	write operation merely to test visibility.
+6. Review the Audit Log/settings change record where implemented.
+
+**Expected result:** Tool exposure changes for subsequent agent runs without executing the tool
+or changing Azure/Entra data.
+
+**Verification:** Test catalog visibility with a `settings.read`-only role, then test one
+harmless read with the approved execution role and connection.
 
 ## How to inspect and validate EntraID MCP tools
 
@@ -65,6 +85,7 @@ Catalog content depends on the connected server version. Keep MCP read-only enab
 | Catalog is unavailable | Check MCP process/package configuration, network/package access, application logs, and health. |
 | Write tool is absent | Confirm whether MCP read-only intentionally filters it. |
 | Tool is visible but unauthorized | Grant only the exact Azure role and scope required, then retest. |
+| Catalog is visible but a toggle returns forbidden | The active role has `settings.read` only. Switch to an approved role containing `settings.write` as well. |
 
 ## Related docs
 

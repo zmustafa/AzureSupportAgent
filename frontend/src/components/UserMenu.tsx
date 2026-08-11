@@ -8,7 +8,7 @@ import { queryClient } from "../queryClient";
 import { roleLabel } from "../utils/roleLabel";
 import { formatError } from "../utils/format";
 
-export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: () => void; onRefresh: () => void }) {
+export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: () => void; onRefresh: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,7 +34,7 @@ export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: ()
       await api.setActiveRole(role);
       // Refresh the shared identity, then drop every cached query so all permission-gated
       // UI (sidebar, dashboards, panels) refetches and re-renders under the new role.
-      onRefresh();
+      await onRefresh();
       await queryClient.invalidateQueries();
       setOpen(false);
       setBusy(false);
@@ -65,8 +65,9 @@ export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: ()
             <div className="truncate text-xs text-slate-500">{user.email}</div>
           </div>
           <div className="px-4 py-3">
-            <label className="mb-1 block text-xs font-medium text-slate-500">Active Role</label>
+            <label htmlFor="active-role-select" className="mb-1 block text-xs font-medium text-slate-500">Active Role</label>
             <select
+              id="active-role-select"
               value={activeRole}
               disabled={busy || roles.length <= 1}
               onChange={(e) => void switchRole(e.target.value)}
@@ -104,7 +105,7 @@ export function UserMenu({ user, onLogout, onRefresh }: { user: Me; onLogout: ()
   );
 }
 
-function ProfileModal({ user, roles, onClose, onSaved }: { user: Me; roles: string[]; onClose: () => void; onSaved: () => void }) {
+function ProfileModal({ user, roles, onClose, onSaved }: { user: Me; roles: string[]; onClose: () => void; onSaved: () => Promise<void> }) {
   const [firstName, setFirstName] = useState(user.first_name ?? (user.display_name ?? "").split(" ")[0] ?? "");
   const [lastName, setLastName] = useState(user.last_name ?? (user.display_name ?? "").split(" ").slice(1).join(" "));
   const [activeRole, setActiveRole] = useState(user.active_role || user.role);
@@ -123,7 +124,7 @@ function ProfileModal({ user, roles, onClose, onSaved }: { user: Me; roles: stri
         await api.setActiveRole(activeRole);
         await queryClient.invalidateQueries();
       }
-      onSaved();
+      await onSaved();
       onClose();
     } catch (e) {
       setErr(formatError(e));

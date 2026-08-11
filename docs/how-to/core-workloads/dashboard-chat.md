@@ -14,7 +14,7 @@ permalink: /how-to/core-workloads/dashboard-chat/
 
 ## Prerequisites
 
-- An authenticated session with a non-empty effective application role, an active AI provider/model, and a readable Azure connection for live evidence. Built-in chat roles include `chat.use`; current chat endpoints are authenticated and user-owned rather than guarded by that feature-specific dependency.
+- An authenticated session with `chat.use`, an active AI provider/model, and a readable Azure connection for live evidence. Chat history, lifecycle, turn, and SSE endpoints are also scoped to the signed-in user and tenant.
 - A workload is strongly recommended for scope control.
 - Graph or Log Analytics access is required only when the investigation needs those sources.
 - A configured Jira, ServiceNow, or XSOAR connector is required for the corresponding ticket handoff.
@@ -86,7 +86,8 @@ Dashboard: `/dashboard` (also `/`). Chat: `/chat`, `/chat?deep=1`, or an existin
 
 | Symptom | Resolution |
 | --- | --- |
-| No model is available | Ask an administrator to test and activate a provider. |
+| Chat is hidden or the direct route is denied | Switch to an assigned role containing `chat.use`, or request that exact capability. |
+| No model is available | Ask a user with `settings.read` and `settings.write` to test and activate a provider. |
 | Stream stops | Reopen the chat; then check provider health, rate limits, and connection state. |
 | Tool is unauthorized | Verify selected connection, workload, application permission, Azure RBAC, and Graph/log access. |
 | Conclusion is missing | Narrow scope/time and ensure specialists can reach the required evidence. |

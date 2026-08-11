@@ -16,6 +16,7 @@ import { usePersistedState } from "../utils/persistedState";
 import { Spinner } from "./chat/icons";
 import { WidgetRenderer } from "./monitor/widgets";
 import { WidgetEditor, AiWidgetModal, BuildFromWorkloadModal, newBlankWidget } from "./monitor/editor";
+import { useAuth } from "./AuthContext";
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
 
@@ -145,6 +146,8 @@ function WorkbookTiles() {
 /** Central monitoring dashboard. One aggregated, deep-linkable view of everything
  *  happening: activity volume, token usage, tool-call health, automations, and a feed. */
 export function MonitorPanel() {
+  const { has } = useAuth();
+  const canManage = has("settings.write");
   const rootRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   // Enterprise controls: live/pause auto-refresh, selectable cadence, fullscreen NOC mode.
@@ -183,6 +186,10 @@ export function MonitorPanel() {
     if (editing) return;
     setWorkWidgets(active ? (active.widgets?.length ? active.widgets : defaultWidgets()) : defaultWidgets());
   }, [active, editing]);
+
+  useEffect(() => {
+    if (!canManage) setEditing(false);
+  }, [canManage]);
 
   useEffect(() => {
     const onFs = () => setIsFs(!!document.fullscreenElement);
@@ -342,7 +349,9 @@ export function MonitorPanel() {
             ))}
           </select>
 
-          {!editing ? (
+          {!canManage ? (
+            <span className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs text-sky-700">Read-only dashboard access</span>
+          ) : !editing ? (
             <>
               <button onClick={() => setEditing(true)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50">✎ Customize</button>
               <button onClick={() => void newDashboard()} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50">+ New</button>
@@ -393,7 +402,7 @@ export function MonitorPanel() {
           <DashboardGrid
             data={q.data}
             widgets={workWidgets}
-            editing={editing}
+            editing={editing && canManage}
             live={live}
             onLayoutChange={setWorkWidgets}
             onRemoveWidget={removeWidget}
@@ -402,11 +411,11 @@ export function MonitorPanel() {
         )}
       </div>
 
-      {editorWidget && (
+      {canManage && editorWidget && (
         <WidgetEditor widget={editorWidget} onSave={applyEditedWidget} onClose={() => setEditorWidget(null)} />
       )}
-      {showAiWidget && <AiWidgetModal onAdd={addWidget} onClose={() => setShowAiWidget(false)} />}
-      {showFromWorkload && <BuildFromWorkloadModal onCreated={onDashboardCreated} onClose={() => setShowFromWorkload(false)} />}
+      {canManage && showAiWidget && <AiWidgetModal onAdd={addWidget} onClose={() => setShowAiWidget(false)} />}
+      {canManage && showFromWorkload && <BuildFromWorkloadModal onCreated={onDashboardCreated} onClose={() => setShowFromWorkload(false)} />}
     </div>
   );
 }

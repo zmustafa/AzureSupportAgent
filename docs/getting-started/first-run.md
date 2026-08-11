@@ -9,7 +9,10 @@ permalink: /getting-started/first-run/
 
 # First-run setup
 
-Complete this sequence immediately after deployment. Administrative configuration requires an administrator; users without those permissions can consume only the features granted to their role.
+Complete this sequence immediately after deployment. Configuration is capability-gated: the AI
+Providers route requires `settings.read` and its changes require `settings.write`; Azure
+connections require `connections.manage`; Access Control requires `users.manage`. Users without
+those permissions can consume only the features granted to their active role.
 
 **Application route:** `/dashboard`
 
@@ -32,7 +35,7 @@ Do not keep sharing the bootstrap account. Configure named users or SSO after th
 4. Save and run **Test connection** where available.
 5. Select a model and set the provider/model as the default.
 
-A provider that has not been configured remains disabled. Local Ollama or LM Studio must be reachable from the deployed container, not merely from the administrator's laptop.
+A provider that has not been configured remains disabled. Local Ollama or LM Studio must be reachable from the deployed container, not merely from the configuration operator's laptop.
 
 ## 3. Connect Azure
 
@@ -47,7 +50,7 @@ A provider that has not been configured remains disabled. Local Ollama or LM Stu
 
 ## 4. Verify the Dashboard
 
-Return to `/dashboard`. The setup guide should recognize the configured provider and Azure connection. Some Dashboard cards are role-gated or cache-backed; an empty coverage or posture card does not necessarily mean a zero score. It often means that no scan has run for the selected workload.
+Return to `/dashboard`. The setup guide should recognize the configured provider and Azure connection. Dashboard cards are capability-filtered or cache-backed; an empty coverage or posture card does not necessarily mean a zero score. It often means that no scan has run for the selected workload.
 
 ![The Proactive Support tool directory, grouped by what each tool answers]({{ site.baseurl }}/assets/proactive-support.png)
 

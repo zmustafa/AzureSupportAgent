@@ -9,6 +9,10 @@ import { WelcomeModal } from "./components/WelcomeModal";
 import { ContextDocumentationHelp } from "./components/ContextDocumentationHelp";
 import { APP_VERSION, APP_VERSION_DISPLAY } from "./version";
 import { api } from "./api";
+import { NoAccessScreen } from "./components/NoAccessScreen";
+import { UserMenu } from "./components/UserMenu";
+import { adminRequirement } from "./components/routeAccess";
+import { canAccess, hasEffectiveAccess } from "./utils/accessControl";
 
 // Friendly labels for the active AI provider shown in the top bar.
 const PROVIDER_LABELS: Record<string, string> = {
@@ -41,12 +45,12 @@ function LegacyIamRedirect() {
 }
 
 export default function App() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, refresh, has } = useAuth();
   const location = useLocation();
   const activeLlmQ = useQuery({
     queryKey: ["activeLlm"],
     queryFn: api.activeLlm,
-    enabled: !!user,
+    enabled: hasEffectiveAccess(user),
     staleTime: 60_000,
     retry: false,
   });
@@ -65,6 +69,16 @@ export default function App() {
 
   if (user.must_change_password) {
     return <ForcePasswordChange />;
+  }
+
+  if (!hasEffectiveAccess(user)) {
+    return (
+      <NoAccessScreen
+        user={user}
+        onLogout={() => void logout()}
+        onRefresh={refresh}
+      />
+    );
   }
 
   const aiProvider = activeLlmQ.data?.provider ?? "";
@@ -95,7 +109,7 @@ export default function App() {
           <HelpMenu />
           <ContextDocumentationHelp pathname={location.pathname} />
           {aiProvider ? (
-            user.role === "admin" ? (
+            has("settings.read") ? (
               <Link
                 to="/admin/providers"
                 title="Change AI provider"
@@ -126,21 +140,12 @@ export default function App() {
           <Link to="/dashboard" className="rounded px-2 py-1 hover:bg-white/10">
             Dashboard
           </Link>
-          {user.role === "admin" && (
+          {canAccess(user, adminRequirement(undefined)) && (
             <Link to="/admin" className="rounded px-2 py-1 hover:bg-white/10">
               Settings
             </Link>
           )}
-          <span className="rounded bg-white/10 px-2 py-1">
-            {`${user.email} (${user.role})`}
-          </span>
-          <button
-            onClick={() => void logout()}
-            className="rounded px-2 py-1 hover:bg-white/10"
-            title="Sign out"
-          >
-            Sign out
-          </button>
+          <UserMenu user={user} onLogout={() => void logout()} onRefresh={refresh} />
         </div>
       </header>
 

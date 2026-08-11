@@ -50,6 +50,11 @@ import {
 } from "./navConfig";
 import { useAuth } from "./AuthContext";
 import { formatDuration, formatTimestamp } from "../utils/format";
+import { canAccess, filterPermissionedGroups } from "../utils/accessControl";
+import {
+  automationWritePermission,
+  routeRequirement,
+} from "./routeAccess";
 import {
   ComposeIcon,
   SearchIcon,
@@ -216,6 +221,32 @@ function PanelLoading() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-gray-400">
       Loading…
+    </div>
+  );
+}
+
+function AccessDeniedPanel() {
+  return (
+    <main className="flex min-w-0 flex-1 items-center justify-center bg-gray-50 p-6">
+      <section className="max-w-md rounded-2xl border border-amber-200 bg-white p-7 text-center shadow-sm">
+        <div className="text-3xl" aria-hidden>🔒</div>
+        <h1 className="mt-3 text-lg font-semibold text-gray-900">Access not granted</h1>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          The active role does not include the permission required for this page. Choose an
+          accessible item from the navigation or switch roles from the account menu.
+        </p>
+        <Link to="/dashboard" className="mt-4 inline-flex rounded-lg bg-brand-dark px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark/90">
+          Return to Dashboard
+        </Link>
+      </section>
+    </main>
+  );
+}
+
+function ReadOnlyBanner() {
+  return (
+    <div className="mx-4 mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+      Read-only access — the active role can view this section but cannot change it.
     </div>
   );
 }
@@ -504,6 +535,8 @@ type LiveStream = {
 export default function ChatView() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { user: me, has } = useAuth();
+  const canChat = has("chat.use");
   const { chatId: routeChatId } = useParams<{ chatId?: string }>();
   const location = useLocation();
   // Automations live inside this shell so the chat sidebar stays visible. The URL
@@ -871,19 +904,24 @@ export default function ChatView() {
     [],
   );
 
-  const { data: chats = [] } = useQuery({ queryKey: ["chats"], queryFn: api.listChats });
+  const { data: chats = [] } = useQuery({
+    queryKey: ["chats"],
+    queryFn: api.listChats,
+    enabled: canChat,
+  });
   // Architecture memories, used to offer a memory picker when launching a deep
   // investigation on a chat whose workload has one or more documented architectures.
   const { data: allMemories } = useQuery({
     queryKey: ["architectureMemories"],
     queryFn: api.architectureMemories,
+    enabled: has("architectures.read"),
   });
   // Trash (soft-deleted chats). Only fetched while the Trash panel is open.
   const [trashOpen, setTrashOpen] = useState(false);
   const { data: trashedChats = [] } = useQuery({
     queryKey: ["trashChats"],
     queryFn: api.trashChats,
-    enabled: trashOpen,
+    enabled: canChat && trashOpen,
   });
   const { data: activeLlm } = useQuery({
     queryKey: ["activeLlm"],
@@ -897,6 +935,7 @@ export default function ChatView() {
   const { data: serverActive } = useQuery({
     queryKey: ["activeTurns"],
     queryFn: api.activeTurns,
+    enabled: canChat,
     // Adaptive polling: while any turn is running, poll fast (4s) so live "Working…"
     // spinners stay snappy across tabs; when nothing is active, back off to 15s to cut
     // idle load on the server (B1ms Postgres) and the client. Never polls in the
@@ -919,6 +958,7 @@ export default function ChatView() {
   const { data: tenantData } = useQuery({
     queryKey: ["azureConnections"],
     queryFn: api.azureConnections,
+    enabled: canChat || has("connections.read"),
     staleTime: 30_000,
   });
   const tenants = tenantData?.connections ?? [];
@@ -926,20 +966,18 @@ export default function ChatView() {
   const { data: agentsData } = useQuery({
     queryKey: ["customAgents"],
     queryFn: api.customAgents,
+    enabled: has("agents.read"),
     staleTime: 30_000,
   });
   const customAgents = agentsData?.agents ?? [];
   // Only enabled agents are surfaced in the sidebar quick-launch menu and the composer
   // agent picker (disabled agents are kept but hidden).
   const enabledAgents = customAgents.filter((a) => a.enabled !== false);
-  // Identity — used to gate the Admin Dashboard link in the sidebar footer. Read from the
-  // shared AuthContext (single source of truth) so an active-role switch re-renders the menu
-  // immediately, with no manual page refresh.
-  const { user: me } = useAuth();
   // Progress-feed verbosity, configured in the dashboard (compact/normal/detailed).
   const { data: appSettings } = useQuery({
     queryKey: ["appSettings"],
     queryFn: api.appSettings,
+    enabled: has("settings.read"),
     staleTime: 60_000,
   });
   const progressLevel: ProgressLevel =
@@ -2456,8 +2494,15 @@ export default function ChatView() {
     );
   };
 
+  const visibleProactiveNav = filterPermissionedGroups(PROACTIVE_NAV, me);
+  const visibleAdminNav = filterPermissionedGroups(ADMIN_NAV, me);
+  const visibleAutomationNav = AUTOMATIONS_NAV.filter((item) => has(item.permission));
+  const routeAllowed = canAccess(me, routeRequirement(location.pathname));
+  const automationWrite = automationWritePermission(automationsSection);
+  const automationReadOnly = !!automationWrite && !has(automationWrite);
+
   const execConfig: ExecConfig = {
-    enabled: me?.role === "admin" && !!appSettings?.settings.command_execution_enabled,
+    enabled: has("sandbox.exec") && !!appSettings?.settings.command_execution_enabled,
     allowlist: appSettings?.settings.command_allowlist ?? ["az"],
     chatId: activeId,
     openEditor: (command, mode) => setEditorState({ command, mode }),
@@ -2479,7 +2524,7 @@ export default function ChatView() {
             <span className="pl-1.5 text-sm font-semibold text-gray-800">Azure Agent</span>
           )}
           <div className="ml-auto flex items-center gap-1">
-            <NotificationBell collapsed={railCollapsed} />
+            {has("notifications.read") && <NotificationBell collapsed={railCollapsed} />}
             <button
               onClick={toggleRail}
               title={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -2491,7 +2536,7 @@ export default function ChatView() {
         </div>
 
         {/* New chat */}
-        <button
+        {canChat && <button
           onClick={startNewChat}
           title="New chat"
           className={`mx-2 mb-0.5 flex items-center rounded-lg text-sm text-gray-700 transition hover:bg-gray-200/60 ${
@@ -2500,9 +2545,9 @@ export default function ChatView() {
         >
           <ComposeIcon className="h-[18px] w-[18px] shrink-0 text-gray-500" />
           {!railCollapsed && <span>New chat</span>}
-        </button>
+        </button>}
 
-        {railCollapsed && (
+        {canChat && railCollapsed && (
           // Collapsed rail: a search affordance that expands back to the full list.
           <button
             onClick={toggleRail}
@@ -2550,7 +2595,7 @@ export default function ChatView() {
 
         {/* Mission Control: per-workload "run every analysis" cockpit. Top-level, right
             below Dashboard. Admin-only (the missions API is admin-gated). */}
-        {me?.role === "admin" &&
+        {has("missions.read") &&
           (railCollapsed ? (
             <Link
               to="/mission-control"
@@ -2580,7 +2625,7 @@ export default function ChatView() {
           ))}
 
         {/* Azure Workloads: hand-picked resource scopes. Available to all users. */}
-        {railCollapsed ? (
+        {has("workloads.read") && (railCollapsed ? (
           <Link
             to="/workloads"
             title="Azure Workloads"
@@ -2606,13 +2651,13 @@ export default function ChatView() {
               <span>Azure Workloads</span>
             </Link>
           </div>
-        )}
+        ))}
 
         {/* Proactive Support: design, posture, coverage, governance and forensic dashboards
             grouped under one expandable menu with category subheadings (mirrors Settings).
             Clicking the label opens the /proactive landing page. Ownership, Architectures and
             Estate Graph now live in here too. Admin-only. */}
-        {me?.role === "admin" && (() => {
+        {visibleProactiveNav.length > 0 && (() => {
           const PROACTIVE_ICONS: Record<string, typeof ProactiveIcon> = {
             insights: SparkleIcon,
             architectures: ArchitectureIcon, knowme: KnowMeIcon, fmea: FmeaIcon, ownership: OwnershipIcon, graph: GraphIcon,
@@ -2677,7 +2722,7 @@ export default function ChatView() {
               </div>
               {proactiveOpen && (
                 <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {PROACTIVE_NAV.map((n) => {
+                  {visibleProactiveNav.map((n) => {
                     const Icon = PROACTIVE_ICONS[n.id];
                     const active = activeById[n.id];
                     return (
@@ -2709,7 +2754,7 @@ export default function ChatView() {
 
         {/* Settings: an expandable menu (mirrors Automations). URL-driven so a refresh
             restores the same panel. Admin-only. */}
-        {me?.role === "admin" &&
+        {visibleAdminNav.length > 0 &&
           (railCollapsed ? (
             <Link
               to="/admin"
@@ -2751,7 +2796,7 @@ export default function ChatView() {
               </div>
               {adminOpen && (
                 <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {ADMIN_NAV.map((n) => {
+                  {visibleAdminNav.map((n) => {
                     const active =
                       inAdmin &&
                       (adminSection === n.id ||
@@ -2784,7 +2829,7 @@ export default function ChatView() {
 
         {/* Automations: an expandable menu. URL-driven so a browser refresh restores the
             same panel. Admin-only. Placed below Settings. */}
-        {me?.role === "admin" &&
+        {visibleAutomationNav.length > 0 &&
           (railCollapsed ? (
             <Link
               to="/automations"
@@ -2825,7 +2870,7 @@ export default function ChatView() {
               </div>
               {automationsOpen && (
                 <div className="mt-0.5 space-y-0.5 pl-3.5">
-                  {AUTOMATIONS_NAV.map((n) => {
+                  {visibleAutomationNav.map((n) => {
                     const active = inAutomations && automationsSection === n.id;
                     return (
                       <Link
@@ -2849,7 +2894,7 @@ export default function ChatView() {
 
         {/* Sub Agents: a top-level link (next to Automations) to the management page.
             Admin-only. Clicking opens the management page; it does NOT expand a submenu. */}
-        {me?.role === "admin" &&
+        {has("agents.read") &&
           (railCollapsed ? (
             <Link
               to="/automations/agents"
@@ -2879,7 +2924,7 @@ export default function ChatView() {
           ))}
 
         {/* Monitor: a single link to the central dashboard. Admin-only. */}
-        {me?.role === "admin" &&
+        {has("monitor.view") &&
           (railCollapsed ? (
             <Link
               to="/monitor"
@@ -2909,7 +2954,7 @@ export default function ChatView() {
           ))}
 
         {/* Stats: a read-only at-a-glance metrics page. Admin-only. */}
-        {me?.role === "admin" &&
+        {has("monitor.view") &&
           (railCollapsed ? (
             <Link
               to="/stats"
@@ -2939,7 +2984,7 @@ export default function ChatView() {
           ))}
 
         {/* Search + quick filter — sit just above the chat list (Favorites / Recents). */}
-        {!railCollapsed && (
+        {canChat && !railCollapsed && (
           <>
             <div className="relative mx-2 mb-2 mt-1">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
@@ -2982,7 +3027,7 @@ export default function ChatView() {
         )}
 
         {/* Chat list (hidden when collapsed) */}
-        {!railCollapsed && (
+        {canChat && !railCollapsed && (
           <nav className="px-2 pb-2">
             {filteredChats.length === 0 && (
               <div className="px-3 py-4 text-center text-xs text-gray-400">
@@ -3015,7 +3060,7 @@ export default function ChatView() {
         </div>
 
         {/* Footer: Trash + delete unpinned + Admin Dashboard link */}
-        <div className="mt-auto border-t border-gray-200">
+        {canChat && <div className="mt-auto border-t border-gray-200">
           <button
             onClick={() => setTrashOpen(true)}
             title="Trash"
@@ -3046,11 +3091,11 @@ export default function ChatView() {
               Delete unpinned
             </button>
           )}
-        </div>
+        </div>}
       </aside>
 
       {/* Trash overlay: lists soft-deleted chats with restore / permanent-delete. */}
-      {trashOpen && (
+      {canChat && trashOpen && (
         <TrashPanel
           chats={trashedChats}
           onClose={() => setTrashOpen(false)}
@@ -3061,11 +3106,16 @@ export default function ChatView() {
       )}
 
       {/* Main */}
-      {inAutomations ? (
+      {!routeAllowed ? (
+        <AccessDeniedPanel />
+      ) : inAutomations ? (
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {automationReadOnly && <ReadOnlyBanner />}
           <PanelErrorBoundary name="Automations">
             <Suspense fallback={<PanelLoading />}>
-              <AutomationsPanel section={automationsSection} />
+              <fieldset disabled={automationReadOnly} className="contents">
+                <AutomationsPanel section={automationsSection} />
+              </fieldset>
             </Suspense>
           </PanelErrorBoundary>
         </main>

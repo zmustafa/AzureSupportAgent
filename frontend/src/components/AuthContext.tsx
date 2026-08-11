@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, HttpError, type Me } from "../api";
+import { hasEffectivePermission, isEffectiveAdmin } from "../utils/accessControl";
 
 interface AuthState {
   user: Me | null;
@@ -75,9 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       refresh,
-      has: (p: string) =>
-        !!user && (user.role === "admin" || (user.permissions ?? []).includes(p)),
-      isAdmin: !!user && user.role === "admin",
+      has: (p: string) => hasEffectivePermission(user, p),
+      isAdmin: isEffectiveAdmin(user),
     }),
     [user, loading, error, login, logout, refresh],
   );

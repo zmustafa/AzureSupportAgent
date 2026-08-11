@@ -12,6 +12,8 @@ permalink: /user-guide/core/chat-deep-investigation/
 
 **Routes:** `/chat`, `/chat?deep=1`, and `/c/{chatId}`
 
+**Product permission:** `chat.use`
+
 ## Purpose
 
 Chat is the conversational entry point for Azure investigation. A normal turn is best for a focused question. Deep Investigation convenes a War Room of specialist agents that researches, forms hypotheses, validates them against available evidence, and produces a structured conclusion.
@@ -30,7 +32,7 @@ Deep mode can involve networking, identity, compute, storage, security, reliabil
 
 ### Prerequisites and permissions
 
-- An authenticated session with a non-empty effective application role. Current chat endpoints are user/tenant scoped but do not apply a feature-specific permission dependency; `chat.use` remains the catalog capability granted by the built-in chat roles.
+- An authenticated session whose active role contains `chat.use`. The chat router enforces it for history, lifecycle, turn, and SSE endpoints in addition to user/tenant ownership checks.
 - A configured and active AI provider/model.
 - For live evidence, an Azure connection that can read the selected scope.
 - Microsoft Graph permissions for Entra-specific evidence and Log Analytics access for relevant log queries.
@@ -102,7 +104,8 @@ No dedicated export, history, scheduling, or integration controls are documented
 
 | Symptom | Resolution |
 | --- | --- |
-| No model is available | Ask an administrator to configure, test, and activate a provider |
+| Chat route shows **Access not granted** | Switch to an assigned role containing `chat.use`, or request that exact capability. |
+| No model is available | Ask a user with `settings.read` and `settings.write` to configure, test, and activate a provider |
 | Stream stops or appears stuck | Reopen the chat; cross-tab active-turn state can reconnect to server work. Check provider health and rate limits |
 | Tools return unauthorized | Verify the selected Azure connection, Azure/Graph permissions, and application role |
 | Investigation has no conclusion | Narrow to a workload/time window and ensure specialists can reach ARM, Graph, metrics, or logs needed for validation |

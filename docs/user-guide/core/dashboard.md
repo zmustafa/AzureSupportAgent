@@ -30,7 +30,7 @@ The Dashboard is a summary, not a replacement for the source feature. Open the l
 
 ### Prerequisites and permissions
 
-All signed-in users can see the shell, but each data source has its own permission. Administrative setup data and several posture panels are shown only to administrators. Standard users may see provider/connection summaries and self-service data allowed by their role.
+A signed-in user needs at least one effective product permission to pass the NoAccess wall. Each Dashboard query, card, setup action, and shortcut is then filtered by its own capability instead of by an administrator role name. For example, provider configuration uses `settings.read`/`settings.write`, Monitor uses `monitor.view`, and workload, assessment, coverage, radar, reservation, identity, IAM, inventory, notification, task, connector, and agent cards use their owning permissions.
 
 For a useful Dashboard, configure:
 
@@ -41,11 +41,23 @@ For a useful Dashboard, configure:
 
 ## Tabs and actions
 
-
+- Setup cards, quick links, Explore cards, posture panels, and data queries appear only when the
+	active role has their owning capability. A hidden card is not an authorization bypass; direct
+	routes and backend endpoints check the same capability independently.
+- **New chat** and **Deep investigation** appear only with `chat.use`.
+- The header **Search** control or **Ctrl + K**/**⌘ + K** opens the command palette. It filters
+	route destinations by the active permission set and only navigates; selecting an action-like
+	label does not run that action.
+- Selecting an available setup/posture card opens the owning feature. Running, saving, testing,
+	approving, or applying then requires that feature's operation capability.
 
 ## Freshness and scope behavior
 
-
+Dashboard queries are independent and non-blocking. Optional failures hide or degrade only the
+affected tile. Several posture reads use stored snapshots or trends and a five-minute client
+stale window; opening Dashboard does not trigger their Azure collection. The primary workload is
+stored in the browser and scopes the coverage/performance lenses. Notification count, tasks, and
+recent-investigation/insight data use their own shorter client cache intervals.
 
 ## Workflow overview
 
@@ -93,7 +105,7 @@ The Dashboard itself is read-oriented. Its links can lead to scan, generation, o
 | --- | --- |
 | Setup item remains incomplete | Test and activate the provider/connection, then reload; non-admin views may expose only a summary |
 | Coverage cards are empty | Create/select a workload and run the corresponding scans |
-| A panel disappeared | Check application role, endpoint access, and whether the optional data source failed |
+| A panel disappeared | Check the active role's exact capability, endpoint access, and whether the optional data source failed |
 | Values look old | Open the owning feature, check freshness, and run a scoped refresh if authorized |
 | Dashboard is slow | Expensive panels are deferred and cached; check failing network requests rather than repeatedly refreshing |
 | Primary workload is wrong | Change the workload selector; the choice is stored per browser |

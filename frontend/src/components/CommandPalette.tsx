@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { DESTINATIONS, type Destination } from "../help/content";
+import { canAccess } from "../utils/accessControl";
+import { routeRequirement } from "./routeAccess";
 
 /**
  * Command Palette — press Ctrl/⌘+K anywhere to fuzzily jump to any page or action. The single
@@ -10,7 +12,7 @@ import { DESTINATIONS, type Destination } from "../help/content";
  */
 export function CommandPalette() {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -41,7 +43,7 @@ export function CommandPalette() {
   }, [open]);
 
   const items = useMemo(() => {
-    const all = DESTINATIONS.filter((d) => isAdmin || !d.adminOnly);
+    const all = DESTINATIONS.filter((d) => canAccess(user, routeRequirement(d.path)));
     const q = query.trim().toLowerCase();
     if (!q) return all;
     const tokens = q.split(/\s+/);
@@ -49,7 +51,7 @@ export function CommandPalette() {
       const hay = `${d.label} ${d.group} ${d.keywords ?? ""}`.toLowerCase();
       return tokens.every((t) => hay.includes(t));
     });
-  }, [query, isAdmin]);
+  }, [query, user]);
 
   // Group while preserving order.
   const grouped = useMemo(() => {

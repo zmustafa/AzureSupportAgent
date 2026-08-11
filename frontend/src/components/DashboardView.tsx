@@ -5,6 +5,8 @@ import { api, type AssessmentRunSummary, type RadarRailItem, type ReservationIte
 import { usePersistedState } from "../utils/persistedState";
 import { TrendChart } from "./TrendChart";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
+import { useAuth } from "./AuthContext";
+import { roleLabel } from "../utils/roleLabel";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -73,22 +75,40 @@ function statusOk(status?: string): boolean | undefined {
 }
 
 export function DashboardPanel() {
-  const meQ = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const isAdmin = meQ.data?.role === "admin";
+  const { user, has } = useAuth();
+  const canChat = has("chat.use");
+  const canSettings = has("settings.read");
+  const canManageConnections = has("connections.manage");
+  const canManageConnectors = has("connectors.manage");
+  const canWorkloads = has("workloads.read");
+  const canArchitectures = has("architectures.read");
+  const canAssessments = has("assessments.read");
+  const canPolicy = has("policy.read");
+  const canAgents = has("agents.read");
+  const canNotifications = has("notifications.read");
+  const canReservations = has("reservations.read");
+  const canRadar = has("radar.read");
+  const canInsights = has("insights.read");
+  const canCoverage = has("coverage.read");
+  const canPerformance = has("perfprofile.read");
+  const canIdentity = has("identity.read");
+  const canIam = has("iam.read");
+  const canInventory = has("inventory.read");
+  const canTasks = has("tasks.read");
+  const canMonitor = has("monitor.view");
 
-  // Setup status sources. Admin-only endpoints are gated by `enabled: isAdmin` so
-  // non-admins never trigger a 403 — they fall back to the all-users `activeLlm` /
-  // `azureConnections` summaries instead.
-  const llmQ = useQuery({ queryKey: ["llmConfig"], queryFn: api.llmConfig, enabled: isAdmin, retry: false });
+  // Setup status sources. Privileged endpoints are gated by their concrete capabilities so
+  // narrower roles never trigger a 403; they fall back to the all-user summaries instead.
+  const llmQ = useQuery({ queryKey: ["llmConfig"], queryFn: api.llmConfig, enabled: canSettings, retry: false });
   const activeLlmQ = useQuery({ queryKey: ["activeLlm"], queryFn: api.activeLlm, retry: false });
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
-  const adminConnQ = useQuery({ queryKey: ["adminConnections"], queryFn: api.adminConnections, enabled: isAdmin, retry: false });
-  const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors, enabled: isAdmin, retry: false });
-  const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads, retry: false });
-  const archQ = useQuery({ queryKey: ["architectures"], queryFn: api.architectures, retry: false });
-  const runsQ = useQuery({ queryKey: ["assessmentRuns"], queryFn: () => api.assessmentRuns(), retry: false });
-  const policyQ = useQuery({ queryKey: ["policySnapshots"], queryFn: api.policySnapshots, enabled: isAdmin, retry: false });
-  const agentsQ = useQuery({ queryKey: ["customAgents"], queryFn: api.customAgents, enabled: isAdmin, retry: false });
+  const adminConnQ = useQuery({ queryKey: ["adminConnections"], queryFn: api.adminConnections, enabled: canManageConnections, retry: false });
+  const connectorsQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors, enabled: canManageConnectors, retry: false });
+  const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads, enabled: canWorkloads, retry: false });
+  const archQ = useQuery({ queryKey: ["architectures"], queryFn: api.architectures, enabled: canArchitectures, retry: false });
+  const runsQ = useQuery({ queryKey: ["assessmentRuns"], queryFn: () => api.assessmentRuns(), enabled: canAssessments, retry: false });
+  const policyQ = useQuery({ queryKey: ["policySnapshots"], queryFn: api.policySnapshots, enabled: canPolicy, retry: false });
+  const agentsQ = useQuery({ queryKey: ["customAgents"], queryFn: api.customAgents, enabled: canAgents, retry: false });
   // New signals driving the KPI strip, posture & risks panel, and the activity feed.
   // Each query is non-blocking — a failure hides the affected tile/section instead of
   // breaking the dashboard. Defer expensive admin-only queries with a 5-minute
@@ -96,13 +116,14 @@ export function DashboardPanel() {
   const unreadQ = useQuery({
     queryKey: ["notificationsUnread"],
     queryFn: api.notificationsUnread,
+    enabled: canNotifications,
     retry: false,
     staleTime: 60_000,
   });
   const reservationsQ = useQuery({
     queryKey: ["reservationsOverview"],
     queryFn: () => api.reservationsOverview(false),
-    enabled: isAdmin,
+    enabled: canReservations,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -110,7 +131,7 @@ export function DashboardPanel() {
   const radarQ = useQuery({
     queryKey: ["radarOverviewDashboard"],
     queryFn: () => api.radarOverview({}),
-    enabled: isAdmin,
+    enabled: canRadar,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -118,12 +139,14 @@ export function DashboardPanel() {
   const recentInvQ = useQuery({
     queryKey: ["recentDeepInvestigations"],
     queryFn: () => api.deepInvestigations(5),
+    enabled: canChat,
     retry: false,
     staleTime: 2 * 60_000,
   });
   const insightLatestQ = useQuery({
     queryKey: ["insightLatestDashboard"],
     queryFn: () => api.insightLatest(),
+    enabled: canInsights,
     retry: false,
     staleTime: 2 * 60_000,
   });
@@ -140,7 +163,7 @@ export function DashboardPanel() {
   const ambaTrendQ = useQuery({
     queryKey: ["dashAmbaTrend", primaryWorkloadId],
     queryFn: () => api.coverageTrend("amba", covParams!),
-    enabled: isAdmin && !!primaryWorkloadId,
+    enabled: canCoverage && !!primaryWorkloadId,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -148,7 +171,7 @@ export function DashboardPanel() {
   const telemetryTrendQ = useQuery({
     queryKey: ["dashTelemetryTrend", primaryWorkloadId],
     queryFn: () => api.coverageTrend("telemetry", covParams!),
-    enabled: isAdmin && !!primaryWorkloadId,
+    enabled: canCoverage && !!primaryWorkloadId,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -156,7 +179,7 @@ export function DashboardPanel() {
   const backupTrendQ = useQuery({
     queryKey: ["dashBackupTrend", primaryWorkloadId],
     queryFn: () => api.coverageTrend("backupdr", covParams!),
-    enabled: isAdmin && !!primaryWorkloadId,
+    enabled: canCoverage && !!primaryWorkloadId,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -164,7 +187,7 @@ export function DashboardPanel() {
   const perfTrendQ = useQuery({
     queryKey: ["dashPerfTrend", primaryWorkloadId],
     queryFn: () => api.coverageTrend("performance", covParams!),
-    enabled: isAdmin && !!primaryWorkloadId,
+    enabled: canPerformance && !!primaryWorkloadId,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -172,7 +195,7 @@ export function DashboardPanel() {
   const perfRunsQ = useQuery({
     queryKey: ["dashPerfRuns", primaryWorkloadId],
     queryFn: () => api.perfRuns(covParams!),
-    enabled: isAdmin && !!primaryWorkloadId,
+    enabled: canPerformance && !!primaryWorkloadId,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -180,7 +203,7 @@ export function DashboardPanel() {
   const identityQ = useQuery({
     queryKey: ["dashIdentity"],
     queryFn: () => api.identityOverview(30),
-    enabled: isAdmin,
+    enabled: canIdentity,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -188,7 +211,7 @@ export function DashboardPanel() {
   const iamQ = useQuery({
     queryKey: ["dashRbac"],
     queryFn: () => api.iamOverview(),
-    enabled: isAdmin,
+    enabled: canIam,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -196,7 +219,7 @@ export function DashboardPanel() {
   const optimizationQ = useQuery({
     queryKey: ["dashOptimization"],
     queryFn: () => api.inventoryOptimization(),
-    enabled: isAdmin,
+    enabled: canInventory,
     retry: false,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -204,7 +227,7 @@ export function DashboardPanel() {
   const tasksQ = useQuery({
     queryKey: ["dashScheduledTasks"],
     queryFn: api.scheduledTasks,
-    enabled: isAdmin,
+    enabled: canTasks,
     retry: false,
     staleTime: 60_000,
   });
@@ -215,7 +238,7 @@ export function DashboardPanel() {
   const effectiveProvider = activeProvider || activeLlmQ.data?.provider || "";
   const effectiveModel = activeCfg?.model || activeLlmQ.data?.model || "";
 
-  const aiReady: boolean | undefined = isAdmin
+  const aiReady: boolean | undefined = canSettings
     ? (llmQ.isSuccess ? (activeCfg ? activeCfg.has_key || KEYLESS_OK.has(activeProvider) : false) : undefined)
     : (activeLlmQ.isSuccess ? !!activeLlmQ.data?.provider : undefined);
 
@@ -262,14 +285,14 @@ export function DashboardPanel() {
   const policySnapshots = policyQ.data?.snapshots ?? [];
   const agents = agentsQ.data?.agents ?? [];
 
-  type Step = { id: string; title: string; desc: string; done: boolean | undefined; detail?: string; bullets?: string[]; cta: string; to: string; adminOnly?: boolean };
+  type Step = { id: string; title: string; desc: string; done: boolean | undefined; detail?: string; bullets?: string[]; cta: string; to: string; allowed: boolean };
   const steps: Step[] = useMemo(() => [
     {
       id: "ai", title: "Connect an AI provider",
       desc: "The agent needs a large language model (OpenAI, Claude, Azure OpenAI, GitHub Copilot, a local model, …) to think.",
       done: aiReady,
       detail: aiReady && effectiveProvider
-        ? (isAdmin
+        ? (canSettings
             ? `${plural(configuredProviders.length, "provider")} configured · Default: ${providerLabel(effectiveProvider)}${effectiveModel ? ` · ${effectiveModel}` : ""}`
             : `Default: ${providerLabel(effectiveProvider)}${effectiveModel ? ` · ${effectiveModel}` : ""}`)
         : undefined,
@@ -281,7 +304,7 @@ export function DashboardPanel() {
         "💸 Free-only model filtering (e.g. OpenRouter) to keep costs in check",
         "📊 Built-in usage and token accounting per model",
       ],
-      cta: isAdmin ? "Configure AI" : "Ask an admin", to: "/admin/providers", adminOnly: true,
+      cta: canSettings ? "Configure AI" : "Ask an admin", to: "/admin/providers", allowed: canSettings,
     },
     {
       id: "azure", title: "Connect your Azure tenant",
@@ -296,7 +319,7 @@ export function DashboardPanel() {
         "✅ Validate Entra ID permissions before you depend on a connection",
         "⭐ Set a default connection used across the whole app",
       ],
-      cta: isAdmin ? "Add connection" : "Ask an admin", to: "/admin/tenants", adminOnly: true,
+      cta: canManageConnections ? "Add connection" : "Ask an admin", to: "/admin/tenants", allowed: canManageConnections,
     },
     {
       id: "deep", title: "Run a Deep Investigation",
@@ -313,7 +336,7 @@ export function DashboardPanel() {
         "💾 The full hypothesis tree is saved with the chat — reopen the side panel anytime to review the reasoning",
         "🔁 Re-run after a change to confirm the fix actually resolved the issue, with a fresh evidence trail",
       ],
-      cta: "Start a Deep Investigation", to: "/chat",
+      cta: "Start a Deep Investigation", to: "/chat", allowed: canChat,
     },
     {
       id: "workload", title: "Let AI discover your Azure Workloads",
@@ -328,7 +351,7 @@ export function DashboardPanel() {
         "🧠 AI explains its reasoning and confidence for every discovered workload",
         "🎯 Becomes the foundation for assessments and architecture diagrams",
       ],
-      cta: "Go to Workloads", to: "/workloads",
+      cta: "Go to Workloads", to: "/workloads", allowed: canWorkloads,
     },
     {
       id: "assess", title: "Assess against the Well-Architected Framework",
@@ -343,12 +366,12 @@ export function DashboardPanel() {
         "📊 Rich report with charts and toggles to drill into each pillar",
         "⏰ Run on a schedule or across many workloads at once",
       ],
-      cta: "Go to Assessments", to: "/assessments",
+      cta: "Go to Assessments", to: "/assessments", allowed: canAssessments,
     },
     {
       id: "policy", title: "Govern your estate with Azure Policy",
       desc: "Explore live policy assignments, scan compliance, and simulate a guardrail before you enforce it — every action is read-only.",
-      done: isAdmin ? (policyQ.isSuccess ? policySnapshots.length > 0 : undefined) : undefined,
+      done: canPolicy ? (policyQ.isSuccess ? policySnapshots.length > 0 : undefined) : undefined,
       detail: policySnapshots.length
         ? `${plural(policySnapshots.length, "posture snapshot")} captured${
             policySnapshots[0]?.summary?.compliance?.available
@@ -366,7 +389,7 @@ export function DashboardPanel() {
         "\uD83D\uDD2C Analyze impact before you apply \u2014 AI simulates the change against live resources, counts exactly what's affected, and gives a go/no\u2011go verdict",
         "\uD83D\uDEA6 Roll out safely in stages (audit \u2192 deny) with copy\u2011ready policy JSON + `az` commands you run yourself \u2014 the planner never touches Azure",
       ],
-      cta: isAdmin ? "Go to Azure Policy" : "Ask an admin", to: "/policy", adminOnly: true,
+      cta: canPolicy ? "Go to Azure Policy" : "Ask an admin", to: "/policy", allowed: canPolicy,
     },
     {
       id: "arch", title: "Living architecture, built by AI agents",
@@ -382,9 +405,9 @@ export function DashboardPanel() {
         "🔍 Drift detection compares the diagram against what's actually deployed in Azure",
         "🚦 Lifecycle states (Draft → In Review → Ready) and grouping into solution categories",
       ],
-      cta: "Go to Architectures", to: "/architectures",
+      cta: "Go to Architectures", to: "/architectures", allowed: canArchitectures,
     },
-  ], [aiReady, azureReady, isAdmin, conns, workloads.length, runs.length, architectures.length, effectiveProvider, effectiveModel, configuredProviders.length, policyQ.isSuccess, policySnapshots]);
+  ], [aiReady, azureReady, canSettings, canManageConnections, canChat, canWorkloads, canAssessments, canPolicy, canArchitectures, conns, workloads.length, runs.length, architectures.length, effectiveProvider, effectiveModel, configuredProviders.length, policyQ.isSuccess, policySnapshots]);
 
   const known = steps.filter((s) => s.done !== undefined);
   const doneCount = known.filter((s) => s.done).length;
@@ -405,7 +428,7 @@ export function DashboardPanel() {
   const renderSetupCards = (forceExpanded: boolean) => (
     <div className="space-y-2">
       {steps.map((s, i) => {
-        const blocked = s.adminOnly && !isAdmin;
+        const blocked = !s.allowed;
         const expanded = expandedSteps[s.id] ?? (forceExpanded || s.done !== true);
         return (
           <div key={s.id} className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-sm ${s.done ? "border-green-200" : ""}`}>
@@ -512,7 +535,7 @@ export function DashboardPanel() {
         to: `/chat/${inv.chat_id}`,
       });
     }
-    if (isAdmin) {
+    if (canPolicy) {
       for (const snap of policySnapshots.slice(0, 3)) {
         const when = (snap as unknown as { generated_at?: string; created_at?: string }).generated_at
           || (snap as unknown as { created_at?: string }).created_at
@@ -533,10 +556,10 @@ export function DashboardPanel() {
       .filter((e) => !!e.at)
       .sort((a, b) => (new Date(b.at).getTime() - new Date(a.at).getTime()))
       .slice(0, 6);
-  }, [runs, recentInvestigations, policySnapshots, isAdmin]);
+  }, [runs, recentInvestigations, policySnapshots, canPolicy]);
 
-  const userName = (meQ.data?.display_name && meQ.data.display_name.trim())
-    || (meQ.data?.email ? meQ.data.email.split("@")[0] : "")
+  const userName = (user?.display_name && user.display_name.trim())
+    || (user?.email ? user.email.split("@")[0] : "")
     || "there";
   const defaultConn = conns.find((c) => c.is_default) || conns[0];
 
@@ -560,12 +583,14 @@ export function DashboardPanel() {
       hasData: (q.data?.points?.length ?? 0) > 0 || q.data?.current != null,
     });
     return [
-      mk("amba", "Monitoring", "📈", "/coverage", ambaTrendQ),
-      mk("telemetry", "Telemetry", "🛰️", "/telemetry", telemetryTrendQ),
-      mk("backupdr", "Backup & DR", "💾", "/backupdr", backupTrendQ),
-      mk("performance", "Performance", "⚡", "/performance", perfTrendQ),
+      ...(canCoverage ? [
+        mk("amba", "Monitoring", "📈", "/coverage", ambaTrendQ),
+        mk("telemetry", "Telemetry", "🛰️", "/telemetry", telemetryTrendQ),
+        mk("backupdr", "Backup & DR", "💾", "/backupdr", backupTrendQ),
+      ] : []),
+      ...(canPerformance ? [mk("performance", "Performance", "⚡", "/performance", perfTrendQ)] : []),
     ];
-  }, [ambaTrendQ, telemetryTrendQ, backupTrendQ, perfTrendQ]);
+  }, [ambaTrendQ, telemetryTrendQ, backupTrendQ, perfTrendQ, canCoverage, canPerformance]);
 
   const topBottleneck = useMemo(() => {
     const latest = (perfRunsQ.data?.runs ?? []).find((r) => r.top_bottleneck);
@@ -700,7 +725,7 @@ export function DashboardPanel() {
     setHiddenSections(isHidden(key) ? hiddenSections.filter((k) => k !== key) : [...hiddenSections, key]);
 
   const anyPostureLoading = ambaTrendQ.isLoading || identityQ.isLoading || iamQ.isLoading;
-  const coreLoading = meQ.isLoading || wlQ.isLoading || runsQ.isLoading || archQ.isLoading;
+  const coreLoading = wlQ.isLoading || runsQ.isLoading || archQ.isLoading;
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
@@ -713,7 +738,7 @@ export function DashboardPanel() {
               <div className="min-w-0">
                 <h1 className="truncate text-2xl font-bold text-gray-800">Welcome back, {userName}</h1>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-600">
-                  <span className="rounded-full bg-white/70 px-2 py-0.5">{isAdmin ? "Administrator" : "User"}</span>
+                  <span className="rounded-full bg-white/70 px-2 py-0.5">{roleLabel(user?.active_role || user?.role) || "User"}</span>
                   {effectiveProvider && (
                     <span className="rounded-full bg-white/70 px-2 py-0.5">
                       🧠 {providerLabel(effectiveProvider)}{effectiveModel ? ` · ${effectiveModel}` : ""}
@@ -762,10 +787,10 @@ export function DashboardPanel() {
                   </button>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Link to="/chat" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">💬 New chat</Link>
-                  <Link to="/chat?deep=1" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100">🔎 Deep investigation</Link>
-                  <Link to="/assessments" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">🛡️ Run assessment</Link>
-                  {isAdmin && (
+                  {canChat && <Link to="/chat" className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">💬 New chat</Link>}
+                  {canChat && <Link to="/chat?deep=1" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100">🔎 Deep investigation</Link>}
+                  {canAssessments && <Link to="/assessments" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">🛡️ Run assessment</Link>}
+                  {canMonitor && (
                     <Link to="/monitor" className="rounded-lg border px-3 py-1.5 text-xs text-gray-700 hover:bg-white">📊 Monitor</Link>
                   )}
                 </div>
@@ -799,23 +824,23 @@ export function DashboardPanel() {
             Array.from({ length: 6 }).map((_, i) => <SkeletonTile key={i} />)
           ) : (
           <>
-          <KpiTile to="/workloads" icon="🧩" label="Workloads" value={workloads.length} />
-          <KpiTile
+          {canWorkloads && <KpiTile to="/workloads" icon="🧩" label="Workloads" value={workloads.length} />}
+          {canAssessments && <KpiTile
             to="/assessments"
             icon="🛡️"
             label="Assessments"
             value={runs.length}
             sub={avgScore != null ? `avg ${avgScore}/100` : undefined}
-          />
-          <KpiTile to="/architectures" icon="🗺️" label="Architectures" value={architectures.length} />
-          <KpiTile
+          />}
+          {canArchitectures && <KpiTile to="/architectures" icon="🗺️" label="Architectures" value={architectures.length} />}
+          {canNotifications && <KpiTile
             to="/notifications"
             icon="🔔"
             label="Unread"
             value={unreadCount}
             tone={unreadCount > 0 ? "amber" : undefined}
-          />
-          {isAdmin && (
+          />}
+          {canRadar && (
             <KpiTile
               to="/radar"
               icon="📡"
@@ -824,7 +849,7 @@ export function DashboardPanel() {
               tone={retirementsSoon.length > 0 ? "red" : undefined}
             />
           )}
-          {isAdmin && (
+          {canReservations && (
             <KpiTile
               to="/reservations"
               icon="🏷️"
@@ -838,7 +863,7 @@ export function DashboardPanel() {
         </div>
 
         {/* Attention — what needs me today (failed runs, expiring creds, deadlines) */}
-        {isAdmin && !isHidden("attention") && attention.length > 0 && (
+        {(canAssessments || canIdentity || canRadar || canReservations) && !isHidden("attention") && attention.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
             <div className="mb-2 flex items-center gap-2">
               <span className="text-sm font-semibold text-amber-800">⚠ Needs attention</span>
@@ -886,12 +911,12 @@ export function DashboardPanel() {
           </div>
         )}
 
-        {isAdmin && !isHidden("coverage") && (
+        {(canCoverage || canPerformance) && !isHidden("coverage") && (
           <div>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Coverage</h2>
               <div className="flex items-center gap-2">
-                {primaryWorkloadId && (
+                {canCoverage && primaryWorkloadId && (
                   <button
                     onClick={() => void downloadEstatePdf()}
                     disabled={estatePdfBusy}
@@ -937,7 +962,7 @@ export function DashboardPanel() {
         <div>
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Posture &amp; risks</h2>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Card title="Lowest assessment" icon="🛡️" manageTo="/assessments">
+            {canAssessments && <Card title="Lowest assessment" icon="🛡️" manageTo="/assessments">
               {lowestRun ? (
                 <Link to={`/assessments/${lowestRun.id}`} className="block rounded-lg border bg-gray-50 p-3 hover:border-brand/40 hover:bg-white">
                   <div className="flex items-center justify-between gap-2">
@@ -951,9 +976,9 @@ export function DashboardPanel() {
               ) : (
                 <Empty text={runs.length ? "No completed runs with a score yet." : "No assessment has been run yet."} />
               )}
-            </Card>
+            </Card>}
 
-            {isAdmin && (
+            {canRadar && (
               <Card title="Retirements due ≤ 90d" icon="📡" manageTo="/radar">
                 {radarQ.isError ? (
                   <Empty text="Radar data not available." />
@@ -974,7 +999,7 @@ export function DashboardPanel() {
               </Card>
             )}
 
-            {isAdmin && (
+            {canReservations && (
               <Card title="Reservations expiring ≤ 30d" icon="🏷️" manageTo="/reservations">
                 {reservationsQ.isError ? (
                   <Empty text="Reservation data not available." />
@@ -996,7 +1021,7 @@ export function DashboardPanel() {
             )}
 
             {/* Identity risk */}
-            {isAdmin && (
+            {canIdentity && (
               <Card title="Identity risk" icon="🔑" manageTo="/entra/findings?sub=hygiene">
                 {identityQ.isError ? (
                   <Empty text="Identity data not available." />
@@ -1016,7 +1041,7 @@ export function DashboardPanel() {
             )}
 
             {/* Access (RBAC) */}
-            {isAdmin && (
+            {canIam && (
               <Card title="Access (IAM)" icon="🛂" manageTo="/iam">
                 {iamQ.isError ? (
                   <Empty text="RBAC data not available." />
@@ -1036,7 +1061,7 @@ export function DashboardPanel() {
             )}
 
             {/* Cost optimization (FinOps) */}
-            {isAdmin && (
+            {canInventory && (
               <Card title="Cost optimization" icon="💰" manageTo="/inventory">
                 {optimizationQ.isError ? (
                   <Empty text="Optimization data not available." />
@@ -1066,7 +1091,7 @@ export function DashboardPanel() {
         )}
 
         {/* Scheduled automations — what's coming up */}
-        {isAdmin && !isHidden("scheduled") && upcomingTasks.length > 0 && (
+        {canTasks && !isHidden("scheduled") && upcomingTasks.length > 0 && (
           <div>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Scheduled next</h2>
             <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1148,14 +1173,14 @@ export function DashboardPanel() {
             <span className="text-gray-400">{configOpen ? "▾" : "▸"}</span>
             What's set up
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-gray-500">
-              {plural(configuredProviders.length || (effectiveProvider ? 1 : 0), "provider")} · {plural(conns.length, "tenant")}{isAdmin ? ` · ${plural(connectors.length, "connector")}` : ""}
+              {plural(configuredProviders.length || (effectiveProvider ? 1 : 0), "provider")} · {plural(conns.length, "tenant")}{canManageConnectors ? ` · ${plural(connectors.length, "connector")}` : ""}
             </span>
           </button>
           {configOpen && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* AI providers */}
-            <Card title="AI providers" icon="🧠" manageTo={isAdmin ? "/admin/providers" : undefined}>
-              {isAdmin ? (
+            <Card title="AI providers" icon="🧠" manageTo={canSettings ? "/admin/providers" : undefined}>
+              {canSettings ? (
                 configuredProviders.length === 0 ? (
                   <Empty text="No AI provider configured yet." />
                 ) : (
@@ -1204,7 +1229,7 @@ export function DashboardPanel() {
             </Card>
 
             {/* Azure tenants */}
-            <Card title="Azure tenants" icon="🏢" manageTo={isAdmin ? "/admin/tenants" : undefined}>
+            <Card title="Azure tenants" icon="🏢" manageTo={canManageConnections ? "/admin/tenants" : undefined}>
               {conns.length === 0 ? (
                 <Empty text="No Azure tenant connected." />
               ) : (
@@ -1234,7 +1259,7 @@ export function DashboardPanel() {
             </Card>
 
             {/* Connectors (admin) */}
-            {isAdmin && (
+            {canManageConnectors && (
               <Card title="Connectors" icon="🔌" manageTo="/admin/connectors">
                 {connectors.length === 0 ? (
                   <Empty text="No connectors configured (Teams, Slack, Jira, Grafana, …)." />
@@ -1257,7 +1282,7 @@ export function DashboardPanel() {
             )}
 
             {/* Sub agents quick summary (admin) */}
-            {isAdmin && (
+            {canAgents && (
               <Card title="Sub agents" icon="✨" manageTo="/automations/agents">
                 {agents.length === 0 ? (
                   <Empty text="No specialized agents defined yet." />
@@ -1280,26 +1305,26 @@ export function DashboardPanel() {
             <>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Quick links</h2>
               <div className="flex flex-wrap gap-2">
-                <QuickLink to="/chat" icon="💬" label="Chat" />
-                <QuickLink to="/workloads" icon="🧩" label="Workloads" />
-                <QuickLink to="/assessments" icon="🛡️" label="Assessments" />
-                <QuickLink to="/architectures" icon="🗺️" label="Architectures" />
-                {isAdmin && <QuickLink to="/policy" icon="📐" label="Policy" />}
-                <QuickLink to="/automations" icon="⚙️" label="Automations" />
-                {isAdmin && <QuickLink to="/monitor" icon="📊" label="Monitor" />}
+                {canChat && <QuickLink to="/chat" icon="💬" label="Chat" />}
+                {canWorkloads && <QuickLink to="/workloads" icon="🧩" label="Workloads" />}
+                {canAssessments && <QuickLink to="/assessments" icon="🛡️" label="Assessments" />}
+                {canArchitectures && <QuickLink to="/architectures" icon="🗺️" label="Architectures" />}
+                {canPolicy && <QuickLink to="/policy" icon="📐" label="Policy" />}
+                {(canTasks || has("workbooks.read") || has("playbooks.read") || canAgents) && <QuickLink to="/automations" icon="⚙️" label="Automations" />}
+                {canMonitor && <QuickLink to="/monitor" icon="📊" label="Monitor" />}
               </div>
             </>
           ) : (
             <>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">What can I do here?</h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <ExploreCard to="/chat" icon="💬" title="Chat with the agent" desc="Ask anything about your Azure estate. It investigates with live data and explains its reasoning." />
-                <ExploreCard to="/workloads" icon="🧩" title="Azure Workloads" desc="Group resources into applications — or let ✨ Autopilot discover them for you." />
-                <ExploreCard to="/assessments" icon="🛡️" title="Assessments" desc="Score workloads against the Well-Architected Framework, mapped to CIS / NIST / ISO." />
-                <ExploreCard to="/architectures" icon="🗺️" title="Architectures" desc="AI-built, editable diagrams of your apps — with drift detection and best-practice review." />
-                {isAdmin && <ExploreCard to="/policy" icon="📐" title="Azure Policy" desc="Explore assignments, scan compliance, and simulate guardrails before you enforce — read-only." />}
-                <ExploreCard to="/automations" icon="⚙️" title="Automations" desc="Schedule recurring jobs, build workbooks & playbooks, and create specialized sub agents." />
-                {isAdmin && <ExploreCard to="/monitor" icon="📊" title="Monitor" desc="Central dashboard of activity, runs, usage, and audit across the workspace." />}
+                {canChat && <ExploreCard to="/chat" icon="💬" title="Chat with the agent" desc="Ask anything about your Azure estate. It investigates with live data and explains its reasoning." />}
+                {canWorkloads && <ExploreCard to="/workloads" icon="🧩" title="Azure Workloads" desc="Group resources into applications — or let ✨ Autopilot discover them for you." />}
+                {canAssessments && <ExploreCard to="/assessments" icon="🛡️" title="Assessments" desc="Score workloads against the Well-Architected Framework, mapped to CIS / NIST / ISO." />}
+                {canArchitectures && <ExploreCard to="/architectures" icon="🗺️" title="Architectures" desc="AI-built, editable diagrams of your apps — with drift detection and best-practice review." />}
+                {canPolicy && <ExploreCard to="/policy" icon="📐" title="Azure Policy" desc="Explore assignments, scan compliance, and simulate guardrails before you enforce — read-only." />}
+                {(canTasks || has("workbooks.read") || has("playbooks.read") || canAgents) && <ExploreCard to="/automations" icon="⚙️" title="Automations" desc="Schedule recurring jobs, build workbooks & playbooks, and create specialized sub agents." />}
+                {canMonitor && <ExploreCard to="/monitor" icon="📊" title="Monitor" desc="Central dashboard of activity, runs, usage, and audit across the workspace." />}
               </div>
             </>
           )}

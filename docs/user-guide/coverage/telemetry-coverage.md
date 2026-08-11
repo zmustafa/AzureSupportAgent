@@ -24,7 +24,7 @@ Telemetry Coverage compares discovered diagnostic settings with a resource-type-
 
 - An enabled ARM-capable Azure connection with Reader access to the selected scope and permission to read `Microsoft.Insights/diagnosticSettings`.
 - A selected workload or subscription scope.
-- At least one approved Log Analytics workspace configured by an administrator when destination compliance is required.
+- At least one approved Log Analytics workspace configured with `coverage.manage` when destination compliance is required.
 - Write permissions and an appropriate Azure role are needed only when an exported remediation is later deployed outside this view.
 
 ## Tabs and actions
@@ -76,7 +76,7 @@ Category availability differs by Azure resource type and API version. A category
 
 Generated Bicep uses diagnostic-setting resources and can require a placeholder resource reference. Policy-oriented output is intended for a DeployIfNotExists design; assignment requires an identity and suitable role assignment at the target scope. The app generates or proposes artifacts—it does not silently deploy them.
 
-Administrators curate the approved-workspace list and telemetry reference. Reference changes affect future classifications. If local governance uses change requests, review the proposed reference diff before approval; reference approval is not approval to modify Azure resources.
+Users with `coverage.manage` curate the approved-workspace list and telemetry reference. Reference changes affect future classifications. If local governance uses change requests, review the proposed reference diff before approval; reference approval is not approval to modify Azure resources.
 
 Finding registration requires workload scope. Ticketing requires a configured supported connector. PDF and evidence actions use the currently loaded scan; confirm its freshness before preserving or sharing it.
 
@@ -94,7 +94,7 @@ Finding registration requires workload scope. Ticketing requires a configured su
 
 | Symptom | Check |
 | --- | --- |
-| No approved workspace appears | Ask an administrator to curate approved workspaces and verify connection visibility. |
+| No approved workspace appears | Ask a user with `coverage.manage` to curate approved workspaces and verify connection visibility. |
 | Many resources are unreadable | Verify diagnostic-settings read access, destination access, scan cap, and connection scope. |
 | A supported category is shown missing everywhere | Refresh the reference and confirm exact category names/API support. |
 | Policy remediation does nothing | Check assignment identity, role assignment, definition parameters, evaluation delay, and remediation task state. |

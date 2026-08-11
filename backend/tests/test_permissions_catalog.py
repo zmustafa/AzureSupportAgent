@@ -58,6 +58,7 @@ def test_new_feature_permissions_are_present():
     for key in (
         "inventory.read",
         "graph.read",
+        "radar.manage",
         "iam.read",
         "identity.read",
         "tagintel.read",
@@ -131,6 +132,7 @@ def test_auditor_is_read_only_oversight():
     for p in auditor:
         assert not any(p.endswith(suffix) for suffix in
                        (".write", ".manage", ".approve", ".delete", ".exec", ".run")), p
+    assert "radar.manage" not in auditor
 
 
 def test_user_role_is_minimal_self_service():

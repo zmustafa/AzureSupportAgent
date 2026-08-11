@@ -20,14 +20,18 @@ from app.agent.orchestrator import Orchestrator
 from app.core.ai_prompts import get_full_prompt, get_list
 from app.core.config import get_settings
 from app.core.db import SessionLocal, get_db
-from app.core.security import Principal, get_principal, require_admin
+from app.core.security import Principal, get_principal, require_admin, require_permission
 from app.core.utils import format_error, safe_json_parse
 from app.mcp.client import build_mcp_client
 from app.models import AuditLog, Chat, Message, ToolCall, Usage
 from app.schemas import ChatCreate, ChatOut, MessageCreate, MessageOut
 
 logger = logging.getLogger("app.chats")
-router = APIRouter(prefix="/chats", tags=["chats"])
+router = APIRouter(
+    prefix="/chats",
+    tags=["chats"],
+    dependencies=[Depends(require_permission("chat.use"))],
+)
 settings = get_settings()
 
 # Bulk workload reviews create every durable chat immediately, but only this many reviews

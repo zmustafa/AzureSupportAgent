@@ -12,7 +12,7 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
 # Notifications
 
 **Application route:** `/notifications` and `/automations/notifications`<br>
-**Product permissions:** authenticated access for the in-app feed; `notifications.manage` for routing rules
+**Product permissions:** `notifications.read` for the in-app feed and read-state changes; `notifications.manage` for global routing rules
 
 ## Purpose
 
@@ -20,9 +20,9 @@ The notification engine normalizes event type, source, severity, title, message,
 
 ## Prerequisites and data sources
 
-- An authenticated user can list tenant-scoped in-app deliveries, read the unread count, and mark notifications read. The current feed endpoints do not apply the cataloged `notifications.read` dependency.
+- `notifications.read` is required to list tenant-scoped in-app deliveries, read the unread count, and mark one or all notifications read.
 - `notifications.manage` is required to list, create, update, or delete routing rules.
-- External delivery requires an enabled connector. A connector test can be a real side effect; follow its provider-specific guide before sending one.
+- External delivery requires an enabled connector. **Test** is side-effect-free by design; **Send test** creates a real destination event and must follow the provider-specific guide.
 - Producer features supply normalized event type, source, severity, title, body, facts, and links.
 
 ## Tabs and actions
@@ -41,7 +41,11 @@ The notification engine normalizes event type, source, severity, title, message,
 
 ### In-app center
 
-The bell shows tenant-scoped notifications and unread count. Filter by severity/type, open an item, mark read/unread, or clear according to the controls shown. The client refreshes periodically and when the page regains visibility; brief delay is normal.
+The bell shows tenant-scoped notifications and unread count. The full page switches between
+**All** and **Unread**, filters by source, searches title/body, opens supported source links, and
+marks one or all notifications read. There is no mark-unread or delete/clear action in this
+surface. The client refreshes periodically, and the bell refreshes when the page regains
+visibility; brief delay is normal.
 
 ### Routing rules
 
@@ -70,15 +74,16 @@ A successful test proves only the tested path at that time. Avoid routing sensit
 
 - Marking read does not delete or retract an event.
 - Disabling or deleting a rule stops future matches only. It cannot retract an external delivery.
-- Connector **Test** semantics vary: most registered connectors send a real test, while Grafana performs a configuration/read check.
+- Connector **Test** is configuration-only or a lightweight authentication/read probe and intentionally creates no destination record. **Send test** is the separate allowlisted action that performs a real delivery.
 
 ## Troubleshooting
 
 | Symptom | Cause and resolution |
 | --- | --- |
-| No in-app events appear | Confirm the producer emitted an event, an in-app delivery record exists for the same tenant, and the unread-only filter is not hiding a read item. Feed access requires authentication but currently has no `notifications.read` dependency. |
+| Notification bell or route is absent | Assign `notifications.read` to the active role; `notifications.manage` alone governs rules and does not replace the feed read capability. |
+| No in-app events appear | Confirm the producer emitted an event, an in-app delivery record exists for the same tenant, and the unread-only filter is not hiding a read item. |
 | A rule never matches | Compare the exact normalized event type and source, then confirm the event severity meets the rule's minimum. Empty event/source lists mean any value. |
-| An external delivery fails | Confirm the connector is enabled, its secret and endpoint remain valid, and the destination policy permits the operation. Re-test only after accounting for the connector's real side effect. |
+| An external delivery fails | Confirm the connector is enabled, its secret and endpoint remain valid, and the destination policy permits the operation. Use side-effect-free **Test** first; prepare the destination before another **Send test**. |
 | A destination receives duplicates | Check overlapping notification rules and any task-level connector destinations that deliver the same event independently. |
 | Unread count changes later than the producer run | Wait for the periodic/visibility refresh, then confirm the producer and in-app delivery completed before treating it as a feed problem. |
 

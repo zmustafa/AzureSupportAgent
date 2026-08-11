@@ -63,36 +63,49 @@ export const ACCESS_SUB_IDS = new Set<string>(ACCESS_NAV.map((n) => n.id));
 // Ordered in logical clusters (the `group` marks the first item of each cluster so the
 // UI can draw a subtle divider): core configuration, connections/integrations,
 // security & access, then observability.
-export const ADMIN_NAV: { id: AdminSection; label: string; icon: string; group?: string; desc?: string }[] = [
+export type PermissionedNavItem = {
+  permission: string;
+  writePermission?: string;
+};
+
+export type AdminNavItem = PermissionedNavItem & {
+  id: AdminSection;
+  label: string;
+  icon: string;
+  group?: string;
+  desc?: string;
+};
+
+export const ADMIN_NAV: AdminNavItem[] = [
   // Core configuration
-  { id: "providers", label: "AI Providers", icon: "🧠", group: "Configuration", desc: "Configure OpenAI, Azure OpenAI, GitHub Copilot, Claude and other model providers." },
-  { id: "tenants", label: "Azure Tenants", icon: "🏢", desc: "Manage Azure tenant connections and service-principal / token credentials." },
-  { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️", desc: "Onboard troubleshooting sandbox VMs for in-guest diagnostics (vm_exec)." },
-  { id: "connectors", label: "Connectors", icon: "🔌", desc: "Wire up Teams, Slack, email, Jira, ServiceNow and Grafana integrations." },
-  { id: "settings", label: "General", icon: "⚙️", desc: "Core application behavior, safety toggles, and runtime tuning." },
+  { id: "providers", label: "AI Providers", icon: "🧠", group: "Configuration", permission: "settings.read", writePermission: "settings.write", desc: "Configure OpenAI, Azure OpenAI, GitHub Copilot, Claude and other model providers." },
+  { id: "tenants", label: "Azure Tenants", icon: "🏢", permission: "connections.manage", desc: "Manage Azure tenant connections and service-principal / token credentials." },
+  { id: "sandboxvms", label: "Sandbox VMs", icon: "🖥️", permission: "sandbox.exec", desc: "Onboard troubleshooting sandbox VMs for in-guest diagnostics (vm_exec)." },
+  { id: "connectors", label: "Connectors", icon: "🔌", permission: "connectors.manage", desc: "Wire up Teams, Slack, email, Jira, ServiceNow and Grafana integrations." },
+  { id: "settings", label: "General", icon: "⚙️", permission: "settings.read", writePermission: "settings.write", desc: "Core application behavior, safety toggles, and runtime tuning." },
   // Security & access
-  { id: "access", label: "Access Control", icon: "🔐", group: "Security & access", desc: "Manage users, roles, groups and single sign-on (OIDC / SAML) providers." },
-  { id: "policies", label: "Security Policy", icon: "🔒", desc: "Password rules, lockout, session lifetimes and SSO auto-provisioning defaults." },
-  { id: "firewall", label: "Network Access", icon: "🛡️", desc: "Restrict which IP addresses and ranges can reach this application at all." },
-  { id: "sessions", label: "Active Sessions", icon: "🖥️", desc: "View and revoke active user sessions across the workspace." },
+  { id: "access", label: "Access Control", icon: "🔐", group: "Security & access", permission: "users.manage", desc: "Manage users, roles, groups and single sign-on (OIDC / SAML) providers." },
+  { id: "policies", label: "Security Policy", icon: "🔒", permission: "users.manage", desc: "Password rules, lockout, session lifetimes and SSO auto-provisioning defaults." },
+  { id: "firewall", label: "Network Access", icon: "🛡️", permission: "firewall.read", writePermission: "firewall.manage", desc: "Restrict which IP addresses and ranges can reach this application at all." },
+  { id: "sessions", label: "Active Sessions", icon: "🖥️", permission: "users.manage", desc: "View and revoke active user sessions across the workspace." },
   // Tool preference — reference sets, change-request inboxes, prompts & scoring tuning.
-  { id: "prompts", label: "System Prompts", icon: "📝", group: "Tool Preference", desc: "Edit the system prompts that steer the agent and its sub-agents." },
-  { id: "scoring", label: "Assessments & Architecture", icon: "📐", desc: "Tune assessment severity weights, score bands and architecture-designer settings." },
-  { id: "amba", label: "AMBA Reference Set", icon: "📡", desc: "Curate the recommended Azure Monitor baseline alerts per resource type." },
-  { id: "ambachanges", label: "AMBA Change Requests", icon: "📥", desc: "Review and approve pending changes to monitoring coverage." },
-  { id: "telemetry", label: "Telemetry Reference Set", icon: "📊", desc: "Curate the recommended diagnostic-settings categories per resource type." },
-  { id: "telemetrychanges", label: "Telemetry Change Requests", icon: "📝", desc: "Review and approve pending changes to telemetry coverage." },
-  { id: "backupdr", label: "Backup/DR Reference Set", icon: "🔁", desc: "Curate the recommended backup & disaster-recovery protection checks." },
-  { id: "backupdrchanges", label: "Backup/DR Change Requests", icon: "💾", desc: "Review and approve pending changes to backup/DR coverage." },
-  { id: "radar", label: "Retirement Radar Reference", icon: "📡", desc: "Tune retirement/breaking-change classification rules and the model-lifecycle table." },
+  { id: "prompts", label: "System Prompts", icon: "📝", group: "Tool Preference", permission: "settings.read", writePermission: "settings.write", desc: "Edit the system prompts that steer the agent and its sub-agents." },
+  { id: "scoring", label: "Assessments & Architecture", icon: "📐", permission: "settings.read", writePermission: "settings.write", desc: "Tune assessment severity weights, score bands and architecture-designer settings." },
+  { id: "amba", label: "AMBA Reference Set", icon: "📡", permission: "coverage.manage", desc: "Curate the recommended Azure Monitor baseline alerts per resource type." },
+  { id: "ambachanges", label: "AMBA Change Requests", icon: "📥", permission: "coverage.manage", desc: "Review and approve pending changes to monitoring coverage." },
+  { id: "telemetry", label: "Telemetry Reference Set", icon: "📊", permission: "coverage.manage", desc: "Curate the recommended diagnostic-settings categories per resource type." },
+  { id: "telemetrychanges", label: "Telemetry Change Requests", icon: "📝", permission: "coverage.manage", desc: "Review and approve pending changes to telemetry coverage." },
+  { id: "backupdr", label: "Backup/DR Reference Set", icon: "🔁", permission: "coverage.manage", desc: "Curate the recommended backup & disaster-recovery protection checks." },
+  { id: "backupdrchanges", label: "Backup/DR Change Requests", icon: "💾", permission: "coverage.manage", desc: "Review and approve pending changes to backup/DR coverage." },
+  { id: "radar", label: "Retirement Radar Reference", icon: "📡", permission: "radar.read", writePermission: "radar.manage", desc: "Tune retirement/breaking-change classification rules and the model-lifecycle table." },
   // Observability
-  { id: "usage", label: "Usage", icon: "📊", group: "Observability", desc: "Token usage and estimated cost by AI provider and model." },
-  { id: "audit", label: "Audit Log", icon: "📋", desc: "Searchable record of administrative and security-relevant actions." },
+  { id: "usage", label: "Usage", icon: "📊", group: "Observability", permission: "monitor.view", desc: "Token usage and estimated cost by AI provider and model." },
+  { id: "audit", label: "Audit Log", icon: "📋", permission: "audit.read", writePermission: "settings.write", desc: "Searchable record of administrative and security-relevant actions." },
   // Miscellaneous
-  { id: "tools", label: "Azure MCP Tools", icon: "🧰", group: "Miscellaneous", desc: "Review the Azure MCP tools exposed to the agent and the built-in utilities." },
-  { id: "entratools", label: "EntraID MCP Tools", icon: "🆔", desc: "Review the Microsoft Graph (Entra ID) tools available to the agent." },
-  { id: "backup", label: "Backup & Restore", icon: "💾", desc: "Export and import the whole-tenant configuration (secret-free)." },
-  { id: "demodata", label: "Demo Data", icon: "🎬", desc: "Load or remove the synthetic sample tenant for exploring features." },
+  { id: "tools", label: "Azure MCP Tools", icon: "🧰", group: "Miscellaneous", permission: "settings.read", desc: "Review the Azure MCP tools exposed to the agent and the built-in utilities." },
+  { id: "entratools", label: "EntraID MCP Tools", icon: "🆔", permission: "settings.read", desc: "Review the Microsoft Graph (Entra ID) tools available to the agent." },
+  { id: "backup", label: "Backup & Restore", icon: "💾", permission: "backup.manage", desc: "Export and import the whole-tenant configuration (secret-free)." },
+  { id: "demodata", label: "Demo Data", icon: "🎬", permission: "demo.manage", desc: "Load or remove the synthetic sample tenant for exploring features." },
 ];
 
 // Every valid /admin/:section id — top-level nav items plus the Access Control sub-tabs.
@@ -107,42 +120,42 @@ export const ADMIN_SECTION_IDS = new Set<AdminSection>([
 // the FIRST item of each cluster so both the sidebar and the landing page can draw the same
 // category subheadings. `icon` is the emoji shown on the landing cards; the sidebar maps the
 // item `id` to a line-icon component (see PROACTIVE_ICONS in ChatView). `to` is the route.
-export type ProactiveItem = { id: string; to: string; label: string; icon: string; group?: string; desc?: string };
+export type ProactiveItem = PermissionedNavItem & { id: string; to: string; label: string; icon: string; group?: string; desc?: string };
 
 export const PROACTIVE_NAV: ProactiveItem[] = [
   // Daily intelligence — scheduled AI insight packs that watch the estate and ping only when it matters.
-  { id: "insights", to: "/insights", label: "AI Insight Packs", icon: "🧠", group: "Daily intelligence", desc: "Scheduled AI packs that gather change/telemetry data, reason over it, and notify you only when something material happens." },
+  { id: "insights", to: "/insights", label: "AI Insight Packs", icon: "🧠", group: "Daily intelligence", permission: "insights.read", writePermission: "insights.write", desc: "Scheduled AI packs that gather change/telemetry data, reason over it, and notify you only when something material happens." },
   // Design & ownership — how the estate is shaped, who owns it, how it connects.
-  { id: "architectures", to: "/architectures", label: "Architectures", icon: "📐", group: "Design & ownership", desc: "Visual application architecture diagrams — hand-drawn or AI-reverse-engineered from a workload." },
-  { id: "knowme", to: "/knowme", label: "Know-Me", icon: "📄", desc: "Support-facing workload references transformed from Architecture Memory — triage runbook, known issues, thresholds and a human-completion checklist." },
-  { id: "ownership", to: "/ownership", label: "Ownership", icon: "🪪", desc: "Assign accountable owners and teams across subscriptions, workloads and resources." },
-  { id: "graph", to: "/graph", label: "Estate Graph", icon: "🕸️", desc: "A workload-aware knowledge graph of the whole tenant with cost, retirement and RBAC overlays." },
+  { id: "architectures", to: "/architectures", label: "Architectures", icon: "📐", group: "Design & ownership", permission: "architectures.read", writePermission: "architectures.write", desc: "Visual application architecture diagrams — hand-drawn or AI-reverse-engineered from a workload." },
+  { id: "knowme", to: "/knowme", label: "Know-Me", icon: "📄", permission: "architectures.read", writePermission: "architectures.write", desc: "Support-facing workload references transformed from Architecture Memory — triage runbook, known issues, thresholds and a human-completion checklist." },
+  { id: "ownership", to: "/ownership", label: "Ownership", icon: "🪪", permission: "ownership.read", writePermission: "ownership.write", desc: "Assign accountable owners and teams across subscriptions, workloads and resources." },
+  { id: "graph", to: "/graph", label: "Estate Graph", icon: "🕸️", permission: "graph.read", desc: "A workload-aware knowledge graph of the whole tenant with cost, retirement and RBAC overlays." },
   // Assessment & performance — how healthy and well-architected the estate is.
-  { id: "assessments", to: "/assessments", label: "Assessments", icon: "✅", group: "Assessment & performance", desc: "Well-Architected and CIS assessments with scored findings, waivers and PDF reports." },
-  { id: "performance", to: "/performance", label: "Performance Profiler", icon: "🚀", desc: "Profile workloads against the monitoring baseline and rank bottlenecks on a heatmap." },
-  { id: "fmea", to: "/fmea", label: "FMEA", icon: "🧪", desc: "Failure Mode and Effects Analysis — AI-generated, scored risk tables (Severity × Occurrence × Detection → RPN) built from an architecture's Memory." },
+  { id: "assessments", to: "/assessments", label: "Assessments", icon: "✅", group: "Assessment & performance", permission: "assessments.read", writePermission: "assessments.run", desc: "Well-Architected and CIS assessments with scored findings, waivers and PDF reports." },
+  { id: "performance", to: "/performance", label: "Performance Profiler", icon: "🚀", permission: "perfprofile.read", desc: "Profile workloads against the monitoring baseline and rank bottlenecks on a heatmap." },
+  { id: "fmea", to: "/fmea", label: "FMEA", icon: "🧪", permission: "architectures.read", writePermission: "architectures.write", desc: "Failure Mode and Effects Analysis — AI-generated, scored risk tables (Severity × Occurrence × Detection → RPN) built from an architecture's Memory." },
   // Coverage — is the estate monitored, logged and protected.
-  { id: "coverage", to: "/coverage", label: "Monitoring Coverage", icon: "📡", group: "Coverage", desc: "Measure Azure Monitor baseline alert coverage and close gaps with generated IaC." },
-  { id: "alerts-manager", to: "/alerts-manager", label: "Alerts Manager", icon: "🔔", desc: "Find overlapping alert rules, duplicate notification paths, action-group routing issues and AMBA baseline gaps." },
-  { id: "telemetry", to: "/telemetry", label: "Telemetry Coverage", icon: "📊", desc: "Measure diagnostic-settings coverage per resource type against the recommended baseline." },
-  { id: "backupdr", to: "/backupdr", label: "Backup & DR Coverage", icon: "🔁", desc: "Audit backup and disaster-recovery protection and generate remediation runbooks." },
-  { id: "backup-manager", to: "/backup-manager", label: "Backup Manager", icon: "💾", desc: "Protection inventory, backup job triage, policy and vault administration, DR drills and approval-gated backup changes." },
-  { id: "capability", to: "/capability", label: "Connection Capability", icon: "🔌", desc: "What each Azure connection can and can't reach — ARM, Graph, Log Analytics, Key Vault and gated writes — surfacing the blind spots that make an answer half-blind." },
+  { id: "coverage", to: "/coverage", label: "Monitoring Coverage", icon: "📡", group: "Coverage", permission: "coverage.read", writePermission: "coverage.manage", desc: "Measure Azure Monitor baseline alert coverage and close gaps with generated IaC." },
+  { id: "alerts-manager", to: "/alerts-manager", label: "Alerts Manager", icon: "🔔", permission: "alerts_manager.read", desc: "Find overlapping alert rules, duplicate notification paths, action-group routing issues and AMBA baseline gaps." },
+  { id: "telemetry", to: "/telemetry", label: "Telemetry Coverage", icon: "📊", permission: "coverage.read", writePermission: "coverage.manage", desc: "Measure diagnostic-settings coverage per resource type against the recommended baseline." },
+  { id: "backupdr", to: "/backupdr", label: "Backup & DR Coverage", icon: "🔁", permission: "coverage.read", writePermission: "coverage.manage", desc: "Audit backup and disaster-recovery protection and generate remediation runbooks." },
+  { id: "backup-manager", to: "/backup-manager", label: "Backup Manager", icon: "💾", permission: "backup_manager.read", desc: "Protection inventory, backup job triage, policy and vault administration, DR drills and approval-gated backup changes." },
+  { id: "capability", to: "/capability", label: "Connection Capability", icon: "🔌", permission: "connections.read", desc: "What each Azure connection can and can't reach — ARM, Graph, Log Analytics, Key Vault and gated writes — surfacing the blind spots that make an answer half-blind." },
   // Estate intelligence — what's deployed, how it's tagged, what changed.
-  { id: "inventory", to: "/inventory", label: "Inventory", icon: "📋", group: "Estate intelligence", desc: "A unified resource grid with overview, location, cost and optimization lenses." },
-  { id: "tagintel", to: "/tagintel", label: "Tag Intelligence", icon: "🏷️", desc: "Tag census, hygiene, coverage, cost allocation, drift and policy generation." },
-  { id: "change-explorer", to: "/change-explorer", label: "Change Explorer", icon: "🕑", desc: "Analyze what changed in a workload over a time window, by risk, actor and dependency." },
+  { id: "inventory", to: "/inventory", label: "Inventory", icon: "📋", group: "Estate intelligence", permission: "inventory.read", desc: "A unified resource grid with overview, location, cost and optimization lenses." },
+  { id: "tagintel", to: "/tagintel", label: "Tag Intelligence", icon: "🏷️", permission: "tagintel.read", writePermission: "tagintel.write", desc: "Tag census, hygiene, coverage, cost allocation, drift and policy generation." },
+  { id: "change-explorer", to: "/change-explorer", label: "Change Explorer", icon: "🕑", permission: "changeexplorer.read", desc: "Analyze what changed in a workload over a time window, by risk, actor and dependency." },
   // Governance & identity — policy, identity posture and access review.
-  { id: "policy", to: "/policy", label: "Azure Policy", icon: "🛡️", group: "Governance & identity", desc: "Policy inventory, compliance, effective policy, rollout planning and drift / IaC." },
-  { id: "entra", to: "/entra", label: "Entra ID", icon: "🛡️", desc: "Tenant-wide identity posture score, Conditional Access coverage and conflicts, privileged access, app-registration and credential-expiry hygiene, and a findings inbox — who can do what, and what breaks if you change it." },
-  { id: "iam", to: "/iam", label: "IAM", icon: "🔑", desc: "Azure access review — effective access, privileged exposure, PIM and scopes." },
+  { id: "policy", to: "/policy", label: "Azure Policy", icon: "🛡️", group: "Governance & identity", permission: "policy.read", writePermission: "policy.write", desc: "Policy inventory, compliance, effective policy, rollout planning and drift / IaC." },
+  { id: "entra", to: "/entra", label: "Entra ID", icon: "🛡️", permission: "entra.read", writePermission: "entra.admin", desc: "Tenant-wide identity posture score, Conditional Access coverage and conflicts, privileged access, app-registration and credential-expiry hygiene, and a findings inbox — who can do what, and what breaks if you change it." },
+  { id: "iam", to: "/iam", label: "IAM", icon: "🔑", permission: "iam.read", writePermission: "iam.write", desc: "Azure access review — effective access, privileged exposure, PIM and scopes." },
   // Lifecycle & investigation — what's expiring, what's wrong, and the evidence trail.
-  { id: "radar", to: "/radar", label: "Retirement Radar", icon: "🛰️", group: "Lifecycle & investigation", desc: "Track Azure retirements and breaking changes impacting your estate." },
-  { id: "reservations", to: "/reservations", label: "Reservations Monitor", icon: "🎟️", desc: "Track reservation order expiry and surface a weekly renewal digest." },
-  { id: "quota", to: "/quota", label: "Quota Monitor", icon: "📊", desc: "Subscription/region quota usage, limits, headroom and risk — before deployments fail." },
-  { id: "telemetry-intel", to: "/telemetry-intel", label: "Telemetry Intelligence", icon: "🔬", desc: "AI correlation and triage over Application Insights with KQL translation." },
-  { id: "evidence", to: "/evidence", label: "Evidence Locker", icon: "🗄️", desc: "Investigation snapshots, diffs, sharing and export for audit trails." },
-  { id: "cases", to: "/cases", label: "Case Files", icon: "🗂️", desc: "Durable incident case files — findings → investigation → evidence → remediation → verification on one append-only timeline that survives refresh and reassignment." },
+  { id: "radar", to: "/radar", label: "Retirement Radar", icon: "🛰️", group: "Lifecycle & investigation", permission: "radar.read", writePermission: "radar.manage", desc: "Track Azure retirements and breaking changes impacting your estate." },
+  { id: "reservations", to: "/reservations", label: "Reservations Monitor", icon: "🎟️", permission: "reservations.read", desc: "Track reservation order expiry and surface a weekly renewal digest." },
+  { id: "quota", to: "/quota", label: "Quota Monitor", icon: "📊", permission: "quota.read", writePermission: "quota.run", desc: "Subscription/region quota usage, limits, headroom and risk — before deployments fail." },
+  { id: "telemetry-intel", to: "/telemetry-intel", label: "Telemetry Intelligence", icon: "🔬", permission: "teleintel.read", desc: "AI correlation and triage over Application Insights with KQL translation." },
+  { id: "evidence", to: "/evidence", label: "Evidence Locker", icon: "🗄️", permission: "evidence.read", writePermission: "evidence.write", desc: "Investigation snapshots, diffs, sharing and export for audit trails." },
+  { id: "cases", to: "/cases", label: "Case Files", icon: "🗂️", permission: "cases.read", writePermission: "cases.write", desc: "Durable incident case files — findings → investigation → evidence → remediation → verification on one append-only timeline that survives refresh and reassignment." },
 ];
 
 export const PROACTIVE_PATHS = new Set<string>(PROACTIVE_NAV.map((n) => n.to));
@@ -162,30 +175,40 @@ export const AUTOMATIONS_NAV: {
   label: string;
   icon: string;
   description: string;
+  permission: string;
+  writePermission?: string;
 }[] = [
   {
     id: "tasks",
     label: "Scheduled Tasks",
     icon: "⏰",
     description: "Recurring agent workflows that run on a schedule.",
+    permission: "tasks.read",
+    writePermission: "tasks.write",
   },
   {
     id: "workbooks",
     label: "Workbooks",
     icon: "📓",
     description: "Saved az / Resource Graph / PowerShell operations with AI-summarized output.",
+    permission: "workbooks.read",
+    writePermission: "workbooks.write",
   },
   {
     id: "playbooks",
     label: "Playbooks",
     icon: "🧩",
     description: "Chain workbooks into multi-step, conditional flows.",
+    permission: "playbooks.read",
+    writePermission: "playbooks.write",
   },
   {
     id: "notifications",
     label: "Notifications",
     icon: "🔔",
     description: "Route events to Teams, Slack, email and the in-app center.",
+    permission: "notifications.manage",
+    writePermission: "notifications.manage",
   },
 ];
 

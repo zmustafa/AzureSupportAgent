@@ -305,9 +305,11 @@ The auth package supports:
 ### 7.3 RBAC
 
 Role/group-based access control lives in `app/auth/permissions.py` and
-`app/core/security.py`. Admin-only sections use `require_admin`; feature endpoints use
-permission-aware dependencies where implemented. Tenant scoping is enforced through
-the `Principal` object and tenant filters.
+`app/core/security.py`. Feature endpoints use exact `require_permission` dependencies;
+`require_admin` remains only for a small system-status boundary. Direct and group roles form an
+unscoped union, while a session can act as one assigned role. A zero-permission principal is
+blocked server-side except for the identity/profile/role-switch/sign-out allowlist. Tenant
+scoping is enforced through the `Principal` object and tenant filters.
 
 ## 8. Azure Connections and Governance
 
@@ -517,7 +519,7 @@ AI dashboard generation:
 Key security controls:
 
 - Tenant-scoped principal on every request.
-- Admin-only endpoints for sensitive settings, providers, connections, and Monitor authoring.
+- Capability-gated endpoints: `settings.read`/`settings.write` for application configuration and providers, dedicated connection permissions, `monitor.view` for Monitor reads, and `settings.write` for Monitor authoring.
 - Encrypted Azure connection secrets at rest.
 - Tool classification into read/write/destructive categories.
 - Approval gates for write actions.

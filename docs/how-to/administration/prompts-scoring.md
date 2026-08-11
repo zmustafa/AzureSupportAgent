@@ -12,7 +12,8 @@ permalink: /how-to/administration/prompts-scoring/
 
 ## Prerequisites
 
-- Product permission `settings.write`.
+- Product permissions `settings.read` and `settings.write`. The routes use the read key; prompt
+	and scoring mutations use the write key.
 - Reviewed prompt text with no credentials or tenant-specific secret values.
 - A benign and adversarial test set.
 - A recorded scoring baseline and a small representative assessment.

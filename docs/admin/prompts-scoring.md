@@ -10,7 +10,7 @@ permalink: /admin/prompts-scoring/
 # System Prompts and Assessments & Architecture
 
 **App routes:** `/admin/prompts`, `/admin/scoring`<br>
-**Product permission:** `settings.write`
+**Product permissions:** `settings.read` to inspect; `settings.write` to edit, reset, or save
 
 ## Purpose
 
@@ -28,6 +28,8 @@ These admin areas govern executable AI instructions, assessment score interpreta
 ### System Prompts
 
 Select one prompt, edit and save it, or reset it to the built-in seed. Prompt text acts as executable policy for future AI operations.
+
+With `settings.read` alone, both routes remain visible but the shared Settings wrapper disables mutation controls. Backend prompt and scoring writes require `settings.write`.
 
 ### Assessments & Architecture
 

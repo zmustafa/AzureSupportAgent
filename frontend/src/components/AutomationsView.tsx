@@ -25,6 +25,7 @@ export { AUTOMATIONS_NAV };
 import { WorkbooksSection } from "./WorkbooksView";
 import { PlaybooksSection } from "./PlaybooksView";
 import { NotificationsSection } from "./NotificationsView";
+import { useAuth } from "./AuthContext";
 
 const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
@@ -138,16 +139,15 @@ export function AutomationsPanel({ section }: { section: AutomationsSection }) {
 }
 
 function OverviewSection() {
-  const tasksQ = useQuery({ queryKey: ["scheduledTasks"], queryFn: api.scheduledTasks });
-  const agentsQ = useQuery({ queryKey: ["customAgents"], queryFn: api.customAgents });
-  const connQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors });
+  const { has } = useAuth();
+  const visibleNav = AUTOMATIONS_NAV.filter((item) => has(item.permission));
+  const tasksQ = useQuery({ queryKey: ["scheduledTasks"], queryFn: api.scheduledTasks, enabled: has("tasks.read") });
+  const connQ = useQuery({ queryKey: ["connectors"], queryFn: api.connectors, enabled: has("connectors.manage") });
 
   const metrics = tasksQ.data?.metrics ?? { active: 0, total: 0, total_runs: 0 };
-  const agentCount = agentsQ.data?.agents?.length ?? 0;
   const connectorCount = connQ.data?.connectors?.length ?? 0;
   const counts: Record<string, number> = {
     tasks: metrics.total,
-    agents: agentCount,
     connectors: connectorCount,
   };
 
@@ -166,7 +166,7 @@ function OverviewSection() {
           ["Active schedules", metrics.active],
           ["Total schedules", metrics.total],
           ["Total runs", metrics.total_runs],
-          ["Connectors", connectorCount],
+          ...(has("connectors.manage") ? [["Connectors", connectorCount] as [string, number]] : []),
         ].map(([k, v]) => (
           <div key={k as string} className="rounded-lg border bg-white p-4 text-center shadow-sm">
             <div className="text-2xl font-semibold text-gray-800">{v as number}</div>
@@ -176,7 +176,7 @@ function OverviewSection() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {AUTOMATIONS_NAV.map((n) => (
+        {visibleNav.map((n) => (
           <Link
             key={n.id}
             to={`/automations/${n.id}`}

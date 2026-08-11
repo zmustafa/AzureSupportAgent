@@ -9,7 +9,7 @@ permalink: /admin/reference-sets-change-requests/
 
 # Reference sets and change requests
 
-**Permissions:** `coverage.manage` and/or `settings.write` as enforced by the screen
+**Permissions:** `coverage.manage` for AMBA, telemetry, and Backup/DR reference/change-request routes; `radar.read` to inspect the Retirement Radar reference and `radar.manage` to change, restore, or reset it
 
 ## Purpose
 
@@ -48,7 +48,7 @@ To refresh the vendored catalogue to a newer AMBA release, run `python scripts/i
 
 ### Telemetry
 
-Curate recommended diagnostic log/metric categories and destination expectations per resource type. Approved Log Analytics workspaces are maintained in General settings. **Telemetry Change Requests** governs proposed additions/removals before they affect coverage.
+Curate recommended diagnostic log/metric categories and destination expectations per resource type. Approved Log Analytics workspaces and the telemetry reference are maintained with `coverage.manage`. **Telemetry Change Requests** governs proposed additions/removals before they affect coverage.
 
 ### Backup/DR
 

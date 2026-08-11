@@ -5,6 +5,9 @@ import JSZip from "jszip";
 import { api, streamRefreshLlmModels, streamTestLlmProvider, type AiPrompt, type AppSettings, type ArchitectureCategory, type AuditEntry, type BackupConflictMode, type BackupImportPreview, type LlmTestStep, type SandboxVm, type SandboxVmRun, type SiemDestination, type Workload } from "../api";
 import { ensureUtc, formatError } from "../utils/format";
 import { ConnectorsSection } from "./AutomationsView";
+import { useAuth } from "./AuthContext";
+import { filterPermissionedGroups } from "../utils/accessControl";
+import { adminWritePermission } from "./routeAccess";
 // Heavy admin sub-sections — lazy so visiting /admin only pulls the small General/
 // Providers/etc. cards, not every reference-set editor in the bundle.
 const SecurityPanel = lazy(() => import("./SecurityView").then((m) => ({ default: m.SecurityPanel })));
@@ -15,6 +18,18 @@ const BackupDrReferenceEditor = lazy(() => import("./BackupDrReferenceEditor").t
 
 const AdminSubLoading = () => <div className="p-6 text-sm text-gray-500">Loading…</div>;
 const wrap = (node: React.ReactNode) => <Suspense fallback={<AdminSubLoading />}>{node}</Suspense>;
+
+function ReadOnlySection({ readOnly, children }: { readOnly: boolean; children: React.ReactNode }) {
+  if (!readOnly) return <>{children}</>;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mx-8 mt-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+        Read-only access — the active role can inspect this configuration but cannot change it.
+      </div>
+      <fieldset disabled className="contents">{children}</fieldset>
+    </div>
+  );
+}
 import {
   ADMIN_NAV,
   ADMIN_SECTION_IDS,
@@ -160,13 +175,15 @@ function fmtUsd(v: number): string {
  *  Maps over ADMIN_NAV so a new section appears here + in the sidebar automatically. A quick
  *  filter keeps it usable as the section count grows (enterprise apps have many settings). */
 function SettingsOverview() {
+  const { user } = useAuth();
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
+  const permittedItems = filterPermissionedGroups(ADMIN_NAV, user);
 
   // Preserve the ADMIN_NAV order but split into the same groups the sidebar uses. Each item
   // carries the group of the nearest preceding item that declared one.
   const groups: { name: string; items: typeof ADMIN_NAV }[] = [];
-  for (const item of ADMIN_NAV) {
+  for (const item of permittedItems) {
     if (item.group || groups.length === 0) {
       groups.push({ name: item.group ?? "Settings", items: [] });
     }
@@ -234,8 +251,12 @@ function SettingsOverview() {
 /** Settings content panel. Rendered inside the chat shell (the chat sidebar stays
  *  visible); section is driven by the /admin/:section URL. */
 export function AdminPanel({ section }: { section: AdminSection }) {
-  const tools = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
-  const usage = useQuery({ queryKey: ["usage"], queryFn: api.usage });
+  const { has } = useAuth();
+  const writePermission = adminWritePermission(section);
+  const canWrite = !writePermission || has(writePermission);
+  const readOnly = !canWrite && section !== "audit";
+  const tools = useQuery({ queryKey: ["tools"], queryFn: api.listTools, enabled: section === "tools" });
+  const usage = useQuery({ queryKey: ["usage"], queryFn: api.usage, enabled: section === "usage" });
 
   // Bare /admin → a Settings overview landing page with links to every section.
   if (section === "overview") {
@@ -261,7 +282,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
     return wrap(<BackupDrReferenceEditor />);
   }
 
-  return (
+  const content = (
     <div className="h-full overflow-y-auto bg-gray-50">
       <div className="space-y-6 p-8">
         {section === "providers" && <AIProviderCard />}
@@ -369,12 +390,14 @@ export function AdminPanel({ section }: { section: AdminSection }) {
           </Card>
         )}
 
-        {section === "audit" && <AuditCard />}
+        {section === "audit" && <AuditCard canManageSiem={has("settings.write")} />}
         {section === "backup" && <BackupRestoreCard />}
         {section === "demodata" && <DemoDataCard />}
       </div>
     </div>
   );
+
+  return <ReadOnlySection readOnly={readOnly}>{content}</ReadOnlySection>;
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
@@ -2315,7 +2338,7 @@ function DemoDataCard() {
   );
 }
 
-function AuditCard() {
+function AuditCard({ canManageSiem }: { canManageSiem: boolean }) {
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(0);
   const [exporting, setExporting] = useState<"csv" | "json" | null>(null);
@@ -2380,7 +2403,14 @@ function AuditCard() {
 
   return (
     <div className="space-y-4">
-      <SiemExportCard />
+      {!canManageSiem && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+          Audit entries and exports are available. SIEM destination configuration is read-only for this role.
+        </div>
+      )}
+      <fieldset disabled={!canManageSiem} className="contents">
+        <SiemExportCard />
+      </fieldset>
       <section className="rounded-lg border bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-medium">Audit Log</h2>

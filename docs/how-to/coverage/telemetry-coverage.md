@@ -71,7 +71,7 @@ Open `/telemetry`. Use **Coverage**, **Fleet**, or **Cleanup**.
 
 | Symptom | Resolution |
 | --- | --- |
-| No approved workspace | Ask an administrator to curate workspaces and verify connection visibility. |
+| No approved workspace | Ask a user with `coverage.manage` to curate workspaces and verify connection visibility. |
 | Many unreadable rows | Check diagnostic-settings and destination read access, scope, scan cap, and throttling. |
 | Category is missing everywhere | Verify the exact category name and current API support, then review the reference. |
 | Policy remediation does nothing | Check assignment identity, role assignment, parameters, evaluation delay, and remediation task. |

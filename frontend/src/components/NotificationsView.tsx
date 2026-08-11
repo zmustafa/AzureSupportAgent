@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, type AppNotification, type NotificationRule, type Severity } from "../api";
 import { formatError, formatRelativeFromNow, formatTimestamp } from "../utils/format";
 import { notificationLink, SEVERITY_DOT } from "../utils/notificationLink";
+import { useAuth } from "./AuthContext";
 
 const input =
   "w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand";
@@ -235,6 +236,7 @@ const NOTE_SOURCE_LABEL: Record<string, string> = {
 };
 
 export function NotificationsPanel() {
+  const { has } = useAuth();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [tab, setTab] = useState<"all" | "unread">("all");
@@ -282,9 +284,11 @@ export function NotificationsPanel() {
               scheduled tasks. Click one to open the run or report it came from.
             </p>
           </div>
-          <Link to="/automations/notifications" className="shrink-0 rounded-lg border px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
-            ⚙ Manage rules
-          </Link>
+          {has("notifications.manage") && (
+            <Link to="/automations/notifications" className="shrink-0 rounded-lg border px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50">
+              ⚙ Manage rules
+            </Link>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

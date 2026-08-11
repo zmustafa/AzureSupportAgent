@@ -55,10 +55,13 @@ from app.schemas import ApprovalDecision, ApprovalOut, ToolCallOut
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# Existing `require_admin` call sites now enforce a fine-grained capability (admins always
-# pass through require_permission). Admin config remains admin-only because only the admin
-# role carries settings.write. See app.auth.permissions for the catalog.
+# Keep write-oriented legacy call sites on settings.write, while read endpoints below use
+# their explicit catalog capabilities. This makes operator/auditor read roles real instead
+# of advertising permissions that every endpoint ignored.
 require_admin = require_permission("settings.write")
+require_settings_read = require_permission("settings.read")
+require_audit_read = require_permission("audit.read")
+require_monitor_view = require_permission("monitor.view")
 settings = get_settings()
 
 
@@ -136,7 +139,7 @@ class AppSettingsUpdate(BaseModel):
 
 
 @router.get("/settings")
-async def get_app_settings(_: Principal = Depends(require_admin)):
+async def get_app_settings(_: Principal = Depends(require_settings_read)):
     from app.core.app_settings import ALLOWED_COMMAND_BINARIES, RESPONSE_STYLES, load_settings
 
     return {
@@ -175,7 +178,7 @@ class AiPromptsUpdate(BaseModel):
 
 
 @router.get("/ai-prompts")
-async def get_ai_prompts(_: Principal = Depends(require_admin)):
+async def get_ai_prompts(_: Principal = Depends(require_settings_read)):
     from app.core.ai_prompts import list_prompts
 
     return {"prompts": list_prompts()}
@@ -245,7 +248,7 @@ class LLMConfigUpdate(BaseModel):
 
 
 @router.get("/llm/config")
-async def get_llm_config(_: Principal = Depends(require_admin)):
+async def get_llm_config(_: Principal = Depends(require_settings_read)):
     """Current LLM configuration (keys masked)."""
     return public_config()
 
@@ -316,7 +319,7 @@ async def list_llm_models(
     provider: str,
     free_only: bool | None = None,
     include_hidden: bool = False,
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(require_settings_read),
 ):
     """List available models for a provider. Fetches live where possible, with a
     curated fallback list. Uses the saved key for that provider.
@@ -1040,7 +1043,7 @@ async def refresh_llm_models_stream(
 
 
 @router.get("/llm/oauth/chatgpt/status")
-async def chatgpt_oauth_status(_: Principal = Depends(require_admin)):
+async def chatgpt_oauth_status(_: Principal = Depends(require_settings_read)):
     """Report ChatGPT (Codex) sign-in / token status for the admin UI."""
     return chatgpt_oauth.status()
 
@@ -1098,7 +1101,7 @@ async def chatgpt_oauth_complete(
 
 
 @router.get("/llm/oauth/claude/status")
-async def claude_oauth_status(_: Principal = Depends(require_admin)):
+async def claude_oauth_status(_: Principal = Depends(require_settings_read)):
     """Report Claude (Pro/Max) sign-in / token status for the admin UI."""
     return claude_oauth.status()
 
@@ -1270,13 +1273,13 @@ async def github_copilot_signout(
 
 
 @router.get("/llm/oauth/github/status")
-async def github_copilot_status(_: Principal = Depends(require_admin)):
+async def github_copilot_status(_: Principal = Depends(require_settings_read)):
     """Report GitHub Copilot sign-in / token status for the admin UI."""
     return github_copilot_auth.status()
 
 
 @router.get("/mcp/tools")
-async def list_mcp_tools(_: Principal = Depends(require_admin)):
+async def list_mcp_tools(_: Principal = Depends(require_settings_read)):
     """Discover the tools exposed by the Azure MCP server, with read/write class."""
     client = build_mcp_client(settings)
     try:
@@ -1291,7 +1294,7 @@ async def list_mcp_tools(_: Principal = Depends(require_admin)):
 
 
 @router.get("/builtin/tools")
-async def list_builtin_tools(_: Principal = Depends(require_admin)):
+async def list_builtin_tools(_: Principal = Depends(require_settings_read)):
     """The first-party built-in utility tools (web fetch + network diagnostics) and
     whether they're enabled for the agent."""
     from app.agent.builtins import builtin_tool_catalog
@@ -1313,7 +1316,7 @@ async def list_builtin_tools(_: Principal = Depends(require_admin)):
 
 
 @router.get("/entra/tools")
-async def list_entra_tools(_: Principal = Depends(require_admin)):
+async def list_entra_tools(_: Principal = Depends(require_settings_read)):
     """Discover the tools exposed by the EntraID (Microsoft Graph) MCP server, with
     read/write class. Authenticates with the default Azure connection's service
     principal (the same identity the agent uses for directory queries)."""
@@ -1394,7 +1397,7 @@ async def decide_approval(
 
 @router.get("/tool-calls", response_model=list[ToolCallOut])
 async def list_tool_calls(
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_monitor_view),
     db: AsyncSession = Depends(get_db),
     limit: int = 100,
 ):
@@ -1409,7 +1412,7 @@ async def list_tool_calls(
 
 @router.get("/usage")
 async def usage_summary(
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_monitor_view),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -1441,7 +1444,7 @@ async def usage_summary(
 
 @router.get("/audit")
 async def audit_log(
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_audit_read),
     db: AsyncSession = Depends(get_db),
     limit: int = 25,
     offset: int = 0,
@@ -1501,7 +1504,7 @@ def _siem_audit_target(values: dict[str, Any]) -> str:
 
 
 @router.get("/siem-export")
-async def get_siem_export(_: Principal = Depends(require_admin)):
+async def get_siem_export(_: Principal = Depends(require_audit_read)):
     from app.core.siem_export import list_destinations
 
     return list_destinations()
@@ -1632,7 +1635,7 @@ async def reset_siem_cursor(
 async def monitor_overview(
     days: int | None = None,
     workload_id: str | None = None,
-    principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(require_monitor_view),
     db: AsyncSession = Depends(get_db),
 ):
     """Central monitoring dashboard: one aggregated snapshot of everything happening
@@ -2398,7 +2401,7 @@ class MonitorDashboardUpsert(BaseModel):
 
 
 @router.get("/monitor/dashboards")
-async def list_monitor_dashboards(principal: Principal = Depends(require_admin)):
+async def list_monitor_dashboards(principal: Principal = Depends(require_monitor_view)):
     """All saved Monitor dashboards for this tenant (default first)."""
     from app.monitor import registry as dash_registry
 
@@ -2406,7 +2409,7 @@ async def list_monitor_dashboards(principal: Principal = Depends(require_admin))
 
 
 @router.get("/monitor/dashboards/{dashboard_id}")
-async def get_monitor_dashboard(dashboard_id: str, _: Principal = Depends(require_admin)):
+async def get_monitor_dashboard(dashboard_id: str, _: Principal = Depends(require_monitor_view)):
     from app.monitor import registry as dash_registry
 
     dash = dash_registry.get_dashboard(dashboard_id)
@@ -2472,7 +2475,7 @@ class AiDashboardRequest(BaseModel):
 
 
 @router.get("/monitor/datasources")
-async def monitor_datasources(_: Principal = Depends(require_admin)):
+async def monitor_datasources(_: Principal = Depends(require_monitor_view)):
     """Catalog of data sources + widget types (powers the editor + grounds the AI)."""
     from app.monitor.catalog import DATASOURCE_CATALOG, WIDGET_CATALOG
 
@@ -2481,7 +2484,7 @@ async def monitor_datasources(_: Principal = Depends(require_admin)):
 
 @router.post("/monitor/widgets/run")
 async def run_monitor_widget(
-    payload: WidgetRunRequest, principal: Principal = Depends(require_admin)
+    payload: WidgetRunRequest, principal: Principal = Depends(require_monitor_view)
 ):
     """Resolve one widget's data binding to a normalized table (cached). Live refresh
     and the editor's preview both call this."""
@@ -2564,7 +2567,7 @@ async def ai_build_dashboard(
 
 @router.get("/monitor/dashboards/{dashboard_id}/versions")
 async def monitor_dashboard_versions(
-    dashboard_id: str, _: Principal = Depends(require_admin)
+    dashboard_id: str, _: Principal = Depends(require_monitor_view)
 ):
     from app.monitor import registry as dash_registry
 

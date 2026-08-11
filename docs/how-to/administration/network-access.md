@@ -12,7 +12,9 @@ permalink: /how-to/administration/network-access/
 
 ## Prerequisites
 
-- Product permission `firewall.manage` to change the policy (`firewall.read` to view it).
+- Product permissions `firewall.read` and `firewall.manage` to operate the editor. The route and
+   policy/block reads use `firewall.read`; save, confirm, and block-history clearing use
+   `firewall.manage`.
 - The public IP ranges your users actually egress from — confirmed with whoever runs the
   network, not assumed from a VPN client.
 - Azure RBAC on the resource group hosting the container app, for recovery.

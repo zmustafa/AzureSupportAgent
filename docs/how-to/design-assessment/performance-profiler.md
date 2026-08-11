@@ -16,7 +16,8 @@ permalink: /how-to/design-assessment/performance-profiler/
 
 - `perfprofile.read` and an enabled connection that can read Resource Graph and Azure Monitor metrics.
 - A current workload definition for workload mode, or a subscription and connection for subscription mode.
-- `settings.write` only when changing profiler capacity under `/admin/settings`.
+- `settings.read` and `settings.write` only when changing profiler capacity under
+	`/admin/settings`; the route is read-gated and saving is write-gated.
 - Optional: an AI provider for narrative, Jira or ServiceNow for tickets, and Evidence Locker storage for evidence capture.
 
 ## Route
@@ -116,7 +117,7 @@ Open `/performance`. Its top-level views are **🔥 Profiler**, **🚀 Fleet**, 
 
 ## How to tune profiler capacity safely
 
-1. Open `/admin/settings` with `settings.write` and record all five **Performance Profiler capacity** values.
+1. Open `/admin/settings` with `settings.read` and `settings.write`, then record all five **Performance Profiler capacity** values.
 2. Keep **Fleet workloads in parallel** at `1` unless measurements justify `2` or `3`.
 3. Use **Delay between Fleet starts** to spread authentication and discovery; the default is 1,000 ms.
 4. Keep **Azure Monitor calls in parallel** low because the gate is process-wide across Fleet, focused runs, Mission Control, and agent tools. The default is `2`.

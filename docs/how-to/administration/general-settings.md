@@ -12,7 +12,8 @@ permalink: /how-to/administration/general-settings/
 
 ## Prerequisites
 
-- Product permission `settings.write`.
+- Product permissions `settings.read` and `settings.write`. The route uses the read key; saving
+	uses the write key.
 - An approved reason, current value, expected value, and representative verification workflow.
 - A current backup for broad or high-impact changes.
 

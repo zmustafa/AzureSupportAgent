@@ -9,7 +9,7 @@ permalink: /admin/ai-providers/
 
 # AI Providers
 
-**Permission:** `settings.write`
+**Permissions:** `settings.read` to inspect provider configuration, model visibility, and OAuth status; `settings.write` to save, test, refresh models, or change OAuth state
 
 ## Purpose
 
@@ -22,7 +22,7 @@ The provider screen exposes the provider catalog implemented by the application,
 
 ## Tabs and actions
 
-
+With `settings.read` alone, the section is rendered read-only and mutation controls are disabled. Provider/model saves, model refresh and test streams, OAuth authorize/refresh/sign-out actions, and visibility changes require `settings.write` and are audit logged where implemented.
 
 ## Freshness and scope behavior
 

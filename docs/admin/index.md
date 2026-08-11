@@ -9,7 +9,14 @@ has_children: true
 
 # Administration
 
-Administration is role-gated. Use least privilege: most application configuration requires `settings.write`, while Azure connections, connectors, users, audit, backup, and demo data have dedicated permissions.
+Administration is capability-gated, not limited to one role name. Readable Settings entries
+appear only when the active role has their exact capability. Common splits include
+`settings.read`/`settings.write`, `firewall.read`/`firewall.manage`,
+`radar.read`/`radar.manage`, `monitor.view` for Usage, and `audit.read` for Audit Log;
+connections, connectors, users, backup, and demo data have dedicated permissions. A custom role
+that must operate a split editor needs both its route/read key and mutation key. Without the
+mutation key, supported sections remain read-only; a mutation key alone does not expose a
+read-gated route.
 
 ![AI provider administration screen]({{ site.baseurl }}/assets/ai-providers.png)
 

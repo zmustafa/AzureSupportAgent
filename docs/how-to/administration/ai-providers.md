@@ -12,7 +12,8 @@ permalink: /how-to/administration/ai-providers/
 
 ## Prerequisites
 
-- Product permission `settings.write`.
+- Product permissions `settings.read` and `settings.write`. The route and provider/status reads
+	use the read key; save, test, model refresh, visibility, and OAuth mutations use the write key.
 - A provider account, approved model, and either the credential or OAuth access required by the provider card.
 - Network egress from the application to a hosted endpoint, or reachability to an Ollama or LM Studio endpoint.
 

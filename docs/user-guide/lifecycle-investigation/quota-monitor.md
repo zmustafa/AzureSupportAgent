@@ -45,7 +45,7 @@ Quota Monitor uses modular collectors for compute, network, storage, App Service
 6. Prioritize rows by usage percentage and remaining headroom, then follow the displayed recommendation.
 7. Export CSV or JSON for capacity planning.
 
-Default bands are configurable: Watch at 70%, Warning at 85%, and Critical at 95%. Administrators can change them, so use the metadata displayed for the run rather than assuming these values.
+Default bands are configurable: Watch at 70%, Warning at 85%, and Critical at 95%. Configured values can differ from those defaults, so use the metadata displayed for the run rather than assuming them.
 
 ## Interpretation of results
 

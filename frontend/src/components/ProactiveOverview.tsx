@@ -4,15 +4,19 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { PROACTIVE_NAV } from "./navConfig";
+import { useAuth } from "./AuthContext";
+import { filterPermissionedGroups } from "../utils/accessControl";
 
 export function ProactiveOverviewPanel() {
+  const { user } = useAuth();
   const [q, setQ] = useState("");
   const term = q.trim().toLowerCase();
+  const permittedItems = filterPermissionedGroups(PROACTIVE_NAV, user);
 
   // Preserve the PROACTIVE_NAV order but split into the same groups the sidebar uses. Each
   // item joins the group of the nearest preceding item that declared one.
   const groups: { name: string; items: typeof PROACTIVE_NAV }[] = [];
-  for (const item of PROACTIVE_NAV) {
+  for (const item of permittedItems) {
     if (item.group || groups.length === 0) {
       groups.push({ name: item.group ?? "Proactive Support", items: [] });
     }

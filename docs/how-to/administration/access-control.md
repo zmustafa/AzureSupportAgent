@@ -20,6 +20,7 @@ feature_ids: [ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:
 - An IdP application with the exact redirect/ACS values shown by the application.
 - OIDC issuer/client details and secret, or SAML entity ID, SSO URL, and signing certificate.
 - A tested local recovery administrator before changing sign-in policy.
+- For self-service Active Role switching, only an authenticated session with two or more assigned roles is required; `users.manage` is not required to switch your own session.
 
 ## Route
 
@@ -48,10 +49,13 @@ feature_ids: [ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:
 
 1. Select **New role** and enter a clear name and description.
 2. Select only capabilities required by the task; do not infer wildcard behavior.
-3. Save the role.
-4. Assign it to one test user directly or through a test group.
-5. Test allowed and denied workflows in a separate session.
-6. Expand assignment only after review.
+3. For a split editor, select both its route/read capability and mutation capability—for
+	example `monitor.view` plus `settings.write`, `audit.read` plus `settings.write`,
+	`firewall.read` plus `firewall.manage`, or `radar.read` plus `radar.manage`.
+4. Save the role.
+5. Assign it to one test user directly or through a test group.
+6. Test allowed and denied workflows in a separate session.
+7. Expand assignment only after review.
 
 **Expected result:** The custom role grants exactly the selected capabilities. Built-in system roles remain read-only.
 
@@ -70,6 +74,32 @@ feature_ids: [ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:
 
 **Verification:** Compare member counts and effective roles before and after assignment, then verify a representative permission.
 
+## How to switch the active role and verify direct-route denial
+
+1. Open the account menu and record the current navigation entries.
+2. Under **Active Role**, select another role already assigned directly or through a group.
+3. Wait for identity refresh; do not manually reload the page.
+4. Confirm the left navigation, Dashboard shortcuts, Settings/Proactive cards, and command palette now show only routes allowed by that role.
+5. Enter a known unauthorized feature URL directly.
+6. Confirm **Access not granted** appears before the protected feature loads, then verify its API returns `403` for the missing capability.
+7. Select another assigned role when required. To return to the unscoped direct/group union after an explicit selection, start a new session.
+
+**Expected result:** Role selection downscopes the current session immediately; it never grants an unassigned role, and a direct URL does not bypass client or backend enforcement.
+
+**Verification:** Exercise one permitted route and one denied route, and confirm no protected feature request starts for the denied route.
+
+## How to recover from the NoAccess wall
+
+1. Open the account menu on the NoAccess wall.
+2. If another assigned role is available, select it and wait for identity refresh.
+3. Confirm normal navigation appears and open one route authorized by the selected role.
+4. If no alternative role is available, sign out and ask an administrator to grant an approved role.
+5. Have the administrator verify the assignment with one allowed and one denied route; do not replace NoAccess with a broad role solely to remove the wall.
+
+**Expected result:** A user with another assigned role can recover without bypassing the zero-permission backend lockout; a user with only NoAccess remains blocked from application data.
+
+**Verification:** Confirm normal feature queries do not run on the wall and begin only after a role with permissions becomes active.
+
 ## How to configure and test OIDC or SAML SSO
 
 1. Select **New provider**, choose OIDC or SAML, and enter only the fields shown.
@@ -86,7 +116,7 @@ feature_ids: [ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:
 
 ## Safety and rollback
 
-Permissions from direct and group roles form a union. Remove the test assignment or restore the prior capability list to roll back. Deleting a custom role removes its assignments; it does not recreate previous access automatically.
+Permissions from direct and group roles form a union until the session is explicitly scoped to one active role. Remove the test assignment or restore the prior capability list to roll back. Deleting a custom role removes its assignments; it does not recreate previous access automatically. Never add `users.manage` to a narrow role: the application treats that capability as effective administration.
 
 A broad group role expands access for every member. Remove the role from the group or remove a member to roll back. Deleting a group removes memberships but does not delete users or roles.
 
@@ -109,6 +139,8 @@ Passwords are hashed and never displayed. Do not share them in tickets. Keep at 
 | New SSO user has no access | Assign an approved role; `noaccess` is the safe JIT default. |
 | User cannot sign in | Check status, auth source, local-login policy, lockout, required password change, or IdP state. |
 | User has unexpected access | Review both direct roles and group-inherited roles plus the session's active-role downscope. |
+| Custom role has unrestricted access | Remove `users.manage`; it intentionally makes the holder an effective administrator. |
+| Active Role cannot return to the union | Start a new session. The UI selects individual assigned roles; an explicit active role is session-scoped. |
 | Delete or demotion is blocked | Preserve the protected administrator/recovery condition instead of bypassing it. |
 
 ## Related docs

@@ -67,7 +67,7 @@ Scans are read-only but can issue many Azure calls and trigger throttling. Narro
 
 ### Freshness and partial results
 
-Results are cached. Risk thresholds are administrator-configurable, so read run metadata rather than assuming defaults. APIs expose different quota families and update times. Partial success is normal; unknown, absent, or failed rows must not be interpreted as healthy.
+Results are cached. Risk thresholds are configurable, so read run metadata rather than assuming defaults. APIs expose different quota families and update times. Partial success is normal; unknown, absent, or failed rows must not be interpreted as healthy.
 
 ## Troubleshooting
 

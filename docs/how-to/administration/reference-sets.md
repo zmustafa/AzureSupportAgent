@@ -21,7 +21,8 @@ permalink: /how-to/administration/reference-sets/
 - A reviewed pending request and destination data-boundary approval.
 - Reviewed protection, job, restore-test, replication, and severity requirements.
 - A reviewed request and an owner for the external protection change.
-- Product permission `radar.read`.
+- Product permissions `radar.read` and `radar.manage` for Retirement Radar reference changes.
+	The route/history reads use `radar.read`; save, restore, and reset use `radar.manage`.
 - Authoritative retirement/breaking-change sources and reviewed model lifecycle dates.
 
 ## Route
@@ -31,7 +32,6 @@ permalink: /how-to/administration/reference-sets/
 - Open `/admin/backupdr`.
 - Open `/admin/backupdrchanges`.
 - Open `/admin/radar`.
-- Open `/admin/settings`.
 - Open `/admin/telemetry`.
 - Open `/admin/telemetrychanges`.
 
@@ -64,7 +64,7 @@ permalink: /how-to/administration/reference-sets/
 
 1. Review the current version and affected resource types.
 2. Edit only visible log/metric category and destination expectations.
-3. Check category support and the approved Log Analytics workspace list in `/admin/settings`.
+3. Check category support and the approved Log Analytics workspace list exposed by the Telemetry workflow.
 4. Save a new revision.
 5. Run a representative Telemetry Coverage scan.
 6. Record changed baseline behavior.

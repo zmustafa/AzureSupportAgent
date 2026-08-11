@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Refresh retirement signals, map impact and ownership, track migration state, and create safe handoffs.
 permalink: /how-to/lifecycle-investigation/retirement-radar/
+feature_ids: [PROACTIVE_NAV:radar]
 ---
 
 # Triage lifecycle risk with Retirement Radar
@@ -16,7 +17,9 @@ permalink: /how-to/lifecycle-investigation/retirement-radar/
 
 ## Prerequisites
 
-- Product permission `radar.read` and the appropriate write permission for state changes when your role model separates them.
+- Product permission `radar.read` to view. Add `radar.manage` to the same custom role to refresh,
+  change state, curate the reference, generate runbooks, register findings, create tickets, or
+  seed demo data through the read-gated UI.
 - An Azure connection that can read Service Health, Advisor, and inventory at the selected scope.
 - Current workload ownership; AI only for runbook drafting; Jira/ServiceNow only for ticketing.
 
@@ -76,6 +79,7 @@ Snapshots are cached and age visibly. Source feeds can be delayed, resource matc
 
 | Symptom | Resolution |
 | --- | --- |
+| View opens but Refresh or another change returns forbidden | `radar.read` is view-only; switch to an assigned role containing `radar.manage`. |
 | No events and never loaded | Verify scope/connection and select **Refresh**. |
 | No impacted resources | Refresh inventory and check workload/resource matching. |
 | Owner is missing | Update ownership mapping, then refresh/reopen the event. |

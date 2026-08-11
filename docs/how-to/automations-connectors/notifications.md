@@ -13,14 +13,15 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
 
 ## Prerequisites
 
-- An authenticated session for in-app review; `notifications.manage` for routing-rule operations.
+- `notifications.read` for in-app review and read-state changes; `notifications.manage` for routing-rule operations.
 - At least one enabled, provider-verified connector for external delivery.
 - A known producer event type and source.
 - An authenticated user in the intended tenant.
 
 ## Route
 
-- Open `/automations/notifications`.
+- Open `/notifications` for the personal in-app center.
+- Open `/automations/notifications` for global routing rules.
 
 ## How to create and verify a notification rule
 
@@ -43,7 +44,7 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
 2. Switch between **All** and **Unread**, filter by source, or search title/body text.
 3. Select a notification to mark it read and open its source when a deep link is available.
 4. Use **Mark all read** when all currently unread items have been reviewed.
-5. Select **Manage rules** to adjust future routing.
+5. Select **Manage rules** only when the active role also has `notifications.manage`.
 
 **Expected result:** Read state and unread count update, and supported items open their originating run or report.
 
@@ -59,6 +60,8 @@ Start with narrow event and severity filters and a non-production destination. D
 
 | Symptom | Resolution |
 | --- | --- |
+| Bell or in-app route is absent | assign `notifications.read` to the active role. |
+| Manage rules is absent | assign `notifications.manage`; feed read access does not grant global rule management. |
 | New event is delayed | the list refreshes periodically; refresh after confirming the producer completed. |
 | Deep link unavailable | use source and title to locate the originating feature history. |
 | Wrong tenant's event expected | notifications and rules are tenant-scoped. |

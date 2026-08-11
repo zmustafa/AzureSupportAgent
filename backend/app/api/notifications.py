@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.core.security import Principal, get_principal, require_permission
+from app.core.security import Principal, require_permission
 from app.models import Notification, NotificationDelivery, NotificationRule
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 # Existing `require_admin` call sites (rule management) now enforce notifications.manage
 # (admins always pass via require_permission). See app.auth.permissions for the catalog.
 require_admin = require_permission("notifications.manage")
+require_read = require_permission("notifications.read")
 logger = logging.getLogger("app.api.notifications")
 
 
@@ -41,7 +42,7 @@ def _note_row(n: Notification) -> dict[str, Any]:
 async def list_notifications_endpoint(
     unread_only: bool = False,
     limit: int = 50,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_read),
     db: AsyncSession = Depends(get_db),
 ):
     """In-app center feed: events delivered to the in-app channel for this tenant."""
@@ -65,7 +66,7 @@ async def list_notifications_endpoint(
 
 @router.get("/unread-count")
 async def unread_count_endpoint(
-    principal: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(require_read), db: AsyncSession = Depends(get_db)
 ):
     delivered = (
         select(NotificationDelivery.notification_id)
@@ -91,7 +92,7 @@ async def unread_count_endpoint(
 @router.post("/{notification_id}/read")
 async def mark_read_endpoint(
     notification_id: str,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_read),
     db: AsyncSession = Depends(get_db),
 ):
     n = await db.get(Notification, notification_id)
@@ -104,7 +105,7 @@ async def mark_read_endpoint(
 
 @router.post("/read-all")
 async def mark_all_read_endpoint(
-    principal: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(require_read), db: AsyncSession = Depends(get_db)
 ):
     await db.execute(
         update(Notification)
