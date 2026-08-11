@@ -20,7 +20,7 @@ from app.automations import agents as agents_registry
 from app.automations.schedule import compute_next_run, human_schedule
 from app.connectors.registry import all_tool_names
 from app.core.db import get_db
-from app.core.security import Principal, require_admin, require_permission
+from app.core.security import Principal, require_permission
 from app.models import AuditLog, ScheduledTask, TaskRun
 
 router = APIRouter(prefix="/admin/automations", tags=["automations"])
@@ -73,6 +73,10 @@ class AgentUpsert(BaseModel):
     category: str | None = None
     allow_all_azure: bool | None = None
     allow_all_entra: bool | None = None
+    azure_tools: list[str] | None = None
+    azure_bundles: list[str] | None = None
+    entra_tools: list[str] | None = None
+    entra_bundles: list[str] | None = None
     connector_tools: list[str] | None = None
     run_mode: str | None = None
     enabled: bool | None = None
@@ -138,6 +142,10 @@ _EXPORT_FIELDS = (
     "connection_id",
     "allow_all_azure",
     "allow_all_entra",
+    "azure_tools",
+    "azure_bundles",
+    "entra_tools",
+    "entra_bundles",
     "connector_tools",
     "run_mode",
     "enabled",
@@ -256,6 +264,18 @@ async def import_agents_endpoint(
             "connection_id": raw.get("connection_id") or "",
             "allow_all_azure": bool(raw.get("allow_all_azure", True)),
             "allow_all_entra": bool(raw.get("allow_all_entra", False)),
+            "azure_tools": [
+                str(t).strip() for t in (raw.get("azure_tools") or []) if str(t).strip()
+            ],
+            "azure_bundles": [
+                str(t).strip() for t in (raw.get("azure_bundles") or []) if str(t).strip()
+            ],
+            "entra_tools": [
+                str(t).strip() for t in (raw.get("entra_tools") or []) if str(t).strip()
+            ],
+            "entra_bundles": [
+                str(t).strip() for t in (raw.get("entra_bundles") or []) if str(t).strip()
+            ],
             "connector_tools": [
                 t for t in (raw.get("connector_tools") or []) if t in valid_tools
             ],
@@ -419,6 +439,8 @@ async def agent_enhance_generate_endpoint(
             "run_mode": agent.get("run_mode", "review"),
             "allow_all_azure": agent.get("allow_all_azure", True),
             "allow_all_entra": agent.get("allow_all_entra", False),
+            "azure_bundles": agent.get("azure_bundles", []),
+            "entra_bundles": agent.get("entra_bundles", []),
         },
     }
 

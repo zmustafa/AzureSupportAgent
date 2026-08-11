@@ -19,6 +19,7 @@ import httpx
 
 from app.agent import chatgpt_oauth as oauth
 from app.agent.provider import LLMProvider, StreamEvent, ToolSpec
+from app.agent.provider_capabilities import validate_tool_count
 from app.agent.tool_protocol import (
     ToolCallDetector,
     build_tool_instructions,
@@ -117,6 +118,7 @@ class CodexProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        validate_tool_count("chatgpt", self._model, tools)
         _token, headers = await self._auth()
         instructions, inputs = _split_system_and_convo(messages)
         if tools:

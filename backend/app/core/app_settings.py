@@ -15,7 +15,6 @@ Covers the "advanced settings" found in ChatGPT/Claude-style apps:
 """
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -156,6 +155,19 @@ DEFAULTS: dict[str, Any] = {
     # Max characters of a tool DISCOVERY ("learn") result — these list a service's
     # sub-commands and are large, so they need more room than normal results.
     "tool_discovery_limit": 60000,
+    # Progressive tool discovery. The initial surface stays far below provider hard
+    # limits; local search may expand up to the per-turn ceiling.
+    "tool_routing_enabled": True,
+    "tool_initial_budget": 24,
+    "tool_max_per_turn": 32,
+    "tool_search_page_size": 8,
+    # Global raw-Entra per-tool kill switches. Caller permissions and custom-agent
+    # allowlists are applied independently.
+    "azure_mcp_disabled_tools": [],
+    "entra_mcp_disabled_tools": [],
+    "agent_skills_enabled": True,
+    # Optional direct-OpenAI Responses API path. Local routing remains the baseline.
+    "openai_native_tool_search_enabled": False,
     # Seconds to wait for a single LLM streaming request before timing out.
     "request_timeout_seconds": 180,
     # Shared DB-backed abuse/cost controls. Zero disables an individual limit.
@@ -454,6 +466,28 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["max_tool_iterations"] = max(1, min(50, int(current["max_tool_iterations"])))
     current["tool_result_limit"] = max(2000, min(200000, int(current["tool_result_limit"])))
     current["tool_discovery_limit"] = max(2000, min(400000, int(current["tool_discovery_limit"])))
+    current["tool_initial_budget"] = max(
+        4, min(96, int(current.get("tool_initial_budget", 24)))
+    )
+    current["tool_max_per_turn"] = max(
+        current["tool_initial_budget"],
+        min(128, int(current.get("tool_max_per_turn", 32))),
+    )
+    current["tool_search_page_size"] = max(
+        1, min(12, int(current.get("tool_search_page_size", 8)))
+    )
+    for disabled_key in ("azure_mcp_disabled_tools", "entra_mcp_disabled_tools"):
+        disabled_names = current.get(disabled_key) or []
+        if not isinstance(disabled_names, list):
+            disabled_names = []
+        current[disabled_key] = sorted({
+            str(name).strip() for name in disabled_names if str(name).strip()
+        })
+    current["tool_routing_enabled"] = bool(current.get("tool_routing_enabled", True))
+    current["agent_skills_enabled"] = bool(current.get("agent_skills_enabled", True))
+    current["openai_native_tool_search_enabled"] = bool(
+        current.get("openai_native_tool_search_enabled", False)
+    )
     current["request_timeout_seconds"] = max(30, min(600, int(current["request_timeout_seconds"])))
     current["expensive_requests_per_user_hour"] = max(
         0, min(100000, int(current["expensive_requests_per_user_hour"]))
@@ -694,6 +728,14 @@ def agent_runtime_params() -> dict[str, Any]:
         "max_tool_iterations": int(s.get("max_tool_iterations", 16)),
         "tool_result_limit": int(s.get("tool_result_limit", 20000)),
         "tool_discovery_limit": int(s.get("tool_discovery_limit", 60000)),
+        "tool_initial_budget": int(s.get("tool_initial_budget", 24)),
+        "tool_max_per_turn": int(s.get("tool_max_per_turn", 32)),
+        "tool_search_page_size": int(s.get("tool_search_page_size", 8)),
+        "tool_routing_enabled": bool(s.get("tool_routing_enabled", True)),
+        "agent_skills_enabled": bool(s.get("agent_skills_enabled", True)),
+        "openai_native_tool_search_enabled": bool(
+            s.get("openai_native_tool_search_enabled", False)
+        ),
         "request_timeout_seconds": int(s.get("request_timeout_seconds", 180)),
     }
 

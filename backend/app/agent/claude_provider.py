@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSpec
+from app.agent.provider_capabilities import validate_tool_count
 from app.agent.tool_protocol import FN_MARKER_HOLDBACK, find_function_call_marker
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -165,6 +166,11 @@ class ClaudeProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        validate_tool_count(
+            "claude_oauth" if self._use_oauth else "claude",
+            self._model,
+            tools,
+        )
         if not self._use_oauth and not self._api_key:
             raise RuntimeError("Claude API key is not set. Add it in the admin AI Provider settings.")
 

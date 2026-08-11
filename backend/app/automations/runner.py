@@ -117,6 +117,13 @@ async def run_task(task_id: str, trigger: str = "schedule") -> str:
         )
 
     started = _time.perf_counter()
+    from app.entra.agent_tool import behavioural_graph_tools_blocked
+
+    entra_enabled = bool(
+        agent.get("allow_all_entra", False)
+        or agent.get("entra_tools")
+        or agent.get("entra_bundles")
+    )
     orchestrator = Orchestrator(
         settings,
         provider=turn_provider,
@@ -125,10 +132,18 @@ async def run_task(task_id: str, trigger: str = "schedule") -> str:
         connector_toolset=toolset,
         extra_instructions=extra_instructions,
         write_policy_override=write_override,
+        azure_enabled=bool(agent.get("allow_all_azure", True)),
+        entra_enabled=entra_enabled,
+        entra_blocked_tools=behavioural_graph_tools_blocked(None),
+        azure_tools=agent.get("azure_tools") or [],
+        azure_bundles=agent.get("azure_bundles") or [],
+        entra_tools=agent.get("entra_tools") or [],
+        entra_bundles=agent.get("entra_bundles") or [],
     )
     assistant_text = ""
     activity: list[dict[str, Any]] = []
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    tool_routing: dict[str, Any] = {}
     error: str | None = None
     try:
         history = [{"role": "user", "content": prompt}]
@@ -140,6 +155,10 @@ async def run_task(task_id: str, trigger: str = "schedule") -> str:
                 usage["completion_tokens"] = ev.data.get("completion_tokens", 0)
                 if ev.data.get("content"):
                     assistant_text = ev.data["content"] or assistant_text
+                if ev.data.get("tool_routing"):
+                    tool_routing = dict(ev.data["tool_routing"])
+            elif ev.type == "routing":
+                tool_routing = dict(ev.data)
             elif ev.type in ("tool_start", "approval_required"):
                 activity.append(
                     {
@@ -233,7 +252,11 @@ async def run_task(task_id: str, trigger: str = "schedule") -> str:
                 target=task_id,
                 provider=turn_provider,
                 model=turn_model,
-                metadata_json={"trigger": trigger, "status": "failed" if error else "succeeded"},
+                metadata_json={
+                    "trigger": trigger,
+                    "status": "failed" if error else "succeeded",
+                    "tool_routing": tool_routing,
+                },
             )
         )
         await db.commit()

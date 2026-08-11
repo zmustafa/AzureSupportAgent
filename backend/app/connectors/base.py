@@ -95,10 +95,20 @@ class ConnectorToolset:
         return entry[0].kind if entry else "write"
 
     def specs(self) -> list[dict[str, Any]]:
-        """Tool definitions for the LLM (name/description/parameters)."""
+        """Tool definitions plus provider-neutral catalog metadata."""
         return [
-            {"name": t.name, "description": t.description, "parameters": t.parameters}
-            for t, _ in self._tools.values()
+            {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.parameters,
+                "kind": t.kind,
+                "source": (
+                    f"connector:{conn.get('type')}"
+                    if conn.get("type")
+                    else "connector"
+                ),
+            }
+            for t, conn in self._tools.values()
         ]
 
     def tool_names(self) -> list[str]:

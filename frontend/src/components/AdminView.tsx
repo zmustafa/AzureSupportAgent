@@ -255,7 +255,6 @@ export function AdminPanel({ section }: { section: AdminSection }) {
   const writePermission = adminWritePermission(section);
   const canWrite = !writePermission || has(writePermission);
   const readOnly = !canWrite && section !== "audit";
-  const tools = useQuery({ queryKey: ["tools"], queryFn: api.listTools, enabled: section === "tools" });
   const usage = useQuery({ queryKey: ["usage"], queryFn: api.usage, enabled: section === "usage" });
 
   // Bare /admin → a Settings overview landing page with links to every section.
@@ -296,44 +295,7 @@ export function AdminPanel({ section }: { section: AdminSection }) {
         {section === "telemetrychanges" && <TelemetryChangeRequestsCard />}
         {section === "backupdrchanges" && <BackupDrChangeRequestsCard />}
         {section === "radar" && <RadarReferenceCard />}
-        {section === "tools" && (
-          <Card title="Azure MCP Tools">
-            {tools.isError && (
-              <p className="text-sm text-red-600">
-                MCP server unavailable. Check the connection and Azure sign-in.
-              </p>
-            )}
-            {tools.isLoading && (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-16 animate-pulse rounded border bg-gray-100" />
-                ))}
-              </div>
-            )}
-            {!tools.isLoading && !tools.isError && tools.data?.length === 0 && (
-              <p className="text-sm text-gray-500">No tools are currently exposed.</p>
-            )}
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {tools.data?.map((t) => (
-                <div key={t.name} className="rounded border bg-white p-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-medium">{t.name}</span>
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs ${
-                        t.kind === "write"
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-green-100 text-green-800"
-                      }`}
-                    >
-                      {t.kind}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">{t.description}</p>
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
+        {section === "tools" && <AzureMcpToolsCard />}
 
         {section === "tools" && <BuiltinToolsCard />}
 
@@ -1544,6 +1506,127 @@ const ENTRA_GRAPH_PERMISSIONS: { name: string; desc: string }[] = [
   { name: "Application.ReadWrite.All", desc: "Create, update, and delete applications (app registrations) and service principals" },
 ];
 
+function AzureMcpToolsCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["tools"], queryFn: api.listTools, retry: false });
+  const routingQ = useQuery({
+    queryKey: ["toolRoutingDiagnostics", "azure"],
+    queryFn: () => api.toolRoutingDiagnostics("Diagnose VM network health and performance"),
+    retry: false,
+  });
+  const [search, setSearch] = useState("");
+  const [bundle, setBundle] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const tools = q.data?.tools ?? [];
+  const bundles = q.data?.bundles ?? [];
+  const disabled = new Set(q.data?.disabled ?? []);
+  const term = search.trim().toLowerCase();
+  const visible = tools.filter((tool) => {
+    if (bundle && !tool.bundles.includes(bundle)) return false;
+    if (!term) return true;
+    return `${tool.name} ${tool.description} ${tool.bundles.join(" ")}`.toLowerCase().includes(term);
+  });
+
+  async function saveDisabled(next: Set<string>) {
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateAppSettings({ azure_mcp_disabled_tools: [...next].sort() });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["tools"] }),
+        qc.invalidateQueries({ queryKey: ["toolRoutingDiagnostics"] }),
+        qc.invalidateQueries({ queryKey: ["appSettings"] }),
+      ]);
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleTool(name: string, on: boolean) {
+    const next = new Set(disabled);
+    if (on) next.delete(name);
+    else next.add(name);
+    void saveDisabled(next);
+  }
+
+  function toggleBundle(name: string) {
+    const names = tools.filter((tool) => tool.bundles.includes(name)).map((tool) => tool.name);
+    const allOn = names.every((toolName) => !disabled.has(toolName));
+    const next = new Set(disabled);
+    for (const toolName of names) {
+      if (allOn) next.add(toolName);
+      else next.delete(toolName);
+    }
+    void saveDisabled(next);
+  }
+
+  return (
+    <Card title="Azure MCP Tools">
+      <p className="mb-3 text-sm text-gray-500">
+        Azure service tools are indexed once, routed by request, and loaded progressively.
+        Disable a namespace here to remove it from normal chat, deep investigation, catalog
+        search, skills, and custom-agent expansion.
+      </p>
+      {routingQ.data && (
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            ["Catalog", routingQ.data.routing.available],
+            ["Initially exposed", routingQ.data.routing.selected],
+            ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
+            ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
+          ].map(([statLabel, value]) => (
+            <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
+              <div className="text-lg font-semibold text-gray-800">{value}</div>
+              <div className="text-[11px] text-gray-500">{statLabel}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {saving && <p className="mb-2 text-xs text-gray-400">Saving…</p>}
+      {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>}
+      {q.isError && <p className="text-sm text-red-600">MCP server unavailable. Check the connection and Azure sign-in.</p>}
+      {q.isLoading && <div className="h-24 animate-pulse rounded border bg-gray-100" />}
+      {!q.isLoading && !q.isError && tools.length === 0 && <p className="text-sm text-gray-500">No tools are currently exposed.</p>}
+      {tools.length > 0 && (
+        <>
+          <div className="mb-2 flex flex-wrap gap-2">
+            <input className="min-w-[14rem] flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search Azure tools…" aria-label="Search Azure tools" />
+            <select className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm" value={bundle} onChange={(e) => setBundle(e.target.value)} aria-label="Filter by Azure tool bundle">
+              <option value="">All bundles</option>
+              {bundles.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {bundles.map((name) => {
+              const names = tools.filter((tool) => tool.bundles.includes(name)).map((tool) => tool.name);
+              const allOn = names.length > 0 && names.every((toolName) => !disabled.has(toolName));
+              return <button type="button" key={name} onClick={() => toggleBundle(name)} className={`rounded-full border px-2.5 py-1 text-[11px] ${allOn ? "border-brand/30 bg-brand/5 text-brand" : "border-gray-200 text-gray-500"}`}>{allOn ? "✓ " : ""}{name} · {names.length}</button>;
+            })}
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {visible.map((tool) => (
+              <div key={tool.name} className="rounded border bg-white p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-medium">{tool.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-2 py-0.5 text-xs ${tool.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{tool.kind}</span>
+                    <Toggle label="" ariaLabel={`Enable Azure tool ${tool.name}`} checked={!disabled.has(tool.name)} onChange={(on) => toggleTool(tool.name, on)} />
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">{tool.description}</p>
+                <div className="mt-1 flex flex-wrap gap-1">{tool.bundles.map((name) => <span key={name} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 /** Built-in first-party utility tools (web fetch + network diagnostics) with an admin
  *  kill-switch and per-tool enable/disable. All tools are read-only + SSRF-guarded. */
 function BuiltinToolsCard() {
@@ -1645,12 +1728,27 @@ function BuiltinToolsCard() {
 function EntraToolsCard() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["entraTools"], queryFn: api.listEntraTools, retry: false });
+  const routingQ = useQuery({
+    queryKey: ["toolRoutingDiagnostics", "entra"],
+    queryFn: () => api.toolRoutingDiagnostics("Investigate a user's MFA and Conditional Access"),
+    retry: false,
+  });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [bundle, setBundle] = useState("");
 
   const enabled = q.data?.enabled ?? false;
   const connectionConfigured = q.data?.connection_configured ?? false;
   const allTools = q.data?.tools ?? [];
+  const disabled = new Set(q.data?.disabled ?? []);
+  const bundles = q.data?.bundles ?? [];
+  const term = search.trim().toLowerCase();
+  const visibleTools = allTools.filter((t) => {
+    if (bundle && !t.bundles.includes(bundle)) return false;
+    if (!term) return true;
+    return `${t.name} ${t.description} ${t.bundles.join(" ")}`.toLowerCase().includes(term);
+  });
 
   async function toggleEnabled(v: boolean) {
     setSaving(true);
@@ -1664,6 +1762,41 @@ function EntraToolsCard() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveDisabled(next: Set<string>) {
+    setSaving(true);
+    setError("");
+    try {
+      await api.updateAppSettings({ entra_mcp_disabled_tools: [...next].sort() });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["entraTools"] }),
+        qc.invalidateQueries({ queryKey: ["toolRoutingDiagnostics"] }),
+        qc.invalidateQueries({ queryKey: ["appSettings"] }),
+      ]);
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleTool(name: string, on: boolean) {
+    const next = new Set(disabled);
+    if (on) next.delete(name);
+    else next.add(name);
+    void saveDisabled(next);
+  }
+
+  function toggleBundle(name: string) {
+    const names = allTools.filter((t) => t.bundles.includes(name)).map((t) => t.name);
+    const allOn = names.every((n) => !disabled.has(n));
+    const next = new Set(disabled);
+    for (const toolName of names) {
+      if (allOn) next.add(toolName);
+      else next.delete(toolName);
+    }
+    void saveDisabled(next);
   }
 
   return (
@@ -1702,6 +1835,29 @@ function EntraToolsCard() {
           </div>
         )}
 
+        {routingQ.data && (
+          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Catalog", routingQ.data.routing.available],
+              ["Initially exposed", routingQ.data.routing.selected],
+              ["Per-turn ceiling", routingQ.data.routing.max_per_turn],
+              ["Provider hard limit", routingQ.data.provider.max_tool_definitions],
+            ].map(([statLabel, value]) => (
+              <div key={String(statLabel)} className="rounded-lg border bg-gray-50 px-3 py-2">
+                <div className="text-lg font-semibold text-gray-800">{value}</div>
+                <div className="text-[11px] text-gray-500">{statLabel}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {routingQ.data && routingQ.data.routing.available > routingQ.data.provider.max_tool_definitions && (
+          <div className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            The full catalog is larger than {routingQ.data.provider.id}&apos;s limit, so the
+            router exposes only relevant tools and loads more on demand. No arbitrary
+            truncation is used.
+          </div>
+        )}
+
         {q.isError && (
           <p className="text-sm text-red-600">
             EntraID MCP server unavailable: {formatError(q.error)}
@@ -1717,22 +1873,64 @@ function EntraToolsCard() {
         {!q.isLoading && !q.isError && allTools.length === 0 && (
           <p className="text-sm text-gray-500">No tools are currently exposed.</p>
         )}
+        {!q.isLoading && !q.isError && allTools.length > 0 && (
+          <>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <input
+                className="min-w-[14rem] flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search Entra tools…"
+                aria-label="Search Entra tools"
+              />
+              <select
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm"
+                value={bundle}
+                onChange={(e) => setBundle(e.target.value)}
+                aria-label="Filter by Entra tool bundle"
+              >
+                <option value="">All bundles</option>
+                {bundles.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {bundles.map((name) => {
+                const names = allTools.filter((t) => t.bundles.includes(name)).map((t) => t.name);
+                const allOn = names.length > 0 && names.every((n) => !disabled.has(n));
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => toggleBundle(name)}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${allOn ? "border-brand/30 bg-brand/5 text-brand" : "border-gray-200 text-gray-500"}`}
+                  >
+                    {allOn ? "✓ " : ""}{name} · {names.length}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {allTools.map((t) => (
-            <div key={t.name} className="rounded border bg-white p-3 text-sm">
-              <div className="flex items-center justify-between">
+          {visibleTools.map((t) => (
+            <div key={t.name} className={`rounded border bg-white p-3 text-sm ${t.permission_withheld ? "opacity-60" : ""}`}>
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-mono font-medium">{t.name}</span>
-                <span
-                  className={`rounded px-2 py-0.5 text-xs ${
-                    t.kind === "write"
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-green-100 text-green-800"
-                  }`}
-                >
-                  {t.kind}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded px-2 py-0.5 text-xs ${t.kind === "write" ? "bg-amber-100 text-amber-800" : "bg-green-100 text-green-800"}`}>{t.kind}</span>
+                  <Toggle
+                    label=""
+                    ariaLabel={`Enable Entra tool ${t.name}`}
+                    checked={enabled && !disabled.has(t.name) && !t.permission_withheld}
+                    onChange={(v) => toggleTool(t.name, v)}
+                  />
+                </div>
               </div>
               <p className="mt-1 text-xs text-gray-500">{t.description}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {t.bundles.map((name) => <span key={name} className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{name}</span>)}
+                {t.permission_withheld && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">permission withheld</span>}
+              </div>
             </div>
           ))}
         </div>
@@ -3782,6 +3980,54 @@ function AppSettingsCard() {
             step={5000}
             suffix="chars"
             onChange={(v) => set({ tool_discovery_limit: v })}
+          />
+          <Toggle
+            label="Progressive tool routing"
+            hint="Expose a small relevant tool surface first, then load additional permitted tools through local catalog search. Keep enabled to avoid provider tool-count failures."
+            checked={form.tool_routing_enabled ?? true}
+            onChange={(v) => set({ tool_routing_enabled: v })}
+          />
+          <NumberField
+            label="Initial tool budget"
+            hint="Maximum schemas initially exposed after relevance routing. Four internal discovery tools are included in this count."
+            value={form.tool_initial_budget ?? 24}
+            min={4}
+            max={96}
+            step={1}
+            suffix="tools"
+            onChange={(v) => set({ tool_initial_budget: v })}
+          />
+          <NumberField
+            label="Per-turn tool ceiling"
+            hint="Maximum schemas after deferred searches and skill bundle expansion. It can never exceed 128."
+            value={form.tool_max_per_turn ?? 32}
+            min={4}
+            max={128}
+            step={1}
+            suffix="tools"
+            onChange={(v) => set({ tool_max_per_turn: v })}
+          />
+          <NumberField
+            label="Tools loaded per search"
+            hint="How many matching schemas a catalog search may add in one expansion round."
+            value={form.tool_search_page_size ?? 8}
+            min={1}
+            max={12}
+            step={1}
+            suffix="tools"
+            onChange={(v) => set({ tool_search_page_size: v })}
+          />
+          <Toggle
+            label="On-demand support skills"
+            hint="List compact workflow summaries and load the full investigation procedure only when selected. Skills guide work but never grant access."
+            checked={form.agent_skills_enabled ?? true}
+            onChange={(v) => set({ agent_skills_enabled: v })}
+          />
+          <Toggle
+            label="OpenAI native tool search (experimental)"
+            hint="For supported direct OpenAI Responses API models, defer schemas to client-executed native tool search. Other providers continue using the local router."
+            checked={form.openai_native_tool_search_enabled ?? false}
+            onChange={(v) => set({ openai_native_tool_search_enabled: v })}
           />
           <NumberField
             label="LLM request timeout"

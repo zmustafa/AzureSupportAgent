@@ -16,6 +16,18 @@ class ToolSpec:
     name: str
     description: str
     parameters: dict[str, Any]  # JSON schema
+    # Provider-neutral routing metadata. Existing callers only provide the first three
+    # fields and keep the same behavior; the orchestrator enriches runtime catalogs.
+    kind: str = "read"
+    source: str = "unknown"
+    domain: str = "general"
+    bundles: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
+    always_available: bool = False
+    priority: int = 0
+    # Responses-API providers can mark non-initial tools for native tool search. Other
+    # adapters deliberately ignore this flag and receive the bounded local selection.
+    defer_loading: bool = False
 
 
 @dataclass

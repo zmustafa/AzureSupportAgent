@@ -1532,11 +1532,17 @@ async def _start_message_turn(
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
     if turn_agent is not None:
-        turn_entra_enabled = bool(turn_agent.get("allow_all_entra", False))
+        turn_entra_enabled = bool(
+            turn_agent.get("allow_all_entra", False)
+            or turn_agent.get("entra_tools")
+            or turn_agent.get("entra_bundles")
+        )
+        turn_azure_enabled = bool(turn_agent.get("allow_all_azure", True))
     else:
         from app.core.app_settings import load_settings as _load_app_settings
 
         turn_entra_enabled = bool(_load_app_settings().get("entra_mcp_enabled", False))
+        turn_azure_enabled = True
 
     # Behavioural Graph reads (sign-in logs, directory audit) are withheld from a caller who
     # does not hold `investigate.activity`. Without this the first-party gate is decorative:
@@ -1580,6 +1586,9 @@ async def _start_message_turn(
                 connector_toolset=turn_connector_toolset,
                 focus=turn_deep_agents,
                 architecture_memory=turn_arch_memory or None,
+                azure_enabled=turn_azure_enabled,
+                azure_tools=(turn_agent or {}).get("azure_tools") or [],
+                azure_bundles=(turn_agent or {}).get("azure_bundles") or [],
             )
         else:
             runner = Orchestrator(
@@ -1590,8 +1599,13 @@ async def _start_message_turn(
                 connector_toolset=turn_connector_toolset,
                 extra_instructions=turn_extra_instructions,
                 write_policy_override=turn_write_override,
+                azure_enabled=turn_azure_enabled,
                 entra_enabled=turn_entra_enabled,
                 entra_blocked_tools=turn_entra_blocked,
+                azure_tools=(turn_agent or {}).get("azure_tools") or [],
+                azure_bundles=(turn_agent or {}).get("azure_bundles") or [],
+                entra_tools=(turn_agent or {}).get("entra_tools") or [],
+                entra_bundles=(turn_agent or {}).get("entra_bundles") or [],
             )
         orchestrator = runner
         async with SessionLocal() as task_db:
@@ -1601,6 +1615,7 @@ async def _start_message_turn(
 
             assistant_text = ""
             usage = {"prompt_tokens": 0, "completion_tokens": 0}
+            tool_routing: dict[str, Any] = {}
             activity: list[dict[str, Any]] = []
             reasoning_buf = ""
             tokens_since_save = 0
@@ -1642,6 +1657,10 @@ async def _start_message_turn(
                             # Keep the live event-accumulated tree; just fold in the
                             # research summary the runner reports at the end.
                             investigation["research"] = ev.data["investigation"].get("research")
+                        if ev.data.get("tool_routing"):
+                            tool_routing = dict(ev.data["tool_routing"])
+                    elif ev.type == "routing":
+                        tool_routing = dict(ev.data)
 
                     # Accumulate the deep-investigation structure for persistence.
                     if ev.type == "phase":
@@ -1771,6 +1790,7 @@ async def _start_message_turn(
                             "chat_id": chat_id,
                             "prompt_tokens": usage["prompt_tokens"],
                             "completion_tokens": usage["completion_tokens"],
+                            "tool_routing": tool_routing,
                         },
                     )
                 )

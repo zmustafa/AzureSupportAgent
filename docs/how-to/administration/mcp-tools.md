@@ -13,8 +13,8 @@ permalink: /how-to/administration/mcp-tools/
 ## Prerequisites
 
 - Product permission `settings.read` to open the Admin tool catalogs.
-- Both `settings.read` and `settings.write` to change built-in utility enablement, per-tool
-	disablement, or default-assistant Entra exposure.
+- Both `settings.read` and `settings.write` to change Azure, built-in, or Entra per-tool and
+	bundle exposure, routing budgets, skills, or default-assistant Entra exposure.
 - A running Azure MCP server configuration.
 - A working deployment identity or Azure credential chain.
 - Entra MCP enabled in General settings.
@@ -29,11 +29,13 @@ permalink: /how-to/administration/mcp-tools/
 
 ## How to inspect Azure MCP and built-in tools
 
-1. Review each live Azure MCP tool's name, description, and `read` or `write` classification.
-2. Review the built-in utility catalog shown on the same route.
-3. Compare the catalog with General settings for MCP read-only mode, built-in enablement, disabled tools, egress policy, command execution, and timeouts.
-4. For a required tool, confirm its target Azure connection and least-privilege Azure RBAC.
-5. Use the tool in a bounded read-only workflow before considering a write.
+1. Review the full catalog, initially exposed count, per-turn ceiling, and provider hard limit.
+2. Search by tool name or description, or filter by an Azure domain bundle.
+3. Review each live Azure MCP tool's name, description, bundle, and classification.
+4. Review the built-in utility catalog shown on the same route.
+5. Compare the catalog with General settings for routing budgets, MCP read-only mode, built-in enablement, disabled tools, egress policy, command execution, and timeouts.
+6. For a required tool, confirm its target Azure connection and least-privilege Azure RBAC.
+7. Use the tool in a bounded read-only workflow before considering a write.
 
 **Expected result:** The required tool is visible with an understood classification and policy boundary.
 
@@ -44,7 +46,7 @@ permalink: /how-to/administration/mcp-tools/
 1. Open `/admin/tools` or `/admin/entratools` with an active role containing both
 	`settings.read` and `settings.write`.
 2. Record the current global and per-tool state and the workflows that depend on it.
-3. Change one built-in utility toggle or the default-assistant Entra exposure switch.
+3. Change one Azure, built-in, or Entra tool/bundle toggle, or the default-assistant Entra exposure switch.
 4. Reload the page and confirm the saved state.
 5. Start a new bounded chat and verify the intended tool is present or absent. Do not use a
 	write operation merely to test visibility.
@@ -58,12 +60,25 @@ harmless read with the approved execution role and connection.
 
 ## How to inspect and validate EntraID MCP tools
 
-1. Review server and connection status, then inspect tool name, description, and read/write classification.
+1. Review server/connection status and catalog budgets, then inspect tool name, description,
+	bundles, classification, and permission-withheld badges.
 2. If the connection is not ready, open `/admin/tenants` and choose **Validate EntraID** on the intended service-principal connection.
 3. Review satisfied and missing Microsoft Graph application permissions.
 4. Grant only permissions required by the intended read or write, then provide administrator consent.
 5. Revalidate the connection and reload `/admin/entratools`.
 6. Run a bounded directory read before any approved mutation.
+
+## How to validate progressive discovery
+
+1. Enable the Entra MCP catalog and leave progressive routing enabled.
+2. Send a greeting. The routing telemetry should show only the four internal discovery schemas.
+3. Ask a Conditional Access question. The initial surface should contain the CA bundle, not
+	unrelated Azure IAM or network tools.
+4. Ask the model to search for an ownerless-applications capability. Confirm `search_tools`
+	loads a small bounded set and the matching read tool executes on the next round.
+5. Confirm every selected/expanded count remains below the configured ceiling and provider limit.
+6. Review the `chat.turn` audit metadata for source/domain counts, schema bytes, selected names,
+	and selection reasons. Prompt contents and tool arguments are not recorded as routing telemetry.
 
 **Expected result:** The Entra page reports an enabled, configured catalog and the intended tool can authenticate to Microsoft Graph.
 
@@ -86,6 +101,7 @@ Catalog content depends on the connected server version. Keep MCP read-only enab
 | Write tool is absent | Confirm whether MCP read-only intentionally filters it. |
 | Tool is visible but unauthorized | Grant only the exact Azure role and scope required, then retest. |
 | Catalog is visible but a toggle returns forbidden | The active role has `settings.read` only. Switch to an approved role containing `settings.write` as well. |
+| Provider reports an oversized tools array | Keep progressive routing enabled and lower the initial/per-turn budgets if customized. The provider adapter now rejects over-limit requests before sending them. |
 
 ## Related docs
 

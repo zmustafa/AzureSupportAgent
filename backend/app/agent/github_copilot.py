@@ -24,6 +24,7 @@ import httpx
 
 from app.agent import github_copilot_auth as auth
 from app.agent.provider import LLMProvider, StreamEvent, ToolCallRequest, ToolSpec
+from app.agent.provider_capabilities import validate_tool_count
 
 DEFAULT_API_BASE_URL = auth.DEFAULT_API_BASE_URL
 
@@ -561,6 +562,7 @@ class GitHubCopilotChatProvider(LLMProvider):
         tools: list[ToolSpec] | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        validate_tool_count("github_copilot", self._model, tools)
         # Guarantee reasoning models (Opus 4.x, GPT-5, o-series, …) enough output budget
         # so hidden reasoning can't consume the whole cap and return an EMPTY completion.
         # Applied here so every downstream path (editor completions, /responses) inherits it.

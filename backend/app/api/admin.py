@@ -106,6 +106,14 @@ class AppSettingsUpdate(BaseModel):
     max_tool_iterations: int | None = None
     tool_result_limit: int | None = None
     tool_discovery_limit: int | None = None
+    tool_routing_enabled: bool | None = None
+    tool_initial_budget: int | None = Field(default=None, ge=4, le=96)
+    tool_max_per_turn: int | None = Field(default=None, ge=4, le=128)
+    tool_search_page_size: int | None = Field(default=None, ge=1, le=12)
+    azure_mcp_disabled_tools: list[str] | None = None
+    entra_mcp_disabled_tools: list[str] | None = None
+    agent_skills_enabled: bool | None = None
+    openai_native_tool_search_enabled: bool | None = None
     request_timeout_seconds: int | None = None
     expensive_requests_per_user_hour: int | None = Field(default=None, ge=0, le=100000)
     expensive_requests_per_tenant_hour: int | None = Field(default=None, ge=0, le=1000000)
@@ -1288,9 +1296,28 @@ async def list_mcp_tools(_: Principal = Depends(require_settings_read)):
         raise HTTPException(status_code=502, detail=f"MCP unavailable: {exc}") from exc
     finally:
         client.close()
-    return [
-        {"name": t.name, "description": t.description, "kind": t.kind} for t in tools
-    ]
+    from app.agent.provider import ToolSpec
+    from app.agent.tool_catalog import make_entry
+    from app.core.app_settings import load_settings
+
+    disabled = {str(v) for v in (load_settings().get("azure_mcp_disabled_tools") or [])}
+    enriched = []
+    for tool in tools:
+        entry = make_entry(
+            ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+            source_hint="azure_mcp",
+            kind=tool.kind,
+        )
+        enriched.append({
+            **entry.public(),
+            "active": tool.name not in disabled,
+            "disabled": tool.name in disabled,
+        })
+    return {
+        "disabled": sorted(disabled),
+        "bundles": sorted({b for item in enriched for b in item.get("bundles", [])}),
+        "tools": enriched,
+    }
 
 
 @router.get("/builtin/tools")
@@ -1316,7 +1343,7 @@ async def list_builtin_tools(_: Principal = Depends(require_settings_read)):
 
 
 @router.get("/entra/tools")
-async def list_entra_tools(_: Principal = Depends(require_settings_read)):
+async def list_entra_tools(principal: Principal = Depends(require_settings_read)):
     """Discover the tools exposed by the EntraID (Microsoft Graph) MCP server, with
     read/write class. Authenticates with the default Azure connection's service
     principal (the same identity the agent uses for directory queries)."""
@@ -1332,13 +1359,184 @@ async def list_entra_tools(_: Principal = Depends(require_settings_read)):
         raise HTTPException(status_code=502, detail=f"EntraID MCP unavailable: {exc}") from exc
     finally:
         client.close()
-    enabled = bool(load_settings().get("entra_mcp_enabled", False))
+    app_settings = load_settings()
+    enabled = bool(app_settings.get("entra_mcp_enabled", False))
+    disabled = {str(v) for v in (app_settings.get("entra_mcp_disabled_tools") or [])}
+    from app.agent.provider import ToolSpec
+    from app.agent.tool_catalog import make_entry
+    from app.entra.agent_tool import behavioural_graph_tools_blocked
+
+    blocked = behavioural_graph_tools_blocked(principal)
+    enriched = []
+    for tool in tools:
+        entry = make_entry(
+            ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+            source_hint="entra_mcp",
+            kind=tool.kind,
+        )
+        enriched.append({
+            **entry.public(),
+            "active": enabled and tool.name not in disabled and tool.name not in blocked,
+            "disabled": tool.name in disabled,
+            "permission_withheld": tool.name in blocked,
+        })
     return {
         "enabled": enabled,
         "connection_configured": connection is not None,
-        "tools": [
-            {"name": t.name, "description": t.description, "kind": t.kind} for t in tools
-        ],
+        "disabled": sorted(disabled),
+        "permission_withheld": sorted(blocked),
+        "bundles": sorted({b for item in enriched for b in item.get("bundles", [])}),
+        "tools": enriched,
+    }
+
+
+@router.get("/tool-routing/diagnostics")
+async def tool_routing_diagnostics(
+    query: str = "",
+    agent_id: str = "",
+    principal: Principal = Depends(require_settings_read),
+):
+    """Measure the effective catalog and preview deterministic bounded selection."""
+    from app.agent.provider import ToolSpec
+    from app.agent.provider_capabilities import capabilities_for
+    from app.agent.tool_catalog import ToolCatalog, make_entry
+    from app.agent.tool_router import internal_tool_specs, route_initial
+    from app.automations import agents as agents_registry
+    from app.connectors.registry import build_toolset
+    from app.core.app_settings import agent_runtime_params, load_settings
+    from app.core.azure_connections import get_default_connection
+    from app.core.llm_config import get_active
+    from app.entra.agent_tool import (
+        behavioural_graph_tools_blocked,
+        register_entra_identity_tools,
+    )
+    from app.iam.agent_tool import register_iam_tools
+    from app.mcp.client import build_entra_mcp_client
+    from app.ownership.agent_tool import register_ownership_tools
+
+    app_settings = load_settings()
+    rt = agent_runtime_params()
+    connection = get_default_connection()
+    agent = agents_registry.get_agent(agent_id) if agent_id else None
+    allow_azure = bool(agent.get("allow_all_azure", True)) if agent else True
+    azure_names = {str(v) for v in ((agent or {}).get("azure_tools") or [])}
+    azure_bundles = {str(v) for v in ((agent or {}).get("azure_bundles") or [])}
+    allow_entra = (
+        bool(agent.get("allow_all_entra", False))
+        if agent
+        else bool(app_settings.get("entra_mcp_enabled", False))
+    )
+    entra_names = {str(v) for v in ((agent or {}).get("entra_tools") or [])}
+    entra_bundles = {str(v) for v in ((agent or {}).get("entra_bundles") or [])}
+    allow_entra = bool(allow_entra or entra_names or entra_bundles)
+
+    entries = []
+    errors: dict[str, str] = {}
+    azure_client = build_mcp_client(settings, connection=connection)
+    try:
+        azure_discovered = await azure_client.list_tools()
+    except Exception as exc:  # noqa: BLE001 - diagnostics report partial catalogs
+        azure_discovered = []
+        errors["azure_mcp"] = str(exc)[:300]
+    finally:
+        azure_client.close()
+    disabled_azure = {
+        str(v) for v in (app_settings.get("azure_mcp_disabled_tools") or [])
+    }
+    for tool in azure_discovered:
+        if tool.name in disabled_azure:
+            continue
+        entry = make_entry(
+            ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+            source_hint="azure_mcp",
+            kind=tool.kind,
+        )
+        if allow_azure or entry.name in azure_names or azure_bundles.intersection(entry.bundles):
+            entries.append(entry)
+
+    if allow_entra:
+        entra_client = build_entra_mcp_client(settings, connection=connection)
+        try:
+            entra_discovered = await entra_client.list_tools()
+        except Exception as exc:  # noqa: BLE001
+            entra_discovered = []
+            errors["entra_mcp"] = str(exc)[:300]
+        finally:
+            entra_client.close()
+        disabled = {str(v) for v in (app_settings.get("entra_mcp_disabled_tools") or [])}
+        blocked = behavioural_graph_tools_blocked(principal)
+        for tool in entra_discovered:
+            if tool.name in disabled or tool.name in blocked:
+                continue
+            entry = make_entry(
+                ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+                source_hint="entra_mcp",
+                kind=tool.kind,
+            )
+            scoped = not (entra_names or entra_bundles) or (
+                entry.name in entra_names or entra_bundles.intersection(entry.bundles)
+            )
+            if scoped:
+                entries.append(entry)
+
+    toolset = build_toolset(
+        (agent or {}).get("connector_tools") if agent else None,
+        include_connectors=bool(agent),
+    )
+    tenant_id = str((connection or {}).get("tenant_id") or principal.tenant_id or "default")
+    register_iam_tools(toolset, tenant_id=tenant_id)
+    register_ownership_tools(toolset, tenant_id=principal.tenant_id)
+    register_entra_identity_tools(
+        toolset,
+        tenant_id=tenant_id,
+        principal=principal,
+        connection=connection,
+    )
+    for spec in toolset.specs():
+        entries.append(make_entry(
+            ToolSpec(
+                spec["name"], spec["description"], spec["parameters"],
+                kind=spec.get("kind", "read"),
+            ),
+            source_hint=spec.get("source", "connector"),
+            kind=spec.get("kind", "read"),
+        ))
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    catalog = ToolCatalog(entries)
+    preview_query = query.strip() or "Investigate the requested Azure or Entra support issue"
+    surface = route_initial(
+        preview_query,
+        catalog,
+        initial_budget=(
+            rt["tool_initial_budget"]
+            if rt["tool_routing_enabled"]
+            else rt["tool_max_per_turn"]
+        ),
+        max_per_turn=rt["tool_max_per_turn"],
+        search_page_size=rt["tool_search_page_size"],
+        explicit_names=tuple(azure_names | entra_names),
+        explicit_bundles=tuple(azure_bundles | entra_bundles),
+        fill_to_budget=not rt["tool_routing_enabled"],
+    )
+    active = get_active(
+        (agent or {}).get("provider") or None,
+        (agent or {}).get("model") or None,
+    )
+    caps = capabilities_for(active.get("provider"), active.get("model"))
+    selected = set(surface.active_names)
+    return {
+        "query": preview_query,
+        "agent_id": agent_id or None,
+        "provider": {
+            "id": caps.provider,
+            "model": caps.model,
+            "max_tool_definitions": caps.max_tool_definitions,
+            "native_tool_search": caps.native_tool_search,
+            "api": caps.api,
+        },
+        "routing": surface.diagnostics(),
+        "errors": errors,
+        "tools": [entry.public(selected=entry.name in selected) for entry in catalog.entries()],
     }
 
 

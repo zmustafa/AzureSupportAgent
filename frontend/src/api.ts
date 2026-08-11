@@ -4862,13 +4862,24 @@ export const api = {
       { method: "POST", body: JSON.stringify({ content }) },
     ),
   listTools: () =>
-    http<{ name: string; description: string; kind: string }[]>("/admin/mcp/tools"),
+    http<{
+      disabled: string[];
+      bundles: string[];
+      tools: ToolCatalogEntry[];
+    }>("/admin/mcp/tools"),
   listEntraTools: () =>
     http<{
       enabled: boolean;
       connection_configured: boolean;
-      tools: { name: string; description: string; kind: string }[];
+      disabled: string[];
+      permission_withheld: string[];
+      bundles: string[];
+      tools: ToolCatalogEntry[];
     }>("/admin/entra/tools"),
+  toolRoutingDiagnostics: (query = "", agentId = "") =>
+    http<ToolRoutingDiagnostics>(
+      `/admin/tool-routing/diagnostics?query=${encodeURIComponent(query)}&agent_id=${encodeURIComponent(agentId)}`,
+    ),
   listBuiltinTools: () =>
     http<{
       enabled: boolean;
@@ -11798,6 +11809,49 @@ export interface ConnectorToolInfo {
   connector_type: string;
 }
 
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  source: string;
+  domain: string;
+  bundles: string[];
+  kind: string;
+  selected?: boolean;
+  active?: boolean;
+  disabled?: boolean;
+  permission_withheld?: boolean;
+  reason?: string;
+}
+
+export interface ToolRoutingDiagnostics {
+  query: string;
+  agent_id?: string | null;
+  provider: {
+    id: string;
+    model: string;
+    max_tool_definitions: number;
+    native_tool_search: boolean;
+    api: string;
+  };
+  routing: {
+    available: number;
+    selected: number;
+    withheld: number;
+    initial_budget: number;
+    max_per_turn: number;
+    schema_bytes_available: number;
+    schema_bytes_selected: number;
+    by_source: Record<string, number>;
+    by_domain: Record<string, number>;
+    selected_by_source: Record<string, number>;
+    selected_by_domain: Record<string, number>;
+    selected_tools: string[];
+    selection_reasons: Record<string, string>;
+  };
+  errors: Record<string, string>;
+  tools: ToolCatalogEntry[];
+}
+
 export interface CustomAgent {
   id: string;
   name: string;
@@ -11808,6 +11862,10 @@ export interface CustomAgent {
   connection_id: string;
   allow_all_azure: boolean;
   allow_all_entra?: boolean;
+  azure_tools?: string[];
+  azure_bundles?: string[];
+  entra_tools?: string[];
+  entra_bundles?: string[];
   connector_tools: string[];
   run_mode: string;
   enabled?: boolean;
@@ -11848,6 +11906,8 @@ export interface AgentDraft {
   instructions: string;
   connector_tools: string[];
   allow_all_azure: boolean;
+  azure_bundles?: string[];
+  entra_bundles?: string[];
   run_mode: string;
   suggested_provider: string;
   suggested_model: string;
@@ -12133,6 +12193,10 @@ export interface AgentConfig {
   connection_id: string | null;
   allow_all_azure: boolean;
   allow_all_entra?: boolean;
+  azure_tools?: string[];
+  azure_bundles?: string[];
+  entra_tools?: string[];
+  entra_bundles?: string[];
   connector_tools: string[];
   run_mode: string;
 }
@@ -12160,6 +12224,8 @@ export interface AgentEnhanceDraft {
   instructions: string;
   connector_tools: string[];
   allow_all_azure: boolean;
+  azure_bundles?: string[];
+  entra_bundles?: string[];
   run_mode: string;
   summary: string;
   changes: string[];
@@ -12170,6 +12236,8 @@ export interface AgentEnhanceCurrent {
   connector_tools: string[];
   run_mode: string;
   allow_all_azure: boolean;
+  azure_bundles?: string[];
+  entra_bundles?: string[];
 }
 export interface AgentEnhanceResult {
   draft: AgentEnhanceDraft;
@@ -12814,6 +12882,14 @@ export interface AppSettings {
   max_tool_iterations: number;
   tool_result_limit: number;
   tool_discovery_limit: number;
+  tool_routing_enabled?: boolean;
+  tool_initial_budget?: number;
+  tool_max_per_turn?: number;
+  tool_search_page_size?: number;
+  azure_mcp_disabled_tools?: string[];
+  entra_mcp_disabled_tools?: string[];
+  agent_skills_enabled?: boolean;
+  openai_native_tool_search_enabled?: boolean;
   request_timeout_seconds: number;
   command_execution_enabled: boolean;
   command_allowlist: string[];

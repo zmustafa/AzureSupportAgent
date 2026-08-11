@@ -988,6 +988,7 @@ export default function ChatView() {
   const streaming = !!live?.streaming;
   const streamText = live?.streamText ?? "";
   const errorDetail = live?.error ?? "";
+  const displayError = formatChatProviderError(errorDetail);
   const liveLog = live?.log ?? [];
   const liveStartedAt = live?.startedAt ?? Date.now();
 
@@ -3587,10 +3588,10 @@ export default function ChatView() {
                 <div className="max-w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   <div className="mb-1 font-medium">⚠️ The model failed to respond</div>
                   <div className="whitespace-pre-wrap break-words text-xs text-red-600">
-                    {errorDetail}
+                    {displayError.message}
                   </div>
                   <div className="mt-2 text-xs text-red-500">
-                    Try again, or switch models with the picker below.
+                    {displayError.hint}
                   </div>
                 </div>
               </div>
@@ -4234,6 +4235,26 @@ export default function ChatView() {
     </div>
     </ExecContext.Provider>
   );
+}
+
+function formatChatProviderError(detail: string): { message: string; hint: string } {
+  const lower = detail.toLowerCase();
+  if (lower.includes("array_above_max_length") || (lower.includes("tools") && lower.includes("maximum length"))) {
+    return {
+      message: "The selected model rejected an oversized tool catalog before generating a response.",
+      hint: "Progressive tool routing should prevent this. Retry once; if it persists, review Settings → Advanced agent tuning and EntraID MCP Tools.",
+    };
+  }
+  if (lower.includes("tool catalog exceeds the provider limit")) {
+    return {
+      message: detail.split("\n")[0],
+      hint: "Lower the initial or per-turn tool budget, then retry. No tools were executed.",
+    };
+  }
+  return {
+    message: detail,
+    hint: "Try again, or switch models with the picker below.",
+  };
 }
 
 /** Trash overlay: lists soft-deleted (archived) chats. Each can be restored to the

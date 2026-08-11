@@ -1853,6 +1853,8 @@ function AgentWizard({
         instructions: draft.instructions,
         connector_tools: tools.filter((t) => wantsTool.has(t.name)).map((t) => t.name),
         allow_all_azure: draft.allow_all_azure,
+        azure_bundles: draft.azure_bundles ?? [],
+        entra_bundles: draft.entra_bundles ?? [],
         run_mode: draft.run_mode,
         category: draft.category || undefined,
         provider: draft.suggested_provider || undefined,
@@ -2160,6 +2162,8 @@ function AgentEnhanceWizard({
       instructions: draft.instructions,
       connector_tools: tools.filter((t) => wantsTool.has(t.name)).map((t) => t.name),
       allow_all_azure: draft.allow_all_azure,
+      azure_bundles: draft.azure_bundles ?? [],
+      entra_bundles: draft.entra_bundles ?? [],
       run_mode: draft.run_mode,
     });
   }
@@ -2391,6 +2395,21 @@ function AgentForm({
   const [error, setError] = useState("");
   const set = (patch: Partial<CustomAgent>) => setForm((f) => ({ ...f, ...patch }));
   const selected = new Set(form.connector_tools ?? []);
+  const azureBundleOptions = [
+    "azure.compute", "azure.networking", "azure.storage", "azure.data",
+    "azure.monitoring", "azure.identity", "azure.governance", "azure.reads", "azure.writes",
+  ];
+  const entraBundleOptions = [
+    "entra.users", "entra.groups", "entra.applications", "entra.authentication",
+    "entra.conditional_access", "entra.audit", "entra.roles", "entra.devices",
+    "entra.reads", "entra.writes",
+  ];
+  const toggleMcpBundle = (field: "azure_bundles" | "entra_bundles", name: string) => {
+    const next = new Set(form[field] ?? []);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    set({ [field]: [...next] });
+  };
 
   // Tool filtering — the connector catalog can be large, so let users search by name/
   // description/connector and optionally narrow to a single connector or just the
@@ -2439,6 +2458,12 @@ function AgentForm({
     enabled: !!form.provider,
   });
   const modelList = models.data?.models ?? [];
+  const toolPreview = useQuery({
+    queryKey: ["agentToolPreview", form.id],
+    queryFn: () => api.toolRoutingDiagnostics(form.instructions?.slice(0, 500) ?? "", form.id ?? ""),
+    enabled: !!form.id,
+    retry: false,
+  });
 
   async function save() {
     if (!form.name?.trim()) {
@@ -2550,6 +2575,17 @@ function AgentForm({
       <p className="-mt-1 text-[11px] text-gray-400">
         Leave provider empty to use the globally active provider/model for this agent.
       </p>
+      {form.id && toolPreview.data && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          Saved tool policy preview: <span className="font-semibold">{toolPreview.data.routing.selected}</span> initially exposed
+          from {toolPreview.data.routing.available} eligible · ceiling {toolPreview.data.routing.max_per_turn} · provider limit {toolPreview.data.provider.max_tool_definitions}.
+          {toolPreview.data.routing.selected_tools.length > 0 && (
+            <div className="mt-1 font-mono text-[10px] text-blue-700">
+              {toolPreview.data.routing.selected_tools.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
       <div>
         <label className={label}>Run mode</label>
         <div className="flex gap-2">
@@ -2676,12 +2712,49 @@ function AgentForm({
       </div>
       <label className="flex items-center gap-2 text-sm text-gray-600">
         <input type="checkbox" checked={form.allow_all_azure ?? true} onChange={(e) => set({ allow_all_azure: e.target.checked })} />
-        Also allow all Azure investigation tools (MCP)
+        Allow routing across the complete Azure MCP catalog
       </label>
+      {!(form.allow_all_azure ?? true) && (
+        <div className="rounded-lg border bg-gray-50 p-3">
+          <div className="mb-2 text-xs font-medium text-gray-700">Allowed Azure bundles</div>
+          <div className="flex flex-wrap gap-1.5">
+            {azureBundleOptions.map((name) => {
+              const on = (form.azure_bundles ?? []).includes(name);
+              return <button type="button" key={name} onClick={() => toggleMcpBundle("azure_bundles", name)} className={`rounded-full border px-2.5 py-1 text-[11px] ${on ? "border-brand bg-brand/5 text-brand" : "border-gray-200 bg-white text-gray-500"}`}>{on ? "✓ " : ""}{name}</button>;
+            })}
+          </div>
+          <label className={label + " mt-2"}>Exact Azure tool names</label>
+          <input
+            className={input + " font-mono text-xs"}
+            value={(form.azure_tools ?? []).join(", ")}
+            onChange={(e) => set({ azure_tools: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })}
+            placeholder="compute, monitor, resourcegraph"
+          />
+        </div>
+      )}
       <label className="flex items-center gap-2 text-sm text-gray-600">
         <input type="checkbox" checked={form.allow_all_entra ?? false} onChange={(e) => set({ allow_all_entra: e.target.checked })} />
-        Also allow all EntraID (Microsoft Graph) tools (MCP)
+        Allow routing across the complete EntraID MCP catalog
       </label>
+      {!(form.allow_all_entra ?? false) && (
+        <div className="rounded-lg border bg-gray-50 p-3">
+          <div className="mb-2 text-xs font-medium text-gray-700">Allowed Entra bundles</div>
+          <div className="flex flex-wrap gap-1.5">
+            {entraBundleOptions.map((name) => {
+              const on = (form.entra_bundles ?? []).includes(name);
+              return <button type="button" key={name} onClick={() => toggleMcpBundle("entra_bundles", name)} className={`rounded-full border px-2.5 py-1 text-[11px] ${on ? "border-brand bg-brand/5 text-brand" : "border-gray-200 bg-white text-gray-500"}`}>{on ? "✓ " : ""}{name}</button>;
+            })}
+          </div>
+          <label className={label + " mt-2"}>Exact Entra tool names</label>
+          <input
+            className={input + " font-mono text-xs"}
+            value={(form.entra_tools ?? []).join(", ")}
+            onChange={(e) => set({ entra_tools: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })}
+            placeholder="search_users, get_user_mfa_status"
+          />
+          <p className="mt-1 text-[11px] text-gray-400">Selecting a bundle or exact tool opts this agent into Entra without enabling the complete catalog.</p>
+        </div>
+      )}
         </div>
 
         {/* Footer */}

@@ -41,6 +41,12 @@ DEFAULTS: dict[str, Any] = {
     # connector tool names (e.g. ["email_send", "teams_post_message"]).
     "allow_all_azure": True,
     "allow_all_entra": False,
+    # Optional scoped catalogs. Existing agents keep allow-all behavior; setting an
+    # allow-all flag false with explicit names/bundles restricts what routing may use.
+    "azure_tools": [],
+    "azure_bundles": [],
+    "entra_tools": [],
+    "entra_bundles": [],
     "connector_tools": [],
     "run_mode": "review",  # review | autonomous
     # Whether the agent is enabled. Disabled agents are hidden from the chat sidebar's

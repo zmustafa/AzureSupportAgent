@@ -160,6 +160,8 @@ Respond with ONLY a JSON object of this exact shape (no prose, no code fence):
   "instructions": "full markdown operating manual",
   "connector_tools": ["exact_tool_name_from_catalog"],
   "allow_all_azure": true,
+    "azure_bundles": [],
+    "entra_bundles": [],
   "run_mode": "review" | "autonomous",
   "suggested_provider": "",   // "" to use the global default, else a provider id from the list
   "suggested_model": "",      // "" for provider default
@@ -240,6 +242,8 @@ Respond with ONLY a JSON object of this exact shape (no prose, no code fence):
   "instructions": "full enhanced markdown operating manual",
   "connector_tools": ["exact_tool_name_from_catalog"],
   "allow_all_azure": true,
+    "azure_bundles": [],
+    "entra_bundles": [],
   "run_mode": "review" | "autonomous",
   "summary": "one or two sentences describing what the enhanced agent now does",
   "changes": ["short bullet of a specific improvement", "another improvement"]
@@ -400,6 +404,8 @@ async def generate_agent(
         )[:20000],
         "connector_tools": chosen,
         "allow_all_azure": bool(parsed.get("allow_all_azure", True)),
+        "azure_bundles": [str(v) for v in (parsed.get("azure_bundles") or []) if str(v)],
+        "entra_bundles": [str(v) for v in (parsed.get("entra_bundles") or []) if str(v)],
         "run_mode": run_mode,
         "suggested_provider": prov,
         "suggested_model": str(parsed.get("suggested_model", "") or "")[:128],
@@ -516,6 +522,16 @@ async def enhance_agent(
         )[:20000],
         "connector_tools": chosen,
         "allow_all_azure": bool(parsed.get("allow_all_azure", agent.get("allow_all_azure", True))),
+        "azure_bundles": [
+            str(v) for v in (
+                parsed.get("azure_bundles") or agent.get("azure_bundles") or []
+            ) if str(v)
+        ],
+        "entra_bundles": [
+            str(v) for v in (
+                parsed.get("entra_bundles") or agent.get("entra_bundles") or []
+            ) if str(v)
+        ],
         "run_mode": run_mode,
         "summary": str(parsed.get("summary", ""))[:600],
         "changes": changes,

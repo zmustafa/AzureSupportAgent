@@ -25,10 +25,13 @@ from typing import Any
 from app.agent.factory import build_provider_for
 from app.agent.orchestrator import AgentEvent, _is_command_catalog, _summarize_result
 from app.agent.provider import ToolSpec
+from app.agent.tool_catalog import ToolCatalog, make_entry
+from app.agent.tool_results import ToolArtifactStore, prepare_tool_result
+from app.agent.tool_router import internal_tool_specs, route_initial
 from app.connectors.base import ConnectorToolset
 from app.core.ai_prompts import get_full_prompt, get_guidance
 from app.core.config import Settings
-from app.mcp.client import MCPClient, build_mcp_client
+from app.mcp.client import build_mcp_client
 
 # Budgets (kept modest so a run finishes in a few minutes).
 MAX_HYPOTHESES = 3
@@ -95,6 +98,9 @@ class DeepInvestigator:
         connector_toolset: ConnectorToolset | None = None,
         focus: list[str] | None = None,
         architecture_memory: str | None = None,
+        azure_enabled: bool = True,
+        azure_tools: list[str] | None = None,
+        azure_bundles: list[str] | None = None,
     ) -> None:
         self._settings = settings
         self._provider = build_provider_for(provider, model)
@@ -113,8 +119,14 @@ class DeepInvestigator:
         # diagnostic hints) injected into every phase's system prompt as expert context.
         self._architecture_memory = (architecture_memory or "").strip()
         self._mcp = build_mcp_client(settings, connection=connection)
+        self._azure_enabled = bool(azure_enabled)
+        self._azure_tools = frozenset(str(v) for v in (azure_tools or []) if str(v))
+        self._azure_bundles = frozenset(str(v) for v in (azure_bundles or []) if str(v))
         self._connectors = connector_toolset
         self._tool_specs: list[ToolSpec] = []
+        self._catalog: ToolCatalog | None = None
+        self._surface: Any = None
+        self._artifacts = ToolArtifactStore()
         self._nodes_validated = 0
         # Specialist agents the user picked for the war room (resolved catalog entries).
         from app.agent.deep_agents import get_agents
@@ -137,24 +149,119 @@ class DeepInvestigator:
         except Exception:  # noqa: BLE001 - cleanup must never raise
             pass
 
-    async def _load_tools(self) -> None:
+    async def _load_tools(self, query: str) -> None:
         try:
             tools = await self._mcp.list_tools()
         except Exception:  # noqa: BLE001 - MCP optional; investigation degrades gracefully
             tools = []
-        specs = MCPClient.to_tool_specs(tools)
+        from app.core.app_settings import load_settings
+
+        disabled_azure = {
+            str(v) for v in (load_settings().get("azure_mcp_disabled_tools") or [])
+        }
+        entries = []
+        for tool in tools:
+            if tool.name in disabled_azure:
+                continue
+            entry = make_entry(
+                ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+                source_hint="azure_mcp",
+                kind=tool.kind,
+            )
+            if not self._azure_enabled:
+                if entry.name not in self._azure_tools and not self._azure_bundles.intersection(entry.bundles):
+                    continue
+            entries.append(entry)
         if self._connectors is not None:
             for spec in self._connectors.specs():
-                specs.append(
-                    ToolSpec(
-                        name=spec["name"],
-                        description=spec["description"],
-                        parameters=spec["parameters"],
+                entries.append(
+                    make_entry(
+                        ToolSpec(
+                            name=spec["name"],
+                            description=spec["description"],
+                            parameters=spec["parameters"],
+                            kind=spec.get("kind", "read"),
+                        ),
+                        source_hint=spec.get("source", "connector"),
+                        kind=spec.get("kind", "read"),
                     )
                 )
-        self._tool_specs = specs
+        from app.core.app_settings import agent_runtime_params
+
+        rt = agent_runtime_params()
+        internal = internal_tool_specs()
+        if not rt["agent_skills_enabled"]:
+            internal = [spec for spec in internal if spec.name != "load_skill"]
+        entries.extend(make_entry(spec, source_hint="internal") for spec in internal)
+        self._catalog = ToolCatalog(entries)
+        self._surface = route_initial(
+            query,
+            self._catalog,
+            initial_budget=(
+                rt["tool_initial_budget"]
+                if rt["tool_routing_enabled"]
+                else rt["tool_max_per_turn"]
+            ),
+            max_per_turn=rt["tool_max_per_turn"],
+            search_page_size=rt["tool_search_page_size"],
+            explicit_names=self._azure_tools,
+            explicit_bundles=self._azure_bundles,
+            fill_to_budget=not rt["tool_routing_enabled"],
+        )
+        self._tool_specs = self._surface.specs()
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "search_tools" and self._surface is not None and self._catalog is not None:
+            decisions = self._surface.search(
+                str(arguments.get("query") or ""),
+                source=str(arguments.get("source") or ""),
+                domain=str(arguments.get("domain") or ""),
+                bundles=arguments.get("bundles") or (),
+                limit=max(1, min(12, int(arguments.get("limit") or 8))),
+            )
+            loaded = self._surface.load_search_results(decisions)
+            self._tool_specs = self._surface.specs()
+            matches = []
+            for decision in decisions:
+                entry = self._catalog.get(decision.name)
+                if entry is not None:
+                    matches.append({**entry.public(reason=decision.reason), "score": decision.score})
+            return {
+                "isError": False,
+                "content": [json.dumps({"matches": matches, "loaded": loaded})],
+                "display_summary": f"Found {len(matches)} tools; loaded {len(loaded)}",
+            }
+        if name == "load_tool_bundle" and self._surface is not None:
+            loaded = self._surface.load_bundle(
+                arguments.get("bundles") or (), query=str(arguments.get("query") or "")
+            )
+            self._tool_specs = self._surface.specs()
+            return {
+                "isError": False,
+                "content": [json.dumps({"loaded": loaded})],
+                "display_summary": f"Loaded {len(loaded)} tools from bundles",
+            }
+        if name == "load_skill" and self._surface is not None:
+            from app.agent.skills import get_skill
+
+            skill = get_skill(str(arguments.get("skill_id") or ""))
+            if skill is None:
+                return {"isError": True, "content": ["Unknown support skill."]}
+            loaded = self._surface.load_bundle(skill.bundles)
+            self._tool_specs = self._surface.specs()
+            return {
+                "isError": False,
+                "content": [skill.instructions],
+                "skill": skill.summary(),
+                "loaded_tools": loaded,
+                "display_summary": f"Loaded skill: {skill.name}",
+            }
+        if name == "read_tool_artifact":
+            return self._artifacts.read(
+                str(arguments.get("artifact_id") or ""),
+                offset=int(arguments.get("offset") or 0),
+                limit=int(arguments.get("limit") or 8000),
+            )
         if self._connectors is not None and self._connectors.has(name):
             # Investigations are read-only; skip connector write tools entirely.
             if self._connectors.kind(name) == "write":
@@ -411,11 +518,27 @@ class DeepInvestigator:
                 from app.agent.result_sanitizer import sanitize_tool_result
 
                 res_for_model = sanitize_tool_result(res_for_model)
+                res_for_model, artifact_meta = prepare_tool_result(
+                    res_for_model,
+                    cap=cap,
+                    artifacts=self._artifacts,
+                )
+                if artifact_meta:
+                    yield AgentEvent(
+                        type="status",
+                        data={
+                            "phase": "tool_result_compacted",
+                            "message": (
+                                f"Compacted a large {call.name} result · "
+                                f"{artifact_meta['total_chars']} characters"
+                            ),
+                        },
+                    )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": json.dumps(res_for_model)[:cap],
+                        "content": json.dumps(res_for_model, ensure_ascii=False),
                     }
                 )
 
@@ -496,8 +619,6 @@ class DeepInvestigator:
         history: list[dict[str, Any]],
         scope_hint: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        await self._load_tools()
-
         # The user's question is the last user message in history.
         question = ""
         for m in reversed(history):
@@ -505,8 +626,21 @@ class DeepInvestigator:
                 c = m.get("content")
                 question = c if isinstance(c, str) else _text_of(c)
                 break
+            await self._load_tools(question)
 
         base_system = get_full_prompt("chat_system_prompt")
+        from app.core.app_settings import agent_runtime_params
+
+        if agent_runtime_params()["agent_skills_enabled"]:
+            from app.agent.skills import skill_catalog_prompt
+
+            skill_prompt = skill_catalog_prompt()
+            if skill_prompt:
+                base_system = f"{base_system}\n\n{skill_prompt}"
+        base_system = (
+            f"{base_system}\n\nOnly relevant read tools are initially loaded. Use "
+            "`search_tools` or `load_tool_bundle` when more evidence capabilities are needed."
+        )
         if scope_hint:
             base_system = f"{base_system}\n\n{scope_hint}"
         # Inject the architecture's memory (intended design, security model, known gaps,
@@ -522,6 +656,9 @@ class DeepInvestigator:
 
         total_p = 0
         total_c = 0
+
+        if self._surface is not None:
+            yield AgentEvent(type="routing", data=self._surface.diagnostics())
 
         # Announce the specialist agent roster up-front so the war room can render it.
         if self._focus:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -14,9 +15,13 @@ from typing import Any
 
 from app.agent.factory import build_provider_for
 from app.agent.provider import ToolSpec
+from app.agent.provider_capabilities import capabilities_for
+from app.agent.tool_catalog import ToolCatalog, make_entry
+from app.agent.tool_results import ToolArtifactStore, prepare_tool_result
+from app.agent.tool_router import internal_tool_specs, route_initial
 from app.connectors.base import ConnectorToolset
 from app.core.config import Settings
-from app.mcp.client import DiscoveredTool, MCPClient, build_mcp_client
+from app.mcp.client import DiscoveredTool, build_mcp_client
 
 # Fallback tool-iteration budget; the live value comes from the dashboard setting
 # `max_tool_iterations` (see app_settings.agent_runtime_params).
@@ -25,6 +30,7 @@ MAX_TOOL_ITERATIONS = 16
 # the shared pooled MCP session; write tools are never parallelized (they stay gated
 # and are surfaced for approval in the original call order).
 TOOL_FANOUT = 6
+logger = logging.getLogger("app.agent.orchestrator")
 
 
 def _is_blank_answer(text: str | None) -> bool:
@@ -189,14 +195,27 @@ class Orchestrator:
         connector_toolset: ConnectorToolset | None = None,
         extra_instructions: str | None = None,
         write_policy_override: str | None = None,
+        azure_enabled: bool = True,
         entra_enabled: bool = False,
         entra_blocked_tools: frozenset[str] | None = None,
+        azure_tools: list[str] | None = None,
+        azure_bundles: list[str] | None = None,
+        entra_tools: list[str] | None = None,
+        entra_bundles: list[str] | None = None,
     ) -> None:
         self._settings = settings
         # Per-chat provider/model override (falls back to globally-active config).
         self._provider = build_provider_for(provider, model)
+        from app.core.llm_config import get_active
+
+        _active = get_active(provider, model)
+        self._provider_name = str(_active.get("provider") or provider or "openai")
+        self._model_name = str(_active.get("model") or model or "")
         # Optional Azure connection (tenant identity) bound to this turn's MCP session.
         self._mcp = build_mcp_client(settings, connection=connection)
+        self._azure_enabled = bool(azure_enabled)
+        self._azure_tools = frozenset(str(v) for v in (azure_tools or []) if str(v))
+        self._azure_bundles = frozenset(str(v) for v in (azure_bundles or []) if str(v))
         # Optional EntraID (Microsoft Graph) MCP server, authenticated with the same
         # connection's service-principal identity. Built only when enabled for this turn.
         self._entra = None
@@ -205,6 +224,8 @@ class Orchestrator:
         # sit behind `investigate.activity`; leaving the raw equivalents in the catalogue
         # would make that permission unenforceable through chat.
         self._entra_blocked = frozenset(entra_blocked_tools or ())
+        self._entra_tools = frozenset(str(v) for v in (entra_tools or []) if str(v))
+        self._entra_bundles = frozenset(str(v) for v in (entra_bundles or []) if str(v))
         if entra_enabled:
             try:
                 from app.mcp.client import build_entra_mcp_client
@@ -218,6 +239,7 @@ class Orchestrator:
         self._extra_instructions = extra_instructions
         # Optional write-policy override ('off' for autonomous custom agents).
         self._write_policy_override = write_policy_override
+        self._artifacts = ToolArtifactStore()
 
     def close(self) -> None:
         """Release the per-turn MCP client resources (e.g. a temp cert file)."""
@@ -229,24 +251,85 @@ class Orchestrator:
             except Exception:  # noqa: BLE001 - cleanup must never raise
                 pass
 
-    async def _load_tools(self) -> tuple[list[DiscoveredTool], dict[str, DiscoveredTool]]:
-        try:
-            tools = await self._mcp.list_tools()
-        except Exception:
-            # MCP unavailable: agent still answers, just without live Azure tools.
-            tools = []
-        # Merge EntraID (Microsoft Graph) tools when enabled for this turn.
+    @staticmethod
+    def _scoped(
+        entry: Any,
+        *,
+        allow_all: bool,
+        names: frozenset[str],
+        bundles: frozenset[str],
+    ) -> bool:
+        if allow_all or entry.name in names:
+            return True
+        return bool(bundles.intersection(entry.bundles))
+
+    async def _load_tools(
+        self,
+    ) -> tuple[list[DiscoveredTool], list[DiscoveredTool], dict[str, DiscoveredTool]]:
+        azure_tools: list[DiscoveredTool] = []
+        if self._azure_enabled or self._azure_tools or self._azure_bundles:
+            try:
+                from app.core.app_settings import load_settings
+
+                disabled_azure = {
+                    str(v) for v in (load_settings().get("azure_mcp_disabled_tools") or [])
+                }
+                discovered = await self._mcp.list_tools()
+                for tool in discovered:
+                    if tool.name in disabled_azure:
+                        continue
+                    entry = make_entry(
+                        ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+                        source_hint="azure_mcp",
+                        kind=tool.kind,
+                    )
+                    if self._scoped(
+                        entry,
+                        allow_all=self._azure_enabled,
+                        names=self._azure_tools,
+                        bundles=self._azure_bundles,
+                    ):
+                        azure_tools.append(tool)
+            except Exception:
+                # MCP unavailable: agent still answers, just without live Azure tools.
+                azure_tools = []
+
+        entra_tools: list[DiscoveredTool] = []
         if self._entra is not None:
             try:
-                entra_tools = await self._entra.list_tools()
-                entra_tools = [t for t in entra_tools if t.name not in self._entra_blocked]
+                from app.core.app_settings import load_settings
+
+                disabled = {
+                    str(v) for v in (load_settings().get("entra_mcp_disabled_tools") or [])
+                }
+                discovered = await self._entra.list_tools()
+                for tool in discovered:
+                    if tool.name in self._entra_blocked or tool.name in disabled:
+                        continue
+                    entry = make_entry(
+                        ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
+                        source_hint="entra_mcp",
+                        kind=tool.kind,
+                    )
+                    # Constructing the Entra client is the allow-all opt-in. Explicit
+                    # lists/bundles narrow selection only when the caller set them.
+                    scoped = not (self._entra_tools or self._entra_bundles) or self._scoped(
+                        entry,
+                        allow_all=False,
+                        names=self._entra_tools,
+                        bundles=self._entra_bundles,
+                    )
+                    if scoped:
+                        entra_tools.append(tool)
                 self._entra_tool_names = {t.name for t in entra_tools}
-                # On a name clash, Azure tools win; EntraID-only names are added.
-                existing = {t.name for t in tools}
-                tools = tools + [t for t in entra_tools if t.name not in existing]
             except Exception:  # noqa: BLE001 - EntraID optional; proceed without it
                 self._entra_tool_names = set()
-        return tools, {t.name: t for t in tools}
+
+        # Preserve the historical Azure-wins rule for raw MCP name collisions. The
+        # unified catalog rejects collisions with connector/internal sources.
+        existing = {t.name for t in azure_tools}
+        merged = azure_tools + [t for t in entra_tools if t.name not in existing]
+        return azure_tools, entra_tools, {t.name: t for t in merged}
 
     async def run(
         self,
@@ -259,22 +342,100 @@ class Orchestrator:
         # Surface tool-loading as the first measured milestone — the initial message pays
         # the MCP cold-start (npx @azure/mcp spawn), which is the biggest "stuck" window.
         yield AgentEvent(type="status", data={"phase": "tools", "message": "Loading Azure tools…"})
-        tools, tool_index = await self._load_tools()
-        tool_specs = MCPClient.to_tool_specs(tools)
-        _azure_n = len(tool_specs)
-        _graph_n = len(self._entra_tool_names) if self._entra is not None else 0
+        loaded_tools: Any = await self._load_tools()
+        if len(loaded_tools) == 2:  # backward-compatible monkeypatch/extension contract
+            merged_tools, tool_index = loaded_tools
+            azure_tools = [t for t in merged_tools if t.name not in self._entra_tool_names]
+            entra_tools = [t for t in merged_tools if t.name in self._entra_tool_names]
+        else:
+            azure_tools, entra_tools, tool_index = loaded_tools
+        entries = [
+            make_entry(
+                ToolSpec(t.name, t.description, t.parameters, kind=t.kind),
+                source_hint="azure_mcp",
+                kind=t.kind,
+            )
+            for t in azure_tools
+        ]
+        azure_names = {t.name for t in azure_tools}
+        entries.extend(
+            make_entry(
+                ToolSpec(t.name, t.description, t.parameters, kind=t.kind),
+                source_hint="entra_mcp",
+                kind=t.kind,
+            )
+            for t in entra_tools
+            if t.name not in azure_names
+        )
+        _azure_n = len(azure_tools)
+        _graph_n = len(entra_tools)
         _ready = f"Ready — {_azure_n} Azure" + (f" + {_graph_n} Graph" if _graph_n else "") + " tool(s)"
         yield AgentEvent(type="status", data={"phase": "tools_ready", "message": _ready})
         # Merge in connector tools (Teams/Outlook/Jira/Grafana), if any.
         if self._connectors is not None:
             for spec in self._connectors.specs():
-                tool_specs.append(
-                    ToolSpec(
-                        name=spec["name"],
-                        description=spec["description"],
-                        parameters=spec["parameters"],
+                entries.append(
+                    make_entry(
+                        ToolSpec(
+                            name=spec["name"],
+                            description=spec["description"],
+                            parameters=spec["parameters"],
+                            kind=spec.get("kind", "read"),
+                        ),
+                        source_hint=spec.get("source", "connector"),
+                        kind=spec.get("kind", "read"),
                     )
                 )
+        from app.core.app_settings import agent_runtime_params
+
+        _rt = agent_runtime_params()
+        internal_specs = internal_tool_specs()
+        if not _rt["agent_skills_enabled"]:
+            internal_specs = [spec for spec in internal_specs if spec.name != "load_skill"]
+        entries.extend(make_entry(s, source_hint="internal", kind="read") for s in internal_specs)
+        catalog = ToolCatalog(entries)
+
+        latest_user = ""
+        for message in reversed(history):
+            if message.get("role") == "user" and isinstance(message.get("content"), str):
+                latest_user = str(message["content"])
+                break
+
+        initial_budget = _rt["tool_initial_budget"]
+        if not _rt["tool_routing_enabled"]:
+            # The safety ceiling still applies when relevance routing is disabled.
+            initial_budget = _rt["tool_max_per_turn"]
+        surface = route_initial(
+            latest_user,
+            catalog,
+            initial_budget=initial_budget,
+            max_per_turn=_rt["tool_max_per_turn"],
+            search_page_size=_rt["tool_search_page_size"],
+            explicit_names=tuple(self._azure_tools) + tuple(self._entra_tools),
+            explicit_bundles=tuple(self._azure_bundles) + tuple(self._entra_bundles),
+            fill_to_budget=not _rt["tool_routing_enabled"],
+        )
+        routing_meta = surface.diagnostics()
+        routing_meta.update({
+            "provider": self._provider_name,
+            "model": self._model_name,
+            "provider_limit": capabilities_for(
+                self._provider_name, self._model_name
+            ).max_tool_definitions,
+        })
+        logger.info(
+            "Tool route provider=%s model=%s available=%s selected=%s withheld=%s bytes=%s/%s sources=%s tools=%s",
+            self._provider_name,
+            self._model_name,
+            routing_meta["available"],
+            routing_meta["selected"],
+            routing_meta["withheld"],
+            routing_meta["schema_bytes_selected"],
+            routing_meta["schema_bytes_available"],
+            routing_meta["selected_by_source"],
+            ",".join(surface.active_names),
+        )
+        yield AgentEvent(type="routing", data=routing_meta)
 
         from app.core.app_settings import effective_write_policy, system_prompt_additions
         from app.core.ai_prompts import get_full_prompt
@@ -287,6 +448,18 @@ class Orchestrator:
         # Custom-agent instructions, when running as a scheduled task / custom agent.
         if self._extra_instructions:
             system_text = f"{system_text}\n\n{self._extra_instructions}"
+        if _rt["agent_skills_enabled"]:
+            from app.agent.skills import skill_catalog_prompt
+
+            skills_prompt = skill_catalog_prompt()
+            if skills_prompt:
+                system_text = f"{system_text}\n\n{skills_prompt}"
+        system_text = (
+            f"{system_text}\n\nTOOL DISCOVERY: Only tools relevant to the current request "
+            "are initially visible. If a needed capability is absent, call `search_tools`; "
+            "use `load_tool_bundle` for a known bundle. Large results return an artifact "
+            "id that can be paged with `read_tool_artifact`."
+        )
 
         # Resolve the write policy: an explicit override (autonomous agent) wins, else
         # the runtime dashboard setting. 'off' => writes auto-execute; 'gated' => pause.
@@ -325,9 +498,6 @@ class Orchestrator:
         total_completion = 0
 
         # Advanced tuning knobs (dashboard-configurable; read per turn).
-        from app.core.app_settings import agent_runtime_params
-
-        _rt = agent_runtime_params()
         max_iterations = _rt["max_tool_iterations"]
         data_result_cap = _rt["tool_result_limit"]
         discovery_result_cap = _rt["tool_discovery_limit"]
@@ -335,6 +505,12 @@ class Orchestrator:
         for _iter in range(max_iterations):
             assistant_text = ""
             pending_calls = []
+            native_search = bool(_rt["openai_native_tool_search_enabled"]) and capabilities_for(
+                self._provider_name, self._model_name
+            ).native_tool_search
+            tool_specs = (
+                surface.all_specs_for_native_search() if native_search else surface.specs()
+            )
 
             # On follow-up rounds (after a tool result), tell the user we're going back to
             # the model with the new evidence — otherwise there's another silent gap.
@@ -430,6 +606,7 @@ class Orchestrator:
                         "content": final,
                         "prompt_tokens": total_prompt,
                         "completion_tokens": total_completion,
+                        "tool_routing": surface.diagnostics(),
                     },
                 )
                 return
@@ -464,10 +641,13 @@ class Orchestrator:
             for call in pending_calls:
                 tool = tool_index.get(call.name)
                 is_connector = self._connectors is not None and self._connectors.has(call.name)
+                catalog_entry = catalog.get(call.name)
                 # Refine the coarse name-based kind by inspecting the call's command/
                 # intent argument, so namespace tools (sql, role, …) only gate on actual
                 # writes and reads run freely.
-                if is_connector:
+                if catalog_entry is not None and catalog_entry.source == "internal":
+                    kind = "read"
+                elif is_connector:
                     kind = self._connectors.kind(call.name) if self._connectors else "write"
                 else:
                     kind = classify_call(call.name, call.arguments)
@@ -478,7 +658,7 @@ class Orchestrator:
                 plan.append((call, is_connector, gated))
 
             # Announce the executable (non-gated) calls up front.
-            for call, _is_conn, gated in plan:
+            for call, _, gated in plan:
                 if not gated:
                     yield AgentEvent(
                         type="tool_start",
@@ -496,7 +676,97 @@ class Orchestrator:
                 started = time.perf_counter()
                 async with sem:
                     try:
-                        if is_connector and self._connectors is not None:
+                        if call.name == "search_tools":
+                            args = call.arguments or {}
+                            decisions = surface.search(
+                                str(args.get("query") or ""),
+                                source=str(args.get("source") or ""),
+                                domain=str(args.get("domain") or ""),
+                                bundles=args.get("bundles") or (),
+                                limit=max(
+                                    1,
+                                    min(
+                                        12,
+                                        int(args.get("limit") or surface.search_page_size),
+                                    ),
+                                ),
+                            )
+                            loaded = (
+                                surface.load_search_results(decisions)
+                                if args.get("load", True) is not False
+                                else []
+                            )
+                            matches = []
+                            for decision in decisions:
+                                entry = catalog.get(decision.name)
+                                if entry is not None:
+                                    matches.append({
+                                        **entry.public(reason=decision.reason),
+                                        "score": decision.score,
+                                    })
+                            result = {
+                                "isError": False,
+                                "content": [
+                                    json.dumps(
+                                        {
+                                            "matches": matches,
+                                            "loaded": loaded,
+                                            "remaining_slots": surface.remaining_slots(),
+                                        }
+                                    )
+                                ],
+                                "display_summary": (
+                                    f"Found {len(decisions)} tools; loaded {len(loaded)}"
+                                ),
+                            }
+                        elif call.name == "load_tool_bundle":
+                            args = call.arguments or {}
+                            bundles = args.get("bundles") or []
+                            loaded = surface.load_bundle(
+                                bundles,
+                                query=str(args.get("query") or latest_user),
+                            )
+                            result = {
+                                "isError": False,
+                                "content": [
+                                    json.dumps(
+                                        {
+                                            "bundles": bundles,
+                                            "loaded": loaded,
+                                            "remaining_slots": surface.remaining_slots(),
+                                        }
+                                    )
+                                ],
+                                "display_summary": f"Loaded {len(loaded)} tools from bundles",
+                            }
+                        elif call.name == "load_skill":
+                            from app.agent.skills import get_skill
+
+                            skill = get_skill(
+                                str((call.arguments or {}).get("skill_id") or "")
+                            )
+                            if skill is None:
+                                result = {
+                                    "isError": True,
+                                    "content": ["Unknown support skill."],
+                                }
+                            else:
+                                loaded = surface.load_bundle(skill.bundles, query=latest_user)
+                                result = {
+                                    "isError": False,
+                                    "content": [skill.instructions],
+                                    "skill": skill.summary(),
+                                    "loaded_tools": loaded,
+                                    "display_summary": f"Loaded skill: {skill.name}",
+                                }
+                        elif call.name == "read_tool_artifact":
+                            args = call.arguments or {}
+                            result = self._artifacts.read(
+                                str(args.get("artifact_id") or ""),
+                                offset=int(args.get("offset") or 0),
+                                limit=int(args.get("limit") or 8000),
+                            )
+                        elif is_connector and self._connectors is not None:
                             result = await self._connectors.call(call.name, call.arguments)
                         elif call.name in self._entra_tool_names and self._entra is not None:
                             result = await self._entra.call_tool(call.name, call.arguments)
@@ -512,7 +782,7 @@ class Orchestrator:
                 if not gated
             }
 
-            for call, _is_conn, gated in plan:
+            for call, _, gated in plan:
                 if gated:
                     # Gated: do not execute. Surface an approval requirement.
                     yield AgentEvent(
@@ -543,6 +813,8 @@ class Orchestrator:
 
                 # Read tool: its concurrent execution was kicked off above.
                 result, duration_ms = await exec_tasks[call.id]
+                if call.name in {"search_tools", "load_tool_bundle", "load_skill"}:
+                    yield AgentEvent(type="routing", data=surface.diagnostics())
 
                 # Discovery calls are internal two-phase plumbing: an explicit `learn:
                 # true`, OR any call whose result is the command catalog (a missing/
@@ -591,11 +863,27 @@ class Orchestrator:
                 from app.agent.result_sanitizer import sanitize_tool_result
 
                 result_for_model = sanitize_tool_result(result_for_model)
+                result_for_model, artifact_meta = prepare_tool_result(
+                    result_for_model,
+                    cap=result_cap,
+                    artifacts=self._artifacts,
+                )
+                if artifact_meta:
+                    yield AgentEvent(
+                        type="status",
+                        data={
+                            "phase": "tool_result_compacted",
+                            "message": (
+                                f"Compacted a large {call.name} result · "
+                                f"{artifact_meta['total_chars']} characters"
+                            ),
+                        },
+                    )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": json.dumps(result_for_model)[:result_cap],
+                        "content": json.dumps(result_for_model, ensure_ascii=False),
                     }
                 )
 
@@ -645,5 +933,6 @@ class Orchestrator:
                 "prompt_tokens": total_prompt,
                 "completion_tokens": total_completion,
                 "note": "max tool iterations reached",
+                "tool_routing": surface.diagnostics(),
             },
         )
