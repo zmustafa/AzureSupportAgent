@@ -39,7 +39,7 @@ execnet==2.1.2
 fastapi==0.136.3
 fastmcp-slim==3.4.2
 frozenlist==1.8.0
-greenlet==3.5.1
+greenlet==3.5.4
 griffelib==2.0.2
 h11==0.16.0
 h2==4.4.1
