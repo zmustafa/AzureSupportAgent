@@ -203,8 +203,14 @@ async def preview_import(
             caller_ip=client_ip(request),
             actor=principal.subject,
         )
-    except (netaccess.NetAccessError, netaccess_io.NetAccessImportError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except (netaccess.NetAccessError, netaccess_io.NetAccessImportError):
+        # Never reflect exception text across the API boundary. Import rows carry their own
+        # structured diagnostics on a successful preview; a structural parser failure can
+        # otherwise contain decoder/library details or a traceback from a nested exception.
+        raise HTTPException(
+            status_code=400,
+            detail="The import could not be parsed. Check the UTF-8 TXT/CSV format and limits.",
+        ) from None
 
 
 @router.get("/export")

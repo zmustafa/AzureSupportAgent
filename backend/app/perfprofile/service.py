@@ -15,6 +15,14 @@ from app.perfprofile import cache, demo, runs
 log = logging.getLogger("app.perfprofile.service")
 
 
+def _log_count(value: Any) -> int:
+    """Constrain collection telemetry to an integer before it enters text logs."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _demo_collection(snapshot: dict[str, Any]) -> dict[str, Any]:
     cells = [cell for row in snapshot.get("resources", []) for cell in row.get("cells", [])]
     return {
@@ -151,7 +159,9 @@ async def execute_profile(
             code="workload_timeout",
         )
     except Exception as exc:  # noqa: BLE001 - persist a terminal attempt; log the traceback
-        log.exception("Performance profile attempt failed for %s:%s", scope_kind, scope_id)
+        # Do not put request-derived scope identifiers into exception logs. The persisted run
+        # carries the complete scope context; the traceback here is only for engineering triage.
+        log.exception("Performance profile attempt failed")
         message = str(exc)[:1000] or "Unexpected performance profile failure."
         snap = _failed_snapshot(
             scope_kind=scope_kind,
@@ -189,22 +199,18 @@ async def execute_profile(
     )
     collection = snap.get("collection") or {}
     log.info(
-        "Performance profile terminal tenant=%s scope=%s:%s trigger=%s status=%s "
-        "resources=%s/%s metric_checks=%s/%s failed=%s requests=%s attempts=%s "
+        "Performance profile terminal resources=%s/%s metric_checks=%s/%s "
+        "failed=%s requests=%s attempts=%s "
         "throttled=%s timed_out=%s",
-        tenant,
-        scope_kind,
-        scope_id,
-        trigger,
-        status,
-        collection.get("resources_completed", 0),
-        collection.get("resources_selected", 0),
-        collection.get("metric_checks_succeeded", 0) + collection.get("metric_checks_no_data", 0),
-        collection.get("metric_checks_total", 0),
-        collection.get("metric_checks_failed", 0),
-        collection.get("metric_requests_total", 0),
-        collection.get("metric_request_attempts", 0),
-        collection.get("metric_requests_throttled", 0),
-        collection.get("metric_requests_timed_out", 0),
+        _log_count(collection.get("resources_completed", 0)),
+        _log_count(collection.get("resources_selected", 0)),
+        _log_count(collection.get("metric_checks_succeeded", 0))
+        + _log_count(collection.get("metric_checks_no_data", 0)),
+        _log_count(collection.get("metric_checks_total", 0)),
+        _log_count(collection.get("metric_checks_failed", 0)),
+        _log_count(collection.get("metric_requests_total", 0)),
+        _log_count(collection.get("metric_request_attempts", 0)),
+        _log_count(collection.get("metric_requests_throttled", 0)),
+        _log_count(collection.get("metric_requests_timed_out", 0)),
     )
     return stored or snap

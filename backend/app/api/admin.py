@@ -1435,9 +1435,11 @@ async def tool_routing_diagnostics(
     azure_client = build_mcp_client(settings, connection=connection)
     try:
         azure_discovered = await azure_client.list_tools()
-    except Exception as exc:  # noqa: BLE001 - diagnostics report partial catalogs
+    except Exception:  # noqa: BLE001 - diagnostics report partial catalogs
         azure_discovered = []
-        errors["azure_mcp"] = str(exc)[:300]
+        # This response is operator-facing but still an external API boundary. MCP exceptions
+        # can contain child-process tracebacks, command lines, paths, or provider payloads.
+        errors["azure_mcp"] = "Azure MCP catalog is temporarily unavailable."
     finally:
         azure_client.close()
     disabled_azure = {
@@ -1458,9 +1460,9 @@ async def tool_routing_diagnostics(
         entra_client = build_entra_mcp_client(settings, connection=connection)
         try:
             entra_discovered = await entra_client.list_tools()
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             entra_discovered = []
-            errors["entra_mcp"] = str(exc)[:300]
+            errors["entra_mcp"] = "Entra MCP catalog is temporarily unavailable."
         finally:
             entra_client.close()
         disabled = {str(v) for v in (app_settings.get("entra_mcp_disabled_tools") or [])}

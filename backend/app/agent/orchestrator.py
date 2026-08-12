@@ -424,7 +424,7 @@ class Orchestrator:
             ).max_tool_definitions,
         })
         logger.info(
-            "Tool route provider=%s model=%s available=%s selected=%s withheld=%s bytes=%s/%s sources=%s tools=%s",
+            "Tool route provider=%s model=%s available=%s selected=%s withheld=%s bytes=%s/%s sources=%s",
             self._provider_name,
             self._model_name,
             routing_meta["available"],
@@ -433,7 +433,6 @@ class Orchestrator:
             routing_meta["schema_bytes_selected"],
             routing_meta["schema_bytes_available"],
             routing_meta["selected_by_source"],
-            ",".join(surface.active_names),
         )
         yield AgentEvent(type="routing", data=routing_meta)
 
