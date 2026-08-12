@@ -366,6 +366,18 @@ def preview_import(
     }
 
 
+def safe_preview_import(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+    """Run an import preview without allowing parser exceptions to cross an API boundary.
+
+    Structural failures intentionally collapse to ``None``. Row-level diagnostics remain in a
+    successful preview result, while exception objects, causes, paths, and tracebacks stay local.
+    """
+    try:
+        return preview_import(*args, **kwargs)
+    except (netaccess.NetAccessError, NetAccessImportError):
+        return None
+
+
 def _csv_safe(value: str) -> str:
     stripped = value.lstrip("\t\r\n ")
     return "'" + value if stripped and stripped[0] in _FORMULA_TRIGGERS else value

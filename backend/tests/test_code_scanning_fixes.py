@@ -113,8 +113,7 @@ def test_performance_logs_exclude_request_identifiers(monkeypatch, caplog):
     assert any("Performance profile terminal resources=" in message for message in messages)
 
 
-def test_tool_route_info_log_does_not_include_selected_tool_names():
+def test_tool_route_diagnostics_are_not_written_to_process_logs():
     source = inspect.getsource(orchestrator.Orchestrator.run)
-    log_block = source[source.index('logger.info(\n            "Tool route'):source.index('yield AgentEvent(type="routing"')]
-    assert "active_names" not in log_block
-    assert "tools=%s" not in log_block
+    assert 'logger.info(\n            "Tool route' not in source
+    assert 'yield AgentEvent(type="routing", data=routing_meta)' in source

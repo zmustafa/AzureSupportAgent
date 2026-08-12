@@ -423,17 +423,9 @@ class Orchestrator:
                 self._provider_name, self._model_name
             ).max_tool_definitions,
         })
-        logger.info(
-            "Tool route provider=%s model=%s available=%s selected=%s withheld=%s bytes=%s/%s sources=%s",
-            self._provider_name,
-            self._model_name,
-            routing_meta["available"],
-            routing_meta["selected"],
-            routing_meta["withheld"],
-            routing_meta["schema_bytes_selected"],
-            routing_meta["schema_bytes_available"],
-            routing_meta["selected_by_source"],
-        )
+        # Routing diagnostics are already emitted as a permission-gated stream event. Do not
+        # duplicate provider/model/tool metadata into clear-text process logs: custom names and
+        # schemas can contain credential-like strings and logs have a broader retention surface.
         yield AgentEvent(type="routing", data=routing_meta)
 
         from app.core.app_settings import effective_write_policy, system_prompt_additions

@@ -191,26 +191,23 @@ async def preview_import(
     principal: Principal = Depends(require_manage),
 ):
     """Validate a pasted/uploaded list and return the exact resulting draft; write nothing."""
-    try:
-        return netaccess_io.preview_import(
-            payload.text,
-            source_name=payload.source_name,
-            requested_format=payload.format,
-            default_label=payload.default_label,
-            strategy=payload.strategy,
-            mode=payload.mode,
-            existing_rules=[rule.model_dump() for rule in payload.existing_rules],
-            caller_ip=client_ip(request),
-            actor=principal.subject,
-        )
-    except (netaccess.NetAccessError, netaccess_io.NetAccessImportError):
-        # Never reflect exception text across the API boundary. Import rows carry their own
-        # structured diagnostics on a successful preview; a structural parser failure can
-        # otherwise contain decoder/library details or a traceback from a nested exception.
+    result = netaccess_io.safe_preview_import(
+        payload.text,
+        source_name=payload.source_name,
+        requested_format=payload.format,
+        default_label=payload.default_label,
+        strategy=payload.strategy,
+        mode=payload.mode,
+        existing_rules=[rule.model_dump() for rule in payload.existing_rules],
+        caller_ip=client_ip(request),
+        actor=principal.subject,
+    )
+    if result is None:
         raise HTTPException(
             status_code=400,
             detail="The import could not be parsed. Check the UTF-8 TXT/CSV format and limits.",
-        ) from None
+        )
+    return result
 
 
 @router.get("/export")
