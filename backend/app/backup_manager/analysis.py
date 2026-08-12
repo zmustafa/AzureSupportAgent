@@ -30,7 +30,6 @@ from app.backup_manager import policies as policy_ops
 from app.backup_manager import posture as posture_ops
 from app.backup_manager import pricing, reference
 from app.backup_manager import reports as report_ops
-from app.backup_manager import service
 from app.backup_manager import snapshot as snapshot_store
 
 log = logging.getLogger("app.backup_manager.analysis")
@@ -131,7 +130,8 @@ async def build_cost(
             await progress(
                 "cost",
                 f"Actual spend {actuals.get('total', 0):,.2f} {actuals.get('currency', '')} "
-                f"across {len(actuals.get('by_meter') or {})} meter(s)."
+                f"across {len(actuals.get('by_meter') or {})} meter(s); "
+                f"{actuals.get('subscriptions_succeeded', len(subscriptions))}/{len(subscriptions)} subscription queries succeeded."
                 if actuals.get("available")
                 else f"Cost Management unavailable — {str(actuals.get('reason') or '')[:120]}",
             )
@@ -141,6 +141,7 @@ async def build_cost(
     # 2. Rate card in the billing currency where we know it, so estimate and actual compare.
     currency = str(actuals.get("currency") or "") or str(reference.cost_rates().get("currency") or "USD")
     region = price_region(estate, connection)
+    regions = sorted({str(vault.get("location") or "").lower() for vault in estate.get("vaults", []) if vault.get("location")})
     rate_card = cost_ops.reference_rate_card()
     if not is_demo:
         try:
@@ -160,6 +161,7 @@ async def build_cost(
     # 3. Per-item consumed GB from Backup Reports — the allocation weights.
     storage_by_instance: dict[str, float] = {}
     report_note = ""
+    report: dict[str, Any] = {}
     if use_reports and not is_demo:
         if progress:
             await progress("cost", "Asking Log Analytics for per-item consumed storage…")
@@ -167,6 +169,7 @@ async def build_cost(
             report = await report_ops.build_report(connection, estate, days=30)
             if report.get("available"):
                 storage_by_instance = match_report_storage(estate, report.get("storage_by_item", {}))
+                report_note = str(report.get("reason") or "")
             else:
                 report_note = report.get("reason", "")
         except report_ops.ReportsUnavailable as exc:
@@ -179,9 +182,19 @@ async def build_cost(
             )
 
     estimate = cost_ops.estimate(estate, rate_card=rate_card, storage_by_instance=storage_by_instance)
-    allocation = cost_ops.allocate(
-        estate, actuals, estimate_rows=estimate.get("top_rows", []),
-        storage_by_instance=storage_by_instance,
+    allocation = (
+        {
+            "rows": [], "currency": "", "allocated_total": 0.0,
+            "unattributed_total": 0.0, "vaults_allocated": 0,
+            "vaults_unattributed": len(actuals.get("by_vault") or {}),
+            "basis_counts": {},
+            "note": "Allocation is unavailable because the management group spans multiple billing currencies.",
+        }
+        if actuals.get("mixed_currency")
+        else cost_ops.allocate(
+            estate, actuals, estimate_rows=estimate.get("top_rows", []),
+            storage_by_instance=storage_by_instance,
+        )
     )
     cost_by_instance = {r["instance_id"]: r["allocated_cost"] for r in allocation.get("rows", [])}
 
@@ -192,6 +205,19 @@ async def build_cost(
         estate, rate_card=rate_card, cost_by_instance=cost_by_instance or None,
     )
     estimate["report_note"] = report_note
+    estimate["price_regions"] = regions
+    estimate["representative_price_region"] = len(regions) > 1
+    if len(regions) > 1:
+        estimate["rate_error"] = (
+            f"The scope spans {len(regions)} vault regions; list-price estimates use representative region {region}."
+        )
+    estimate["partial"] = bool(
+        actuals.get("mixed_currency")
+        or (actuals.get("reason") and not actuals.get("available"))
+        or report_note
+        or report.get("partial")
+        or len(regions) > 1
+    ) if not is_demo else False
     estimate["price_region"] = region
     estimate["demo"] = bool(estate.get("demo"))
     estimate["months_back"] = months_back
@@ -238,6 +264,8 @@ def compose(
         "demo": bool(estate.get("demo")),
         "scope": estate.get("scope", {}),
         "errors": estate.get("errors", {}),
+        "warnings": estate.get("warnings", {}),
+        "source_details": estate.get("source_details", {}),
         "protection": {
             "vaults": len(estate.get("vaults", [])),
             "protected_items": len(instances),
@@ -273,20 +301,34 @@ def compose(
         "demo": bool(estate.get("demo")),
         "scope": estate.get("scope", {}),
         "errors": estate.get("errors", {}),
+        "warnings": estate.get("warnings", {}),
+        "source_details": estate.get("source_details", {}),
         "job_window_days": estate.get("job_window_days"),
         "summary": summary,
         "inventory": {
             "rows": instances,
             "facets": _facets(estate),
-            "total_count": len(instances),
-            "truncated": False,
+            "total_count": sum(
+                int((estate.get("source_details", {}).get(name, {}) or {}).get("source_total") or 0)
+                for name in ("rsv_items", "dp_instances")
+            ) or len(instances),
+            "truncated": any(
+                bool((estate.get("source_details", {}).get(name, {}) or {}).get("partial"))
+                for name in ("rsv_items", "dp_instances")
+            ),
         },
         "jobs": {
             "rows": enriched_jobs,
             "summary": job_summary,
-            "total_count": len(enriched_jobs),
+            "total_count": sum(
+                int((estate.get("source_details", {}).get(name, {}) or {}).get("source_total") or 0)
+                for name in ("rsv_jobs", "dp_jobs")
+            ) or len(enriched_jobs),
             "job_window_days": estate.get("job_window_days"),
-            "truncated": False,
+            "truncated": any(
+                bool((estate.get("source_details", {}).get(name, {}) or {}).get("partial"))
+                for name in ("rsv_jobs", "dp_jobs")
+            ),
         },
         "job_analysis": {
             "clusters": job_ops.cluster_failures(enriched_jobs),
@@ -324,6 +366,7 @@ async def build_snapshot(
     subscription_id: str = "",
     management_group_id: str = "",
     progress: ProgressFn | None = None,
+    resolved_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the whole Backup Manager pipeline once and return every tab's payload."""
     async def emit(phase: str, message: str) -> None:
@@ -334,7 +377,7 @@ async def build_snapshot(
         connection, tenant_id=tenant_id, workload_id=workload_id or None,
         subscription_id=subscription_id or None,
         management_group_id=management_group_id or None,
-        force=True, progress=progress,
+        force=True, progress=progress, resolved_scope=resolved_scope,
     )
     is_demo = bool(estate.get("demo"))
 
@@ -365,9 +408,11 @@ async def build_snapshot(
     await emit("analyze", "Detecting unprotected but backup-eligible resources…")
     subscriptions = set(estate.get("scope", {}).get("subscriptions") or [])
     gaps = await gap_ops.detect(connection, estate, subscriptions=subscriptions)
-    gaps["coverage_gaps"] = (
-        gap_ops.ingest_coverage_gaps(tenant_id, scope_kind, scope_id) if scope_id else []
-    )
+    coverage_gaps, coverage_status = gap_ops.ingest_coverage_gaps_for_scope(
+        tenant_id, scope_kind, scope_id, sorted(subscriptions),
+    ) if scope_id else ([], {"available_snapshots": 0, "missing_snapshots": 0, "partial": False})
+    gaps["coverage_gaps"] = coverage_gaps
+    gaps["coverage_status"] = coverage_status
     # The remediation form needs somewhere to send the work, so carry the target lists along.
     gaps["vaults"] = [
         {"id": v["id"], "name": v["name"], "kind": v["kind"], "location": v["location"],
@@ -395,5 +440,9 @@ async def build_snapshot(
         compliance=compliance, gaps=gaps, readiness=readiness, rpo=rpo, cost=cost,
     )
     snapshot["scope"] = {**snapshot.get("scope", {}), "scope_kind": scope_kind, "scope_id": scope_id}
-    snapshot["partial"] = bool(errors)
+    snapshot["partial"] = bool(
+        errors or estate.get("warnings") or gaps.get("source_detail", {}).get("partial")
+        or coverage_status.get("partial")
+        or cost.get("partial")
+    )
     return snapshot_store.bound(snapshot)

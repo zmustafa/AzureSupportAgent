@@ -11,6 +11,7 @@ reviewer's workstation. Every cell that reaches a sheet goes through :func:`cell
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 _FORMULA_TRIGGERS = ("=", "+", "-", "@")
@@ -18,6 +19,23 @@ _FORMULA_LEADING_WS = ("\t", "\r", "\n")
 
 #: Excel's hard limit on a sheet title.
 MAX_TITLE = 31
+
+
+@dataclass(frozen=True)
+class HyperlinkCell:
+    """Displayed text plus a validated HTTPS target for a real OOXML hyperlink."""
+
+    text: str
+    url: str
+
+
+def hyperlink(text: Any, url: Any) -> HyperlinkCell | str:
+    """Create a safe hyperlink value, falling back to plain text for an invalid target."""
+    label = str(text or "")
+    target = str(url or "")
+    if not target.lower().startswith("https://") or any(ch in target for ch in ("\r", "\n", "\t")):
+        return label
+    return HyperlinkCell(label, target)
 
 
 def cell_safe(value: Any) -> Any:
@@ -42,6 +60,8 @@ def coerce(value: Any) -> Any:
     ``True`` becomes "Yes" and ``False`` becomes empty rather than "No": a grid of "No" is
     unreadable, and the columns that carry a boolean are all "does this apply".
     """
+    if isinstance(value, HyperlinkCell):
+        return cell_safe(value.text)
     if isinstance(value, bool):
         return "Yes" if value else ""
     if value is None:
@@ -140,6 +160,12 @@ class WorkbookBuilder:
             cell.alignment = Alignment(vertical="center")
         for r in data:
             ws.append([coerce(v) for v in r])
+            row_number = ws.max_row
+            for column, value in enumerate(r, start=1):
+                if isinstance(value, HyperlinkCell) and value.url:
+                    cell = ws.cell(row=row_number, column=column)
+                    cell.hyperlink = value.url
+                    cell.style = "Hyperlink"
         ws.freeze_panes = "A2"
         for ci, h in enumerate(headers, start=1):
             width = len(str(h))

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -42,6 +43,7 @@ from app.backup_manager import (
 )
 from app.backup_manager.builtin_seed import PORTAL_ONLY_OPERATIONS
 from app.core import coverage_runs
+from app.core.azure_portal import portal_host
 from app.core.db import SessionLocal, get_db
 from app.core.genjob import JobRegistry, ProgressFn
 from app.core.security import Principal, require_permission
@@ -78,6 +80,7 @@ _approve = require_permission("backup_manager.approve")
 
 MAX_PAGE_SIZE = 200
 APPLY_CONCURRENCY = 6
+WORKBOOK_CHANGE_LIMIT = 10_000
 
 
 # --------------------------------------------------------------------------- request models
@@ -209,8 +212,27 @@ def _tenant(principal: Principal) -> str:
 def _connection(connection_id: str, workload_id: str | None = None) -> dict[str, Any]:
     try:
         return service.resolve_selected_connection(connection_id or None, workload_id or None)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _resolve_scope_for_request(
+    connection: dict[str, Any], *, workload_id: str, subscription_id: str, management_group_id: str,
+) -> dict[str, Any]:
+    try:
+        return await service.resolve_scope(
+            connection, workload_id=workload_id or None,
+            subscription_id=subscription_id or None,
+            management_group_id=management_group_id or None,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=service.safe_error(str(exc))) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _is_demo(workload_id: str | None) -> bool:
@@ -230,6 +252,7 @@ async def _estate(
     enrich: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return ``(estate, connection)`` for a scope, serving demo data where applicable."""
+    _scope_identity(workload_id, subscription_id, management_group_id)
     if _is_demo(workload_id):
         return demo_data.build_demo_estate(workload_id), {"id": "demo", "read_only": True, "display_name": "Demo"}
     connection = _connection(connection_id, workload_id)
@@ -267,7 +290,9 @@ def _audit(principal: Principal, action: str, target: str, metadata: dict[str, A
     )
 
 
-def _capabilities(connection: dict[str, Any], principal: Principal) -> dict[str, Any]:
+def _capabilities(
+    connection: dict[str, Any], principal: Principal, *, scope_kind: str = "none",
+) -> dict[str, Any]:
     has = lambda perm: principal.is_admin or principal.has(perm)  # noqa: E731 - local shorthand
     return {
         "connection_id": str(connection.get("id") or ""),
@@ -286,6 +311,9 @@ def _capabilities(connection: dict[str, Any], principal: Principal) -> dict[str,
         "can_restore": False,
         "can_delete_backup_data": False,
         "portal_only_operations": PORTAL_ONLY_OPERATIONS,
+        "portal_host": portal_host(connection),
+        "scope_kind": scope_kind,
+        "analysis_only_scope": scope_kind == "management_group",
     }
 
 
@@ -306,16 +334,37 @@ def _guard_write(connection: dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+def _guard_mutation_scope(body: ScopeBody) -> None:
+    kind, _scope_id = _scope_identity(
+        body.workload_id, body.subscription_id, body.management_group_id, required=False,
+    )
+    if kind == "management_group":
+        raise HTTPException(
+            status_code=400,
+            detail="Management-group scope is analysis-only. Narrow to a workload or subscription to draft or apply changes.",
+        )
+
+
 # --------------------------------------------------------------------------- system
 @router.get("/capabilities")
 async def capabilities(
     connection_id: str = Query(default=""),
     workload_id: str = Query(default=""),
+    subscription_id: str = Query(default=""),
+    management_group_id: str = Query(default=""),
     principal: Principal = Depends(_read),
 ) -> dict[str, Any]:
+    subscription_id = subscription_id if isinstance(subscription_id, str) else ""
+    management_group_id = management_group_id if isinstance(management_group_id, str) else ""
+    scope_kind, _scope_id = _scope_identity(
+        workload_id, subscription_id, management_group_id, required=False,
+    )
     if _is_demo(workload_id):
-        return {**_capabilities({"id": "demo", "display_name": "Demo", "read_only": True}, principal), "demo": True}
-    return _capabilities(_connection(connection_id, workload_id), principal)
+        return {**_capabilities(
+            {"id": "demo", "display_name": "Demo", "read_only": True}, principal,
+            scope_kind=scope_kind,
+        ), "demo": True}
+    return _capabilities(_connection(connection_id, workload_id), principal, scope_kind=scope_kind)
 
 
 @router.get("/refusals")
@@ -424,15 +473,14 @@ async def refresh(
 
 # --------------------------------------------------------------------------- snapshot
 def _scope_identity(
-    workload_id: str, subscription_id: str, management_group_id: str,
+    workload_id: str, subscription_id: str, management_group_id: str, *, required: bool = True,
 ) -> tuple[str, str]:
-    if workload_id:
-        return "workload", workload_id
-    if subscription_id:
-        return "subscription", subscription_id
-    if management_group_id:
-        return "management_group", management_group_id
-    return "none", ""
+    try:
+        return service.scope_identity(
+            workload_id, subscription_id, management_group_id, required=required,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _job_key(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> str:
@@ -599,6 +647,7 @@ async def run_refresh_analysis(
     subscription_id: str = "",
     management_group_id: str = "",
     progress: ProgressFn,
+    resolved_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run and persist one Backup Manager analysis independently of an HTTP request."""
     scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
@@ -607,10 +656,27 @@ async def run_refresh_analysis(
     if scope_kind == "none":
         raise ValueError("Select a workload, subscription, or management group first.")
     connection = _connection(connection_id, workload_id)
+    if scope_kind == "management_group":
+        await _resolve_scope_for_request(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id,
+        )
     tenant = _tenant(principal)
     effective_connection = str(connection.get("id") or "")
 
     await progress("start", "Starting a server-side backup estate analysis. It continues if you navigate away.")
+    if scope_kind == "management_group":
+        await progress("scope", f"Resolving management group {scope_id} and its descendant subscriptions…")
+        if resolved_scope is None:
+            resolved_scope = await _resolve_scope_for_request(
+                connection, workload_id=workload_id, subscription_id=subscription_id,
+                management_group_id=management_group_id,
+            )
+        await progress(
+            "subscriptions",
+            f"Management group resolved to {resolved_scope.get('subscription_count', 0):,} subscription(s) "
+            f"across {(int(resolved_scope.get('subscription_count') or 0) + service.ARG_SUBSCRIPTION_BATCH - 1) // service.ARG_SUBSCRIPTION_BATCH:,} Resource Graph batch(es).",
+        )
     if _analysis_slots.locked():
         await progress("start", f"Waiting for a free analysis slot ({ANALYSIS_CONCURRENCY} run at a time)…")
     async with _analysis_slots:
@@ -620,6 +686,7 @@ async def run_refresh_analysis(
                 connection, tenant_id=tenant, scope_kind=scope_kind, scope_id=scope_id,
                 workload_id=workload_id, subscription_id=subscription_id,
                 management_group_id=management_group_id, progress=progress,
+                resolved_scope=resolved_scope,
             )
             await progress("save", "Saving the analysis so every tab reads the same numbers…")
             snapshot_store.write_snapshot(tenant, effective_connection, scope_kind, scope_id, snapshot)
@@ -659,7 +726,10 @@ async def refresh_start(
     """Start a detached analysis for this scope, idempotently.
 
     The job outlives the request, so navigating away or closing the tab does not abandon a
-    sweep that has already spent minutes of Azure calls."""
+    sweep that has already spent minutes of Azure calls. Scope failures are explicit: 400 for
+    an invalid or conflicting scope, 403 for an unreadable hierarchy branch, 404 when the
+    selected management group is not visible, and 409 when it has no visible subscriptions.
+    """
     scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
     if _is_demo(workload_id):
         raise HTTPException(status_code=400, detail="Demo scopes are generated on read and need no analysis.")
@@ -667,6 +737,12 @@ async def refresh_start(
         raise HTTPException(status_code=400, detail="Select a workload, subscription, or management group first.")
 
     connection = _connection(connection_id, workload_id)
+    resolved_scope: dict[str, Any] | None = None
+    if scope_kind == "management_group":
+        resolved_scope = await _resolve_scope_for_request(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id,
+        )
     tenant = _tenant(principal)
     effective_connection = str(connection.get("id") or "")
     key = _job_key(tenant, effective_connection, scope_kind, scope_id)
@@ -679,6 +755,7 @@ async def refresh_start(
             subscription_id=subscription_id,
             management_group_id=management_group_id,
             progress=progress,
+            resolved_scope=resolved_scope,
         )
 
     return _job_response(_refresh_jobs.start(key, runner))
@@ -883,7 +960,11 @@ async def cleanup_snapshots(principal: Principal = Depends(_read)) -> dict[str, 
             reasons.append("stale schema")
         rows.append({
             **row,
-            "scope_name": workload_names.get(row["scope_id"], row["scope_id"]),
+            "scope_name": (
+                workload_names.get(row["scope_id"], row["scope_id"])
+                if row["scope_kind"] == "workload"
+                else row.get("scope_name") or row["scope_id"]
+            ),
             "orphan_reasons": reasons,
             "orphan": bool(reasons),
         })
@@ -1098,6 +1179,7 @@ async def retention_impact(
     body: RetentionImpactRequest,
     principal: Principal = Depends(_read),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1137,12 +1219,15 @@ async def list_gaps(
     subscriptions = set(estate.get("scope", {}).get("subscriptions") or [])
     result = await gap_ops.detect(connection, estate, subscriptions=subscriptions)
     coverage: list[dict[str, Any]] = []
+    coverage_status: dict[str, Any] = {}
     if include_coverage:
-        scope_kind = "workload" if workload_id else "subscription"
-        scope_id = workload_id or subscription_id
+        scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
         if scope_id:
-            coverage = gap_ops.ingest_coverage_gaps(_tenant(principal), scope_kind, scope_id)
+            coverage, coverage_status = gap_ops.ingest_coverage_gaps_for_scope(
+                _tenant(principal), scope_kind, scope_id, sorted(subscriptions),
+            )
     result["coverage_gaps"] = coverage
+    result["coverage_status"] = coverage_status
     result["vaults"] = [
         {"id": v["id"], "name": v["name"], "kind": v["kind"], "location": v["location"],
          "subscription_id": v["subscription_id"], "redundancy": v.get("redundancy", "")}
@@ -1160,6 +1245,7 @@ async def list_gaps(
 async def _build_remediation(
     principal: Principal, body: RemediationPreviewRequest,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1259,6 +1345,7 @@ async def protection_change(
 
     Deleting backup data is not reachable: the request model has no such action and the apply
     handler refuses any stop mode other than retain-data."""
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1374,6 +1461,7 @@ async def backup_now(
     principal: Principal = Depends(_ondemand),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1412,6 +1500,7 @@ async def cancel_job(
     principal: Principal = Depends(_ondemand),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1445,6 +1534,7 @@ async def harden_vault(
     principal: Principal = Depends(_vault_write),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     """Draft one change per selected control. Irreversible controls are refused outright."""
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
@@ -1651,6 +1741,7 @@ async def request_test_failover(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Draft an approval-gated Site Recovery test failover. Never a real failover."""
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1714,6 +1805,7 @@ async def request_cleanup(
     principal: Principal = Depends(_drill_write),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     estate, connection = await _estate(
         principal, connection_id=body.connection_id, workload_id=body.workload_id,
         subscription_id=body.subscription_id, management_group_id=body.management_group_id, enrich=False,
@@ -1755,20 +1847,14 @@ async def list_drills(
     principal: Principal = Depends(_read),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _scope_identity(workload_id, subscription_id, management_group_id)
     rows = await drill_ops.list_drills(
         db, tenant_id=_tenant(principal), connection_id=connection_id, status=status,
     )
     public = [drill_ops.public_drill(r) for r in rows]
-    readiness: dict[str, Any] = {}
-    try:
-        estate, _connection = await _estate(
-            principal, connection_id=connection_id, workload_id=workload_id,
-            subscription_id=subscription_id, management_group_id=management_group_id, enrich=False,
-        )
-        readiness = dr_ops.build_readiness(estate)
-    except HTTPException:
-        readiness = {}
-    return {"drills": public, "summary": drill_ops.summarize(public, readiness)}
+    # The register is a live DB ledger. Site Recovery readiness comes from the completed
+    # snapshot already rendered by the DR tab; opening the register must not query Azure.
+    return {"drills": public, "summary": drill_ops.summarize(public, {})}
 
 
 @router.post("/drills")
@@ -1777,6 +1863,7 @@ async def create_drill(
     principal: Principal = Depends(_drill_write),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    _guard_mutation_scope(body)
     try:
         drill = drill_ops.build_drill(
             tenant_id=_tenant(principal), connection_id=body.connection_id or "default",
@@ -2256,6 +2343,81 @@ async def reference_reset(principal: Principal = Depends(_reference_write)) -> d
 
 
 # --------------------------------------------------------------------------- export + evidence
+@router.get("/export/workbook")
+async def export_workbook(
+    connection_id: str = Query(default=""),
+    workload_id: str = Query(default=""),
+    subscription_id: str = Query(default=""),
+    management_group_id: str = Query(default=""),
+    principal: Principal = Depends(_read),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Every Backup Manager tab as one snapshot-consistent Excel review pack.
+
+    No Azure call is allowed here.  The analyzed snapshot is authoritative; the two ledgers
+    that move independently (managed changes and drills) are read from the database and passed
+    to the pure formatter as public projections.
+    """
+    scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
+    if scope_kind == "none":
+        raise HTTPException(status_code=400, detail="Select a workload, subscription, or management group first.")
+
+    if _is_demo(workload_id):
+        connection = {"id": "demo", "display_name": "Demo", "azure_cloud": "AzureCloud"}
+        snapshot = await _demo_snapshot(workload_id)
+        change_rows: list[BackupManagerChange] = []
+        drill_rows: list[BackupDrill] = []
+        changes_truncated = False
+    else:
+        connection = _connection(connection_id, workload_id)
+        tenant = _tenant(principal)
+        effective_connection = str(connection.get("id") or "")
+        snapshot = snapshot_store.read_snapshot(
+            tenant, effective_connection, scope_kind, scope_id,
+        )
+        if snapshot is None or not snapshot.get("report_exists"):
+            raise HTTPException(status_code=409, detail="Analyze backups first; no completed snapshot exists for this scope.")
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict):
+            summary["actionable_changes"] = await _actionable_changes(db, tenant, effective_connection)
+        snapshot["age_seconds"] = snapshot_store.age_seconds(snapshot)
+
+        change_rows = list((await db.execute(
+            select(BackupManagerChange)
+            .where(
+                BackupManagerChange.tenant_id == tenant,
+                BackupManagerChange.connection_id == effective_connection,
+            )
+            .order_by(BackupManagerChange.requested_at.desc())
+            .limit(WORKBOOK_CHANGE_LIMIT + 1)
+        )).scalars())
+        changes_truncated = len(change_rows) > WORKBOOK_CHANGE_LIMIT
+        del change_rows[WORKBOOK_CHANGE_LIMIT:]
+        drill_rows = await drill_ops.list_drills(
+            db, tenant_id=tenant, connection_id=effective_connection,
+        )
+
+    ledger_at = datetime.now(timezone.utc).isoformat()
+    content = await asyncio.to_thread(
+        export_ops.to_workbook,
+        snapshot=snapshot,
+        changes=[change_ops.public_change(row) for row in change_rows],
+        drills=[drill_ops.public_drill(row) for row in drill_rows],
+        portal_host=portal_host(connection),
+        connection_label=str(connection.get("display_name") or connection.get("id") or ""),
+        ledger_generated_at=ledger_at,
+        changes_truncated=changes_truncated,
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="backup-manager-review-{datetime.now(timezone.utc):%Y-%m-%d}.xlsx"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("/export")
 async def export_csv(
     kind: Literal["instances", "jobs", "policies", "gaps", "posture", "drills"] = Query(...),
@@ -2267,29 +2429,36 @@ async def export_csv(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     if kind == "drills":
-        rows = [drill_ops.public_drill(r) for r in await drill_ops.list_drills(
-            db, tenant_id=_tenant(principal), connection_id=connection_id,
-        )]
-    else:
-        estate, connection = await _estate(
-            principal, connection_id=connection_id, workload_id=workload_id,
-            subscription_id=subscription_id, management_group_id=management_group_id,
-            enrich=(kind == "posture"),
-        )
-        if kind == "instances":
-            rows = estate.get("instances", [])
-        elif kind == "jobs":
-            rows = job_ops.enrich(estate.get("jobs", []))
-        elif kind == "policies":
-            rows = policy_ops.analyze(estate.get("policies", []), estate.get("instances", []))["policies"]
-        elif kind == "posture":
-            rows = posture_ops.build_posture(estate.get("vaults", []))["vaults"]
+        if _is_demo(workload_id):
+            rows = []
         else:
-            if _is_demo(workload_id):
-                rows = demo_data.demo_gaps(workload_id)["gaps"]
-            else:
-                subscriptions = set(estate.get("scope", {}).get("subscriptions") or [])
-                rows = (await gap_ops.detect(connection, estate, subscriptions=subscriptions))["gaps"]
+            connection = _connection(connection_id, workload_id)
+            rows = [drill_ops.public_drill(r) for r in await drill_ops.list_drills(
+                db, tenant_id=_tenant(principal), connection_id=str(connection.get("id") or ""),
+            )]
+    else:
+        scope_kind, scope_id = _scope_identity(workload_id, subscription_id, management_group_id)
+        if scope_kind == "none":
+            raise HTTPException(status_code=400, detail="Select a scope before exporting.")
+        if _is_demo(workload_id):
+            snapshot = await _demo_snapshot(workload_id)
+        else:
+            connection = _connection(connection_id, workload_id)
+            snapshot = snapshot_store.read_snapshot(
+                _tenant(principal), str(connection.get("id") or ""), scope_kind, scope_id,
+            )
+            if snapshot is None or not snapshot.get("report_exists"):
+                raise HTTPException(status_code=409, detail="Analyze backups first; no completed snapshot exists for this scope.")
+        if kind == "instances":
+            rows = (snapshot.get("inventory") or {}).get("rows", [])
+        elif kind == "jobs":
+            rows = (snapshot.get("jobs") or {}).get("rows", [])
+        elif kind == "policies":
+            rows = (snapshot.get("policies") or {}).get("policies", [])
+        elif kind == "posture":
+            rows = (snapshot.get("posture") or {}).get("vaults", [])
+        else:
+            rows = (snapshot.get("gaps") or {}).get("gaps", [])
     content = export_ops.export(kind, rows)
     return Response(
         content=content, media_type="text/csv",
@@ -2303,25 +2472,43 @@ async def capture_evidence(
     principal: Principal = Depends(_read),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Hash-stamp the current recoverability position into the Evidence Locker."""
+    """Hash-stamp the completed snapshot without starting another Azure collection."""
     from app.evidence import registry as evidence_registry
 
-    estate, _connection = await _estate(
-        principal, connection_id=body.connection_id, workload_id=body.workload_id,
-        subscription_id=body.subscription_id, management_group_id=body.management_group_id,
+    scope_kind, scope_id = _scope_identity(
+        body.workload_id, body.subscription_id, body.management_group_id,
     )
+    if _is_demo(body.workload_id):
+        snapshot = await _demo_snapshot(body.workload_id)
+        effective_connection = "demo"
+    else:
+        connection = _connection(body.connection_id, body.workload_id)
+        effective_connection = str(connection.get("id") or "")
+        snapshot = snapshot_store.read_snapshot(
+            _tenant(principal), effective_connection, scope_kind, scope_id,
+        )
+        if snapshot is None or not snapshot.get("report_exists"):
+            raise HTTPException(status_code=409, detail="Analyze backups first; no completed snapshot exists for this scope.")
     drills = [drill_ops.public_drill(r) for r in await drill_ops.list_drills(
-        db, tenant_id=_tenant(principal), connection_id=body.connection_id,
+        db, tenant_id=_tenant(principal), connection_id=effective_connection,
     )]
+    estate = {
+        "generated_at": snapshot.get("generated_at"),
+        "scope": snapshot.get("scope", {}),
+        "vaults": (snapshot.get("vaults") or {}).get("vaults", []),
+        "instances": (snapshot.get("inventory") or {}).get("rows", []),
+        "replication": (snapshot.get("dr") or {}).get("items", []),
+        "policies": (snapshot.get("policies") or {}).get("policies", []),
+    }
     payload = export_ops.evidence_payload(
         estate=estate,
-        posture=posture_ops.build_posture(estate.get("vaults", [])),
-        compliance=policy_ops.compliance(estate.get("instances", []), estate.get("policies", [])),
-        rpo=dr_ops.rpo_attainment(estate.get("instances", [])),
+        posture=snapshot.get("posture") or {},
+        compliance=snapshot.get("compliance") or {},
+        rpo=(snapshot.get("dr") or {}).get("rpo") or {},
         drills=drills,
-        scope=estate.get("scope", {}),
+        scope=snapshot.get("scope", {}),
     )
-    scope_label = body.workload_id or body.subscription_id or "tenant"
+    scope_label = str((snapshot.get("scope") or {}).get("scope_name") or scope_id)
     meta = evidence_registry.create_snapshot(
         tenant_id=_tenant(principal),
         name=body.name or f"Backup recoverability — {scope_label}",

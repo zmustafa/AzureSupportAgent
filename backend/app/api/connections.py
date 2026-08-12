@@ -6,6 +6,8 @@ selected connection). All endpoints require the admin role; secrets are never re
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +20,6 @@ from app.core.azure_connections import (
     get_connection,
     public_connection,
     public_connections,
-    resolve_connection,
     set_default,
     update_status,
     upsert_connection,
@@ -38,6 +39,7 @@ class ConnectionUpsert(BaseModel):
     id: str | None = None
     display_name: str
     tenant_id: str
+    azure_cloud: Literal["AzureCloud", "AzureUSGovernment", "AzureChinaCloud"] = "AzureCloud"
     auth_method: str
     default_subscription: str | None = None
     log_analytics_workspace_id: str | None = None

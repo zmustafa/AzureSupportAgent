@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.azure_connections import resolve_connection
+from app.core.azure_connections import get_connection, resolve_connection
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.models import AuditLog
@@ -494,9 +494,14 @@ def _schedule_resource_group_prefetch(
 
 @router.post("/tree")
 async def tree_endpoint(payload: TreeRequest, _: Principal = Depends(get_principal)):
-    conn = resolve_connection(payload.connection_id or None)
+    conn = get_connection(payload.connection_id) if payload.connection_id else resolve_connection(None)
     if not conn:
-        raise HTTPException(status_code=400, detail="Pick an Azure connection first.")
+        raise HTTPException(
+            status_code=404 if payload.connection_id else 400,
+            detail="The selected Azure connection was not found." if payload.connection_id else "Pick an Azure connection first.",
+        )
+    if conn.get("disabled"):
+        raise HTTPException(status_code=400, detail="The selected Azure connection is disabled.")
 
     # Subscription expansion is special: a cold expand fetches the RG list AND all of the
     # subscription's resources in ONE session, then caches each child RG's resources too —

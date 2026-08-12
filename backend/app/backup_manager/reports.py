@@ -12,6 +12,7 @@ a Log Analytics token.  Silent emptiness would be indistinguishable from healthy
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -54,6 +55,17 @@ def workspace_for(connection: dict[str, Any], estate: dict[str, Any] | None = No
             if workspace:
                 return str(workspace)
     return ""
+
+
+def workspaces_for(connection: dict[str, Any], estate: dict[str, Any] | None = None) -> list[str]:
+    """Every distinct in-scope reporting workspace, configured workspace first."""
+    values: list[str] = []
+    configured = str(connection.get("log_analytics_workspace_id") or "").strip()
+    if configured:
+        values.append(configured)
+    for vault in (estate or {}).get("vaults", []) or []:
+        values.extend(str(value).strip() for value in vault.get("diagnostics_workspaces") or [] if value)
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _workspace_guid(workspace: str) -> str:
@@ -174,13 +186,19 @@ async def build_report(
 ) -> dict[str, Any]:
     """Long-horizon backup report. Always returns a shaped response; ``available`` states
     whether real data was retrieved and ``reason``/``remedy`` explain any shortfall."""
-    workspace = workspace_for(connection, estate)
+    workspaces = workspaces_for(connection, estate)
+    workspace = workspaces[0] if workspaces else ""
     timespan = f"P{max(1, min(int(days), 180))}D"
     vaults_with_diagnostics = sum(1 for v in estate.get("vaults", []) if v.get("diagnostics_enabled"))
     total_vaults = len(estate.get("vaults", []) or [])
     base = {
         "available": False,
         "workspace": workspace,
+        "workspaces": workspaces,
+        "workspaces_total": len(workspaces),
+        "workspaces_succeeded": 0,
+        "workspaces_failed": 0,
+        "partial": False,
         "days": days,
         "vaults_total": total_vaults,
         "vaults_with_diagnostics": vaults_with_diagnostics,
@@ -198,15 +216,72 @@ async def build_report(
         base["remedy"] = "Enable vault diagnostic settings from the Vaults tab, then re-run this report."
         return base
 
-    try:
-        trend = await query(connection, workspace, JOB_TREND_KQL, timespan=timespan)
-        storage = await query(connection, workspace, STORAGE_KQL, timespan=timespan)
-        failures = await query(connection, workspace, FAILURE_HISTORY_KQL, timespan=timespan)
-        sla = await query(connection, workspace, SLA_KQL, timespan=timespan)
-    except ReportsUnavailable as exc:
-        base["reason"] = exc.reason
-        base["remedy"] = exc.remedy or "Grant the connection Log Analytics Reader on the workspace."
+    semaphore = asyncio.Semaphore(3)
+
+    async def collect(current: str) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str, str]:
+        async with semaphore:
+            try:
+                return (
+                    current,
+                    await query(connection, current, JOB_TREND_KQL, timespan=timespan),
+                    await query(connection, current, STORAGE_KQL, timespan=timespan),
+                    await query(connection, current, FAILURE_HISTORY_KQL, timespan=timespan),
+                    await query(connection, current, SLA_KQL, timespan=timespan),
+                    "", "",
+                )
+            except ReportsUnavailable as exc:
+                return current, [], [], [], [], exc.reason, exc.remedy
+
+    results = await asyncio.gather(*(collect(value) for value in workspaces))
+    trend: list[dict[str, Any]] = []
+    storage: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    sla: list[dict[str, Any]] = []
+    report_errors: list[str] = []
+    remedies: list[str] = []
+    for current, current_trend, current_storage, current_failures, current_sla, error, remedy in results:
+        if error:
+            report_errors.append(f"{service.name_from_id(current)}: {error}")
+            if remedy:
+                remedies.append(remedy)
+            continue
+        base["workspaces_succeeded"] += 1
+        trend.extend(current_trend)
+        storage.extend(current_storage)
+        failures.extend(current_failures)
+        sla.extend(current_sla)
+    base["workspaces_failed"] = len(report_errors)
+    base["partial"] = bool(report_errors)
+    if not base["workspaces_succeeded"]:
+        base["reason"] = "; ".join(report_errors)[:1200]
+        base["remedy"] = "; ".join(dict.fromkeys(remedies))[:800] or "Grant the connection Log Analytics Reader on the workspaces."
         return base
+
+    # Opaque BackupItemUniqueId values are retained only when they match an in-scope item;
+    # ARM-shaped ids are additionally constrained to the resolved subscription boundary.
+    subscriptions = {str(value).lower() for value in estate.get("scope", {}).get("subscriptions") or []}
+    names = {str(item.get("friendly_name") or "").lower() for item in estate.get("instances", []) if item.get("friendly_name")}
+
+    def in_scope_item(row: dict[str, Any]) -> bool:
+        value = str(row.get("BackupItemUniqueId") or "")
+        lower = value.lower()
+        if "/subscriptions/" in lower:
+            subscription = service.subscription_from_id(value).lower()
+            return not subscriptions or subscription in subscriptions
+        return any(name and name in lower for name in names)
+
+    storage = [row for row in storage if in_scope_item(row)]
+    sla = [row for row in sla if in_scope_item(row)]
+    storage = list({str(row.get("BackupItemUniqueId") or ""): row for row in storage}.values())
+    sla = list({str(row.get("BackupItemUniqueId") or ""): row for row in sla}.values())
+    management_group_scope = estate.get("scope", {}).get("scope_kind") == "management_group"
+    if management_group_scope:
+        # These two queries are workspace-level aggregates and cannot be proven scope-bound
+        # when a workspace is shared. Omit rather than leak unrelated subscriptions.
+        trend = []
+        failures = []
+        base["partial"] = True
+        report_errors.append("Workspace-level trend/failure aggregates were omitted because they are not resource-scoped.")
 
     storage_by_item: dict[str, float] = {}
     for row in storage:
@@ -218,6 +293,7 @@ async def build_report(
 
     base.update({
         "available": True,
+        "reason": "; ".join(report_errors)[:1200],
         "job_trend": [
             {
                 "date": str(r.get("TimeGenerated") or "")[:10],

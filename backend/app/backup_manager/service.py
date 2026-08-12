@@ -24,6 +24,8 @@ from app.core.crypto import decrypt, encrypt
 
 T = TypeVar("T")
 
+ARG_SUBSCRIPTION_BATCH = 100
+
 ARM_BASE = "https://management.azure.com"
 
 # --- API versions ----------------------------------------------------------------
@@ -141,6 +143,34 @@ def kql_escape(value: str) -> str:
     return str(value or "").replace("\\", "\\\\").replace("'", "\\'")
 
 
+def scope_identity(
+    workload_id: str | None = None,
+    subscription_id: str | None = None,
+    management_group_id: str | None = None,
+    *,
+    required: bool = True,
+) -> tuple[str, str]:
+    """Validate that exactly one Backup Manager scope was supplied."""
+    selected = [
+        ("workload", str(workload_id or "").strip()),
+        ("subscription", str(subscription_id or "").strip()),
+        ("management_group", str(management_group_id or "").strip()),
+    ]
+    populated = [(kind, value) for kind, value in selected if value]
+    if len(populated) > 1:
+        raise ValueError("Select exactly one workload, subscription, or management group.")
+    if not populated:
+        if required:
+            raise ValueError("Select a workload, subscription, or management group first.")
+        return "none", ""
+    kind, value = populated[0]
+    if kind == "management_group":
+        from app.workloads.discovery import normalize_management_group_id
+
+        value = normalize_management_group_id(value)
+    return kind, value
+
+
 # --------------------------------------------------------------------------- connection scope
 def workload_context(workload_id: str | None) -> tuple[dict[str, Any] | None, set[str], set[str]]:
     """Return ``(workload, lowercased node ids, subscription ids)`` for a workload scope."""
@@ -162,14 +192,19 @@ def workload_context(workload_id: str | None) -> tuple[dict[str, Any] | None, se
 
 
 def resolve_selected_connection(connection_id: str | None, workload_id: str | None = None) -> dict[str, Any]:
-    from app.core.azure_connections import connection_for_scope, resolve_connection
+    from app.core.azure_connections import connection_for_scope, get_connection, resolve_connection
 
     workload, _ids, _subs = workload_context(workload_id)
-    connection = (
-        connection_for_scope("workload", connection_id=connection_id, workload=workload)
-        if workload_id
-        else resolve_connection(connection_id)
-    )
+    if connection_id:
+        connection = get_connection(connection_id)
+        if connection is None:
+            raise LookupError("The selected Azure connection was not found.")
+    else:
+        connection = (
+            connection_for_scope("workload", workload=workload)
+            if workload_id
+            else resolve_connection(None)
+        )
     if not connection:
         raise ValueError("No Azure connection is configured for this scope.")
     if connection.get("disabled"):
@@ -189,15 +224,51 @@ async def scope_subscriptions(
     subscription_id: str | None = None,
     management_group_id: str | None = None,
 ) -> set[str]:
-    """Resolve the concrete subscription set a request is scoped to (empty = all visible)."""
-    if subscription_id:
-        return {subscription_id}
-    if management_group_id:
-        from app.workloads.discovery import subscriptions_under_mg
+    """Resolve the exact concrete subscription set; selected scopes never mean all-visible."""
+    return set((await resolve_scope(
+        connection,
+        workload_id=workload_id,
+        subscription_id=subscription_id,
+        management_group_id=management_group_id,
+    ))["subscriptions"])
 
-        return set(await subscriptions_under_mg(connection, management_group_id))
-    _workload, _ids, subs = workload_context(workload_id)
-    return subs
+
+async def resolve_scope(
+    connection: dict[str, Any],
+    *,
+    workload_id: str | None = None,
+    subscription_id: str | None = None,
+    management_group_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolved scope metadata carried into snapshots, history, and exports."""
+    kind, scope_id = scope_identity(workload_id, subscription_id, management_group_id)
+    if kind == "subscription":
+        return {
+            "scope_kind": kind, "scope_id": scope_id, "scope_name": scope_id,
+            "subscriptions": [scope_id], "subscription_count": 1,
+            "resolution_complete": True, "resolution_warnings": [],
+        }
+    if kind == "management_group":
+        from app.workloads.discovery import resolve_management_group_scope
+
+        result = await resolve_management_group_scope(connection, scope_id)
+        return {
+            "scope_kind": kind,
+            "scope_id": result["management_group_id"],
+            "scope_name": result["management_group_name"],
+            **result,
+        }
+    workload, _ids, subscriptions = workload_context(scope_id)
+    if workload is None:
+        raise LookupError("The selected workload was not found.")
+    if not subscriptions:
+        raise ValueError("No subscriptions are attached to the selected workload.")
+    return {
+        "scope_kind": kind, "scope_id": scope_id,
+        "scope_name": str(workload.get("name") or scope_id),
+        "subscriptions": sorted(subscriptions), "subscription_count": len(subscriptions),
+        "resolution_complete": True, "resolution_warnings": [],
+    }
 
 
 # --------------------------------------------------------------------------- Azure access
@@ -221,16 +292,66 @@ async def arg(
     from app.azure.arm import query_resource_graph_paged
 
     token = await token_for(connection)
-    subs = sorted({str(s) for s in (subscriptions or ()) if s}) or None
-    rows, error, complete, total = await query_resource_graph_paged(token, query, subs, max_rows=max_rows)
-    if error:
-        raise ValueError(safe_error(error))
-    return rows, {
-        "partial": not complete,
-        "source_total": total,
-        "source_count": len(rows),
+    subs = sorted({str(s).lower() for s in (subscriptions or ()) if s})
+    batches: list[list[str] | None] = (
+        [subs[index:index + ARG_SUBSCRIPTION_BATCH] for index in range(0, len(subs), ARG_SUBSCRIPTION_BATCH)]
+        if subs else [None]
+    )
+    retained: list[dict[str, Any]] = []
+    errors: list[str] = []
+    complete = True
+    known_total = 0
+    total_known = True
+    succeeded = 0
+    for index, batch in enumerate(batches, start=1):
+        rows, error, batch_complete, total = await query_resource_graph_paged(
+            token, query, batch, max_rows=max_rows,
+        )
+        if error:
+            errors.append(f"batch {index}/{len(batches)}: {safe_error(error)}")
+            complete = False
+            continue
+        succeeded += 1
+        complete = complete and batch_complete
+        if total is None:
+            total_known = False
+        else:
+            known_total += int(total)
+        if len(retained) < max_rows:
+            retained.extend(rows[: max_rows - len(retained)])
+    if not succeeded:
+        raise ValueError("; ".join(errors)[:1500] or "Resource Graph query failed.")
+    source_total = known_total if total_known else max(len(retained), known_total)
+    return retained, {
+        "partial": not complete or bool(errors) or source_total > len(retained),
+        "source_total": source_total,
+        "source_count": len(retained),
         "source_limit": max_rows,
+        "subscription_count": len(subs),
+        "batch_count": len(batches),
+        "successful_batches": succeeded,
+        "failed_batches": len(errors),
+        "errors": errors,
     }
+
+
+async def arg_safe_detailed(
+    connection: dict[str, Any],
+    query: str,
+    subscriptions: Iterable[str] | None = None,
+    *,
+    max_rows: int = 5000,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+    try:
+        rows, metadata = await arg(connection, query, subscriptions, max_rows=max_rows)
+        return rows, metadata, ""
+    except (ValueError, KeyError, TypeError) as exc:  # noqa: BLE001 - degraded source
+        return [], {
+            "partial": True, "source_total": None, "source_count": 0,
+            "source_limit": max_rows, "subscription_count": len(set(subscriptions or ())),
+            "batch_count": 0, "successful_batches": 0, "failed_batches": 1,
+            "errors": [safe_error(str(exc))],
+        }, safe_error(str(exc))
 
 
 async def arg_safe(
@@ -242,11 +363,10 @@ async def arg_safe(
 ) -> tuple[list[dict[str, Any]], str]:
     """``arg`` that degrades to ``([], error)`` — one unsupported ARG table must not fail a
     whole inventory sweep, so every collector source is independently fail-soft."""
-    try:
-        rows, _meta = await arg(connection, query, subscriptions, max_rows=max_rows)
-        return rows, ""
-    except (ValueError, KeyError, TypeError) as exc:  # noqa: BLE001 - degraded source
-        return [], safe_error(str(exc))
+    rows, _metadata, error = await arg_safe_detailed(
+        connection, query, subscriptions, max_rows=max_rows,
+    )
+    return rows, error
 
 
 async def arm_get(

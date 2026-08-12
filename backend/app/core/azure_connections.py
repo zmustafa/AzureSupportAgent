@@ -48,6 +48,8 @@ _SECRET_FIELDS = ("client_secret", "certificate_pem", "access_token", "refresh_t
 _DEFAULTS: dict[str, Any] = {
     "display_name": "",
     "tenant_id": "",
+    # Trusted cloud metadata used by cloud-aware UI/exports (for example portal deep links).
+    "azure_cloud": "AzureCloud",
     "auth_method": "service_principal",
     "default_subscription": "",
     # Log Analytics workspace (GUID) for `az monitor log-analytics query` widgets.
@@ -270,6 +272,7 @@ def public_connection(conn: dict[str, Any]) -> dict[str, Any]:
         "id": conn["id"],
         "display_name": conn.get("display_name", ""),
         "tenant_id": conn.get("tenant_id", ""),
+        "azure_cloud": conn.get("azure_cloud", "AzureCloud"),
         "auth_method": conn.get("auth_method", ""),
         "default_subscription": conn.get("default_subscription", ""),
         "log_analytics_workspace_id": conn.get("log_analytics_workspace_id", ""),

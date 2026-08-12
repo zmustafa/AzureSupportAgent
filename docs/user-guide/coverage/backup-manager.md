@@ -35,6 +35,7 @@ Only **stop protection with data retained** exists. A request to stop protection
 ### Prerequisites
 
 - An Azure connection that can read the Resource Graph `recoveryservicesresources` table across the selected scope.
+- For management-group analysis, permission to read the selected management group hierarchy plus Reader-equivalent access on every descendant subscription that should be included.
 - Reader access to Recovery Services vaults and Backup vaults for the per-vault configuration reads (soft delete, storage redundancy, Resource Guard, diagnostic settings).
 - `Microsoft.CostManagement/query/action` on the in-scope subscriptions for actual spend. Without it the Cost tab still reports list-price estimates and says why actuals are missing.
 - A Log Analytics workspace receiving vault diagnostics for long-horizon Backup Reports. Pasted-token connections cannot query Log Analytics because the token audience differs; use a service-principal or managed-identity connection.
@@ -138,6 +139,93 @@ If **every** Resource Graph source fails — an expired token or a revoked role 
 Demo workloads are synthetic and are composed on read, so they need no analysis and offer no Analyze button.
 
 Backup job history from Resource Graph covers a rolling window of approximately **seven days**. Longer horizons require vault diagnostics shipping to Log Analytics.
+
+### Management-group scope
+
+Choose **Management group** to analyze every descendant subscription visible to the selected
+Azure connection, including subscriptions below nested child management groups. The picker uses
+the live Azure management-group hierarchy and is bound to the selected connection; changing the
+connection clears the previous group so a scope cannot silently cross tenants.
+
+Management-group discovery fails closed. An invalid or invisible group, a hierarchy branch that
+cannot be read, or a group with no visible subscriptions stops the analysis and keeps the previous
+completed result. An empty resolution is never interpreted as “all visible subscriptions.” The
+progress panel reports the resolved subscription count and Resource Graph batch progress.
+
+Large management groups are queried in bounded subscription batches. Detail rows remain bounded,
+and source totals, failed batches and truncation are reported as partial rather than as a clean
+undercount. Backup & DR Coverage findings are merged only from existing subscription-level cached
+coverage scans; Backup Manager never starts those scans itself.
+
+Cost Management queries each descendant subscription with bounded concurrency. When billing
+currencies differ, amounts are displayed separately and are never summed, allocated or compared.
+Backup Reports query every distinct in-scope Log Analytics workspace with bounded concurrency;
+workspace failures and any aggregate that cannot be safely scoped are reported as limitations.
+
+Management-group scope is **analysis-only**. All tabs, filters, portal links, CSV/XLSX exports,
+history and Cleanup remain available, but drafting or applying Azure changes requires narrowing to
+a workload or subscription. This restriction is enforced by both the UI and API.
+
+## Exports and Azure portal links
+
+The Overview header offers **Excel review pack** after a scope has a completed analysis. It is
+the one-file equivalent of the entire Manager view: Summary and limitations first, then protected
+items, RPO, jobs and failure analysis, policies and compliance, vault posture and capacity,
+protection gaps, Site Recovery and drills, cost and waste, and the public managed-change ledger.
+An Index groups the sheets by the same parent areas as the UI.
+Management-group workbooks also include **Scope subscriptions**, listing the exact descendants
+resolved when the analysis ran; Summary records the group name, ID, count and completeness.
+
+The workbook is built from the **last completed snapshot**. Downloading it never reads Resource
+Graph, ARM, Cost Management, Retail Prices or Log Analytics. If a new analysis is in progress, the
+button exports the prior completed result and the Summary names its timestamp. Before the first
+analysis the button is disabled and the endpoint returns an Analyze-first response.
+
+The **Coverage & limitations** sheet must be read before interpreting blank sheets or zeroes. It
+records source errors, partial and assumed cost inputs, unpriced items, the job-history window and
+every bounded row section. A failed source is not represented as a clean empty result. Demo exports
+are marked as synthetic. Cost columns always carry their currency and keep estimates, actuals and
+allocated actuals separate.
+
+The workbook and existing CSV exports neutralize spreadsheet-formula prefixes in Azure-controlled
+names. The workbook exports only the browser-safe managed-change projection; encrypted before/
+desired/after payloads, operation URLs, credentials, tokens and provider traces are never included.
+Managed changes and the drill register are live database-backed ledgers rather than analysis rows,
+so they are read when the workbook is generated and carry a separate **Live ledgers read** timestamp.
+Those sheets are connection-wide where the ledger model cannot prove a narrower resource scope;
+the analyzed Azure sections remain bound to the selected tenant, connection and scope.
+
+Resource rows expose small **↗ Azure portal** actions when a validated ARM resource id exists:
+source resources, protected items, vaults, policies, jobs, Site Recovery items, drill targets and
+managed-change targets. The link is constructed by the application rather than accepted from a
+provider payload. It uses the connection's configured Azure cloud (public, US Government or China),
+opens in a separate tab and carries no token. A deleted/orphaned datasource deliberately says
+**Source deleted** and has no source link, while its retained protected-item and vault links remain
+available when valid. A recovery-point timestamp is not enough to manufacture a recovery-point link.
+
+The per-grid **Export CSV** actions remain available for targeted operational extracts. They now
+read the same completed snapshot as the screen rather than starting another Azure collection.
+
+## Sorting in operational grids
+
+Sortable headers use `aria-sort`, keyboard-focusable header buttons and visible direction arrows.
+Preferences are saved in the browser and survive navigation, reload, scope changes and a new
+analysis. Sorting always copies the snapshot rows before ordering; it never mutates the shared
+analysis or changes the id behind an action.
+
+- **Chronic failures:** item, vault, last recovery point and error. Default is no recovery point
+	first, then oldest recovery point. The complete collection is sorted before the 50-row display
+	cap, which reports `Showing 50 of N`.
+- **Backup jobs:** started, item, operation, status and cause. Default is newest first. Status and
+	search filters run before sorting, and the 100-row display cap runs last.
+- **Policies:** policy, vault, schedule, retention and protected items, plus an **Attention first**
+	order for below-baseline, duplicated and unused policies. Unknown retention is not zero.
+- **Gaps:** resource, type, resource group, region and explicit severity rank. Default severity is
+	critical → error → warning → info → unknown; it is never alphabetic.
+
+Checkboxes and actions remain keyed by immutable ids after sorting. In particular, gap selection,
+Select all, remediation preview/submission, on-demand backup, job cancellation and retention-impact
+modelling cannot be retargeted by a row-order change.
 
 ## Workflow overview
 
@@ -256,6 +344,11 @@ The failure knowledge base, vault checks, retention tiers, service limits and co
 | Symptom | Resolution |
 | --- | --- |
 | Every tab asks me to analyze | This is intended. The module never reads Azure on its own. Click **Analyze backups**. |
+| Management-group picker is empty or unavailable | Confirm the selected connection can read the management-group hierarchy. Use **Retry** after correcting access; the picker never falls back to another connection. |
+| Management-group analysis says no visible subscriptions | The group is empty for this connection, or the identity cannot see its descendants. Grant hierarchy and subscription Reader access, then retry. The product will not substitute an all-visible scan. |
+| Management-group analysis is partial | Open the progress details and workbook **Coverage & limitations**. One or more ARG batches, Cost Management subscriptions, Log Analytics workspaces, or cached Backup & DR Coverage subscription scans were unavailable or capped. |
+| Actual spend shows multiple currencies | The group crosses billing currencies. Backup Manager reports each currency separately and intentionally disables combined totals, allocation, and estimate variance. |
+| Write actions are unavailable for a management group | This scope is analysis-only. Narrow to a workload or subscription before drafting, approving, or applying an Azure change. |
 | The analysis failed and my old data is still shown | Every Resource Graph source failed, most often an expired or revoked credential. The previous analysis was deliberately kept. Refresh the connection credential and analyze again. |
 | Analysis reports zero of everything but no error | Check the connection's Reader access at the selected scope and the reported `errors`. A permission gap degrades a section rather than failing the sweep. |
 | A tab shows stale numbers | Nothing refreshes automatically. Click **Analyze again**; the header shows when the current analysis was taken. |

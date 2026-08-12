@@ -3888,6 +3888,9 @@ export interface BackupManagerCapabilities {
   /** Always false — destructive backup operations are portal-only. */
   can_delete_backup_data: false;
   portal_only_operations: { id: string; label: string; reason: string }[];
+  portal_host: "portal.azure.com" | "portal.azure.us" | "portal.azure.cn" | "";
+  scope_kind: "none" | "workload" | "subscription" | "management_group";
+  analysis_only_scope: boolean;
   demo?: boolean;
 }
 
@@ -4295,7 +4298,9 @@ export interface BackupChangesResp {
 export interface BackupReplicationItem {
   id: string;
   name: string;
+  vault_id?: string;
   vault_name: string;
+  datasource_id?: string;
   friendly_name: string;
   protected_item_type: string;
   protection_state: string;
@@ -4319,7 +4324,7 @@ export interface BackupReplicationItem {
 export interface BackupDrResp {
   items: BackupReplicationItem[];
   recovery_plans: {
-    id: string; name: string; friendly_name: string; vault_name: string;
+    id: string; name: string; friendly_name: string; vault_id?: string; vault_name: string;
     primary_region: string; recovery_region: string; last_test_failover: string;
     last_test_failover_age_days: number | null; current_scenario: string;
     current_scenario_status: string; protected_item_count: number; stale_drill: boolean;
@@ -4372,11 +4377,17 @@ export interface BackupCostActuals {
   by_meter: Record<string, number>;
   daily: { date: string; cost: number }[];
   currency: string;
+  currencies?: string[];
+  mixed_currency?: boolean;
+  totals_by_currency?: Record<string, number>;
   total: number;
   period: { from: string; to: string; partial: string };
   partial_period: boolean;
   cost_type: string;
   subscriptions: string[];
+  subscriptions_succeeded?: number;
+  subscriptions_failed?: number;
+  partial?: boolean;
   reason: string;
   remedy: string;
   cache_age_seconds?: number;
@@ -4447,7 +4458,7 @@ export interface BackupCostResp {
   assumed_instance_gb: number;
   confidence: "measured" | "partial" | "assumed";
   top_rows: {
-    instance_id: string; name: string; datasource_type: string; vault_id: string;
+    instance_id: string; name: string; datasource_id: string; datasource_type: string; vault_id: string;
     vault_name: string; redundancy: string; stored_gb: number; instance_cost: number;
     storage_cost: number; monthly_cost: number; meter: string; measured: boolean;
     priced: boolean; note: string;
@@ -4458,7 +4469,7 @@ export interface BackupCostResp {
   report_note: string;
   price_region: string;
   waste: {
-    findings: { kind: string; severity: string; title: string; detail: string; instance_id: string; name: string; vault_name: string; monthly_cost: number; action: string }[];
+    findings: { kind: string; severity: string; title: string; detail: string; instance_id: string; datasource_id: string; vault_id: string; name: string; vault_name: string; monthly_cost: number; action: string }[];
     recoverable_monthly: number;
     counts: Record<string, number>;
     currency: string;
@@ -4508,9 +4519,16 @@ export interface BackupSnapshot {
   generated_at: string;
   age_seconds?: number | null;
   demo: boolean;
+  partial?: boolean;
   reason?: string;
-  scope: { scope_kind?: string; scope_id?: string; subscriptions: string[] } & Record<string, unknown>;
+  scope: {
+    scope_kind?: string; scope_id?: string; scope_name?: string; subscriptions: string[];
+    subscription_count?: number; management_group_id?: string; management_group_name?: string;
+    resolution_complete?: boolean; resolution_warnings?: string[];
+  } & Record<string, unknown>;
   errors: Record<string, string>;
+  warnings?: Record<string, string>;
+  source_details?: Record<string, Record<string, unknown>>;
   job_window_days: number;
   counts: { vaults?: number; protected_items?: number; policies?: number; jobs?: number; gaps?: number; failed_jobs?: number };
   summary: BackupManagerSummary;
@@ -4618,6 +4636,7 @@ export interface BackupManagerStoredSnapshot {
   scope_kind: string;
   scope_id: string;
   scope_name: string;
+  subscription_count: number;
   generated_at: string;
   age_seconds: number | null;
   size_bytes: number;
@@ -4801,6 +4820,8 @@ export const api = {
   backupManagerRefusals: () => http<{ operations: { id: string; label: string; reason: string }[] }>("/backup-manager/refusals"),
   backupManagerExport: (kind: string, scope: BackupManagerScope) =>
     httpBlob(`/backup-manager/export${backupScopeQuery(scope, { kind })}`),
+  backupManagerWorkbook: (scope: BackupManagerScope) =>
+    httpBlob(`/backup-manager/export/workbook${backupScopeQuery(scope)}`),
   backupManagerEvidence: (body: BackupManagerScope & { name?: string }) =>
     http<{ ok: boolean; snapshot: Record<string, unknown> }>("/backup-manager/evidence", { method: "POST", body: JSON.stringify(body) }),
 
@@ -12544,6 +12565,7 @@ export interface AzureConnection {
   id: string;
   display_name: string;
   tenant_id: string;
+  azure_cloud: "AzureCloud" | "AzureUSGovernment" | "AzureChinaCloud";
   auth_method: string;
   default_subscription: string;
   read_only: boolean;
@@ -12571,6 +12593,7 @@ export interface ConnectionUpsert {
   id?: string;
   display_name: string;
   tenant_id: string;
+  azure_cloud?: "AzureCloud" | "AzureUSGovernment" | "AzureChinaCloud";
   auth_method: string;
   default_subscription?: string;
   read_only?: boolean;

@@ -6,8 +6,8 @@ groups and subscriptions come from ARM REST. Everything is read-only.
 """
 from __future__ import annotations
 
-import json
 import logging
+import re
 from typing import Any
 
 from app.azure.arm import (
@@ -23,6 +23,8 @@ from app.exec.command_runner import run_kql_capture
 logger = logging.getLogger("app.workloads.discovery")
 
 _PAGE = 200
+_MG_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._()\-]{0,89}$")
+_MG_ARM_PREFIX = "/providers/microsoft.management/managementgroups/"
 
 
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
@@ -316,26 +318,82 @@ async def all_resources(
     return [_norm_resource(r) for r in _parse_rows(capres.stdout)]
 
 
-async def subscriptions_under_mg(connection: dict | None, mg_id: str) -> list[str]:
-    """Recursively collect subscription ids beneath a management group (cycle-safe)."""
+def normalize_management_group_id(value: str) -> str:
+    """A validated management-group name, accepting its canonical ARM scope form."""
+    text = str(value or "").strip().rstrip("/")
+    if text.lower().startswith(_MG_ARM_PREFIX):
+        text = text[len(_MG_ARM_PREFIX):]
+    if not _MG_NAME.fullmatch(text):
+        raise ValueError("The management-group identifier is invalid.")
+    return text
+
+
+async def resolve_management_group_scope(connection: dict | None, mg_id: str) -> dict[str, Any]:
+    """Resolve one visible management group to every descendant subscription.
+
+    Unlike the legacy list-only helper, this fails closed: an unreadable branch, an invisible
+    selected group, or an empty result is never allowed to become an unscoped Azure query.
+    """
+    selected = normalize_management_group_id(mg_id)
     token, err = await get_arm_token(connection) if connection else (None, "no connection")
     if not token or err:
-        return []
-    subs: list[str] = []
+        raise PermissionError(str(err or "Could not acquire an ARM token."))
+    groups, groups_error = await list_all_management_groups(token)
+    if groups_error:
+        raise PermissionError(f"Management-group discovery failed: {groups_error}")
+    by_id = {str(group.get("id") or "").lower(): group for group in groups}
+    selected_group = by_id.get(selected.lower())
+    if selected_group is None:
+        raise LookupError("The selected management group is not visible to this Azure connection.")
+
+    subs: set[str] = set()
     seen_mgs: set[str] = set()
     stack = [mg_id]
+    branch_errors: list[str] = []
     while stack:
-        cur = stack.pop()
-        if cur in seen_mgs:
+        cur = normalize_management_group_id(stack.pop())
+        canonical = cur.lower()
+        if canonical in seen_mgs:
             continue
-        seen_mgs.add(cur)
-        children, _ = await get_management_group_children(token, cur)
+        seen_mgs.add(canonical)
+        children, child_error = await get_management_group_children(token, cur)
+        if child_error:
+            branch_errors.append(f"{cur}: {child_error}")
+            continue
         for c in children:
             if c["kind"] == "mg":
                 stack.append(c["id"])
-            elif c["kind"] == "subscription" and c["id"] not in subs:
-                subs.append(c["id"])
-    return subs
+            elif c["kind"] == "subscription" and c["id"]:
+                subs.add(str(c["id"]).lower())
+    if branch_errors:
+        raise PermissionError(
+            "Management-group hierarchy was only partially readable: "
+            + "; ".join(branch_errors)[:1200]
+        )
+    if not subs:
+        raise ValueError("No visible subscriptions were found under the selected management group.")
+    return {
+        "management_group_id": selected,
+        "management_group_name": str(selected_group.get("name") or selected),
+        "subscriptions": sorted(subs),
+        "subscription_count": len(subs),
+        "descendant_management_group_count": len(seen_mgs) - 1,
+        "resolution_complete": True,
+        "resolution_warnings": [],
+    }
+
+
+async def subscriptions_under_mg(connection: dict | None, mg_id: str) -> list[str]:
+    """Compatibility wrapper for older callers that treat unreadable scope as no rows.
+
+    Backup Manager calls :func:`resolve_management_group_scope` directly and therefore keeps
+    its fail-closed contract; this wrapper preserves the established behavior of advisory
+    features whose own completeness model handles an empty list.
+    """
+    try:
+        return list((await resolve_management_group_scope(connection, mg_id))["subscriptions"])
+    except (LookupError, PermissionError, ValueError):
+        return []
 
 
 async def resources_in_subscriptions(

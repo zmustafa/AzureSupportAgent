@@ -88,7 +88,9 @@ async def detect(
     connection: dict[str, Any], estate: dict[str, Any], *, subscriptions: set[str] | None = None,
 ) -> dict[str, Any]:
     """Every eligible resource in scope that has no backup instance pointing at it."""
-    rows, error = await service.arg_safe(connection, detection_query(), subscriptions, max_rows=20000)
+    rows, metadata, error = await service.arg_safe_detailed(
+        connection, detection_query(), subscriptions, max_rows=20000,
+    )
     protected = {i.get("datasource_id") for i in estate.get("instances", []) if i.get("datasource_id")}
     # A storage account is protected via its blob service child id, so match on the prefix too.
     protected_prefixes = {p.rsplit("/blobservices/", 1)[0] for p in protected if "/blobservices/" in p}
@@ -126,6 +128,9 @@ async def detect(
         "protected_total": eligible_total - len(gaps),
         "coverage_pct": round(100 * (eligible_total - len(gaps)) / eligible_total) if eligible_total else 100,
         "error": error,
+        "source_detail": metadata,
+        "truncated": bool(metadata.get("partial")),
+        "total_count": metadata.get("source_total"),
         "native_only": [{"type": t, "note": n} for t, n in sorted(NATIVE_ONLY_TYPES.items())],
     }
 
@@ -162,6 +167,37 @@ def ingest_coverage_gaps(tenant_id: str, scope_kind: str, scope_id: str) -> list
             "reason": "Flagged by Backup & DR Coverage: " + ", ".join(str(c) for c in gap.get("failed_checks") or []),
         })
     return out
+
+
+def ingest_coverage_gaps_for_scope(
+    tenant_id: str, scope_kind: str, scope_id: str, subscriptions: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Coverage findings for a scope, merging cached subscription scans for management groups."""
+    if scope_kind != "management_group":
+        rows = ingest_coverage_gaps(tenant_id, scope_kind, scope_id)
+        return rows, {
+            "available_snapshots": 1 if rows else 0,
+            "missing_snapshots": 0 if rows else 1,
+            "partial": False,
+        }
+    merged: dict[str, dict[str, Any]] = {}
+    available = 0
+    missing = 0
+    from app.backupdr import cache as coverage_cache
+
+    for subscription_id in sorted(set(subscriptions)):
+        if coverage_cache.read_snapshot(tenant_id, "subscription", subscription_id) is None:
+            missing += 1
+            continue
+        available += 1
+        for row in ingest_coverage_gaps(tenant_id, "subscription", subscription_id):
+            merged.setdefault(str(row.get("gap_id") or service.canonical_hash(row)), row)
+    return list(merged.values()), {
+        "available_snapshots": available,
+        "missing_snapshots": missing,
+        "partial": missing > 0,
+        "not_measured": available == 0,
+    }
 
 
 # --------------------------------------------------------------------------- ARM bodies

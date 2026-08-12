@@ -732,6 +732,7 @@ const AUTH_METHOD_LABELS: Record<string, string> = {
 const BLANK_FORM: import("../api").ConnectionUpsert = {
   display_name: "",
   tenant_id: "",
+  azure_cloud: "AzureCloud",
   auth_method: "default_chain",
   default_subscription: "",
   read_only: true,
@@ -826,6 +827,7 @@ function ConnectionsCard() {
       id: c.id,
       display_name: c.display_name,
       tenant_id: c.tenant_id,
+      azure_cloud: c.azure_cloud ?? "AzureCloud",
       auth_method: c.auth_method,
       default_subscription: c.default_subscription,
       read_only: c.read_only,
@@ -1180,6 +1182,20 @@ function ConnectionForm({
             placeholder="00000000-0000-0000-0000-000000000000"
           />
         </div>
+      </div>
+
+      <div>
+        <label className={label}>Azure cloud</label>
+        <select
+          className={input}
+          value={form.azure_cloud ?? "AzureCloud"}
+          onChange={(e) => set({ azure_cloud: e.target.value as import("../api").ConnectionUpsert["azure_cloud"] })}
+        >
+          <option value="AzureCloud">Azure public cloud</option>
+          <option value="AzureUSGovernment">Azure US Government</option>
+          <option value="AzureChinaCloud">Azure China</option>
+        </select>
+        <div className="mt-1 text-[11px] text-gray-500">Controls cloud-aware Azure portal links in reports and resource actions.</div>
       </div>
 
       <div>

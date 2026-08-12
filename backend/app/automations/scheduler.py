@@ -38,7 +38,11 @@ class Scheduler:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
-            self._stop.clear()
+            # TestClient and embedded hosts can start the same app singleton on a new event
+            # loop. asyncio synchronization primitives are loop-bound once awaited, so each
+            # scheduler lifecycle needs fresh primitives rather than clearing the old Event.
+            self._stop = asyncio.Event()
+            self._sem = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
             self._task = asyncio.create_task(self._loop())
             logger.info("Scheduler started (tick=%ss)", TICK_SECONDS)
 
@@ -50,6 +54,13 @@ class Scheduler:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            self._task = None
+        if self._inflight:
+            for task in tuple(self._inflight):
+                task.cancel()
+            await asyncio.gather(*self._inflight, return_exceptions=True)
+            self._inflight.clear()
+        self._running_ids.clear()
 
     async def _loop(self) -> None:
         # On startup, backfill any missing next_run_at so freshly-loaded tasks schedule.

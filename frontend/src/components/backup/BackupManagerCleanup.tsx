@@ -156,6 +156,9 @@ function StoredSnapshots({ canPurge }: { canPurge: boolean }) {
                         <td className="px-2 py-1.5">
                           <span className="font-medium text-gray-800">{row.scope_name}</span>
                           <span className="ml-1 text-[10px] text-gray-400">{row.scope_kind}</span>
+                          {row.scope_kind === "management_group" && (
+                            <span className="ml-1 text-[10px] text-gray-400">· {row.subscription_count} subscriptions</span>
+                          )}
                         </td>
                         <td className="px-2 py-1.5 text-gray-500" title={row.generated_at}>{relTime(row.generated_at)}</td>
                         <td className="px-2 py-1.5 tabular-nums text-gray-600">{row.protected_items}</td>

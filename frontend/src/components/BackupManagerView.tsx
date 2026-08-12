@@ -30,12 +30,14 @@ import {
   type BackupVaultScore,
 } from "../api";
 import { queryKeys } from "../queryKeys";
+import { azurePortalResourceUrl, azurePortalSubscriptionUrl } from "../utils/azurePortal";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
 import { BackupFlowTab } from "./backup/BackupFlowTab";
 import { BackupManagerCleanup } from "./backup/BackupManagerCleanup";
 import { BackupManagerFleet } from "./backup/BackupManagerFleet";
 import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { ManagementGroupPicker } from "./ManagementGroupPicker";
 
 type Tab =
   | "overview" | "flow" | "inventory" | "jobs" | "policies" | "vaults"
@@ -159,6 +161,115 @@ function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="rounded-xl border border-dashed bg-gray-50 p-8 text-center text-sm text-gray-500">{children}</div>;
+}
+
+type SortDirection = "asc" | "desc";
+type TableSort<K extends string> = { key: K; direction: SortDirection };
+
+function useTableSort<K extends string>(storageKey: string, fallback: TableSort<K>, allowed: readonly K[]) {
+  const [sort, setSort] = useState<TableSort<K>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "null") as TableSort<K> | null;
+      if (saved && allowed.includes(saved.key) && (saved.direction === "asc" || saved.direction === "desc")) return saved;
+    } catch { /* a stale preference is not a page failure */ }
+    return fallback;
+  });
+  const update = (key: K, first: SortDirection = "asc") => {
+    setSort((current) => {
+      const next = current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" as const : "asc" as const }
+        : { key, direction: first };
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  };
+  const replace = (next: TableSort<K>) => {
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    setSort(next);
+  };
+  return { sort, update, replace };
+}
+
+function compareText(left: unknown, right: unknown): number {
+  const a = String(left ?? "").trim();
+  const b = String(right ?? "").trim();
+  if (!a && b) return 1;
+  if (a && !b) return -1;
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+function compareNumber(left: unknown, right: unknown): number {
+  const a = typeof left === "number" && Number.isFinite(left) ? left : null;
+  const b = typeof right === "number" && Number.isFinite(right) ? right : null;
+  if (a === null && b !== null) return 1;
+  if (a !== null && b === null) return -1;
+  return (a ?? 0) - (b ?? 0);
+}
+
+function compareTextDirection(left: unknown, right: unknown, direction: SortDirection): number {
+  const a = String(left ?? "").trim();
+  const b = String(right ?? "").trim();
+  if (!a && b) return 1;
+  if (a && !b) return -1;
+  const result = compareText(a, b);
+  return direction === "asc" ? result : -result;
+}
+
+function compareNumberDirection(left: unknown, right: unknown, direction: SortDirection): number {
+  const a = typeof left === "number" && Number.isFinite(left) ? left : null;
+  const b = typeof right === "number" && Number.isFinite(right) ? right : null;
+  if (a === null && b !== null) return 1;
+  if (a !== null && b === null) return -1;
+  const result = compareNumber(a, b);
+  return direction === "asc" ? result : -result;
+}
+
+function SortableTh<K extends string>({
+  label, column, state, onSort, first = "asc", directionLabels, className = "",
+}: {
+  label: string; column: K; state: TableSort<K>; onSort: (key: K, first?: SortDirection) => void;
+  first?: SortDirection; directionLabels?: Record<SortDirection, string>; className?: string;
+}) {
+  const active = state.key === column;
+  const directionLabel = active ? directionLabels?.[state.direction] : undefined;
+  return (
+    <th className={className} aria-sort={active ? (state.direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={() => onSort(column, first)}
+        className="inline-flex w-full items-center gap-1 rounded text-left hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand/40"
+        aria-label={`Sort by ${label.toLowerCase()}${directionLabel ? `; currently ${directionLabel}` : ""}`}
+        title={directionLabel}
+      >
+        <span>{label}</span>
+        <span aria-hidden="true" className={active ? "text-brand" : "text-gray-300"}>
+          {active ? (state.direction === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+function PortalLink({ resourceId, portalHost, label, subscriptionId, className = "" }: {
+  resourceId?: string | null; portalHost?: string; label: string; subscriptionId?: string | null; className?: string;
+}) {
+  const url = subscriptionId
+    ? azurePortalSubscriptionUrl(subscriptionId, portalHost)
+    : azurePortalResourceUrl(resourceId, portalHost);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => event.stopPropagation()}
+      className={`inline-flex items-center gap-1 text-brand hover:underline ${className}`}
+      aria-label={`${label} in Azure portal`}
+      title={`${label} in Azure portal`}
+    >
+      ↗<span className="sr-only">{label}</span>
+    </a>
+  );
 }
 
 function ErrorBanner({ errors }: { errors: Record<string, string> | undefined }) {
@@ -310,13 +421,17 @@ export function BackupManagerPanel() {
   const mainView: MainView = routeTab === "fleet" ? "fleet" : routeTab === "cleanup" ? "cleanup" : "manager";
   const tab: Tab = routeTab && VALID_TABS.has(routeTab) ? (routeTab as Tab) : "overview";
 
-  const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription">("azsup.backupManager.scopeKind", "workload");
+  const [scopeKind, setScopeKind] = usePersistedState<"workload" | "subscription" | "management_group">("azsup.backupManager.scopeKind", "workload");
   const [workloadId, setWorkloadId] = usePersistedState("azsup.backupManager.workloadId", "");
   useWorkloadDeepLink(setScopeKind as (k: "workload" | "subscription") => void, setWorkloadId);
   const [subId, setSubId] = usePersistedState("azsup.backupManager.subId", "");
   const [subName, setSubName] = usePersistedState("azsup.backupManager.subName", "");
+  const [mgId, setMgId] = usePersistedState("azsup.backupManager.mgId", "");
+  const [mgName, setMgName] = usePersistedState("azsup.backupManager.mgName", "");
+  const [mgRefreshToken, setMgRefreshToken] = useState(0);
   const [connId, setConnId] = usePersistedState("azsup.backupManager.connectionId", "");
   const [banner, setBanner] = useState("");
+  const [exportingWorkbook, setExportingWorkbook] = useState(false);
   // Set when the operator clicks through from the protection flow, so the destination tab
   // opens on what they were looking at instead of making them find it again.
   const [focusGapIds, setFocusGapIds] = useState<string[]>([]);
@@ -327,10 +442,29 @@ export function BackupManagerPanel() {
       connection_id: connId,
       workload_id: scopeKind === "workload" ? workloadId : "",
       subscription_id: scopeKind === "subscription" ? subId : "",
+      management_group_id: scopeKind === "management_group" ? mgId : "",
     }),
-    [connId, scopeKind, workloadId, subId],
+    [connId, scopeKind, workloadId, subId, mgId],
   );
-  const scopeReady = scopeKind === "workload" ? !!workloadId : !!subId;
+  const scopeReady = scopeKind === "workload" ? !!workloadId : scopeKind === "subscription" ? !!subId : !!mgId;
+
+  useEffect(() => {
+    const linkedWorkload = routeSearch.get("workload_id");
+    const linkedMg = routeSearch.get("management_group_id");
+    const linkedConnection = routeSearch.get("connection_id");
+    if (linkedConnection && linkedConnection !== connId) setConnId(linkedConnection);
+    if (linkedWorkload) {
+      setMgId(""); setMgName("");
+      setSubId(""); setSubName("");
+    } else if (linkedMg) {
+      setScopeKind("management_group");
+      setWorkloadId("");
+      setSubId(""); setSubName("");
+      setMgId(linkedMg);
+      setMgName(linkedMg);
+      setMgRefreshToken((value) => value + 1);
+    }
+  }, [connId, routeSearch, setConnId, setMgId, setMgName, setScopeKind, setSubId, setSubName, setWorkloadId]);
 
   const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads, staleTime: 60_000 });
   const capsQ = useQuery({
@@ -340,6 +474,7 @@ export function BackupManagerPanel() {
     retry: false,
   });
   const caps = capsQ.data;
+  const portalHost = caps?.portal_host ?? "";
 
   // The single analysis every tab reads. Never refetches on its own — the never-stale
   // defaults live in queryClient.ts so this guarantee cannot be lost at a call site.
@@ -434,6 +569,21 @@ export function BackupManagerPanel() {
   });
   const startAnalysis = () => analyzeM.mutate();
 
+  async function exportWorkbook() {
+    if (!analyzed || exportingWorkbook) return;
+    setExportingWorkbook(true);
+    try {
+      const blob = await api.backupManagerWorkbook(scope);
+      const date = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `backup-manager-review-${date}.xlsx`);
+      setBanner("Excel review pack downloaded from the last completed analysis.");
+    } catch (error) {
+      setBanner(error instanceof Error ? error.message : "Could not prepare the Excel review pack.");
+    } finally {
+      setExportingWorkbook(false);
+    }
+  }
+
   // Stop tracking a locally-started job once the server has actually reported it (or a newer
   // run) as finished. A poll that returns an OLDER finished job — the previous analysis for
   // this scope — must not clear it, or we are back to the bug this marker exists to prevent.
@@ -501,28 +651,84 @@ export function BackupManagerPanel() {
               <span>💾</span> Backup Manager
             </h1>
             <p className="text-xs text-gray-500">
-              Protection inventory, backup job triage, policy and vault administration, DR readiness — with
-              approval-gated changes. Restores and destructive backup operations are intentionally not available here.
+              Backup and DR oversight with approval-gated changes—no restores or destructive operations.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ScopePicker
-              scopeKind={scopeKind}
-              onScopeKindChange={setScopeKind}
-              workloads={workloadsQ.data?.workloads ?? []}
-              workloadId={workloadId}
-              onWorkloadChange={setWorkloadId}
-              subId={subId}
-              subName={subName}
-              onSubPick={(id, name) => { setSubId(id); setSubName(name); }}
-              workloadPlaceholder="Select a workload…"
-              connectionId={connId}
-            />
-            <ConnectionScopePicker value={connId} onChange={setConnId} align="right" />
+            <ConnectionScopePicker value={connId} onChange={(id) => {
+              if (id === connId) return;
+              setConnId(id);
+              setWorkloadId("");
+              setSubId(""); setSubName("");
+              setMgId(""); setMgName("");
+            }} align="right" />
+            <div className="flex max-w-full flex-wrap items-center gap-2">
+              <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+                {(["workload", "subscription", "management_group"] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    aria-pressed={scopeKind === kind}
+                    onClick={() => {
+                      setScopeKind(kind);
+                      if (kind === "management_group") setMgRefreshToken((value) => value + 1);
+                    }}
+                    className={`rounded-md px-2.5 py-1 ${scopeKind === kind ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}
+                  >
+                    {kind === "workload" ? "Workload" : kind === "subscription" ? "Subscription" : "Management group"}
+                  </button>
+                ))}
+              </div>
+              {scopeKind === "management_group" ? (
+                <ManagementGroupPicker
+                  value={mgId}
+                  valueName={mgName}
+                  connectionId={connId}
+                  refreshToken={mgRefreshToken}
+                  onPick={(id, name) => { setMgId(id); setMgName(name); }}
+                />
+              ) : (
+                <ScopePicker
+                  scopeKind={scopeKind}
+                  onScopeKindChange={() => {}}
+                  workloads={workloadsQ.data?.workloads ?? []}
+                  workloadId={workloadId}
+                  onWorkloadChange={setWorkloadId}
+                  subId={subId}
+                  subName={subName}
+                  onSubPick={(id, name) => { setSubId(id); setSubName(name); }}
+                  workloadPlaceholder="Select a workload…"
+                  connectionId={connId}
+                  hideKindToggle
+                />
+              )}
+            </div>
+            {scopeKind === "subscription" && (
+              <PortalLink subscriptionId={subId} portalHost={portalHost} label="Open selected subscription" className="rounded border px-2 py-1 text-xs" />
+            )}
+            {scopeKind === "management_group" && analyzed && (
+              <span className="text-[11px] text-gray-500" title={snapshot?.scope.scope_id}>
+                {snapshot?.scope.scope_name || mgName || mgId} · {snapshot?.scope.subscription_count ?? snapshot?.scope.subscriptions.length ?? 0} subscriptions
+              </span>
+            )}
             {snapshot?.generated_at && !caps?.demo && (
               <span className="text-[11px] text-gray-500" title={fmtDate(snapshot.generated_at)}>
                 Analyzed {fmtDate(snapshot.generated_at)}
               </span>
+            )}
+            {tab === "overview" && (
+              <button
+                data-testid="backup-manager-workbook"
+                type="button"
+                onClick={() => void exportWorkbook()}
+                disabled={!analyzed || exportingWorkbook}
+                title={analyzed
+                  ? "Download every Backup Manager section from the last completed analysis."
+                  : "Analyze backups before exporting a review pack."}
+                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {exportingWorkbook ? "Preparing workbook…" : "⬇ Excel review pack"}
+              </button>
             )}
             {!caps?.demo && (
               <button
@@ -538,7 +744,7 @@ export function BackupManagerPanel() {
             )}
           </div>
         </div>
-        <nav className="mt-3 flex flex-wrap gap-1">
+        <nav aria-label="Backup Manager sections" className="mt-3 flex flex-wrap gap-1">
           {TABS.map((t) => {
             const isActive = tab === t.id;
             const urgent = t.id === "changes" && actionable > 0;
@@ -586,6 +792,16 @@ export function BackupManagerPanel() {
                 Demo workload — synthetic backup estate. Every write action is disabled.
               </div>
             )}
+            {caps?.analysis_only_scope && (
+              <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                Management-group scope is analysis-only. Narrow to a workload or subscription to draft or apply changes.
+              </div>
+            )}
+            {snapshot?.partial && (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Partial analysis — review source warnings and workbook Coverage &amp; limitations before interpreting totals.
+              </div>
+            )}
             {progressState && (
               <div className="mb-3"><AnalysisProgress state={progressState} /></div>
             )}
@@ -604,14 +820,14 @@ export function BackupManagerPanel() {
                   <BackupFlowTab snapshot={snapshot} scope={scope} onGoTab={(next) => goTab(next as Tab)}
                     onFocusGap={(ids) => setFocusGapIds(ids)} onFocusVault={(id) => setFocusVaultId(id)} />
                 )}
-                {tab === "inventory" && <InventoryTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} />}
-                {tab === "jobs" && <JobsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} />}
-                {tab === "policies" && <PoliciesTab snapshot={snapshot} scope={scope} />}
-                {tab === "vaults" && <VaultsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} focusVaultId={focusVaultId} />}
-                {tab === "gaps" && <GapsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} onGoTab={goTab} focusGap={routeSearch.get("gap") ?? ""} focusGapIds={focusGapIds} />}
-                {tab === "dr" && <DrTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} />}
-                {tab === "cost" && <CostTab snapshot={snapshot} scope={scope} />}
-                {tab === "changes" && <ChangesTab scope={scope} caps={caps} onBanner={setBanner} />}
+                {tab === "inventory" && <InventoryTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} portalHost={portalHost} />}
+                {tab === "jobs" && <JobsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} portalHost={portalHost} />}
+                {tab === "policies" && <PoliciesTab snapshot={snapshot} scope={scope} caps={caps} portalHost={portalHost} />}
+                {tab === "vaults" && <VaultsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} focusVaultId={focusVaultId} portalHost={portalHost} />}
+                {tab === "gaps" && <GapsTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} onGoTab={goTab} focusGap={routeSearch.get("gap") ?? ""} focusGapIds={focusGapIds} portalHost={portalHost} />}
+                {tab === "dr" && <DrTab snapshot={snapshot} scope={scope} caps={caps} onBanner={setBanner} portalHost={portalHost} />}
+                {tab === "cost" && <CostTab snapshot={snapshot} scope={scope} portalHost={portalHost} />}
+                {tab === "changes" && <ChangesTab scope={scope} caps={caps} onBanner={setBanner} portalHost={portalHost} />}
               </>
             )}
           </>
@@ -705,8 +921,8 @@ function OverviewTab({ snapshot, actionable, onGoTab }: {
 }
 
 // ---------------------------------------------------------------------------- Inventory
-function InventoryTab({ snapshot, scope, caps, onBanner }: {
-  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void;
+function InventoryTab({ snapshot, scope, caps, onBanner, portalHost }: {
+  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; portalHost: string;
 }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -755,7 +971,7 @@ function InventoryTab({ snapshot, scope, caps, onBanner }: {
     errors: snapshot.errors,
     has_more: page * PAGE_SIZE < filtered.length,
   };
-  const canWrite = caps?.can_protect && !caps?.read_only && !caps?.demo;
+  const canWrite = caps?.can_protect && !caps?.read_only && !caps?.demo && !caps?.analysis_only_scope;
 
   return (
     <div className="space-y-3">
@@ -805,9 +1021,13 @@ function InventoryTab({ snapshot, scope, caps, onBanner }: {
               {data.rows.map((row) => (
                 <tr key={row.id} className="hover:bg-gray-50">
                   <td className="px-3 py-2">
-                    <button className="font-medium text-gray-900 hover:underline" onClick={() => setSelected(row)}>
-                      {row.friendly_name || row.name}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button className="font-medium text-gray-900 hover:underline" onClick={() => setSelected(row)}>
+                        {row.friendly_name || row.name}
+                      </button>
+                      {!row.orphaned && <PortalLink resourceId={row.datasource_id} portalHost={portalHost} label="Open source resource" />}
+                      <PortalLink resourceId={row.id} portalHost={portalHost} label="Open protected item" />
+                    </div>
                     <div className="flex gap-1 pt-0.5">
                       {row.orphaned && <Pill tone="bg-rose-50 text-rose-700">orphaned</Pill>}
                       {row.protection_stopped && <Pill tone="bg-amber-50 text-amber-700">stopped</Pill>}
@@ -816,12 +1036,14 @@ function InventoryTab({ snapshot, scope, caps, onBanner }: {
                   </td>
                   <td className="px-3 py-2 text-gray-600">{row.datasource_type}</td>
                   <td className="px-3 py-2 text-gray-600">
-                    {row.vault_name}
+                    <span className="inline-flex items-center gap-1">{row.vault_name}<PortalLink resourceId={row.vault_id} portalHost={portalHost} label="Open vault" /></span>
                     <div className="text-[11px] text-gray-400">
                       {row.vault_kind === "backup" ? "Backup vault" : "Recovery Services"}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-gray-600">{row.policy_name || "—"}</td>
+                  <td className="px-3 py-2 text-gray-600">
+                    <span className="inline-flex items-center gap-1">{row.policy_name || "—"}<PortalLink resourceId={row.policy_id} portalHost={portalHost} label="Open policy" /></span>
+                  </td>
                   <td className="px-3 py-2">{row.protection_state || "—"}</td>
                   <td className="px-3 py-2">
                     {fmtAge(row.recovery_point_age_hours)}
@@ -893,6 +1115,17 @@ function InventoryTab({ snapshot, scope, caps, onBanner }: {
                 </div>
               ))}
             </dl>
+            <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 text-xs">
+              {selected.orphaned ? (
+                <span className="rounded bg-gray-100 px-2 py-1 text-gray-600">Source deleted</span>
+              ) : (
+                <PortalLink resourceId={selected.datasource_id} portalHost={portalHost} label="Open source resource" className="rounded border px-2 py-1" />
+              )}
+              <PortalLink resourceId={selected.id} portalHost={portalHost} label="Open protected item" className="rounded border px-2 py-1" />
+              <PortalLink resourceId={selected.vault_id} portalHost={portalHost} label="Open vault" className="rounded border px-2 py-1" />
+              <PortalLink resourceId={selected.policy_id} portalHost={portalHost} label="Open policy" className="rounded border px-2 py-1" />
+              <PortalLink subscriptionId={selected.subscription_id} portalHost={portalHost} label="Open subscription" className="rounded border px-2 py-1" />
+            </div>
             {selected.last_error_message && (
               <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
                 <div className="font-medium">{selected.last_error_code}</div>
@@ -913,22 +1146,66 @@ function InventoryTab({ snapshot, scope, caps, onBanner }: {
 }
 
 // ---------------------------------------------------------------------------- Jobs
-function JobsTab({ snapshot, scope, caps, onBanner }: {
-  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void;
+function JobsTab({ snapshot, scope, caps, onBanner, portalHost }: {
+  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; portalHost: string;
 }) {
   const qc = useQueryClient();
   const [status, setStatus] = useState("failed");
   const [search, setSearch] = useState("");
   const [openCluster, setOpenCluster] = useState<string>("");
+  type ChronicSortKey = "item" | "vault" | "age" | "error";
+  type JobSortKey = "started" | "item" | "operation" | "status" | "cause";
+  const chronicSorter = useTableSort<ChronicSortKey>(
+    "azsup.backupManager.chronicSort", { key: "age", direction: "desc" },
+    ["item", "vault", "age", "error"],
+  );
+  const jobSorter = useTableSort<JobSortKey>(
+    "azsup.backupManager.jobSort", { key: "started", direction: "desc" },
+    ["started", "item", "operation", "status", "cause"],
+  );
 
-  const jobRows = useMemo(() => {
+  const chronicRows = useMemo(() => {
+    const rows = [...(snapshot.job_analysis?.chronic ?? [])];
+    const { key, direction } = chronicSorter.sort;
+    rows.sort((a, b) => {
+      let result = 0;
+      if (key === "age") {
+        if (a.age_days === null && b.age_days !== null) return direction === "desc" ? -1 : 1;
+        if (a.age_days !== null && b.age_days === null) return direction === "desc" ? 1 : -1;
+        result = compareNumberDirection(a.age_days, b.age_days, direction);
+      } else if (key === "item") result = compareTextDirection(a.name, b.name, direction);
+      else if (key === "vault") result = compareTextDirection(a.vault_name, b.vault_name, direction);
+      else result = compareTextDirection(a.error_code, b.error_code, direction);
+      if (result) return result;
+      return compareText(a.name, b.name) || compareText(a.instance_id, b.instance_id);
+    });
+    return rows;
+  }, [snapshot.job_analysis?.chronic, chronicSorter.sort]);
+
+  const filteredJobRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return snapshot.jobs.rows.filter((row) => {
+    const rows = snapshot.jobs.rows.filter((row) => {
       if (status && row.status_bucket !== status) return false;
       if (!needle) return true;
       return `${row.entity_name} ${row.error_code} ${row.operation}`.toLowerCase().includes(needle);
-    }).slice(0, 100);
-  }, [snapshot.jobs.rows, status, search]);
+    });
+    const statusRank: Record<string, number> = { failed: 0, running: 1, unknown: 2, succeeded: 3 };
+    const { key, direction } = jobSorter.sort;
+    rows.sort((a, b) => {
+      let result = 0;
+      if (key === "started") result = compareNumberDirection(Date.parse(a.start_time), Date.parse(b.start_time), direction);
+      else if (key === "item") result = compareTextDirection(a.entity_name, b.entity_name, direction);
+      else if (key === "operation") result = compareTextDirection(a.operation, b.operation, direction);
+      else if (key === "status") {
+        result = (statusRank[a.status_bucket] ?? 9) - (statusRank[b.status_bucket] ?? 9);
+        if (direction === "desc") result = -result;
+      } else result = compareTextDirection(a.failure_title || a.error_code, b.failure_title || b.error_code, direction);
+      if (result) return result;
+      return compareText(a.entity_name, b.entity_name) || compareText(a.id, b.id);
+    });
+    return rows;
+  }, [snapshot.jobs.rows, status, search, jobSorter.sort]);
+  const jobRows = filteredJobRows.slice(0, 100);
 
   const retryM = useMutation({
     mutationFn: (instanceId: string) => api.backupManagerBackupNow({ ...scope, instance_id: instanceId }),
@@ -947,7 +1224,7 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
     onError: (e: Error) => onBanner(e.message),
   });
 
-  const canWrite = caps?.can_ondemand && !caps?.read_only && !caps?.demo;
+  const canWrite = caps?.can_ondemand && !caps?.read_only && !caps?.demo && !caps?.analysis_only_scope;
   const analysis = snapshot.job_analysis;
 
   return (
@@ -970,18 +1247,21 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
-                <th className="px-3 py-2">Item</th>
-                <th className="px-3 py-2">Vault</th>
-                <th className="px-3 py-2">Last recovery point</th>
-                <th className="px-3 py-2">Error</th>
+                <SortableTh label="Item" column="item" state={chronicSorter.sort} onSort={chronicSorter.update} className="px-3 py-2" />
+                <SortableTh label="Vault" column="vault" state={chronicSorter.sort} onSort={chronicSorter.update} className="px-3 py-2" />
+                <SortableTh label="Last recovery point" column="age" state={chronicSorter.sort} onSort={chronicSorter.update}
+                  first="desc" directionLabels={{ asc: "Newest first", desc: "Oldest first" }} className="px-3 py-2" />
+                <SortableTh label="Error" column="error" state={chronicSorter.sort} onSort={chronicSorter.update} className="px-3 py-2" />
                 <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y">
-              {analysis.chronic.slice(0, 50).map((row: BackupChronicFailure) => (
+              {chronicRows.slice(0, 50).map((row: BackupChronicFailure) => (
                 <tr key={row.instance_id}>
-                  <td className="px-3 py-2 font-medium">{row.name}</td>
-                  <td className="px-3 py-2 text-gray-600">{row.vault_name}</td>
+                  <td className="px-3 py-2 font-medium">
+                    <span className="inline-flex items-center gap-1">{row.name}<PortalLink resourceId={row.datasource_id} portalHost={portalHost} label="Open source resource" /><PortalLink resourceId={row.instance_id} portalHost={portalHost} label="Open protected item" /></span>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600"><span className="inline-flex items-center gap-1">{row.vault_name}<PortalLink resourceId={row.vault_id} portalHost={portalHost} label="Open vault" /></span></td>
                   <td className="px-3 py-2">
                     {row.age_days === null ? <Pill tone="bg-rose-100 text-rose-800">never</Pill> : `${row.age_days}d ago`}
                   </td>
@@ -998,6 +1278,7 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
               ))}
             </tbody>
           </table>
+          {chronicRows.length > 50 && <div className="border-t px-3 py-2 text-xs text-gray-500">Showing 50 of {chronicRows.length}</div>}
         </div>
       )}
 
@@ -1058,6 +1339,7 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
         <span className="ml-auto text-xs text-gray-500">
           Resource Graph retains ~{snapshot.jobs.job_window_days ?? 7} days of job history
         </span>
+        {filteredJobRows.length > 100 && <span className="text-xs text-gray-500">Showing 100 of {filteredJobRows.length}</span>}
         <button onClick={async () => downloadBlob(await api.backupManagerExport("jobs", scope), "backup-jobs.csv")}
           className="rounded-lg border px-2.5 py-1.5 text-xs hover:bg-gray-50">Export CSV</button>
       </div>
@@ -1069,11 +1351,11 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
               <tr>
-                <th className="px-3 py-2">Started</th>
-                <th className="px-3 py-2">Item</th>
-                <th className="px-3 py-2">Operation</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Cause</th>
+                <SortableTh label="Started" column="started" state={jobSorter.sort} onSort={jobSorter.update} first="desc" className="px-3 py-2" />
+                <SortableTh label="Item" column="item" state={jobSorter.sort} onSort={jobSorter.update} className="px-3 py-2" />
+                <SortableTh label="Operation" column="operation" state={jobSorter.sort} onSort={jobSorter.update} className="px-3 py-2" />
+                <SortableTh label="Status" column="status" state={jobSorter.sort} onSort={jobSorter.update} className="px-3 py-2" />
+                <SortableTh label="Cause" column="cause" state={jobSorter.sort} onSort={jobSorter.update} className="px-3 py-2" />
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -1081,7 +1363,7 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
               {jobRows.map((job: BackupJob) => (
                 <tr key={job.id} className="hover:bg-gray-50">
                   <td className="whitespace-nowrap px-3 py-2 text-gray-600">{fmtDate(job.start_time)}</td>
-                  <td className="px-3 py-2 font-medium">{job.entity_name || "—"}</td>
+                  <td className="px-3 py-2 font-medium"><span className="inline-flex items-center gap-1">{job.entity_name || "—"}<PortalLink resourceId={job.datasource_id} portalHost={portalHost} label="Open source resource" /><PortalLink resourceId={job.id} portalHost={portalHost} label="Open backup job" /><PortalLink resourceId={job.vault_id} portalHost={portalHost} label="Open vault" /></span></td>
                   <td className="px-3 py-2 text-gray-600">{job.operation}</td>
                   <td className="px-3 py-2">
                     <Pill tone={STATUS_STYLE[job.status_bucket] ?? STATUS_STYLE.unknown}>{job.status}</Pill>
@@ -1109,9 +1391,14 @@ function JobsTab({ snapshot, scope, caps, onBanner }: {
 }
 
 // ---------------------------------------------------------------------------- Policies
-function PoliciesTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupManagerScope }) {
+function PoliciesTab({ snapshot, scope, caps, portalHost }: { snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; portalHost: string }) {
   const [impactFor, setImpactFor] = useState<BackupPolicy | null>(null);
   const [proposed, setProposed] = useState(30);
+  type PolicySortKey = "attention" | "policy" | "vault" | "schedule" | "retention" | "items";
+  const policySorter = useTableSort<PolicySortKey>(
+    "azsup.backupManager.policySort", { key: "vault", direction: "asc" },
+    ["attention", "policy", "vault", "schedule", "retention", "items"],
+  );
   const impactM = useMutation({
     mutationFn: () => api.backupManagerRetentionImpact({
       ...scope, policy_id: impactFor!.id, proposed_retention_days: proposed, exact: true,
@@ -1119,6 +1406,27 @@ function PoliciesTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: Bac
   });
 
   const data = snapshot.policies;
+  const sortedPolicies = useMemo(() => {
+    const rows = [...data.policies];
+    const { key, direction } = policySorter.sort;
+    const attentionRank = (policy: BackupPolicy) => policy.below_floor
+      ? 0 : policy.unused && policy.duplicate_of.length > 0
+        ? 1 : policy.duplicate_of.length > 0
+          ? 2 : policy.unused ? 3 : 4;
+    rows.sort((a, b) => {
+      let result = 0;
+      if (key === "attention") result = attentionRank(a) - attentionRank(b);
+      else if (key === "policy") result = compareTextDirection(a.name, b.name, direction);
+      else if (key === "vault") result = compareTextDirection(a.vault_name, b.vault_name, direction);
+      else if (key === "schedule") result = compareTextDirection(a.schedule_summary, b.schedule_summary, direction);
+      else if (key === "retention") result = compareNumberDirection(a.retention_days, b.retention_days, direction);
+      else result = compareNumberDirection(a.in_use_count, b.in_use_count, direction);
+      if (key === "attention" && direction === "desc") result = -result;
+      if (result) return result;
+      return compareText(a.vault_name, b.vault_name) || compareText(a.name, b.name) || compareText(a.id, b.id);
+    });
+    return rows;
+  }, [data.policies, policySorter.sort]);
 
   return (
     <div className="space-y-4">
@@ -1151,37 +1459,64 @@ function PoliciesTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: Bac
         </div>
       )}
 
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <label className="text-xs text-gray-500" htmlFor="backup-policy-sort">Sort policies</label>
+        <select
+          id="backup-policy-sort"
+          value={policySorter.sort.key}
+          onChange={(event) => policySorter.replace({ key: event.target.value as PolicySortKey, direction: "asc" })}
+          className="rounded-lg border px-2 py-1.5 text-xs"
+        >
+          <option value="attention">Attention first</option>
+          <option value="vault">Vault</option>
+          <option value="policy">Policy</option>
+          <option value="schedule">Schedule</option>
+          <option value="retention">Retention</option>
+          <option value="items">Protected items</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => policySorter.update(policySorter.sort.key)}
+          className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
+          aria-label="Reverse policy sort direction"
+        >
+          {policySorter.sort.direction === "asc" ? "▲" : "▼"}
+        </button>
+      </div>
+
       <div className="overflow-x-auto rounded-xl border bg-white">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
             <tr>
-              <th className="px-3 py-2">Policy</th>
-              <th className="px-3 py-2">Vault</th>
-              <th className="px-3 py-2">Schedule</th>
-              <th className="px-3 py-2">Retention</th>
-              <th className="px-3 py-2">Items</th>
+              <SortableTh label="Policy" column="policy" state={policySorter.sort} onSort={policySorter.update} className="px-3 py-2" />
+              <SortableTh label="Vault" column="vault" state={policySorter.sort} onSort={policySorter.update} className="px-3 py-2" />
+              <SortableTh label="Schedule" column="schedule" state={policySorter.sort} onSort={policySorter.update} className="px-3 py-2" />
+              <SortableTh label="Retention" column="retention" state={policySorter.sort} onSort={policySorter.update} className="px-3 py-2" />
+              <SortableTh label="Items" column="items" state={policySorter.sort} onSort={policySorter.update} className="px-3 py-2" />
               <th className="px-3 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y">
-            {data.policies.map((policy) => (
+            {sortedPolicies.map((policy) => (
               <tr key={policy.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2">
-                  <div className="font-medium">{policy.name}</div>
+                  <div className="flex items-center gap-1.5 font-medium">{policy.name}<PortalLink resourceId={policy.arm_id || policy.id} portalHost={portalHost} label="Open policy" /></div>
                   <div className="flex gap-1 pt-0.5">
                     {policy.below_floor && <Pill tone="bg-rose-50 text-rose-700">below baseline</Pill>}
                     {policy.unused && <Pill tone="bg-gray-100 text-gray-600">unused</Pill>}
                     {policy.duplicate_of.length > 0 && <Pill tone="bg-amber-50 text-amber-700">duplicated</Pill>}
                   </div>
                 </td>
-                <td className="px-3 py-2 text-gray-600">{policy.vault_name}</td>
+                <td className="px-3 py-2 text-gray-600"><span className="inline-flex items-center gap-1">{policy.vault_name}<PortalLink resourceId={policy.vault_id} portalHost={portalHost} label="Open vault" /></span></td>
                 <td className="px-3 py-2 text-gray-600">{policy.schedule_summary || "—"}</td>
                 <td className="px-3 py-2">{policy.retention_days ? `${policy.retention_days}d` : "—"}</td>
                 <td className="px-3 py-2">{policy.in_use_count}</td>
                 <td className="px-3 py-2 text-right">
                   <button
+                    disabled={caps?.analysis_only_scope}
+                    title={caps?.analysis_only_scope ? "Narrow to a workload or subscription to model a retention change." : undefined}
                     onClick={() => { setImpactFor(policy); setProposed(policy.retention_days ?? 30); impactM.reset(); }}
-                    className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                    className="rounded border px-2 py-1 text-xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >Model retention change</button>
                 </td>
               </tr>
@@ -1268,8 +1603,8 @@ const HARDEN_LABEL: Record<string, string> = {
   enable_diagnostics: "Send Backup Reports to Log Analytics",
 };
 
-function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId }: {
-  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; focusVaultId?: string;
+function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId, portalHost }: {
+  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; focusVaultId?: string; portalHost: string;
 }) {
   const qc = useQueryClient();
   const [openVault, setOpenVault] = useState<string>("");
@@ -1291,7 +1626,11 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId }: {
   });
 
   const data = snapshot.posture;
-  const canWrite = caps?.can_manage_vaults && !caps?.read_only && !caps?.demo;
+  const canWrite = caps?.can_manage_vaults && !caps?.read_only && !caps?.demo && !caps?.analysis_only_scope;
+  const vaultDetails = useMemo(
+    () => new Map(snapshot.vaults.vaults.map((vault) => [vault.id.toLowerCase(), vault])),
+    [snapshot.vaults.vaults],
+  );
 
   return (
     <div className="space-y-4">
@@ -1331,27 +1670,31 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId }: {
         {data.vaults.map((vault: BackupVaultScore) => {
           const isOpen = openVault === vault.vault_id;
           const chosen = selectedControls[vault.vault_id] ?? [];
+          const detail = vaultDetails.get(vault.vault_id.toLowerCase());
           const available = Array.from(new Set(
             vault.checks.filter((c) => c.action && !c.portal_only).map((c) => c.action),
           ));
           return (
             <div key={vault.vault_id} className="rounded-xl border bg-white">
-              <button className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-                onClick={() => setOpenVault(isOpen ? "" : vault.vault_id)}>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">{vault.vault_name}</span>
-                    <Pill tone={BAND_STYLE[vault.band]}>{vault.score}</Pill>
-                    <span className="text-xs text-gray-500">
-                      {vault.vault_kind === "backup" ? "Backup vault" : "Recovery Services vault"}
-                    </span>
+              <div className="flex items-center">
+                <button className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-3 text-left"
+                  onClick={() => setOpenVault(isOpen ? "" : vault.vault_id)}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">{vault.vault_name}</span>
+                      <Pill tone={BAND_STYLE[vault.band]}>{vault.score}</Pill>
+                      <span className="text-xs text-gray-500">
+                        {vault.vault_kind === "backup" ? "Backup vault" : "Recovery Services vault"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {vault.instance_count} protected item(s) · {vault.location} · {vault.subscription_id}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {vault.instance_count} protected item(s) · {vault.location} · {vault.subscription_id}
-                  </div>
-                </div>
-                <span className="text-gray-400">{isOpen ? "▲" : "▼"}</span>
-              </button>
+                  <span className="text-gray-400">{isOpen ? "▲" : "▼"}</span>
+                </button>
+                <PortalLink resourceId={vault.vault_id} portalHost={portalHost} label="Open vault" className="mr-4 rounded border px-2 py-1 text-xs" />
+              </div>
               {isOpen && (
                 <div className="border-t px-4 py-3">
                   <table className="w-full text-sm">
@@ -1388,6 +1731,20 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId }: {
                       ))}
                     </tbody>
                   </table>
+                  {(detail?.diagnostics_workspaces.length ?? 0) > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-gray-600">
+                      <span className="font-medium text-gray-800">Diagnostic workspaces</span>
+                      {detail!.diagnostics_workspaces.map((workspaceId, index) => (
+                        <PortalLink
+                          key={workspaceId}
+                          resourceId={workspaceId}
+                          portalHost={portalHost}
+                          label={`Open diagnostic workspace ${index + 1}`}
+                          className="rounded border px-2 py-1"
+                        />
+                      ))}
+                    </div>
+                  )}
                   {canWrite && available.length > 0 && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
                       {chosen.includes("enable_diagnostics") && (
@@ -1438,13 +1795,18 @@ function VaultsTab({ snapshot, scope, caps, onBanner, focusVaultId }: {
 
 // ---------------------------------------------------------------------------- Gaps
 function GapsTab({
-  snapshot, scope, caps, onBanner, onGoTab, focusGap, focusGapIds,
-}: { snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; onGoTab: (t: Tab) => void; focusGap: string; focusGapIds?: string[] }) {
+  snapshot, scope, caps, onBanner, onGoTab, focusGap, focusGapIds, portalHost,
+}: { snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; onGoTab: (t: Tab) => void; focusGap: string; focusGapIds?: string[]; portalHost: string }) {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [vaultId, setVaultId] = useState("");
   const [policyId, setPolicyId] = useState("");
   const [preview, setPreview] = useState<BackupRemediationItem[] | null>(null);
+  type GapSortKey = "resource" | "type" | "resource_group" | "region" | "severity";
+  const gapSorter = useTableSort<GapSortKey>(
+    "azsup.backupManager.gapSort", { key: "severity", direction: "desc" },
+    ["resource", "type", "resource_group", "region", "severity"],
+  );
 
   useEffect(() => {
     if (focusGap) setSelected(new Set([focusGap]));
@@ -1478,8 +1840,32 @@ function GapsTab({
   });
 
   const data = snapshot.gaps;
-  const canWrite = caps?.can_protect && !caps?.read_only && !caps?.demo;
+  const canWrite = caps?.can_protect && !caps?.read_only && !caps?.demo && !caps?.analysis_only_scope;
   const policies = (data.policies ?? []).filter((p) => !vaultId || p.vault_id.toLowerCase() === vaultId.toLowerCase());
+  const selectedVault = (data.vaults ?? []).find((vault) => vault.id === vaultId);
+  const selectedPolicy = (data.policies ?? []).find((policy) => policy.id === policyId);
+  const sortedGaps = useMemo(() => {
+    const rows = [...data.gaps];
+    const rank: Record<string, number> = { critical: 0, error: 1, warning: 2, info: 3 };
+    const { key, direction } = gapSorter.sort;
+    rows.sort((a, b) => {
+      let result = 0;
+      if (key === "severity") {
+        // Ascending means lowest priority first; descending means highest priority first.
+        result = (rank[a.severity.toLowerCase()] ?? 4) - (rank[b.severity.toLowerCase()] ?? 4);
+        if (direction === "asc") result = -result;
+      } else if (key === "resource") result = compareTextDirection(a.resource_name, b.resource_name, direction);
+      else if (key === "type") result = compareTextDirection(a.display_type, b.display_type, direction);
+      else if (key === "resource_group") result = compareTextDirection(a.resource_group, b.resource_group, direction);
+      else result = compareTextDirection(a.location, b.location, direction);
+      if (result) return result;
+      return (rank[a.severity.toLowerCase()] ?? 4) - (rank[b.severity.toLowerCase()] ?? 4)
+        || compareText(a.display_type, b.display_type)
+        || compareText(a.resource_name, b.resource_name)
+        || compareText(a.gap_id, b.gap_id);
+    });
+    return rows;
+  }, [data.gaps, gapSorter.sort]);
 
   return (
     <div className="space-y-4">
@@ -1508,6 +1894,7 @@ function GapsTab({
                   </option>
                 ))}
               </select>
+              {selectedVault && <div className="mt-1"><PortalLink resourceId={selectedVault.id} portalHost={portalHost} label="Open target vault" className="text-[11px]" /></div>}
             </label>
             <label className="text-sm">
               <span className="block text-xs text-gray-500">Backup policy</span>
@@ -1520,6 +1907,7 @@ function GapsTab({
                   </option>
                 ))}
               </select>
+              {selectedPolicy && <div className="mt-1"><PortalLink resourceId={selectedPolicy.arm_id || selectedPolicy.id} portalHost={portalHost} label="Open target policy" className="text-[11px]" /></div>}
             </label>
             <button onClick={() => previewM.mutate()} disabled={!selected.size || !vaultId || !policyId || previewM.isPending}
               className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40">
@@ -1557,15 +1945,16 @@ function GapsTab({
                     checked={selected.size === data.gaps.length && data.gaps.length > 0}
                     onChange={(e) => setSelected(e.target.checked ? new Set(data.gaps.map((g) => g.gap_id)) : new Set())} />
                 </th>
-                <th className="px-3 py-2">Resource</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">Resource group</th>
-                <th className="px-3 py-2">Region</th>
-                <th className="px-3 py-2">Severity</th>
+                <SortableTh label="Resource" column="resource" state={gapSorter.sort} onSort={gapSorter.update} className="px-3 py-2" />
+                <SortableTh label="Type" column="type" state={gapSorter.sort} onSort={gapSorter.update} className="px-3 py-2" />
+                <SortableTh label="Resource group" column="resource_group" state={gapSorter.sort} onSort={gapSorter.update} className="px-3 py-2" />
+                <SortableTh label="Region" column="region" state={gapSorter.sort} onSort={gapSorter.update} className="px-3 py-2" />
+                <SortableTh label="Severity" column="severity" state={gapSorter.sort} onSort={gapSorter.update}
+                  first="desc" directionLabels={{ asc: "Lowest severity first", desc: "Highest severity first" }} className="px-3 py-2" />
               </tr>
             </thead>
             <tbody className="divide-y">
-              {data.gaps.map((gap: BackupGap) => (
+              {sortedGaps.map((gap: BackupGap) => (
                 <tr key={gap.gap_id} className="hover:bg-gray-50">
                   <td className="px-3 py-2">
                     <input type="checkbox" checked={selected.has(gap.gap_id)}
@@ -1575,7 +1964,7 @@ function GapsTab({
                         return next;
                       })} />
                   </td>
-                  <td className="px-3 py-2 font-medium">{gap.resource_name}</td>
+                  <td className="px-3 py-2 font-medium"><span className="inline-flex items-center gap-1">{gap.resource_name}<PortalLink resourceId={gap.resource_id} portalHost={portalHost} label="Open resource" /></span></td>
                   <td className="px-3 py-2 text-gray-600">{gap.display_type}</td>
                   <td className="px-3 py-2 text-gray-600">{gap.resource_group}</td>
                   <td className="px-3 py-2 text-gray-600">{gap.location}</td>
@@ -1606,8 +1995,8 @@ function GapsTab({
 }
 
 // ---------------------------------------------------------------------------- DR & drills
-function DrTab({ snapshot, scope, caps, onBanner }: {
-  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void;
+function DrTab({ snapshot, scope, caps, onBanner, portalHost }: {
+  snapshot: BackupSnapshot; scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; portalHost: string;
 }) {
   const qc = useQueryClient();
   // Drills live in the database and change without an analysis, so they stay a live query.
@@ -1650,7 +2039,7 @@ function DrTab({ snapshot, scope, caps, onBanner }: {
   });
 
   const dr = snapshot.dr;
-  const canDrill = caps?.can_drill && !caps?.read_only && !caps?.demo;
+  const canDrill = caps?.can_drill && !caps?.read_only && !caps?.demo && !caps?.analysis_only_scope;
 
   return (
     <div className="space-y-4">
@@ -1685,7 +2074,7 @@ function DrTab({ snapshot, scope, caps, onBanner }: {
               {dr.items.map((item: BackupReplicationItem) => (
                 <tr key={item.id}>
                   <td className="px-3 py-2">
-                    <div className="font-medium">{item.friendly_name}</div>
+                    <div className="flex items-center gap-1.5 font-medium">{item.friendly_name}<PortalLink resourceId={item.id} portalHost={portalHost} label="Open replicated item" /><PortalLink resourceId={item.datasource_id} portalHost={portalHost} label="Open source resource" /><PortalLink resourceId={item.vault_id} portalHost={portalHost} label="Open vault" /></div>
                     <div className="text-[11px] text-gray-500">{item.primary_region} → {item.recovery_region}</div>
                   </td>
                   <td className="px-3 py-2"><Pill tone={BAND_STYLE[item.status]}>{item.replication_health}</Pill></td>
@@ -1707,6 +2096,51 @@ function DrTab({ snapshot, scope, caps, onBanner }: {
                           title="Isolated (no-network) test failover, approval-gated">Run test failover</button>
                       )
                     )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="rounded-xl border bg-white">
+        <div className="border-b px-4 py-2 text-sm font-semibold text-gray-900">Site Recovery plans</div>
+        {dr.recovery_plans.length === 0 ? (
+          <div className="p-6 text-sm text-gray-500">No Site Recovery plans in this scope.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-3 py-2">Plan</th>
+                <th className="px-3 py-2">Regions</th>
+                <th className="px-3 py-2">Protected items</th>
+                <th className="px-3 py-2">Last test failover</th>
+                <th className="px-3 py-2">State</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {dr.recovery_plans.map((plan) => (
+                <tr key={plan.id}>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {plan.friendly_name}
+                      <PortalLink resourceId={plan.id} portalHost={portalHost} label="Open recovery plan" />
+                      <PortalLink resourceId={plan.vault_id} portalHost={portalHost} label="Open vault" />
+                    </div>
+                    <div className="text-[11px] text-gray-500">{plan.current_scenario || "—"}</div>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{plan.primary_region} → {plan.recovery_region}</td>
+                  <td className="px-3 py-2">{plan.protected_item_count}</td>
+                  <td className="px-3 py-2">
+                    {plan.last_test_failover_age_days === null
+                      ? <Pill tone="bg-rose-50 text-rose-700">never</Pill>
+                      : `${Math.round(plan.last_test_failover_age_days)}d ago`}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Pill tone={plan.stale_drill ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}>
+                      {plan.stale_drill ? "stale drill" : plan.current_scenario_status || "current"}
+                    </Pill>
                   </td>
                 </tr>
               ))}
@@ -1747,7 +2181,7 @@ function DrTab({ snapshot, scope, caps, onBanner }: {
             <tbody className="divide-y">
               {drillsQ.data!.drills.map((drill) => (
                 <tr key={drill.id}>
-                  <td className="px-3 py-2 font-medium">{drill.name}</td>
+                  <td className="px-3 py-2 font-medium"><span className="inline-flex items-center gap-1">{drill.name}<PortalLink resourceId={drill.target_id} portalHost={portalHost} label="Open drill target" /></span></td>
                   <td className="px-3 py-2 text-gray-600">{drill.kind === "test_failover" ? "Test failover" : "Restore"}</td>
                   <td className="px-3 py-2">
                     <Pill tone={drill.status === "passed" ? STATUS_STYLE.succeeded : drill.status === "failed" ? STATUS_STYLE.failed : "bg-gray-100 text-gray-600"}>
@@ -1791,7 +2225,7 @@ const BASIS_LABEL: Record<string, string> = {
   equal: "equal share",
 };
 
-function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupManagerScope }) {
+function CostTab({ snapshot, scope, portalHost }: { snapshot: BackupSnapshot; scope: BackupManagerScope; portalHost: string }) {
   const DEFAULT_MONTHS = 1;
   const DEFAULT_TYPE = "AmortizedCost" as const;
   const [monthsBack, setMonthsBack] = useState<number>(DEFAULT_MONTHS);
@@ -1813,7 +2247,7 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
   const variance = data.variance;
   const allocation = data.allocation;
   const allocated = new Map(allocation.rows.map((r) => [r.instance_id, r]));
-  const headline = actuals.available ? actuals.total : data.monthly_total;
+  const headline = actuals.available && !actuals.mixed_currency ? actuals.total : data.monthly_total;
   const headlineCurrency = actuals.available ? actuals.currency : data.currency;
   const meters = Object.entries(actuals.by_meter ?? {});
   // Scale to the actual peak, not to a fixed 1-unit floor: a month that only ever spends
@@ -1844,7 +2278,7 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
 
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label={actuals.available ? "Actual spend" : "Estimated monthly"}
-          value={fmtMoney(headline, headlineCurrency)}
+          value={actuals.mixed_currency ? "Multiple currencies" : fmtMoney(headline, headlineCurrency)}
           hint={actuals.available ? `${costType === "AmortizedCost" ? "Amortized" : "Actual"} · from Cost Management` : data.confidence}
           band={actuals.available ? "green" : undefined} />
         <Stat label="List-price estimate" value={fmtMoney(data.monthly_total, data.currency)}
@@ -1855,6 +2289,18 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
           hint={data.waste.basis === "actual" ? "from actual spend" : "estimated"}
           band={data.waste.recoverable_monthly > 0 ? "amber" : "green"} />
       </div>
+
+      {actuals.mixed_currency && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-medium">Actual spend uses multiple billing currencies</div>
+          <div className="mt-1 flex flex-wrap gap-3">
+            {Object.entries(actuals.totals_by_currency ?? {}).map(([currency, total]) => (
+              <span key={currency}>{fmtMoney(total, currency)}</span>
+            ))}
+          </div>
+          <p className="mt-1 text-xs">Amounts are not summed, allocated, or compared across currencies.</p>
+        </div>
+      )}
 
       {/* Estimate vs actual — the check that tells you whether the model is believable. */}
       <div className={`rounded-xl border p-4 ${variance.comparable ? "bg-white" : "border-dashed bg-gray-50"}`}>
@@ -1874,6 +2320,11 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
         {!actuals.available && actuals.reason && (
           <p className="mt-2 text-xs text-amber-700">
             {actuals.reason} {actuals.remedy}
+          </p>
+        )}
+        {actuals.available && actuals.partial && actuals.reason && (
+          <p className="mt-2 text-xs text-amber-700">
+            Partial Cost Management coverage: {actuals.reason}
           </p>
         )}
       </div>
@@ -1966,7 +2417,12 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
                       {finding.severity}
                     </Pill>
                   </div>
-                  <div className="text-xs text-gray-600">{finding.name} · {finding.detail}</div>
+                  <div className="flex items-center gap-1 text-xs text-gray-600">
+                    <span>{finding.name} · {finding.detail}</span>
+                    {finding.kind !== "orphaned_protection" && <PortalLink resourceId={finding.datasource_id} portalHost={portalHost} label="Open source resource" />}
+                    <PortalLink resourceId={finding.instance_id} portalHost={portalHost} label="Open waste target" />
+                    <PortalLink resourceId={finding.vault_id} portalHost={portalHost} label="Open vault" />
+                  </div>
                   <div className="mt-0.5 text-xs text-gray-500">{finding.action}</div>
                 </div>
                 <div className="whitespace-nowrap text-sm font-medium text-gray-900">
@@ -1996,11 +2452,11 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
               return (
                 <tr key={row.instance_id}>
                   <td className="px-3 py-2">
-                    <div className="font-medium">{row.name}</div>
+                    <div className="flex items-center gap-1.5 font-medium">{row.name}<PortalLink resourceId={row.datasource_id} portalHost={portalHost} label="Open source resource" /><PortalLink resourceId={row.instance_id} portalHost={portalHost} label="Open protected item" /></div>
                     {row.note && <div className="text-[11px] text-gray-500">{row.note}</div>}
                   </td>
                   <td className="px-3 py-2 text-gray-600">
-                    {row.vault_name}
+                    <span className="inline-flex items-center gap-1">{row.vault_name}<PortalLink resourceId={row.vault_id} portalHost={portalHost} label="Open vault" /></span>
                     <div className="text-[11px] text-gray-400">{row.redundancy || "—"}</div>
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-600">{row.meter || "—"}</td>
@@ -2029,7 +2485,7 @@ function CostTab({ snapshot, scope }: { snapshot: BackupSnapshot; scope: BackupM
 }
 
 // ---------------------------------------------------------------------------- Changes
-function ChangesTab({ scope, caps, onBanner }: { scope: BackupManagerScope; caps: any; onBanner: (m: string) => void }) {
+function ChangesTab({ scope, caps, onBanner, portalHost }: { scope: BackupManagerScope; caps: any; onBanner: (m: string) => void; portalHost: string }) {
   const qc = useQueryClient();
   const connectionId = scope.connection_id ?? "";
   const [page, setPage] = useState(1);
@@ -2111,7 +2567,7 @@ function ChangesTab({ scope, caps, onBanner }: { scope: BackupManagerScope; caps
   if (q.isLoading) return <Empty>Loading managed changes…</Empty>;
   if (q.isError) return <Empty>{(q.error as Error).message}</Empty>;
   const data = q.data!;
-  const canApprove = caps?.can_approve && !caps?.read_only;
+  const canApprove = caps?.can_approve && !caps?.read_only && !caps?.analysis_only_scope;
 
   return (
     <div className="space-y-3">
@@ -2187,7 +2643,7 @@ function ChangesTab({ scope, caps, onBanner }: { scope: BackupManagerScope; caps
                     )}
                   </td>
                   <td className="max-w-xs truncate px-3 py-2 text-xs text-gray-600" title={change.target_id}>
-                    {change.target_name}
+                    <span className="inline-flex items-center gap-1">{change.target_name}<PortalLink resourceId={change.target_id} portalHost={portalHost} label="Open change target" /></span>
                   </td>
                   <td className="px-3 py-2">
                     <Pill tone={CHANGE_STATUS_STYLE[change.status] ?? "bg-gray-100 text-gray-600"}>{change.status}</Pill>

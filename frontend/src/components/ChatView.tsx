@@ -717,11 +717,21 @@ export default function ChatView() {
   // Sidebar: collapse to an icon-only rail (persisted).
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("azsup.railCollapsed.v1") === "1";
+      return window.matchMedia("(max-width: 767px)").matches
+        || localStorage.getItem("azsup.railCollapsed.v1") === "1";
     } catch {
       return false;
     }
   });
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const collapseForNarrowViewport = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setRailCollapsed(true);
+    };
+    collapseForNarrowViewport(media);
+    media.addEventListener("change", collapseForNarrowViewport);
+    return () => media.removeEventListener("change", collapseForNarrowViewport);
+  }, []);
   function toggleRail() {
     setRailCollapsed((v) => {
       const next = !v;
@@ -2515,7 +2525,7 @@ export default function ChatView() {
     <div className="relative flex h-full">
       {/* Sidebar */}
       <aside
-        className={`flex flex-col border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
+        className={`flex shrink-0 flex-col overflow-hidden border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
           railCollapsed ? "w-14" : "w-64"
         }`}
       >

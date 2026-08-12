@@ -30,7 +30,7 @@ log = logging.getLogger("app.backup_manager.snapshot")
 
 # Bump when the snapshot shape changes so stale-shaped snapshots are treated as absent
 # instead of being fed to a UI that expects different keys.
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 2
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_snapshot.json"
 
@@ -38,7 +38,11 @@ _PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_snapshot
 MAX_SCOPES = 24
 #: Per-section row caps. Backup job history is the only list that grows unboundedly with
 #: estate size; the others are naturally small but are capped for symmetry.
-MAX_ROWS = {"instances": 5000, "jobs": 2000, "gaps": 2000}
+MAX_ROWS = {
+    "instances": 5000, "jobs": 2000, "gaps": 2000, "policies": 5000,
+    "vaults": 5000, "replicated_items": 5000, "recovery_plans": 5000,
+    "compliance": 5000, "chronic": 5000, "failure_clusters": 5000,
+}
 
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -94,6 +98,8 @@ def empty_snapshot(scope_kind: str, scope_id: str, reason: str = "") -> dict[str
         "reason": reason,
         "scope": {"scope_kind": scope_kind, "scope_id": scope_id, "subscriptions": []},
         "errors": {},
+        "warnings": {},
+        "source_details": {},
         "job_window_days": 0,
         "counts": {},
         "summary": {},
@@ -110,17 +116,27 @@ def empty_snapshot(scope_kind: str, scope_id: str, reason: str = "") -> dict[str
                  "truncated": False},
         "dr": {"summary": {}, "rpo": {}, "items": [], "recovery_plans": []},
         "cost": {},
+        "truncation": {},
     }
 
 
 def bound(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Cap the row lists that scale with estate size, flagging any truncation."""
+    truncation = snapshot.setdefault("truncation", {})
+
+    def cap(section: dict[str, Any], key: str, limit_key: str, label: str) -> None:
+        rows = section.get(key) or []
+        if len(rows) > MAX_ROWS[limit_key]:
+            section[key] = rows[: MAX_ROWS[limit_key]]
+            truncation[label] = {"exported": MAX_ROWS[limit_key], "known_total": len(rows)}
+
     inventory = snapshot.get("inventory")
     if isinstance(inventory, dict):
         rows = inventory.get("rows") or []
         if len(rows) > MAX_ROWS["instances"]:
             inventory["rows"] = rows[: MAX_ROWS["instances"]]
             inventory["truncated"] = True
+            truncation["Protected items"] = {"exported": MAX_ROWS["instances"], "known_total": len(rows)}
     jobs = snapshot.get("jobs")
     if isinstance(jobs, dict):
         rows = jobs.get("rows") or []
@@ -128,12 +144,30 @@ def bound(snapshot: dict[str, Any]) -> dict[str, Any]:
             # Newest first is already the collector's order, so the tail is the oldest history.
             jobs["rows"] = rows[: MAX_ROWS["jobs"]]
             jobs["truncated"] = True
+            truncation["Backup jobs"] = {"exported": MAX_ROWS["jobs"], "known_total": len(rows)}
     gaps = snapshot.get("gaps")
     if isinstance(gaps, dict):
         rows = gaps.get("gaps") or []
         if len(rows) > MAX_ROWS["gaps"]:
             gaps["gaps"] = rows[: MAX_ROWS["gaps"]]
             gaps["truncated"] = True
+            truncation["Protection gaps"] = {"exported": MAX_ROWS["gaps"], "known_total": len(rows)}
+    for section_name, key, limit_key, label in (
+        ("policies", "policies", "policies", "Policies"),
+        ("vaults", "vaults", "vaults", "Vaults"),
+        ("compliance", "rows", "compliance", "Policy compliance"),
+    ):
+        section = snapshot.get(section_name)
+        if isinstance(section, dict):
+            cap(section, key, limit_key, label)
+    dr = snapshot.get("dr")
+    if isinstance(dr, dict):
+        cap(dr, "items", "replicated_items", "Replicated items")
+        cap(dr, "recovery_plans", "recovery_plans", "Recovery plans")
+    job_analysis = snapshot.get("job_analysis")
+    if isinstance(job_analysis, dict):
+        cap(job_analysis, "chronic", "chronic", "Chronic failures")
+        cap(job_analysis, "clusters", "failure_clusters", "Failure clusters")
     return snapshot
 
 
@@ -192,11 +226,14 @@ def list_scopes(tenant_id: str) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             size = 0
         counts = value.get("counts") or {}
+        scope = value.get("scope") or {}
         out.append({
             "key": stored_key,
             "connection_id": parts[1] if parts[1] != "default" else "",
             "scope_kind": parts[2],
             "scope_id": parts[3],
+            "scope_name": str(scope.get("scope_name") or parts[3]),
+            "subscription_count": int(scope.get("subscription_count") or len(scope.get("subscriptions") or [])),
             "generated_at": str(value.get("generated_at") or ""),
             "age_seconds": age_seconds(value),
             "size_bytes": size,

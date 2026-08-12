@@ -791,16 +791,22 @@ async def _collect_uncached(
     }
     names = list(sources)
 
-    async def tracked(name: str) -> tuple[list[dict[str, Any]], str]:
+    async def tracked(name: str) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
         """Run one source query, reporting its row count the moment it lands."""
-        rows, error = await service.arg_safe(connection, sources[name][0], subscriptions)
+        rows, metadata, error = await service.arg_safe_detailed(
+            connection, sources[name][0], subscriptions,
+        )
         if progress:
             label = SOURCE_LABELS.get(name, name)
             await progress(
                 "query",
-                f"{label}: {error}" if error else f"Received {len(rows):,} {label} row(s).",
+                f"{label}: {error}" if error else (
+                    f"Received {len(rows):,} {label} row(s)"
+                    + (f" of {metadata.get('source_total'):,}" if isinstance(metadata.get("source_total"), int) else "")
+                    + (" (partial)." if metadata.get("partial") else ".")
+                ),
             )
-        return rows, error
+        return rows, metadata, error
 
     if progress:
         await progress("query", f"Querying {len(names)} Resource Graph sources across "
@@ -809,8 +815,11 @@ async def _collect_uncached(
 
     shaped: dict[str, list[dict[str, Any]]] = {}
     errors: dict[str, str] = {}
-    for name, (rows, error) in zip(names, results):
+    warnings: dict[str, str] = {}
+    source_details: dict[str, dict[str, Any]] = {}
+    for name, (rows, metadata, error) in zip(names, results):
         _query, shaper, kind = sources[name]
+        source_details[name] = metadata
         if error:
             errors[name] = error
             shaped[name] = []
@@ -821,7 +830,17 @@ async def _collect_uncached(
                 out.append(shaper(row, kind=kind) if kind else shaper(row))
             except (TypeError, ValueError, KeyError, AttributeError) as exc:  # noqa: BLE001
                 log.debug("backup_manager: dropped malformed %s row: %s", name, exc)
-        shaped[name] = out
+        deduped: dict[str, dict[str, Any]] = {}
+        for item in out:
+            identity = service.canonical_id(item.get("id") or "") or service.canonical_hash(item)
+            deduped.setdefault(identity, item)
+        shaped[name] = list(deduped.values())
+        if metadata.get("partial"):
+            warnings[name] = (
+                f"Retained {metadata.get('source_count', len(rows))} of "
+                f"{metadata.get('source_total', 'an unknown total')} row(s); "
+                f"{metadata.get('failed_batches', 0)} subscription batch(es) failed."
+            )
 
     live_ids: set[str] | None = None
     if detect_orphans:
@@ -838,7 +857,7 @@ async def _collect_uncached(
                 if live_ids is None else f"Resolved {len(live_ids):,} live resource id(s).",
             )
 
-    return build_estate(
+    estate = build_estate(
         vaults=shaped["vaults"],
         rsv_items=shaped["rsv_items"],
         dp_instances=shaped["dp_instances"],
@@ -852,6 +871,9 @@ async def _collect_uncached(
         errors=errors,
         scope=scope,
     )
+    estate["warnings"] = warnings
+    estate["source_details"] = source_details
+    return estate
 
 
 async def _live_resource_ids(
@@ -879,21 +901,23 @@ async def collect_estate(
     detect_orphans: bool = True,
     force: bool = False,
     progress: ProgressFn | None = None,
+    resolved_scope: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Cached, scope-resolved estate sweep."""
     if progress:
         await progress("scope", "Resolving the selected scope to subscriptions…")
-    subscriptions = await service.scope_subscriptions(
+    resolved = dict(resolved_scope or await service.resolve_scope(
         connection, workload_id=workload_id, subscription_id=subscription_id,
         management_group_id=management_group_id,
-    )
+    ))
+    subscriptions = set(resolved["subscriptions"])
     if progress:
         await progress("scope", f"Scope resolved to {len(subscriptions):,} subscription(s).")
     scope = {
+        **resolved,
         "workload_id": workload_id or "",
         "subscription_id": subscription_id or "",
         "management_group_id": management_group_id or "",
-        "subscriptions": sorted(subscriptions),
         "connection_id": str(connection.get("id") or ""),
     }
     key = inventory_cache.scope_key(
