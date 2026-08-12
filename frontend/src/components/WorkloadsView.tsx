@@ -654,6 +654,7 @@ export function WorkloadsPanel() {
     enabled: workloads.length > 0 && !showTrash,
     staleTime: 60_000,
   });
+  const profilesInitialLoading = profilesQ.isPending && profilesQ.fetchStatus === "fetching";
   const profileById: Record<string, WorkloadProfile> = {};
   for (const p of profilesQ.data?.profiles ?? []) profileById[p.id] = p;
 
@@ -1022,6 +1023,8 @@ export function WorkloadsPanel() {
         navigate("/chat");
       }}
       refreshing={refreshing === w.id}
+      profileLoading={profilesInitialLoading && !profileById[w.id]}
+      profileError={profilesQ.isError && !profileById[w.id]}
       groupName={grouped ? undefined : groupNameOf(w)}
       onOpenGroup={w.group_id ? () => navigate(`/workloads/groups/${w.group_id}`) : undefined}
     />
@@ -1120,6 +1123,9 @@ export function WorkloadsPanel() {
           </div>
         )}
         {wlQ.isLoading && <div className="text-sm text-gray-500">Loading…</div>}
+        {profilesInitialLoading && (
+          <div role="status" aria-live="polite" className="sr-only">Loading workload visualizations…</div>
+        )}
 
         {/* Front door: first-run onboarding. When the estate has no workloads yet, lead
             with Autopilot so new users map their whole estate in one motion. */}

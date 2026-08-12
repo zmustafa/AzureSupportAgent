@@ -12,25 +12,42 @@ Like the other proactive dashboards, the heavy data pull is **server-side cached
 
 Two data paths:
 
-* **Real** — when an Entra connection is configured, best-effort enumerate applications via
-  the EntraID MCP server (``list_applications`` + ``get_application_by_id``) and normalise
-  the Graph shapes (``passwordCredentials``/``keyCredentials``/``requiredResourceAccess``/
-  owners). Any failure falls back to the demo dataset so the screen is never blank locally.
+* **Real** — when an Entra connection is configured, enumerate Microsoft Graph one bounded
+    page at a time using the shared retry-aware Graph client. Every completed page is eligible
+    for a durable checkpoint, so navigation, throttling, process failure and restart never
+    destroy the last completed snapshot or force a long scan to start over.
 * **Demo** — a rich, deterministic dummy dataset (no Azure required) so the grid + filters
   can be exercised locally.
 """
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
+from uuid import UUID
+
+from app.entra.graphclient import (
+    GraphAuthError,
+    GraphClient,
+    GraphError,
+    GraphPermissionError,
+    GraphRequest,
+    GraphResponse,
+)
 
 log = logging.getLogger("app.identity.appregs")
 
-# A progress callback used while building the snapshot: progress(level, message).
+# A progress callback used while building the snapshot: progress(level, message, metadata).
 # level ∈ {"info", "ok", "warn", "error"}.
-ProgressFn = Callable[[str, str], Awaitable[None]]
+ProgressFn = Callable[..., Awaitable[None]]
+CheckpointFn = Callable[[dict[str, Any]], Awaitable[None]]
+
+APPREGS_PAGE_SIZE = 250
+APPREGS_FULL_SAFETY_LIMIT = 100_000
+APPREGS_CHECKPOINT_SCHEMA = 2
+ENTERPRISE_APP_STATES = ("active", "deactivated", "not_instantiated", "unknown")
 
 
 # --------------------------------------------------------------------------- risk model
@@ -147,6 +164,9 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
         )
 
     owners = [o for o in (raw.get("owners") or []) if o]
+    enterprise_state = str(raw.get("enterpriseAppState") or "unknown")
+    if enterprise_state not in ENTERPRISE_APP_STATES:
+        enterprise_state = "unknown"
 
     return {
         "id": raw.get("id") or "",
@@ -167,6 +187,12 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
         "owners": owners,
         "ownerless": len(owners) == 0,
         "highRisk": high_risk,
+        "enterpriseAppState": enterprise_state,
+        "servicePrincipalId": raw.get("servicePrincipalId") or None,
+        "servicePrincipalType": raw.get("servicePrincipalType") or "",
+        "disabledByMicrosoftStatus": raw.get("disabledByMicrosoftStatus") or "",
+        "enterpriseAppStateReadStatus": raw.get("enterpriseAppStateReadStatus") or "unreadable",
+        "enterpriseAppStateSource": raw.get("enterpriseAppStateSource") or "microsoft_graph",
     }
 
 
@@ -176,6 +202,7 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
     audiences: dict[str, int] = {}
     perms: dict[str, int] = {}
     owners: dict[str, int] = {}
+    states: dict[str, int] = {state: 0 for state in ENTERPRISE_APP_STATES}
     summary = {
         "total": len(apps),
         "withSecrets": 0,
@@ -186,6 +213,10 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         "ownerless": 0,
         "applicationPerms": 0,
         "delegatedPerms": 0,
+        "active": 0,
+        "deactivated": 0,
+        "notInstantiated": 0,
+        "stateUnknown": 0,
     }
     for a in apps:
         audiences[a["signInAudience"]] = audiences.get(a["signInAudience"], 0) + 1
@@ -203,6 +234,18 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         if a["ownerless"]:
             summary["ownerless"] += 1
             owners["(ownerless)"] = owners.get("(ownerless)", 0) + 1
+        state = str(a.get("enterpriseAppState") or "unknown")
+        if state not in states:
+            state = "unknown"
+        states[state] += 1
+        if state == "active":
+            summary["active"] += 1
+        elif state == "deactivated":
+            summary["deactivated"] += 1
+        elif state == "not_instantiated":
+            summary["notInstantiated"] += 1
+        else:
+            summary["stateUnknown"] += 1
         summary["applicationPerms"] += a["applicationPermissionsCount"]
         summary["delegatedPerms"] += a["delegatedPermissionsCount"]
         for p in a["permissions"]:
@@ -218,6 +261,7 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         "audiences": _facet(audiences),
         "permissions": _facet(perms),
         "owners": _facet(owners),
+        "enterpriseAppStates": _facet(states),
         "summary": summary,
     }
 
@@ -454,30 +498,28 @@ def build_demo_app_registrations() -> list[dict[str, Any]]:
             "owners": ["Security Team"],
         },
     ]
+    demo_states = (
+        "active", "active", "deactivated", "active", "active", "active",
+        "not_instantiated", "active", "unknown", "active", "active", "active",
+    )
+    for index, app in enumerate(raw):
+        state = demo_states[index]
+        app["enterpriseAppState"] = state
+        app["servicePrincipalId"] = (
+            f"d0000000-0000-0000-0000-{index + 1:012d}"
+            if state in ("active", "deactivated")
+            else None
+        )
+        app["servicePrincipalType"] = "Application" if app["servicePrincipalId"] else ""
+        app["disabledByMicrosoftStatus"] = ""
+        app["enterpriseAppStateReadStatus"] = (
+            "demo" if state != "not_instantiated" else "not_found"
+        )
+        app["enterpriseAppStateSource"] = "demo"
     return [_normalise_app(r) for r in raw]
 
 
-# --------------------------------------------------------------------------- real (MCP)
-def _tool_result_json(result: dict[str, Any]) -> Any:
-    content = result.get("content") or []
-    if result.get("isError"):
-        msg = "\n".join(str(p) for p in content).strip()
-        raise RuntimeError(msg[:500] or "EntraID tool returned an error.")
-    joined = "".join(p for p in content if isinstance(p, str)).strip()
-    if joined:
-        try:
-            return json.loads(joined)
-        except (ValueError, TypeError):
-            pass
-    for part in content:
-        if isinstance(part, str):
-            try:
-                return json.loads(part)
-            except (ValueError, TypeError):
-                continue
-    return []
-
-
+# --------------------------------------------------------------------------- real Graph projection
 def _perms_from_graph_app(detail: dict[str, Any], resolver: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """Best-effort permission extraction from a Graph application's
     ``requiredResourceAccess`` block. ``type == 'Role'`` → Application, ``'Scope'`` →
@@ -507,88 +549,347 @@ def _creds_from_graph_app(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-async def _graph_permission_resolver(client) -> dict[str, str]:
-    """Build a GUID→friendly-value map from the Microsoft Graph service principal's
-    appRoles + oauth2PermissionScopes (so ``Directory.ReadWrite.All`` shows instead of a
-    GUID). Best-effort: returns an empty map on any failure."""
+async def _graph_permission_resolver(client: GraphClient) -> dict[str, str]:
+    """Build a Graph permission GUID→friendly-name map with one read-only call."""
     try:
-        data = _tool_result_json(await client.call_tool("get_all_graph_permissions", {}))
-    except Exception as exc:  # noqa: BLE001 - resolver is best-effort
-        log.info("get_all_graph_permissions failed: %s", exc)
+        data = await client.get(
+            "/servicePrincipals",
+            params={
+                "$filter": "appId eq '00000003-0000-0000-c000-000000000000'",
+                "$select": "appRoles,oauth2PermissionScopes",
+                "$top": 1,
+            },
+        )
+    except GraphError as exc:
+        log.info("Microsoft Graph permission catalog unavailable: status=%d", exc.status)
         return {}
-    if not isinstance(data, dict):
+    rows = data.get("value") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
         return {}
     out: dict[str, str] = {}
-    for key in ("delegated_permissions", "application_permissions"):
-        for p in data.get(key) or []:
-            gid = p.get("id")
-            value = p.get("value")
+    for key in ("oauth2PermissionScopes", "appRoles"):
+        for permission in rows[0].get(key) or []:
+            if not isinstance(permission, dict):
+                continue
+            gid, value = permission.get("id"), permission.get("value")
             if gid and value:
                 out[str(gid)] = str(value)
     return out
 
 
+def _enterprise_state_projection(raw: dict[str, Any]) -> dict[str, Any]:
+    """Return only the persisted service-principal state fields from an app row."""
+    state = str(raw.get("enterpriseAppState") or "unknown")
+    if state not in ENTERPRISE_APP_STATES:
+        state = "unknown"
+    return {
+        "enterpriseAppState": state,
+        "servicePrincipalId": raw.get("servicePrincipalId") or None,
+        "servicePrincipalType": raw.get("servicePrincipalType") or "",
+        "disabledByMicrosoftStatus": raw.get("disabledByMicrosoftStatus") or "",
+        "enterpriseAppStateReadStatus": raw.get("enterpriseAppStateReadStatus") or "unreadable",
+        "enterpriseAppStateSource": raw.get("enterpriseAppStateSource") or "microsoft_graph",
+    }
+
+
+def _unknown_enterprise_state(read_status: str) -> dict[str, Any]:
+    return {
+        "enterpriseAppState": "unknown",
+        "servicePrincipalId": None,
+        "servicePrincipalType": "",
+        "disabledByMicrosoftStatus": "",
+        "enterpriseAppStateReadStatus": read_status,
+        "enterpriseAppStateSource": "microsoft_graph",
+    }
+
+
+def _enterprise_state_from_response(response: GraphResponse) -> dict[str, Any]:
+    if response.status == 404:
+        return {
+            "enterpriseAppState": "not_instantiated",
+            "servicePrincipalId": None,
+            "servicePrincipalType": "",
+            "disabledByMicrosoftStatus": "",
+            "enterpriseAppStateReadStatus": "not_found",
+            "enterpriseAppStateSource": "microsoft_graph",
+        }
+    if not response.ok or not isinstance(response.body, dict):
+        return _unknown_enterprise_state("unreadable")
+    enabled = response.body.get("accountEnabled")
+    state = "active" if enabled is True else "deactivated" if enabled is False else "unknown"
+    return {
+        "enterpriseAppState": state,
+        "servicePrincipalId": response.body.get("id") or None,
+        "servicePrincipalType": response.body.get("servicePrincipalType") or "",
+        "disabledByMicrosoftStatus": response.body.get("disabledByMicrosoftStatus") or "",
+        "enterpriseAppStateReadStatus": "read" if isinstance(enabled, bool) else "incomplete",
+        "enterpriseAppStateSource": "microsoft_graph",
+    }
+
+
+async def _attach_enterprise_app_states(
+    client: GraphClient,
+    apps: list[dict[str, Any]],
+    known: dict[str, dict[str, Any]],
+    *,
+    on_retry: Callable[[int, int, float], Awaitable[None]] | None = None,
+) -> None:
+    """Join local service-principal state to one completed application page by ``appId``.
+
+    Alternate-key GETs are sent through Graph JSON batching (20 per request). Every result,
+    including absence and unreadability, is attached before the page is checkpointed so a
+    resumed refresh never repeats completed state lookups.
+    """
+    pending: list[str] = []
+    for app in apps:
+        raw_id = str(app.get("appId") or "")
+        try:
+            app_id = str(UUID(raw_id))
+        except (ValueError, TypeError, AttributeError):
+            app.update(_unknown_enterprise_state("invalid_app_id"))
+            continue
+        if app_id in known:
+            app.update(known[app_id])
+        elif app_id not in pending:
+            pending.append(app_id)
+
+    if pending:
+        requests = [
+            GraphRequest(
+                id=str(index),
+                url=(
+                    f"/servicePrincipals(appId='{app_id}')"
+                    "?$select=id,appId,accountEnabled,servicePrincipalType,disabledByMicrosoftStatus"
+                ),
+            )
+            for index, app_id in enumerate(pending)
+        ]
+        try:
+            responses = await client.batch(requests, on_retry=on_retry)
+        except GraphError:
+            responses = [GraphResponse(id=request.id, status=0, body=None) for request in requests]
+        for request, response in zip(requests, responses):
+            app_id = pending[int(request.id)]
+            known[app_id] = _enterprise_state_from_response(response)
+
+    for app in apps:
+        try:
+            app_id = str(UUID(str(app.get("appId") or "")))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        app.update(known.get(app_id) or _unknown_enterprise_state("unreadable"))
+
+
 async def _collect_real(
-    connection: dict[str, Any], *, limit: int, progress: "ProgressFn | None" = None
-) -> list[dict[str, Any]]:
-    """Best-effort real enumeration via the EntraID MCP server. Raises on any hard failure
-    so the caller can fall back to demo data. Emits granular ``progress`` lines (this can take
-    10–30 minutes against a large tenant, so the UI streams every step)."""
-    from app.core.config import get_settings
-    from app.mcp.client import build_entra_mcp_client
+    connection: dict[str, Any],
+    *,
+    limit: int,
+    full: bool = False,
+    page_size: int = APPREGS_PAGE_SIZE,
+    checkpoint: dict[str, Any] | None = None,
+    on_checkpoint: CheckpointFn | None = None,
+    progress: "ProgressFn | None" = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Enumerate Graph applications one page at a time with durable checkpoints."""
+    started = time.monotonic()
+    mode = "full" if full else "capped"
+    target_limit = APPREGS_FULL_SAFETY_LIMIT if full else max(50, min(5000, int(limit)))
+    page_size = max(50, min(999, int(page_size)))
 
-    async def _say(level: str, message: str) -> None:
+    async def _say(level: str, message: str, **metadata: Any) -> None:
         if progress is not None:
-            await progress(level, message)
+            await progress(level, message, metadata)
 
-    settings = get_settings()
-    await _say("info", "Connecting to Microsoft Entra (Graph) via the EntraID MCP server…")
-    client = build_entra_mcp_client(settings, connection=connection)
-    try:
+    def _cancelled() -> bool:
+        return bool(should_cancel and should_cancel())
+
+    checkpoint_matches = bool(
+        checkpoint
+        and checkpoint.get("schema") == APPREGS_CHECKPOINT_SCHEMA
+        and checkpoint.get("mode") == mode
+        and int(checkpoint.get("target_limit") or 0) == target_limit
+        and int(checkpoint.get("page_size") or 0) == page_size
+        and isinstance(checkpoint.get("apps_raw"), list)
+    )
+    apps_raw = list(checkpoint.get("apps_raw") or []) if checkpoint_matches else []
+    next_link = str(checkpoint.get("next_link") or "") if checkpoint_matches else ""
+    pages = int(checkpoint.get("pages") or 0) if checkpoint_matches else 0
+    graph_total = checkpoint.get("graph_total") if checkpoint_matches else None
+    resumed = bool(checkpoint_matches and (apps_raw or next_link))
+    enumeration_complete = bool(checkpoint.get("enumeration_complete")) if checkpoint_matches else False
+    enterprise_state_by_app_id: dict[str, dict[str, Any]] = {}
+    for saved in apps_raw:
+        if not isinstance(saved, dict) or "enterpriseAppState" not in saved:
+            continue
+        try:
+            saved_app_id = str(UUID(str(saved.get("appId") or "")))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        enterprise_state_by_app_id[saved_app_id] = _enterprise_state_projection(saved)
+
+    await _say("info", "Connecting to Microsoft Entra (Graph)…", phase="connect", mode=mode)
+    async with GraphClient(connection, concurrency=2) as client:
         await _say("info", "Loading the Microsoft Graph permission catalog (appRoles + delegated scopes)…")
         resolver = await _graph_permission_resolver(client)
         await _say("info", f"Permission catalog loaded — {len(resolver)} permission id(s) resolvable to friendly names.")
 
-        await _say("info", f"Listing application registrations (up to {limit})… this is the slow step on large tenants.")
-        listing = _tool_result_json(await client.call_tool("list_applications", {"limit": limit}))
-        apps_raw = listing if isinstance(listing, list) else []
-        total = min(len(apps_raw), limit)
-        await _say("info", f"Fetched {total} application registration(s). Processing each one…")
+        if resumed:
+            await _say(
+                "info",
+                f"Resuming from checkpoint — {len(apps_raw)} registration(s) across {pages} page(s) already fetched.",
+                phase="resume", current=len(apps_raw), total=graph_total, page=pages, resumed=True,
+            )
+        else:
+            scope = "the full tenant" if full else f"up to {target_limit}"
+            await _say("info", f"Listing application registrations ({scope})…", phase="enumerate", current=0)
+
+        if graph_total is None and not resumed:
+            try:
+                graph_total = await client.get_count("applications")
+            except GraphError as exc:
+                log.info("Microsoft Graph application count unavailable: status=%d", exc.status)
+            if graph_total is not None:
+                await _say(
+                    "info", f"Tenant reports {graph_total} application registration(s).",
+                    phase="count", current=len(apps_raw), total=graph_total,
+                    percent=round((len(apps_raw) / graph_total) * 100, 1) if graph_total else 100.0,
+                )
+
+        restarted_after_expired_checkpoint = False
+        while not enumeration_complete and len(apps_raw) < target_limit:
+            if _cancelled():
+                raise asyncio.CancelledError()
+
+            async def _retry(status: int, attempt: int, delay: float) -> None:
+                await _say(
+                    "warn",
+                    f"Microsoft Graph returned {status}; retry {attempt} in {delay:.1f}s…",
+                    phase="throttle", status=status, retry=attempt,
+                    delay_seconds=round(delay, 1), current=len(apps_raw), total=graph_total,
+                    throttles=client.stats.throttled, retries=client.stats.retries,
+                )
+
+            remaining = target_limit - len(apps_raw)
+            try:
+                page = await client.get_page(
+                    "applications",
+                    select=(
+                        "id", "appId", "displayName", "createdDateTime", "signInAudience",
+                        "publisherDomain", "tags", "passwordCredentials", "keyCredentials",
+                        "requiredResourceAccess",
+                    ),
+                    expand="owners($select=id,displayName,userPrincipalName)",
+                    top=min(page_size, remaining),
+                    next_link=next_link,
+                    include_count=not apps_raw and not next_link,
+                    on_retry=_retry,
+                )
+            except GraphError as exc:
+                if resumed and next_link and exc.status in (400, 410) and not restarted_after_expired_checkpoint:
+                    restarted_after_expired_checkpoint = True
+                    resumed = False
+                    apps_raw, next_link, pages, graph_total = [], "", 0, None
+                    enterprise_state_by_app_id = {}
+                    await _say("warn", "Saved Graph continuation expired; restarting enumeration from page 1.", phase="restart")
+                    continue
+                raise
+
+            if graph_total is None and page.total is not None:
+                graph_total = max(0, int(page.total))
+            page_items = page.items[:remaining]
+
+            async def _state_retry(status: int, attempt: int, delay: float) -> None:
+                await _say(
+                    "warn",
+                    f"Microsoft Graph returned {status} while checking enterprise-app state; retry {attempt} in {delay:.1f}s…",
+                    phase="enterprise_state", status=status, retry=attempt,
+                    delay_seconds=round(delay, 1), current=len(apps_raw), total=graph_total,
+                    throttles=client.stats.throttled, retries=client.stats.retries,
+                )
+
+            await _say(
+                "info",
+                f"Checking enterprise-application state for page {pages + 1}…",
+                phase="enterprise_state", current=len(apps_raw), total=graph_total, page=pages + 1,
+            )
+            await _attach_enterprise_app_states(
+                client,
+                page_items,
+                enterprise_state_by_app_id,
+                on_retry=_state_retry,
+            )
+            apps_raw.extend(page_items)
+            pages += 1
+            next_link = page.next_link
+            enumeration_complete = not bool(next_link)
+            state = {
+                "schema": APPREGS_CHECKPOINT_SCHEMA,
+                "mode": mode,
+                "configured_limit": limit,
+                "target_limit": target_limit,
+                "page_size": page_size,
+                "pages": pages,
+                "graph_total": graph_total,
+                "next_link": next_link,
+                "enumeration_complete": enumeration_complete,
+                "apps_raw": apps_raw,
+            }
+            if on_checkpoint is not None:
+                await on_checkpoint(state)
+            pct = round((len(apps_raw) / graph_total) * 100, 1) if graph_total else None
+            total_text = f" of {graph_total}" if graph_total is not None else ""
+            await _say(
+                "ok",
+                f"Page {pages} fetched — {len(apps_raw)}{total_text} application registration(s){f' ({pct:g}%)' if pct is not None else ''}.",
+                phase="enumerate", current=len(apps_raw), total=graph_total, percent=pct,
+                page=pages, pages=pages, page_size=page_size, retries=client.stats.retries,
+                throttles=client.stats.throttled, resumed=resumed,
+            )
+
+        truncated = bool(next_link)
+        stop_reason = "complete" if not truncated else ("full_safety_limit" if full else "configured_limit")
+        await _say(
+            "info", f"Processing {len(apps_raw)} fetched application registration(s)…",
+            phase="process", current=0, total=len(apps_raw), pages=pages,
+        )
 
         out: list[dict[str, Any]] = []
-        for i, app in enumerate(apps_raw[:limit], start=1):
+        for index, app in enumerate(apps_raw, start=1):
+            if _cancelled():
+                raise asyncio.CancelledError()
+            if not isinstance(app, dict):
+                continue
             owners = []
-            for o in app.get("owners") or []:
-                if isinstance(o, dict):
-                    owners.append(o.get("displayName") or o.get("userPrincipalName") or "")
-                elif isinstance(o, str):
-                    owners.append(o)
-            norm = _normalise_app(
-                {
-                    "id": app.get("id"),
-                    "appId": app.get("appId"),
-                    "displayName": app.get("displayName"),
-                    "signInAudience": app.get("signInAudience"),
-                    "createdDateTime": app.get("createdDateTime"),
-                    "publisherDomain": app.get("publisherDomain"),
-                    "tags": app.get("tags") or [],
-                    "credentials": _creds_from_graph_app(app),
-                    "permissions": _perms_from_graph_app(app, resolver),
-                    "owners": [o for o in owners if o],
-                }
-            )
-            out.append(norm)
-            risk = " · HIGH RISK" if norm["highRisk"] else ""
-            owner_txt = f"{len(norm['owners'])} owner(s)" if norm["owners"] else "ownerless"
-            await _say(
-                "ok" if not norm["highRisk"] else "warn",
-                f"[{i}/{total}] {norm['displayName']} — {norm['secretsCount']} secret(s), "
-                f"{norm['certsCount']} cert(s), {norm['applicationPermissionsCount']} app + "
-                f"{norm['delegatedPermissionsCount']} delegated perm(s), {owner_txt}{risk}",
-            )
-        return out
-    finally:
-        client.close()
+            for owner in app.get("owners") or []:
+                if isinstance(owner, dict):
+                    owners.append(owner.get("displayName") or owner.get("userPrincipalName") or "")
+                elif isinstance(owner, str):
+                    owners.append(owner)
+            out.append(_normalise_app({
+                "id": app.get("id"), "appId": app.get("appId"),
+                "displayName": app.get("displayName"), "signInAudience": app.get("signInAudience"),
+                "createdDateTime": app.get("createdDateTime"), "publisherDomain": app.get("publisherDomain"),
+                "tags": app.get("tags") or [], "credentials": _creds_from_graph_app(app),
+                "permissions": _perms_from_graph_app(app, resolver), "owners": [o for o in owners if o],
+                **_enterprise_state_projection(app),
+            }))
+            if index == len(apps_raw) or index % 100 == 0:
+                pct = round((index / len(apps_raw)) * 100, 1) if apps_raw else 100.0
+                await _say(
+                    "info", f"Processed {index} of {len(apps_raw)} registration(s) ({pct:g}%).",
+                    phase="process", current=index, total=len(apps_raw), percent=pct, pages=pages,
+                )
+
+        return out, {
+            "mode": mode, "configured_limit": limit, "applied_limit": target_limit,
+            "full_safety_limit": APPREGS_FULL_SAFETY_LIMIT, "page_size": page_size,
+            "pages": pages, "graph_total": graph_total, "fetched": len(out),
+            "complete": not truncated, "truncated": truncated, "stop_reason": stop_reason,
+            "resumed": resumed, "retries": client.stats.retries,
+            "throttles": client.stats.throttled,
+            "duration_seconds": round(time.monotonic() - started, 1),
+        }
 
 
 # --------------------------------------------------------------------------- orchestrator
@@ -597,57 +898,90 @@ async def collect_app_registrations(
     *,
     tenant_id: str,
     limit: int = 200,
+    full: bool = False,
+    page_size: int = APPREGS_PAGE_SIZE,
+    checkpoint: dict[str, Any] | None = None,
+    on_checkpoint: CheckpointFn | None = None,
     progress: "ProgressFn | None" = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Build the full app-registrations snapshot. Never raises — falls back to demo data.
     Emits granular ``progress(level, message)`` lines (the live enumeration can take 10–30
     minutes on a large tenant)."""
-    async def _say(level: str, message: str) -> None:
+    async def _say(level: str, message: str, **metadata: Any) -> None:
         if progress is not None:
-            await progress(level, message)
+            await progress(level, message, metadata)
 
     source = "demo_dummy_data"
     note = ""
     apps: list[dict[str, Any]] = []
+    enumeration = {
+        "mode": "full" if full else "capped",
+        "configured_limit": limit,
+        "applied_limit": APPREGS_FULL_SAFETY_LIMIT if full else limit,
+        "full_safety_limit": APPREGS_FULL_SAFETY_LIMIT,
+        "page_size": page_size,
+        "pages": 0,
+        "graph_total": None,
+        "fetched": 0,
+        "complete": False,
+        "truncated": False,
+        "stop_reason": "not_started",
+        "resumed": False,
+        "retries": 0,
+        "throttles": 0,
+        "duration_seconds": 0.0,
+    }
     # When a connection IS configured the user wants their REAL tenant — never silently
     # substitute demo data (it looks deceptively real). A Graph auth/config error or a live
     # enumeration failure yields an empty snapshot + an actionable note instead.
     connection_failed = False
     if connection is not None:
-        from app.mcp.client import entra_graph_config_error, unwrap_exc_message
-
-        cfg_err = entra_graph_config_error(connection)
-        if cfg_err:
-            # The Graph MCP can't authenticate with this connection — surface the clear,
-            # actionable reason; do NOT fall back to demo.
-            note = cfg_err
-            source = "unavailable"
-            connection_failed = True
-            log.info("app-registrations: Graph MCP not usable with this connection: %s", cfg_err)
-            await _say("error", cfg_err)
-        else:
-            try:
-                apps = await _collect_real(connection, limit=limit, progress=progress)
-                source = "microsoft_graph"
-            except Exception as exc:  # noqa: BLE001 - real connection: report, don't fake
-                note = f"Live enumeration failed: {unwrap_exc_message(exc)[:200]}"
-                source = "unavailable"
-                connection_failed = True
-                log.info("app-registrations live collect failed: %s", exc)
-                await _say("error", note)
-                apps = []
+        try:
+            apps, enumeration = await _collect_real(
+                connection,
+                limit=limit,
+                full=full,
+                page_size=page_size,
+                checkpoint=checkpoint,
+                on_checkpoint=on_checkpoint,
+                progress=progress,
+                should_cancel=should_cancel,
+            )
+            source = "microsoft_graph"
+        except asyncio.CancelledError:
+            raise
+        except GraphPermissionError:
+            note = "Microsoft Graph denied the application inventory. Grant Application.Read.All or Directory.Read.All, then refresh."
+            source, connection_failed = "unavailable", True
+            log.info("app-registrations Graph permission denied")
+            await _say("error", note, phase="error")
+        except GraphAuthError:
+            note = "This connection could not acquire a Microsoft Graph token. Check its tenant credentials and Graph application permissions."
+            source, connection_failed = "unavailable", True
+            log.info("app-registrations Graph authentication unavailable")
+            await _say("error", note, phase="error")
+        except GraphError as exc:
+            note = f"Microsoft Graph application enumeration failed (HTTP {exc.status or 'network'}). The previous completed snapshot was preserved."
+            source, connection_failed = "unavailable", True
+            log.info("app-registrations Graph enumeration failed: status=%d", exc.status)
+            await _say("error", note, phase="error")
+        except Exception as exc:  # noqa: BLE001 - collapse unexpected provider details
+            note = "Application registration refresh failed. The previous completed snapshot was preserved."
+            source, connection_failed = "unavailable", True
+            log.info("app-registrations live collect failed: %s", type(exc).__name__)
+            await _say("error", note, phase="error")
     if not apps and connection is None:
         # No Azure connection at all (fresh product exploration) — seed the illustrative demo set.
         apps = build_demo_app_registrations()
         source = "demo_dummy_data"
         note = note or "No Entra connection configured — showing demo data."
         await _say("warn", note)
-    await _say("info", "Aggregating facets (audiences, permissions, owners) and summary KPIs…")
+    await _say("info", "Aggregating facets (audiences, permissions, owners, enterprise-app state) and summary KPIs…", phase="aggregate")
     apps.sort(key=lambda a: a["displayName"].lower())
     agg = aggregate(apps)
-    # IU3 — flag when the live listing hit the per-refresh cap so the UI can show a "first N" notice.
-    truncated = source == "microsoft_graph" and len(apps) >= limit
-    await _say("ok", f"Snapshot complete — {len(apps)} app registration(s).")
+    truncated = bool(enumeration.get("truncated")) if source == "microsoft_graph" else False
+    await _say("ok", f"Snapshot complete — {len(apps)} app registration(s).", phase="complete", current=len(apps), total=enumeration.get("graph_total"), percent=100 if enumeration.get("complete") else None)
     return {
         "generated_at": _now_iso(),
         "tenant_id": tenant_id,
@@ -656,10 +990,17 @@ async def collect_app_registrations(
         "note": note,
         "connection_failed": connection_failed,
         "apps": apps,
-        "facets": {"audiences": agg["audiences"], "permissions": agg["permissions"], "owners": agg["owners"]},
+        "facets": {
+            "audiences": agg["audiences"],
+            "permissions": agg["permissions"],
+            "owners": agg["owners"],
+            "enterpriseAppStates": agg["enterpriseAppStates"],
+        },
         "summary": agg["summary"],
         "truncated": truncated,
         "limit": limit,
+        "graph_total": enumeration.get("graph_total"),
+        "enumeration": enumeration,
     }
 
 
@@ -678,7 +1019,12 @@ def build_demo_snapshot(tenant_id: str = "default") -> dict[str, Any]:
         "source": "demo_dummy_data",
         "note": "Demo data — not a live Entra enumeration.",
         "apps": apps,
-        "facets": {"audiences": agg["audiences"], "permissions": agg["permissions"], "owners": agg["owners"]},
+        "facets": {
+            "audiences": agg["audiences"],
+            "permissions": agg["permissions"],
+            "owners": agg["owners"],
+            "enterpriseAppStates": agg["enterpriseAppStates"],
+        },
         "summary": agg["summary"],
     }
 

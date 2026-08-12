@@ -66,6 +66,27 @@ One collection builds one snapshot per tenant, and that snapshot serves every En
 
 Granted permissions are collected by querying the handful of resource service principals that matter — Microsoft Graph, the legacy Azure AD Graph, Exchange Online and SharePoint Online — for everyone holding one of their application permissions, rather than fanning a call out across every principal in the tenant. A consent granted minutes ago will not appear until the next collection.
 
+### Application Registrations refresh controls
+
+The **Registrations** operational sub-tab keeps its own completed snapshot. Opening the tab only reads that cache; it does not call Microsoft Graph. An explicit refresh offers two modes:
+
+- **First N** uses the administrator's **Application registration refresh limit**. The default is 500 and Settings accepts 50–5,000.
+- **Full tenant** deliberately follows Graph paging until the tenant has been enumerated. A 100,000-object emergency ceiling remains as protection against an accidental unbounded response; if reached, the result is visibly partial rather than presented as complete.
+
+Before listing objects, the refresh asks Graph for the tenant's application count. The progress panel then reports `fetched / total`, page number, percentage, retries, and throttles. Graph pages contain up to 250 objects by default. The collector honors `Retry-After` on throttling and uses bounded exponential backoff when Graph does not provide one.
+
+Every completed page is checkpointed separately from the completed snapshot. Navigating away does not stop the job. If the application process restarts or a Graph request fails, returning to the page resumes from the saved continuation when it is still valid; an expired continuation restarts safely from page one. Checkpoints expire after 24 hours.
+
+Each application page is also joined to its local enterprise application through the immutable
+application ID. The join uses read-only Microsoft Graph batches of at most 20 lookups. State is
+checkpointed with the page, so a resumed scan does not repeat completed lookups. The grid and
+exports distinguish four outcomes: **Active**, **Deactivated**, **No local enterprise app**, and
+**Unknown** when the state was not readable. Missing state is never interpreted as deactivated.
+Microsoft's separate disable-status field is displayed independently from the tenant operator's
+enabled/deactivated state.
+
+**Cancel** stops the active refresh and keeps completed pages available for resume. Cancellation, failure, or an incomplete provider response never replaces the previous completed snapshot. Only a successful refresh publishes the new cache. Completion metadata records mode, Graph total, fetched count, pages, duration, retries, throttles, resume state, truncation, and stop reason.
+
 ## Interpretation of results
 
 - **A large permission count is not automatically bad, and a small one is not automatically safe.** One `RoleManagement.ReadWrite.Directory` grant outranks forty read scopes. Read the tier and the self-grant marker, not the number.
@@ -73,6 +94,13 @@ Granted permissions are collected by querying the handful of resource service pr
 - **Tenant-wide delegated grants behave like application permissions.** A grant consented for all principals applies to everyone who signs in, not only to the person who accepted it.
 - **Requested is not granted.** Permissions in the manifest with no matching assignment carry no access. They are worth reviewing before the next consent, not today.
 - **No owner is an operational finding.** Nobody is accountable for rotating the credentials or retiring the application, which is usually why the credential is the one that expires unnoticed.
+- **Deactivated does not mean harmless or deleted.** The corresponding service principal is
+	disabled, but the registration, credentials and requested permissions still exist and can become
+	effective again if it is re-enabled. The Registrations view therefore keeps all risk and
+	credential evidence visible and offers a dedicated state filter and workbook sheet.
+- **No local enterprise app is not the same as deactivated.** It means this tenant has no
+	corresponding service principal for the registration. **Unknown** means Graph did not return a
+	trustworthy state; neither outcome is converted to a disabled verdict.
 - **A multi-decade credential lifetime is itself the finding.** It is reported as an approximate lifetime in years rather than a raw day count, because a secret that cannot be rotated on any sensible schedule is not a neutral fact.
 - **Unverified publisher and external publisher are context, not verdicts.** Plenty of legitimate internal applications have neither.
 
@@ -100,6 +128,12 @@ Granted permissions are collected by querying the handful of resource service pr
 | An app consented today is absent | Consent is eventually consistent and the grid reads a snapshot. Refresh. |
 | A permission chip shows an identifier instead of a name | The resource service principal could not be resolved; the permission is reported rather than dropped. |
 | Refresh returns a permission error | Collection requires `entra.admin`, not `entra.read`. |
+| Refresh appears paused | Read the page/total progress and retry delay. Graph throttling is retried automatically. |
+| The server restarted during a refresh | Return to Registrations. A checkpointed run resumes automatically if it is less than 24 hours old. |
+| The result says `N of M (capped)` | Increase the normal limit in Settings or choose **Full tenant**, then refresh. |
+| A refresh failed or was cancelled | The prior completed snapshot remains active. Press Refresh to resume the checkpointed pages. |
+| State says `Unknown` | The service-principal lookup was incomplete or unreadable. Refresh after checking `Application.Read.All` or `Directory.Read.All`; do not treat Unknown as deactivated. |
+| State says `No local enterprise app` | The app registration exists but no corresponding service principal is instantiated in this tenant. |
 
 ## Related pages
 

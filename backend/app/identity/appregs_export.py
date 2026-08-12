@@ -58,6 +58,15 @@ def _high_risk_reasons(app: dict[str, Any]) -> str:
     return "; ".join(reasons)
 
 
+def _enterprise_state_label(app: dict[str, Any]) -> str:
+    return {
+        "active": "Active",
+        "deactivated": "Deactivated",
+        "not_instantiated": "No local enterprise app",
+        "unknown": "Unknown",
+    }.get(str(app.get("enterpriseAppState") or "unknown"), "Unknown")
+
+
 def to_workbook(snap: dict[str, Any]) -> bytes:
     """Build the multi-sheet app-registrations workbook from a snapshot dict."""
     from io import BytesIO
@@ -116,6 +125,10 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
         ("Expired credentials", "expired"),
         ("High risk", "highRisk"),
         ("Ownerless", "ownerless"),
+        ("Active enterprise applications", "active"),
+        ("Deactivated enterprise applications", "deactivated"),
+        ("No local enterprise application", "notInstantiated"),
+        ("Enterprise application state unknown", "stateUnknown"),
         ("Application permissions", "applicationPerms"),
         ("Delegated permissions", "delegatedPerms"),
     ]:
@@ -127,12 +140,16 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
     _sheet(
         "Applications",
         ["Name", "App ID", "Object ID", "Sign-in audience", "Publisher domain",
+         "Enterprise app state", "Service principal ID", "Service principal type",
+         "Microsoft disable status",
          "Secrets", "Certs", "Next expiry (days)", "Expired creds",
          "App permissions", "Delegated permissions", "High risk", "Ownerless", "Owners", "Created"],
         [
             [
                 a.get("displayName", ""), a.get("appId", ""), a.get("id", ""),
                 a.get("signInAudience", ""), a.get("publisherDomain", ""),
+                _enterprise_state_label(a), a.get("servicePrincipalId", ""),
+                a.get("servicePrincipalType", ""), a.get("disabledByMicrosoftStatus", ""),
                 a.get("secretsCount", 0), a.get("certsCount", 0),
                 a.get("nextExpiryDays"), a.get("expiredCredentials", 0),
                 a.get("applicationPermissionsCount", 0), a.get("delegatedPermissionsCount", 0),
@@ -191,10 +208,11 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
     # 6. High Risk — only flagged apps, with the reason signals.
     _sheet(
         "High Risk",
-        ["Name", "App ID", "Reasons", "App permissions", "Delegated permissions", "Owners"],
+        ["Name", "App ID", "Enterprise app state", "Reasons", "App permissions", "Delegated permissions", "Owners"],
         [
             [
-                a.get("displayName", ""), a.get("appId", ""), _high_risk_reasons(a),
+                a.get("displayName", ""), a.get("appId", ""), _enterprise_state_label(a),
+                _high_risk_reasons(a),
                 a.get("applicationPermissionsCount", 0), a.get("delegatedPermissionsCount", 0),
                 "; ".join(a.get("owners") or []),
             ]
@@ -202,7 +220,26 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
         ],
     )
 
-    # 7. Permission Pivot — apps-per-permission rollup (from the facet, else recomputed).
+    # 7. Deactivated — disabled local enterprise applications remain visible because their
+    # credentials and permissions can become effective again if the principal is re-enabled.
+    _sheet(
+        "Deactivated",
+        ["Name", "App ID", "Service principal ID", "Service principal type",
+         "Microsoft disable status", "High risk", "App permissions", "Delegated permissions",
+         "Secrets", "Certs", "Owners"],
+        [
+            [
+                a.get("displayName", ""), a.get("appId", ""), a.get("servicePrincipalId", ""),
+                a.get("servicePrincipalType", ""), a.get("disabledByMicrosoftStatus", ""),
+                bool(a.get("highRisk")), a.get("applicationPermissionsCount", 0),
+                a.get("delegatedPermissionsCount", 0), a.get("secretsCount", 0),
+                a.get("certsCount", 0), "; ".join(a.get("owners") or []),
+            ]
+            for a in apps if a.get("enterpriseAppState") == "deactivated"
+        ],
+    )
+
+    # 8. Permission Pivot — apps-per-permission rollup (from the facet, else recomputed).
     perm_facet = facets.get("permissions") or []
     if not perm_facet:
         counts: dict[str, int] = {}

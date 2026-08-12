@@ -34,6 +34,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -49,6 +50,7 @@ GETBYIDS_MAX = 1000     # directoryObjects/getByIds hard limit
 _MAX_RETRIES = 5
 _MAX_BACKOFF_S = 60.0
 _DEFAULT_TIMEOUT = 60.0
+_GRAPH_HOST = "graph.microsoft.com"
 
 
 # --------------------------------------------------------------------------- errors
@@ -132,6 +134,7 @@ class GraphResponse:
     id: str
     status: int
     body: Any
+    headers: dict[str, str] = field(default_factory=dict)
     throttled: bool = False
 
     @property
@@ -149,6 +152,15 @@ class GraphResponse:
             if isinstance(v, list):
                 return v
         return []
+
+
+@dataclass
+class GraphPage:
+    """One page of a Graph collection plus its opaque continuation metadata."""
+
+    items: list[dict[str, Any]]
+    next_link: str = ""
+    total: int | None = None
 
 
 # --------------------------------------------------------------------------- client
@@ -239,6 +251,7 @@ class GraphClient:
         *,
         json_body: Any = None,
         headers: dict[str, str] | None = None,
+        on_retry: Callable[[int, int, float], Awaitable[None]] | None = None,
     ) -> httpx.Response:
         """Issue one request with retry/backoff. Raises on 401/403 and terminal failures."""
         tok = await self.token()
@@ -260,7 +273,13 @@ class GraphClient:
                     if attempt > _MAX_RETRIES:
                         raise GraphError(0, f"Network error after {attempt} attempts: {exc}", url) from exc
                     self.stats.retries += 1
-                    await asyncio.sleep(self._backoff(attempt, None))
+                    delay = self._backoff(attempt, None)
+                    if on_retry is not None:
+                        try:
+                            await on_retry(0, attempt, delay)
+                        except Exception:  # noqa: BLE001 - telemetry must not break a request
+                            pass
+                    await asyncio.sleep(delay)
                     continue
             self.stats.requests += 1
             self.stats.ms += (time.monotonic() - started) * 1000
@@ -272,7 +291,13 @@ class GraphClient:
                 if attempt > _MAX_RETRIES:
                     raise GraphError(resp.status_code, f"Throttled/unavailable after {attempt} attempts", url)
                 self.stats.retries += 1
-                await asyncio.sleep(self._backoff(attempt, resp.headers.get("Retry-After")))
+                delay = self._backoff(attempt, resp.headers.get("Retry-After"))
+                if on_retry is not None:
+                    try:
+                        await on_retry(resp.status_code, attempt, delay)
+                    except Exception:  # noqa: BLE001 - telemetry must not break a request
+                        pass
+                await asyncio.sleep(delay)
                 continue
 
             if resp.status_code == 401:
@@ -342,6 +367,96 @@ class GraphClient:
         resp = await self._send("GET", url, headers=headers)
         body = resp.json() if resp.content else {}
         return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def validate_page_link(url: str, *, collection_path: str) -> str:
+        """Validate an opaque Graph continuation before attaching the bearer token.
+
+        Checkpoints survive process restarts and are stored on disk. Treat their URL as
+        untrusted at the next use: only HTTPS Microsoft Graph links for the same v1.0
+        collection are accepted. This prevents a tampered checkpoint from becoming an
+        authenticated SSRF request.
+        """
+        parsed = urlsplit(str(url or ""))
+        expected_path = f"/v1.0/{collection_path.strip('/')}"
+        if (
+            parsed.scheme.lower() != "https"
+            or (parsed.hostname or "").lower() != _GRAPH_HOST
+            or parsed.port not in (None, 443)
+            or parsed.path.rstrip("/").lower() != expected_path.rstrip("/").lower()
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise GraphError(400, "Invalid Microsoft Graph continuation link.", expected_path)
+        return url
+
+    async def get_page(
+        self,
+        path: str,
+        *,
+        select: Sequence[str] | None = None,
+        expand: str | None = None,
+        top: int = 250,
+        next_link: str = "",
+        include_count: bool = False,
+        on_retry: Callable[[int, int, float], Awaitable[None]] | None = None,
+    ) -> GraphPage:
+        """Read exactly one page of a v1.0 Graph collection.
+
+        Unlike :meth:`get_all`, this exposes the continuation to trusted server code so a
+        long-running collector can checkpoint after every page and resume after restart.
+        The continuation never crosses the public API boundary.
+        """
+        collection = path.strip("/")
+        if not collection or "/" in collection:
+            raise ValueError("A top-level Graph collection path is required.")
+        headers = {"ConsistencyLevel": "eventual"} if include_count else None
+        if next_link:
+            url = self.validate_page_link(next_link, collection_path=collection)
+        else:
+            params: dict[str, Any] = {"$top": max(1, min(999, int(top)))}
+            if select:
+                params["$select"] = ",".join(select)
+            if expand:
+                params["$expand"] = expand
+            if include_count:
+                params["$count"] = "true"
+            url = f"{GRAPH_V1}/{collection}?{httpx.QueryParams(params)}"
+        resp = await self._send("GET", url, headers=headers, on_retry=on_retry)
+        body = resp.json() if resp.content else {}
+        if not isinstance(body, dict):
+            raise GraphError(502, "Microsoft Graph returned an invalid collection payload.", path)
+        raw_items = body.get("value")
+        if not isinstance(raw_items, list):
+            raise GraphError(502, "Microsoft Graph collection is missing its value array.", path)
+        items = [item for item in raw_items if isinstance(item, dict)]
+        next_url = str(body.get("@odata.nextLink") or "")
+        if next_url:
+            self.validate_page_link(next_url, collection_path=collection)
+        total_raw = body.get("@odata.count")
+        try:
+            total = int(total_raw) if total_raw is not None else None
+        except (TypeError, ValueError):
+            total = None
+        self.stats.pages += 1
+        self.stats.items += len(items)
+        return GraphPage(items=items, next_link=next_url, total=total)
+
+    async def get_count(self, collection: str) -> int | None:
+        """Return a top-level v1.0 collection count, or ``None`` if not provided."""
+        name = str(collection or "").strip("/")
+        if not name or "/" in name:
+            raise ValueError("A top-level Graph collection is required.")
+        resp = await self._send(
+            "GET",
+            f"{GRAPH_V1}/{name}/$count",
+            headers={"ConsistencyLevel": "eventual", "Accept": "text/plain"},
+        )
+        try:
+            value = int(resp.text.strip())
+        except (TypeError, ValueError):
+            return None
+        return max(0, value)
 
     async def get_all(
         self,
@@ -428,7 +543,14 @@ class GraphClient:
             url = (body.get("@odata.nextLink") or "") if isinstance(body, dict) else ""
         return items, truncated
 
-    async def batch(self, requests: Sequence[GraphRequest], *, beta: bool = False) -> list[GraphResponse]:
+    async def batch(
+        self,
+        requests: Sequence[GraphRequest],
+        *,
+        beta: bool = False,
+        on_retry: Callable[[int, int, float], Awaitable[None]] | None = None,
+        _attempt: int = 0,
+    ) -> list[GraphResponse]:
         """Run N sub-requests through ``$batch`` (auto-chunked at 20, chunks run concurrently).
 
         Sub-request failures are returned, never raised — one 403 on an owners lookup must
@@ -457,7 +579,12 @@ class GraphClient:
                     for r in chunk
                 ]
             }
-            resp = await self._send("POST", f"{self.base(beta)}/$batch", json_body=payload)
+            resp = await self._send(
+                "POST",
+                f"{self.base(beta)}/$batch",
+                json_body=payload,
+                on_retry=on_retry,
+            )
             self.stats.batches += 1
             self.stats.batch_subrequests += len(chunk)
             body = resp.json() if resp.content else {}
@@ -471,6 +598,10 @@ class GraphClient:
                     id=str(item.get("id") or ""),
                     status=status,
                     body=item.get("body"),
+                    headers={
+                        str(k).lower(): str(v)
+                        for k, v in (item.get("headers") or {}).items()
+                    } if isinstance(item.get("headers"), dict) else {},
                     throttled=status == 429,
                 )
                 if gr.throttled:
@@ -478,19 +609,36 @@ class GraphClient:
                 if gr.forbidden:
                     self.stats.forbidden += 1
                 by_id[gr.id] = gr
-            # Retry only the throttled sub-requests, once, respecting Retry-After.
+            # Retry only throttled sub-requests. Graph places Retry-After in each batch
+            # sub-response's `headers` object, not its error body. Keep the retry bounded
+            # exactly like a normal request so one permanently throttled object cannot
+            # recurse forever and hold a tenant-wide collection open.
             retryable = [r for r in chunk if by_id.get(r.id) and by_id[r.id].throttled]
-            if retryable:
+            if retryable and _attempt < _MAX_RETRIES:
                 delay = 0.0
                 for r in retryable:
-                    hdrs = (by_id[r.id].body or {}) if isinstance(by_id[r.id].body, dict) else {}
                     try:
-                        delay = max(delay, float(hdrs.get("Retry-After") or 0))
+                        delay = max(delay, float(by_id[r.id].headers.get("retry-after") or 0))
                     except (TypeError, ValueError):
                         pass
-                await asyncio.sleep(min(_MAX_BACKOFF_S, (delay or 2.0) + random.uniform(0, 0.5)))
+                attempt = _attempt + 1
+                delay = min(
+                    _MAX_BACKOFF_S,
+                    (delay if delay > 0 else 2.0 ** attempt) + random.uniform(0, 0.5),
+                )
                 self.stats.retries += 1
-                for gr in await self.batch(retryable, beta=beta):
+                if on_retry is not None:
+                    try:
+                        await on_retry(429, attempt, delay)
+                    except Exception:  # noqa: BLE001 - telemetry must not break a request
+                        pass
+                await asyncio.sleep(delay)
+                for gr in await self.batch(
+                    retryable,
+                    beta=beta,
+                    on_retry=on_retry,
+                    _attempt=attempt,
+                ):
                     by_id[gr.id] = gr
             return by_id
 

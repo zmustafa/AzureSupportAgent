@@ -12,9 +12,9 @@ button) recomputes under a per-tenant lock and overwrites the cache. Admin-gated
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -273,19 +273,51 @@ def _empty_appregs(tenant_id: str) -> dict[str, Any]:
         "source": "",
         "note": "",
         "apps": [],
-        "facets": {"audiences": [], "permissions": [], "owners": []},
+        "facets": {
+            "audiences": [],
+            "permissions": [],
+            "owners": [],
+            "enterpriseAppStates": [],
+        },
         "summary": {
             "total": 0, "withSecrets": 0, "withCerts": 0, "expiringSoon": 0, "expired": 0,
             "highRisk": 0, "ownerless": 0, "applicationPerms": 0, "delegatedPerms": 0,
+            "active": 0, "deactivated": 0, "notInstantiated": 0, "stateUnknown": 0,
         },
         "cached": False,
         "never_loaded": True,
         "fetched_at": "",
         "age_seconds": None,
+        "truncated": False,
+        "limit": _appregs_limit(),
+        "configured_limit": _appregs_limit(),
+        "max_configurable_limit": 5000,
+        "full_safety_limit": 100000,
+        "page_size": 250,
+        "graph_total": None,
+        "enumeration": None,
     }
 
 
-async def _appregs_snapshot(principal: Principal, *, connection_id: str | None, force: bool) -> dict[str, Any]:
+def _appregs_options(payload: dict[str, Any]) -> dict[str, Any]:
+    from app.identity import appregs
+
+    return {
+        **payload,
+        "configured_limit": _appregs_limit(),
+        "max_configurable_limit": 5000,
+        "full_safety_limit": appregs.APPREGS_FULL_SAFETY_LIMIT,
+        "page_size": appregs.APPREGS_PAGE_SIZE,
+    }
+
+
+async def _appregs_snapshot(
+    principal: Principal,
+    *,
+    connection_id: str | None,
+    force: bool,
+    mode: Literal["capped", "full"] = "capped",
+) -> dict[str, Any]:
     """Server-cached app-registrations snapshot. The cache is permanent and visiting the page
     only ever READS it — it never recomputes. Only ``force`` (the Refresh button) re-pulls from
     Graph. On a cache miss with ``force=False`` we return an empty 'not loaded yet' snapshot."""
@@ -296,13 +328,20 @@ async def _appregs_snapshot(principal: Principal, *, connection_id: str | None, 
     if not force:
         hit = appregs_cache.get(tenant_id, cid)
         if hit:
-            return {**hit["payload"], "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]}
+            return _appregs_options({**hit["payload"], "cached": True, "never_loaded": False, "fetched_at": hit["fetched_at"], "age_seconds": hit["age_seconds"]})
         # No cache yet — do NOT compute on a plain page visit.
         return _empty_appregs(tenant_id)
 
-    snap = await appregs.collect_app_registrations(connection, tenant_id=tenant_id, limit=_appregs_limit())
+    snap = await appregs.collect_app_registrations(
+        connection,
+        tenant_id=tenant_id,
+        limit=_appregs_limit(),
+        full=mode == "full",
+    )
+    if snap.get("source") == "unavailable":
+        raise HTTPException(status_code=503, detail=snap.get("note") or "Application registration refresh failed.")
     fetched_at = appregs_cache.set_(tenant_id, cid, snap)
-    return {**snap, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0}
+    return _appregs_options({**snap, "cached": False, "never_loaded": False, "fetched_at": fetched_at, "age_seconds": 0})
 
 
 def _appregs_limit() -> int:
@@ -317,9 +356,11 @@ def _appregs_limit() -> int:
 
 def _appregs_target(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
     """Resolve (connection, tenant_id, cache-connection-id) for app-registrations."""
-    from app.core.azure_connections import resolve_connection
+    from app.core.azure_connections import get_connection, resolve_connection
 
-    connection = resolve_connection(connection_id)
+    connection = get_connection(connection_id) if connection_id else resolve_connection(None)
+    if connection_id and connection is None:
+        raise HTTPException(status_code=404, detail="Azure connection not found.")
     tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
     cid = connection_id or (connection or {}).get("id") or ""
     return connection, tenant_id, cid
@@ -360,18 +401,19 @@ async def app_registrations_workbook(
 @router.post("/app-registrations/refresh")
 async def refresh_app_registrations(
     connection_id: str | None = None,
+    mode: Literal["capped", "full"] = "capped",
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Force a re-pull of app registrations and overwrite the cache (the Refresh button)."""
-    snap = await _appregs_snapshot(principal, connection_id=connection_id, force=True)
+    snap = await _appregs_snapshot(principal, connection_id=connection_id, force=True, mode=mode)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
             actor_id=principal.subject,
             action="identity.app_registrations.refresh",
             target=f"apps={snap.get('summary', {}).get('total', 0)}",
-            metadata_json={"summary": snap.get("summary", {}), "source": snap.get("source", "")},
+            metadata_json={"summary": snap.get("summary", {}), "source": snap.get("source", ""), "mode": mode},
         )
     )
     await db.commit()
@@ -381,6 +423,7 @@ async def refresh_app_registrations(
 @router.post("/app-registrations/refresh/start")
 async def start_app_registrations_refresh(
     connection_id: str | None = None,
+    mode: Literal["capped", "full"] = "capped",
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -392,7 +435,10 @@ async def start_app_registrations_refresh(
     connection, tenant_id, cid = _appregs_target(principal, principal and connection_id)
     key = _appregs_job_key(tenant_id, cid)
     already = appregs_job.is_running(key)
-    job = appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid, limit=_appregs_limit())
+    job = appregs_job.start_job(
+        key=key, tenant_id=tenant_id, connection=connection, connection_id=cid,
+        limit=_appregs_limit(), mode=mode,
+    )
     if not already:
         db.add(
             AuditLog(
@@ -400,7 +446,7 @@ async def start_app_registrations_refresh(
                 actor_id=principal.subject,
                 action="identity.app_registrations.refresh.start",
                 target=key,
-                metadata_json={"job_id": job["id"]},
+                metadata_json={"job_id": job["id"], "mode": mode},
             )
         )
         await db.commit()
@@ -417,12 +463,29 @@ async def app_registrations_job(
 
     _conn, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
-    return {"job": appregs_job.public_job(appregs_job.get_job(key))}
+    job = appregs_job.get_job(key) or appregs_job.recoverable_job(tenant_id, cid)
+    return {"job": appregs_job.public_job(job)}
+
+
+@router.post("/app-registrations/refresh/cancel")
+async def cancel_app_registrations_refresh(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Cancel the active refresh without touching the previous completed snapshot."""
+    from app.identity import appregs_cache, appregs_job
+
+    _connection, tenant_id, cid = _appregs_target(principal, connection_id)
+    key = _appregs_job_key(tenant_id, cid)
+    if not appregs_job.cancel_job(key):
+        raise HTTPException(status_code=409, detail="No application registration refresh is running.")
+    return {"ok": True, "resume_available": appregs_cache.get_checkpoint(tenant_id, cid) is not None}
 
 
 @router.get("/app-registrations/refresh/stream")
 async def stream_app_registrations_refresh(
     connection_id: str | None = None,
+    mode: Literal["capped", "full"] = "capped",
     principal: Principal = Depends(require_admin),
 ):
     """SSE progress stream for the background refresh job: start → progress* (+ ping
@@ -433,7 +496,10 @@ async def stream_app_registrations_refresh(
     connection, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
     if not appregs_job.is_running(key):
-        appregs_job.start_job(key=key, tenant_id=tenant_id, connection=connection, connection_id=cid, limit=_appregs_limit())
+        appregs_job.start_job(
+            key=key, tenant_id=tenant_id, connection=connection, connection_id=cid,
+            limit=_appregs_limit(), mode=mode,
+        )
     return EventSourceResponse(appregs_job.stream(key))
 
 

@@ -74,6 +74,11 @@ def test_aggregate_facets_and_summary():
     # Perm totals equal the sum of per-app counts.
     assert s["applicationPerms"] == sum(a["applicationPermissionsCount"] for a in apps)
     assert s["delegatedPerms"] == sum(a["delegatedPermissionsCount"] for a in apps)
+    assert s["active"] + s["deactivated"] + s["notInstantiated"] + s["stateUnknown"] == len(apps)
+    state_counts = {f["value"]: f["count"] for f in agg["enterpriseAppStates"]}
+    assert set(state_counts) == set(appregs.ENTERPRISE_APP_STATES)
+    assert sum(state_counts.values()) == len(apps)
+    assert state_counts["deactivated"] == s["deactivated"] >= 1
 
 
 def test_cache_roundtrip(tmp_path, monkeypatch):
@@ -107,12 +112,15 @@ def test_workbook_multi_sheet():
     names = set(wb.sheetnames)
     assert {
         "Summary", "Applications", "Credentials", "API Permissions",
-        "Owners", "High Risk", "Permission Pivot",
+        "Owners", "High Risk", "Deactivated", "Permission Pivot",
     } <= names
 
     # Applications sheet: header + one row per app.
     ws = wb["Applications"]
     assert ws.max_row == len(snap["apps"]) + 1
+    headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+    assert "Enterprise app state" in headers
+    assert "Service principal ID" in headers
 
     # Credentials sheet: header + one row per credential across all apps.
     cred_total = sum(len(a.get("credentials") or []) for a in snap["apps"])
@@ -125,6 +133,8 @@ def test_workbook_multi_sheet():
     # High Risk sheet: header + only the flagged apps.
     hr = sum(1 for a in snap["apps"] if a.get("highRisk"))
     assert wb["High Risk"].max_row == hr + 1
+    deactivated = sum(1 for a in snap["apps"] if a.get("enterpriseAppState") == "deactivated")
+    assert wb["Deactivated"].max_row == deactivated + 1
     wb.close()
 
 

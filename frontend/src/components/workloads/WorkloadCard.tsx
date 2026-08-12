@@ -33,6 +33,8 @@ export function WorkloadCard({
   onChat,
   onDeepReview,
   refreshing,
+  profileLoading,
+  profileError,
   groupName,
   onOpenGroup,
 }: {
@@ -49,6 +51,8 @@ export function WorkloadCard({
   onChat: () => void;
   onDeepReview: () => void;
   refreshing: boolean;
+  profileLoading: boolean;
+  profileError: boolean;
   // When the workload belongs to a group and we're NOT already inside that group's section,
   // show a chip linking to the group's command-center page.
   groupName?: string;
@@ -61,16 +65,23 @@ export function WorkloadCard({
 
   return (
     <div
+      data-testid="workload-card"
+      aria-busy={profileLoading}
       onClick={(e) => {
         // Toggle selection when clicking anywhere on the card, except on interactive
         // controls (buttons, the checkbox, links, selects) which keep their own behavior.
         if ((e.target as HTMLElement).closest("button, input, a, select")) return;
         onToggleSelect();
       }}
-      className={`group cursor-pointer rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow ${
+      className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-white p-4 shadow-sm transition hover:border-brand/40 hover:shadow ${
         selected ? "border-brand ring-2 ring-brand/40" : ""
       }`}
     >
+      {profileLoading && (
+        <div data-testid="workload-card-loading" aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 overflow-hidden rounded-xl">
+          <div className="absolute inset-y-0 left-0 w-1/3 animate-card-shimmer bg-gradient-to-r from-transparent via-white/75 to-transparent will-change-transform motion-reduce:animate-none" />
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-start gap-2">
         <input
@@ -99,11 +110,21 @@ export function WorkloadCard({
               <span className="truncate">{groupName}</span>
             </button>
           )}
-          {profile && <div className="mt-1"><ClassPills c={profile.classification} /></div>}
+          {profileLoading ? (
+            <div className="mt-1 flex gap-1" aria-hidden="true">
+              <span className="h-4 w-16 rounded bg-gray-100" />
+              <span className="h-4 w-12 rounded bg-gray-100" />
+              <span className="h-4 w-20 rounded bg-gray-100" />
+            </div>
+          ) : profile ? <div className="mt-1"><ClassPills c={profile.classification} /></div> : null}
           {w.description && <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">{w.description}</p>}
         </div>
         <div className="flex flex-col items-center gap-0.5">
-          <ScoreBadge score={health?.score ?? null} band={health?.band ?? "unknown"} />
+          {profileLoading ? (
+            <div aria-hidden="true" className="h-11 w-11 rounded-full border-2 border-gray-100 bg-gray-50" />
+          ) : (
+            <ScoreBadge score={health?.score ?? null} band={health?.band ?? "unknown"} />
+          )}
           {(profile?.score_trend?.points?.length ?? 0) > 1 && (
             <div className="flex items-center gap-0.5" title={`Score trend (${profile!.score_trend.count} points)`}>
               <Sparkline points={profile!.score_trend.points} width={44} height={14} color={bandColor(health?.band ?? "unknown")} />
@@ -118,34 +139,59 @@ export function WorkloadCard({
       </div>
 
       {/* Body: donut + types | radar */}
-      <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-center gap-3">
-        <CompositionDonut
-          data={comp?.by_category ?? []}
-          size={84}
-          centerLabel={String(comp?.total ?? w.summary?.total_resources ?? 0)}
-          centerSub="resources"
-        />
-        <div className="min-w-0 space-y-1">
-          {topTypes.length > 0 ? (
-            topTypes.map((t) => (
-              <div key={t.friendly} className="flex items-center gap-1.5 text-[11px] text-gray-600">
-                <AzureIcon kind="resource" type={t.type} className="h-3.5 w-3.5 text-gray-400" />
-                <span className="truncate">{t.friendly}</span>
-                <span className="ml-auto shrink-0 tabular-nums font-medium text-gray-700">{t.count}</span>
-              </div>
-            ))
-          ) : (
-            <div className="text-[11px] text-gray-400">No resources yet</div>
-          )}
-          {(comp?.by_type.length ?? 0) > 5 && (
-            <div className="text-[10px] text-gray-400">+{(comp!.by_type.length - 5)} more types</div>
-          )}
+      {profileLoading ? (
+        <div aria-hidden="true" className="mt-3 grid min-h-[104px] grid-cols-[auto_1fr_auto] items-center gap-3">
+          <div className="h-[84px] w-[84px] rounded-full border-[12px] border-gray-100 bg-white" />
+          <div className="min-w-0 space-y-2">
+            <div className="h-3 w-full rounded bg-gray-100" />
+            <div className="h-3 w-5/6 rounded bg-gray-100" />
+            <div className="h-3 w-4/5 rounded bg-gray-100" />
+            <div className="h-3 w-2/3 rounded bg-gray-100" />
+          </div>
+          <div className="h-[104px] w-[104px] rounded-lg bg-gray-50">
+            <div className="m-auto mt-3 h-20 w-20 rotate-45 border border-gray-100" />
+          </div>
         </div>
-        {health && <HealthRadar health={health} size={104} />}
-      </div>
+      ) : profileError && !profile ? (
+        <div className="mt-3 flex min-h-[104px] items-center justify-center rounded-lg border border-amber-100 bg-amber-50/50 px-3 text-center text-xs text-amber-700">
+          Visualization unavailable. Refresh the page to retry loading the cached profile.
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-[auto_1fr_auto] items-center gap-3">
+          <CompositionDonut
+            data={comp?.by_category ?? []}
+            size={84}
+            centerLabel={String(comp?.total ?? w.summary?.total_resources ?? 0)}
+            centerSub="resources"
+          />
+          <div className="min-w-0 space-y-1">
+            {topTypes.length > 0 ? (
+              topTypes.map((t) => (
+                <div key={t.friendly} className="flex items-center gap-1.5 text-[11px] text-gray-600">
+                  <AzureIcon kind="resource" type={t.type} className="h-3.5 w-3.5 text-gray-400" />
+                  <span className="truncate">{t.friendly}</span>
+                  <span className="ml-auto shrink-0 tabular-nums font-medium text-gray-700">{t.count}</span>
+                </div>
+              ))
+            ) : (
+              <div className="text-[11px] text-gray-400">No resources yet</div>
+            )}
+            {(comp?.by_type.length ?? 0) > 5 && (
+              <div className="text-[10px] text-gray-400">+{(comp!.by_type.length - 5)} more types</div>
+            )}
+          </div>
+          {health && <HealthRadar health={health} size={104} />}
+        </div>
+      )}
 
       {/* Category legend chips */}
-      {(comp?.by_category.length ?? 0) > 0 && (
+      {profileLoading ? (
+        <div aria-hidden="true" className="mt-2 flex gap-1">
+          <span className="h-4 w-16 rounded bg-gray-100" />
+          <span className="h-4 w-20 rounded bg-gray-100" />
+          <span className="h-4 w-14 rounded bg-gray-100" />
+        </div>
+      ) : (comp?.by_category.length ?? 0) > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {comp!.by_category.map((c) => (
             <span key={c.category} className="inline-flex items-center gap-1 rounded bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600">
@@ -158,10 +204,16 @@ export function WorkloadCard({
 
       {/* Risk row */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {risk?.retirements_90d ? <RiskChip icon="⚠" label={`${risk.retirements_90d} retiring ≤90d`} tone="amber" /> : null}
-        {risk?.criticals ? <RiskChip icon="🔴" label={`${risk.criticals} critical`} tone="red" /> : null}
-        {health?.extras?.backupdr?.dr_pairs_unhealthy ? <RiskChip icon="🛟" label={`${health.extras.backupdr.dr_pairs_unhealthy} DR unhealthy`} tone="amber" /> : null}
-        {health && !profile?.analyzed && <RiskChip icon="○" label="Not analyzed" tone="gray" />}
+        {profileLoading ? (
+          <><span aria-hidden="true" className="h-5 w-24 rounded bg-gray-100" /><span aria-hidden="true" className="h-5 w-16 rounded bg-gray-100" /></>
+        ) : (
+          <>
+            {risk?.retirements_90d ? <RiskChip icon="⚠" label={`${risk.retirements_90d} retiring ≤90d`} tone="amber" /> : null}
+            {risk?.criticals ? <RiskChip icon="🔴" label={`${risk.criticals} critical`} tone="red" /> : null}
+            {health?.extras?.backupdr?.dr_pairs_unhealthy ? <RiskChip icon="🛟" label={`${health.extras.backupdr.dr_pairs_unhealthy} DR unhealthy`} tone="amber" /> : null}
+            {health && !profile?.analyzed && <RiskChip icon="○" label="Not analyzed" tone="gray" />}
+          </>
+        )}
       </div>
 
       {/* Actions */}

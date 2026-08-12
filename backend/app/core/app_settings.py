@@ -237,9 +237,9 @@ DEFAULTS: dict[str, Any] = {
     # Max privileged users scanned for MFA status per refresh (the scan is N Graph calls;
     # results are labelled "sampled" when more privileged users exist than this cap).
     "identity_mfa_scan_cap": 50,
-    # IP4 — max app registrations enumerated per refresh (each is several Graph calls for its
-    # credentials / API permissions / owners). The UI surfaces a "first N (capped)" notice when
-    # the live listing hits this. Raise for large tenants at the cost of a slower refresh.
+    # Normal app-registration refresh cap. Graph pages include credentials, requested API
+    # permissions and expanded owners; the UI offers a deliberate Full tenant mode when a
+    # complete enumeration is required. Raise the cap for large tenants at the cost of time.
     "app_registrations_limit": 500,
     # --- Entra ID Support Agent ----------------------------------------------------
     # Server-side cache TTL (seconds) for the per-domain Entra snapshot. Reads never

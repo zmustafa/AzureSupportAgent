@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegistration, type AppRegistrationsResponse } from "../api";
+import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegRefreshMode, type AppRegistration, type AppRegistrationsResponse, type EnterpriseAppState } from "../api";
 import { formatError } from "../utils/format";
 import { Skeleton, useDebounced, VirtualList } from "../utils/perf";
 
@@ -27,6 +27,27 @@ function portalUrl(a: AppRegistration): string {
 }
 
 type CredFilter = "secrets" | "certs" | "expiring" | "expired" | "none";
+
+const ENTERPRISE_STATES: EnterpriseAppState[] = ["active", "deactivated", "not_instantiated", "unknown"];
+const ENTERPRISE_STATE_META: Record<EnterpriseAppState, { label: string; cls: string; title: string }> = {
+  active: { label: "Active", cls: "bg-green-100 text-green-700", title: "The local enterprise application is enabled." },
+  deactivated: { label: "Deactivated", cls: "bg-red-100 text-red-700", title: "The local enterprise application is disabled." },
+  not_instantiated: { label: "No local enterprise app", cls: "bg-gray-100 text-gray-600", title: "No corresponding service principal exists in this tenant." },
+  unknown: { label: "Unknown", cls: "bg-amber-100 text-amber-700", title: "The enterprise-application state could not be determined." },
+};
+
+function EnterpriseStateBadge({ state }: { state?: EnterpriseAppState }) {
+  const meta = ENTERPRISE_STATE_META[state ?? "unknown"];
+  return (
+    <span
+      data-testid={`appregs-state-${state ?? "unknown"}`}
+      title={meta.title}
+      className={`inline-flex max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.cls}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
 
 const RISK_CLS: Record<string, string> = {
   high: "bg-red-100 text-red-700",
@@ -93,6 +114,8 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   // Live progress log for the (slow, background) refresh. Each entry is one streamed step.
   const [progress, setProgress] = useState<AppRegProgress[]>([]);
   const [showProgress, setShowProgress] = useState(false);
+  const [refreshMode, setRefreshMode] = useState<AppRegRefreshMode>("capped");
+  const [cancelling, setCancelling] = useState(false);
   const logRef = useRef<HTMLDivElement | null>(null);
 
   // Filters
@@ -101,6 +124,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   const [audSel, setAudSel] = useState<Set<string>>(new Set());
   const [permTypeSel, setPermTypeSel] = useState<Set<"Application" | "Delegated">>(new Set());
   const [credSel, setCredSel] = useState<Set<CredFilter>>(new Set());
+  const [stateSel, setStateSel] = useState<Set<EnterpriseAppState>>(new Set());
   const [highRiskOnly, setHighRiskOnly] = useState(false);
   const [permSel, setPermSel] = useState<Set<string>>(new Set());
   const [ownerSel, setOwnerSel] = useState<Set<string>>(new Set());
@@ -116,33 +140,55 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   // Attach to the SSE progress stream. The server job runs in the background and survives
   // disconnects, so this both LAUNCHES (when none running) and FOLLOWS the refresh.
-  const followStream = useCallback(() => {
+  const followStream = useCallback((mode: AppRegRefreshMode) => {
+    setRefreshMode(mode);
     setRefreshing(true);
+    setCancelling(false);
     setShowProgress(true);
     setProgress([]);
     setMsg(null);
     void streamAppRegistrationsRefresh(
       {
+        onStart: (job) => setRefreshMode(job.mode),
         onProgress: (p) => setProgress((prev) => [...prev, p]),
         onDone: (fresh) => {
           qc.setQueryData(["appRegistrations", connectionId], fresh);
           setRefreshing(false);
+          setCancelling(false);
           setMsg({ text: `Refreshed — ${fresh.summary?.total ?? 0} app registration(s).`, ok: true });
         },
         onError: (m) => {
           setRefreshing(false);
+          setCancelling(false);
           setMsg({ text: m, ok: false });
+        },
+        onCancelled: (d) => {
+          setRefreshing(false);
+          setCancelling(false);
+          setMsg({ text: `${d.message}${d.resume_available ? " Press Refresh to resume from the last completed page." : ""}`, ok: false });
         },
       },
       connectionId,
+      mode,
     ).catch((e) => {
       setRefreshing(false);
+      setCancelling(false);
       setMsg({ text: formatError(e), ok: false });
     });
   }, [qc, connectionId]);
 
   function doRefresh() {
-    followStream();
+    followStream(refreshMode);
+  }
+
+  async function cancelRefresh() {
+    setCancelling(true);
+    try {
+      await api.cancelAppRegistrationsRefresh(connectionId);
+    } catch (e) {
+      setCancelling(false);
+      setMsg({ text: formatError(e), ok: false });
+    }
   }
 
   // On mount: if a background refresh is already running (e.g. started on another tab or
@@ -152,7 +198,9 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     void api
       .appRegistrationsJob(connectionId)
       .then((r) => {
-        if (!cancelled && r.job && r.job.status === "running") followStream();
+        if (!cancelled && r.job && (r.job.status === "running" || r.job.status === "cancelling" || r.job.status === "paused")) {
+          followStream(r.job.mode);
+        }
       })
       .catch(() => {
         /* ignore — no job yet */
@@ -161,6 +209,16 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
       cancelled = true;
     };
   }, [followStream]);
+
+  const liveProgress = useMemo(
+    () => [...progress].reverse().find((entry) => entry.current != null || entry.page != null),
+    [progress],
+  );
+  const progressPercent = liveProgress?.percent ?? (
+    liveProgress?.current != null && liveProgress.total
+      ? Math.min(100, (liveProgress.current / liveProgress.total) * 100)
+      : null
+  );
 
   // Keep the progress log scrolled to the newest line.
   useEffect(() => {
@@ -177,6 +235,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   function matches(a: AppRegistration): boolean {
     if (audSel.size && !audSel.has(a.signInAudience)) return false;
+    if (stateSel.size && !stateSel.has(a.enterpriseAppState ?? "unknown")) return false;
     if (permTypeSel.size) {
       const hasApp = a.applicationPermissionsCount > 0;
       const hasDel = a.delegatedPermissionsCount > 0;
@@ -205,13 +264,14 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     }
     const t = dText.trim().toLowerCase();
     if (t) {
-      const hay = `${a.displayName} ${a.appId} ${a.publisherDomain} ${a.tags.join(" ")} ${a.owners.join(" ")}`.toLowerCase();
+      const state = ENTERPRISE_STATE_META[a.enterpriseAppState ?? "unknown"].label;
+      const hay = `${a.displayName} ${a.appId} ${a.publisherDomain} ${a.tags.join(" ")} ${a.owners.join(" ")} ${state} ${a.servicePrincipalType ?? ""} ${a.disabledByMicrosoftStatus ?? ""}`.toLowerCase();
       if (!hay.includes(t)) return false;
     }
     return true;
   }
 
-  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, dText]);
+  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, stateSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, dText]);
 
   // Counts for the fixed facet rows (computed over the full app set, like the other facets).
   const facetCounts = useMemo(() => {
@@ -232,12 +292,14 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   const permFacet = (data?.facets.permissions ?? []).filter((f) =>
     permSearch.trim() ? f.value.toLowerCase().includes(permSearch.trim().toLowerCase()) : true,
   );
+  const stateCounts = new Map((data?.facets.enterpriseAppStates ?? []).map((f) => [f.value, f.count]));
 
   const anyFilter =
-    audSel.size || permTypeSel.size || credSel.size || highRiskOnly || permSel.size || ownerSel.size || text.trim();
+    audSel.size || stateSel.size || permTypeSel.size || credSel.size || highRiskOnly || permSel.size || ownerSel.size || text.trim();
 
   function clearAll() {
     setAudSel(new Set());
+    setStateSel(new Set());
     setPermTypeSel(new Set());
     setCredSel(new Set());
     setHighRiskOnly(false);
@@ -248,11 +310,15 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   function exportCsv() {
     const rows = [
-      ["Name", "AppId", "Audience", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners"],
+      ["Name", "AppId", "Audience", "EnterpriseAppState", "ServicePrincipalId", "ServicePrincipalType", "MicrosoftDisableStatus", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners"],
       ...filtered.map((a) => [
         a.displayName,
         a.appId,
         a.signInAudience,
+        ENTERPRISE_STATE_META[a.enterpriseAppState ?? "unknown"].label,
+        a.servicePrincipalId ?? "",
+        a.servicePrincipalType ?? "",
+        a.disabledByMicrosoftStatus ?? "",
         String(a.secretsCount),
         String(a.certsCount),
         String(a.applicationPermissionsCount),
@@ -276,6 +342,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   // IU5 — toggle a credential facet from a KPI tile.
   const toggleCred = (c: CredFilter) => { const n = new Set(credSel); n.has(c) ? n.delete(c) : n.add(c); setCredSel(n); };
+  const toggleState = (state: EnterpriseAppState) => { const n = new Set(stateSel); n.has(state) ? n.delete(state) : n.add(state); setStateSel(n); };
 
   const s = data?.summary;
 
@@ -287,7 +354,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-gray-900">Application Registrations</h1>
             <p className="text-xs text-gray-500">
-              Snapshot of Entra ID app registrations — credentials, API permissions and owners.
+              Snapshot of Entra ID app registrations — enterprise-app state, credentials, API permissions and owners.
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -318,17 +385,39 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                   ? "border-green-300 bg-green-50 text-green-700 hover:bg-green-100"
                   : "pointer-events-none border bg-white text-gray-400 opacity-50"
               }`}
-              title="Download a multi-sheet Excel workbook: Applications, Credentials, API Permissions, Owners, High Risk and a Permission pivot (all apps)"
+              title="Download a multi-sheet Excel workbook: Applications, Credentials, API Permissions, Owners, High Risk, Deactivated and a Permission pivot (all apps)"
             >
               ⬇ Excel (all sheets)
             </a>
+            <select
+              aria-label="Application registration refresh scope"
+              value={refreshMode}
+              disabled={refreshing}
+              onChange={(e) => setRefreshMode(e.target.value as AppRegRefreshMode)}
+              title="Choose the configured safety cap or intentionally enumerate the full tenant"
+              className="rounded-lg border bg-white px-2 py-1.5 text-xs text-gray-700 disabled:opacity-50"
+            >
+              <option value="capped">First {data?.configured_limit ?? 500}</option>
+              <option value="full">Full tenant</option>
+            </select>
             <button
+              data-testid="appregs-refresh"
               onClick={() => void doRefresh()}
               disabled={refreshing}
               className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
-              {refreshing ? "Refreshing…" : "↻ Refresh"}
+              {refreshing ? "Refreshing…" : refreshMode === "full" ? "↻ Refresh full tenant" : "↻ Refresh"}
             </button>
+            {refreshing && (
+              <button
+                data-testid="appregs-cancel"
+                onClick={() => void cancelRefresh()}
+                disabled={cancelling}
+                className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                {cancelling ? "Cancelling…" : "Cancel"}
+              </button>
+            )}
             {progress.length > 0 && (
               <button
                 onClick={() => setShowProgress((v) => !v)}
@@ -344,12 +433,22 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-400">
           <span>Source: {data?.source === "microsoft_graph" ? "Microsoft Graph" : data?.source === "unavailable" ? "unavailable" : "demo dummy data"}</span>
           {data?.note && <span className="text-amber-600">· {data.note}</span>}
+          {data?.enumeration && (
+            <span>
+              · {data.enumeration.fetched}{data.enumeration.graph_total != null ? ` of ${data.enumeration.graph_total}` : ""} fetched
+              {` · ${data.enumeration.pages} page${data.enumeration.pages === 1 ? "" : "s"}`}
+              {` · ${data.enumeration.duration_seconds.toLocaleString()}s`}
+              {data.enumeration.resumed ? " · resumed" : ""}
+              {data.enumeration.retries ? ` · ${data.enumeration.retries} retries` : ""}
+            </span>
+          )}
         </div>
 
         {/* KPI row */}
         {s && (
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
             <Kpi label="App registrations" value={s.total} active={!anyFilter} onClick={clearAll} />
+            <Kpi label="Deactivated" value={s.deactivated ?? 0} tone={s.deactivated ? "text-red-600" : undefined} active={stateSel.has("deactivated")} onClick={() => toggleState("deactivated")} />
             <Kpi label="With secrets" value={s.withSecrets} active={credSel.has("secrets")} onClick={() => toggleCred("secrets")} />
             <Kpi label="With certs" value={s.withCerts} active={credSel.has("certs")} onClick={() => toggleCred("certs")} />
             <Kpi label="Expiring ≤30d" value={s.expiringSoon} tone={s.expiringSoon ? "text-orange-600" : undefined} active={credSel.has("expiring")} onClick={() => toggleCred("expiring")} />
@@ -379,6 +478,23 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
             <span className="tabular-nums text-gray-500">{progress.length} step(s)</span>
           </div>
           <div ref={logRef} className="max-h-56 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
+            {refreshing && liveProgress && (
+              <div data-testid="appregs-page-progress" className="mb-2 rounded border border-gray-700 bg-gray-800 px-2 py-1.5 font-sans text-[11px] text-gray-300">
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {liveProgress.current ?? 0}{liveProgress.total != null ? ` of ${liveProgress.total}` : ""} fetched
+                    {liveProgress.page ? ` · page ${liveProgress.page}` : ""}
+                  </span>
+                  <span>
+                    {progressPercent != null ? `${progressPercent.toFixed(1)}%` : "total pending"}
+                    {liveProgress.retries ? ` · ${liveProgress.retries} retries` : ""}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-gray-700">
+                  <div className={`h-full rounded-full bg-emerald-400 transition-all ${progressPercent == null ? "w-1/4 animate-pulse" : ""}`} style={progressPercent == null ? undefined : { width: `${Math.max(0, Math.min(100, progressPercent))}%` }} />
+                </div>
+              </div>
+            )}
             {progress.map((p) => (
               <div
                 key={p.seq}
@@ -419,6 +535,18 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               </button>
             ) : null}
           </div>
+
+          <FacetGroup title="Enterprise app state">
+            {ENTERPRISE_STATES.map((state) => (
+              <FacetRow
+                key={state}
+                label={ENTERPRISE_STATE_META[state].label}
+                count={stateCounts.get(state) ?? 0}
+                active={stateSel.has(state)}
+                onClick={() => toggleState(state)}
+              />
+            ))}
+          </FacetGroup>
 
           <FacetGroup title="Permission type">
             <FacetRow label="Application" count={facetCounts.application} active={permTypeSel.has("Application")} onClick={() => toggle(permTypeSel, "Application", setPermTypeSel)} />
@@ -484,8 +612,8 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               {filtered.length} of {apps.length} app registration(s)
             </span>
             {data?.truncated && (
-              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={`The refresh enumerates up to ${data.limit ?? 200} apps; raise the cap to see more.`}>
-                first {data.limit ?? 200} (capped)
+              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700" title={`The completed snapshot contains ${data.enumeration?.fetched ?? data.limit ?? 500}${data.graph_total != null ? ` of ${data.graph_total}` : ""} apps. Raise the configured cap or run Full tenant.`}>
+                {data.enumeration?.fetched ?? data.limit ?? 500}{data.graph_total != null ? ` of ${data.graph_total}` : ""} (capped)
               </span>
             )}
           </div>
@@ -512,8 +640,8 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               <>
                 {/* IP1 — virtualized header + rows (expandable detail rendered inline; VirtualList
                     measures variable heights). Was a plain <table> mapping every row. */}
-                <div className="sticky top-0 z-10 grid grid-cols-[2fr_1fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
-                  <span>Name</span><span>Audience</span><span className="text-center">Secrets</span><span className="text-center">Certs</span>
+                <div className="sticky top-0 z-10 grid grid-cols-[2fr_1fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                  <span>Name</span><span>Audience</span><span>State</span><span className="text-center">Secrets</span><span className="text-center">Certs</span>
                   <span className="text-center">App perms</span><span className="text-center">Delegated</span><span>Next expiry</span><span>Owners</span><span>Risk</span>
                 </div>
                 <VirtualList
@@ -526,7 +654,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                       <div className="border-b border-gray-100">
                         <div
                           onClick={() => setExpanded(open ? null : a.id)}
-                          className="grid cursor-pointer grid-cols-[2fr_1fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
+                          className="grid cursor-pointer grid-cols-[2fr_1fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className="text-gray-400">{open ? "▾" : "▸"}</span>
@@ -539,6 +667,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                             </div>
                           </div>
                           <span className="truncate text-xs text-gray-600">{AUDIENCE_LABEL[a.signInAudience] ?? a.signInAudience}</span>
+                          <span className="min-w-0 pr-1"><EnterpriseStateBadge state={a.enterpriseAppState} /></span>
                           <span className="text-center tabular-nums">{a.secretsCount || <span className="text-gray-300">0</span>}</span>
                           <span className="text-center tabular-nums">{a.certsCount || <span className="text-gray-300">0</span>}</span>
                           <span className="text-center tabular-nums">{a.applicationPermissionsCount ? <span className="font-medium text-red-600">{a.applicationPermissionsCount}</span> : <span className="text-gray-300">0</span>}</span>
@@ -551,8 +680,23 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                         </div>
                         {open && (
                           <div className="bg-gray-50/60 px-6 py-3">
+                            {a.enterpriseAppState === "deactivated" && (
+                              <div data-testid="appregs-deactivated-warning" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                                <b>Enterprise application deactivated.</b> Its credentials and permissions remain listed because they can become effective again if the service principal is re-enabled.
+                              </div>
+                            )}
+                            {a.disabledByMicrosoftStatus && (
+                              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                                <b>Microsoft disable status:</b> {a.disabledByMicrosoftStatus}
+                              </div>
+                            )}
                             <div className="mb-3">
                               <a href={portalUrl(a)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-brand/30 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/5">↗ Open in Azure portal</a>
+                              <span className="ml-2 text-[11px] text-gray-500">
+                                Enterprise app: {ENTERPRISE_STATE_META[a.enterpriseAppState ?? "unknown"].label}
+                                {a.servicePrincipalType ? ` · ${a.servicePrincipalType}` : ""}
+                                {a.servicePrincipalId ? ` · ${a.servicePrincipalId}` : ""}
+                              </span>
                             </div>
                             <div className="grid gap-4 lg:grid-cols-2">
                               <div>

@@ -54,6 +54,13 @@ The active workload list and Trash are application-registry reads. Fleet profile
 overlap summaries, health and risk are cache-only; opening the page does not scan Azure. Profiles
 and lightweight group/overlap queries are treated as fresh for 60 seconds in the browser.
 
+The workload definitions can arrive before the shared fleet-profile response. During that initial
+gap, each card keeps its name and actions visible while a sliding shimmer and fixed-size skeletons
+occupy the score, composition and health-visualization areas. This is a loading state, not a claim
+that the workload has zero resources. The shimmer stops when profiles succeed or fail, does not
+cover already-cached cards during a background refetch, and becomes static when the browser's
+reduced-motion preference is enabled.
+
 Selection is keyed by workload ID rather than by the current view. Switching layouts or narrowing
 a filter does not discard earlier selections, so the selection count can exceed the visible row
 count. Opening Trash clears the active selection to prevent lifecycle actions crossing views.
@@ -137,6 +144,8 @@ No dedicated export, history, scheduling, or integration controls are documented
 | Bulk Trash action is disabled | Select 1–500 active workloads; more than 500 must be split into multiple reviewed batches |
 | Merge result is unexpected | Inspect the merged workload and source entries in Trash before any permanent purge |
 | Resource filters show no workloads | Clear the minimum/maximum values or correct a minimum greater than the maximum. Both boundaries are inclusive. |
+| Cards briefly show a sliding highlight | Fleet profiles are still loading from the server cache. Wait for the visualization skeletons to resolve; no Azure scan is running. |
+| A card says **Visualization unavailable** | The shared cached-profile request failed. Reload to retry; the workload definition and its actions remain available. |
 | Selected count is larger than the visible result | Selection persists when layouts or filters change. Use **Clear** or **Deselect all** and review the selected count before Trash. |
 | Bulk Trash moved fewer definitions than selected | Some IDs were already trashed or disappeared concurrently. Read the result banner and reopen Trash before retrying. |
 

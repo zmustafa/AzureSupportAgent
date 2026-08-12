@@ -284,6 +284,8 @@ export type AppRegPermission = {
   risk: "high" | "medium" | "low";
 };
 
+export type EnterpriseAppState = "active" | "deactivated" | "not_instantiated" | "unknown";
+
 export type AppRegistration = {
   id: string;
   appId: string;
@@ -303,6 +305,12 @@ export type AppRegistration = {
   owners: string[];
   ownerless: boolean;
   highRisk: boolean;
+  enterpriseAppState: EnterpriseAppState;
+  servicePrincipalId: string | null;
+  servicePrincipalType: string;
+  disabledByMicrosoftStatus: string;
+  enterpriseAppStateReadStatus: "read" | "not_found" | "incomplete" | "unreadable" | "invalid_app_id" | "demo";
+  enterpriseAppStateSource: "microsoft_graph" | "demo";
 };
 
 export type AppRegFacet = { value: string; count: number };
@@ -321,6 +329,7 @@ export type AppRegistrationsResponse = {
     audiences: AppRegFacet[];
     permissions: AppRegFacet[];
     owners: AppRegFacet[];
+    enterpriseAppStates: AppRegFacet[];
   };
   summary: {
     total: number;
@@ -332,6 +341,10 @@ export type AppRegistrationsResponse = {
     ownerless: number;
     applicationPerms: number;
     delegatedPerms: number;
+    active: number;
+    deactivated: number;
+    notInstantiated: number;
+    stateUnknown: number;
   };
   cached: boolean;
   never_loaded?: boolean;
@@ -340,6 +353,52 @@ export type AppRegistrationsResponse = {
   // IU3 — set when the live listing hit the per-refresh cap (UI shows a "first N" notice).
   truncated?: boolean;
   limit?: number;
+  configured_limit: number;
+  max_configurable_limit: number;
+  full_safety_limit: number;
+  page_size: number;
+  graph_total?: number | null;
+  enumeration?: AppRegEnumeration | null;
+};
+
+export type AppRegRefreshMode = "capped" | "full";
+export type AppRegEnumeration = {
+  mode: AppRegRefreshMode;
+  configured_limit: number;
+  applied_limit: number;
+  full_safety_limit: number;
+  page_size: number;
+  pages: number;
+  graph_total: number | null;
+  fetched: number;
+  complete: boolean;
+  truncated: boolean;
+  stop_reason: "complete" | "configured_limit" | "full_safety_limit" | "not_started";
+  resumed: boolean;
+  retries: number;
+  throttles: number;
+  duration_seconds: number;
+};
+
+export type AppRegJob = {
+  id: string;
+  status: "running" | "cancelling" | "paused" | "done" | "cancelled" | "error";
+  started_at: string;
+  finished_at: string | null;
+  progress_count: number;
+  last_message: string;
+  error: string;
+  mode: AppRegRefreshMode;
+  configured_limit: number;
+  page_size: number;
+  current: number;
+  total: number | null;
+  percent: number | null;
+  page: number;
+  retries: number;
+  throttles: number;
+  resumed: boolean;
+  resume_available: boolean;
 };
 
 // ---- AMBA Monitoring Coverage ---------------------------------------------------
@@ -6436,10 +6495,10 @@ export const api = {
       "/identity/app-registrations" +
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
     ),
-  refreshAppRegistrations: (connectionId?: string | null) =>
+  refreshAppRegistrations: (connectionId?: string | null, mode: AppRegRefreshMode = "capped") =>
     http<AppRegistrationsResponse>(
       "/identity/app-registrations/refresh" +
-        (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
+        `?mode=${mode}` + (connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""),
       { method: "POST", body: "{}" },
     ),
   // Multi-sheet Excel workbook (Applications / Credentials / Permissions / Owners / High
@@ -6448,9 +6507,15 @@ export const api = {
     `${API_BASE}/identity/app-registrations/workbook` +
     (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
   appRegistrationsJob: (connectionId?: string | null) =>
-    http<{ job: { id: string; status: string; started_at: string; finished_at: string | null; progress_count: number; last_message: string; error: string } | null }>(
+    http<{ job: AppRegJob | null }>(
       "/identity/app-registrations/job" +
         (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
+    ),
+  cancelAppRegistrationsRefresh: (connectionId?: string | null) =>
+    http<{ ok: boolean; resume_available: boolean }>(
+      "/identity/app-registrations/refresh/cancel" +
+        (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ""),
+      { method: "POST", body: "{}" },
     ),
   // Reservations Monitor — server cache; demo scope for synthetic data.
   reservationsOverview: (demo = false, connectionId = "") =>
@@ -11302,21 +11367,39 @@ export async function streamEntraRefresh(
 }
 
 // ---- App Registrations background refresh (SSE) --------------------------------
-export type AppRegProgress = { seq: number; ts: string; level: "info" | "ok" | "warn" | "error"; message: string };
+export type AppRegProgress = {
+  seq: number;
+  ts: string;
+  level: "info" | "ok" | "warn" | "error";
+  message: string;
+  phase?: string;
+  current?: number;
+  total?: number | null;
+  percent?: number | null;
+  page?: number;
+  pages?: number;
+  page_size?: number;
+  retries?: number;
+  throttles?: number;
+  delay_seconds?: number;
+  resumed?: boolean;
+};
 
 /** Follow the background Application Registrations refresh over SSE. The server job keeps
  *  running even if this stream disconnects — re-calling re-attaches and replays the log. */
 export async function streamAppRegistrationsRefresh(
   handlers: {
-    onStart?: (d: { id: string; status: string; started_at: string }) => void;
+    onStart?: (d: { id: string; status: string; started_at: string; mode: AppRegRefreshMode; configured_limit: number; current: number; total: number | null; page: number; resumed: boolean }) => void;
     onProgress?: (d: AppRegProgress) => void;
     onDone?: (d: AppRegistrationsResponse) => void;
     onError?: (msg: string) => void;
+    onCancelled?: (d: { message: string; resume_available: boolean }) => void;
   },
   connectionId?: string | null,
+  mode: AppRegRefreshMode = "capped",
   signal?: AbortSignal,
 ): Promise<void> {
-  const qs = connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "";
+  const qs = `?mode=${mode}${connectionId ? `&connection_id=${encodeURIComponent(connectionId)}` : ""}`;
   const res = await fetch(`${API_BASE}/identity/app-registrations/refresh/stream${qs}`, {
     method: "GET",
     credentials: "include",
@@ -11367,6 +11450,7 @@ export async function streamAppRegistrationsRefresh(
       else if (event === "progress") handlers.onProgress?.(parsed as unknown as AppRegProgress);
       else if (event === "done") handlers.onDone?.(parsed as unknown as AppRegistrationsResponse);
       else if (event === "error") handlers.onError?.((parsed.message as string) ?? "Refresh failed.");
+      else if (event === "cancelled") handlers.onCancelled?.(parsed as unknown as { message: string; resume_available: boolean });
       // "ping" heartbeats are ignored.
     }
   }
@@ -12967,6 +13051,8 @@ export interface AppSettings {
   entra_mcp_enabled?: boolean;
   /** Entra sign-in collection window, in days. Clamped to 1–90 by the server. */
   entra_signin_lookback_days?: number;
+  /** Normal Application Registrations refresh cap. Clamped to 50–5,000. */
+  app_registrations_limit?: number;
   auto_execute_writes: boolean;
   max_tool_iterations: number;
   tool_result_limit: number;

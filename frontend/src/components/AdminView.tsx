@@ -3144,6 +3144,7 @@ function NumberField({
         <label className="text-sm font-medium text-gray-800">{label}</label>
         <div className="flex items-center gap-1.5">
           <input
+            aria-label={label}
             type="number"
             value={value}
             min={min}
@@ -3849,6 +3850,23 @@ function AppSettingsCard() {
             </div>
           )}
         </div>
+      </Card>
+
+      <Card title="Identity collection">
+        <p className="mb-3 text-xs text-gray-500">
+          Safety limits for explicit Microsoft Entra inventory refreshes. Changing this
+          setting does not start a scan and does not alter the last completed snapshot.
+        </p>
+        <NumberField
+          label="Application registration refresh limit"
+          hint="Normal refresh stops after this many app registrations. Use Full tenant on the Application Registrations page for an intentional complete enumeration. Higher values take longer and may encounter Graph throttling."
+          value={form.app_registrations_limit ?? 500}
+          min={50}
+          max={5000}
+          step={50}
+          suffix="apps"
+          onChange={(v) => set({ app_registrations_limit: v })}
+        />
       </Card>
 
       <Card title="Tool Safety">

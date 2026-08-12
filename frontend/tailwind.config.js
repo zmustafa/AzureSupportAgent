@@ -21,10 +21,15 @@ export default {
           "0%, 100%": { opacity: "1", filter: "brightness(1.5)" },
           "50%": { opacity: "0.55", filter: "brightness(1)" },
         },
+        cardShimmer: {
+          "0%": { transform: "translateX(-160%)" },
+          "100%": { transform: "translateX(360%)" },
+        },
       },
       animation: {
         indeterminate: "indeterminate 1.15s ease-in-out infinite",
         "blink-bright": "blinkBright 0.9s ease-in-out infinite",
+        "card-shimmer": "cardShimmer 1.4s ease-in-out infinite",
       },
     },
   },
