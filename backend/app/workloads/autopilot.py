@@ -723,6 +723,27 @@ def _candidate(group: dict[str, Any], signals: dict[str, Any] | None = None) -> 
     }
 
 
+def _candidate_size_meta(
+    candidates: list[dict[str, Any]], min_candidate_resources: int
+) -> dict[str, int]:
+    """Describe the review-time minimum without dropping discovery evidence.
+
+    Candidate size is only known after AI grouping and child-resource reattachment. The
+    threshold therefore belongs to review policy: every candidate still streams to the client,
+    where the operator can lower the threshold or include one undersized workload explicitly
+    without paying for another discovery run.
+    """
+    minimum = max(1, min(5_000, int(min_candidate_resources or 1)))
+    undersized = [c for c in candidates if int(c.get("resource_count", 0) or 0) < minimum]
+    return {
+        "min_candidate_resources": minimum,
+        "below_minimum_workloads": len(undersized),
+        "below_minimum_resources": sum(
+            int(c.get("resource_count", 0) or 0) for c in undersized
+        ),
+    }
+
+
 def _filter_config_from(kwargs: dict[str, Any]) -> sculpt.FilterConfig:
     """Build a sculpt FilterConfig from the loose discovery kwargs."""
     return sculpt.FilterConfig(
@@ -756,6 +777,7 @@ async def discover_workloads(
     environments: list[str] | None = None, regions: list[str] | None = None,
     subscriptions: list[str] | None = None, name_contains: str = "",
     confidence_floor: float = 0.0, max_ai_calls: int = 0, naming_hint: str = "",
+    min_candidate_resources: int = 1,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream discovery progress, then yield candidate workloads under the scope.
 
@@ -773,6 +795,8 @@ async def discover_workloads(
     * ``confidence_floor`` — drop candidates the model isn't confident about.
     * ``max_ai_calls`` — hard budget; the remainder falls back to deterministic grouping.
     * ``naming_hint`` — the estate's naming convention, injected into the grouping prompt.
+        * ``min_candidate_resources`` — review-time size policy, reported in metadata only. It
+            never suppresses the stream because the operator can override it without another AI run.
     """
     if connection is None:
         yield {"type": "error", "message": "No Azure connection selected."}
@@ -782,6 +806,7 @@ async def discover_workloads(
     # arrive fully resolved. ``preset`` is recorded in meta for traceability.
     granularity = granularity or "resource"
     confidence_floor = float(confidence_floor or 0.0)
+    min_candidate_resources = max(1, min(5_000, int(min_candidate_resources or 1)))
 
     conn_label = connection.get("display_name") or connection.get("tenant_id") or "Azure"
     tenant_id = connection.get("tenant_id", "") or "default"
@@ -815,7 +840,18 @@ async def discover_workloads(
 
     total_enumerated = len(resources)
     if not resources:
-        yield {"type": "done", "candidates": [], "meta": {"resource_count": 0, "ungrouped": 0, "organized_pct": 100, "used_ai": False, "truncated": truncated}}
+        yield {
+            "type": "done",
+            "candidates": [],
+            "meta": {
+                "resource_count": 0,
+                "ungrouped": 0,
+                "organized_pct": 100,
+                "used_ai": False,
+                "truncated": truncated,
+                **_candidate_size_meta([], min_candidate_resources),
+            },
+        }
         return
     if truncated:
         yield _status("enumerating", f"Reached the {_MAX_RESOURCES}-resource limit; analyzing the first {_MAX_RESOURCES}.", truncated=True)
@@ -835,7 +871,19 @@ async def discover_workloads(
             skipped = before - len(resources)
             yield _status("enumerating", f"Delta mode: skipped {skipped} resource(s) already in a workload; {len(resources)} unorganized remain.", skipped=skipped, delta=True)
             if not resources:
-                yield {"type": "done", "candidates": [], "meta": {"resource_count": 0, "ungrouped": 0, "organized_pct": 100, "used_ai": False, "truncated": truncated, "delta": True}}
+                yield {
+                    "type": "done",
+                    "candidates": [],
+                    "meta": {
+                        "resource_count": 0,
+                        "ungrouped": 0,
+                        "organized_pct": 100,
+                        "used_ai": False,
+                        "truncated": truncated,
+                        "delta": True,
+                        **_candidate_size_meta([], min_candidate_resources),
+                    },
+                }
                 return
 
     # 2c. SCULPT — apply the input-reduction + scoping filters (Tier 1). The noise/system-RG
@@ -853,7 +901,18 @@ async def discover_workloads(
         bits = [f"{v} {k.replace('_', ' ')}" for k, v in reasons.items() if v]
         yield _status("sculpting", f"Sculpted the estate: {len(kept)} resources to group ({removed_total} filtered — {', '.join(bits)}).", kept=len(kept), removed=removed_total, reasons=reasons)
     if not kept:
-        yield {"type": "done", "candidates": [], "meta": {"resource_count": total_enumerated, "ungrouped": total_enumerated, "organized_pct": 0, "used_ai": False, "truncated": truncated}}
+        yield {
+            "type": "done",
+            "candidates": [],
+            "meta": {
+                "resource_count": total_enumerated,
+                "ungrouped": total_enumerated,
+                "organized_pct": 0,
+                "used_ai": False,
+                "truncated": truncated,
+                **_candidate_size_meta([], min_candidate_resources),
+            },
+        }
         return
 
     # 2d. TAG-SEED — deterministically pre-bucket well-tagged resources; only the remainder
@@ -967,6 +1026,7 @@ async def discover_workloads(
             "below_floor": below_floor,
             "naming_hint": naming_hint,
             "preset": preset,
+            **_candidate_size_meta(candidates, min_candidate_resources),
         },
     }
 

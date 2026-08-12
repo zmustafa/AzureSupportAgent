@@ -50,11 +50,19 @@ _CONFIG_FIELDS = (
     "exclude_noise", "exclude_system_rgs", "rg_globs", "tag_seed_keys",
     "include_types", "exclude_types", "environments", "regions", "subscriptions",
     "name_contains", "confidence_floor", "max_ai_calls", "naming_hint",
+    "min_candidate_resources",
 )
 
 
 def _sanitize_config(raw: dict[str, Any]) -> dict[str, Any]:
-    return {k: raw[k] for k in _CONFIG_FIELDS if k in raw}
+    clean = {k: raw[k] for k in _CONFIG_FIELDS if k in raw}
+    try:
+        clean["min_candidate_resources"] = max(
+            1, min(5_000, int(clean.get("min_candidate_resources", 1) or 1))
+        )
+    except (TypeError, ValueError):
+        clean["min_candidate_resources"] = 1
+    return clean
 
 
 def list_profiles(tenant_id: str, connection_id: str) -> list[dict[str, Any]]:

@@ -9,13 +9,17 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.azure_connections import resolve_connection
+from app.core.db import get_db
 from app.core.security import Principal, require_permission
+from app.models import AuditLog
 from app.workloads import discovery, discovery_profiles
 from app.workloads import registry as wl_registry
 from app.workloads.autopilot import (
@@ -106,6 +110,43 @@ async def empty_workload_trash_endpoint(_: Principal = Depends(_write)):
 class MergeRequest(BaseModel):
     workload_ids: list[str] = Field(default_factory=list)
     name: str = Field(default="", max_length=200)
+
+
+class BulkTrashRequest(BaseModel):
+    workload_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/bulk/trash")
+async def bulk_trash_workloads_endpoint(
+    payload: BulkTrashRequest,
+    principal: Principal = Depends(_write),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move up to 500 workload definitions to Trash in one atomic registry write.
+
+    Workloads are shared application configuration governed by ``workloads.write`` and their
+    admin-managed Azure connections; the application principal's tenant id is not the Azure
+    tenant boundary (the same rule used by the list endpoint). No Azure resource is changed.
+    """
+    result = wl_registry.delete_workloads(payload.workload_ids)
+    db.add(
+        AuditLog(
+            tenant_id=principal.tenant_id,
+            actor_id=principal.subject,
+            action="workloads.bulk_trash",
+            target="workloads",
+            metadata_json={
+                "requested": result["requested"],
+                "deleted": result["deleted"],
+                "already_trashed": result["already_trashed"],
+                "not_found": result["not_found"],
+                # Bounded by the request model; retained for incident reconstruction.
+                "deleted_ids": result["deleted_ids"],
+            },
+        )
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/merge")
@@ -728,6 +769,8 @@ class AutopilotRequest(BaseModel):
     confidence_floor: float = 0.0             # hide candidates below this confidence
     max_ai_calls: int = 0                     # budget cap (0 = unbounded)
     naming_hint: str = ""                     # naming convention pattern for the prompt
+    min_candidate_resources: int = Field(default=1, ge=1, le=5_000)
+    # Review-only policy: every candidate still streams so it can be inspected/overridden.
     # ---- Seed mode (scope_kind="resource"): reverse-engineer ONE workload from one id ----
     seed_resource_id: str = ""                # the ARM id to trace outward from
     max_hops: int = 0                         # 0 = take the preset's value
@@ -876,6 +919,7 @@ async def autopilot_discover_endpoint(
                 subscriptions=payload.subscriptions, name_contains=payload.name_contains,
                 confidence_floor=payload.confidence_floor, max_ai_calls=payload.max_ai_calls,
                 naming_hint=payload.naming_hint,
+                min_candidate_resources=payload.min_candidate_resources,
             ):
                 ev_type = ev.pop("type")
                 yield {"event": ev_type, "data": json.dumps(ev)}

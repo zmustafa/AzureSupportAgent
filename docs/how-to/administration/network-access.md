@@ -67,6 +67,48 @@ sign-in page. Listed sources are unaffected.
 mobile connection not on the corporate range), confirm the site returns `403` rather than a login
 form. Confirm `firewall.update` appears in `/admin/audit`.
 
+## How to import or export a list of ranges
+
+### Import TXT or CSV
+
+1. Select **Import list** under **Allowed sources**.
+2. Choose **Paste list** for one address/CIDR per line, or **Upload file** for a UTF-8 `.txt` or
+   `.csv` file. TXT accepts blank lines and `#` comment lines. CSV columns are `cidr`, `label`,
+   and `enabled`; only `cidr` is required.
+3. Enter the default label used by TXT rows and CSV rows whose label is blank.
+4. Choose **Merge** to preserve existing rules, or **Replace** to make the imported file the
+   complete list. Replace reports every rule that will be removed and refuses an empty file.
+5. Select **Preview import**. Review invalid lines, normalization, duplicate/existing rows,
+   overlap warnings, added/retained/removed totals, and the current-address coverage banner.
+6. Correct the input until **Apply to draft** becomes available, then select it.
+7. Review or search the resulting table. Imported values are still unsaved at this point.
+8. Select **Save**. If the policy is enforcing, the normal self-IP and confirmation safeguards
+   still apply.
+
+{: .warning }
+Use **Monitor** before enforcing a newly imported enterprise list. A syntactically valid list can
+still omit a real VPN, NAT gateway, automation runner or out-of-hours egress address.
+
+Imports are limited to 1 MiB, 1,024 characters per physical line and 5,000 resulting rules.
+Only literal IPv4/IPv6 addresses and CIDRs are accepted; DNS names, wildcards and start/end ranges
+are rejected.
+
+### Export the saved policy
+
+Open **Export** and choose:
+
+- **Active ranges — TXT** for one active normalized CIDR per line, suitable for a flattened
+  allowlist input.
+- **All rules — CSV** for a round-trip file containing labels and disabled rules.
+
+Export reads the saved server policy. If the table says **Unsaved changes**, save first or the
+download will intentionally contain the previous saved policy. A read-only auditor can export;
+import and Save require `firewall.manage`.
+
+**Verification:** Re-import the CSV using **Merge**. Every row should be reported as existing and
+skipped, with zero additions. Re-import the active TXT into an empty draft to verify the expected
+active normalized ranges. Neither preview changes the policy until **Apply to draft** and **Save**.
+
 ## How to seed the allowlist at deployment
 
 Set `allowlistSeed` to a comma-separated list of IPs/CIDRs when deploying, so a new environment
@@ -138,6 +180,10 @@ az containerapp ingress access-restriction remove \
 | "Would block" rows while enforcing | Rows keep the mode they were recorded under. Those are historical Monitor entries, not requests being allowed now. |
 | Blocked entries show one address for many users | Users share an egress NAT. Allow the range, not individual addresses. |
 | A restored backup is not enforcing | An imported `enforce` policy is restored as **Monitor** on purpose, because a backup carries the original deployment's ranges. Review the rules, then enforce. |
+| **Apply to draft** is unavailable | Correct every invalid or duplicate row named by the preview. Replace also requires at least one valid range. Overlap warnings do not block apply. |
+| Import preview says your current address is uncovered | Add an enabled range covering the address shown by the server. Applying a draft is allowed, but Enforce-mode Save is blocked until the address is covered. |
+| Export does not include the rows just imported | **Apply to draft** does not save. Press **Save** successfully, then export the saved policy. |
+| Imported rules seem to have disappeared | Clear **Search allowed sources** and check the filtered/total rule count. |
 
 ## Related docs
 

@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent
 # Mirrors `exclude:` in _config.yml — these are not published, so links into them are broken and
 # links FROM them are irrelevant.
 EXCLUDED_DIRS = {
-    "_journey_render", "deck-assets", "improvement-plans", "test-findings", "usecase-render",
+    "_journey_render", "deck-assets", "improvement-plans", "test-findings", "usecase-assets", "usecase-render",
     "_site", "_sass", ".jekyll-cache",
 }
 EXCLUDED_FILES = {

@@ -77,7 +77,7 @@ export function WorkloadCard({
           type="checkbox"
           checked={selected}
           onChange={onToggleSelect}
-          title="Select for a fleet mission or merge"
+          title="Select for fleet actions, grouping, merge, or Trash"
           className="mt-1 shrink-0"
         />
         <div className="min-w-0 flex-1">

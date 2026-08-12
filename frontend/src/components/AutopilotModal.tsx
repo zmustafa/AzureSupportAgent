@@ -435,6 +435,7 @@ export function AutopilotModal({
   const [nameContains, setNameContains] = useState("");
   const [confidenceFloor, setConfidenceFloor] = useState(0);       // 0..1
   const [maxAiCalls, setMaxAiCalls] = useState(0);                 // 0 = unbounded
+  const [minCandidateResources, setMinCandidateResources] = useState(1);
   const [useNaming, setUseNaming] = useState(true);
 
   const [survey, setSurvey] = useState<SurveyResult | null>(null);
@@ -470,6 +471,10 @@ export function AutopilotModal({
   const [log, setLog] = useState<{ phase: string; message: string }[]>([]);
   const [candidates, setCandidates] = useState<WorkloadCandidate[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Minimum-size exclusion never mutates the manual selection. Lowering the threshold restores
+  // previously selected candidates; an explicit override permits one undersized candidate.
+  const [sizeOverrides, setSizeOverrides] = useState<Set<number>>(new Set());
+  const [showSizeExcluded, setShowSizeExcluded] = useState(false);
   // Free-text filter over the discovered candidates (name / description / type / RG / class).
   const [search, setSearch] = useState("");
   // Review ordering is client-side and never changes candidate identity: selection and
@@ -574,9 +579,10 @@ export function AutopilotModal({
       name_contains: nameContains,
       confidence_floor: confidenceFloor,
       max_ai_calls: maxAiCalls,
+      min_candidate_resources: minCandidateResources,
       naming_hint: useNaming && survey?.facets.naming.pattern ? survey.facets.naming.pattern : "",
     };
-  }, [strategy, mode, tagKey, preset, granularity, excludeNoise, excludeSystemRgs, rgGlobs, tagSeedKeys, excludeTypes, environments, regions, subsFilter, nameContains, confidenceFloor, maxAiCalls, useNaming, survey]);
+  }, [strategy, mode, tagKey, preset, granularity, excludeNoise, excludeSystemRgs, rgGlobs, tagSeedKeys, excludeTypes, environments, regions, subsFilter, nameContains, confidenceFloor, maxAiCalls, minCandidateResources, useNaming, survey]);
 
   // Apply a preset's controls (the user can still override any of them afterwards).
   function applyPreset(p: PresetId) {
@@ -607,6 +613,7 @@ export function AutopilotModal({
     setNameContains(c.name_contains ?? "");
     setConfidenceFloor(c.confidence_floor ?? 0);
     setMaxAiCalls(c.max_ai_calls ?? 0);
+    setMinCandidateResources(Math.max(1, Math.min(5_000, c.min_candidate_resources ?? 1)));
   }
 
   // Live cost re-estimate against the cached survey whenever the controls change (debounced).
@@ -804,6 +811,8 @@ export function AutopilotModal({
     setLog([]);
     setCandidates([]);
     setSelected(new Set());
+    setSizeOverrides(new Set());
+    setShowSizeExcluded(false);
     setMeta(null);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -880,6 +889,8 @@ export function AutopilotModal({
     setLog([]);
     setCandidates([]);
     setSelected(new Set());
+    setSizeOverrides(new Set());
+    setShowSizeExcluded(false);
     setMeta(null);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -920,11 +931,71 @@ export function AutopilotModal({
     onClose();
   }
 
+  const undersizedIndexes = useMemo(() => {
+    const out = new Set<number>();
+    if (isSeedMode || minCandidateResources <= 1) return out;
+    candidates.forEach((candidate, index) => {
+      if ((candidate.resource_count ?? candidate.nodes?.length ?? 0) < minCandidateResources) {
+        out.add(index);
+      }
+    });
+    return out;
+  }, [candidates, isSeedMode, minCandidateResources]);
+
+  const autoExcludedIndexes = useMemo(() => {
+    const out = new Set(undersizedIndexes);
+    sizeOverrides.forEach((index) => out.delete(index));
+    return out;
+  }, [undersizedIndexes, sizeOverrides]);
+
+  const effectiveSelected = useMemo(() => {
+    const out = new Set<number>();
+    selected.forEach((index) => {
+      if (!autoExcludedIndexes.has(index)) out.add(index);
+    });
+    return out;
+  }, [selected, autoExcludedIndexes]);
+
+  const reviewCoverage = useMemo(() => {
+    const idsFor = (indexes: Iterable<number>) => {
+      const ids = new Set<string>();
+      for (const index of indexes) {
+        for (const node of candidates[index]?.nodes ?? []) {
+          if (node.kind === "resource" && node.id) ids.add(node.id.toLowerCase());
+        }
+      }
+      return ids;
+    };
+    const all = idsFor(candidates.map((_, index) => index));
+    const excluded = idsFor(autoExcludedIndexes);
+    const saving = idsFor(effectiveSelected);
+    const groupedCandidateResources = candidates.reduce(
+      (total, candidate) => total + (candidate.resource_count ?? 0),
+      0,
+    );
+    const excludedCandidateResources = [...autoExcludedIndexes].reduce(
+      (total, index) => total + (candidates[index]?.resource_count ?? 0),
+      0,
+    );
+    const savingCandidateResources = [...effectiveSelected].reduce(
+      (total, index) => total + (candidates[index]?.resource_count ?? 0),
+      0,
+    );
+    return {
+      groupedResources: all.size || groupedCandidateResources,
+      excludedResources: excluded.size || excludedCandidateResources,
+      savingResources: saving.size || savingCandidateResources,
+    };
+  }, [candidates, autoExcludedIndexes, effectiveSelected]);
+
   async function save() {
     const decisions: { action: string; name?: string; from?: string; to?: string }[] = [];
     const chosen: WorkloadCandidate[] = [];
     candidates.forEach((c, i) => {
-      if (!selected.has(i)) {
+      // Automatic size filtering is review policy, not a judgement that the AI boundary was
+      // wrong. Do not poison grouping memory with hundreds of synthetic "reject" decisions.
+      if (autoExcludedIndexes.has(i)) return;
+      if (!effectiveSelected.has(i)) {
         decisions.push({ action: "reject", name: c.name });
         return;
       }
@@ -960,10 +1031,10 @@ export function AutopilotModal({
 
   // Free-text filter + review ordering. Keep each candidate's ORIGINAL index so selection,
   // inline edits and save stay correct while the visible list is filtered or reordered.
-  const visibleCandidates = useMemo(() => {
+  const candidateReview = useMemo(() => {
     const q = search.trim().toLowerCase();
     const indexed = candidates.map((c, i) => ({ c, i }));
-    const filtered = q ? indexed.filter(({ c }) => {
+    const matching = q ? indexed.filter(({ c }) => {
       const hay = [
         c.name, c.description, c.reasoning, c.workload_type, c.environment, c.criticality,
         ...(c.resource_groups || []),
@@ -972,6 +1043,9 @@ export function AutopilotModal({
       ].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     }) : indexed;
+    const filtered = showSizeExcluded
+      ? matching
+      : matching.filter(({ i }) => !autoExcludedIndexes.has(i));
 
     const criticalityRank: Record<string, number> = {
       critical: 4,
@@ -1000,8 +1074,13 @@ export function AutopilotModal({
       if (result === 0) result = a.c.name.localeCompare(b.c.name) || a.i - b.i;
       return candidateSortDirection === "asc" ? result : -result;
     };
-    return [...filtered].sort(compare);
-  }, [candidates, search, candidateSort, candidateSortDirection, edits]);
+    return {
+      visible: [...filtered].sort(compare),
+      matchingCount: matching.length,
+      hiddenExcluded: matching.filter(({ i }) => autoExcludedIndexes.has(i)).length,
+    };
+  }, [candidates, search, candidateSort, candidateSortDirection, edits, showSizeExcluded, autoExcludedIndexes]);
+  const visibleCandidates = candidateReview.visible;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={cancel}>
@@ -1379,6 +1458,23 @@ export function AutopilotModal({
                           <input type="number" min={0} value={maxAiCalls} onChange={(e) => { setMaxAiCalls(Math.max(0, Number(e.target.value))); setPreset("custom"); }} className={`${input} w-32`} />
                         </div>
                         <div>
+                          <label className={label}>Minimum resources per proposed workload</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={minCandidateResources}
+                            onChange={(e) => {
+                              setMinCandidateResources(Math.max(1, Math.min(5_000, Number(e.target.value) || 1)));
+                              setPreset("custom");
+                            }}
+                            className={`${input} w-32`}
+                          />
+                          <p className="mt-1 text-[10px] text-gray-400">
+                            Review-only: workloads with fewer resources are excluded after grouping. This saves review effort but does not reduce AI calls.
+                          </p>
+                        </div>
+                        <div>
                           <label className={label}>Name contains</label>
                           <input value={nameContains} onChange={(e) => { setNameContains(e.target.value); setPreset("custom"); }} placeholder="Only resources whose name contains…" className={input} />
                         </div>
@@ -1571,11 +1667,60 @@ export function AutopilotModal({
               {/* Candidates */}
               {candidates.length > 0 && (
                 <div className="space-y-2">
+                  {!isSeedMode && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
+                          Minimum resources per workload
+                          <input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={minCandidateResources}
+                            onChange={(e) => setMinCandidateResources(Math.max(1, Math.min(5_000, Number(e.target.value) || 1)))}
+                            className="w-20 rounded-md border bg-white px-2 py-1 text-xs"
+                          />
+                        </label>
+                        <span className="text-[11px] text-gray-600">
+                          Excludes workloads with fewer than <b>{minCandidateResources}</b> resources.
+                        </span>
+                        <div className="ml-auto flex flex-wrap gap-2 text-[11px]">
+                          <span className="rounded bg-white px-2 py-1 text-amber-800">
+                            {autoExcludedIndexes.size} workload(s) excluded · {reviewCoverage.excludedResources} resource(s)
+                          </span>
+                          <span className="rounded bg-white px-2 py-1 text-emerald-700">
+                            {candidates.length - autoExcludedIndexes.size} eligible
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
+                        <button
+                          onClick={() => setShowSizeExcluded((value) => !value)}
+                          className="font-medium text-amber-800 hover:underline"
+                        >
+                          {showSizeExcluded ? "Hide excluded" : `Show excluded (${autoExcludedIndexes.size})`}
+                        </button>
+                        <button
+                          onClick={() => { setSizeOverrides(new Set()); setShowSizeExcluded(false); }}
+                          className="text-gray-600 hover:underline"
+                        >
+                          Exclude below minimum
+                        </button>
+                        {sizeOverrides.size > 0 && (
+                          <button onClick={() => setSizeOverrides(new Set())} className="text-gray-600 hover:underline">
+                            Clear {sizeOverrides.size} override{sizeOverrides.size === 1 ? "" : "s"}
+                          </button>
+                        )}
+                        <span className="text-gray-400">Changing this value does not call Azure or the AI again.</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm font-medium text-gray-700">
                       {search.trim()
-                        ? `${visibleCandidates.length} of ${candidates.length} candidate workload${candidates.length === 1 ? "" : "s"}`
+                        ? `${candidateReview.matchingCount} matching of ${candidates.length} candidate workload${candidates.length === 1 ? "" : "s"}`
                         : `${candidates.length} candidate workload${candidates.length === 1 ? "" : "s"}`}
+                      {candidateReview.hiddenExcluded > 0 ? ` · ${candidateReview.hiddenExcluded} excluded hidden` : ""}
                     </span>
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1">
@@ -1615,15 +1760,17 @@ export function AutopilotModal({
                         )}
                       </div>
                       <div className="flex gap-2 text-xs">
-                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.forEach(({ i }) => n.add(i)); return n; })} className="text-brand hover:underline" title="Add all shown (current filter) to your selection">Add&nbsp;all</button>
-                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.filter(({ c }) => (c.confidence ?? 0) >= 0.8).forEach(({ i }) => n.add(i)); return n; })} className="text-green-700 hover:underline" title="Add high-confidence shown to your selection">Add&nbsp;high</button>
-                        <button onClick={() => setSelected(new Set())} className="text-gray-500 hover:underline" title="Clear selection">None</button>
+                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.filter(({ i }) => !autoExcludedIndexes.has(i)).forEach(({ i }) => n.add(i)); return n; })} className="text-brand hover:underline" title="Add all eligible shown workloads to your selection">Add&nbsp;all eligible</button>
+                        <button onClick={() => setSelected((s) => { const n = new Set(s); visibleCandidates.filter(({ c, i }) => !autoExcludedIndexes.has(i) && (c.confidence ?? 0) >= 0.8).forEach(({ i }) => n.add(i)); return n; })} className="text-green-700 hover:underline" title="Add high-confidence eligible workloads shown">Add&nbsp;high</button>
+                        <button onClick={() => { setSelected(new Set()); setSizeOverrides(new Set()); }} className="text-gray-500 hover:underline" title="Clear selection and size overrides">None</button>
                       </div>
                     </div>
                   </div>
                   {visibleCandidates.length === 0 && (
                     <p className="rounded-lg border border-dashed bg-gray-50 p-4 text-center text-xs text-gray-400">
-                      No candidate workloads match “{search}”.
+                      {candidateReview.hiddenExcluded > 0
+                        ? `${candidateReview.hiddenExcluded} matching workload(s) are excluded by the minimum size. Use “Show excluded” to review them.`
+                        : `No candidate workloads match “${search}”.`}
                     </p>
                   )}
                   {visibleCandidates.map(({ c, i }) => {
@@ -1631,12 +1778,16 @@ export function AutopilotModal({
                     const e = edits[i] || {};
                     const curName = e.name ?? c.name;
                     const curCrit = e.criticality ?? c.criticality ?? "";
+                    const undersized = undersizedIndexes.has(i);
+                    const autoExcluded = autoExcludedIndexes.has(i);
+                    const overridden = undersized && sizeOverrides.has(i);
                     return (
-                      <div key={i} className="flex gap-3 rounded-xl border bg-white p-3 hover:border-brand/40">
+                      <div key={i} className={`flex gap-3 rounded-xl border p-3 ${autoExcluded ? "border-gray-200 bg-gray-50 opacity-75" : "bg-white hover:border-brand/40"}`}>
                         <input
                           type="checkbox"
                           className="mt-1.5"
-                          checked={selected.has(i)}
+                          checked={effectiveSelected.has(i)}
+                          disabled={autoExcluded}
                           onChange={(ev) => {
                             setSelected((s) => {
                               const n = new Set(s);
@@ -1644,6 +1795,13 @@ export function AutopilotModal({
                               else n.delete(i);
                               return n;
                             });
+                            if (!ev.target.checked && overridden) {
+                              setSizeOverrides((current) => {
+                                const next = new Set(current);
+                                next.delete(i);
+                                return next;
+                              });
+                            }
                           }}
                         />
                         <div className="min-w-0 flex-1">
@@ -1656,6 +1814,34 @@ export function AutopilotModal({
                             />
                             <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ct.cls}`}>{ct.label}</span>
                             <span className="text-[11px] text-gray-400">{c.resource_count} resources</span>
+                            {undersized && (
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${overridden ? "border-sky-200 bg-sky-50 text-sky-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                                {overridden ? "included despite minimum" : `below minimum: ${c.resource_count} of ${minCandidateResources}`}
+                              </span>
+                            )}
+                            {autoExcluded && (
+                              <button
+                                onClick={() => {
+                                  setSizeOverrides((current) => new Set(current).add(i));
+                                  setSelected((current) => new Set(current).add(i));
+                                }}
+                                className="rounded border border-sky-300 bg-white px-2 py-0.5 text-[10px] font-medium text-sky-700 hover:bg-sky-50"
+                              >
+                                Include anyway
+                              </button>
+                            )}
+                            {overridden && (
+                              <button
+                                onClick={() => setSizeOverrides((current) => {
+                                  const next = new Set(current);
+                                  next.delete(i);
+                                  return next;
+                                })}
+                                className="text-[10px] text-gray-500 hover:underline"
+                              >
+                                Remove override
+                              </button>
+                            )}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5">
                             <ClassBadges type={c.workload_type} environment={c.environment} />
@@ -1717,7 +1903,7 @@ export function AutopilotModal({
                       {typeof meta.organized_pct === "number" && Number(meta.resource_count) > 0 && (
                         <div>
                           <div className="mb-0.5 flex items-center justify-between text-[11px] text-gray-500">
-                            <span>Estate organized into workloads</span>
+                            <span>Grouped by discovery</span>
                             <span className="font-semibold text-gray-700">{String(meta.organized_pct)}%</span>
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -1751,6 +1937,28 @@ export function AutopilotModal({
                       </label>
                     </div>
                   )}
+                </div>
+              )}
+              {!isSeedMode && candidates.length > 0 && (
+                <div className="rounded-lg border bg-white px-3 py-2 text-xs text-gray-600">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium text-gray-800">Review outcome</span>
+                    <span className="font-semibold text-brand">
+                      Will save {effectiveSelected.size} workload{effectiveSelected.size === 1 ? "" : "s"} · {reviewCoverage.savingResources} unique resource{reviewCoverage.savingResources === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
+                    <span>Discovery grouped {candidates.length} workloads · {reviewCoverage.groupedResources} unique resources</span>
+                    <span>{autoExcludedIndexes.size} undersized workload(s) omitted · {reviewCoverage.excludedResources} resource(s)</span>
+                    <span>{Math.max(0, candidates.length - effectiveSelected.size - autoExcludedIndexes.size)} manually unselected</span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div
+                      className="h-full rounded-full bg-brand"
+                      style={{ width: `${reviewCoverage.groupedResources > 0 ? Math.round(100 * reviewCoverage.savingResources / reviewCoverage.groupedResources) : 0}%` }}
+                      title="Unique grouped resources that will be saved"
+                    />
+                  </div>
                 </div>
               )}
               {error && <div className="text-xs text-red-600">{error}</div>}
@@ -1820,10 +2028,10 @@ export function AutopilotModal({
               ) : (
                 <button
                   onClick={() => void save()}
-                  disabled={saving || selected.size === 0}
+                  disabled={saving || effectiveSelected.size === 0}
                   className="rounded-lg bg-brand px-4 py-1.5 text-sm font-medium text-white hover:bg-brand/90 disabled:opacity-50"
                 >
-                  {saving ? "Saving…" : `Save ${selected.size} workload${selected.size === 1 ? "" : "s"}`}
+                  {saving ? "Saving…" : `Save ${effectiveSelected.size} workload${effectiveSelected.size === 1 ? "" : "s"}`}
                 </button>
               )}
             </>

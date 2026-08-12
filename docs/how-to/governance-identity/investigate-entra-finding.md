@@ -15,12 +15,16 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:investigate]
 
 - Product permission `entra.read` to read the inbox, a finding and its signal definition.
 - Product permission `entra.admin` to change finding state, apply a bulk action, or run a scanner.
+- Product permissions `entra.read` and `investigate.read` to open the Entra shell and a
+	principal dossier. `investigate.activity` is separately required to read behavioural history.
 - A completed collection for the tenant. The inbox reads the snapshot; it never collects on its own.
 - Tier 1 consent produces findings across posture, applications and directory roles. Tier 2 and tier 3 consent, plus Entra ID P1/P2, are what make the risk, PIM and governance signals measurable rather than blind.
 
 ## Route
 
-`/entra/findings` for the inbox, scanners and identity hygiene; the deep-dive tabs at `/entra/conditional-access`, `/entra/privileged`, `/entra/applications`, `/entra/signals` and `/entra/governance` for context.
+`/entra/findings` for the inbox, scanners and identity hygiene; `/entra/investigate` for one
+principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privileged`,
+`/entra/applications`, `/entra/signals` and `/entra/governance` for context.
 
 ## How to filter the inbox to a working set
 
@@ -55,13 +59,38 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:investigate]
 
 1. Open `/entra/investigate` from a finding or select the principal directly.
 2. Confirm the principal identity and object type before reading access, group, application, sign-in, or activity evidence.
-3. Separate structural access from behavioural history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
-4. Follow handoffs to IAM or Conditional Access only when the destination preserves the same principal or scope.
-5. Validate significant conclusions against the named source record and the current Entra portal state.
+3. If the header and warning banner show **⚠ disabled**, treat that as the account state in the
+	cached snapshot—not as proof that assignments, group membership, active tokens, or historical
+	actions are gone. Prioritize the Access, Members, Activations, and Findings sections.
+4. Separate structural access from behavioural history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
+5. Follow handoffs to IAM or Conditional Access only when the destination preserves the same principal or scope.
+6. Validate significant conclusions against the named source record and the current Entra portal state.
 
 **Expected result:** One principal's identity, structural reach, and available activity evidence are correlated without treating missing domains as clean results.
 
 **Verification:** The selected object remains the same across each handoff, timestamps are current enough for the decision, and every conclusion cites source evidence.
+
+## How to review a disabled principal for residual access
+
+1. Open `/entra/investigate`, search for the principal, and confirm the object ID and tenant.
+2. Confirm the amber **⚠ This account is disabled.** banner and **⚠ disabled** header badge are
+	present. If they are absent, do not infer enabled state; check snapshot freshness and resolution.
+3. Use the **Offboarding** lens for a person or **Workload identity** for a service principal or
+	managed identity.
+4. Review standing and eligible Entra roles, Azure assignments, transitive group membership,
+	privilege activations, findings, and access-change history. Disabled state does not remove them.
+5. If authorized for `investigate.activity`, enter a ticket/reason, choose the shortest useful
+	window, and select **Read activity**. Include the Azure Activity Log only when resource-plane
+	operations are needed; it is an explicit, slower per-subscription read.
+6. Export the dossier when an evidence workbook is required, then validate account state and any
+	remaining assignments in the authoritative Entra and Azure views.
+
+**Expected result:** The disabled state is visually unmistakable while residual structural access
+and available history remain reviewable rather than being hidden as though disablement removed them.
+
+**Verification:** The dossier warning matches the current Entra account state, every retained
+assignment is accounted for, unreadable/truncated sections remain labelled, and the activity/export
+audit record identifies the reviewer and principal without changing Entra or Azure.
 
 ## How to snooze or suppress deliberately
 
@@ -108,10 +137,13 @@ The remediation itself always happens in Entra through your change process, with
 | A remediated finding is still listed | The snapshot predates the fix. Refresh, then re-read the inbox. |
 | A scanner says it cannot run | Its domain is blind or unlicensed; reporting zero findings would be indistinguishable from having looked. Fix coverage first. |
 | The score moved but no finding changed | Coverage changed. Compare measured pillars rather than the headline number. |
+| A known disabled account has no amber warning | The snapshot may predate disablement, the object may be unresolved, or enabled state was unreadable. Refresh the Entra snapshot and verify the same tenant/object in the Entra admin center. |
+| **Read activity** returns a permission error | Structural dossier reads use `investigate.read`; behavioural history requires the separate `investigate.activity` capability. |
 
 ## Related docs
 
 - [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/)
+- [Investigate a principal]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/)
 - [Entra findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/)
 - [Entra posture and score]({{ site.baseurl }}/user-guide/governance-identity/entra-posture/)
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)

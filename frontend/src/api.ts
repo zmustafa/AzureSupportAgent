@@ -5583,11 +5583,22 @@ export const api = {
 
   // --- Network access control (IP allowlist) ---
   firewallConfig: () => http<FirewallConfig>("/admin/firewall"),
-  updateFirewall: (body: { mode: string; rules: FirewallRuleIn[] }) =>
+  updateFirewall: (body: {
+    mode: string;
+    rules: FirewallRuleIn[];
+    import_context?: FirewallImportContext;
+  }) =>
     http<FirewallConfig>("/admin/firewall", {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  firewallImportPreview: (body: FirewallImportPreviewRequest) =>
+    http<FirewallImportPreview>("/admin/firewall/import/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  firewallExport: (format: "txt" | "csv") =>
+    httpBlob(`/admin/firewall/export?format=${format}`),
   confirmFirewall: () =>
     http<FirewallConfig>("/admin/firewall/confirm", { method: "POST", body: "{}" }),
   firewallBlocks: (limit = 25, offset = 0) =>
@@ -5681,6 +5692,11 @@ export const api = {
     }),
   deleteWorkload: (id: string) =>
     http<{ ok: boolean }>(`/workloads/${id}`, { method: "DELETE" }),
+  bulkTrashWorkloads: (workloadIds: string[]) =>
+    http<WorkloadBulkTrashResult>("/workloads/bulk/trash", {
+      method: "POST",
+      body: JSON.stringify({ workload_ids: workloadIds }),
+    }),
   // --- Workload trash (soft-delete) ---
   trashedWorkloads: () => http<{ workloads: Workload[] }>("/workloads/trash"),
   restoreWorkload: (id: string) =>
@@ -11716,6 +11732,71 @@ export interface FirewallRule extends FirewallRuleIn {
   created_at?: string;
 }
 
+export type FirewallImportStrategy = "merge" | "replace";
+export type FirewallImportFormat = "auto" | "txt" | "csv";
+
+export interface FirewallImportContext {
+  source_name: string;
+  strategy: FirewallImportStrategy;
+  skipped_existing: number;
+}
+
+export interface FirewallImportPreviewRequest {
+  text: string;
+  source_name: string;
+  format: FirewallImportFormat;
+  default_label: string;
+  strategy: FirewallImportStrategy;
+  mode: FirewallMode;
+  existing_rules: FirewallRuleIn[];
+}
+
+export interface FirewallImportDiagnostic {
+  line: number;
+  input: string;
+  cidr: string | null;
+  label: string;
+  enabled: boolean;
+  status: "invalid" | "valid" | "existing" | "retained" | "add";
+  message: string;
+}
+
+export interface FirewallImportSummary {
+  input_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_input: number;
+  canonicalized: number;
+  added: number;
+  retained: number;
+  skipped_existing: number;
+  removed: number;
+  result_total: number;
+  enabled_total: number;
+}
+
+export interface FirewallImportOverlap {
+  cidr: string;
+  overlaps: string;
+  message: string;
+}
+
+export interface FirewallImportPreview {
+  source_name: string;
+  format: "txt" | "csv";
+  strategy: FirewallImportStrategy;
+  can_apply: boolean;
+  errors: string[];
+  diagnostics: FirewallImportDiagnostic[];
+  overlaps: FirewallImportOverlap[];
+  overlap_count: number;
+  overlap_details_truncated: boolean;
+  result_rules: FirewallRule[];
+  your_ip: string | null;
+  your_ip_covered: boolean;
+  summary: FirewallImportSummary;
+}
+
 /** How the server arrived at your address — the answer to "why does it think I'm that IP?". */
 export interface FirewallResolutionEntry {
   value: string;
@@ -13039,6 +13120,14 @@ export interface Workload {
   group_id?: string;
 }
 
+export interface WorkloadBulkTrashResult {
+  requested: number;
+  deleted: number;
+  already_trashed: number;
+  not_found: number;
+  deleted_ids: string[];
+}
+
 export interface WorkloadEvidence {
   kind: string; // provenance | network | scope | rbac
   detail: string;
@@ -13390,6 +13479,8 @@ export interface SculptConfig {
   confidence_floor?: number;
   max_ai_calls?: number;
   naming_hint?: string;
+  /** Review-only: exclude candidates containing fewer resources, without rerunning AI. */
+  min_candidate_resources?: number;
   // ---- Seed mode (scope_kind="resource"): one resource id -> one workload ----
   seed_resource_id?: string;
   max_hops?: number;

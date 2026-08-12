@@ -12,12 +12,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import netaccess, netaccess_events
+from app.core import netaccess, netaccess_events, netaccess_io
 from app.core.clientip import client_ip, describe as describe_client_ip
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
@@ -35,9 +35,26 @@ class RuleIn(BaseModel):
     enabled: bool = True
 
 
+class FirewallImportContextIn(BaseModel):
+    source_name: str = Field(default="pasted-ranges.txt", max_length=255)
+    strategy: str = Field(default="merge", pattern="^(merge|replace)$")
+    skipped_existing: int = Field(default=0, ge=0, le=netaccess.MAX_RULES)
+
+
 class ConfigIn(BaseModel):
     mode: str
-    rules: list[RuleIn]
+    rules: list[RuleIn] = Field(max_length=netaccess.MAX_RULES)
+    import_context: FirewallImportContextIn | None = None
+
+
+class ImportPreviewIn(BaseModel):
+    text: str = Field(max_length=netaccess_io.MAX_IMPORT_BYTES)
+    source_name: str = Field(default="pasted-ranges.txt", max_length=255)
+    format: str = Field(default="auto", pattern="^(auto|txt|csv)$")
+    default_label: str = Field(default="Imported range", max_length=128)
+    strategy: str = Field(default="merge", pattern="^(merge|replace)$")
+    mode: str
+    existing_rules: list[RuleIn] = Field(default_factory=list, max_length=netaccess.MAX_RULES)
 
 
 async def _audit(db: AsyncSession, principal: Principal, action: str, meta: dict[str, Any]) -> None:
@@ -98,40 +115,15 @@ async def update_config(
     principal: Principal = Depends(require_manage),
     db: AsyncSession = Depends(get_db),
 ):
-    if payload.mode not in netaccess.MODES:
-        raise HTTPException(status_code=400, detail=f"Unknown mode '{payload.mode}'.")
-
     caller_ip = client_ip(request)
-    seen: set[str] = set()
-    rules: list[dict[str, Any]] = []
-    for rule in payload.rules:
-        try:
-            net = netaccess.parse_cidr(rule.cidr)
-        except netaccess.NetAccessError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-        if payload.mode == "enforce" and rule.enabled and net.prefixlen == 0:
-            # A rule that permits everything is a misconfiguration wearing a policy costume:
-            # it silently turns enforcement into a no-op while the UI still reads "Enforcing".
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{rule.cidr}' allows every address, which disables enforcement. "
-                "Remove it or use Off mode.",
-            )
-        if not rule.label.strip():
-            raise HTTPException(status_code=400, detail=f"'{rule.cidr}' needs a label.")
-        key = str(net)
-        if key in seen:
-            raise HTTPException(status_code=400, detail=f"'{key}' is listed more than once.")
-        seen.add(key)
-        rules.append(
-            {
-                "cidr": key,
-                "label": rule.label.strip()[:128],
-                "enabled": bool(rule.enabled),
-                "created_by": principal.subject,
-                "created_at": datetime.now(UTC).isoformat(),
-            }
+    try:
+        rules = netaccess.normalize_rules(
+            (rule.model_dump() for rule in payload.rules),
+            mode=payload.mode,
+            actor=principal.subject,
         )
+    except netaccess.NetAccessError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
     # SAFETY: never let an operator save an enforcing policy that excludes themselves. This is
     # the single most likely way to lose access to the application, and it is entirely
@@ -157,19 +149,91 @@ async def update_config(
     }
     netaccess.write_config(cfg)
     netaccess.reset_cache()
+    audit_meta: dict[str, Any] = {
+        "from_mode": previous.get("mode"),
+        "to_mode": payload.mode,
+        "rule_count": len(rules),
+        "rules": [r["cidr"] for r in rules],
+        "actor_ip": caller_ip,
+    }
+    if payload.import_context is not None:
+        old_ids: set[str] = set()
+        for old_rule in previous.get("rules", []):
+            try:
+                old_ids.add(str(netaccess.parse_cidr(str(old_rule.get("cidr", "")))))
+            except netaccess.NetAccessError:
+                # Do not abort the audit write after config changed merely because a corrupt
+                # legacy row has no canonical identity to compare.
+                continue
+        new_ids = {r["cidr"] for r in rules}
+        source = payload.import_context.source_name.replace("\\", "/").rsplit("/", 1)[-1]
+        audit_meta["import"] = {
+            "source_name": source,
+            "strategy": payload.import_context.strategy,
+            "added": len(new_ids - old_ids),
+            "removed": len(old_ids - new_ids),
+            "retained": len(old_ids & new_ids),
+            "preview_skipped_existing": payload.import_context.skipped_existing,
+        }
     await _audit(
         db,
         principal,
         "firewall.update",
-        {
-            "from_mode": previous.get("mode"),
-            "to_mode": payload.mode,
-            "rule_count": len(rules),
-            "rules": [r["cidr"] for r in rules],
-            "actor_ip": caller_ip,
-        },
+        audit_meta,
     )
     return _decorate(cfg, caller_ip, request)
+
+
+@router.post("/import/preview")
+async def preview_import(
+    payload: ImportPreviewIn,
+    request: Request,
+    principal: Principal = Depends(require_manage),
+):
+    """Validate a pasted/uploaded list and return the exact resulting draft; write nothing."""
+    try:
+        return netaccess_io.preview_import(
+            payload.text,
+            source_name=payload.source_name,
+            requested_format=payload.format,
+            default_label=payload.default_label,
+            strategy=payload.strategy,
+            mode=payload.mode,
+            existing_rules=[rule.model_dump() for rule in payload.existing_rules],
+            caller_ip=client_ip(request),
+            actor=principal.subject,
+        )
+    except (netaccess.NetAccessError, netaccess_io.NetAccessImportError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/export")
+async def export_rules(
+    format: str = "txt",
+    _: Principal = Depends(require_read),
+):
+    """Download the saved policy, never an unsaved browser draft."""
+    cfg = netaccess.load_config()
+    fmt = format.strip().lower()
+    if fmt == "txt":
+        content = netaccess_io.export_txt(cfg.get("rules", []), mode=str(cfg.get("mode", "off")))
+        media_type = "text/plain; charset=utf-8"
+        filename = "firewall-active-ranges"
+    elif fmt == "csv":
+        content = netaccess_io.export_csv(cfg.get("rules", []), mode=str(cfg.get("mode", "off")))
+        media_type = "text/csv; charset=utf-8"
+        filename = "firewall-all-rules"
+    else:
+        raise HTTPException(status_code=400, detail="Export format must be 'txt' or 'csv'.")
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}-{stamp}.{fmt}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/confirm")

@@ -4,7 +4,7 @@ title: Entra ID
 parent: Governance & Identity
 grand_parent: User guide
 nav_order: 2
-description: Tenant-wide Entra ID posture score, Conditional Access coverage, privileged access, applications and consent, sign-in risk, governance, blast radius, and the findings inbox.
+description: Tenant-wide Entra ID posture score, Conditional Access coverage, privileged access, applications and consent, sign-in risk, governance, blast radius, principal investigation, and the findings inbox.
 permalink: /user-guide/governance-identity/identity/
 feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:posture, ENTRA_NAV:conditional-access, ENTRA_NAV:privileged, ENTRA_NAV:applications, ENTRA_NAV:signals, ENTRA_NAV:governance, ENTRA_NAV:graph, ENTRA_NAV:findings, ENTRA_NAV:setup]
 ---
@@ -46,9 +46,10 @@ Missing permission or licence produces an honestly labelled blind spot, never a 
 | 📜 Governance | `/entra/governance` | Access reviews, entitlement expiry, lifecycle workflows, guest (B2B) lifecycle and partner organisations, what is governed at all | [Governance]({{ site.baseurl }}/user-guide/governance-identity/entra-governance/) · [Guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
 | 🕸️ Blast radius | `/entra/graph` | Escalation paths from an entry point to tenant-level power | [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) |
 | 📋 Findings & scanners | `/entra/findings` | The working queue: proactive scanners, the inbox, workflow state, bulk actions | [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/) |
+| 🔍 Investigate | `/entra/investigate` | What one user, guest, group, application, managed identity, deleted object, or cross-tenant principal can reach and how that changed | [Investigate a principal]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/) |
 | 🔌 Setup & coverage | `/entra/setup` | Which consent tier is granted, what each tier unlocks, which domains are blind and why | [Setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/) |
 
-The tab bar scrolls horizontally when the window is too narrow for nine labels; the connection picker and freshness badge stay pinned on the right.
+The tab bar scrolls horizontally when the window is too narrow for ten labels; the connection picker and freshness badge stay pinned on the right.
 
 ### Global controls
 
@@ -136,6 +137,7 @@ Compare scores over time within one tenant. Do not compare a score across tenant
 ## Related pages
 
 - [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/)
+- [Investigate a principal]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/)
 - [Review Entra ID posture end to end]({{ site.baseurl }}/how-to/governance-identity/entra-first-refresh/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)
 - [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/)

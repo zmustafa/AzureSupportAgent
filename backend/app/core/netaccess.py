@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,10 @@ from app.core import jsonstore
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "network_access.json"
 
 MODES = ("off", "monitor", "enforce")
+
+# Large enough for enterprise egress lists while bounding config, preview, and backup payloads.
+# Every write path uses ``normalize_rules`` so bulk import cannot bypass this ceiling.
+MAX_RULES = 5_000
 
 #: How long an ``enforce`` switch stays provisional before auto-reverting to ``monitor``.
 CONFIRM_WINDOW_MINUTES = 15
@@ -94,6 +99,59 @@ def describe_scope(net: ipaddress.IPv4Network | ipaddress.IPv6Network) -> str:
 
 def _is_everything(net: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
     return net.prefixlen == 0
+
+
+def normalize_rules(
+    rules: Iterable[Mapping[str, Any]],
+    *,
+    mode: str,
+    actor: str | None = None,
+) -> list[dict[str, Any]]:
+    """Validate and canonicalize a complete policy rule list.
+
+    This is the single authority used by ordinary saves, import previews, and exports. When
+    ``actor`` is omitted, existing provenance is preserved; supplying it stamps the rules as an
+    explicit save, matching the endpoint's historical behavior.
+    """
+    if mode not in MODES:
+        raise NetAccessError(f"Unknown mode '{mode}'.")
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    timestamp = datetime.now(UTC).isoformat()
+    for rule in rules:
+        if len(normalized) >= MAX_RULES:
+            raise NetAccessError(f"A policy can contain at most {MAX_RULES:,} ranges.")
+        net = parse_cidr(str(rule.get("cidr", "")))
+        key = str(net)
+        enabled = bool(rule.get("enabled", True))
+        if mode == "enforce" and enabled and _is_everything(net):
+            raise NetAccessError(
+                f"'{key}' allows every address, which disables enforcement. "
+                "Remove it or use Off mode."
+            )
+        label = str(rule.get("label", "") or "").strip()
+        if not label:
+            raise NetAccessError(f"'{key}' needs a label.")
+        if key in seen:
+            raise NetAccessError(f"'{key}' is listed more than once.")
+        seen.add(key)
+        normalized.append(
+            {
+                "cidr": key,
+                "label": label[:128],
+                "enabled": enabled,
+                "created_by": (
+                    actor if actor is not None else str(rule.get("created_by", "") or "")
+                ),
+                "created_at": (
+                    timestamp
+                    if actor is not None
+                    else str(rule.get("created_at", "") or timestamp)
+                ),
+            }
+        )
+    return normalized
 
 
 # --------------------------------------------------------------------------- config I/O
@@ -161,35 +219,47 @@ def write_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- evaluation
 
-# Compiled networks, cached against the exact rule set they were built from. This runs on EVERY
-# request, so re-parsing CIDR strings per request is not acceptable. The underlying JSON read is
-# already mtime-validated by ``jsonstore``, so an out-of-band file edit invalidates this too.
+# Compiled network bases grouped by prefix, cached against the exact enabled rule set. A linear
+# scan was acceptable for a handful of hand-entered rules but not for an imported 5,000-range
+# list. Matching now performs at most 33 IPv4 or 129 IPv6 prefix lookups, independent of list
+# size. The underlying JSON read is mtime-validated, so an out-of-band edit invalidates this too.
 _COMPILED_KEY: tuple[str, ...] | None = None
-_COMPILED: tuple[Any, ...] = ()
+_COMPILED: dict[int, tuple[tuple[int, frozenset[int]], ...]] = {4: (), 6: ()}
 
 
-def _compiled(rules: list[dict[str, Any]]) -> tuple[Any, ...]:
+def _compiled(
+    rules: list[dict[str, Any]],
+) -> dict[int, tuple[tuple[int, frozenset[int]], ...]]:
     global _COMPILED_KEY, _COMPILED
     key = tuple(
         str(r.get("cidr", "")) for r in rules if isinstance(r, dict) and r.get("enabled", True)
     )
     if key != _COMPILED_KEY:
-        nets = []
+        grouped: dict[int, dict[int, set[int]]] = {4: {}, 6: {}}
         for cidr in key:
             try:
-                nets.append(ipaddress.ip_network(cidr, strict=False))
+                net = ipaddress.ip_network(cidr, strict=False)
             except ValueError:
                 # A corrupt stored value must not 500 every request. Skipping it is the safe
                 # direction: in `enforce` a rule that cannot be parsed cannot grant access.
                 continue
-        _COMPILED_KEY, _COMPILED = key, tuple(nets)
+            grouped[net.version].setdefault(net.prefixlen, set()).add(int(net.network_address))
+
+        compiled: dict[int, tuple[tuple[int, frozenset[int]], ...]] = {}
+        for version, bits in ((4, 32), (6, 128)):
+            rows: list[tuple[int, frozenset[int]]] = []
+            for prefix, bases in sorted(grouped[version].items(), reverse=True):
+                mask = ((1 << prefix) - 1) << (bits - prefix) if prefix else 0
+                rows.append((mask, frozenset(bases)))
+            compiled[version] = tuple(rows)
+        _COMPILED_KEY, _COMPILED = key, compiled
     return _COMPILED
 
 
 def reset_cache() -> None:
     """Drop the compiled-network cache (used by tests and after a save)."""
     global _COMPILED_KEY, _COMPILED
-    _COMPILED_KEY, _COMPILED = None, ()
+    _COMPILED_KEY, _COMPILED = None, {4: (), 6: ()}
 
 
 def matches(ip: str | None, rules: list[dict[str, Any]]) -> bool:
@@ -200,7 +270,8 @@ def matches(ip: str | None, rules: list[dict[str, Any]]) -> bool:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    return any(addr in net for net in _compiled(rules) if addr.version == net.version)
+    value = int(addr)
+    return any((value & mask) in bases for mask, bases in _compiled(rules)[addr.version])
 
 
 def matching_rule(ip: str | None, rules: list[dict[str, Any]]) -> dict[str, Any] | None:

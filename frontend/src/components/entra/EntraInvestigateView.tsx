@@ -280,7 +280,7 @@ function Banners({ p }: { p: InvestigatePrincipal }) {
   if (p.sub_kind?.dynamic) {
     out.push({ tone: "amber", text: "Membership of this group is a rule, not a list. Removing someone does not stick — the rule re-adds them." });
   }
-  if (p.enabled === false) out.push({ tone: "gray", text: "This account is disabled." });
+  if (p.enabled === false) out.push({ tone: "amber", text: "⚠ This account is disabled." });
   const tones: Record<string, string> = {
     rose: "border-rose-200 bg-rose-50 text-rose-800",
     amber: "border-amber-200 bg-amber-50 text-amber-800",
@@ -601,7 +601,9 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                 {KIND_LABEL[principal.kind]}
               </span>
               {principal.enabled === false && (
-                <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[11px] text-gray-700">disabled</span>
+                <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                  ⚠ disabled
+                </span>
               )}
               <div className="ml-auto flex gap-2">
                 <a

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   api,
+  downloadBlob,
   HttpError,
   type AcGroup,
   type AcIdp,
@@ -10,6 +11,10 @@ import {
   type AcUser,
   type AuthPolicies,
   type FirewallMode,
+  type FirewallImportContext,
+  type FirewallImportFormat,
+  type FirewallImportPreview,
+  type FirewallImportStrategy,
   type FirewallResolution,
   type FirewallRule,
   type IdpTestResult,
@@ -1423,6 +1428,356 @@ function useCountdown(deadline: string | null): string | null {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
+const FIREWALL_IMPORT_MAX_BYTES = 1024 * 1024;
+const FIREWALL_IMPORT_PAGE_SIZE = 50;
+const FIREWALL_RULE_PAGE_SIZE = 100;
+
+function FirewallExportMenu({ dirty, onError }: { dirty: boolean; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState<"txt" | "csv" | "">("");
+
+  async function download(format: "txt" | "csv") {
+    setBusy(format);
+    onError("");
+    try {
+      const blob = await api.firewallExport(format);
+      const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+      downloadBlob(
+        blob,
+        format === "txt"
+          ? `firewall-active-ranges-${stamp}.txt`
+          : `firewall-all-rules-${stamp}.csv`,
+      );
+    } catch (error) {
+      onError(errMsg(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <details className="relative">
+      <summary className="cursor-pointer list-none rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        {busy ? "Exporting…" : "Export ▾"}
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border bg-white p-2 shadow-lg">
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={() => void download("txt")}
+          className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          <span className="block font-medium text-slate-700">Active ranges — TXT</span>
+          <span className="block text-xs text-slate-500">One active CIDR per line.</span>
+        </button>
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={() => void download("csv")}
+          className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
+        >
+          <span className="block font-medium text-slate-700">All rules — CSV</span>
+          <span className="block text-xs text-slate-500">Includes labels and disabled rules.</span>
+        </button>
+        {dirty && (
+          <p className="mt-1 border-t px-2 pt-2 text-[11px] text-amber-700">
+            Export uses the saved policy. Save draft changes first to include them.
+          </p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function FirewallImportPanel({
+  mode,
+  rules,
+  onApply,
+  onClose,
+}: {
+  mode: FirewallMode;
+  rules: FirewallRule[];
+  onApply: (rules: FirewallRule[], context: FirewallImportContext) => void;
+  onClose: () => void;
+}) {
+  const [sourceKind, setSourceKind] = useState<"paste" | "file">("paste");
+  const [text, setText] = useState("");
+  const [sourceName, setSourceName] = useState("pasted-ranges.txt");
+  const [format, setFormat] = useState<FirewallImportFormat>("auto");
+  const [defaultLabel, setDefaultLabel] = useState("Imported range");
+  const [strategy, setStrategy] = useState<FirewallImportStrategy>("merge");
+  const [preview, setPreview] = useState<FirewallImportPreview | null>(null);
+  const [previewPage, setPreviewPage] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function chooseFile(file: File | undefined) {
+    if (!file) return;
+    setError("");
+    setPreview(null);
+    if (!/\.(txt|csv)$/i.test(file.name)) {
+      setError("Choose a UTF-8 .txt or .csv file.");
+      return;
+    }
+    if (file.size > FIREWALL_IMPORT_MAX_BYTES) {
+      setError("The file is larger than 1 MiB.");
+      return;
+    }
+    try {
+      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+      setText(decoded);
+      setSourceName(file.name);
+      setFormat(file.name.toLowerCase().endsWith(".csv") ? "csv" : "txt");
+    } catch {
+      setError("The file is not valid UTF-8 text.");
+    }
+  }
+
+  async function runPreview() {
+    setBusy(true);
+    setError("");
+    setPreview(null);
+    try {
+      const result = await api.firewallImportPreview({
+        text,
+        source_name: sourceKind === "paste" ? "pasted-ranges.txt" : sourceName,
+        format: sourceKind === "paste" ? "auto" : format,
+        default_label: defaultLabel,
+        strategy,
+        mode,
+        existing_rules: rules.map((rule) => ({
+          cidr: rule.cidr,
+          label: rule.label,
+          enabled: rule.enabled,
+        })),
+      });
+      setPreview(result);
+      setPreviewPage(0);
+    } catch (cause) {
+      setError(errMsg(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const diagnostics = preview?.diagnostics ?? [];
+  const pageCount = Math.max(1, Math.ceil(diagnostics.length / FIREWALL_IMPORT_PAGE_SIZE));
+  const safePage = Math.min(previewPage, pageCount - 1);
+  const visibleDiagnostics = diagnostics.slice(
+    safePage * FIREWALL_IMPORT_PAGE_SIZE,
+    (safePage + 1) * FIREWALL_IMPORT_PAGE_SIZE,
+  );
+
+  const statusStyle: Record<string, string> = {
+    invalid: "bg-rose-100 text-rose-800",
+    existing: "bg-slate-100 text-slate-700",
+    retained: "bg-sky-100 text-sky-800",
+    add: "bg-emerald-100 text-emerald-800",
+    valid: "bg-emerald-100 text-emerald-800",
+  };
+
+  return (
+    <div data-testid="firewall-import-panel" className="mb-4 rounded-lg border border-brand-dark/30 bg-slate-50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">Import allowed sources</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Preview first. Applying changes only updates the draft; Save activates it.
+          </p>
+        </div>
+        <Btn variant="ghost" onClick={onClose}>Close</Btn>
+      </div>
+
+      <div className="mt-3 inline-flex rounded-lg border bg-white p-0.5 text-xs">
+        {(["paste", "file"] as const).map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            onClick={() => {
+              setSourceKind(kind);
+              setText("");
+              setSourceName(kind === "paste" ? "pasted-ranges.txt" : "");
+              setFormat("auto");
+              setPreview(null);
+              setError("");
+            }}
+            className={`rounded-md px-3 py-1.5 ${sourceKind === kind ? "bg-brand-dark text-white" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            {kind === "paste" ? "Paste list" : "Upload file"}
+          </button>
+        ))}
+      </div>
+
+      {sourceKind === "paste" ? (
+        <Field label="IP addresses or CIDR ranges">
+          <textarea
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              setPreview(null);
+            }}
+            rows={9}
+            spellCheck={false}
+            placeholder={"20.118.190.135/32\n156.20.174.0/24\n2001:db8:100::/48"}
+            className={`${inputCls} mt-3 font-mono text-xs`}
+          />
+          <span className="mt-1 block text-xs text-slate-500">
+            One address or CIDR per line. Blank lines and lines beginning with # are ignored.
+          </span>
+        </Field>
+      ) : (
+        <div className="mt-3 rounded-lg border-2 border-dashed bg-white p-4">
+          <input
+            type="file"
+            accept=".txt,.csv,text/plain,text/csv"
+            aria-label="Choose firewall import file"
+            onChange={(event) => void chooseFile(event.target.files?.[0])}
+            className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700"
+          />
+          {!!sourceName && sourceName !== "pasted-ranges.txt" && (
+            <div className="mt-3">
+              <p className="text-xs font-medium text-slate-700">{sourceName}</p>
+              <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-100">
+                {text.slice(0, 8_000)}{text.length > 8_000 ? "\n…" : ""}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Field label="Default label">
+          <input
+            className={inputCls}
+            maxLength={128}
+            value={defaultLabel}
+            onChange={(event) => {
+              setDefaultLabel(event.target.value);
+              setPreview(null);
+            }}
+            placeholder="Corporate egress"
+          />
+          <span className="mt-1 block text-xs text-slate-500">Used for TXT rows and blank CSV labels.</span>
+        </Field>
+        <fieldset>
+          <legend className="mb-1 text-sm font-medium text-slate-700">Import strategy</legend>
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input type="radio" checked={strategy === "merge"} onChange={() => { setStrategy("merge"); setPreview(null); }} />
+            <span><strong>Merge</strong> — keep existing rules and add new ranges.</span>
+          </label>
+          <label className="mt-1 flex items-start gap-2 text-sm text-rose-700">
+            <input type="radio" checked={strategy === "replace"} onChange={() => { setStrategy("replace"); setPreview(null); }} />
+            <span><strong>Replace</strong> — remove saved/draft ranges not in this list.</span>
+          </label>
+        </fieldset>
+      </div>
+
+      {error && <div className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</div>}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Btn variant="primary" disabled={busy || !text.trim()} onClick={() => void runPreview()}>
+          {busy ? "Previewing…" : "Preview import"}
+        </Btn>
+        <Btn variant="ghost" onClick={() => {
+          setText("");
+          setSourceName(sourceKind === "paste" ? "pasted-ranges.txt" : "");
+          setFormat("auto");
+          setPreview(null);
+          setError("");
+        }}>
+          Clear
+        </Btn>
+      </div>
+
+      {preview && (
+        <div className="mt-4 space-y-3 border-t pt-4">
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">
+            {([
+              ["Input", preview.summary.input_rows],
+              ["Add", preview.summary.added],
+              ["Retain", preview.summary.retained],
+              ["Remove", preview.summary.removed],
+              ["Skipped", preview.summary.skipped_existing],
+              ["Invalid", preview.summary.invalid_rows],
+              ["Result", preview.summary.result_total],
+              ["Active", preview.summary.enabled_total],
+            ] as const).map(([labelText, value]) => (
+              <div key={labelText} className="rounded border bg-white px-2 py-1.5">
+                <div className="text-slate-400">{labelText}</div>
+                <div className="font-semibold tabular-nums text-slate-800">{value.toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+
+          {preview.errors.length > 0 && (
+            <ul className="list-disc space-y-0.5 rounded border border-rose-200 bg-rose-50 p-3 pl-7 text-xs text-rose-800">
+              {preview.errors.map((message) => <li key={message}>{message}</li>)}
+            </ul>
+          )}
+
+          <div className={`rounded border px-3 py-2 text-xs ${preview.your_ip_covered ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+            {preview.your_ip_covered
+              ? `The resulting list covers your current address (${preview.your_ip ?? "unknown"}).`
+              : `The resulting list does not cover your current address (${preview.your_ip ?? "unknown"}). Enforce-mode Save remains blocked until you add it.`}
+          </div>
+
+          {preview.overlap_count > 0 && (
+            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <div className="font-medium">{preview.overlap_count.toLocaleString()} overlapping range pair(s) — retained as entered.</div>
+              <ul className="mt-1 list-disc pl-5">
+                {preview.overlaps.slice(0, 10).map((item) => <li key={`${item.cidr}-${item.overlaps}`}>{item.message}</li>)}
+              </ul>
+              {preview.overlap_count > 10 && <p className="mt-1">Showing the first 10 overlap warnings.</p>}
+            </div>
+          )}
+
+          {visibleDiagnostics.length > 0 && (
+            <div className="overflow-x-auto rounded border bg-white">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-left text-slate-500">
+                  <tr><th className="px-2 py-1.5">Line</th><th className="px-2 py-1.5">Input</th><th className="px-2 py-1.5">Normalized</th><th className="px-2 py-1.5">Status</th><th className="px-2 py-1.5">Detail</th></tr>
+                </thead>
+                <tbody>
+                  {visibleDiagnostics.map((item) => (
+                    <tr key={`${item.line}-${item.input}`} className="border-t align-top">
+                      <td className="px-2 py-1.5 tabular-nums text-slate-500">{item.line}</td>
+                      <td className="max-w-56 break-all px-2 py-1.5 font-mono text-slate-700">{item.input || "—"}</td>
+                      <td className="px-2 py-1.5 font-mono text-slate-700">{item.cidr ?? "—"}</td>
+                      <td className="px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 ${statusStyle[item.status] ?? statusStyle.valid}`}>{item.status}</span></td>
+                      <td className="max-w-80 px-2 py-1.5 text-slate-600">{item.message || item.label}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Rows {safePage * FIREWALL_IMPORT_PAGE_SIZE + 1}–{Math.min((safePage + 1) * FIREWALL_IMPORT_PAGE_SIZE, diagnostics.length)} of {diagnostics.length}</span>
+              <div className="flex gap-1"><Btn variant="ghost" disabled={safePage === 0} onClick={() => setPreviewPage(safePage - 1)}>Previous</Btn><Btn variant="ghost" disabled={safePage >= pageCount - 1} onClick={() => setPreviewPage(safePage + 1)}>Next</Btn></div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Btn
+              variant="primary"
+              disabled={!preview.can_apply}
+              onClick={() => onApply(preview.result_rules, {
+                source_name: preview.source_name,
+                strategy: preview.strategy,
+                skipped_existing: preview.summary.skipped_existing,
+              })}
+            >
+              Apply to draft
+            </Btn>
+            {!preview.can_apply && <span className="text-xs text-rose-700">Resolve preview errors before applying.</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FirewallCard() {
   const qc = useQueryClient();
   const { has, isAdmin } = useAuth();
@@ -1438,6 +1793,11 @@ function FirewallCard() {
   const [newCidr, setNewCidr] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [confirmText, setConfirmText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importContext, setImportContext] = useState<FirewallImportContext | null>(null);
+  const [importApplied, setImportApplied] = useState(false);
+  const [ruleSearch, setRuleSearch] = useState("");
+  const [rulePage, setRulePage] = useState(0);
 
   const server = cfg.data;
   const mode = draft?.mode ?? server?.mode ?? "off";
@@ -1465,9 +1825,12 @@ function FirewallCard() {
       api.updateFirewall({
         mode,
         rules: rules.map((r) => ({ cidr: r.cidr, label: r.label, enabled: r.enabled })),
+        ...(importContext ? { import_context: importContext } : {}),
       }),
     onSuccess: (fresh) => {
       setDraft(null);
+      setImportContext(null);
+      setImportApplied(false);
       setConfirmText("");
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -1505,6 +1868,16 @@ function FirewallCard() {
     setAdding(false);
   };
 
+  const filteredRules = useMemo(() => {
+    const needle = ruleSearch.trim().toLowerCase();
+    return rules
+      .map((rule, index) => ({ rule, index }))
+      .filter(({ rule }) =>
+        !needle || [rule.cidr, rule.label, rule.scope, rule.enabled ? "active" : "disabled"]
+          .some((value) => String(value ?? "").toLowerCase().includes(needle)),
+      );
+  }, [ruleSearch, rules]);
+
   if (cfg.isLoading) {
     return <Card title="Network access"><p className="text-sm text-slate-500">Loading…</p></Card>;
   }
@@ -1514,6 +1887,12 @@ function FirewallCard() {
   const preview = newCidr.trim() ? describeCidr(newCidr) : "";
   const previewCoversMe =
     !!server?.your_ip && !!newCidr.trim() && cidrCovers(newCidr.trim(), server.your_ip);
+  const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / FIREWALL_RULE_PAGE_SIZE));
+  const safeRulePage = Math.min(rulePage, rulePageCount - 1);
+  const visibleRules = filteredRules.slice(
+    safeRulePage * FIREWALL_RULE_PAGE_SIZE,
+    (safeRulePage + 1) * FIREWALL_RULE_PAGE_SIZE,
+  );
 
   return (
     <div className="space-y-6">
@@ -1648,18 +2027,46 @@ function FirewallCard() {
       <Card
         title="Allowed sources"
         actions={
-          canManage ? (
-            <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            {canManage && (
+              <>
               {server?.your_ip && (
                 <Btn onClick={() => addRule(`${server.your_ip}/32`, "My current address")}>
                   + Add my IP
                 </Btn>
               )}
-              <Btn variant="primary" onClick={() => setAdding((v) => !v)}>+ Add range</Btn>
-            </div>
-          ) : null
+              <Btn onClick={() => { setImporting((value) => !value); setAdding(false); }}>
+                ⇩ Import list
+              </Btn>
+              <Btn variant="primary" onClick={() => { setAdding((value) => !value); setImporting(false); }}>+ Add range</Btn>
+              </>
+            )}
+            <FirewallExportMenu dirty={dirty} onError={setErr} />
+          </div>
         }
       >
+        {importApplied && (
+          <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            Imported into the draft — review the resulting list and press <strong>Save</strong> to activate it.
+          </div>
+        )}
+
+        {importing && (
+          <FirewallImportPanel
+            mode={mode}
+            rules={rules}
+            onClose={() => setImporting(false)}
+            onApply={(importedRules, context) => {
+              mutate({ rules: importedRules });
+              setImportContext(context);
+              setImportApplied(true);
+              setImporting(false);
+              setRulePage(0);
+              setRuleSearch("");
+            }}
+          />
+        )}
+
         {adding && (
           <div className="mb-4 rounded-lg border border-brand-dark/30 bg-slate-50 p-4">
             <h3 className="mb-3 text-sm font-semibold">New allowed source</h3>
@@ -1708,60 +2115,93 @@ function FirewallCard() {
             your own address first.
           </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-slate-500">
-              <tr className="border-b">
-                <th className="py-1.5 pr-3 font-medium">Range</th>
-                <th className="py-1.5 pr-3 font-medium">Label</th>
-                <th className="py-1.5 pr-3 font-medium">Scope</th>
-                <th className="py-1.5 pr-3 font-medium">Status</th>
-                <th className="py-1.5 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {rules.map((r, i) => (
-                <tr key={`${r.cidr}-${i}`} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="py-1.5 pr-3 font-mono text-slate-700">{r.cidr}</td>
-                  <td className="py-1.5 pr-3 text-slate-600">{r.label}</td>
-                  <td className="py-1.5 pr-3 text-slate-500">{r.scope}</td>
-                  <td className="py-1.5 pr-3">
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-xs ${
-                        r.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {r.enabled ? "Active" : "Disabled"}
-                    </span>
-                  </td>
-                  <td className="py-1.5 text-right">
-                    {canManage && (
-                      <div className="flex justify-end gap-1">
-                        <Btn
-                          variant="ghost"
-                          onClick={() =>
-                            mutate({
-                              rules: rules.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)),
-                            })
-                          }
-                        >
-                          {r.enabled ? "Disable" : "Enable"}
-                        </Btn>
-                        <Btn
-                          variant="danger"
-                          onClick={() => {
-                            if (!confirm(`Remove ${r.cidr} (${r.label})?`)) return;
-                            mutate({ rules: rules.filter((_, j) => j !== i) });
-                          }}
-                        >
-                          Delete
-                        </Btn>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <input
+                value={ruleSearch}
+                onChange={(event) => { setRuleSearch(event.target.value); setRulePage(0); }}
+                aria-label="Search allowed sources"
+                placeholder="Search range, label, scope, or status…"
+                className="w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-dark focus:outline-none"
+              />
+              <span className="text-xs text-slate-500">
+                {filteredRules.length.toLocaleString()} of {rules.length.toLocaleString()} rule(s)
+              </span>
+            </div>
+
+            {visibleRules.length === 0 ? (
+              <p className="rounded border bg-slate-50 px-3 py-4 text-sm text-slate-500">No rules match this search.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-slate-500">
+                    <tr className="border-b">
+                      <th className="py-1.5 pr-3 font-medium">Range</th>
+                      <th className="py-1.5 pr-3 font-medium">Label</th>
+                      <th className="py-1.5 pr-3 font-medium">Scope</th>
+                      <th className="py-1.5 pr-3 font-medium">Status</th>
+                      <th className="py-1.5 font-medium" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRules.map(({ rule: r, index: i }) => (
+                      <tr key={`${r.cidr}-${i}`} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-1.5 pr-3 font-mono text-slate-700">{r.cidr}</td>
+                        <td className="py-1.5 pr-3 text-slate-600">{r.label}</td>
+                        <td className="py-1.5 pr-3 text-slate-500">{r.scope}</td>
+                        <td className="py-1.5 pr-3">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              r.enabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                            }`}
+                          >
+                            {r.enabled ? "Active" : "Disabled"}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-right">
+                          {canManage && (
+                            <div className="flex justify-end gap-1">
+                              <Btn
+                                variant="ghost"
+                                onClick={() =>
+                                  mutate({
+                                    rules: rules.map((item, index) => (index === i ? { ...item, enabled: !item.enabled } : item)),
+                                  })
+                                }
+                              >
+                                {r.enabled ? "Disable" : "Enable"}
+                              </Btn>
+                              <Btn
+                                variant="danger"
+                                onClick={() => {
+                                  if (!confirm(`Remove ${r.cidr} (${r.label})?`)) return;
+                                  mutate({ rules: rules.filter((_, index) => index !== i) });
+                                }}
+                              >
+                                Delete
+                              </Btn>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {rulePageCount > 1 && (
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>
+                  Rules {safeRulePage * FIREWALL_RULE_PAGE_SIZE + 1}–{Math.min((safeRulePage + 1) * FIREWALL_RULE_PAGE_SIZE, filteredRules.length)}
+                </span>
+                <div className="flex gap-1">
+                  <Btn variant="ghost" disabled={safeRulePage === 0} onClick={() => setRulePage(safeRulePage - 1)}>Previous</Btn>
+                  <Btn variant="ghost" disabled={safeRulePage >= rulePageCount - 1} onClick={() => setRulePage(safeRulePage + 1)}>Next</Btn>
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {dirty && (
           <p className="mt-3 text-xs text-amber-700">Unsaved changes — press Save above to apply.</p>

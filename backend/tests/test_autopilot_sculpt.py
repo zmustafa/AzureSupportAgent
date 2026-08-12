@@ -185,6 +185,36 @@ def test_reattach_orphans_joins_parent_rg():
     assert len(groups[0]["members"]) == 2
 
 
+def test_candidate_minimum_uses_post_reattachment_resource_count():
+    groups = [{"name": "Billing", "members": [_r("/1", "web", "microsoft.web/sites", rg="rg-bill")]}]
+    sculpt.reattach_orphans(
+        groups,
+        [_r("/2", "disk", "microsoft.compute/disks", rg="rg-bill")],
+    )
+    candidate = ap._candidate(
+        groups[0], {"provenance": {}, "private_endpoints": [], "network": {}}
+    )
+    meta = ap._candidate_size_meta([candidate], 2)
+    assert candidate["resource_count"] == 2
+    assert meta["below_minimum_workloads"] == 0
+
+
+def test_candidate_size_metadata_clamps_and_never_filters_input():
+    candidates = [
+        {"name": "one", "resource_count": 1},
+        {"name": "five", "resource_count": 5},
+    ]
+    meta = ap._candidate_size_meta(candidates, 5)
+    assert len(candidates) == 2
+    assert meta == {
+        "min_candidate_resources": 5,
+        "below_minimum_workloads": 1,
+        "below_minimum_resources": 1,
+    }
+    assert ap._candidate_size_meta(candidates, 0)["min_candidate_resources"] == 1
+    assert ap._candidate_size_meta(candidates, 50_000)["min_candidate_resources"] == 5_000
+
+
 # --------------------------------------------------------------------- aggregated grouping
 def test_build_units_resource_group():
     res = [
@@ -273,13 +303,59 @@ def test_compute_estimate_returns_none_on_cache_miss():
     assert ap.compute_estimate("nope", "nope", "subscription", "missing", {}) is None
 
 
+def test_discovery_stream_keeps_undersized_candidates_and_reports_threshold(monkeypatch):
+    key = ap._survey_key("t-size", "c-size", "subscription", "s-size")
+    resources = [
+        _r("/small", "small", "microsoft.web/sites", rg="rg-small"),
+        *[
+            _r(f"/large-{i}", f"large-{i}", "microsoft.web/sites", rg="rg-large")
+            for i in range(5)
+        ],
+    ]
+    ap._survey_cache_put(key, resources, False)
+
+    async def _subs(*_args, **_kwargs):
+        return ["s-size"], None
+
+    async def _signals(*_args, **_kwargs):
+        return {"provenance": {}, "private_endpoints": [], "network": {}}
+
+    monkeypatch.setattr(ap, "_resolve_subs", _subs)
+    monkeypatch.setattr(ap.discovery, "gather_signals", _signals)
+
+    async def collect():
+        return [
+            event
+            async for event in ap.discover_workloads(
+                {"id": "c-size", "tenant_id": "t-size", "display_name": "Size test"},
+                "subscription",
+                "s-size",
+                "Size subscription",
+                strategy="resource_group",
+                exclude_noise=False,
+                exclude_system_rgs=False,
+                min_candidate_resources=5,
+            )
+        ]
+
+    events = asyncio.run(collect())
+    streamed = [event["candidate"] for event in events if event["type"] == "candidate"]
+    done = next(event for event in events if event["type"] == "done")
+    assert sorted(c["resource_count"] for c in streamed) == [1, 5]
+    assert len(done["candidates"]) == 2
+    assert done["meta"]["min_candidate_resources"] == 5
+    assert done["meta"]["below_minimum_workloads"] == 1
+    ap._survey_cache.pop(key, None)
+
+
 # --------------------------------------------------------------------- profiles
 def test_profiles_save_list_update_delete(tmp_path, monkeypatch):
     monkeypatch.setattr(dp, "_PATH", tmp_path / "profiles.json")
-    p = dp.save_profile("t1", "c1", name="Prod fast", config={"preset": "fast", "granularity": "resource_group", "bogus": 1}, scope_kind="subscription", scope_id="s1")
+    p = dp.save_profile("t1", "c1", name="Prod fast", config={"preset": "fast", "granularity": "resource_group", "min_candidate_resources": 5, "bogus": 1}, scope_kind="subscription", scope_id="s1")
     assert p["name"] == "Prod fast"
     assert "bogus" not in p["config"]          # sanitized away
     assert p["config"]["preset"] == "fast"
+    assert p["config"]["min_candidate_resources"] == 5
 
     listed = dp.list_profiles("t1", "c1")
     assert len(listed) == 1 and listed[0]["id"] == p["id"]
@@ -295,3 +371,11 @@ def test_profiles_save_list_update_delete(tmp_path, monkeypatch):
     assert dp.delete_profile("t1", "c1", p["id"]) is True
     assert dp.list_profiles("t1", "c1") == []
     assert dp.delete_profile("t1", "c1", "missing") is False
+
+
+def test_profile_minimum_is_clamped_and_invalid_values_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(dp, "_PATH", tmp_path / "profiles.json")
+    high = dp.save_profile("t1", "c1", name="High", config={"min_candidate_resources": 99_999})
+    bad = dp.save_profile("t1", "c1", name="Bad", config={"min_candidate_resources": "not-a-number"})
+    assert high["config"]["min_candidate_resources"] == 5_000
+    assert bad["config"]["min_candidate_resources"] == 1

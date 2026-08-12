@@ -62,6 +62,7 @@ exclude:
   - deck-assets
   - improvement-plans
   - test-findings
+  - usecase-assets
   - usecase-render
   - ARCHITECTURES_FEATURE.md
   - ARCHITECTURES_TEST_PLAN.md

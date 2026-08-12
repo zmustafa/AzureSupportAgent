@@ -142,6 +142,42 @@ def delete_workload(workload_id: str) -> bool:
     return True
 
 
+def delete_workloads(workload_ids: list[str]) -> dict[str, Any]:
+    """Soft-delete many workloads with one registry read and at most one atomic write.
+
+    IDs are de-duplicated in request order. Missing and already-trashed definitions are
+    reported as counts rather than turning a concurrent partial change into an all-or-nothing
+    failure. This modifies only local workload definitions; Azure resources are never touched.
+    """
+    ids = list(dict.fromkeys(wid.strip() for wid in workload_ids if wid and wid.strip()))
+    data = _read()
+    workloads = data.get("workloads", {})
+    deleted_ids: list[str] = []
+    already_trashed = 0
+    not_found = 0
+    stamp = _now()
+    for wid in ids:
+        wl = workloads.get(wid)
+        if wl is None:
+            not_found += 1
+            continue
+        if wl.get("deleted_at"):
+            already_trashed += 1
+            continue
+        wl["deleted_at"] = stamp
+        wl["updated_at"] = stamp
+        deleted_ids.append(wid)
+    if deleted_ids:
+        _write(data)
+    return {
+        "requested": len(ids),
+        "deleted": len(deleted_ids),
+        "already_trashed": already_trashed,
+        "not_found": not_found,
+        "deleted_ids": deleted_ids,
+    }
+
+
 def restore_workload(workload_id: str) -> dict[str, Any] | None:
     """Restore a trashed workload back into the active list."""
     data = _read()

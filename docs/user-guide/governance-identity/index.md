@@ -32,6 +32,7 @@ These views combine Azure Resource Manager, Policy Insights, and Microsoft Graph
 | [Guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) | Review the external population as a lifecycle, roll it up per partner organisation, and see which partners no cross-tenant policy names. |
 | [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) | Trace derived escalation paths from an entry point to tenant-level power. |
 | [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/) | Work the inbox, run proactive scanners, and apply finding workflow state. |
+| [Investigate a principal]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/) | Correlate one identity's cached access and findings, inspect an explicit warning when an account is disabled, request audited activity, and export provenance. |
 
 ### IAM deep dives
 

@@ -102,6 +102,58 @@ Each rule is a single IP address or a CIDR range, IPv4 or IPv6, with a required 
 - A rule permitting every address (`0.0.0.0/0` or `::/0`) is rejected in Enforce mode, because
   it would silently turn enforcement into a no-op while the screen still read "Enforcing".
 
+### Bulk import
+
+Select **Import list** to paste a list or choose a UTF-8 `.txt`/`.csv` file. Import is always a
+two-step operation: **Preview import** validates and calculates the result, then **Apply to
+draft** changes only the browser draft. Nothing becomes active until the ordinary **Save** button
+is pressed, so the self-IP guard, typed `ENFORCE` confirmation, audit event and commit-confirm
+timer cannot be bypassed by bulk import.
+
+TXT input contains one IPv4/IPv6 address or CIDR per line. Blank lines and lines beginning with
+`#` are ignored. A bare address is normalized to `/32` or `/128`, and the default label is applied
+to every row.
+
+```text
+# Corporate egress
+20.118.190.135/32
+156.20.174.0/24
+2001:db8:100::/48
+```
+
+CSV uses the following round-trip format. `label` and `enabled` are optional; a blank label uses
+the default label and a blank enabled value means active.
+
+```csv
+cidr,label,enabled
+20.118.190.135/32,Head office,true
+156.20.174.0/24,Legacy VPN,false
+```
+
+The preview reports invalid lines with their line numbers, canonicalization, duplicates,
+existing ranges skipped during a merge, ranges added/retained/removed, overlaps and whether the
+result still covers the administrator's current address. Invalid or duplicate input blocks
+**Apply to draft**; overlaps are warnings and both ranges are retained.
+
+- **Merge** keeps every existing rule. When an imported CIDR already exists, the existing label
+  and enabled state win and the imported row is reported as skipped.
+- **Replace** makes the imported list authoritative and reports which existing rules will be
+  removed. An empty replacement is rejected. Replace does not bypass the Enforce self-IP guard.
+- Imports are limited to 1 MiB, 1,024 characters per physical line and 5,000 resulting rules.
+  DNS names, wildcards and start/end range notation are not accepted.
+
+### Export
+
+The **Export** menu always exports the saved server policy, not unsaved browser changes:
+
+- **Active ranges — TXT** downloads one active canonical CIDR per line. Disabled rules and labels
+  are omitted, making the file suitable for tools that accept a flattened allowlist.
+- **All rules — CSV** downloads `cidr`, `label` and `enabled`, including disabled rules, and can be
+  imported back into this screen. Labels are neutralized against spreadsheet formula execution.
+
+Users with `firewall.read` can export because the file contains the same policy they can already
+view. Import preview and Save require `firewall.manage`.
+
 ## Health probes are never blocked
 
 `/healthz`, `/readyz` and `/version` are always reachable. Blocking the platform's health probes
@@ -168,6 +220,17 @@ The policy is included in [Backup & Restore]({{ site.baseurl }}/admin/backup-dem
 policy that was set to Enforce is restored as **Monitor**: a backup carries the *original*
 deployment's ranges, which may not include whoever is performing the restore. The rules are
 preserved so they can be reviewed and enforced deliberately.
+
+## Troubleshooting
+
+| Symptom | Cause and resolution |
+| --- | --- |
+| **Apply to draft** stays disabled after preview | One or more import rows is invalid or duplicated after CIDR normalization, or Replace contains no valid range. Use the line-numbered diagnostics, correct every invalid row, and preview again. Overlap warnings alone do not block apply. |
+| Preview warns that the current address is not covered | The calculated draft omits the address resolved by the server. You may inspect or apply the draft, but Enforce-mode Save remains blocked; add a covering enabled range or use **+ Add my IP**, then preview/save again. |
+| A CSV row is rejected at `enabled` | Use `true`/`false`, `yes`/`no`, `1`/`0`, or `enabled`/`disabled`. A blank value means enabled. |
+| A downloaded export omits recent edits | Export reads the saved server policy, never the browser draft. Save the draft successfully, then export again. |
+| Import reports more removals than expected | **Replace** makes the imported list authoritative. Switch to **Merge**, or add the missing saved ranges to the input before applying. |
+| The allowed-source table appears empty after import | A search filter can hide every rule. Clear **Search allowed sources**; the count beside it reports filtered versus total rules. |
 
 ## Related docs
 

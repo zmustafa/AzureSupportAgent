@@ -62,12 +62,34 @@ Open `/workloads`.
 
 **Verification:** Confirm active/trash lists, merged membership, and downstream links before permanent deletion.
 
+## How to bulk move workloads to Trash
+
+1. Use the **Resources min–max** filter to isolate small definitions; for example, maximum `4`
+	shows workloads containing fewer than five resources. Combine it with search, classification,
+	group, or fleet filters as needed.
+2. Select individual workloads, or choose **Select all shown**. Selection persists when changing
+	cards/table/board/map views and when filters hide rows, so review the selected count—not only
+	the visible cards.
+3. Select **Move N to Trash**. A single operation supports up to 500 workloads.
+4. Review the confirmation: workload count, represented resource count, names, and grouped-workload
+	warning. Confirm only after verifying the intended set.
+5. Open **Trash** to restore accidental removals. Group associations and dependent historical
+	records remain intact; only the active workload definitions were hidden.
+
+**Expected result:** The selected definitions leave every active fleet view and appear in Trash.
+Azure resources, architectures, Know-Me, FMEA, assessments, missions, evidence, and audit history
+are not deleted.
+
+**Verification:** Restore one workload and confirm its membership and group association return.
+Audit shows one `workloads.bulk_trash` entry with deleted/already-trashed/not-found counts.
+
 ## Safety and rollback
 
 - Fleet and profile views are cache reads, not live scans.
 - Membership edits change downstream assessment, coverage, cost, ownership, and investigation scope.
 - Manual save changes only the application registry; it does not move or tag Azure resources.
 - Normal delete is reversible. Merge has no one-click undo; sources remain in Trash until purged. Purge and empty-trash are permanent.
+- Bulk delete is the same reversible soft-delete as single delete. It never calls an Azure deletion API.
 - Never include secrets in names, descriptions, or tags.
 
 ## Troubleshooting
@@ -79,6 +101,10 @@ Open `/workloads`.
 | Picker returns no resources | Check connection, scope, Reader access, and Resource Graph capability. |
 | Resource count is surprising | Inspect broad scope nodes and exclusions, then run overlap analysis. |
 | Merge is wrong | Inspect the merged record and restore sources from Trash before purging anything. |
+| Bulk Trash is disabled | No workloads are selected, the operation is running, or more than 500 are selected. Narrow the selection. |
+| Fewer workloads moved than requested | Some selected IDs were already in Trash or disappeared concurrently; review the result banner. |
+| The resource-count filter returns nothing | Clear the values or ensure the inclusive minimum is not greater than the maximum. |
+| The selected count exceeds visible cards | Selections survive layout and filter changes. Select **Clear** or **Deselect all**, then rebuild the reviewed selection. |
 
 ## Related docs
 

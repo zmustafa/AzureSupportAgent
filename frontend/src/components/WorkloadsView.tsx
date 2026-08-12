@@ -577,6 +577,8 @@ export function WorkloadsPanel() {
     (localStorage.getItem("azsup.workloads.view") as "cards" | "table" | "board" | "map") || "cards");
   const [fleetFilter, setFleetFilter] = useState<string>("");  // category/env filter from cockpit
   const [search, setSearch] = useState<string>("");  // free-text filter over name/description/tags/type
+  const [minResources, setMinResources] = useState<string>(() => localStorage.getItem("azsup.workloads.minResources") || "");
+  const [maxResources, setMaxResources] = useState<string>(() => localStorage.getItem("azsup.workloads.maxResources") || "");
   // Sort + faceted classification filter (persisted so the choice sticks across visits).
   const [sortKey, setSortKey] = useState<string>(() => localStorage.getItem("azsup.workloads.sort") || "");
   const setSort = (k: string) => { setSortKey(k); localStorage.setItem("azsup.workloads.sort", k); };
@@ -723,6 +725,12 @@ export function WorkloadsPanel() {
   // Resource count for sorting: prefer the profile's true total, else count resource nodes.
   const resourceCount = (w: Workload): number =>
     profileById[w.id]?.composition.total ?? (w.nodes || []).filter((n) => n.kind === "resource").length;
+  const matchesResourceCount = (w: Workload): boolean => {
+    const count = resourceCount(w);
+    const minimum = minResources === "" ? null : Math.max(0, Number(minResources) || 0);
+    const maximum = maxResources === "" ? null : Math.max(0, Number(maxResources) || 0);
+    return (minimum === null || count >= minimum) && (maximum === null || count <= maximum);
+  };
   const ts = (s?: string): number => (s ? new Date(s).getTime() || 0 : 0);
   // Apply the chosen sort. "" keeps the backend order (table view still triages by health).
   const sortWorkloads = (list: Workload[]): Workload[] => {
@@ -752,7 +760,7 @@ export function WorkloadsPanel() {
     return w.group_id === groupFilter;
   };
   const visibleWorkloads = sortWorkloads(
-    workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w) && matchesClass(w) && matchesGroup(w)),
+    workloads.filter((w) => matchesFleetFilter(profileById[w.id], fleetFilter) && matchesSearch(w) && matchesClass(w) && matchesGroup(w) && matchesResourceCount(w)),
   );
 
   const setViewMode = (v: "cards" | "table" | "board" | "map") => {
@@ -832,6 +840,7 @@ export function WorkloadsPanel() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [launchingMissions, setLaunchingMissions] = useState(false);
   const [launchingDeepReviews, setLaunchingDeepReviews] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const toggleSelected = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -870,6 +879,54 @@ export function WorkloadsPanel() {
       setMsg(formatError(e));
     } finally {
       setLaunchingDeepReviews(false);
+    }
+  }
+
+  async function bulkTrashSelected() {
+    if (selected.size === 0 || bulkDeleting) return;
+    if (selected.size > 500) {
+      setMsg("Bulk Trash supports at most 500 workloads at a time. Narrow the selection and try again.");
+      return;
+    }
+    const chosen = workloads.filter((workload) => selected.has(workload.id));
+    const totalResources = chosen.reduce((total, workload) => total + resourceCount(workload), 0);
+    const groupedCount = chosen.filter((workload) => !!workload.group_id).length;
+    const names = chosen.slice(0, 10).map((workload) => `• ${workload.name}`).join("\n");
+    const more = chosen.length > 10 ? `\n• …and ${chosen.length - 10} more` : "";
+    const grouped = groupedCount > 0
+      ? `\n${groupedCount} selected workload${groupedCount === 1 ? " belongs" : "s belong"} to workload groups; those associations are preserved for restore.`
+      : "";
+    if (!window.confirm(
+      `Move ${chosen.length} workload${chosen.length === 1 ? "" : "s"} (${totalResources} resources represented) to Trash?\n\n` +
+      `${names}${more}${grouped}\n\nAzure resources are NOT modified. Workload definitions remain restorable from Trash.`,
+    )) return;
+
+    setBulkDeleting(true);
+    setMsg("");
+    setNotice("");
+    try {
+      const result = await api.bulkTrashWorkloads([...selected]);
+      setSelected(new Set());
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["workloads"] }),
+        qc.invalidateQueries({ queryKey: ["workloadsTrash"] }),
+        qc.invalidateQueries({ queryKey: ["workloadProfiles"] }),
+        qc.invalidateQueries({ queryKey: ["workloadGroups"] }),
+        qc.invalidateQueries({ queryKey: ["workloadGroupSuggest"] }),
+        qc.invalidateQueries({ queryKey: ["workloadOverlaps"] }),
+        qc.invalidateQueries({ queryKey: ["estate-coverage"] }),
+      ]);
+      const skipped = result.already_trashed + result.not_found;
+      setNotice(
+        `Moved ${result.deleted} workload${result.deleted === 1 ? "" : "s"} to Trash.` +
+        (skipped > 0
+          ? ` ${result.already_trashed} already trashed; ${result.not_found} no longer found.`
+          : " You can restore them from the Trash view."),
+      );
+    } catch (error) {
+      setMsg(formatError(error));
+    } finally {
+      setBulkDeleting(false);
     }
   }
 
@@ -1009,7 +1066,10 @@ export function WorkloadsPanel() {
               🧩 Overlaps{overlapCount > 0 ? ` (${overlapCount})` : ""}
             </button>
             <button
-              onClick={() => setShowTrash((s) => !s)}
+              onClick={() => {
+                setShowTrash((s) => !s);
+                setSelected(new Set());
+              }}
               className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${
                 showTrash ? "border-gray-400 bg-gray-100 text-gray-800" : "border-gray-300 text-gray-600 hover:bg-gray-50"
               }`}
@@ -1094,7 +1154,7 @@ export function WorkloadsPanel() {
           <FleetCockpit profiles={profilesQ.data!.profiles} onFilter={setFleetFilter} activeFilter={fleetFilter} />
         )}
 
-        {selected.size > 0 && (
+        {!showTrash && selected.size > 0 && (
           <div className="flex items-center gap-3 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-sm">
             <span className="font-medium text-brand">{selected.size} selected</span>
             <button onClick={launchFleet} disabled={launchingMissions} className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
@@ -1115,6 +1175,14 @@ export function WorkloadsPanel() {
             )}
             <button onClick={() => setGrouping(true)} className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50" title="Group the selected workloads as one application / service family (they stay separate — this is not a merge)">
               ⊞ Group{selected.size > 1 ? ` ${selected.size}` : ""}
+            </button>
+            <button
+              onClick={() => void bulkTrashSelected()}
+              disabled={bulkDeleting || selected.size > 500}
+              className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+              title={selected.size > 500 ? "Select at most 500 workloads per bulk operation" : "Move selected workload definitions to Trash; Azure resources are untouched"}
+            >
+              {bulkDeleting ? "Moving to Trash…" : `🗑 Move ${selected.size} to Trash`}
             </button>
             <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
           </div>
@@ -1189,6 +1257,48 @@ export function WorkloadsPanel() {
                 <button onClick={() => setSearch("")} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
               )}
             </div>
+            <label className="inline-flex items-center gap-1 text-xs text-gray-500" title="Show workloads with at least this many resources">
+              <span>Resources</span>
+              <input
+                type="number"
+                min={0}
+                value={minResources}
+                onChange={(e) => {
+                  setMinResources(e.target.value);
+                  localStorage.setItem("azsup.workloads.minResources", e.target.value);
+                }}
+                placeholder="min"
+                aria-label="Minimum workload resources"
+                className="w-16 rounded-lg border px-1.5 py-1 text-xs"
+              />
+              <span>–</span>
+              <input
+                type="number"
+                min={0}
+                value={maxResources}
+                onChange={(e) => {
+                  setMaxResources(e.target.value);
+                  localStorage.setItem("azsup.workloads.maxResources", e.target.value);
+                }}
+                placeholder="max"
+                aria-label="Maximum workload resources"
+                className="w-16 rounded-lg border px-1.5 py-1 text-xs"
+              />
+              {(minResources || maxResources) && (
+                <button
+                  onClick={() => {
+                    setMinResources("");
+                    setMaxResources("");
+                    localStorage.removeItem("azsup.workloads.minResources");
+                    localStorage.removeItem("azsup.workloads.maxResources");
+                  }}
+                  title="Clear resource-count filter"
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              )}
+            </label>
             {/* Sort — affects cards, table, board and map. */}
             <label className="inline-flex items-center gap-1 text-xs text-gray-500">
               <span className="text-gray-400">↕</span>
