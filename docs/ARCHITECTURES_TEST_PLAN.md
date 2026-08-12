@@ -7,11 +7,11 @@
 
 ## 1. Surface Under Test
 
-Backend: `app/api/architectures.py`, `app/architectures/{registry,memory,revisions,memory_revisions,catalog,collections,activity,jobs,layout,designer,reverse}.py`.
+Backend: `app/api/architectures.py`, `app/core/retail_prices.py`, `app/architectures/{registry,memory,revisions,memory_revisions,catalog,collections,activity,jobs,layout,designer,reverse,pricing}.py`.
 Frontend: `ArchitecturesView.tsx`, `ArchitectureCanvas.tsx`, `ArchitectureMemoryView.tsx`, `AIDesigner.tsx`, `api.ts` clients.
 
 Data shapes:
-- Node: `{id, arm_id, name, type, category, layer, resource_group, subscription_id, location, sku, meta, group_id, x, y}`
+- Node: `{id, arm_id, name, type, category, layer, resource_group, subscription_id, location, sku, pricing_hint, meta, group_id, x, y}`
 - Edge: `{id, source, target, label, kind, dashed}` (kind in depends_on|connects_to|data_flow|network|identity|monitors)
 - Group: `{id, name, kind, color, x, y, w, h}` (kind in subscription|resource_group|vnet|tier|custom)
 - Lifecycle state: draft -> in_review -> ready; archived (restorable).
@@ -120,6 +120,24 @@ Data shapes:
 65. Memory generate (AI) status->done (if provider available) or graceful error.
 66. History tab: preview + restore a revision.
 67. Workload link/unlink from editor.
+
+### 2.13 Azure Retail Prices
+
+68. Filter construction escapes OData literals and never accepts a raw caller expression.
+69. Consumption rows normalize the observed API shape; Reservation/malformed rows are dropped.
+70. Pagination follows `NextPageLink` only on HTTPS `prices.azure.com`; foreign hosts fail closed.
+71. Transient 429/5xx responses retry within a bounded delay; terminal errors remain generic.
+72. Exact region/SKU/OS matching chooses one retail SKU group; license variants stay ambiguous without OS facts.
+73. One fixed hourly meter uses `retailPrice × 730 × known quantity`.
+74. VM scale-set monthly baseline requires captured capacity.
+75. Usage, storage, transfer, operations, token, and multi-component meters never receive invented monthly quantities.
+76. Reservation rows cannot enter node projection even if a malformed upstream page includes one.
+77. Conceptual, no-direct-meter, unmatched, ambiguous, and unavailable nodes have distinct states and no false zero.
+78. Cache hit, forced refresh, stale fallback, corruption recovery, and complete outage are labelled.
+79. Currency is explicit on response, node, component, badge, total, and tooltip.
+80. Tenant/permission checks for `/{id}/pricing` match architecture reads.
+81. Browser flow verifies load, currency refetch, fixed badge, usage state, ambiguous meter selection, refresh, stale/error state, and no canvas crash.
+82. Live operator audit enumerates the ARM provider catalog and sends every mapped retail service through the production payload parser.
 
 ## 3. Execution Strategy
 

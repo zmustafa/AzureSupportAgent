@@ -51,9 +51,29 @@ The canvas is a visual editor for nodes, edges, groups, labels, and layout. Avai
 - undo or redo local canvas changes;
 - run design lint checks and inspect drift where available;
 - open resource-specific network or DNS diagnostic actions where supported;
+- enable **Azure view** to load current Azure Retail Prices in a selected currency;
 - save the diagram and open its **Memory**.
 
 Treat generated nodes and edges as proposals. Verify identity, direction, and dependency meaning against deployment definitions and service owners before publishing the diagram.
+
+## Azure Retail Prices on the canvas
+
+**Azure view** retrieves public list rates from `https://prices.azure.com/api/retail/prices` through the backend. The browser never constructs an OData filter or calls the pricing service directly. Use the currency selector beside **Azure view** to request a supported currency, and use refresh to bypass the seven-day local rate cache.
+
+Each resource receives an explicit pricing state:
+
+| State | Meaning |
+|---|---|
+| Fixed monthly baseline | One verified fixed hourly or monthly meter matched the resource. Hourly rates use 730 hours per month. |
+| Usage required | Azure returned a usage rate, but operations, storage, transfer, tokens, duration, throughput, or another quantity is required. |
+| Choose meter | More than one retail SKU group matches. Add an OS/tier fact or select the correct meter in the resource inspector, save, and refresh. |
+| No direct meter | The node is a free/control-plane object or its charges accrue to another resource, such as an App Service plan or SQL database. |
+| Not priced | The ARM type, region, or SKU cannot be mapped safely. No fallback amount is invented. |
+| Price unavailable | The public API and any stale cache could not supply a complete result. Other Azure-view overlays continue to work. |
+
+The toolbar total is labelled **Known baseline** and sums only deterministic fixed components. It also reports pricing coverage. It does not add unrelated component meters or estimate missing usage. Node tooltips and the inspector show service, product, SKU, meter, unit, effective date, currency, source, confidence, and stale state.
+
+Retail pricing is not an invoice or Cost Management result. It excludes negotiated EA/MCA rates, reservations, Savings Plans, Azure Hybrid Benefit unless specifically identified, free grants, taxes, and actual usage. Use Azure Cost Management for actual billed spend; do not compare the retail baseline with an invoice as if they were equivalent.
 
 ## Workflows
 
@@ -109,6 +129,10 @@ Architectures integrate with:
 | Save conflict or stale canvas | Reload the latest diagram before reapplying edits; avoid editing the same diagram in multiple tabs. |
 | Diagram differs from Estate Graph | Compare source freshness and scope; the graph also combines cached inventory and other records. |
 | Memory is stale | Open Memory and regenerate after reviewing the updated diagram. |
+| Price says **Choose meter** | Select the resource, review the candidate product/SKU groups, choose the verified meter, save, and refresh. |
+| Price says **Not priced** | Confirm the node has a real ARM ID, exact ARM type, Azure region, and SKU. Unsupported types remain explicitly unmatched. |
+| Price says **Usage required** | Supply the relevant usage through a future cost model or use Cost Management; the canvas intentionally does not invent it. |
+| Retail refresh fails | Keep using the diagram; stale cached rates are labelled, and reachability/hosting overlays remain independent. |
 
 ## Related docs
 

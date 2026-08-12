@@ -14,13 +14,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.architectures import catalog
 from app.architectures import registry as arch_registry
-from app.core.azure_connections import resolve_connection
+from app.core.azure_connections import get_connection, resolve_connection
 from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
 from app.workloads.registry import get_workload, list_workloads
@@ -79,6 +79,7 @@ class ArchNode(BaseModel):
     subscription_id: str = ""
     location: str = ""
     sku: str = ""
+    pricing_hint: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)
     group_id: str = ""
     x: float = 0.0
@@ -505,6 +506,36 @@ async def purge_know_me_orphan_endpoint(architecture_id: str, principal: Princip
         raise HTTPException(status_code=404, detail="No orphaned Know-Me data found for that architecture.")
     return {"ok": True, "purged_documents": purged_docs}
 
+
+
+@router.get("/{architecture_id}/pricing")
+async def get_architecture_pricing_endpoint(
+    architecture_id: str,
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+    force: bool = Query(default=False),
+    principal: Principal = Depends(get_principal),
+):
+    """Current public Azure retail/list rates for every node in one architecture."""
+    from app.architectures.pricing import price_architecture
+    from app.backup_manager.costmgmt import known_currency
+
+    arch = _tenant_arch_or_404(architecture_id, principal)
+    resolved_currency = str(currency or "").strip().upper()
+    if not resolved_currency:
+        connection = get_connection(str(arch.get("connection_id") or ""))
+        resolved_currency = (
+            known_currency(connection, tenant_id=principal.tenant_id) if connection else ""
+        ) or "USD"
+    try:
+        return await price_architecture(arch, resolved_currency, force=force)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Currency must be a three-letter code such as USD or EUR.",
+        ) from None
+    except Exception as exc:  # noqa: BLE001 - public route collapses provider/cache failures
+        logger.debug("Architecture retail pricing failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Retail pricing is temporarily unavailable.") from None
 
 
 @router.get("/{architecture_id}")

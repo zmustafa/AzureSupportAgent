@@ -29,7 +29,7 @@ DEFAULTS: dict[str, Any] = {
     "source": "manual",  # manual | ai
     "state": "draft",  # draft | in_review | ready | archived
     "category_id": "",  # solution/collection id (empty = Uncategorized)
-    "nodes": [],   # [{id, arm_id, name, type, category, layer, resource_group, subscription_id, location, sku, meta, group_id, x, y}]
+    "nodes": [],   # [{id, arm_id, name, type, category, layer, resource_group, subscription_id, location, sku, pricing_hint, meta, group_id, x, y}]
     "edges": [],   # [{id, source, target, label, kind, dashed}]
     "groups": [],  # [{id, name, kind, color, x, y, w, h}]
     "ai": {},      # {model, generated_at, rationale, confidence, resource_count}

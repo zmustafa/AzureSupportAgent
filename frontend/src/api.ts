@@ -5825,6 +5825,10 @@ export const api = {
   architectureCatalog: () => http<ArchitectureCatalog>("/architectures/catalog"),
   architectures: () => http<{ architectures: Architecture[] }>("/architectures"),
   architecture: (id: string) => http<{ architecture: Architecture }>(`/architectures/${id}`),
+  architecturePricing: (id: string, currency = "", force = false) =>
+    http<ArchitecturePricing>(
+      `/architectures/${encodeURIComponent(id)}/pricing?${currency ? `currency=${encodeURIComponent(currency)}&` : ""}${force ? "force=true" : "force=false"}`,
+    ),
   upsertArchitecture: (body: Partial<Architecture>) =>
     http<{ architecture: Architecture }>("/architectures", {
       method: "PUT",
@@ -13954,6 +13958,7 @@ export interface ArchNode {
   subscription_id: string;
   location: string;
   sku: string;
+  pricing_hint?: Record<string, unknown>;
   meta: Record<string, string>;
   group_id: string;
   x: number;
@@ -14004,6 +14009,68 @@ export interface Architecture {
   updated_by?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export type ArchitecturePriceStatus =
+  | "priced_monthly"
+  | "rate_only"
+  | "free"
+  | "ambiguous"
+  | "unmatched"
+  | "not_applicable"
+  | "unavailable";
+
+export interface ArchitecturePriceComponent {
+  meter_id: string;
+  service_name: string;
+  product_name: string;
+  sku_name: string;
+  meter_name: string;
+  retail_price: number;
+  unit_of_measure: string;
+  effective_start_date: string;
+  fixed_baseline: boolean;
+}
+
+export interface ArchitecturePriceCandidate {
+  meter_id: string;
+  product_name: string;
+  sku_name: string;
+  component_count: number;
+  components: ArchitecturePriceComponent[];
+}
+
+export interface ArchitectureNodePrice {
+  node_id: string;
+  arm_type: string;
+  status: ArchitecturePriceStatus;
+  currency: string;
+  region: string;
+  monthly_estimate: number | null;
+  quantity: number | null;
+  confidence: "none" | "low" | "medium" | "high";
+  components: ArchitecturePriceComponent[];
+  candidates: ArchitecturePriceCandidate[];
+  reason: string;
+  stale: boolean;
+}
+
+export interface ArchitecturePricing {
+  architecture_id: string;
+  source: "azure_retail_prices";
+  currency: string;
+  as_of: string;
+  monthly_hours: number;
+  stale: boolean;
+  partial: boolean;
+  error: string;
+  nodes: ArchitectureNodePrice[];
+  summary: {
+    known_fixed_monthly: number;
+    node_count: number;
+    covered_count: number;
+    counts: Partial<Record<ArchitecturePriceStatus, number>>;
+  };
 }
 
 export type ArchitectureState = "draft" | "in_review" | "ready" | "archived";

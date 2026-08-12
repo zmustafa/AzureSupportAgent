@@ -68,6 +68,7 @@ Node {
   category,               // compute|web|data|networking|security|integration|ai|monitoring|identity|storage|other
   layer,                  // edge|presentation|application|data|integration|networking|security|shared
   resource_group, subscription_id, location, sku,
+  pricing_hint: { sku, tier, capacity, os_type, kind, disk_size_gb, meter_id? },
   meta: { string: string },   // 3–6 key facts shown on the card (tier, capacity, ...)
   group_id,               // optional parent group
   x, y                    // canvas position
@@ -113,6 +114,13 @@ New package `backend/app/architectures/`:
 - **`layout.py`** — lightweight layered auto‑layout: assign each node a layer (by tier,
   else topological depth), spread nodes horizontally per layer, stack groups; returns
   `(x,y)` per node and group rectangles. Used for AI output and a manual "Tidy" button.
+- **`pricing.py`** — maps verified ARM resource families to Azure Retail Prices services,
+  matches region/SKU/OS and optional meter overrides, distinguishes fixed baselines from
+  usage rates, and emits an explicit terminal state for every node. Raw rates are cached
+  for seven days; no hardcoded price is used as a fallback.
+- **`app/core/retail_prices.py`** — shared bounded client for the public Retail Prices API:
+  encoded server-generated OData filters, Consumption-only rows, strict shape normalization,
+  retry for transient throttling, host-pinned `NextPageLink`, and page/item limits.
 
 New API `backend/app/api/architectures.py` (prefix `/architectures`, `Depends(get_principal)`):
 
@@ -121,6 +129,7 @@ New API `backend/app/api/architectures.py` (prefix `/architectures`, `Depends(ge
 | `GET /catalog` | category meta + palette (for the manual builder) |
 | `GET ""` | list architectures (tenant‑scoped) |
 | `GET /{id}` | one architecture |
+| `GET /{id}/pricing?currency=USD&force=false` | authoritative list-rate states for every node |
 | `PUT ""` | upsert (manual saves) |
 | `DELETE /{id}` | delete |
 | `POST /from-workload` (SSE) | reverse‑engineer: stream status → dump → AI → `done{architecture}` |
@@ -150,13 +159,14 @@ never bloats the main bundle.
   - **Editor view** (`/architectures/:id`) — the canvas.
 - **`ArchitectureCanvas.tsx`** — React Flow canvas:
   - **Custom Azure node** — a card with the resource's `AzureIcon`, friendly type, name,
-    SKU/tier chips and key `meta`; colored by `category`; connect handles on all sides.
+    SKU/tier chips, key `meta`, and an Azure Retail Prices state; colored by `category`;
+    connect handles on all sides.
   - **Group nodes** — translucent containers (subscription/RG/VNet/tier) behind resources.
   - **Edges** — labeled, styled by `kind` (solid network vs dashed logical), arrowheads.
   - **Left palette** — searchable list of Azure resource types (from `/catalog`), drag onto
     canvas to add a node. Grouped by category with icons.
   - **Inspector** (right) — edit selected node (name, type, tier, meta) or edge (label,
-    kind, dashed); delete.
+    kind, dashed); review price provenance/components and select an ambiguous meter; delete.
   - **Toolbar** — Save, **Tidy** (auto‑layout), **✨ AI generate/enhance**, **Export**
     (PNG / SVG / JSON / Mermaid), fit‑view, minimap toggle.
   - **AI** — "Generate from workload" opens a workload picker → calls the SSE endpoint with
@@ -194,3 +204,8 @@ never bloats the main bundle.
 - AI output is **validated/normalized** server‑side (enum clamps, drop dangling edges) so a
   bad LLM response can't corrupt the canvas.
 - The AI never executes anything — it only returns a diagram description.
+- Retail Prices calls are unauthenticated and server-side. Currency and filter values are
+  bounded, Reservation rows are excluded, paging is host-pinned, and provider exceptions
+  collapse to static availability states.
+- A monthly amount is calculated only for one verified fixed meter with known quantity.
+  Usage-priced resources expose rates/units without fabricated consumption.

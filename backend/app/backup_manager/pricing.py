@@ -27,12 +27,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
+from app.core.retail_prices import fetch_retail_prices
 
 log = logging.getLogger("app.backup_manager.pricing")
 
-RETAIL_API = "https://prices.azure.com/api/retail/prices"
-RETAIL_API_VERSION = "2023-01-01-preview"
 BACKUP_SERVICE = "Backup"
 ASR_SERVICE = "Azure Site Recovery"
 
@@ -97,33 +95,14 @@ def instance_meter_key(meter_name: str) -> str:
 # --------------------------------------------------------------------------- fetching
 async def _fetch(service_name: str, region: str, currency: str) -> tuple[list[dict[str, Any]], str]:
     """Page through the retail API for one service/region. Returns ``(items, error)``."""
-    filters = (
-        f"serviceName eq '{service_name}'"
-        f" and armRegionName eq '{region}'"
-        " and type eq 'Consumption'"
+    result = await fetch_retail_prices(
+        service_name,
+        currency=currency,
+        regions=(region,),
+        max_pages=MAX_PAGES,
     )
-    url = f"{RETAIL_API}?api-version={RETAIL_API_VERSION}&currencyCode='{currency}'&$filter={filters}"
-    # NextPageLink comes back inside the response body. This call is unauthenticated, so a
-    # redirected page leaks no token, but it would still turn the pricing refresh into a
-    # server-side request probe. Pin the host to the API we meant to call.
-    origin_host = (httpx.URL(RETAIL_API).host or "").lower()
-    items: list[dict[str, Any]] = []
-    try:
-        async with httpx.AsyncClient(timeout=45) as client:
-            for _page in range(MAX_PAGES):
-                if (httpx.URL(url).host or "").lower() != origin_host:
-                    return items, f"Retail Prices refused NextPageLink host {httpx.URL(url).host!r}"
-                response = await client.get(url)
-                if response.status_code != 200:
-                    return items, f"Retail Prices {response.status_code}: {response.text[:200]}"
-                payload = response.json()
-                items.extend(payload.get("Items") or [])
-                url = str(payload.get("NextPageLink") or "")
-                if not url:
-                    break
-    except (httpx.HTTPError, ValueError) as exc:  # noqa: BLE001 - degrade to the seeded table
-        return items, f"Retail Prices request error: {exc}"
-    return items, ""
+    error = f"Retail Prices request failed ({result.error})." if result.error else ""
+    return result.items, error
 
 
 def build_rate_card(

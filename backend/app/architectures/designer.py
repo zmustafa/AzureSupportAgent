@@ -198,7 +198,8 @@ def _normalize(parsed: dict[str, Any], resources: list[dict[str, Any]]) -> dict[
             "resource_group": (src.get("resourceGroup") if src else n.get("resource_group")) or "",
             "subscription_id": (src.get("subscriptionId") if src else n.get("subscription_id")) or "",
             "location": (src.get("location") if src else n.get("location")) or "",
-            "sku": _sku_label(src.get("sku")) if src else "",
+            "sku": _resource_sku(src) if src else str(n.get("sku") or "")[:60],
+            "pricing_hint": _pricing_hint(src) if src else {},
             "meta": meta,
             "group_id": gid if gid in valid_group_ids else "",
             "x": float(n["x"]) if isinstance(n.get("x"), (int, float)) else 0.0,
@@ -249,6 +250,51 @@ def _sku_label(sku: Any) -> str:
     if isinstance(sku, str):
         return sku[:60]
     return ""
+
+
+def _nested(value: Any, *path: str) -> Any:
+    current = value
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _resource_sku(resource: dict[str, Any]) -> str:
+    """Best deterministic SKU label from the ARG row and resource properties."""
+    direct = _sku_label(resource.get("sku"))
+    if direct:
+        return direct
+    properties = resource.get("properties") if isinstance(resource.get("properties"), dict) else {}
+    candidates = (
+        _nested(properties, "hardwareProfile", "vmSize"),
+        _nested(properties, "virtualMachineProfile", "hardwareProfile", "vmSize"),
+        _sku_label(properties.get("currentSku")),
+        _sku_label(properties.get("sku")),
+    )
+    return next((str(value)[:60] for value in candidates if value), "")
+
+
+def _pricing_hint(resource: dict[str, Any]) -> dict[str, Any]:
+    """Extract only pricing-relevant facts; rates themselves are always fetched live."""
+    properties = resource.get("properties") if isinstance(resource.get("properties"), dict) else {}
+    sku = resource.get("sku") if isinstance(resource.get("sku"), dict) else {}
+    storage = properties.get("storageProfile") if isinstance(properties.get("storageProfile"), dict) else {}
+    vm_profile = properties.get("virtualMachineProfile") if isinstance(properties.get("virtualMachineProfile"), dict) else {}
+    vm_storage = vm_profile.get("storageProfile") if isinstance(vm_profile.get("storageProfile"), dict) else {}
+    os_disk = storage.get("osDisk") if isinstance(storage.get("osDisk"), dict) else {}
+    if not os_disk:
+        os_disk = vm_storage.get("osDisk") if isinstance(vm_storage.get("osDisk"), dict) else {}
+    hint = {
+        "sku": _resource_sku(resource),
+        "tier": str(sku.get("tier") or "")[:80],
+        "capacity": sku.get("capacity"),
+        "os_type": str(os_disk.get("osType") or "")[:40],
+        "kind": str(resource.get("kind") or "")[:80],
+        "disk_size_gb": properties.get("diskSizeGB"),
+    }
+    return {key: value for key, value in hint.items() if value not in (None, "")}
 
 
 async def generate_architecture(

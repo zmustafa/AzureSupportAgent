@@ -32,6 +32,8 @@ import {
   type ArchGroup,
   type ArchitectureCatalog,
   type ArchitecturePaletteItem,
+  type ArchitectureNodePrice,
+  type ArchitecturePricing,
   type AssessmentFinding,
 } from "../api";
 import { AzureIcon, friendlyResourceType, friendlyLocation } from "./AzureIcon";
@@ -53,7 +55,7 @@ const EDGE_KINDS: { id: ArchEdgeKind; label: string; color: string }[] = [
 ];
 const edgeColor = (k: string) => EDGE_KINDS.find((e) => e.id === k)?.color ?? "#6b7280";
 
-// --- Azure semantics helpers (hosting model, reachability, cost, connectors) --------
+// --- Azure semantics helpers (hosting model, reachability, retail rates, connectors) -
 // Hosting model (shared-responsibility lens). "Net" = network plumbing, "" = concept/note.
 function hostingModel(type: string): "IaaS" | "PaaS" | "SaaS" | "Net" | "" {
   const t = (type || "").toLowerCase();
@@ -69,6 +71,7 @@ const HOSTING_META: Record<string, { label: string; cls: string }> = {
   SaaS: { label: "SaaS", cls: "bg-violet-100 text-violet-700" },
   Net: { label: "Net", cls: "bg-teal-100 text-teal-700" },
 };
+const PRICE_CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "SEK", "NOK", "DKK", "INR", "BRL"];
 
 // Public vs private reachability from real config (meta.publicNetworkAccess, type, PE link).
 function isPublicType(t: string) { return /publicipaddresses|applicationgateways|frontdoors|trafficmanager|bastionhosts/.test((t || "").toLowerCase()); }
@@ -78,43 +81,36 @@ function isExposablePaaS(t: string) {
   return /storage\/storageaccounts|sql\/servers|documentdb|keyvault\/vaults|cache\/redis|servicebus\/namespaces|web\/sites|containerregistry|cognitiveservices|search\/searchservices|eventhub/.test((t || "").toLowerCase());
 }
 
-// Very rough indicative monthly cost (USD) by type + sku — for visibility, NOT billing.
-function estMonthlyCost(type: string, sku: string): number {
-  const t = (type || "").toLowerCase(), s = (sku || "").toLowerCase();
-  if (/virtualmachinescalesets/.test(t)) return 280;
-  if (/virtualmachines/.test(t)) { if (/e\d|m\d/.test(s)) return 350; if (/d.*s?_v|standard_d/.test(s)) return 140; if (/b1|b2|basic/.test(s)) return 40; return 120; }
-  if (/\/disks/.test(t)) return /premium/.test(s) ? 20 : 6;
-  if (/web\/serverfarms|serverfarm/.test(t)) { if (/p\dv|premium/.test(s)) return 220; if (/s\d|standard/.test(s)) return 75; if (/b\d|basic/.test(s)) return 13; return 55; }
-  if (/web\/sites|sites\b/.test(t)) return /y1|consumption/.test(s) ? 0 : 0; // billed via plan / consumption
-  if (/sql\/managedinstances/.test(t)) return /gp_gen5_8|generalpurpose/.test(s) ? 1500 : 1100; // SQL MI is pricey
-  if (/sql\/servers/.test(t)) return /gp_|generalpurpose/.test(s) ? 380 : 200;
-  if (/documentdb|cosmos/.test(t)) return 60;
-  if (/storage\/storageaccounts/.test(t)) return 25;
-  if (/cache\/redis/.test(t)) return /premium/.test(s) ? 410 : 55;
-  if (/azurefirewalls/.test(t)) return 950;
-  if (/applicationgateways/.test(t)) return /waf/.test(s) ? 330 : 180;
-  if (/frontdoors/.test(t)) return /premium/.test(s) ? 330 : 35;
-  if (/virtualnetworkgateways/.test(t)) return /vpngw[2-5]/.test(s) ? 380 : 140;
-  if (/bastionhosts/.test(t)) return 140;
-  if (/natgateways/.test(t)) return 45;
-  if (/loadbalancers/.test(t)) return /standard/.test(s) ? 22 : 0;
-  if (/publicipaddresses/.test(t)) return 4;
-  if (/managedclusters|kubernetes/.test(t)) return 220;
-  if (/containerapps|managedenvironments/.test(t)) return 40;
-  if (/containerregistry/.test(t)) return /premium/.test(s) ? 50 : /standard/.test(s) ? 20 : 5;
-  if (/servicebus/.test(t)) return /premium/.test(s) ? 680 : 10;
-  if (/eventhub/.test(t)) return /premium|dedicated/.test(s) ? 700 : 22;
-  if (/apimanagement/.test(t)) return /premium/.test(s) ? 2800 : /standard/.test(s) ? 670 : /developer/.test(s) ? 50 : 140;
-  if (/logic\/workflows/.test(t)) return 15;
-  if (/datafactory/.test(t)) return 80;
-  if (/synapse\/workspaces/.test(t)) return /dw\d/.test(s) ? 1080 : 200; // DW200c ~$1.5/hr
-  if (/powerbidedicated/.test(t)) return /a1|p1/.test(s) ? 750 : 1500;
-  if (/purview/.test(t)) return 400;
-  if (/recoveryservices/.test(t)) return 60;
-  if (/cognitiveservices|openai/.test(t)) return 100;
-  return 0;
+function formatMoney(currency: string, value: number): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: value < 10 ? 2 : 0 }).format(value);
+  } catch {
+    return `${currency} ${value.toFixed(value < 10 ? 2 : 0)}`;
+  }
 }
-function fmtUsd(n: number): string { return n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`; }
+
+function priceBadge(price: ArchitectureNodePrice): { text: string; cls: string } {
+  if (price.status === "priced_monthly" && price.monthly_estimate !== null) {
+    return { text: `~${formatMoney(price.currency, price.monthly_estimate)}/mo`, cls: "bg-emerald-50 text-emerald-700" };
+  }
+  if (price.status === "rate_only") {
+    const component = price.components[0];
+    return component
+      ? { text: `${price.currency} ${component.retail_price.toLocaleString()}/${component.unit_of_measure}`, cls: "bg-sky-50 text-sky-700" }
+      : { text: "Usage required", cls: "bg-sky-50 text-sky-700" };
+  }
+  if (price.status === "free") return { text: "Free meter", cls: "bg-emerald-50 text-emerald-700" };
+  if (price.status === "ambiguous") return { text: "Choose meter", cls: "bg-amber-50 text-amber-700" };
+  if (price.status === "not_applicable") return { text: "No direct meter", cls: "bg-gray-100 text-gray-500" };
+  if (price.status === "unmatched") return { text: "Not priced", cls: "bg-gray-100 text-gray-500" };
+  return { text: "Price unavailable", cls: "bg-red-50 text-red-600" };
+}
+
+function priceTitle(price: ArchitectureNodePrice, asOf: string): string {
+  const components = price.components.slice(0, 4).map((c) => `${c.meter_name}: ${price.currency} ${c.retail_price}/${c.unit_of_measure}`).join(" · ");
+  const source = asOf ? `Azure Retail Prices · as of ${new Date(asOf).toLocaleString()}` : "Azure Retail Prices";
+  return [source, price.reason, components].filter(Boolean).join("\n");
+}
 
 const isVNet = (t: string) => /virtualnetworks/.test((t || "").toLowerCase()) && !/subnets/.test((t || "").toLowerCase());
 const isGatewayType = (t: string) => /virtualnetworkgateways|expressroutecircuits|connections\b/.test((t || "").toLowerCase());
@@ -182,7 +178,9 @@ function AzureNodeCard({ data, selected }: NodeProps) {
   const pillarTint = (d._pillarTint as string) || "";
   const hosting = azureView ? hostingModel(d.type) : "";
   const reach = d._reach as string; // "public" | "private" | ""
-  const cost = Number(d._cost) || 0;
+  const price = d._pricing as ArchitectureNodePrice | undefined;
+  const pricingAsOf = String(d._pricingAsOf || "");
+  const badge = price ? priceBadge(price) : null;
   return (
     <div
       className={`relative min-w-[170px] max-w-[230px] rounded-xl border bg-white shadow-sm transition ${selected ? "ring-2 ring-brand" : "border-gray-200"}`}
@@ -228,13 +226,13 @@ function AzureNodeCard({ data, selected }: NodeProps) {
         </div>
         {hosting && <span className={`shrink-0 rounded px-1 py-0.5 text-[8px] font-bold ${HOSTING_META[hosting].cls}`} title={`${HOSTING_META[hosting].label} (hosting model)`}>{HOSTING_META[hosting].label}</span>}
       </div>
-      {(d.sku || meta.length > 0 || (azureView && cost > 0)) && (
+      {(d.sku || meta.length > 0 || (azureView && badge)) && (
         <div className="flex flex-wrap items-center gap-1 border-t border-gray-100 px-2.5 py-1">
           {d.sku && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] text-gray-600">{d.sku}</span>}
           {meta.map(([k, v]) => (
             <span key={k} className="rounded bg-gray-50 px-1.5 py-0.5 text-[9px] text-gray-500" title={`${k}: ${v}`}>{v}</span>
           ))}
-          {azureView && cost > 0 && <span className="ml-auto rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700" title="Rough indicative monthly cost (not billing)">{fmtUsd(cost)}/mo</span>}
+          {azureView && badge && <span data-testid={`architecture-price-${d.id}`} className={`ml-auto max-w-full truncate rounded px-1.5 py-0.5 text-[9px] font-medium ${badge.cls}`} title={priceTitle(price!, pricingAsOf)}>{badge.text}</span>}
         </div>
       )}
     </div>
@@ -644,8 +642,16 @@ function CanvasInner({
   const [lintOpen, setLintOpen] = useState(true);
   const [boundaryMode, setBoundaryMode] = useState<"none" | "resource_group" | "subscription" | "vnet" | "subnet" | "region">("none");
   const [assessOn, setAssessOn] = useState(false);
-  // Azure-semantics view: reachability badges, hosting-model tags, indicative cost.
+  // Azure-semantics view: reachability badges, hosting-model tags, and live retail rates.
   const [azureView, setAzureView] = useState(true);
+  const [priceCurrency, setPriceCurrency] = useState(() => {
+    try { return localStorage.getItem("azsup.architecture.priceCurrency") || ""; }
+    catch { return ""; }
+  });
+  const [pricing, setPricing] = useState<ArchitecturePricing | null>(null);
+  const [pricingBusy, setPricingBusy] = useState(false);
+  const [pricingError, setPricingError] = useState("");
+  const pricingRequest = useRef(0);
   // Hosting-model filter ("" = all): IaaS | PaaS | SaaS | Net.
   const [hostingFilter, setHostingFilter] = useState("");
   // Well-Architected pillar overlay tint ("" = off).
@@ -669,6 +675,29 @@ function CanvasInner({
   // Live viewport (pan/zoom) so the inspector can be positioned next to the selected node.
   const viewport = useViewport();
   const navigate = useNavigate();
+
+  const loadPricing = useCallback(async (force = false) => {
+    const request = ++pricingRequest.current;
+    setPricingBusy(true); setPricingError("");
+    try {
+      const result = await api.architecturePricing(arch.id, priceCurrency, force);
+      if (request === pricingRequest.current) setPricing(result);
+    } catch (error) {
+      if (request === pricingRequest.current) { setPricing(null); setPricingError(formatError(error)); }
+    } finally {
+      if (request === pricingRequest.current) setPricingBusy(false);
+    }
+  }, [arch.id, priceCurrency]);
+
+  useEffect(() => {
+    if (!azureView) return;
+    void loadPricing(false);
+  }, [azureView, loadPricing]);
+
+  useEffect(() => {
+    try { localStorage.setItem("azsup.architecture.priceCurrency", priceCurrency); }
+    catch { /* storage can be disabled */ }
+  }, [priceCurrency]);
 
   // --- Undo / redo (declared early so the useCallback mutators below can call it) ------
   // History of model snapshots. A live ref mirror of state lets pushHistory stay stable
@@ -880,7 +909,12 @@ function CanvasInner({
     return () => { cancelled = true; };
   }, [arch.workload_id]);
 
+  const pricingByNode = useMemo(
+    () => new Map((pricing?.nodes ?? []).map((price) => [price.node_id, price])),
+    [pricing],
+  );
   const selectedNode = nodes.find((n) => n.id === selNode)?.data;
+  const selectedNodePrice = selectedNode ? pricingByNode.get(selectedNode.id) : undefined;
   const selectedEdge = edges.find((e) => e.id === selEdge);
 
   // Position the inspector panel next to the selected node/edge (in canvas-wrapper
@@ -978,7 +1012,7 @@ function CanvasInner({
   }, [pillarOverlay, assessMap]);
 
   // Rendered nodes: apply category + hosting-model filters (hide), blast-radius / path
-  // dimming, lint badges, and the Azure-semantics overlays (reachability, cost, pillar).
+  // dimming, lint badges, and the Azure-semantics overlays (reachability, pricing, pillar).
   const displayNodes = useMemo(() => nodes.map((n) => {
     const isHidden = hiddenCats.has(n.data.category) || (!!hostingFilter && hostingModel(n.data.type) !== hostingFilter && n.data.type !== "__note__");
     const activeSet = pathSet ? pathSet.nodes : (impactIds ?? null);
@@ -991,16 +1025,15 @@ function CanvasInner({
     let reach = "";
     if (peLinkedIds.has(n.id) || pna === "disabled" || isPrivateEndpointType(n.data.type)) reach = "private";
     else if (isPublicType(n.data.type) || pna === "enabled" || (isExposablePaaS(n.data.type) && pna !== "disabled" && !peLinkedIds.has(n.id))) reach = "public";
-    const cost = azureView ? estMonthlyCost(n.data.type, n.data.sku) : 0;
+    const nodePricing = azureView ? pricingByNode.get(n.id) : undefined;
     const pillarTint = pillarTintByArm.get((n.data.arm_id || "").toLowerCase()) || "";
     return {
       ...n,
       hidden: isHidden,
-      data: { ...n.data, _dim: dim, _lintCount: findings?.length ?? 0, _lintSev: findings?.some((f) => f.severity === "warning") ? "warning" : findings?.length ? "suggestion" : "", _assessSev: assess?.severity ?? "", _assessCount: assess?.findings.length ?? 0, _azureView: azureView, _reach: reach, _cost: cost, _pillarTint: pillarTint },
+      data: { ...n.data, _dim: dim, _lintCount: findings?.length ?? 0, _lintSev: findings?.some((f) => f.severity === "warning") ? "warning" : findings?.length ? "suggestion" : "", _assessSev: assess?.severity ?? "", _assessCount: assess?.findings.length ?? 0, _azureView: azureView, _reach: reach, _pricing: nodePricing, _pricingAsOf: pricing?.as_of ?? "", _pillarTint: pillarTint },
     } as Node<AzData>;
-  }), [nodes, hiddenCats, hostingFilter, impactIds, pathSet, lintByNode, assessOn, assessMap, azureView, peLinkedIds, pillarTintByArm]);
+  }), [nodes, hiddenCats, hostingFilter, impactIds, pathSet, lintByNode, assessOn, assessMap, azureView, peLinkedIds, pillarTintByArm, pricingByNode, pricing?.as_of]);
 
-  // Total indicative monthly cost across visible nodes (Azure view).
   const hiddenNodeIds = useMemo(() => new Set(nodes.filter((n) => hiddenCats.has(n.data.category) || (!!hostingFilter && hostingModel(n.data.type) !== hostingFilter && n.data.type !== "__note__")).map((n) => n.id)), [nodes, hiddenCats, hostingFilter]);
 
   // Highlight the selected edge with an animated dotted brand-colored line so the user
@@ -1564,11 +1597,40 @@ function CanvasInner({
             <option value="subnet">⬚ By Subnet</option>
             <option value="region">⬚ By Region</option>
           </select>
-          {/* Azure semantics view: reachability, hosting model, cost */}
-          <button onClick={() => setAzureView((v) => !v)} title="Azure view: public/private reachability, PaaS/IaaS tags, peering & private-link edges, indicative cost"
+          {/* Azure semantics view: reachability, hosting model, and authoritative retail rates */}
+          <button onClick={() => setAzureView((v) => !v)} title="Azure view: reachability, hosting model, Azure Retail Prices, peering, and private-link edges"
             className={`rounded-lg border px-2.5 py-1 text-xs ${azureView ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-gray-50"}`}>
             ☁ Azure view
           </button>
+          {azureView && (
+            <div data-testid="architecture-pricing-controls" className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/50 px-1.5 py-0.5">
+              <select
+                aria-label="Retail price currency"
+                value={priceCurrency}
+                onChange={(e) => setPriceCurrency(e.target.value)}
+                title="Azure Retail Prices currency"
+                className="bg-transparent text-[10px] font-medium text-emerald-800 focus:outline-none"
+              >
+                <option value="">Billing default</option>
+                {PRICE_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+              </select>
+              <button
+                aria-label="Refresh retail prices"
+                data-testid="architecture-pricing-refresh"
+                disabled={pricingBusy}
+                onClick={() => void loadPricing(true)}
+                title="Refresh rates from the public Azure Retail Prices API"
+                className="rounded px-1 text-[10px] text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                {pricingBusy ? "↻" : "⟳"}
+              </button>
+              <span data-testid="architecture-pricing-summary" className={`max-w-72 truncate text-[10px] ${pricingError ? "text-red-600" : "text-emerald-800"}`} title="Public Azure retail/list prices, not negotiated rates or actual billed spend.">
+                {pricingBusy && !pricing ? "Loading retail prices…" : pricingError ? "Retail prices unavailable" : pricing
+                  ? `${pricing.summary.known_fixed_monthly > 0 ? `Known baseline ${formatMoney(pricing.currency, pricing.summary.known_fixed_monthly)}/mo` : "No fixed baseline"} · ${pricing.summary.covered_count}/${pricing.summary.node_count} covered${pricing.stale ? " · stale" : ""}`
+                  : "Retail prices not loaded"}
+              </span>
+            </div>
+          )}
           {/* Hosting-model filter */}
           <select value={hostingFilter} onChange={(e) => setHostingFilter(e.target.value)} title="Filter by hosting model"
             className="rounded-lg border px-1.5 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand">
@@ -1878,7 +1940,8 @@ function CanvasInner({
               <span className="mr-2">🔒 private</span>
               <span className="mr-2"><span className="inline-block h-1.5 w-3 align-middle" style={{ background: "#0d9488" }} /> peering</span>
               <span className="mr-2"><span className="inline-block h-1.5 w-3 align-middle" style={{ background: "#6366f1", borderTop: "1px dashed #6366f1" }} /> private link</span>
-              <span><span className="inline-block h-1.5 w-3 align-middle" style={{ background: "#b91c1c" }} /> identity</span>
+              <span className="mr-2"><span className="inline-block h-1.5 w-3 align-middle" style={{ background: "#b91c1c" }} /> identity</span>
+              <span title="Azure Retail Prices list rate; not actual billed spend">💰 retail list price</span>
             </div>
           )}
 
@@ -1920,6 +1983,12 @@ function CanvasInner({
                         {LAYER_ORDER.map((l) => <option key={l} value={l}>{l}</option>)}
                       </select></label>
                   </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <label className="block"><span className="mb-0.5 block text-[10px] text-gray-500">Azure SKU</span>
+                      <input className="w-full rounded border px-2 py-1 text-[11px]" value={selectedNode.sku || ""} placeholder="Standard_D2s_v5" onChange={(e) => updNode(selectedNode.id, { sku: e.target.value })} /></label>
+                    <label className="block"><span className="mb-0.5 block text-[10px] text-gray-500">Region</span>
+                      <input className="w-full rounded border px-2 py-1 text-[11px]" value={selectedNode.location || ""} placeholder="eastus" onChange={(e) => updNode(selectedNode.id, { location: e.target.value })} /></label>
+                  </div>
                   {selectedNode.arm_id && <div className="mt-2 truncate text-[9px] text-gray-400" title={selectedNode.arm_id}>{selectedNode.arm_id}</div>}
                   {selectedNode.arm_id && selectedNode.arm_id.startsWith("/subscriptions/") && (
                     <a href={`https://portal.azure.com/#@/resource${selectedNode.arm_id}/overview`} target="_blank" rel="noreferrer"
@@ -1940,6 +2009,41 @@ function CanvasInner({
                   >
                     🧭 Debug resolution
                   </button>
+                  {azureView && selectedNodePrice && (
+                    <div data-testid="architecture-pricing-inspector" className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50/40 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-semibold text-emerald-800">Azure Retail Prices</span>
+                        <span className={`rounded px-1 py-0.5 text-[9px] ${priceBadge(selectedNodePrice).cls}`}>{priceBadge(selectedNodePrice).text}</span>
+                      </div>
+                      <p className="mt-1 text-[9px] leading-snug text-gray-600">{selectedNodePrice.reason}</p>
+                      {selectedNodePrice.components.length > 0 && (
+                        <div className="mt-1 space-y-1 border-t border-emerald-100 pt-1">
+                          {selectedNodePrice.components.slice(0, 5).map((component) => (
+                            <div key={component.meter_id || `${component.meter_name}:${component.unit_of_measure}`} className="text-[9px] text-gray-600">
+                              <div className="truncate font-medium" title={component.product_name}>{component.meter_name}</div>
+                              <div>{selectedNodePrice.currency} {component.retail_price.toLocaleString()} / {component.unit_of_measure}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {selectedNodePrice.candidates.length > 1 && (
+                        <label className="mt-1 block border-t border-amber-100 pt-1">
+                          <span className="block text-[9px] font-medium text-amber-700">Meter/SKU group</span>
+                          <select
+                            aria-label="Retail meter selection"
+                            value={String(selectedNode.pricing_hint?.meter_id || "")}
+                            onChange={(e) => updNode(selectedNode.id, { pricing_hint: { ...(selectedNode.pricing_hint || {}), meter_id: e.target.value } })}
+                            className="mt-0.5 w-full rounded border border-amber-200 bg-white px-1 py-1 text-[9px]"
+                          >
+                            <option value="">Choose a verified meter…</option>
+                            {selectedNodePrice.candidates.map((candidate) => <option key={candidate.meter_id} value={candidate.meter_id}>{candidate.product_name} · {candidate.sku_name}</option>)}
+                          </select>
+                          <span className="mt-0.5 block text-[8px] text-gray-400">Save, then refresh pricing to apply this selection.</span>
+                        </label>
+                      )}
+                      <div className="mt-1 text-[8px] text-gray-400">List price, not actual billed spend{pricing?.as_of ? ` · ${new Date(pricing.as_of).toLocaleDateString()}` : ""}</div>
+                    </div>
+                  )}
                   {Object.keys(selectedNode.meta || {}).length > 0 && (
                     <details className="mt-2">
                       <summary className="cursor-pointer text-[10px] font-medium text-gray-500">Properties ({Object.keys(selectedNode.meta).length})</summary>
