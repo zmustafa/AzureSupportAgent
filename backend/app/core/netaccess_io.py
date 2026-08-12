@@ -242,6 +242,7 @@ def preview_import(
     incoming_lines: dict[str, int] = {}
     duplicate_input = 0
     canonicalized = 0
+    policy_errors: list[str] = []
     for row in parsed:
         item = {
             "line": int(row.get("line", 0)),
@@ -253,45 +254,72 @@ def preview_import(
             "message": "",
         }
         error = str(row.get("parse_error", "") or "")
-        try:
-            if error:
-                raise NetAccessImportError(error)
-            enabled = (
-                _enabled(str(row.get("enabled_raw", "")), item["line"])
-                if "enabled_raw" in row
-                else bool(row.get("enabled", True))
-            )
-            item["enabled"] = enabled
-            item["label"] = str(row.get("label", "") or "").strip()
-            if not item["label"]:
-                raise NetAccessImportError("A label is required; enter a default label or add one in CSV.")
-            if len(item["label"]) > 128:
-                raise NetAccessImportError("Label exceeds the 128-character limit.")
-            net = netaccess.parse_cidr(str(row.get("cidr", "")))
-            cidr = str(net)
-            item["cidr"] = cidr
-            if str(row.get("cidr", "")).strip() != cidr:
-                canonicalized += 1
-            if cidr in incoming_lines:
-                duplicate_input += 1
-                raise NetAccessImportError(
-                    f"Duplicates line {incoming_lines[cidr]} after normalization to {cidr}."
+        if error:
+            item["message"] = "This CSV row has more values than the header."
+            diagnostics.append(item)
+            continue
+
+        if "enabled_raw" in row:
+            try:
+                enabled = _enabled(str(row.get("enabled_raw", "")), item["line"])
+            except NetAccessImportError:
+                item["message"] = (
+                    "enabled must be true/false, yes/no, 1/0, or enabled/disabled."
                 )
-            incoming_lines[cidr] = item["line"]
-            item["status"] = "valid"
-            incoming.append(
-                {
-                    "cidr": cidr,
-                    "label": item["label"],
-                    "enabled": enabled,
-                    "created_by": actor,
-                }
+                diagnostics.append(item)
+                continue
+        else:
+            enabled = bool(row.get("enabled", True))
+        item["enabled"] = enabled
+        item["label"] = str(row.get("label", "") or "").strip()
+        if not item["label"]:
+            item["message"] = (
+                "A label is required; enter a default label or add one in CSV."
             )
-        except (netaccess.NetAccessError, NetAccessImportError) as exc:
-            item["message"] = str(exc)
+            diagnostics.append(item)
+            continue
+        if len(item["label"]) > 128:
+            item["message"] = "Label exceeds the 128-character limit."
+            diagnostics.append(item)
+            continue
+        try:
+            net = netaccess.parse_cidr(str(row.get("cidr", "")))
+        except netaccess.NetAccessError:
+            item["message"] = "not a valid IP address or CIDR range."
+            diagnostics.append(item)
+            continue
+        cidr = str(net)
+        item["cidr"] = cidr
+        if mode == "enforce" and enabled and net.prefixlen == 0:
+            item["message"] = (
+                f"'{cidr}' allows every address, which disables enforcement. "
+                "Remove it or use Off mode."
+            )
+            policy_errors.append(item["message"])
+            diagnostics.append(item)
+            continue
+        if str(row.get("cidr", "")).strip() != cidr:
+            canonicalized += 1
+        if cidr in incoming_lines:
+            duplicate_input += 1
+            item["message"] = (
+                f"Duplicates line {incoming_lines[cidr]} after normalization to {cidr}."
+            )
+            diagnostics.append(item)
+            continue
+        incoming_lines[cidr] = item["line"]
+        item["status"] = "valid"
+        incoming.append(
+            {
+                "cidr": cidr,
+                "label": item["label"],
+                "enabled": enabled,
+                "created_by": actor,
+            }
+        )
         diagnostics.append(item)
 
-    global_errors: list[str] = []
+    global_errors: list[str] = list(policy_errors)
     if not parsed:
         global_errors.append("No IP addresses or CIDR ranges were found in the import.")
     if strategy == "replace" and not incoming:
@@ -317,8 +345,10 @@ def preview_import(
 
     try:
         result = netaccess.normalize_rules(result, mode=mode)
-    except netaccess.NetAccessError as exc:
-        global_errors.append(str(exc))
+    except netaccess.NetAccessError:
+        global_errors.append(
+            "The resulting policy is invalid; check existing duplicates, labels, and ranges."
+        )
 
     if len(result) > netaccess.MAX_RULES:
         global_errors.append(
