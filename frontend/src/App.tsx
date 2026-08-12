@@ -94,7 +94,7 @@ export default function App() {
             Azure Support Agent
           </Link>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="min-w-0 flex items-center gap-3 text-sm">
           <button
             onClick={() => {
               // Synthesize the palette hotkey so the button mirrors Ctrl/⌘+K.
@@ -137,11 +137,11 @@ export default function App() {
           >
             {APP_VERSION_DISPLAY}
           </span>
-          <Link to="/dashboard" className="rounded px-2 py-1 hover:bg-white/10">
+          <Link to="/dashboard" className="hidden rounded px-2 py-1 hover:bg-white/10 lg:inline-block">
             Dashboard
           </Link>
           {canAccess(user, adminRequirement(undefined)) && (
-            <Link to="/admin" className="rounded px-2 py-1 hover:bg-white/10">
+            <Link to="/admin" className="hidden rounded px-2 py-1 hover:bg-white/10 lg:inline-block">
               Settings
             </Link>
           )}

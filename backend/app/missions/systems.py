@@ -39,13 +39,17 @@ class MissionContext:
     workload: dict[str, Any]
     connection: dict[str, Any] | None
     connection_id: str
+    inventory: dict[str, Any] | None = field(default=None, repr=False)
+    architecture_context: dict[str, Any] | None = field(default=None, repr=False)
+    inventory_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    architecture_context_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
 
 @dataclass
 class SystemResult:
     """Outcome of running one system."""
 
-    status: str  # done | fail | skipped | error
+    status: str  # done | partial | fail | skipped | error
     headline: str = ""
     detail: str = ""
     score: int | None = None
@@ -128,6 +132,43 @@ def _latest_arch_for_workload(tenant_id: str, workload_id: str) -> dict[str, Any
     return arts[0]
 
 
+async def _mission_inventory(ctx: MissionContext) -> dict[str, Any]:
+    """Collect a workload's light inventory once and reuse it for the whole mission."""
+    if ctx.inventory is not None:
+        return ctx.inventory
+    async with ctx.inventory_lock:
+        if ctx.inventory is None:
+            from app.architectures.reverse import collect_workload_inventory
+
+            ctx.inventory = await collect_workload_inventory(ctx.workload, ctx.connection)
+    return ctx.inventory
+
+
+async def _mission_architecture_context(ctx: MissionContext) -> dict[str, Any]:
+    """Build one bounded relationship context from the mission's shared light inventory."""
+    if ctx.architecture_context is not None:
+        return ctx.architecture_context
+    async with ctx.architecture_context_lock:
+        if ctx.architecture_context is None:
+            from app.architectures.reverse import build_architecture_context
+
+            ctx.architecture_context = await build_architecture_context(
+                await _mission_inventory(ctx), ctx.connection
+            )
+    return ctx.architecture_context
+
+
+def _coverage_detail(result: dict[str, Any]) -> str:
+    count = int(result.get("count") or 0)
+    known = result.get("known_total")
+    if isinstance(known, int) and known > count:
+        return f"{count:,} of {known:,} resources evaluated"
+    warnings = result.get("warnings") or []
+    if warnings:
+        return str(warnings[0])[:200]
+    return ""
+
+
 # --------------------------------------------------------------- coverage system factory
 def _coverage_system(
     *,
@@ -166,10 +207,10 @@ def _coverage_system(
                 logger.warning("%s trend recording failed", key, exc_info=True)
         head, score, attention = headline(snap)
         return SystemResult(
-            status="done",
+            status="partial" if snap.get("partial") else "done",
             headline=head,
             score=score,
-            attention=attention,
+            attention=attention or bool(snap.get("partial")),
             link=link,
             result_ref={"kind": key, "workload_id": ctx.workload_id},
         )
@@ -183,10 +224,10 @@ def _coverage_system(
             return None
         head, score, attention = headline(snap)
         return {
-            "status": "done",
+            "status": "partial" if snap.get("partial") else "done",
             "headline": head,
             "score": score,
-            "attention": attention,
+            "attention": attention or bool(snap.get("partial")),
             "age_seconds": _age_seconds(snap),
             "link": link_path.format(wid=ctx.workload_id),
         }
@@ -320,9 +361,10 @@ def _h_radar(s: dict[str, Any]) -> tuple[str, int | None, bool]:
     total = int(c.get("total") or 0)
     red = int(c.get("red") or 0)
     retire = int(c.get("retirement") or 0)
+    prefix = "Partial · " if s.get("partial") else ""
     if total == 0:
-        return "clear · 0 retirements", 0, False
-    return f"{total} item(s) · {red} critical", total, (red > 0 or retire > 0)
+        return f"{prefix}clear · 0 retirements", 0, bool(s.get("partial"))
+    return f"{prefix}{total} item(s) · {red} critical", total, bool(red > 0 or retire > 0 or s.get("partial"))
 
 
 # trend/run recorders (mirror each feature's /refresh endpoint so a Mission Control scan is
@@ -368,11 +410,10 @@ def _rec_backupdr(snap: dict[str, Any], tenant_id: str, scope_kind: str, scope_i
 async def _run_architecture(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
     from app.architectures import registry as areg
     from app.architectures.designer import generate_architecture
-    from app.architectures.reverse import dump_resources
 
     if progress:
         await progress("Querying Azure Resource Graph…")
-    dump = await dump_resources(ctx.workload, ctx.connection)
+    dump = await _mission_architecture_context(ctx)
     if dump.get("error"):
         return SystemResult(status="fail", headline=str(dump["error"])[:140], error=str(dump["error"]), attention=True)
     resources = dump.get("resources") or []
@@ -380,7 +421,9 @@ async def _run_architecture(ctx: MissionContext, *, force: bool, progress=None) 
         return SystemResult(status="fail", headline="No resources in scope", attention=True)
     if progress:
         await progress(f"Reverse-engineering architecture from {len(resources)} resource(s)…")
-    result = await generate_architecture(ctx.workload.get("name", ""), resources)
+    result = await generate_architecture(
+        ctx.workload.get("name", ""), resources, context=dump.get("context")
+    )
     if result is None:
         return SystemResult(status="fail", headline="AI could not infer an architecture", attention=True)
 
@@ -399,7 +442,8 @@ async def _run_architecture(ctx: MissionContext, *, force: bool, progress=None) 
         "ai": {
             "rationale": result["rationale"],
             "confidence": result["confidence"],
-            "resource_count": len(resources),
+            "resource_count": int((dump.get("context") or {}).get("total_resource_count") or len(resources)),
+            "context": dump.get("context") or {},
             "generated_by": ctx.actor,
         },
     }
@@ -410,10 +454,17 @@ async def _run_architecture(ctx: MissionContext, *, force: bool, progress=None) 
         payload["name"] = result["name"] or f"{ctx.workload.get('name', 'Workload')} architecture"
         saved = areg.upsert_architecture(payload, actor=ctx.actor, reason="Mission Control")
     n = len(result["nodes"])
+    context = dump.get("context") or {}
+    summarized = context.get("mode") == "summarized"
+    headline = f"{n} nodes · {result.get('confidence', 'medium')} confidence"
+    if summarized:
+        headline = f"Summarized · {headline}"
     return SystemResult(
-        status="done",
-        headline=f"{n} nodes · {result.get('confidence', 'medium')} confidence",
+        status="partial" if dump.get("partial") else "done",
+        headline=headline,
+        detail=_coverage_detail(dump),
         score=n,
+        attention=bool(dump.get("partial")),
         link=f"/architectures/{saved['id']}",
         result_ref={"kind": "architecture", "id": saved["id"]},
     )
@@ -424,11 +475,13 @@ async def _state_architecture(ctx: MissionContext) -> dict[str, Any] | None:
     if not arch:
         return None
     n = len(arch.get("nodes") or [])
+    context = ((arch.get("ai") or {}).get("context") or {})
+    partial = context.get("mode") == "summarized" or context.get("inventory_complete") is False or bool(context.get("warnings"))
     return {
-        "status": "done",
-        "headline": f"{n} nodes",
+        "status": "partial" if partial else "done",
+        "headline": f"Summarized · {n} nodes" if context.get("mode") == "summarized" else f"{n} nodes",
         "score": n,
-        "attention": False,
+        "attention": partial,
         "age_seconds": _age_seconds({"generated_at": arch.get("updated_at") or arch.get("created_at")}),
         "link": f"/architectures/{arch['id']}",
     }
@@ -437,14 +490,18 @@ async def _state_architecture(ctx: MissionContext) -> dict[str, Any] | None:
 async def _run_memory(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
     from app.architectures import memory as mem
     from app.architectures.memory_designer import generate_memory
-    from app.architectures.reverse import dump_resources
 
     arch = _latest_arch_for_workload(ctx.tenant_id, ctx.workload_id)
     if arch is None:
         return SystemResult(status="skipped", headline="No architecture yet", detail="Run Architecture first")
     if progress:
         await progress("Querying resources for memory context…")
-    dump = await dump_resources(ctx.workload, ctx.connection)
+    dump = await _mission_architecture_context(ctx)
+    if dump.get("error"):
+        return SystemResult(
+            status="fail", headline=str(dump["error"])[:140], error=str(dump["error"]),
+            attention=True, link=f"/architectures/{arch['id']}/memory",
+        )
     resources = dump.get("resources") or []
     try:
         from app.api.architectures import _gather_weakness_signals
@@ -468,7 +525,8 @@ async def _run_memory(ctx: MissionContext, *, force: bool, progress=None) -> Sys
             "confidence": result.get("confidence"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "generated_by": ctx.actor,
-            "resource_count": len(resources),
+            "resource_count": int((dump.get("context") or {}).get("total_resource_count") or len(resources)),
+            "context": dump.get("context") or {},
         },
         tenant_id=ctx.tenant_id,
         actor=ctx.actor,
@@ -476,9 +534,11 @@ async def _run_memory(ctx: MissionContext, *, force: bool, progress=None) -> Sys
     )
     n = len([k for k, v in (result["sections"] or {}).items() if v])
     return SystemResult(
-        status="done",
+        status="partial" if dump.get("partial") else "done",
         headline=f"{n} sections documented",
+        detail=_coverage_detail(dump),
         score=n,
+        attention=bool(dump.get("partial")),
         link=f"/architectures/{arch['id']}/memory",
         result_ref={"kind": "architecture_memory", "id": arch["id"]},
     )
@@ -502,11 +562,13 @@ async def _state_memory(ctx: MissionContext) -> dict[str, Any] | None:
         n = len([s for s in sections if s])
     else:
         n = 0
+    context = ((m.get("ai") or {}).get("context") or {})
+    partial = context.get("mode") == "summarized" or context.get("inventory_complete") is False or bool(context.get("warnings"))
     return {
-        "status": "done",
+        "status": "partial" if partial else "done",
         "headline": f"{n} sections documented",
         "score": n,
-        "attention": False,
+        "attention": partial,
         "age_seconds": _age_seconds({"generated_at": m.get("updated_at") or m.get("created_at")}),
         "link": f"/architectures/{arch['id']}/memory",
     }
@@ -800,17 +862,17 @@ def _tagintel_headline(resources: list[dict[str, Any]], tenant_id: str) -> tuple
 
 
 async def _run_tagintel(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
-    from app.architectures.reverse import dump_resources
-
     if progress:
         await progress("Analyzing tags…")
     link = "/tagintel/coverage"
-    dump = await dump_resources(ctx.workload, ctx.connection)
+    dump = await _mission_inventory(ctx)
     if dump.get("error"):
         return SystemResult(status="fail", headline=str(dump["error"])[:140], error=str(dump["error"]), attention=True, link=link)
     resources = _normalize_dump(dump.get("resources", []))
     head, score, attention = _tagintel_headline(resources, ctx.tenant_id or "default")
-    return SystemResult(status="done", headline=head, score=score, attention=attention, link=link,
+    partial = bool(dump.get("partial"))
+    return SystemResult(status="partial" if partial else "done", headline=head,
+                        detail=_coverage_detail(dump), score=score, attention=attention or partial, link=link,
                         result_ref={"kind": "tagintel", "workload_id": ctx.workload_id})
 
 
@@ -882,22 +944,24 @@ async def _state_changeexplorer(ctx: MissionContext) -> dict[str, Any] | None:
 
 # --------------------------------------------------------------------------- inventory
 async def _run_inventory(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
-    from app.architectures.reverse import dump_resources
-
     if progress:
         await progress("Enumerating resources in scope…")
     link = "/inventory"
-    dump = await dump_resources(ctx.workload, ctx.connection)
+    dump = await _mission_inventory(ctx)
     if dump.get("error"):
         return SystemResult(status="fail", headline=str(dump["error"])[:140], error=str(dump["error"]), attention=True, link=link)
     resources = dump.get("resources") or []
     if not resources:
-        return SystemResult(status="done", headline="0 resources in scope", score=0, link=link,
+        return SystemResult(status="partial" if dump.get("partial") else "done",
+                            headline="0 resources in scope", detail=_coverage_detail(dump),
+                            score=0, attention=bool(dump.get("partial")), link=link,
                             result_ref={"kind": "inventory", "workload_id": ctx.workload_id})
     types = len({(r.get("type", "") or "").lower() for r in resources})
     rgs = len({(r.get("resourceGroup") or "").lower() for r in resources if r.get("resourceGroup")})
     head = f"{len(resources)} resources · {types} types · {rgs} RGs"
-    return SystemResult(status="done", headline=head, score=len(resources), link=link,
+    partial = bool(dump.get("partial"))
+    return SystemResult(status="partial" if partial else "done", headline=head,
+                        detail=_coverage_detail(dump), score=len(resources), attention=partial, link=link,
                         result_ref={"kind": "inventory", "workload_id": ctx.workload_id})
 
 

@@ -51,6 +51,14 @@ Mission Control uses a central FIFO admission queue with per-tenant/connection l
 
 If a mission remains queued, another mission for the same connection may be active. Check queue position rather than repeatedly submitting duplicates.
 
+### Large workloads
+
+Mission Control automatically pages and batches workload inventory queries. It does not require an operator-selected “large” threshold. Architecture, Memory, Tag Intelligence, and Inventory reuse one light inventory collection during a mission, reducing repeated Azure Resource Graph calls.
+
+For a large or highly repetitive estate, AI Architecture switches to a bounded summarized context. Topology-bearing resources are prioritized and repeated resources are represented as stable aggregates. The architecture records total, represented, aggregated, and property-enriched counts. Narrow the workload when a resource-by-resource diagram is required.
+
+If a collector reaches a safe retained-row or context limit, the tile reports **Partial** with retained-versus-known counts. A partial result is never described as complete.
+
 ## Workflow overview
 
 ### Run a mission
@@ -86,6 +94,7 @@ Fleet missions use the same principles but can queue multiple workloads. Keep th
 
 - **Queued/running**: execution has not produced a final state.
 - **Done**: the system completed; inspect its headline and attention flag.
+- **Partial**: the system produced a useful result with known omissions or an unavailable independent source. Review its coverage detail and warning before relying on it.
 - **Skipped**: a sufficiently fresh result was reused, or a dependency/condition prevented execution. Read the detail.
 - **Fail/error**: the system could not produce a normal result or found a hard failure. Open the system and logs.
 - **Freshness age**: how old the underlying result is. A completed mission can still include reused data unless forced.
@@ -105,6 +114,7 @@ No dedicated export, history, scheduling, or integration controls are documented
 - Confirm workload membership before launch; every system inherits that boundary.
 - Force refresh can increase Azure requests, model usage, runtime, and rate-limit exposure.
 - Cancel stops remaining orchestration but cannot undo completed external reads or generated artifacts.
+- A failed Architecture or Radar refresh does not replace a previous usable artifact/snapshot with an empty failure.
 - Deleting mission history is permanent and does not delete source feature records.
 - Keep mission evidence and logs free of secrets when sharing or exporting them.
 
@@ -115,6 +125,9 @@ No dedicated export, history, scheduling, or integration controls are documented
 | --- | --- |
 | Mission stays queued | Check queue depth/position and active missions for the same connection; do not submit duplicates |
 | One system fails while others succeed | Open that system's detail and verify its feature permission, Azure/Graph access, provider, and dependency state |
+| A tile is Partial | Review retained-versus-known counts or source warnings. The usable result remains openable; narrow the workload if detailed architecture is required. |
+| Architecture says Summarized | The estate exceeded the bounded detailed context. The diagram represents repeated resources as aggregates; narrow workload membership for resource-level detail. |
+| Radar reports a source warning | Advisor, Service Health, and model lifecycle are collected independently. Review the source status; a total refresh failure preserves the last-good snapshot. |
 | Board shows old data | Review age labels and run a focused or forced refresh when justified |
 | Readiness remains unknown | Select contributing systems and resolve skipped/error states that left no usable result |
 | Streaming disconnects | Reopen the mission; durable mission state persists even when the browser stream drops |

@@ -109,7 +109,19 @@ async def _get_snapshot(principal: Principal, scope_kind: str, scope_id: str, *,
     lock = cache.get_lock(tenant_id, scope_kind, scope_id)
     async with lock:
         connection = connection_for_scope(scope_kind, connection_id=connection_id, workload=workload)
+        previous = cache.read_snapshot(tenant_id, scope_kind, scope_id)
         fresh = await collect_radar(connection, scope_kind=scope_kind, scope_id=scope_id, workload=workload, tenant_id=tenant_id)
+        if fresh.get("collection_failed") and previous:
+            preserved = dict(previous)
+            preserved.update(
+                {
+                    "last_good_preserved": True,
+                    "last_refresh_error": str(fresh.get("error") or "Radar refresh failed.")[:500],
+                    "last_refresh_source_status": fresh.get("source_status") or {},
+                }
+            )
+            cache.write_snapshot(tenant_id, scope_kind, scope_id, preserved)
+            return _decorate(preserved, ttl, tenant_id)
         cache.write_snapshot(tenant_id, scope_kind, scope_id, fresh)
         return _decorate(fresh, ttl, tenant_id)
 

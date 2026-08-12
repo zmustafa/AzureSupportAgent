@@ -1947,6 +1947,12 @@ export type RadarSnapshot = {
   source: string;
   demo: boolean;
   error: string;
+  partial?: boolean;
+  collection_failed?: boolean;
+  warnings?: string[];
+  source_status?: Record<string, { status: string; rows: number; batches?: number; optional?: boolean }>;
+  last_good_preserved?: boolean;
+  last_refresh_error?: string;
   rail: RadarRailItem[];
   events: RadarEvent[];
   model_items: RadarModelItem[];
@@ -1973,7 +1979,7 @@ export type MissionSystem = {
   key: string;
   label: string;
   icon: string;
-  status: string; // queued|running|done|skipped|fail|error|idle
+  status: string; // queued|running|done|partial|skipped|fail|error|idle
   headline: string;
   detail?: string;
   score: number | null;

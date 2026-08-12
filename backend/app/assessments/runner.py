@@ -237,26 +237,38 @@ async def _resolve_scope(workload: dict[str, Any], connection: dict[str, Any] | 
     subs: set[str] = set()
     rg_pairs: set[tuple[str, str]] = set()
     resource_ids: set[str] = set()
+    memberships: list[dict[str, Any]] = []
 
     for node in workload.get("nodes", []):
         kind = node.get("kind")
+        excludes = {
+            str(value).strip().rstrip("/").lower()
+            for value in node.get("excludes", []) or [] if str(value).strip()
+        }
         if kind == "subscription":
             guid = _sub_guid(node.get("id", "")) or _sub_guid(node.get("subscription_id", ""))
             if guid:
                 subs.add(guid)
+                memberships.append({"kind": kind, "subscriptions": {guid.lower()}, "excludes": excludes})
         elif kind == "mg":
             mg_id = node.get("id", "")
-            for s in await discovery.subscriptions_under_mg(connection, mg_id):
-                subs.add(_sub_guid(s))
+            mg_subs = {_sub_guid(s).lower() for s in await discovery.subscriptions_under_mg(connection, mg_id) if _sub_guid(s)}
+            subs.update(mg_subs)
+            memberships.append({"kind": kind, "subscriptions": mg_subs, "excludes": excludes})
         elif kind == "resource_group":
             guid = _sub_guid(node.get("subscription_id", "")) or _sub_guid(node.get("id", ""))
             rg = node.get("resource_group") or node.get("name", "")
             if guid and rg:
                 rg_pairs.add((guid, rg))
+                memberships.append({
+                    "kind": kind, "subscription": guid.lower(), "resource_group": rg.lower(),
+                    "excludes": excludes,
+                })
         elif kind == "resource":
             rid = node.get("id", "")
             if rid:
                 resource_ids.add(rid)
+                memberships.append({"kind": kind, "resource_id": rid.rstrip("/").lower(), "excludes": excludes})
 
     clauses: list[str] = []
     if subs:
@@ -292,6 +304,8 @@ async def _resolve_scope(workload: dict[str, Any], connection: dict[str, Any] | 
         "sub_predicate": sub_predicate,
         "rg_pairs": sorted(rg_pairs),
         "resource_ids": sorted(resource_ids),
+        "memberships": memberships,
+        "has_excludes": any(item.get("excludes") for item in memberships),
         "error": "" if predicate else "Workload has no resolvable scope (empty membership).",
     }
 

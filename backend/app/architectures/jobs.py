@@ -219,14 +219,17 @@ class _Manager:
                     self._fail(job, str(dump["error"]))
                     return
                 resources = dump.get("resources") or []
-                job.resource_count = len(resources)
+                context = dump.get("context") or {}
+                job.resource_count = int(context.get("total_resource_count") or len(resources))
                 if not resources:
                     self._fail(job, "No resources found in this workload's scope.")
                     return
 
                 self._checkpoint(job)
-                self._set(job, "ai", 70, f"Reverse-engineering architecture from {len(resources)} resource(s)…")
-                result = await generate_architecture(job.workload_name, resources)
+                represented = int(context.get("represented_resource_count") or len(resources))
+                mode = str(context.get("mode") or "detailed")
+                self._set(job, "ai", 70, f"Reverse-engineering a {mode} architecture representing {represented} resource(s)…")
+                result = await generate_architecture(job.workload_name, resources, context=context)
                 if result is None:
                     self._fail(job, "The AI could not infer an architecture. Try again.")
                     return
@@ -248,7 +251,8 @@ class _Manager:
                     "ai": {
                         "rationale": result["rationale"],
                         "confidence": result["confidence"],
-                        "resource_count": len(resources),
+                        "resource_count": job.resource_count,
+                        "context": context,
                         "generated_by": job.created_by,
                     },
                 }

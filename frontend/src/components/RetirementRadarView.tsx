@@ -341,6 +341,24 @@ export function RetirementRadarPanel() {
               </div>
             )}
 
+            {data.last_good_preserved && (
+              <div role="status" className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <strong>Last-good snapshot retained.</strong> The latest refresh could not read its required sources
+                {data.last_refresh_error ? `: ${data.last_refresh_error}` : "."}
+              </div>
+            )}
+
+            {data.partial && !data.last_good_preserved && (
+              <div role="status" className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <strong>Partial Radar snapshot.</strong>{" "}
+                {Object.entries(data.source_status ?? {})
+                  .filter(([, source]) => source.status === "failed")
+                  .map(([name]) => name.replaceAll("_", " "))
+                  .join(", ") || "One or more sources"}{" "}
+                could not be read; available sources remain usable.
+              </div>
+            )}
+
             {/* RU4 — stale-cache nudge once past the backend TTL. */}
             {data.stale_cache && !data.never_loaded && (
               <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">

@@ -143,14 +143,15 @@ def test_evidence_collector_parser_salvages_truncation():
 
 
 def test_reverse_property_dump_raises_the_capture_cap():
-    """dump_resources pulls 30 resources' FULL properties per chunk — the heaviest projection
-    in the codebase."""
+    """The bounded architecture context raises the server-side property capture cap and
+    adaptively bisects a truncating batch instead of failing the whole workload."""
     import inspect
 
     from app.architectures import reverse
 
-    src = inspect.getsource(reverse.dump_resources)
+    src = inspect.getsource(reverse.build_architecture_context)
     assert "KQL_RESOURCE_CAPTURE_BYTES" in src
+    assert "await enrich(chunk[:midpoint])" in src
 
 
 def test_dead_resources_exist_helper_is_gone():

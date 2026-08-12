@@ -368,6 +368,19 @@ def test_mission_hard_fail_is_nogo_and_partial(tmp_path, monkeypatch):
     assert final["status"] == "partial"  # one ran, one failed
 
 
+def test_mission_useful_partial_is_warn_not_nogo(tmp_path, monkeypatch):
+    fakes = [
+        _fake_system("inventory", status="partial", attention=True, headline="1,000 of 1,500 resources"),
+        _fake_system("monitoring", headline="90%"),
+    ]
+    _patch_env(monkeypatch, tmp_path, fakes)
+    final = _drive(["inventory", "monitoring"])
+    assert final["status"] == "partial"
+    assert final["readiness"] == "warn"
+    assert final["systems_done"] == 2
+    assert final["systems_attention"] == 1
+
+
 def test_freshness_skip_unless_forced(tmp_path, monkeypatch):
     # last_state reports a recent run -> a non-forced launch should SKIP it.
     fresh = {"status": "done", "headline": "cached 88%", "score": 88, "attention": False, "age_seconds": 30, "link": "/x/monitoring"}

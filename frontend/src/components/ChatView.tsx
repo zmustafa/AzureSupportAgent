@@ -98,6 +98,7 @@ import {
 } from "./chat/icons";
 import { PanelErrorBoundary } from "./chat/PanelErrorBoundary";
 import { MermaidDiagram as SharedMermaidDiagram, useMermaidRender } from "./MermaidDiagram";
+import { MissionControlLoading } from "./MissionControlLoading";
 
 // Heavy, admin-only panels — lazy-loaded (code-split) so the initial chat bundle stays
 // small. They only download when the user first opens Settings/Automations/Monitor.
@@ -3165,7 +3166,7 @@ export default function ChatView() {
       ) : inMissionControl ? (
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <PanelErrorBoundary name="Mission Control">
-            <Suspense fallback={<PanelLoading />}>
+            <Suspense fallback={<MissionControlLoading detail={location.pathname !== "/mission-control"} />}>
               <MissionControlPanel />
             </Suspense>
           </PanelErrorBoundary>

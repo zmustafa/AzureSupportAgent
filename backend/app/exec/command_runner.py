@@ -981,9 +981,10 @@ async def run_kql_collect(
                 rows, err, complete, total = await query_resource_graph_paged(
                     token, query, page_size=page_size, max_rows=max_rows
                 )
+            pages = max(1, (len(rows) + page_size - 1) // page_size)
             if err:
-                return KqlResult(ok=False, rows=rows, error=err, complete=False, total=total)
-            return KqlResult(ok=True, rows=rows, complete=complete, total=total)
+                return KqlResult(ok=False, rows=rows, error=err, complete=False, pages=pages, total=total)
+            return KqlResult(ok=True, rows=rows, complete=complete, pages=pages, total=total)
         # No token: only error out when we KNOW there is no ambient `az` to fall back to.
         method = (connection or {}).get("auth_method", "")
         if method == "az_cli_token" or os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"):

@@ -11,7 +11,7 @@ import json
 import pytest
 
 import app.architectures.reverse as reverse
-from app.exec.command_runner import CaptureResult
+from app.exec.command_runner import CaptureResult, KqlResult
 
 
 def _cap(rows: list[dict]) -> CaptureResult:
@@ -24,7 +24,7 @@ async def test_dump_resources_includes_resource_group(monkeypatch):
     sub = "11111111-1111-1111-1111-111111111111"
     workload = {
         "nodes": [
-            {"kind": "resource_group", "subscription_id": sub, "resource_group": "rg-azsupagent"},
+            {"kind": "resource_group", "subscription_id": sub, "resource_group": "rg-example"},
         ]
     }
 
@@ -34,35 +34,36 @@ async def test_dump_resources_includes_resource_group(monkeypatch):
     def fake_close(_cfg):
         return None
 
-    async def fake_kql(kql, _conn, **_kw):
+    async def fake_collect(kql, _conn, **_kw):
         if "resourcecontainers" in kql:
-            return _cap([
+            return KqlResult(ok=True, rows=[
                 {
-                    "id": f"/subscriptions/{sub}/resourceGroups/rg-azsupagent",
-                    "name": "rg-azsupagent",
+                    "id": f"/subscriptions/{sub}/resourceGroups/rg-example",
+                    "name": "rg-example",
                     "type": "microsoft.resources/subscriptions/resourcegroups",
-                    "location": "southcentralus",
+                    "location": "example-region",
                     "subscriptionId": sub,
                     "tags": {"env": "demo"},
                 }
-            ])
-        if kql.startswith("Resources") and "properties" in kql and "where id in~" in kql:
-            return _cap([])  # pass 2: no extra properties
-        # pass 1: a single member VM in the RG
-        return _cap([
+            ], complete=True, pages=1, total=1)
+        return KqlResult(ok=True, rows=[
             {
-                "id": f"/subscriptions/{sub}/resourceGroups/rg-azsupagent/providers/Microsoft.Compute/virtualMachines/vm1",
+                "id": f"/subscriptions/{sub}/resourceGroups/rg-example/providers/Microsoft.Compute/virtualMachines/vm1",
                 "name": "vm1",
                 "type": "microsoft.compute/virtualmachines",
-                "location": "southcentralus",
-                "resourceGroup": "rg-azsupagent",
+                "location": "example-region",
+                "resourceGroup": "rg-example",
                 "subscriptionId": sub,
                 "tags": {},
             }
-        ])
+        ], complete=True, pages=1, total=1)
+
+    async def fake_kql(kql, _conn, **_kw):
+        return _cap([])
 
     monkeypatch.setattr(reverse, "open_sp_session", fake_open)
     monkeypatch.setattr(reverse, "close_sp_session", fake_close)
+    monkeypatch.setattr(reverse, "run_kql_collect", fake_collect)
     monkeypatch.setattr(reverse, "run_kql_capture", fake_kql)
 
     out = await reverse.dump_resources(workload, {"id": "c"})
@@ -70,7 +71,7 @@ async def test_dump_resources_includes_resource_group(monkeypatch):
     types = {r["type"] for r in out["resources"]}
     assert "microsoft.resources/subscriptions/resourcegroups" in types
     rg = next(r for r in out["resources"] if r["type"].endswith("resourcegroups"))
-    assert rg["name"] == "rg-azsupagent"
+    assert rg["name"] == "rg-example"
     assert rg["tags"] == {"env": "demo"}
     # The member resource is still present alongside the RG.
     assert any(r["type"] == "microsoft.compute/virtualmachines" for r in out["resources"])
@@ -89,14 +90,14 @@ async def test_dump_resources_rg_query_skipped_when_no_scope(monkeypatch):
 
     seen = {"rc": False}
 
-    async def fake_kql(kql, _conn, **_kw):
+    async def fake_collect(kql, _conn, **_kw):
         if "resourcecontainers" in kql:
             seen["rc"] = True
-        return _cap([])
+        return KqlResult(ok=True, rows=[], complete=True, pages=1, total=0)
 
     monkeypatch.setattr(reverse, "open_sp_session", fake_open)
     monkeypatch.setattr(reverse, "close_sp_session", fake_close)
-    monkeypatch.setattr(reverse, "run_kql_capture", fake_kql)
+    monkeypatch.setattr(reverse, "run_kql_collect", fake_collect)
 
     out = await reverse.dump_resources(workload, {"id": "c"})
     # Empty workload resolves to an error before any query; no RG query issued.

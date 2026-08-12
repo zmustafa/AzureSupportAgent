@@ -4,7 +4,7 @@ Pulls retirement/breaking-change signals from two Azure Resource Graph tables �
 ``servicehealthresources`` (planned-maintenance / health-advisory / retirement events) and
 ``advisorresources`` (Advisor "Service Upgrade and Retirement" recommendations, which carry
 resource-level impact) — plus the Azure OpenAI/Foundry deployment inventory for the model
-lane. Everything runs on the ungated, read-only KQL path (``run_kql_capture``).
+lane. Everything runs on the ungated, read-only paged KQL collection path.
 
 ``merge_events`` and ``compute_radar`` are pure functions over already-fetched rows, so
 they're unit-testable and power the demo seed. ``collect_radar`` resolves the scope and
@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -411,14 +412,13 @@ async def _query_service_health(subs: list[str], connection: dict[str, Any] | No
         "| project trackingId = tostring(p.TrackingId), title = tostring(p.Title), "
         "summary = tostring(p.Summary), impactStartTime = tostring(p.ImpactStartTime), "
         "eventType = tostring(p.EventType), eventSubType = tostring(p.EventSubType), "
-        "link = tostring(p.ExternalIncidentId) "
-        "| take 200"
+        "link = tostring(p.ExternalIncidentId)"
     )
-    res = await run_kql_capture(kql, connection, output="json")
+    res = await run_kql_collect(kql, connection, max_rows=10_000)
     if not res.ok:
         raise RuntimeError(res.error or "Service Health query failed.")
     out: list[dict[str, Any]] = []
-    for r in _parse_rows(res.stdout):
+    for r in res.rows:
         out.append(
             {
                 "source": "service_health",
@@ -451,13 +451,12 @@ async def _query_advisor(predicate: str, connection: dict[str, Any] | None) -> l
         "problem = tostring(p.shortDescription.problem), "
         "solution = tostring(p.shortDescription.solution), "
         "impactedId, impactedType = tostring(p.impactedField), "
-        "link = tostring(p.learnMoreLink) "
-        "| take 500"
+        "link = tostring(p.learnMoreLink)"
     )
-    res = await run_kql_capture(kql, connection, output="json")
+    res = await run_kql_collect(kql, connection, max_rows=10_000)
     if not res.ok:
         raise RuntimeError(res.error or "Advisor query failed.")
-    rows = _parse_rows(res.stdout)
+    rows = res.rows
     if not rows:
         return []
 
@@ -489,15 +488,29 @@ async def _query_advisor(predicate: str, connection: dict[str, Any] | None) -> l
 async def _query_resource_meta(ids: list[str], connection: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not ids:
         return {}
-    joined = ", ".join(f"'{_esc(i)}'" for i in ids[:1000])
-    kql = (
-        f"Resources | where id in~ ({joined}) "
-        "| project id, name, type, resourceGroup, location, subscriptionId, tags | take 1000"
-    )
-    res = await run_kql_capture(kql, connection, output="json")
     out: dict[str, dict[str, Any]] = {}
-    if res.ok:
-        for r in _parse_rows(res.stdout):
+    current: list[str] = []
+    current_len = 100
+    batches: list[list[str]] = []
+    for resource_id in sorted(set(ids)):
+        added = len(resource_id) + 4
+        if current and current_len + added > 6000:
+            batches.append(current)
+            current, current_len = [], 100
+        current.append(resource_id)
+        current_len += added
+    if current:
+        batches.append(current)
+    for batch in batches:
+        joined = ", ".join(f"'{_esc(i)}'" for i in batch)
+        kql = (
+            f"Resources | where id in~ ({joined}) "
+            "| project id, name, type, resourceGroup, location, subscriptionId, tags"
+        )
+        res = await run_kql_collect(kql, connection, max_rows=len(batch))
+        if not res.ok:
+            raise RuntimeError(res.error or "Resource metadata query failed.")
+        for r in res.rows:
             out[str(r.get("id", "")).lower()] = r
     return out
 
@@ -512,13 +525,13 @@ async def _query_aoai_deployments(predicate: str, connection: dict[str, Any] | N
         "| extend p = parse_json(properties) "
         "| project id, accountName = tostring(split(id,'/')[8]), deployment = name, "
         "model = tostring(p.model.name), modelVersion = tostring(p.model.version), "
-        "location, resourceGroup, subscriptionId | take 500"
+        "location, resourceGroup, subscriptionId"
     )
-    res = await run_kql_capture(kql, connection, output="json")
+    res = await run_kql_collect(kql, connection, max_rows=10_000)
     if not res.ok:
-        return []
+        raise RuntimeError(res.error or "Azure OpenAI deployment query failed.")
     out: list[dict[str, Any]] = []
-    for r in _parse_rows(res.stdout):
+    for r in res.rows:
         out.append(
             {
                 "id": r.get("id", ""),
@@ -534,6 +547,52 @@ async def _query_aoai_deployments(predicate: str, connection: dict[str, Any] | N
     return out
 
 
+def _subscription_batches(subscriptions: list[str], size: int = 100) -> list[list[str]]:
+    values = sorted({str(value).strip() for value in subscriptions if str(value).strip()})
+    return [values[index:index + size] for index in range(0, len(values), size)]
+
+
+def _resource_in_workload(resource: dict[str, Any], scope: dict[str, Any]) -> bool:
+    resource_id = str(resource.get("id") or resource.get("impactedId") or "").rstrip("/").lower()
+    subscription_id = str(resource.get("subscriptionId") or "").lower()
+    if not subscription_id:
+        match = re.search(r"/subscriptions/([^/]+)", resource_id, re.IGNORECASE)
+        subscription_id = match.group(1).lower() if match else ""
+    resource_group = str(resource.get("resourceGroup") or "").lower()
+    if not resource_group:
+        match = re.search(r"/resourcegroups/([^/]+)", resource_id, re.IGNORECASE)
+        resource_group = match.group(1).lower() if match else ""
+    memberships = scope.get("memberships") or []
+    if memberships:
+        for member in memberships:
+            kind = member.get("kind")
+            included = (
+                (kind in {"subscription", "mg"} and subscription_id in member.get("subscriptions", set()))
+                or (kind == "resource_group" and subscription_id == member.get("subscription") and resource_group == member.get("resource_group"))
+                or (kind == "resource" and resource_id == member.get("resource_id"))
+            )
+            if not included:
+                continue
+            excluded = any(
+                resource_id == value or resource_id.startswith(value + "/")
+                for value in member.get("excludes") or set()
+            )
+            if not excluded:
+                return True
+        return False
+    whole_subscriptions = {str(value).lower() for value in scope.get("subscriptions") or []}
+    resource_groups = {
+        (str(subscription).lower(), str(group).lower())
+        for subscription, group in scope.get("rg_pairs") or []
+    }
+    resource_ids = {str(value).rstrip("/").lower() for value in scope.get("resource_ids") or []}
+    return (
+        subscription_id in whole_subscriptions
+        or (subscription_id, resource_group) in resource_groups
+        or resource_id in resource_ids
+    )
+
+
 async def collect_radar(
     connection: dict[str, Any] | None,
     *,
@@ -546,55 +605,81 @@ async def collect_radar(
 
     subscriptions: list[str] = []
     predicate = ""
+    resolved_scope: dict[str, Any] = {}
     if scope_kind == "workload" and workload is not None:
         scope = await _resolve_scope(workload, connection)
+        resolved_scope = scope
         predicate = scope.get("predicate") or ""
-        subscriptions = list(scope.get("subscriptions") or [])
-        for sub, _rg in scope.get("rg_pairs") or []:
-            if sub not in subscriptions:
-                subscriptions.append(sub)
+        subscriptions = list(scope.get("effective_subscriptions") or scope.get("subscriptions") or [])
         if scope.get("error") and not predicate:
             return _empty_snapshot(scope_kind, scope_id, error=scope["error"])
     elif scope_kind == "subscription" and scope_id:
         predicate = f"subscriptionId =~ '{_esc(scope_id)}'"
         subscriptions = [scope_id]
+        resolved_scope = {
+            "subscriptions": [scope_id], "effective_subscriptions": [scope_id],
+            "rg_pairs": [], "resource_ids": [], "predicate": predicate,
+        }
     else:
         return _empty_snapshot(scope_kind, scope_id, error="No resolvable scope.")
+
+    batches = _subscription_batches(subscriptions)
+    if not batches:
+        return _empty_snapshot(scope_kind, scope_id, error="No visible subscriptions were resolved for this scope.")
 
     notes: list[str] = []
     raw: list[dict[str, Any]] = []
     deployments: list[dict[str, Any]] = []
-    # Advisor + AOAI are scoped by SUBSCRIPTION, not by the per-resource predicate. The workload
-    # scope predicate is an ``id in~ ('…','…',…)`` list of every resource node, which for a large
-    # workload exceeds Azure Resource Graph's query-length limit ("Query is too long"). Advisor
-    # recommendations and AOAI deployments live at the subscription level anyway, so a bounded
-    # ``subscriptionId in~ (…)`` clause is both correct and small. (Service Health already takes
-    # the subscription list directly.) Fall back to the resource predicate only if, somehow, no
-    # subscriptions were resolved.
-    if subscriptions:
-        sub_predicate = "subscriptionId in~ (" + ", ".join(f"'{_esc(s)}'" for s in sorted(set(subscriptions))) + ")"
-    else:
-        sub_predicate = predicate
-    # RP4 — Advisor, Service Health and AOAI deployments are independent Azure reads; run them
-    # concurrently instead of one-after-another to cut radar refresh latency.
+    source_status: dict[str, dict[str, Any]] = {}
+
+    async def collect_batches(kind: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for batch in batches:
+            sub_predicate = "subscriptionId in~ (" + ", ".join(f"'{_esc(s)}'" for s in batch) + ")"
+            if kind == "advisor":
+                results.extend(await _query_advisor(sub_predicate, connection))
+            elif kind == "service_health":
+                results.extend(await _query_service_health(batch, connection))
+            else:
+                results.extend(await _query_aoai_deployments(sub_predicate, connection))
+        return results
+
+    # Independent Azure reads run concurrently; each source batches internally to keep KQL bounded.
     adv_res, sh_res, aoai_res = await asyncio.gather(
-        _query_advisor(sub_predicate, connection),
-        _query_service_health(subscriptions, connection),
-        _query_aoai_deployments(sub_predicate, connection),
+        collect_batches("advisor"), collect_batches("service_health"), collect_batches("aoai"),
         return_exceptions=True,
     )
     if isinstance(adv_res, list):
+        if scope_kind == "workload":
+            filtered_advisor: list[dict[str, Any]] = []
+            for event in adv_res:
+                impacts = [
+                    item for item in event.get("impacted_resources") or []
+                    if _resource_in_workload(item, resolved_scope)
+                ]
+                if impacts:
+                    filtered_advisor.append({**event, "impacted_resources": impacts})
+            adv_res = filtered_advisor
         raw += adv_res
+        source_status["advisor"] = {"status": "ok", "rows": len(adv_res), "batches": len(batches)}
     elif isinstance(adv_res, BaseException):
         notes.append(f"Advisor: {str(adv_res)[:160]}")
+        source_status["advisor"] = {"status": "failed", "rows": 0, "batches": len(batches)}
     if isinstance(sh_res, list):
         raw += sh_res
+        source_status["service_health"] = {"status": "ok", "rows": len(sh_res), "batches": len(batches)}
     elif isinstance(sh_res, BaseException):
         notes.append(f"Service Health: {str(sh_res)[:160]}")
+        source_status["service_health"] = {"status": "failed", "rows": 0, "batches": len(batches)}
     if isinstance(aoai_res, list):
-        deployments = aoai_res
+        deployments = (
+            [row for row in aoai_res if _resource_in_workload(row, resolved_scope)]
+            if scope_kind == "workload" else aoai_res
+        )
+        source_status["model_lifecycle"] = {"status": "ok", "rows": len(deployments), "batches": len(batches)}
     elif isinstance(aoai_res, BaseException):
         notes.append(f"AOAI deployments: {str(aoai_res)[:160]}")
+        source_status["model_lifecycle"] = {"status": "failed", "rows": 0, "batches": len(batches)}
 
     # Optional Azure Updates public feed (the only net-new external fetch).
     try:
@@ -604,15 +689,24 @@ async def collect_radar(
         if s.get("radar_azure_updates_feed_enabled"):
             from app.radar.feed import fetch_azure_updates
 
-            raw += await fetch_azure_updates(s.get("radar_azure_updates_feed_url", ""))
+            feed_rows = await fetch_azure_updates(s.get("radar_azure_updates_feed_url", ""))
+            raw += feed_rows
             notes.append("Azure Updates feed included (may lag announcements ~2 weeks).")
+            source_status["azure_updates_feed"] = {"status": "ok", "rows": len(feed_rows), "optional": True}
+        else:
+            source_status["azure_updates_feed"] = {"status": "disabled", "rows": 0, "optional": True}
     except Exception as exc:  # noqa: BLE001
         notes.append(f"Azure Updates feed: {str(exc)[:120]}")
+        source_status["azure_updates_feed"] = {"status": "failed", "rows": 0, "optional": True}
 
     wl_index = _workload_index()
     events = merge_events(raw, wl_index=wl_index, tenant_id=tenant_id)
     model_items = build_model_items(deployments)
     snap = compute_radar(events, model_items)
+    required = ["advisor", "service_health", "model_lifecycle"]
+    failed_required = [name for name in required if source_status.get(name, {}).get("status") == "failed"]
+    collection_failed = len(failed_required) == len(required)
+    partial = bool(failed_required)
     snap.update(
         {
             "scope_kind": scope_kind,
@@ -621,7 +715,11 @@ async def collect_radar(
             "connection_configured": connection is not None,
             "source": "azure_resource_graph",
             "demo": False,
-            "error": "; ".join(notes),
+            "partial": partial,
+            "collection_failed": collection_failed,
+            "source_status": source_status,
+            "warnings": notes,
+            "error": "; ".join(notes) if collection_failed else "",
         }
     )
     return snap
@@ -644,4 +742,4 @@ def _empty_snapshot(scope_kind: str, scope_id: str, *, error: str) -> dict[str, 
 
 
 # Imported late to avoid a heavy import at module load (mirrors the coverage collectors).
-from app.exec.command_runner import run_kql_capture  # noqa: E402
+from app.exec.command_runner import run_kql_collect  # noqa: E402

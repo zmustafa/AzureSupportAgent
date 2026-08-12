@@ -50,11 +50,24 @@ Landing: `/mission-control`. Workload board: `/mission-control/{workloadId}`.
 
 ## How to interpret and revisit a mission
 
-1. Read tile status: queued/running, done, reused/skipped, failed/error, or not run.
+1. Read tile status: queued/running, done, partial, reused/skipped, failed/error, or not run.
 2. Check age badges for reused results and whether informational systems contribute to attention.
 3. Treat **Warning** as actionable findings/partial concerns and **No-go** as hard/high-impact conditions requiring source review.
 4. Use mission history to reopen prior runs and compare selected systems, force state, duration, and result.
 5. Delete per-workload mission history only when durable mission records are no longer required; source-feature records are separate.
+
+### When a large workload is partial or summarized
+
+1. Read the tile detail for retained-versus-known resources and source warnings.
+2. Open useful partial results; partial does not mean the result was discarded.
+3. For **Summarized** AI Architecture, review the recorded total, represented, aggregated, and property-enriched counts.
+4. Narrow workload membership to the application boundary and rerun Architecture when a resource-by-resource diagram is needed.
+5. Do not repeatedly force the complete mission for a source-specific failure. Correct that source and rerun only its tile.
+6. If Radar reports one unavailable source, review the other source results. If every required Radar source fails, the previous usable snapshot is retained.
+
+**Expected result:** Large estates complete through paged, length-bounded collection or return an explicit partial/summarized outcome rather than a query-length or output-capture failure.
+
+**Verification:** No tile presents retained rows as a complete estate, and unrelated systems continue to completion.
 
 **Expected result:** The rollup is interpreted in the context of selected systems, freshness, access, and source details.
 
@@ -85,6 +98,9 @@ Landing: `/mission-control`. Workload board: `/mission-control/{workloadId}`.
 | --- | --- |
 | Mission stays queued | Check queue position and active work for the same connection; do not submit duplicates. |
 | One tile fails | Open its source feature and verify permission, Azure/Graph capability, provider, and dependency. |
+| A tile is partial | Review its coverage detail. Use the result where appropriate and narrow scope for missing resource-level detail. |
+| Architecture is summarized | Repeated resources were aggregated to stay within a safe AI context; narrow the workload for a detailed diagram. |
+| Radar has a source warning | Review source status. Other sources remain usable, and a total failure preserves last-good data. |
 | Board is old | Review ages, then run a focused or forced refresh. |
 | Readiness is unknown | Run contributing systems and resolve skips/errors that left no usable state. |
 | Azure returns 429 | Let queue/backoff complete, reduce fleet size, and avoid force. |

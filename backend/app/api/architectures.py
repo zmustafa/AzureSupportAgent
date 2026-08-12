@@ -963,6 +963,7 @@ async def generate_memory_stream_endpoint(
             wl = get_workload(workload_id) if workload_id else None
             wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
             resources: list[dict[str, Any]] = []
+            context: dict[str, Any] = {}
             if wl is not None:
                 yield {"event": "status", "data": json.dumps({"phase": "query", "message": "Querying Azure Resource Graph for live resources…"})}
                 from app.architectures.reverse import dump_resources
@@ -970,6 +971,7 @@ async def generate_memory_stream_endpoint(
                 conn = resolve_connection(connection_id or wl.get("connection_id") or None)
                 dump = await dump_resources(wl, conn)
                 resources = dump.get("resources") or []
+                context = dump.get("context") or {}
             else:
                 yield {"event": "status", "data": json.dumps({"phase": "query", "message": "No linked workload — drafting from the diagram only…"})}
 
@@ -1015,7 +1017,8 @@ async def generate_memory_stream_endpoint(
                     "confidence": result.get("confidence"),
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "generated_by": _actor(principal),
-                    "resource_count": len(resources),
+                    "resource_count": int(context.get("total_resource_count") or len(resources)),
+                    "context": context,
                 },
                 tenant_id=principal.tenant_id,
                 actor=_actor(principal),
@@ -1051,12 +1054,14 @@ async def generate_memory_section_endpoint(
     wl = get_workload(workload_id) if workload_id else None
     wl_name = arch.get("workload_name", "") or (wl or {}).get("name", "")
     resources: list[dict[str, Any]] = []
+    context: dict[str, Any] = {}
     if wl is not None:
         from app.architectures.reverse import dump_resources
 
         conn = resolve_connection(connection_id or wl.get("connection_id") or None)
         dump = await dump_resources(wl, conn)
         resources = dump.get("resources") or []
+        context = dump.get("context") or {}
 
     result = await generate_memory(
         arch, resources, weakness_signals, wl_name,
@@ -1083,6 +1088,14 @@ async def generate_memory_section_endpoint(
         workload_id=workload_id,
         sections=sections,
         source="hybrid" if existing is not None else "ai",
+        ai={
+            **((existing or {}).get("ai") or {}),
+            "confidence": (result or {}).get("confidence"),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_by": _actor(principal),
+            "resource_count": int(context.get("total_resource_count") or len(resources)),
+            "context": context,
+        },
         tenant_id=principal.tenant_id,
         actor=_actor(principal),
         reason=f"Regenerated section: {mem.section_label(section_key)}",
@@ -1727,8 +1740,10 @@ async def _run_know_me_from_workload(
         resources = dump["resources"] or []
         if not resources:
             raise RuntimeError("No resources found in this workload's scope — cannot reverse-engineer an architecture.")
-        await progress("architecture", f"🤖 Reverse-engineering an architecture from {len(resources)} resource(s)…")
-        ares = await generate_architecture(wl_name, resources)
+        context = dump.get("context") or {}
+        represented = int(context.get("represented_resource_count") or len(resources))
+        await progress("architecture", f"🤖 Reverse-engineering an architecture representing {represented} resource(s)…")
+        ares = await generate_architecture(wl_name, resources, context=context)
         if ares is None:
             raise RuntimeError("The AI could not infer an architecture from this workload. Try again.")
         arch = arch_registry.upsert_architecture(
@@ -1743,7 +1758,8 @@ async def _run_know_me_from_workload(
                 "nodes": ares["nodes"], "edges": ares["edges"], "groups": ares["groups"],
                 "ai": {
                     "rationale": ares["rationale"], "confidence": ares["confidence"],
-                    "resource_count": len(resources), "generated_by": _actor(principal),
+                    "resource_count": int(context.get("total_resource_count") or len(resources)),
+                    "context": context, "generated_by": _actor(principal),
                 },
                 "created_by": _actor(principal),
             },
@@ -1763,6 +1779,7 @@ async def _run_know_me_from_workload(
         conn = resolve_connection(conn_id or None)
         dump = await dump_resources(wl, conn)
         resources = dump.get("resources") or []
+        context = dump.get("context") or {}
 
         async def _mprog(_phase: str, message: str) -> None:
             await progress("memory", message)
@@ -1780,7 +1797,9 @@ async def _run_know_me_from_workload(
             ai={
                 "confidence": mres.get("confidence"),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "generated_by": _actor(principal), "resource_count": len(resources),
+                "generated_by": _actor(principal),
+                "resource_count": int(context.get("total_resource_count") or len(resources)),
+                "context": context,
             },
             tenant_id=tenant_id, actor=_actor(principal), reason="Generated with AI (Know-Me pipeline)",
         )
@@ -1957,7 +1976,12 @@ async def workload_inventory_endpoint(workload_id: str, _: Principal = Depends(g
         raise HTTPException(status_code=404, detail="Workload not found.")
     conn = resolve_connection(wl.get("connection_id") or None)
     dump = await dump_resources(wl, conn)
-    return {"count": dump["count"], "error": dump["error"], "resources": dump["resources"]}
+    return {
+        "count": dump["count"], "known_total": dump.get("known_total"),
+        "complete": dump.get("complete"), "partial": dump.get("partial"),
+        "context": dump.get("context") or {}, "warnings": dump.get("warnings") or [],
+        "error": dump["error"], "resources": dump["resources"],
+    }
 
 
 # ----------------------------------------------- AI: reverse-engineer from a workload
@@ -1994,10 +2018,12 @@ async def from_workload_endpoint(payload: FromWorkloadRequest, principal: Princi
                 yield {"event": "error", "data": json.dumps({"message": "No resources found in this workload's scope."})}
                 return
 
-            yield {"event": "status", "data": json.dumps({"phase": "ai", "message": f"Reverse-engineering architecture from {len(resources)} resource(s)…"})}
+            context = dump.get("context") or {}
+            represented = int(context.get("represented_resource_count") or len(resources))
+            yield {"event": "status", "data": json.dumps({"phase": "ai", "message": f"Reverse-engineering architecture representing {represented} resource(s)…"})}
             from app.architectures.designer import generate_architecture
 
-            result = await generate_architecture(wl_name, resources)
+            result = await generate_architecture(wl_name, resources, context=context)
             if result is None:
                 yield {"event": "error", "data": json.dumps({"message": "The AI could not infer an architecture. Try again."})}
                 return
@@ -2016,7 +2042,8 @@ async def from_workload_endpoint(payload: FromWorkloadRequest, principal: Princi
                 "ai": {
                     "rationale": result["rationale"],
                     "confidence": result["confidence"],
-                    "resource_count": len(resources),
+                    "resource_count": int(context.get("total_resource_count") or len(resources)),
+                    "context": context,
                     "generated_by": _actor(principal),
                 },
             }
@@ -2047,12 +2074,14 @@ async def enhance_architecture_endpoint(
 
     arch = _tenant_arch_or_404(architecture_id, principal)
     resources: list[dict[str, Any]] = []
+    context: dict[str, Any] = {}
     wl = get_workload(arch.get("workload_id") or "")
     if wl is not None:
         conn = resolve_connection(arch.get("connection_id") or wl.get("connection_id") or None)
         dump = await dump_resources(wl, conn)
         resources = dump["resources"]
-    result = await enhance_architecture(arch, resources, payload.goal)
+        context = dump.get("context") or {}
+    result = await enhance_architecture(arch, resources, payload.goal, context=context)
     if result is None:
         raise HTTPException(status_code=502, detail="The AI could not enhance this diagram. Try again.")
     saved = arch_registry.upsert_architecture({
@@ -2063,7 +2092,10 @@ async def enhance_architecture_endpoint(
         "edges": result["edges"],
         "groups": result["groups"],
         "source": "ai",
-        "ai": {**(arch.get("ai") or {}), "rationale": result["rationale"], "confidence": result["confidence"]},
+        "ai": {
+            **(arch.get("ai") or {}), "rationale": result["rationale"],
+            "confidence": result["confidence"], "context": context,
+        },
     }, actor=_actor(principal), reason="AI enhanced")
     return {"architecture": saved}
 
@@ -2102,7 +2134,7 @@ async def architecture_drift_endpoint(
     When the architecture is linked to a workload, drift is scoped to that workload. Otherwise
     (e.g. an older reverse-engineered diagram with no workload link) it falls back to the
     (subscription, resource group) scope the diagram's own ARM-id nodes already live in."""
-    from app.architectures.reverse import dump_resources, live_resources_in_diagram_scope
+    from app.architectures.reverse import collect_workload_inventory, live_resources_in_diagram_scope
 
     arch = _tenant_arch_or_404(architecture_id, principal)
     nodes = arch.get("nodes") or []
@@ -2111,9 +2143,14 @@ async def architecture_drift_endpoint(
 
     if wl is not None:
         conn = resolve_connection(arch.get("connection_id") or wl.get("connection_id") or None)
-        dump = await dump_resources(wl, conn)
+        dump = await collect_workload_inventory(wl, conn)
         if dump.get("error"):
             raise HTTPException(status_code=502, detail=str(dump["error"]))
+        if dump.get("partial"):
+            raise HTTPException(
+                status_code=409,
+                detail="Live workload inventory is partial; drift was not computed because it could report false removals.",
+            )
         live = dump.get("resources") or []
     else:
         # No workload link — derive the comparison scope from the diagram's own resources.

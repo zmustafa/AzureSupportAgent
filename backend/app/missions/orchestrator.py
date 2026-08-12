@@ -85,8 +85,8 @@ class _Mission:
 
     def public(self) -> dict[str, Any]:
         systems = [self.systems[k] for k in self.system_keys if k in self.systems]
-        done = sum(1 for s in systems if s.get("status") in ("done", "skipped"))
-        attention = sum(1 for s in systems if s.get("attention") or s.get("status") in ("fail", "error"))
+        done = sum(1 for s in systems if s.get("status") in ("done", "partial", "skipped"))
+        attention = sum(1 for s in systems if s.get("attention") or s.get("status") in ("partial", "fail", "error"))
         return {
             "id": self.id,
             "workload_id": self.workload_id,
@@ -540,8 +540,9 @@ class _Manager:
     def _rollup(self, mission: _Mission) -> None:
         systems = [mission.systems[k] for k in mission.system_keys]
         hard_fail = any(s["status"] in ("fail", "error") for s in systems)
-        attention = any(s.get("attention") or s["status"] in ("fail", "error") for s in systems)
-        ran = [s for s in systems if s["status"] in ("done", "fail", "error")]
+        partial = any(s["status"] == "partial" for s in systems)
+        attention = any(s.get("attention") or s["status"] in ("partial", "fail", "error") for s in systems)
+        ran = [s for s in systems if s["status"] in ("done", "partial", "fail", "error")]
         if mission.cancel_requested:
             mission.readiness = "cancelled"
         elif hard_fail:
@@ -554,7 +555,7 @@ class _Manager:
             mission.status = "cancelled"
         elif ran and all(s["status"] in ("fail", "error") for s in ran):
             mission.status = "failed"
-        elif any(s["status"] in ("fail", "error") for s in systems):
+        elif hard_fail or partial:
             mission.status = "partial"
         else:
             mission.status = "succeeded"

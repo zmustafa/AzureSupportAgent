@@ -83,7 +83,7 @@ async def _load(tid: str, cid: str, scope: str, force: bool, workload_id: str = 
     Otherwise the standard inventory scope (``""`` / ``sub:`` / ``mg:``) is used. ``force`` runs
     a fresh scan; a cache miss without ``force`` returns None (caller shows 'not loaded yet')."""
     if workload_id:
-        from app.architectures.reverse import dump_resources
+        from app.architectures.reverse import collect_workload_inventory
         from app.core.azure_connections import connection_for_workload
         from app.workloads.registry import get_workload
 
@@ -108,11 +108,13 @@ async def _load(tid: str, cid: str, scope: str, force: bool, workload_id: str = 
             fetched_at = inv_cache.set_(tid, cid, payload, scope=wl_scope)
             return {"payload": payload, "fetched_at": fetched_at, "age_seconds": 0}
         conn = _conn(cid or None) or connection_for_workload(wl)
-        dump = await dump_resources(wl, conn)
+        dump = await collect_workload_inventory(wl, conn)
         payload = {
             "resources": _normalize_dump(dump.get("resources", []) or []),
             "facets": {"subscriptions": []}, "summary": {},
-            "errors": ([dump["error"]] if dump.get("error") else []),
+            "errors": ([dump["error"]] if dump.get("error") else list(dump.get("warnings") or [])),
+            "partial": bool(dump.get("partial")),
+            "known_total": dump.get("known_total"),
         }
         fetched_at = inv_cache.set_(tid, cid, payload, scope=wl_scope)
         return {"payload": payload, "fetched_at": fetched_at, "age_seconds": 0}
