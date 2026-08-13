@@ -1,14 +1,17 @@
 ---
 layout: default
 title: Architecture
-nav_exclude: true
+parent: Technical documentation
+nav_order: 1
+description: How the backend modules, APIs, and frontend views fit together, for contributors.
+permalink: /technical/architecture/
+redirect_from:
+  - /ARCHITECTURE/
 ---
 
 # Architecture (for contributors)
 
-How Azure Support Agent is put together, so you can find your way around and extend it. For
-*using* the product, see [USER_GUIDE.md]({{ site.baseurl }}/USER_GUIDE/); for the deep spec, see
-[TECHNICAL_SPEC.md]({{ site.baseurl }}/TECHNICAL_SPEC/).
+How Azure Support Agent is put together, so you can find your way around and extend it. For *using* the product, see the [User guide]({{ site.baseurl }}/user-guide/); for the deep specification, see the [technical specification]({{ site.baseurl }}/technical/specification/).
 
 ## High level
 
@@ -102,7 +105,7 @@ A multi-arch Docker image bundles the built SPA and the API. `deploy/main.bicep`
 Files share. `APP_VERSION` / `VITE_APP_VERSION` build args stamp the running version and
 `APP_RELEASE` / `VITE_APP_RELEASE` stamp a sequential release number (git commit count), so
 the header and **Help → About** show a pill like `v1 (rel 102)`. See
-[DEPLOYMENT.md]({{ site.baseurl }}/DEPLOYMENT/).
+[manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/).
 
 ## Repo hygiene
 

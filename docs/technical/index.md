@@ -11,9 +11,9 @@ has_children: true
 
 | Guide | Audience |
 | --- | --- |
-| [Architecture]({{ site.baseurl }}/ARCHITECTURE/) | Contributors mapping backend modules, APIs, and frontend views |
-| [Technical specification]({{ site.baseurl }}/TECHNICAL_SPEC/) | Engineers reviewing the stack, persistence, runtime, and integrations |
-| [Deployment]({{ site.baseurl }}/DEPLOYMENT/) | Operators building and configuring the application manually |
+| [Architecture]({{ site.baseurl }}/technical/architecture/) | Contributors mapping backend modules, APIs, and frontend views |
+| [Technical specification]({{ site.baseurl }}/technical/specification/) | Engineers reviewing the stack, persistence, runtime, and integrations |
+| [Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/) | Operators building and configuring the application manually |
 | [Documentation regeneration]({{ site.baseurl }}/technical/documentation-regeneration/) | Maintainers rebuilding feature references and how-to guides from source |
 | [Contributing on GitHub](https://github.com/zmustafa/AzureSupportAgent/blob/main/CONTRIBUTING.md) | Developers preparing local changes and pull requests |
 

@@ -14,36 +14,76 @@ What is checked: markdown links, HTML ``href``/``src``, and image links, after e
 ``{{ site.baseurl }}``. External links, ``mailto:`` and bare anchors are out of scope — this
 answers "does this page exist", not "is that server up".
 
+A second, mirror-image check runs alongside it: every child of a ``has_children: true`` index
+must be linked from that index's BODY, not merely listed in the theme sidebar. Otherwise a
+landing page quietly stops describing the pages beneath it while every link on it still works.
+
 Usage (from docs/):
 
     python _check_links.py            # report
     python _check_links.py --json     # machine-readable
 
-Exit code 1 when anything is broken, so it can gate a docs change.
+Exit code 1 when anything is broken, so it can gate a docs change; 2 when the script cannot
+read ``_config.yml`` and therefore cannot be trusted to run at all.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+CONFIG = ROOT / "_config.yml"
 
-# Mirrors `exclude:` in _config.yml — these are not published, so links into them are broken and
-# links FROM them are irrelevant.
-EXCLUDED_DIRS = {
-    "_journey_render", "deck-assets", "improvement-plans", "test-findings", "usecase-assets", "usecase-render",
-    "_site", "_sass", ".jekyll-cache",
-}
-EXCLUDED_FILES = {
-    "ARCHITECTURES_FEATURE.md", "ARCHITECTURES_TEST_PLAN.md", "BUG_HUNTING_PLAN.md",
-    "DATA_RETENTION_PLAN.md", "GRAPH_TEST_PLAN.md", "INVENTORY_TEST_PLAN.md",
-    "UI_TEST_PLAN.md", "UX_ADVANCED_PLAN.md",
-}
+# Jekyll never publishes these, whatever _config.yml says.
+ALWAYS_EXCLUDED_DIRS = {"_site", "_sass", ".jekyll-cache", "__pycache__"}
+
+EXCLUDE_BLOCK = re.compile(r"^exclude:\s*\n((?:\s*-\s*.+\n?)+)", re.MULTILINE)
+
+
+class ConfigError(RuntimeError):
+    """_config.yml could not be read the way this script depends on."""
+
+
+def _config_excludes() -> tuple[set[str], set[str]]:
+    """Read ``exclude:`` from _config.yml, as directory names and glob patterns.
+
+    This used to be a hand-written copy of that list. A copy is silently wrong the moment
+    someone excludes a new directory: the checker keeps treating it as published, so links
+    into unpublished content start passing. Read the real thing, and refuse to run if it
+    cannot be found — an empty exclude set is indistinguishable from a correct one in the
+    output, which is exactly the kind of vacuous pass this file exists to prevent.
+    """
+    if not CONFIG.is_file():
+        raise ConfigError(f"{CONFIG.name} not found next to this script")
+    match = EXCLUDE_BLOCK.search(CONFIG.read_text(encoding="utf-8", errors="replace"))
+    if not match:
+        raise ConfigError(f"no `exclude:` list found in {CONFIG.name}")
+    entries = [
+        line.strip().lstrip("-").strip().strip("\"'")
+        for line in match.group(1).splitlines()
+        if line.strip()
+    ]
+    entries = [e for e in entries if e]
+    if not entries:
+        raise ConfigError(f"`exclude:` in {CONFIG.name} parsed to nothing")
+    dirs = {e.rstrip("/") for e in entries if (ROOT / e).is_dir()}
+    return dirs, {e for e in entries if e.rstrip("/") not in dirs}
+
+
+EXCLUDED_DIRS, EXCLUDED_PATTERNS = (set[str](), set[str]())
+try:
+    EXCLUDED_DIRS, EXCLUDED_PATTERNS = _config_excludes()
+except ConfigError as _exc:  # exit 2, so CI can tell "cannot run" from "found problems" (1)
+    print(f"cannot run: {_exc}", file=sys.stderr)
+    raise SystemExit(2) from _exc
 
 FRONT_MATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 PERMALINK = re.compile(r"^permalink:\s*(.+?)\s*$", re.MULTILINE)
+HAS_CHILDREN = re.compile(r"^has_children:\s*true\s*$", re.MULTILINE)
 REDIRECT_BLOCK = re.compile(r"^redirect_from:\s*\n((?:\s*-\s*.+\n?)+)", re.MULTILINE)
 REDIRECT_INLINE = re.compile(r"^redirect_from:\s*\[(.+?)\]\s*$", re.MULTILINE)
 
@@ -66,9 +106,9 @@ def _strip_title(url: str) -> str:
 
 def _is_excluded(path: Path) -> bool:
     rel = path.relative_to(ROOT)
-    if rel.name in EXCLUDED_FILES:
+    if any(part in EXCLUDED_DIRS or part in ALWAYS_EXCLUDED_DIRS for part in rel.parts):
         return True
-    return any(part in EXCLUDED_DIRS for part in rel.parts)
+    return any(fnmatch(rel.name, pat) or fnmatch(rel.as_posix(), pat) for pat in EXCLUDED_PATTERNS)
 
 
 def _normalize(url: str) -> str:
@@ -197,6 +237,57 @@ def check() -> tuple[list[dict[str, object]], int]:
     return broken, examined
 
 
+def _published_url(md: Path) -> str:
+    """Where a page is served, or "" when Jekyll does not render it as a page at all."""
+    fm = FRONT_MATTER.match(md.read_text(encoding="utf-8", errors="replace"))
+    if not fm:
+        return ""
+    pm = PERMALINK.search(fm.group(1))
+    return _normalize(pm.group(1).strip().strip("\"'") if pm else implicit_permalink(md))
+
+
+def unlinked_children() -> tuple[list[dict[str, str]], int, int]:
+    """Child pages that their own section index never links to.
+
+    ``has_children: true`` makes the theme list a page in the sidebar, so a section index can
+    look complete while its body silently omits a child. That is how a landing page drifts
+    behind the pages beneath it: the sidebar keeps working, the prose stops being true, and
+    nothing fails. The sidebar is not the landing page — check what the page actually says.
+    """
+    missing: list[dict[str, str]] = []
+    indexes = children = 0
+
+    for index in sorted(ROOT.rglob("index.md")):
+        if _is_excluded(index):
+            continue
+        fm = FRONT_MATTER.match(index.read_text(encoding="utf-8", errors="replace"))
+        if not fm or not HAS_CHILDREN.search(fm.group(1)):
+            continue
+        indexes += 1
+        linked = {_normalize(raw) for raw, _ in links_in(index)}
+        linked |= {u.rstrip("/") for u in linked}
+
+        for entry in sorted(index.parent.iterdir()):
+            child = entry / "index.md" if entry.is_dir() else entry
+            if not child.is_file() or child.suffix != ".md" or child == index:
+                continue
+            if not entry.is_dir() and child.name == "index.md":
+                continue
+            if _is_excluded(child):
+                continue
+            url = _published_url(child)
+            if not url:
+                continue
+            children += 1
+            if url not in linked and url.rstrip("/") not in linked:
+                missing.append({
+                    "index": index.relative_to(ROOT).as_posix(),
+                    "child": child.relative_to(ROOT).as_posix(),
+                    "url": url,
+                })
+    return missing, indexes, children
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", action="store_true", help="machine-readable output")
@@ -204,14 +295,23 @@ def main() -> int:
 
     urls, _ = published_urls()
     broken, examined = check()
+    missing, indexes, children = unlinked_children()
 
     if args.json:
-        print(json.dumps({"published": len(urls), "examined": examined, "broken": broken}, indent=2))
-        return 1 if broken else 0
+        print(json.dumps({
+            "published": len(urls),
+            "examined": examined,
+            "broken": broken,
+            "indexes": indexes,
+            "children": children,
+            "unlinked_children": missing,
+        }, indent=2))
+        return 1 if broken or missing else 0
 
     # The count of links EXAMINED is part of the result. "0 broken" out of 4 links and out of
     # 1,400 are very different claims, and only one of them means the site is fine.
-    print(f"{len(urls)} published URLs; {examined} internal links checked; {len(broken)} broken.\n")
+    print(f"{len(urls)} published URLs; {examined} internal links checked; {len(broken)} broken.")
+    print(f"{indexes} section indexes; {children} child pages; {len(missing)} not linked from their index.\n")
     by_target: dict[str, list[dict[str, object]]] = {}
     for b in broken:
         by_target.setdefault(str(b["resolved"]), []).append(b)
@@ -222,7 +322,9 @@ def main() -> int:
             print(f"      {h['page']}:{h['line']}  [{h['link']}]")
         if len(hits) > 6:
             print(f"      ... and {len(hits) - 6} more")
-    return 1 if broken else 0
+    for m in missing:
+        print(f"  unlinked: {m['child']}  ({m['url']})\n      not referenced by {m['index']}")
+    return 1 if broken or missing else 0
 
 
 if __name__ == "__main__":

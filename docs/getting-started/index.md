@@ -34,6 +34,6 @@ Use this section to move from an empty Azure subscription to a working Azure Sup
 
 > Azure Support Agent starts from a read-oriented posture. Keep connections read-only while evaluating the product. Enable write permissions only for a defined workflow, and retain approval gates.
 
-## Existing detailed guides
+## After onboarding
 
-The repository also provides the canonical [installation guide]({{ site.baseurl }}/INSTALLATION/), [manual deployment guide]({{ site.baseurl }}/DEPLOYMENT/), and [Entra setup guide]({{ site.baseurl }}/ENTRA_SETUP/). The pages in this section organize those procedures into a task-oriented onboarding path.
+With the first workload saved, continue to the [User guide]({{ site.baseurl }}/user-guide/) for what each application area does, the [How-to guides]({{ site.baseurl }}/how-to/) for numbered procedures, and [Administration]({{ site.baseurl }}/admin/) to configure providers, access, and integrations.

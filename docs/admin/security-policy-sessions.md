@@ -70,5 +70,6 @@ Use the checks below when results differ from expectations.
 
 ## Related pages
 
+- [Set security policy and revoke sessions (how-to)]({{ site.baseurl }}/how-to/administration/security-sessions/)
 - [Access Control]({{ site.baseurl }}/admin/access-control/)
 - [Security troubleshooting]({{ site.baseurl }}/security/troubleshooting/)

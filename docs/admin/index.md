@@ -21,6 +21,8 @@ read-gated route.
 
 ![AI provider administration screen]({{ site.baseurl }}/assets/ai-providers.png)
 
+Looking for numbered procedures rather than reference material? Open the [administration how-to guides]({{ site.baseurl }}/how-to/administration/).
+
 ## Configuration
 
 - [AI providers]({{ site.baseurl }}/admin/ai-providers/)
@@ -47,4 +49,37 @@ read-gated route.
 - [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/)
 - [Durable Work Batches]({{ site.baseurl }}/admin/durable-batches/)
 
-Every visible Settings entry is covered by one of these pages. Changes affect the current tenant/workspace unless a page explicitly describes an Azure connection or external destination.
+## Every Settings entry
+
+The Settings sidebar groups its entries into Configuration, Security & access, Tool Preference, Observability, and Miscellaneous. Each entry below is documented on one of the pages above; where a read and a write capability differ, both are listed.
+
+| Settings entry | Capability | Documented in |
+| --- | --- | --- |
+| AI Providers | `settings.read` / `settings.write` | [AI providers]({{ site.baseurl }}/admin/ai-providers/) |
+| Azure Tenants | `connections.manage` | [Azure tenants and sandbox VMs]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/) |
+| Sandbox VMs | `sandbox.exec` | [Azure tenants and sandbox VMs]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/) |
+| Connectors | `connectors.manage` | [Connectors]({{ site.baseurl }}/connectors/) |
+| General | `settings.read` / `settings.write` | [General settings]({{ site.baseurl }}/admin/general-settings/) |
+| Access Control | `users.manage` | [Access Control]({{ site.baseurl }}/admin/access-control/) |
+| Security Policy | `users.manage` | [Security Policy and Active Sessions]({{ site.baseurl }}/admin/security-policy-sessions/) |
+| Network Access | `firewall.read` / `firewall.manage` | [Network Access]({{ site.baseurl }}/admin/network-access/) |
+| Active Sessions | `users.manage` | [Security Policy and Active Sessions]({{ site.baseurl }}/admin/security-policy-sessions/) |
+| System Prompts | `settings.read` / `settings.write` | [System prompts and scoring]({{ site.baseurl }}/admin/prompts-scoring/) |
+| Assessments & Architecture | `settings.read` / `settings.write` | [System prompts and scoring]({{ site.baseurl }}/admin/prompts-scoring/) |
+| AMBA Reference Set | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| AMBA Change Requests | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Telemetry Reference Set | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Telemetry Change Requests | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Backup/DR Reference Set | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Backup/DR Change Requests | `coverage.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Retirement Radar Reference | `radar.read` / `radar.manage` | [Reference sets and change requests]({{ site.baseurl }}/admin/reference-sets-change-requests/) |
+| Usage | `monitor.view` | [Usage and Audit Log]({{ site.baseurl }}/admin/usage-audit/) |
+| Audit Log | `audit.read` / `settings.write` | [Usage and Audit Log]({{ site.baseurl }}/admin/usage-audit/) |
+| Azure MCP Tools | `settings.read` | [MCP tools]({{ site.baseurl }}/admin/mcp-tools/) |
+| EntraID MCP Tools | `settings.read` | [MCP tools]({{ site.baseurl }}/admin/mcp-tools/) |
+| Backup & Restore | `backup.manage` | [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/) |
+| Demo Data | `demo.manage` | [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/) |
+
+Users, Roles, Groups, and Sign-in & SSO are sub-tabs of Access Control and share its `users.manage` capability. [Durable Work Batches]({{ site.baseurl }}/admin/durable-batches/) is a background-execution surface rather than a Settings entry.
+
+Changes affect the current tenant/workspace unless a page explicitly describes an Azure connection or external destination. The live role editor is authoritative when a capability name differs from this table; see the [permissions reference]({{ site.baseurl }}/reference/permissions/).

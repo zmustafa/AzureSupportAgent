@@ -73,6 +73,8 @@ No dedicated export, history, scheduling, or integration controls are documented
 
 ## Related pages
 
+- [Manage Azure tenants (how-to)]({{ site.baseurl }}/how-to/administration/azure-tenants/)
+- [Manage Sandbox VMs (how-to)]({{ site.baseurl }}/how-to/administration/sandbox-vms/)
 - [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/)
 - [Permissions reference]({{ site.baseurl }}/reference/permissions/)
 - [Credential handling]({{ site.baseurl }}/security/credential-handling/)

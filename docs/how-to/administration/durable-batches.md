@@ -84,4 +84,4 @@ feature history remains available through that feature's Cleanup or History view
 
 - [Performance Profiler how-to]({{ site.baseurl }}/how-to/design-assessment/performance-profiler/)
 - [Inventory how-to]({{ site.baseurl }}/how-to/estate-intelligence/inventory/)
-- [Technical specification]({{ site.baseurl }}/TECHNICAL_SPEC/)
+- [Technical specification]({{ site.baseurl }}/technical/specification/)

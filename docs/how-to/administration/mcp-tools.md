@@ -110,6 +110,6 @@ Catalog content depends on the connected server version. Keep MCP read-only enab
 ## Related docs
 
 - [Azure tenant recipe]({{ site.baseurl }}/how-to/administration/azure-tenants/)
-- [Entra setup]({{ site.baseurl }}/ENTRA_SETUP/)
+- [Entra setup]({{ site.baseurl }}/getting-started/entra-setup/)
 - [MCP tools reference]({{ site.baseurl }}/admin/mcp-tools/)
 - [General settings recipe]({{ site.baseurl }}/how-to/administration/general-settings/)

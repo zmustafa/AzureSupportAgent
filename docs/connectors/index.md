@@ -26,6 +26,19 @@ The source registers these exact types: **Teams, Outlook, Email, Jira, ServiceNo
 - [Azure Logic Apps and generic webhook]({{ site.baseurl }}/connectors/webhooks-logic-apps/)
 - [Queues and storage]({{ site.baseurl }}/connectors/queues-storage/)
 
+## Procedures
+
+| Task | Recipe |
+| --- | --- |
+| Create, test, enable, rotate, disable, or delete a connector | [Manage connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) |
+| Configure Teams, Slack, Outlook, or email | [Configure messaging connectors]({{ site.baseurl }}/how-to/automations-connectors/connectors-messaging/) |
+| Configure Jira, ServiceNow, or PagerDuty | [Configure ticketing connectors]({{ site.baseurl }}/how-to/automations-connectors/connectors-ticketing/) |
+| Configure Grafana, Splunk, Sumo Logic, CrowdStrike, or AWS Security Hub | [Configure observability connectors]({{ site.baseurl }}/how-to/automations-connectors/connectors-observability/) |
+| Configure Azure Logic Apps | [Configure Logic Apps connector]({{ site.baseurl }}/how-to/automations-connectors/connectors-orchestration/) |
+| Configure Service Bus, Amazon SQS, or S3 | [Configure queue and storage connectors]({{ site.baseurl }}/how-to/automations-connectors/connectors-queues-storage/) |
+| Configure a generic webhook | [Configure custom webhook connector]({{ site.baseurl }}/how-to/automations-connectors/connectors-custom/) |
+| Route events to a connector | [Route and review notifications]({{ site.baseurl }}/how-to/automations-connectors/notifications/) |
+
 ## Safe setup
 
 1. Create a least-privilege account, token, policy, or endpoint at the destination.

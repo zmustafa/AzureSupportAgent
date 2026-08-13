@@ -92,5 +92,6 @@ requires otherwise. SIEM test/flush/reset actions can deliver or replay external
 
 ## Related pages
 
+- [Review usage and audit history (how-to)]({{ site.baseurl }}/how-to/administration/usage-audit/)
 - [Auditing]({{ site.baseurl }}/security/auditing/)
 - [SIEM and security destinations]({{ site.baseurl }}/connectors/siem-security/)

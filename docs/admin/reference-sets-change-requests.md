@@ -86,6 +86,7 @@ Use the checks below when results differ from expectations.
 
 ## Related pages
 
+- [Maintain reference sets and change requests (how-to)]({{ site.baseurl }}/how-to/administration/reference-sets/)
 - [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/)
 - [Telemetry Coverage]({{ site.baseurl }}/user-guide/coverage/telemetry-coverage/)
 - [Backup & DR Coverage]({{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/)

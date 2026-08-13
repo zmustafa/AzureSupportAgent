@@ -59,4 +59,4 @@ Only one connection is default. Prefer **Disabled** over deletion while assessin
 - [How-to guides]({{ site.baseurl }}/how-to/)
 - [Azure tenant reference]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/)
 - [Connection Capability recipe]({{ site.baseurl }}/how-to/coverage/connection-capability/)
-- [Entra setup]({{ site.baseurl }}/ENTRA_SETUP/)
+- [Entra setup]({{ site.baseurl }}/getting-started/entra-setup/)

@@ -2,6 +2,8 @@
 layout: default
 title: README screenshots
 nav_exclude: true
+search_exclude: true
+sitemap: false
 ---
 
 # README screenshots

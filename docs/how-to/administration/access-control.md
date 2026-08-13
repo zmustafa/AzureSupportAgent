@@ -149,6 +149,6 @@ Passwords are hashed and never displayed. Do not share them in tickets. Keep at 
 - [Access control security model]({{ site.baseurl }}/security/access-control/)
 - [Access Control reference]({{ site.baseurl }}/admin/access-control/)
 - [Audit investigation]({{ site.baseurl }}/how-to/administration/usage-audit/)
-- [Entra setup]({{ site.baseurl }}/ENTRA_SETUP/)
+- [Entra setup]({{ site.baseurl }}/getting-started/entra-setup/)
 - [Security troubleshooting]({{ site.baseurl }}/security/troubleshooting/)
 - [Security policy and sessions]({{ site.baseurl }}/how-to/administration/security-sessions/)

@@ -1,7 +1,12 @@
 ---
 layout: default
-title: Technical Specification
-nav_exclude: true
+title: Technical specification
+parent: Technical documentation
+nav_order: 2
+description: The implementation-current specification of the stack, persistence, runtime, and integrations.
+permalink: /technical/specification/
+redirect_from:
+  - /TECHNICAL_SPEC/
 ---
 
 # Azure Support Agent - Technical Specification

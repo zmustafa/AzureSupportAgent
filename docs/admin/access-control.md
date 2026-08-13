@@ -82,6 +82,7 @@ Keep a tested recovery administrator before editing access or SSO. Do not use `u
 
 ## Related pages
 
+- [Manage users, roles, groups, and SSO (how-to)]({{ site.baseurl }}/how-to/administration/access-control/)
 - [Security Policy and Active Sessions]({{ site.baseurl }}/admin/security-policy-sessions/)
 - [Access control security model]({{ site.baseurl }}/security/access-control/)
 - [Permissions reference]({{ site.baseurl }}/reference/permissions/)

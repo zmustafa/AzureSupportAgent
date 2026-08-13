@@ -67,7 +67,6 @@ AI is inactive until configured. Provider requests may send prompts, retrieved A
 
 ## Related pages
 
-### Related docs
-
+- [Configure AI providers (how-to)]({{ site.baseurl }}/how-to/administration/ai-providers/)
 - [Credential handling]({{ site.baseurl }}/security/credential-handling/)
 - [Usage and Audit Log]({{ site.baseurl }}/admin/usage-audit/)

@@ -135,5 +135,6 @@ tokens, or certificate private material into documentation or tool prompts.
 
 ## Related pages
 
+- [Inspect Azure and EntraID MCP tools (how-to)]({{ site.baseurl }}/how-to/administration/mcp-tools/)
 - [Permissions reference]({{ site.baseurl }}/reference/permissions/)
 - [Access control]({{ site.baseurl }}/security/access-control/)

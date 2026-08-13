@@ -61,5 +61,6 @@ After restore or demo changes, validate workload counts, references, automation 
 
 ## Related pages
 
+- [Back up, restore, or manage demo data (how-to)]({{ site.baseurl }}/how-to/administration/backup-demo/)
 - [Credential handling]({{ site.baseurl }}/security/credential-handling/)
 - [Auditing]({{ site.baseurl }}/security/auditing/)

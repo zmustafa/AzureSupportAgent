@@ -22,7 +22,7 @@ Upgrade procedures depend on how the application was deployed. The repository pr
 
 ## Manual Container Apps upgrade
 
-The [Manual Deployment Guide]({{ site.baseurl }}/DEPLOYMENT/) documents the supported pattern: build a new image and update the Container App so Azure creates a fresh revision. Prefer a versioned tag or digest. If reusing `latest`, force a unique revision as shown in that guide.
+[Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/) documents the supported pattern: build a new image and update the Container App so Azure creates a fresh revision. Prefer a versioned tag or digest. If reusing `latest`, force a unique revision as shown in that guide.
 
 After the new revision starts:
 
@@ -46,7 +46,7 @@ The complete one-click footprint can be removed by deleting its dedicated resour
 2. Back up the database if policy requires it.
 3. Inventory the resource group and confirm that it contains no unrelated resources.
 4. Record dependencies such as private DNS links, role assignments, external connectors, or monitoring exports.
-5. Delete the resource group in the Azure portal, or use the teardown command in the [Installation Guide]({{ site.baseurl }}/INSTALLATION/).
+5. Delete the resource group in the Azure portal, or use the teardown command in [one-click installation]({{ site.baseurl }}/getting-started/one-click-install/#teardown).
 6. Remove external app registrations, credentials, Graph consents, role assignments, DNS records, and connector credentials that were created outside the resource group.
 7. Verify that billing and monitoring no longer show retained resources.
 
@@ -70,4 +70,4 @@ For a manual deployment spread across resource groups, delete resources in depen
 
 - [One-click installation]({{ site.baseurl }}/getting-started/one-click-install/)
 - [Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/)
-- [Canonical deployment guide]({{ site.baseurl }}/DEPLOYMENT/)
+- [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/)

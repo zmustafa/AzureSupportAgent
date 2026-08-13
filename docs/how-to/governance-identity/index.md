@@ -29,6 +29,7 @@ Use these guides to turn cached governance and access data into verified review 
 | Review external access and clear stale invitations | [Guest (B2B) access reviews]({{ site.baseurl }}/how-to/governance-identity/review-guest-access/) |
 | Triage IAM findings and run the access scanners | [Work the IAM scanner inbox]({{ site.baseurl }}/how-to/governance-identity/iam-scanner-inbox/) |
 | Trace and close a route from ordinary access to full control | [Run an IAM escalation review]({{ site.baseurl }}/how-to/governance-identity/iam-escalation-review/) |
+| Find access still held by accounts that were disabled in Entra ID | [Export disabled accounts that still hold access]({{ site.baseurl }}/how-to/governance-identity/iam-disabled-access/) |
 | Establish what access changed between collections, and who changed it | [Find what access changed and who changed it]({{ site.baseurl }}/how-to/governance-identity/iam-compare-attribute-changes/) |
 
 ## Common operating pattern

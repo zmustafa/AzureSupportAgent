@@ -43,7 +43,14 @@ AI-driven Azure operations, investigation, governance, and proactive support—d
 
 - Discover [Workloads]({{ site.baseurl }}/user-guide/workloads/) and reverse-engineer [Architectures]({{ site.baseurl }}/user-guide/design-ownership/architectures/).
 - Build support knowledge with [Know-Me]({{ site.baseurl }}/user-guide/design-ownership/know-me/).
-- Prioritize improvements with [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/) and [FMEA]({{ site.baseurl }}/user-guide/assessment-performance/fmea/).
+- Prioritize improvements with [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/), [FMEA]({{ site.baseurl }}/user-guide/assessment-performance/fmea/), and the [Performance Profiler]({{ site.baseurl }}/user-guide/assessment-performance/performance-profiler/).
+
+### Know your estate
+
+- Browse every resource through cost, location, and optimization lenses in [Inventory]({{ site.baseurl }}/user-guide/estate-intelligence/inventory/).
+- Explore how resources connect in the [Estate Graph]({{ site.baseurl }}/user-guide/design-ownership/estate-graph/), and give each one an accountable team with [Ownership]({{ site.baseurl }}/user-guide/design-ownership/ownership/).
+- Fix cost allocation and tagging drift with [Tag Intelligence]({{ site.baseurl }}/user-guide/estate-intelligence/tag-intelligence/).
+- Trace a regression back to its cause in [Change Explorer]({{ site.baseurl }}/user-guide/estate-intelligence/change-explorer/).
 
 ### Improve operational coverage
 
@@ -51,6 +58,13 @@ AI-driven Azure operations, investigation, governance, and proactive support—d
 - Review alert noise and routing in [Alerts Manager]({{ site.baseurl }}/user-guide/coverage/alerts-manager/).
 - Audit diagnostic settings and recoverability with [Telemetry Coverage]({{ site.baseurl }}/user-guide/coverage/telemetry-coverage/) and [Backup & DR Coverage]({{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/).
 - Triage backup jobs and manage vaults, policies, DR drills, and backup cost in [Backup Manager]({{ site.baseurl }}/user-guide/coverage/backup-manager/), one workload at a time or across the whole fleet.
+- Confirm what each Azure connection can actually reach with [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/) before trusting a result.
+
+### Stay ahead of change
+
+- Let scheduled [AI Insight Packs]({{ site.baseurl }}/user-guide/design-ownership/ai-insight-packs/) watch the estate and speak up only when something material happens.
+- Track service retirements and breaking changes in [Retirement Radar]({{ site.baseurl }}/user-guide/lifecycle-investigation/retirement-radar/).
+- Catch expiring commitments with the [Reservations Monitor]({{ site.baseurl }}/user-guide/lifecycle-investigation/reservations-monitor/) and limit exhaustion with the [Quota Monitor]({{ site.baseurl }}/user-guide/lifecycle-investigation/quota-monitor/).
 
 ### Govern and automate
 

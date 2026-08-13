@@ -35,11 +35,12 @@ Open `/admin`, then select the required administration card.
    - [Change General settings]({{ site.baseurl }}/how-to/administration/general-settings/)
    - [Manage users, roles, groups, and SSO]({{ site.baseurl }}/how-to/administration/access-control/)
    - [Set policy and revoke sessions]({{ site.baseurl }}/how-to/administration/security-sessions/)
-- [Restrict network access by IP]({{ site.baseurl }}/how-to/administration/network-access/)
+   - [Restrict network access by IP]({{ site.baseurl }}/how-to/administration/network-access/)
    - [Edit prompts and scoring]({{ site.baseurl }}/how-to/administration/prompts-scoring/)
    - [Maintain reference sets and requests]({{ site.baseurl }}/how-to/administration/reference-sets/)
    - [Review usage and audit history]({{ site.baseurl }}/how-to/administration/usage-audit/)
    - [Inspect Azure and EntraID MCP tools]({{ site.baseurl }}/how-to/administration/mcp-tools/)
+   - [Operate durable fleet and background batches]({{ site.baseurl }}/how-to/administration/durable-batches/)
    - [Back up, restore, or manage demo data]({{ site.baseurl }}/how-to/administration/backup-demo/)
 2. Follow the exact route, permission, verification, and rollback guidance on that page.
 3. Review the Audit Log after a write.
