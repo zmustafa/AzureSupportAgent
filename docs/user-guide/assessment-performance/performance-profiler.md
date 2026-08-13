@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Rank Azure Monitor bottlenecks with durable Fleet batches, completeness-aware scoring, heatmaps, trends, findings, and evidence exports.
 permalink: /user-guide/assessment-performance/performance-profiler/
+feature_ids: [PROACTIVE_NAV:performance, ROUTE:performance]
 ---
 
 # Performance Profiler

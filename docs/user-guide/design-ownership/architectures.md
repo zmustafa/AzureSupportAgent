@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Draw, reverse-engineer, review, and maintain workload architecture diagrams.
 permalink: /user-guide/design-ownership/architectures/
+feature_ids: [PROACTIVE_NAV:architectures, ROUTE:architectures]
 ---
 
 # Architectures

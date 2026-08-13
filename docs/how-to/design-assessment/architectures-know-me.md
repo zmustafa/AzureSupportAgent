@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 2
 description: Draw or reverse-engineer diagrams, check drift, manage revisions, generate Memory and Know-Me, and publish reviewed runbooks.
 permalink: /how-to/design-assessment/architectures-know-me/
+feature_ids: [PROACTIVE_NAV:architectures, ROUTE:architectures, PROACTIVE_NAV:knowme, ROUTE:knowme]
 ---
 
 # Build architectures, Memory, and Know-Me

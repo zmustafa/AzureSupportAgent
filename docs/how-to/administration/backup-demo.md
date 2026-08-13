@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 63
 description: Export and preview tenant backups, restore selected sections, and seed or purge synthetic demo records.
 permalink: /how-to/administration/backup-demo/
+feature_ids: [ADMIN_NAV:backup, ADMIN_NAV:demodata]
 ---
 
 # Back up, restore, and manage demo data

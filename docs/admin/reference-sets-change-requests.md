@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 8
 description: Curate AMBA, telemetry, Backup/DR, and retirement references and decide proposed changes.
 permalink: /admin/reference-sets-change-requests/
+feature_ids: [ADMIN_NAV:amba, ADMIN_NAV:ambachanges, ADMIN_NAV:telemetry, ADMIN_NAV:telemetrychanges, ADMIN_NAV:backupdr, ADMIN_NAV:backupdrchanges, ADMIN_NAV:radar]
 ---
 
 # Reference sets and change requests

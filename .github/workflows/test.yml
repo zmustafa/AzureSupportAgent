@@ -87,3 +87,29 @@ jobs:
       - name: no conditionally-called React hooks
         run: python frontend/scripts/find_conditional_hooks.py frontend/src/components
         continue-on-error: true
+
+  docs:
+    name: docs coverage + links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      # Regenerate the inventory from application source rather than trusting the committed
+      # copy. If a nav registry moved, extraction fails loudly here instead of quietly
+      # shrinking the inventory, which would make undocumented features look documented.
+      - name: feature inventory is current
+        working-directory: docs
+        run: |
+          python _feature_inventory.py
+          git diff --exit-code -- _feature_inventory.json
+      # Enforces the promise made on /technical/documentation-regeneration/: every route,
+      # navigation item, permission and connector maps to a feature reference AND a how-to.
+      - name: docs structure and source coverage
+        working-directory: docs
+        run: python _validate_public_docs.py
+      - name: internal links resolve
+        working-directory: docs
+        run: python _check_links.py

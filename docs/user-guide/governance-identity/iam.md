@@ -8,7 +8,7 @@ description: Review effective Azure and Entra access, privileged/data-plane expo
 permalink: /user-guide/governance-identity/iam/
 redirect_from:
   - /user-guide/governance-identity/rbac/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:compare, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:findings, IAM_NAV:insights, IAM_NAV:leastprivilege, IAM_NAV:leavers, IAM_NAV:overview, IAM_NAV:pim, IAM_NAV:privileged, IAM_NAV:reviews, IAM_NAV:roles, IAM_NAV:scanners, IAM_NAV:scopes, IAM_NAV:simulator]
+feature_ids: [PROACTIVE_NAV:iam, ROUTE:iam, IAM_NAV:accessmap, IAM_NAV:bypass, IAM_NAV:compare, IAM_NAV:diagnostics, IAM_NAV:effective, IAM_NAV:escalation, IAM_NAV:evaluate, IAM_NAV:findings, IAM_NAV:insights, IAM_NAV:leastprivilege, IAM_NAV:leavers, IAM_NAV:overview, IAM_NAV:pim, IAM_NAV:privileged, IAM_NAV:reviews, IAM_NAV:roles, IAM_NAV:scanners, IAM_NAV:scopes, IAM_NAV:simulator]
 ---
 
 # IAM

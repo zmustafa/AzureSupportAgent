@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 52
 description: Add, test, discover, validate, default, disable, and remove Azure tenant connections.
 permalink: /how-to/administration/azure-tenants/
+feature_ids: [ADMIN_NAV:tenants]
 ---
 
 # Manage Azure tenant connections

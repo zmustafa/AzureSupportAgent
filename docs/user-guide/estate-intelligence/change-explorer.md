@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Investigate Azure changes by time, operation, actor, risk, resource, technical diff, dependency impact, and run comparison.
 permalink: /user-guide/estate-intelligence/change-explorer/
-feature_ids: [CHANGEEXPLORER_NAV:summary, CHANGEEXPLORER_NAV:operations, CHANGEEXPLORER_NAV:narrative, CHANGEEXPLORER_NAV:timeline, CHANGEEXPLORER_NAV:changes, CHANGEEXPLORER_NAV:security, CHANGEEXPLORER_NAV:risk, CHANGEEXPLORER_NAV:resources, CHANGEEXPLORER_NAV:actors, CHANGEEXPLORER_NAV:diff, CHANGEEXPLORER_NAV:impact, CHANGEEXPLORER_NAV:compare, CHANGEEXPLORER_NAV:export]
+feature_ids: [PROACTIVE_NAV:change-explorer, ROUTE:change-explorer, CHANGEEXPLORER_NAV:summary, CHANGEEXPLORER_NAV:operations, CHANGEEXPLORER_NAV:narrative, CHANGEEXPLORER_NAV:timeline, CHANGEEXPLORER_NAV:changes, CHANGEEXPLORER_NAV:security, CHANGEEXPLORER_NAV:risk, CHANGEEXPLORER_NAV:resources, CHANGEEXPLORER_NAV:actors, CHANGEEXPLORER_NAV:diff, CHANGEEXPLORER_NAV:impact, CHANGEEXPLORER_NAV:compare, CHANGEEXPLORER_NAV:export]
 ---
 
 # Change Explorer

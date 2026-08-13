@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Audit tag usage, hygiene, compliance, cost allocation, and drift, then preview, export, approve, apply, and revert controlled changes.
 permalink: /user-guide/estate-intelligence/tag-intelligence/
-feature_ids: [PROACTIVE_NAV:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
+feature_ids: [PROACTIVE_NAV:tagintel, ROUTE:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
 ---
 
 # Tag Intelligence

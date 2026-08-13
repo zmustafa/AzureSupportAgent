@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Track Azure service retirements, breaking changes, impacted resources, owners, and migration work.
 permalink: /user-guide/lifecycle-investigation/retirement-radar/
-feature_ids: [PROACTIVE_NAV:radar]
+feature_ids: [PROACTIVE_NAV:radar, ROUTE:radar]
 ---
 
 # Retirement Radar

@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 4
 description: Assess backup, recovery, resilience, and disaster-recovery posture and generate a manual remediation runbook.
 permalink: /user-guide/coverage/backup-dr-coverage/
+feature_ids: [PROACTIVE_NAV:backupdr, ROUTE:backupdr, BACKUPDR_NAV:fleet, BACKUPDR_NAV:cleanup]
 ---
 
 # Backup & DR Coverage

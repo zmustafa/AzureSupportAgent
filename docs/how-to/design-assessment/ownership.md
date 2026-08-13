@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 3
 description: Maintain the owner directory, import records, assign scopes, review suggestions, attest ownership, and apply approved tags.
 permalink: /how-to/design-assessment/ownership/
-feature_ids: [PROACTIVE_NAV:ownership, OWNERSHIP_NAV:assignments, OWNERSHIP_NAV:attestation, OWNERSHIP_NAV:coverage, OWNERSHIP_NAV:directory, OWNERSHIP_NAV:estate, OWNERSHIP_NAV:suggestions]
+feature_ids: [PROACTIVE_NAV:ownership, ROUTE:ownership, OWNERSHIP_NAV:assignments, OWNERSHIP_NAV:attestation, OWNERSHIP_NAV:coverage, OWNERSHIP_NAV:directory, OWNERSHIP_NAV:estate, OWNERSHIP_NAV:suggestions]
 ---
 
 # Operate ownership records and attestations

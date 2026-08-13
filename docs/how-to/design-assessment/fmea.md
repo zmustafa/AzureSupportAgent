@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 7
 description: Generate and edit FMEA tables, calculate RPN, assign actions, manage lifecycle and revisions, export worksheets, and handle deleted workloads.
 permalink: /how-to/design-assessment/fmea/
+feature_ids: [PROACTIVE_NAV:fmea, ROUTE:fmea]
 ---
 
 # Build and maintain FMEA

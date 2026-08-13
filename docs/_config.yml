@@ -53,6 +53,8 @@ exclude:
   - _build_journey_slides.py
   - _build_usecases.py
   - _crawl_site.py
+  - _feature_inventory.py
+  - _feature_inventory.json
   - _render.py
   - _uc_helpers.py
   - _usecases_build.py

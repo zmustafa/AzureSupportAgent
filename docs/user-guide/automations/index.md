@@ -6,7 +6,7 @@ nav_order: 9
 description: Schedule recurring targets, run reusable workbooks and playbooks, and route notifications.
 permalink: /user-guide/automations/
 has_children: true
-feature_ids: [SHELL_NAV:automations]
+feature_ids: [SHELL_NAV:automations, ROUTE:automations]
 ---
 
 # Automations

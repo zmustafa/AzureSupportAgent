@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 4
 description: Assess backup and recovery evidence, generate runbooks, verify recovery, and manage saved runs.
 permalink: /how-to/coverage/backup-dr-coverage/
+feature_ids: [PROACTIVE_NAV:backupdr, ROUTE:backupdr, BACKUPDR_NAV:fleet, BACKUPDR_NAV:cleanup]
 ---
 
 # Operate Backup and DR Coverage

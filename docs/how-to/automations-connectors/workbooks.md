@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 62
 description: Create, test, run, import, export, and troubleshoot reusable Azure operations.
 permalink: /how-to/automations-connectors/workbooks/
+feature_ids: [AUTOMATIONS_NAV:workbooks]
 ---
 
 # Build and run workbooks

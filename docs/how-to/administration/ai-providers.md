@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 51
 description: Add, test, select, and retire supported model providers without exposing credentials.
 permalink: /how-to/administration/ai-providers/
+feature_ids: [ADMIN_NAV:providers]
 ---
 
 # Configure AI providers

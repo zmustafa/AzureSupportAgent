@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 64
 description: Create routing rules, verify external delivery, and operate the in-app notification center.
 permalink: /how-to/automations-connectors/notifications/
-feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
+feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 ---
 
 # Route and review notifications

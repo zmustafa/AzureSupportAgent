@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 6
 description: Understand which Azure surfaces each configured connection can reach and expose investigation blind spots.
 permalink: /user-guide/coverage/connection-capability/
+feature_ids: [PROACTIVE_NAV:capability, ROUTE:capability]
 ---
 
 # Connection Capability

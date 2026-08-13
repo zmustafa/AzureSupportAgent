@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 11
 description: Export or import tenant configuration safely and manage synthetic demonstration data.
 permalink: /admin/backup-demo/
+feature_ids: [ADMIN_NAV:backup, ADMIN_NAV:demodata]
 ---
 
 # Backup & Restore and Demo Data

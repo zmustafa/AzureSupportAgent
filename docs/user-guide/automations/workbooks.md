@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Build and run reusable parameterized operations with structured and AI-assisted outputs.
 permalink: /user-guide/automations/workbooks/
+feature_ids: [AUTOMATIONS_NAV:workbooks]
 ---
 
 # Workbooks

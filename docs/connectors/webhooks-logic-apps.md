@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 5
 description: Configure generic signed HTTPS POST delivery or invoke an Azure Logic Apps HTTP trigger.
 permalink: /connectors/webhooks-logic-apps/
+feature_ids: [CONNECTOR:webhook, CONNECTOR:logicapp]
 ---
 
 # Generic webhook and Azure Logic Apps

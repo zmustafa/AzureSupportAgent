@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 5
 description: Configure local sign-in policy, lockouts, session lifetime, SSO provisioning, and session revocation.
 permalink: /admin/security-policy-sessions/
+feature_ids: [ADMIN_NAV:policies, ADMIN_NAV:sessions, SECURITY_NAV:policies, SECURITY_NAV:sessions]
 ---
 
 # Security Policy and Active Sessions

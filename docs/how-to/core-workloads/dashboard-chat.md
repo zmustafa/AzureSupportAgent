@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Review dashboard posture, ask grounded questions, and run a structured Deep Investigation War Room.
 permalink: /how-to/core-workloads/dashboard-chat/
+feature_ids: [SHELL_NAV:chat, ROUTE:dashboard, ROUTE:chat, ROUTE:c]
 ---
 
 # Use Dashboard, Chat, and Deep Investigation

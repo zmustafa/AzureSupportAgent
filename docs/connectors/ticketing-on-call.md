@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 2
 description: Configure Jira, ServiceNow, Cortex XSOAR, and PagerDuty integrations.
 permalink: /connectors/ticketing-on-call/
+feature_ids: [CONNECTOR:jira, CONNECTOR:servicenow, CONNECTOR:pagerduty, CONNECTOR:xsoar]
 ---
 
 # Jira, ServiceNow, XSOAR, and PagerDuty

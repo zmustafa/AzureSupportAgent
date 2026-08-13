@@ -1,8 +1,11 @@
 ---
 layout: default
 title: Operate durable fleet and background batches
-parent: Administration
-nav_order: 99
+parent: Administration tasks
+grand_parent: How-to guides
+nav_order: 64
+description: Launch, leave, cancel, retry, and verify server-owned multi-workload batches.
+permalink: /how-to/administration/durable-batches/
 ---
 
 # Operate durable fleet and background batches

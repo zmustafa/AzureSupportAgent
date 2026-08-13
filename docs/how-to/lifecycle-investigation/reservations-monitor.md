@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 2
 description: Refresh reservation expiry and utilization, filter risks, export evidence, and preview digests.
 permalink: /how-to/lifecycle-investigation/reservations-monitor/
+feature_ids: [PROACTIVE_NAV:reservations, ROUTE:reservations]
 ---
 
 # Review reservations and renewal risk

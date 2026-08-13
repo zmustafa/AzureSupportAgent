@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 3
 description: Audit diagnostic settings, destinations, categories, fleet posture, and generated remediation artifacts.
 permalink: /how-to/coverage/telemetry-coverage/
+feature_ids: [PROACTIVE_NAV:telemetry, ROUTE:telemetry, TELEMETRY_COVERAGE_LOCAL_TABS:coverage, TELEMETRY_COVERAGE_LOCAL_TABS:all, TELEMETRY_COVERAGE_LOCAL_TABS:fleet, TELEMETRY_COVERAGE_LOCAL_TABS:cleanup]
 ---
 
 # Operate Telemetry Coverage

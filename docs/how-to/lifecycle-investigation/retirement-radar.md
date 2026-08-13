@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Refresh retirement signals, map impact and ownership, track migration state, and create safe handoffs.
 permalink: /how-to/lifecycle-investigation/retirement-radar/
-feature_ids: [PROACTIVE_NAV:radar]
+feature_ids: [PROACTIVE_NAV:radar, ROUTE:radar]
 ---
 
 # Triage lifecycle risk with Retirement Radar

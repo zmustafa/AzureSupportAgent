@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 4
 description: Use the in-app notification center and route normalized events through governed connector rules.
 permalink: /user-guide/automations/notifications/
-feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE_ONLY:notifications]
+feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 ---
 
 # Notifications

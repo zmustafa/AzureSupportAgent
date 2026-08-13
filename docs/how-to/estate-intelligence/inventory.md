@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 11
 description: Refresh, search, filter, export, map, cost, optimize, and compare Azure inventory.
 permalink: /how-to/estate-intelligence/inventory/
+feature_ids: [PROACTIVE_NAV:inventory, ROUTE:inventory, INVENTORY_NAV:grid, INVENTORY_NAV:overview, INVENTORY_NAV:location, INVENTORY_NAV:cost, INVENTORY_NAV:optimization, INVENTORY_NAV:changes]
 ---
 
 # Operate Inventory

@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Inventory and analyze policy, compliance, exemptions, effective rules, advisors, safe rollout simulations, AI tools, and IaC drift.
 permalink: /user-guide/governance-identity/azure-policy/
-feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:advisors, POLICY_NAV:ai, POLICY_NAV:assignments, POLICY_NAV:byperson, POLICY_NAV:bysubscription, POLICY_NAV:drift, POLICY_NAV:effective, POLICY_NAV:exemptions, POLICY_NAV:governance, POLICY_NAV:history, POLICY_NAV:inventory, POLICY_NAV:overview, POLICY_NAV:pivot, POLICY_NAV:rollout, POLICY_NAV:timeline]
+feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:advisors, POLICY_NAV:ai, POLICY_NAV:assignments, POLICY_NAV:byperson, POLICY_NAV:bysubscription, POLICY_NAV:drift, POLICY_NAV:effective, POLICY_NAV:exemptions, POLICY_NAV:governance, POLICY_NAV:history, POLICY_NAV:inventory, POLICY_NAV:overview, POLICY_NAV:pivot, POLICY_NAV:rollout, POLICY_NAV:timeline]
 ---
 
 # Azure Policy

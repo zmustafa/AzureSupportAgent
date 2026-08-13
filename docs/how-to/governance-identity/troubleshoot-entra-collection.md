@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 12
 description: Distinguish blind, unlicensed and inconclusive collector domains, read the Graph diagnostics, recover from throttling or an interrupted collection, and explain a score that moved without a directory change.
 permalink: /how-to/governance-identity/troubleshoot-entra-collection/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup]
+feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph, ENTRA_NAV:signals]
 ---
 
 # Troubleshoot Entra collection and coverage

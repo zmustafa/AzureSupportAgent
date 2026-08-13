@@ -8,7 +8,7 @@ description: Use every IAM tab to review effective access, exposure, scopes, rol
 permalink: /how-to/governance-identity/iam-access-reviews/
 redirect_from:
   - /how-to/governance-identity/rbac-access-reviews/
-feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:accessmap, IAM_NAV:leastprivilege, IAM_NAV:pim, IAM_NAV:roles, IAM_NAV:insights, IAM_NAV:scopes, IAM_NAV:diagnostics]
+feature_ids: [PROACTIVE_NAV:iam, ROUTE:iam, IAM_NAV:overview, IAM_NAV:effective, IAM_NAV:privileged, IAM_NAV:accessmap, IAM_NAV:leastprivilege, IAM_NAV:pim, IAM_NAV:roles, IAM_NAV:insights, IAM_NAV:scopes, IAM_NAV:diagnostics]
 ---
 
 # Review, scan, export, and investigate IAM

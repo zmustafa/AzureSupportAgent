@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Run workload controls, interpret posture scores, manage findings and waivers, and export evidence.
 permalink: /user-guide/assessment-performance/assessments/
+feature_ids: [PROACTIVE_NAV:assessments, ROUTE:assessments, ASSESSMENTS_NAV:fleet, ASSESSMENTS_NAV:cleanup]
 ---
 
 # Assessments

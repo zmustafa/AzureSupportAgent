@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 4
 description: Ask bounded telemetry questions, inspect generated KQL, correlate failures, and reconstruct transactions.
 permalink: /user-guide/lifecycle-investigation/telemetry-intelligence/
+feature_ids: [PROACTIVE_NAV:telemetry-intel, ROUTE:telemetry-intel]
 ---
 
 # Telemetry Intelligence

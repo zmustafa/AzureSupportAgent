@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 5
 description: Capture immutable, SHA-256-stamped investigation snapshots, compare them, share them, and attach them to cases.
 permalink: /user-guide/lifecycle-investigation/evidence-locker/
-feature_ids: [EVIDENCE_CONTENT_TABS:inventory, EVIDENCE_CONTENT_TABS:properties, EVIDENCE_CONTENT_TABS:changes, EVIDENCE_CONTENT_TABS:metrics, EVIDENCE_CONTENT_TABS:findings, EVIDENCE_CONTENT_TABS:architecture, EVIDENCE_CONTENT_TABS:memory, EVIDENCE_CONTENT_TABS:activity]
+feature_ids: [PROACTIVE_NAV:evidence, ROUTE:evidence, EVIDENCE_CONTENT_TABS:inventory, EVIDENCE_CONTENT_TABS:properties, EVIDENCE_CONTENT_TABS:changes, EVIDENCE_CONTENT_TABS:metrics, EVIDENCE_CONTENT_TABS:findings, EVIDENCE_CONTENT_TABS:architecture, EVIDENCE_CONTENT_TABS:memory, EVIDENCE_CONTENT_TABS:activity]
 ---
 
 # Evidence Locker

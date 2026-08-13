@@ -4,6 +4,7 @@ title: Connectors
 nav_order: 21
 description: Configure implemented messaging, ticketing, monitoring, SIEM, security, queue, storage, and automation destinations.
 permalink: /connectors/
+feature_ids: [ADMIN_NAV:connectors]
 has_children: true
 ---
 

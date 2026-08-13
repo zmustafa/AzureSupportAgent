@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 5
 description: Launch focused or fleet workload missions, interpret readiness, and investigate per-system results.
 permalink: /how-to/core-workloads/mission-control/
+feature_ids: [ROUTE:mission-control]
 ---
 
 # Run Mission Control

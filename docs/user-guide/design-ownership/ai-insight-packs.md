@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Create, schedule, run, and interpret evidence-backed AI digests.
 permalink: /user-guide/design-ownership/ai-insight-packs/
-feature_ids: [INSIGHTS_NAV:today, INSIGHTS_NAV:library, INSIGHTS_NAV:runs, INSIGHTS_NAV:schedule]
+feature_ids: [PROACTIVE_NAV:insights, ROUTE:insights, INSIGHTS_NAV:today, INSIGHTS_NAV:library, INSIGHTS_NAV:runs, INSIGHTS_NAV:schedule]
 ---
 
 # AI Insight Packs

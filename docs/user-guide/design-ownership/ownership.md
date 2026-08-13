@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 4
 description: Manage owners, assignments, coverage, suggestions, estates, and attestations.
 permalink: /user-guide/design-ownership/ownership/
-feature_ids: [PROACTIVE_NAV:ownership, OWNERSHIP_NAV:assignments, OWNERSHIP_NAV:attestation, OWNERSHIP_NAV:coverage, OWNERSHIP_NAV:directory, OWNERSHIP_NAV:estate, OWNERSHIP_NAV:suggestions]
+feature_ids: [PROACTIVE_NAV:ownership, ROUTE:ownership, OWNERSHIP_NAV:assignments, OWNERSHIP_NAV:attestation, OWNERSHIP_NAV:coverage, OWNERSHIP_NAV:directory, OWNERSHIP_NAV:estate, OWNERSHIP_NAV:suggestions]
 ---
 
 # Ownership

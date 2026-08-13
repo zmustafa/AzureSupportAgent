@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 12
 description: Use every tag-analysis tab and safely preview, apply, verify, export, import, and revert tag changes.
 permalink: /how-to/estate-intelligence/tag-intelligence/
-feature_ids: [PROACTIVE_NAV:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
+feature_ids: [PROACTIVE_NAV:tagintel, ROUTE:tagintel, TAGINTEL_NAV:census, TAGINTEL_NAV:cost, TAGINTEL_NAV:coverage, TAGINTEL_NAV:drift, TAGINTEL_NAV:generate, TAGINTEL_NAV:hygiene, TAGINTEL_NAV:policy, TAGINTEL_NAV:remediate]
 ---
 
 # Operate Tag Intelligence

@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 6
 description: Navigate proactive tools and verify application health and summary statistics without triggering Azure writes.
 permalink: /how-to/core-workloads/proactive-monitor-stats/
+feature_ids: [SHELL_NAV:proactive, ROUTE:proactive, ROUTE:monitor, ROUTE:stats]
 ---
 
 # Use Proactive Support, Monitor, and Stats

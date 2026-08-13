@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Ask grounded estate questions and run structured War Room investigations with parallel specialists.
 permalink: /user-guide/core/chat-deep-investigation/
+feature_ids: [ROUTE:chat, ROUTE:c]
 ---
 
 # Chat and Deep Investigation

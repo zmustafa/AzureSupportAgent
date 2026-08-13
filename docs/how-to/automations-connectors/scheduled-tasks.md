@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 61
 description: Create, validate, run, pause, archive, restore, and troubleshoot scheduled tasks.
 permalink: /how-to/automations-connectors/scheduled-tasks/
+feature_ids: [AUTOMATIONS_NAV:tasks, ROUTE:automations]
 ---
 
 # Schedule and operate tasks

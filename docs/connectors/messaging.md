@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 1
 description: Configure implemented Teams, Slack, SMTP email, and Outlook/Microsoft Graph delivery modes.
 permalink: /connectors/messaging/
+feature_ids: [CONNECTOR:teams, CONNECTOR:slack, CONNECTOR:outlook, CONNECTOR:email]
 ---
 
 # Teams, Slack, and email

@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Maintain architecture-grounded support knowledge, runbooks, and revision history.
 permalink: /user-guide/design-ownership/know-me/
+feature_ids: [PROACTIVE_NAV:knowme, ROUTE:knowme]
 ---
 
 # Know-Me

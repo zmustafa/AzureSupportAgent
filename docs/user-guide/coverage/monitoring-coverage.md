@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Measure Azure Monitor alert coverage against the AMBA baseline and generate reviewable IaC for gaps.
 permalink: /user-guide/coverage/monitoring-coverage/
-feature_ids: [MONITORING_COVERAGE_LOCAL_TABS:coverage, MONITORING_COVERAGE_LOCAL_TABS:all]
+feature_ids: [PROACTIVE_NAV:coverage, ROUTE:coverage, MONITORING_COVERAGE_LOCAL_TABS:coverage, MONITORING_COVERAGE_LOCAL_TABS:all, MONITORING_COVERAGE_LOCAL_TABS:fleet, MONITORING_COVERAGE_LOCAL_TABS:cleanup]
 ---
 
 # Monitoring Coverage

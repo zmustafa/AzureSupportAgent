@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 68
 description: Configure and verify Splunk, Grafana, Security Hub, XSOAR, Sumo Logic, and CrowdStrike connectors.
 permalink: /how-to/automations-connectors/connectors-observability/
+feature_ids: [CONNECTOR:splunk, CONNECTOR:grafana, CONNECTOR:securityhub, CONNECTOR:xsoar, CONNECTOR:sumologic, CONNECTOR:crowdstrike_ngsiem]
 ---
 
 # Configure observability and SIEM connectors

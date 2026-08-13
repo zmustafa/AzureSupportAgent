@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 6
 description: Create, enrich, progress, verify, close, reopen, and safely delete investigation cases.
 permalink: /how-to/lifecycle-investigation/case-files/
+feature_ids: [PROACTIVE_NAV:cases, ROUTE:cases]
 ---
 
 # Run an investigation with Case Files

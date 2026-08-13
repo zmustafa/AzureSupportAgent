@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 3
 description: Configure application behavior, safety, retention, tools, scan limits, thresholds, and feature tuning.
 permalink: /admin/general-settings/
+feature_ids: [ADMIN_NAV:settings]
 ---
 
 # General settings

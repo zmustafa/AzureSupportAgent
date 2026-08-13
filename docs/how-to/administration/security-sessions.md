@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 57
 description: Change local sign-in, lockout, session, and SSO JIT policy and respond to active sessions.
 permalink: /how-to/administration/security-sessions/
+feature_ids: [ADMIN_NAV:policies, ADMIN_NAV:sessions, SECURITY_NAV:policies, SECURITY_NAV:sessions]
 ---
 
 # Set security policy and revoke sessions

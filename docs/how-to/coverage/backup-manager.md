@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 5
 description: Analyze a backup estate, sweep the whole fleet, triage failed jobs, close protection gaps, harden vaults, and reclaim stored analyses.
 permalink: /how-to/coverage/backup-manager/
+feature_ids: [PROACTIVE_NAV:backup-manager, ROUTE:backup-manager, BACKUP_MANAGER_NAV:overview, BACKUP_MANAGER_NAV:flow, BACKUP_MANAGER_NAV:inventory, BACKUP_MANAGER_NAV:jobs, BACKUP_MANAGER_NAV:policies, BACKUP_MANAGER_NAV:vaults, BACKUP_MANAGER_NAV:gaps, BACKUP_MANAGER_NAV:dr, BACKUP_MANAGER_NAV:cost, BACKUP_MANAGER_NAV:changes, BACKUP_MANAGER_NAV:fleet, BACKUP_MANAGER_NAV:cleanup]
 ---
 
 # Operate Backup Manager

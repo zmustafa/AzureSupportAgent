@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 2
 description: Analyze assignments by person, subscription, time, custom dimensions, and saved history.
 permalink: /how-to/governance-identity/policy-pivots-history/
+feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:byperson, POLICY_NAV:bysubscription, POLICY_NAV:pivot, POLICY_NAV:timeline, POLICY_NAV:history]
 ---
 
 # Analyze policy pivots and history

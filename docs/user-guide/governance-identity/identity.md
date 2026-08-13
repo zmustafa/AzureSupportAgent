@@ -6,7 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Tenant-wide Entra ID posture score, Conditional Access coverage, privileged access, applications and consent, sign-in risk, governance, blast radius, principal investigation, and the findings inbox.
 permalink: /user-guide/governance-identity/identity/
-feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:posture, ENTRA_NAV:conditional-access, ENTRA_NAV:privileged, ENTRA_NAV:applications, ENTRA_NAV:signals, ENTRA_NAV:governance, ENTRA_NAV:graph, ENTRA_NAV:findings, ENTRA_NAV:setup]
+feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:posture, ENTRA_NAV:conditional-access, ENTRA_NAV:privileged, ENTRA_NAV:applications, ENTRA_NAV:signals, ENTRA_NAV:governance, ENTRA_NAV:graph, ENTRA_NAV:findings, ENTRA_NAV:setup]
 ---
 
 # Entra ID

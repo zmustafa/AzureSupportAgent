@@ -5,6 +5,7 @@ parent: User guide
 nav_order: 1
 description: Use the Dashboard and conversational investigation experience.
 permalink: /user-guide/core/
+feature_ids: [SHELL_NAV:chat]
 has_children: true
 ---
 

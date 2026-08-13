@@ -4,6 +4,7 @@ title: Administration
 nav_order: 20
 description: Configure providers, Azure access, integrations, security, references, tools, observability, backups, and demo data.
 permalink: /admin/
+feature_ids: [SHELL_NAV:admin, ROUTE:admin]
 has_children: true
 ---
 
@@ -44,5 +45,6 @@ read-gated route.
 
 - [Usage and Audit Log]({{ site.baseurl }}/admin/usage-audit/)
 - [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/)
+- [Durable Work Batches]({{ site.baseurl }}/admin/durable-batches/)
 
 Every visible Settings entry is covered by one of these pages. Changes affect the current tenant/workspace unless a page explicitly describes an Azure connection or external destination.

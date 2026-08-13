@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 53
 description: Register, test, use, disable, and remove dedicated SSH diagnostic hosts safely.
 permalink: /how-to/administration/sandbox-vms/
+feature_ids: [ADMIN_NAV:sandboxvms]
 ---
 
 # Manage Sandbox VMs

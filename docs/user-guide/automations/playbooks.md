@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Chain workbooks into conditional, parameter-mapped, observable multi-step flows.
 permalink: /user-guide/automations/playbooks/
+feature_ids: [AUTOMATIONS_NAV:playbooks]
 ---
 
 # Playbooks

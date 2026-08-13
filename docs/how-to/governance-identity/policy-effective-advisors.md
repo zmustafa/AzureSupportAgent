@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 3
 description: Resolve effective policy, review exemptions, and turn governance advisors into verified actions.
 permalink: /how-to/governance-identity/policy-effective-advisors/
+feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, POLICY_NAV:exemptions, POLICY_NAV:governance]
 ---
 
 # Resolve effective policy and governance risks

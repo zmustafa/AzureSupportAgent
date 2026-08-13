@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 3
 description: Run bounded quota scans, interpret capacity and throttling results, export findings, and verify remediation.
 permalink: /how-to/lifecycle-investigation/quota-monitor/
+feature_ids: [PROACTIVE_NAV:quota, ROUTE:quota]
 ---
 
 # Scan and investigate quota risk

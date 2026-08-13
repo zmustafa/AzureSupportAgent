@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 60
 description: Version AMBA, telemetry, BackupDR, and Retirement references and decide supported change requests.
 permalink: /how-to/administration/reference-sets/
+feature_ids: [ADMIN_NAV:amba, ADMIN_NAV:ambachanges, ADMIN_NAV:telemetry, ADMIN_NAV:telemetrychanges, ADMIN_NAV:backupdr, ADMIN_NAV:backupdrchanges, ADMIN_NAV:radar]
 ---
 
 # Maintain reference sets and change requests

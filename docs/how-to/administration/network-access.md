@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 58
 description: Limit which IP addresses and ranges can reach the application, validate the rules in monitor mode first, and recover from a lockout.
 permalink: /how-to/administration/network-access/
+feature_ids: [ADMIN_NAV:firewall, SECURITY_NAV:firewall]
 ---
 
 # Restrict network access by IP

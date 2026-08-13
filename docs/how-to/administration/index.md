@@ -5,6 +5,7 @@ parent: How-to guides
 nav_order: 5
 description: Task-oriented procedures for every visible administration area.
 permalink: /how-to/administration/
+feature_ids: [SHELL_NAV:admin, ROUTE:admin]
 has_children: true
 ---
 

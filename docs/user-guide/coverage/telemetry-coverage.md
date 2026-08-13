@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Audit Azure diagnostic settings, recommended categories, destinations, and retention, then generate remediation artifacts.
 permalink: /user-guide/coverage/telemetry-coverage/
+feature_ids: [PROACTIVE_NAV:telemetry, ROUTE:telemetry, TELEMETRY_COVERAGE_LOCAL_TABS:coverage, TELEMETRY_COVERAGE_LOCAL_TABS:all, TELEMETRY_COVERAGE_LOCAL_TABS:fleet, TELEMETRY_COVERAGE_LOCAL_TABS:cleanup]
 ---
 
 # Telemetry Coverage

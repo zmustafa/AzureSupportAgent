@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Create, test, schedule, triage, tune, and export evidence-backed insight digests.
 permalink: /how-to/design-assessment/insight-packs/
-feature_ids: [INSIGHTS_NAV:today, INSIGHTS_NAV:library, INSIGHTS_NAV:runs, INSIGHTS_NAV:schedule]
+feature_ids: [PROACTIVE_NAV:insights, ROUTE:insights, INSIGHTS_NAV:today, INSIGHTS_NAV:library, INSIGHTS_NAV:runs, INSIGHTS_NAV:schedule]
 ---
 
 # Operate AI Insight Packs

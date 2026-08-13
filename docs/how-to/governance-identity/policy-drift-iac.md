@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 5
 description: Compare observed Azure Policy with a stored IaC source and prepare reviewed reconciliation work.
 permalink: /how-to/governance-identity/policy-drift-iac/
+feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:drift]
 ---
 
 # Reconcile policy drift with IaC

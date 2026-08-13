@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 6
 description: Configure Amazon S3/SQS and Azure Service Bus destinations for durable downstream processing.
 permalink: /connectors/queues-storage/
+feature_ids: [CONNECTOR:sqs, CONNECTOR:s3, CONNECTOR:servicebus]
 ---
 
 # Queues and storage

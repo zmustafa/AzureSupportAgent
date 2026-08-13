@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 5
 description: Explore estate relationships, paths, blast radius, overlays, drift, and saved views.
 permalink: /user-guide/design-ownership/estate-graph/
+feature_ids: [PROACTIVE_NAV:graph, ROUTE:graph]
 ---
 
 # Estate Graph

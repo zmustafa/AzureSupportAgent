@@ -5,6 +5,7 @@ parent: User guide
 nav_order: 3
 description: Run coordinated multi-system workload sweeps and interpret the go, warning, or no-go posture board.
 permalink: /user-guide/mission-control/
+feature_ids: [ROUTE:mission-control]
 ---
 
 # Mission Control

@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 69
 description: Configure and safely verify Azure Service Bus, Amazon SQS, and Amazon S3 connectors.
 permalink: /how-to/automations-connectors/connectors-queues-storage/
+feature_ids: [CONNECTOR:sqs, CONNECTOR:s3, CONNECTOR:servicebus]
 ---
 
 # Configure queue and storage connectors

@@ -18,6 +18,9 @@ permalink: /reference/troubleshooting/
 | Task/workbook/playbook/notification run | [Automations]({{ site.baseurl }}/user-guide/automations/) |
 | External delivery/ticket/SIEM/queue | [Connectors]({{ site.baseurl }}/connectors/) |
 | Provider/model failures | [AI providers]({{ site.baseurl }}/admin/ai-providers/) |
+| Cannot reach a host, or a name resolves to the wrong address | [Network and DNS Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/) |
+| A diagnostic must run from inside the network | [Sandbox VM Diagnostics]({{ site.baseurl }}/user-guide/design-ownership/sandbox-diagnostics/) |
+| Fleet or background run stuck, partial, or lost after restart | [Durable Work Batches]({{ site.baseurl }}/admin/durable-batches/) |
 | General limits/thresholds/timeouts | [General settings]({{ site.baseurl }}/admin/general-settings/) |
 
 Always capture scope, connection, generated time, run/request ID, exact error, and whether the data was cached. Remove secrets and personal data before sharing diagnostics.

@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 70
 description: Configure, test, verify, and safely operate the Azure Logic Apps connector.
 permalink: /how-to/automations-connectors/connectors-orchestration/
+feature_ids: [CONNECTOR:logicapp]
 ---
 
 # Configure automation and orchestration connectors

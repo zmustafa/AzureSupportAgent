@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 2
 description: Triage fleet health and create a workload manually from explicit Azure scopes and resources.
 permalink: /how-to/core-workloads/workload-fleet/
+feature_ids: [SHELL_NAV:workloads, ROUTE:workloads]
 ---
 
 # Operate the workload fleet and create workloads

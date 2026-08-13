@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Scan subscription and regional quota usage, headroom, provider readiness, and throttling risk.
 permalink: /user-guide/lifecycle-investigation/quota-monitor/
+feature_ids: [PROACTIVE_NAV:quota, ROUTE:quota]
 ---
 
 # Quota Monitor

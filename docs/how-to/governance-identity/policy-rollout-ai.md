@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 4
 description: Simulate staged policy rollout and validate AI-authored, explained, triaged, and tag-governance proposals.
 permalink: /how-to/governance-identity/policy-rollout-ai/
+feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:rollout, POLICY_NAV:ai]
 ---
 
 # Plan policy rollouts and use AI tools

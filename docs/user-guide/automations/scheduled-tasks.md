@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Create, preview, enable, run, and monitor recurring automation targets.
 permalink: /user-guide/automations/scheduled-tasks/
+feature_ids: [AUTOMATIONS_NAV:tasks]
 ---
 
 # Scheduled Tasks

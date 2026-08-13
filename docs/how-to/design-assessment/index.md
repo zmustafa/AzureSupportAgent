@@ -15,7 +15,7 @@ Use these recipes to turn workload inventory into reviewable design, operational
 ## Prerequisites
 
 - Confirm the workload and Azure connection before generation or analysis.
-- Product permissions vary: `insights.*`, `architectures.*`, `ownership.*`, `graph.read`, `assessments.*`, and `perfprofile.read`.
+- Product permissions vary: `insights.*`, `architectures.*`, `ownership.*`, `graph.read`, `assessments.*`, and `perfprofile.read`. Live network, DNS, and in-guest diagnostics additionally require `netdiag.run` or `sandbox.exec`.
 - AI-assisted tasks require an active provider; source collection requires the corresponding Azure/Graph access.
 
 ## Route
@@ -31,6 +31,9 @@ Open the route listed by the selected recipe.
 5. Use [Assessments]({{ site.baseurl }}/how-to/design-assessment/assessments/) for control evaluation, lifecycle, findings, waivers, tickets, reports, and fleet/scheduled runs.
 6. Use [Performance Profiler]({{ site.baseurl }}/how-to/design-assessment/performance-profiler/) for windowed metrics, bottleneck heatmaps, findings, evidence, history, and cleanup.
 7. Use [FMEA]({{ site.baseurl }}/how-to/design-assessment/fmea/) for architecture-grounded failure modes, RPN, action ownership, revisions, and worksheet exports.
+8. Use [Test connectivity]({{ site.baseurl }}/how-to/design-assessment/test-connectivity/) to prove whether a source reaches a target port, and to name the rule that blocked it.
+9. Use [Debug private DNS resolution]({{ site.baseurl }}/how-to/design-assessment/debug-dns-resolution/) when a name resolves publicly, inconsistently, or not at all.
+10. Use [Run a bounded diagnostic on a Sandbox VM]({{ site.baseurl }}/how-to/design-assessment/run-sandbox-diagnostic/) when the answer is only visible from inside the network.
 
 **Expected result:** The workflow starts from current scope/evidence and produces a reviewable record rather than an unverified AI conclusion.
 
@@ -52,3 +55,5 @@ Most collection and generation is read-only against Azure, but saved records, ex
 
 - [Design & Ownership reference]({{ site.baseurl }}/user-guide/design-ownership/)
 - [Assessment & Performance reference]({{ site.baseurl }}/user-guide/assessment-performance/)
+- [Network and DNS Diagnostics reference]({{ site.baseurl }}/user-guide/design-ownership/network-dns-diagnostics/)
+- [Sandbox VM Diagnostics reference]({{ site.baseurl }}/user-guide/design-ownership/sandbox-diagnostics/)

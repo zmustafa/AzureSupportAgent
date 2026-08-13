@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 6
 description: Restrict which IP addresses and ranges can reach the application, with a monitor mode, a self-lockout guard and a commit-confirm safety timer.
 permalink: /admin/network-access/
+feature_ids: [ADMIN_NAV:firewall, SECURITY_NAV:firewall]
 ---
 
 # Network Access

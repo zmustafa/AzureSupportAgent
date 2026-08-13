@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 1
 description: Read setup progress, workload coverage, posture, risks, and activity from the home dashboard.
 permalink: /user-guide/core/dashboard/
+feature_ids: [ROUTE:dashboard]
 ---
 
 # Dashboard

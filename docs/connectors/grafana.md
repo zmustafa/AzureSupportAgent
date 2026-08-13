@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 4
 description: Query a configured Grafana datasource, list alerts, and create annotations.
 permalink: /connectors/grafana/
+feature_ids: [CONNECTOR:grafana]
 ---
 
 # Grafana

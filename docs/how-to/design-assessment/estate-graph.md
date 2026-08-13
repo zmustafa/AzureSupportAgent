@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 4
 description: Search and focus graph nodes, use lenses and overlays, trace paths, estimate blast radius, and export the visible graph.
 permalink: /how-to/design-assessment/estate-graph/
+feature_ids: [PROACTIVE_NAV:graph, ROUTE:graph]
 ---
 
 # Explore the Estate Graph

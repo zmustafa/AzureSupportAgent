@@ -5,6 +5,7 @@ parent: User guide
 nav_order: 2
 description: Organize Azure resources into application boundaries and operate them as a fleet.
 permalink: /user-guide/workloads/
+feature_ids: [SHELL_NAV:workloads, ROUTE:workloads]
 has_children: true
 ---
 

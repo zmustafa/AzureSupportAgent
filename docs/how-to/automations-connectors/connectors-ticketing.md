@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 67
 description: Configure and safely verify Jira, ServiceNow, and PagerDuty connectors.
 permalink: /how-to/automations-connectors/connectors-ticketing/
+feature_ids: [CONNECTOR:jira, CONNECTOR:servicenow, CONNECTOR:pagerduty]
 ---
 
 # Configure ticketing and ITSM connectors

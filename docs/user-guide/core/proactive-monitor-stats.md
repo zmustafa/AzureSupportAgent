@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Understand the proactive feature catalog, operational monitor, and read-only statistics views.
 permalink: /user-guide/core/proactive-monitor-stats/
+feature_ids: [SHELL_NAV:proactive, ROUTE:proactive, ROUTE:monitor, ROUTE:stats]
 ---
 
 # Proactive Support, Monitor, and Stats

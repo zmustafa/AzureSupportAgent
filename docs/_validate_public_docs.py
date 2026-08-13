@@ -47,6 +47,56 @@ for rel,meta,heads in pages:
   for required in ('prerequisites','route','safety and rollback','troubleshooting','related docs'):
    if required not in heads: errors.append(f"{rel}: missing required section '{required}'")
   if not any(h.startswith('how to ') for h in heads): errors.append(f"{rel}: no verb-led 'How to ...' recipe")
+
+# ---- Source-to-documentation coverage -------------------------------------------------
+# /technical/documentation-regeneration/ promises that every current route, navigation item,
+# permission area and connector maps to documentation. Nothing enforced that, so pages were
+# free to claim feature ids that no longer existed (or never had). The inventory below is
+# extracted from application source by _feature_inventory.py; these checks compare the two.
+INV=ROOT/"_feature_inventory.json"
+# Layer rules. The site is built in two layers and every visible area needs both: a feature
+# reference that explains it and a how-to recipe that performs it.
+REFERENCE_ROOTS={"user-guide","admin","connectors","security","reference","getting-started","technical"}
+HOWTO_ROOTS={"how-to"}
+# Namespaces that are catalogues rather than screens. They are explained in one reference
+# table; demanding a numbered recipe per permission key would produce 89 useless pages.
+REFERENCE_ONLY_NAMESPACES={"PERMISSION"}
+if not INV.exists():
+ errors.append("_feature_inventory.json is missing - run: python _feature_inventory.py")
+else:
+ import json
+ inventory=json.loads(INV.read_text(encoding="utf-8"))
+ known=set(inventory["feature_ids"])
+ claimed_reference=defaultdict(list); claimed_howto=defaultdict(list)
+ for rel,meta,_heads in pages:
+  raw=meta.get("feature_ids") or []
+  if isinstance(raw,str): raw=[raw]
+  root=rel.parts[0] if len(rel.parts)>1 else ""
+  for fid in raw:
+   fid=str(fid).strip()
+   if not fid: continue
+   if fid not in known:
+    errors.append(f"{rel}: feature_ids claims '{fid}', which does not exist in application source")
+    continue
+   if root in HOWTO_ROOTS: claimed_howto[fid].append(rel.as_posix())
+   elif root in REFERENCE_ROOTS: claimed_reference[fid].append(rel.as_posix())
+   else: errors.append(f"{rel}: feature_ids used outside a documentation layer")
+ undocumented=[f for f in sorted(known) if f not in claimed_reference and f not in claimed_howto]
+ for fid in undocumented:
+  errors.append(f"undocumented feature: '{fid}' is in the application but on no page")
+ missing_reference=[f for f in sorted(known)
+   if f.split(":",1)[0] not in REFERENCE_ONLY_NAMESPACES
+   and f not in claimed_reference and f in claimed_howto]
+ for fid in missing_reference:
+  errors.append(f"no feature reference for '{fid}' (how-to only) - add it under a reference-layer page")
+ missing_howto=[f for f in sorted(known)
+   if f.split(":",1)[0] not in REFERENCE_ONLY_NAMESPACES
+   and f in claimed_reference and f not in claimed_howto]
+ for fid in missing_howto:
+  errors.append(f"no how-to recipe for '{fid}' (reference only) - add a numbered procedure under docs/how-to/")
+ covered=len(known)-len(undocumented)
+ print(f"feature ids: {covered}/{len(known)} documented (release {inventory['app_release']})")
+
 print(f"public pages checked: {len(pages)}")
 print(f"errors: {len(errors)}")
 for e in errors: print(f"  {e}")

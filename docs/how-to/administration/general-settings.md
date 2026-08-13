@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 55
 description: Adjust runtime, safety, command, Azure pacing, and Performance Profiler capacity settings with bounded verification.
 permalink: /how-to/administration/general-settings/
+feature_ids: [ADMIN_NAV:settings]
 ---
 
 # Change General settings safely

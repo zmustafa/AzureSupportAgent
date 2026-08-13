@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 56
 description: Create and maintain users, least-privilege roles, groups, and OIDC or SAML sign-in providers.
 permalink: /how-to/administration/access-control/
-feature_ids: [ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:identity]
+feature_ids: [ADMIN_NAV:access, ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:identity, SECURITY_NAV:users, SECURITY_NAV:roles, SECURITY_NAV:groups, SECURITY_NAV:identity]
 ---
 
 # Manage Access Control

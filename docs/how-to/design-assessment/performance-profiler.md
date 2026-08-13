@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 6
 description: Run focused or durable Fleet profiles, assess collection completeness, tune capacity safely, recover failures, and preserve validated results.
 permalink: /how-to/design-assessment/performance-profiler/
+feature_ids: [PROACTIVE_NAV:performance, ROUTE:performance]
 ---
 
 # Run Performance Profiler

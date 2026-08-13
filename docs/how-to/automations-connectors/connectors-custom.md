@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 71
 description: Configure, sign, test, verify, and troubleshoot generic HTTPS webhooks.
 permalink: /how-to/automations-connectors/connectors-custom/
+feature_ids: [CONNECTOR:webhook]
 ---
 
 # Configure custom connectors

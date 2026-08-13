@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 59
 description: Edit or reset system prompts and tune assessment, workload-health, and architecture settings with controlled verification.
 permalink: /how-to/administration/prompts-scoring/
+feature_ids: [ADMIN_NAV:prompts, ADMIN_NAV:scoring]
 ---
 
 # Govern prompts and scoring

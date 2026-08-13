@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 5
 description: Run and interpret assessments, manage finding lifecycle and waivers, create tickets, export reports, and operate schedules and fleet scans.
 permalink: /how-to/design-assessment/assessments/
+feature_ids: [PROACTIVE_NAV:assessments, ROUTE:assessments, ASSESSMENTS_NAV:fleet, ASSESSMENTS_NAV:cleanup]
 ---
 
 # Run and govern assessments

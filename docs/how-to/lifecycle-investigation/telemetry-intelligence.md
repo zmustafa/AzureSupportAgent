@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 4
 description: Generate and validate KQL, triage failures, correlate timelines, reconstruct transactions, and preserve findings.
 permalink: /how-to/lifecycle-investigation/telemetry-intelligence/
+feature_ids: [PROACTIVE_NAV:telemetry-intel, ROUTE:telemetry-intel]
 ---
 
 # Investigate telemetry with Telemetry Intelligence

@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 2
 description: Monitor Azure reservation expiry, renewal posture, utilization, and digest routing.
 permalink: /user-guide/lifecycle-investigation/reservations-monitor/
+feature_ids: [PROACTIVE_NAV:reservations, ROUTE:reservations]
 ---
 
 # Reservations Monitor

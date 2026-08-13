@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Scan policy inventory, review assignment details, and export a bounded register.
 permalink: /how-to/governance-identity/policy-inventory-assignments/
-feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:overview]
+feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:overview, POLICY_NAV:inventory, POLICY_NAV:assignments]
 ---
 
 # Inventory Azure Policy and assignments

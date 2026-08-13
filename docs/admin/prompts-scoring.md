@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 7
 description: Govern system prompts, assessment scoring, workload-health weighting, and architecture colors.
 permalink: /admin/prompts-scoring/
+feature_ids: [ADMIN_NAV:prompts, ADMIN_NAV:scoring]
 ---
 
 # System Prompts and Assessments & Architecture

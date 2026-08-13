@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 66
 description: Configure and verify Teams, Slack, Outlook, and SMTP email connectors.
 permalink: /how-to/automations-connectors/connectors-messaging/
+feature_ids: [CONNECTOR:teams, CONNECTOR:slack, CONNECTOR:outlook, CONNECTOR:email]
 ---
 
 # Configure messaging and ChatOps connectors

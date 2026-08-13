@@ -5,7 +5,7 @@ parent: Administration
 nav_order: 4
 description: Manage users, custom roles, groups, and OIDC or SAML sign-in providers.
 permalink: /admin/access-control/
-feature_ids: [ADMIN_NAV:access, ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:identity]
+feature_ids: [ADMIN_NAV:access, ACCESS_NAV:users, ACCESS_NAV:roles, ACCESS_NAV:groups, ACCESS_NAV:identity, SECURITY_NAV:users, SECURITY_NAV:roles, SECURITY_NAV:groups, SECURITY_NAV:identity]
 ---
 
 # Access Control

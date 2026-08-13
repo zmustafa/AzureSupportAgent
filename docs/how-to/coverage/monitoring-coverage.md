@@ -6,7 +6,7 @@ grand_parent: How-to guides
 nav_order: 1
 description: Scan AMBA alert coverage, triage gaps, generate IaC, operate fleet scans, and verify remediation.
 permalink: /how-to/coverage/monitoring-coverage/
-feature_ids: [MONITORING_COVERAGE_LOCAL_TABS:coverage, MONITORING_COVERAGE_LOCAL_TABS:all]
+feature_ids: [PROACTIVE_NAV:coverage, ROUTE:coverage, MONITORING_COVERAGE_LOCAL_TABS:coverage, MONITORING_COVERAGE_LOCAL_TABS:all, MONITORING_COVERAGE_LOCAL_TABS:fleet, MONITORING_COVERAGE_LOCAL_TABS:cleanup]
 ---
 
 # Operate Monitoring Coverage

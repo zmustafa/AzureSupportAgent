@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 6
 description: Explain collection blind spots, verify ARM and Graph reachability, and preserve least privilege.
 permalink: /how-to/coverage/connection-capability/
+feature_ids: [PROACTIVE_NAV:capability, ROUTE:capability]
 ---
 
 # Diagnose Connection Capability

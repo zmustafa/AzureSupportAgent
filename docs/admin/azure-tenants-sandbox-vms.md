@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 2
 description: Manage encrypted Azure connections and approved troubleshooting VMs.
 permalink: /admin/azure-tenants-sandbox-vms/
+feature_ids: [ADMIN_NAV:tenants, ADMIN_NAV:sandboxvms]
 ---
 
 # Azure Tenants and Sandbox VMs

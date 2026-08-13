@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 6
 description: Maintain durable incident records with append-only timelines, evidence, remediation, and verification.
 permalink: /user-guide/lifecycle-investigation/case-files/
+feature_ids: [PROACTIVE_NAV:cases, ROUTE:cases]
 ---
 
 # Case Files

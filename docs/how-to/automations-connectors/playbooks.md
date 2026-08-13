@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 63
 description: Chain workbooks with severity gates, validate runs, and move playbooks safely.
 permalink: /how-to/automations-connectors/playbooks/
+feature_ids: [AUTOMATIONS_NAV:playbooks]
 ---
 
 # Build and run playbooks

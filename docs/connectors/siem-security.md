@@ -5,6 +5,7 @@ parent: Connectors
 nav_order: 3
 description: Send governed events to Splunk, Sumo Logic, CrowdStrike NG-SIEM, Cortex XSOAR, or AWS Security Hub.
 permalink: /connectors/siem-security/
+feature_ids: [CONNECTOR:splunk, CONNECTOR:sumologic, CONNECTOR:crowdstrike_ngsiem, CONNECTOR:securityhub]
 ---
 
 # SIEM and security destinations

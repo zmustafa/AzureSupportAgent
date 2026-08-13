@@ -6,6 +6,7 @@ grand_parent: User guide
 nav_order: 3
 description: Create and review Failure Mode and Effects Analysis documents with scored risk tables.
 permalink: /user-guide/assessment-performance/fmea/
+feature_ids: [PROACTIVE_NAV:fmea, ROUTE:fmea]
 ---
 
 # FMEA

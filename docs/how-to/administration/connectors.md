@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 54
 description: Add, test, send through, disable, and retire supported external connectors.
 permalink: /how-to/administration/connectors/
+feature_ids: [ADMIN_NAV:connectors]
 ---
 
 # Configure connectors

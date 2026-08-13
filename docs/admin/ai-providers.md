@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 1
 description: Configure model providers, credentials, model visibility, OAuth sessions, and connectivity diagnostics.
 permalink: /admin/ai-providers/
+feature_ids: [ADMIN_NAV:providers]
 ---
 
 # AI Providers

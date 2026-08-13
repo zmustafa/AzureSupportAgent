@@ -5,6 +5,7 @@ parent: Administration
 nav_order: 10
 description: Review the live Azure MCP, built-in utility, and Microsoft Graph tool catalogs.
 permalink: /admin/mcp-tools/
+feature_ids: [ADMIN_NAV:tools, ADMIN_NAV:entratools]
 ---
 
 # Azure MCP Tools and EntraID MCP Tools

@@ -6,6 +6,7 @@ grand_parent: How-to guides
 nav_order: 62
 description: Review live Azure, built-in, and Microsoft Graph tool catalogs and diagnose availability safely.
 permalink: /how-to/administration/mcp-tools/
+feature_ids: [ADMIN_NAV:tools, ADMIN_NAV:entratools]
 ---
 
 # Inspect Azure and EntraID MCP tools
