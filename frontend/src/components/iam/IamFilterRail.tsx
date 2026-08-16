@@ -9,7 +9,7 @@ import { api, type IamScopeNode } from "../../api";
 import { usePersistedState } from "../../utils/persistedState";
 import { AzureIcon } from "../AzureIcon";
 import { PanelLeftIcon } from "../chat/icons";
-import { type AccessFilter, useIamConnectionId } from "./IamShared";
+import { type AccessFilter, useIamConnectionChange, useIamConnectionId } from "./IamShared";
 
 function ScopeTreeRow({
   node,
@@ -70,14 +70,19 @@ export function FilterRail({
   collapsible?: boolean;
   storageKey?: string;
 }) {
-  const [mode, setMode] = useState<"scope" | "workload">("scope");
+  const [mode, setMode] = useState<"scope" | "workload">(filter?.type ?? "scope");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = usePersistedState(`${storageKey}.collapsed.v1`, false);
   const connectionId = useIamConnectionId();
+  const setConnectionId = useIamConnectionChange();
   const treeQ = useQuery({ queryKey: ["iam", "scope-tree", connectionId ?? ""], queryFn: () => api.iamScopeTree(connectionId), staleTime: 5 * 60 * 1000 });
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const root = treeQ.data?.root;
   const workloads = wlQ.data?.workloads ?? [];
+
+  useEffect(() => {
+    if (filter?.type) setMode(filter.type);
+  }, [filter?.type]);
 
   // Expand the root + management-group nodes once the tree loads so the hierarchy is visible.
   useEffect(() => {
@@ -191,7 +196,10 @@ export function FilterRail({
               return (
                 <button
                   key={w.id}
-                  onClick={() => onChange({ type: "workload", label: w.name, workload_id: w.id })}
+                  onClick={() => {
+                    if (w.connection_id && w.connection_id !== connectionId) setConnectionId(w.connection_id);
+                    onChange({ type: "workload", label: w.name, workload_id: w.id });
+                  }}
                   className={`block w-full truncate rounded px-2 py-1 text-left text-sm ${sel ? "bg-brand/10 font-medium text-brand" : "text-gray-700 hover:bg-gray-100"}`}
                   title={w.name}
                 >

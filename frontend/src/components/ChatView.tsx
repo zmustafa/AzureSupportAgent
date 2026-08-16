@@ -4074,7 +4074,18 @@ export default function ChatView() {
                   )}
                   <WorkloadPicker
                     selectedId={selectedWorkloadId}
-                    onChange={setSelectedWorkloadId}
+                    activeConnectionId={selectedConnectionId}
+                    onChange={(workloadId, workloadConnectionId) => {
+                      setSelectedWorkloadId(workloadId);
+                      if (workloadConnectionId && workloadConnectionId !== selectedConnectionId) {
+                        setSelectedConnectionId(workloadConnectionId);
+                        if (activeId) {
+                          void api.setChatConnection(activeId, workloadConnectionId).then(() => {
+                            qc.invalidateQueries({ queryKey: ["chats"] });
+                          });
+                        }
+                      }
+                    }}
                   />
                   <ModelPicker
                     provider={pickerProvider}
@@ -5203,16 +5214,26 @@ function InvestigationPanel({
  * connected Azure tenant a prompt runs against; the choice persists on the chat. */
 function WorkloadPicker({
   selectedId,
+  activeConnectionId,
   onChange,
 }: {
   selectedId: string | null;
-  onChange: (id: string | null) => void;
+  activeConnectionId: string | null;
+  onChange: (id: string | null, connectionId?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
   const workloads = wlQ.data?.workloads ?? [];
   const active = workloads.find((w) => w.id === selectedId);
+
+  useEffect(() => {
+    if (active?.connection_id && active.connection_id !== activeConnectionId) {
+      onChange(active.id, active.connection_id);
+    }
+    // `onChange` is an inline state synchronizer; connection/id changes are the triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.connection_id, active?.id, activeConnectionId]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -5261,7 +5282,7 @@ function WorkloadPicker({
               <button
                 key={w.id}
                 onClick={() => {
-                  onChange(w.id);
+                  onChange(w.id, w.connection_id ?? undefined);
                   setOpen(false);
                 }}
                 className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-gray-100 ${

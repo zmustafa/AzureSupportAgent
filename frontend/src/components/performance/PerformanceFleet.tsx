@@ -43,7 +43,7 @@ function relTime(iso: string): string {
 type SortKey = "worst" | "score" | "resources" | "breaching" | "approaching" | "healthy" | "bottleneck" | "name" | "run_at";
 type SortDir = "asc" | "desc";
 
-export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
+export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string, connectionId: string) => void }) {
   const queryClient = useQueryClient();
   const fleetQ = useQuery({ queryKey: ["perfFleet"], queryFn: api.perfFleet, refetchOnWindowFocus: false });
   const batchQ = useQuery({
@@ -334,7 +334,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                       <input type="checkbox" checked={selected.has(r.workload_id)} onChange={() => toggleOne(r.workload_id)} />
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">
                         {r.name}
                       </button>
                       <div className="flex items-center gap-1">
@@ -383,7 +383,7 @@ export function PerformanceFleet({ onOpenWorkload }: { onOpenWorkload: (workload
                       {r.has_runs && r.window && !running && !queued && !partial && !failed && <div className="text-[10px] text-gray-400">{r.window}</div>}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
                     </td>
                   </tr>
                 );

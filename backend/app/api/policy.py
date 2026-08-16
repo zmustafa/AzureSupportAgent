@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.azure_connections import resolve_connection
+from app.core.azure_connections import connection_for_scope, resolve_connection
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
 from app.models import AuditLog
@@ -46,6 +46,24 @@ def _actor(p: Principal) -> str:
 
 def _conn(connection_id: str | None) -> dict[str, Any] | None:
     return resolve_connection(connection_id)
+
+
+def _inventory_scope(
+    connection_id: str | None,
+    workload_id: str | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+    workload = get_workload(workload_id) if workload_id else None
+    if workload_id and not workload:
+        raise HTTPException(status_code=404, detail="Workload not found.")
+    connection = (
+        connection_for_scope("workload", connection_id=connection_id, workload=workload)
+        if workload
+        else _conn(connection_id)
+    )
+    if workload and workload.get("connection_id") and not connection:
+        raise HTTPException(status_code=409, detail="Workload connection is missing or disabled.")
+    canonical_id = str((connection or {}).get("id") or connection_id or "")
+    return connection, workload, canonical_id
 
 
 # ============================================================ Phase 1: read-only inventory
@@ -78,8 +96,8 @@ async def get_inventory(
     miss. A miss returns an empty ``never_loaded`` payload so the UI prompts the user to press
     Refresh. ``force=1`` (Refresh / Scan) bypasses the cache and collects from Azure."""
     tid = principal.tenant_id
-    cid = connection_id or ""
     wid = workload_id or ""
+    conn, wl, cid = _inventory_scope(connection_id, workload_id)
     want_compliance = bool(with_compliance)
 
     if not force:
@@ -106,18 +124,14 @@ async def get_inventory(
             "age_seconds": 0,
         }
 
-    conn = _conn(connection_id)
     inv = await collector.collect_inventory(conn)
 
     # --- Workload scoping ------------------------------------------------------------
     workload_block: dict[str, Any] | None = None
     workload_subs: list[str] = []
     if wid:
-        wl = get_workload(wid)
-        if wl is None:
-            raise HTTPException(status_code=404, detail="Workload not found.")
-        wconn = _conn(connection_id or wl.get("connection_id"))
-        wscope = await collector.resolve_workload_scopes(wl, wconn)
+        assert wl is not None
+        wscope = await collector.resolve_workload_scopes(wl, conn)
         scope_ids = wscope["scope_ids"]
         if scope_ids:
             inv["assignments"] = [a for a in inv["assignments"] if collector.scope_governs(a["scope"], scope_ids)]

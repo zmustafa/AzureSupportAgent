@@ -880,6 +880,22 @@ async def _list_management_groups(connection: dict | None = None) -> list[dict]:
     return groups
 
 
+def _resolve_workload_bound_connection(
+    chosen_connection_id: str | None,
+    workload: dict | None,
+) -> dict | None:
+    """Resolve a chat turn's connection without allowing workload resources to cross tenants."""
+    from app.core.azure_connections import get_connection, resolve_connection
+
+    workload_connection_id = str((workload or {}).get("connection_id") or "")
+    if not workload_connection_id:
+        return resolve_connection(chosen_connection_id)
+    connection = get_connection(workload_connection_id)
+    if not connection or connection.get("disabled"):
+        raise ValueError("The selected workload's Azure connection is missing or disabled.")
+    return connection
+
+
 def _build_workload_scope_hint(workload: dict) -> str:
     """Turn a workload's node membership into a precise, bounded scope constraint.
 
@@ -1287,22 +1303,40 @@ async def _start_message_turn(
         await db.commit()
     turn_agent = _agents_registry.get_agent(turn_agent_id) if turn_agent_id else None
 
-    # Resolve the Azure connection (tenant) for this turn: explicit choice in the
-    # payload wins, else the agent's tenant, else the chat's saved tenant, else default.
-    from app.core.azure_connections import resolve_connection
+    # Resolve workload ownership BEFORE the tenant. A workload is bound to its canonical
+    # connection; stale picker/chat/agent state must not pair its resources with another tenant.
+    from app.workloads.registry import get_workload
+
+    turn_workload_id = chat.workload_id
+    if payload.workload_id is not None:
+        turn_workload_id = payload.workload_id or None
+    workload = get_workload(turn_workload_id) if turn_workload_id else None
+    if turn_workload_id and workload is None:
+        raise HTTPException(status_code=404, detail="The selected workload was not found.")
 
     chosen_connection_id = (
         payload.connection_id or (turn_agent or {}).get("connection_id") or chat.connection_id
     )
-    turn_connection = resolve_connection(chosen_connection_id)
-    if turn_connection and not turn_agent and chat.connection_id != turn_connection["id"]:
-        # Only persist tenant changes when NOT running as an agent (the agent's tenant
-        # shouldn't overwrite the chat's own saved tenant once the agent is cleared).
+    try:
+        turn_connection = _resolve_workload_bound_connection(chosen_connection_id, workload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    chat_scope_changed = False
+    if chat.workload_id != turn_workload_id:
+        chat.workload_id = turn_workload_id
+        chat_scope_changed = True
+    workload_owns_connection = bool((workload or {}).get("connection_id"))
+    if turn_connection and (not turn_agent or workload_owns_connection) and chat.connection_id != turn_connection["id"]:
+        # Agent-specific tenant state remains ephemeral unless a user-selected workload owns
+        # the connection, in which case the visible chat tenant must match its scope.
         chat.connection_id = turn_connection["id"]
+        chat_scope_changed = True
+    if chat_scope_changed:
         await db.commit()
     if turn_connection:
         tenant_label = (
-            payload.tenant_name
+            (payload.tenant_name if not workload_owns_connection else None)
             or turn_connection.get("display_name")
             or turn_connection.get("tenant_id")
         )
@@ -1313,37 +1347,25 @@ async def _start_message_turn(
         )
         scope_hint = f"{tenant_line}\n\n{scope_hint}" if scope_hint else tenant_line
 
-    # Resolve an optional Azure Workload (hand-picked resource scope) for this turn.
-    # Explicit payload.workload_id wins ("" clears it), else the chat's saved workload.
-    turn_workload_id = chat.workload_id
-    if payload.workload_id is not None:
-        turn_workload_id = payload.workload_id or None
-    if chat.workload_id != turn_workload_id:
-        chat.workload_id = turn_workload_id
-        await db.commit()
-    if turn_workload_id:
-        from app.workloads.registry import get_workload
+    if workload and workload.get("nodes"):
+        workload_hint = _build_workload_scope_hint(workload)
+        scope_hint = f"{scope_hint}\n\n{workload_hint}" if scope_hint else workload_hint
+        # Backstop: if the workload lives in exactly one subscription and the connection
+        # has no default subscription, pin the MCP server's default to it for this turn.
+        # Otherwise a direct Azure tool called without an explicit subscription resolves
+        # to the wrong one and 404s on the resource group.
+        if turn_connection and not (turn_connection.get("default_subscription") or "").strip():
+            import re as _re
 
-        workload = get_workload(turn_workload_id)
-        if workload and workload.get("nodes"):
-            workload_hint = _build_workload_scope_hint(workload)
-            scope_hint = f"{scope_hint}\n\n{workload_hint}" if scope_hint else workload_hint
-            # Backstop: if the workload lives in exactly one subscription and the connection
-            # has no default subscription, pin the MCP server's default to it for this turn.
-            # Otherwise a direct Azure tool called without an explicit subscription resolves
-            # to the wrong one and 404s on the resource group.
-            if turn_connection and not (turn_connection.get("default_subscription") or "").strip():
-                import re as _re
-
-                _wl_subs: set[str] = set()
-                for _n in workload.get("nodes", []) or []:
-                    if _n.get("kind") == "subscription" and _n.get("id"):
-                        _wl_subs.add(str(_n["id"]).lower())
-                    _ms = _re.search(r"/subscriptions/([0-9a-fA-F-]{36})", str(_n.get("id", "")))
-                    if _ms:
-                        _wl_subs.add(_ms.group(1).lower())
-                if len(_wl_subs) == 1:
-                    turn_connection = {**turn_connection, "default_subscription": next(iter(_wl_subs))}
+            _wl_subs: set[str] = set()
+            for _n in workload.get("nodes", []) or []:
+                if _n.get("kind") == "subscription" and _n.get("id"):
+                    _wl_subs.add(str(_n["id"]).lower())
+                _ms = _re.search(r"/subscriptions/([0-9a-fA-F-]{36})", str(_n.get("id", "")))
+                if _ms:
+                    _wl_subs.add(_ms.group(1).lower())
+            if len(_wl_subs) == 1:
+                turn_connection = {**turn_connection, "default_subscription": next(iter(_wl_subs))}
 
     # Resolve sandbox troubleshooting VMs linked to this turn's workload. Their tools
     # (vm_exec/vm_list/vm_read_file) are registered below; here we tell the model they

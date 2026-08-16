@@ -130,13 +130,31 @@ def _apply_grid_filters(
     return rows
 
 
-def _target(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any] | None, str, str]:
-    """Resolve (connection, tenant_id, connection-id) for the active access scan."""
-    from app.core.azure_connections import resolve_connection
+def _target(
+    principal: Principal,
+    connection_id: str | None,
+    workload_id: str | None = None,
+) -> tuple[dict[str, Any] | None, str, str]:
+    """Resolve the active access scan, preserving a workload's canonical tenant ownership."""
+    from app.core.azure_connections import connection_for_scope, resolve_connection
+    from app.workloads.registry import get_workload
 
-    connection = resolve_connection(connection_id)
+    if workload_id:
+        workload = get_workload(workload_id)
+        if not workload:
+            raise HTTPException(status_code=404, detail="Workload not found")
+        connection = connection_for_scope(
+            "workload", connection_id=connection_id, workload=workload
+        )
+        if workload.get("connection_id") and not connection:
+            raise HTTPException(
+                status_code=409,
+                detail="Workload connection is missing or disabled",
+            )
+    else:
+        connection = resolve_connection(connection_id)
     tenant_id = (connection or {}).get("tenant_id") or principal.tenant_id or "default"
-    cid = connection_id or (connection or {}).get("id") or ""
+    cid = (connection or {}).get("id") or connection_id or ""
     return connection, tenant_id, cid
 
 
@@ -159,7 +177,7 @@ async def overview(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """KPIs + per-scope freshness + collector status. Reads cache only (never scans)."""
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     # Off the loop like every other compose call in this module. "Reads cache only" is not the
     # same as "is cheap": after any write the memo is gone and this recomposes the whole estate,
     # and this endpoint is polled by the screen that is open while a refresh runs.
@@ -192,7 +210,7 @@ async def access(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """Paged + filtered normalized access rows for a tab (the shared 46-column grid)."""
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     # Azure-scope (management group / subscription tree) and/or workload narrowing.
     if scope_id or subscription_ids or workload_id:
@@ -281,7 +299,7 @@ async def insights(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """The 13 precomputed pivot summaries for the Insights tab (honors the scope/workload filter)."""
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
@@ -312,7 +330,7 @@ async def access_flow(
     reads about eighteen of them. Denies and eligibility are kept distinguishable rather than
     folded in, because a flow diagram cannot express either honestly on its own.
     """
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     rows = await cpu.run(compose.build_master_rows, tenant_id, label="access map rows")
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]
@@ -1465,7 +1483,7 @@ async def export_rows(
     function. It previously understood only the scope/workload narrowing, so a download taken
     with a search term or the privileged toggle active silently contained every other row too —
     and this is the artifact that gets attached to an access review."""
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]

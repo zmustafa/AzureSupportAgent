@@ -45,7 +45,7 @@ function CountCell({ n, cls }: { n: number; cls: string }) {
 type SortKey = "worst" | "changes" | "critical" | "high" | "medium" | "low" | "name" | "run_at";
 type SortDir = "asc" | "desc";
 
-export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string) => void }) {
+export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workloadId: string, connectionId: string) => void }) {
   const durable = useDurableBatch("changeexplorer", [["changeFleet"], ["changeExplorerRuns"]]);
   const fleetQ = useQuery({ queryKey: ["changeFleet"], queryFn: api.changeExplorerFleet, refetchOnWindowFocus: false });
   const rows = useMemo(() => fleetQ.data?.workloads ?? [], [fleetQ.data]);
@@ -270,7 +270,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                       <input type="checkbox" checked={selected.has(r.workload_id)} onChange={() => toggleOne(r.workload_id)} />
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="text-left font-medium text-gray-800 hover:text-brand hover:underline">
                         {r.name}
                       </button>
                       {r.environment && <div className="text-[10px] text-gray-400">{r.environment}</div>}
@@ -305,7 +305,7 @@ export function ChangeExplorerFleet({ onOpenWorkload }: { onOpenWorkload: (workl
                       )}
                     </td>
                     <td className="px-2 py-1.5">
-                      <button onClick={() => onOpenWorkload(r.workload_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
+                      <button onClick={() => onOpenWorkload(r.workload_id, r.connection_id)} className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">Open ▸</button>
                     </td>
                   </tr>
                 );

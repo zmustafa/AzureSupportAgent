@@ -199,6 +199,12 @@ def resolve_selected_connection(connection_id: str | None, workload_id: str | No
         connection = get_connection(connection_id)
         if connection is None:
             raise LookupError("The selected Azure connection was not found.")
+        workload_connection_id = str((workload or {}).get("connection_id") or "")
+        if workload_connection_id and workload_connection_id != str(connection.get("id") or ""):
+            raise ValueError(
+                "The selected workload belongs to a different Azure connection. "
+                "Select the workload's connection before analyzing backups."
+            )
     else:
         connection = (
             connection_for_scope("workload", workload=workload)

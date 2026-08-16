@@ -7,6 +7,8 @@ subscription is reachable only via a non-default connection silently returns zer
 """
 from __future__ import annotations
 
+import pytest
+
 import app.core.azure_connections as conns
 
 
@@ -31,12 +33,14 @@ def test_connection_for_workload_falls_back_to_default(monkeypatch):
     assert conns.connection_for_workload(None) == default
 
 
-def test_connection_for_workload_ignores_disabled(monkeypatch):
-    default = {"id": "conn-default", "is_default": True}
-    monkeypatch.setattr(conns, "get_default_connection", lambda: default)
+def test_connection_for_workload_rejects_disabled_link(monkeypatch):
     monkeypatch.setattr(conns, "get_connection", lambda cid: {"id": cid, "disabled": True})
-    # A disabled workload connection falls back to the default.
-    assert conns.connection_for_workload({"connection_id": "conn-x"}) == default
+    assert conns.connection_for_workload({"connection_id": "conn-x"}) is None
+
+
+def test_connection_for_workload_rejects_missing_link(monkeypatch):
+    monkeypatch.setattr(conns, "get_connection", lambda _cid: None)
+    assert conns.connection_for_workload({"connection_id": "conn-missing"}) is None
 
 
 def test_teleintel_conn_for_workload_scope(monkeypatch):
@@ -68,16 +72,15 @@ def test_perfprofile_conn_and_workload(monkeypatch):
 
 
 # --------------------------------------------------------------------------- connection_for_scope
-def test_connection_for_scope_explicit_override_wins(monkeypatch):
-    """An explicit Azure-tenant picker selection (connection_id) ALWAYS wins — for workload AND
-    subscription scopes — so a subscription reachable only via a non-default connection works."""
+def test_connection_for_scope_workload_ownership_precedes_explicit_picker(monkeypatch):
+    """A workload's canonical connection wins, while subscription overrides remain explicit."""
     default, wl_conn = _setup(monkeypatch)
     other = {"id": "conn-other"}
     monkeypatch.setattr(conns, "get_connection", lambda cid: {
         "conn-workload": wl_conn, "conn-default": default, "conn-other": other}.get(cid))
     wl = {"connection_id": "conn-workload"}
-    # Workload scope, explicit override beats the workload's own connection.
-    assert conns.connection_for_scope("workload", connection_id="conn-other", workload=wl) == other
+    # Workload scope cannot be redirected to another tenant by stale picker state.
+    assert conns.connection_for_scope("workload", connection_id="conn-other", workload=wl) == wl_conn
     # Subscription scope, explicit override beats the default.
     assert conns.connection_for_scope("subscription", connection_id="conn-other") == other
 
@@ -98,8 +101,7 @@ def test_connection_for_scope_subscription_defaults(monkeypatch):
     assert conns.connection_for_scope("workload") == default
 
 
-def test_teleintel_conn_for_honors_connection_id(monkeypatch):
-    """The Telemetry-Intelligence connection resolver honors an explicit connection_id override."""
+def test_teleintel_conn_for_preserves_workload_ownership(monkeypatch):
     from app.api import teleintel
     import app.workloads.registry as reg
 
@@ -110,11 +112,11 @@ def test_teleintel_conn_for_honors_connection_id(monkeypatch):
     monkeypatch.setattr(reg, "get_workload", lambda sid, **kw: {"id": sid, "connection_id": "conn-workload"})
     # Subscription scope + override → the picked connection (not the default).
     assert teleintel._conn_for("subscription", "sub-x", "conn-other")["id"] == "conn-other"
-    # Workload scope + override → the picked connection (not the workload's own).
-    assert teleintel._conn_for("workload", "wl-x", "conn-other")["id"] == "conn-other"
+    # Workload scope + stale override → the workload's own connection.
+    assert teleintel._conn_for("workload", "wl-x", "conn-other")["id"] == "conn-workload"
 
 
-def test_perfprofile_conn_and_workload_honors_connection_id(monkeypatch):
+def test_perfprofile_conn_and_workload_preserves_workload_ownership(monkeypatch):
     from app.api import perfprofile
     import app.workloads.registry as reg
 
@@ -125,5 +127,143 @@ def test_perfprofile_conn_and_workload_honors_connection_id(monkeypatch):
     wl = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
     monkeypatch.setattr(reg, "get_workload", lambda sid, **kw: wl if sid == "wl-x" else None)
     conn, _wl = perfprofile._conn_and_workload("workload", "wl-x", "conn-other")
-    assert conn["id"] == "conn-other"   # explicit picker selection wins
+    assert conn["id"] == "conn-workload"
+
+
+def test_chat_workload_connection_overrides_stale_tenant_picker(monkeypatch):
+    from app.api import chats
+
+    _setup(monkeypatch)
+    connection = chats._resolve_workload_bound_connection(
+        "conn-default", {"id": "wl-x", "connection_id": "conn-workload"}
+    )
+    assert connection and connection["id"] == "conn-workload"
+
+
+def test_chat_connectionless_workload_honors_picker(monkeypatch):
+    from app.api import chats
+
+    default, _ = _setup(monkeypatch)
+    assert chats._resolve_workload_bound_connection("conn-default", {"id": "wl-x"}) == default
+
+
+def test_chat_missing_workload_connection_fails_closed(monkeypatch):
+    from app.api import chats
+
+    monkeypatch.setattr(conns, "get_connection", lambda _cid: None)
+    with pytest.raises(ValueError, match="missing or disabled"):
+        chats._resolve_workload_bound_connection(
+            "conn-default", {"id": "wl-x", "connection_id": "conn-missing"}
+        )
+
+
+def test_changeexplorer_workload_ignores_stale_connection_picker(monkeypatch):
+    from app.api import changeexplorer
+    import app.workloads.registry as registry
+
+    _setup(monkeypatch)
+    workload = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
+    monkeypatch.setattr(registry, "get_workload", lambda _id: workload)
+    resolved_workload, connection = changeexplorer._resolve("wl-x", "conn-default")
+    assert resolved_workload is workload
+    assert connection and connection["id"] == "conn-workload"
+
+
+def test_tagintel_workload_write_ignores_stale_connection_picker(monkeypatch):
+    from app.api import tagintel
+    import app.workloads.registry as registry
+
+    _setup(monkeypatch)
+    workload = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
+    monkeypatch.setattr(registry, "get_workload", lambda _id: workload)
+    connection = tagintel._resolve_write_connection("conn-default", "wl-x")
+    assert connection and connection["id"] == "conn-workload"
+
+
+def test_iam_workload_filter_uses_canonical_tenant(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.api import iam
+    import app.workloads.registry as registry
+
+    default = {"id": "conn-default", "tenant_id": "tenant-default", "is_default": True}
+    workload_connection = {"id": "conn-workload", "tenant_id": "tenant-workload"}
+    monkeypatch.setattr(conns, "get_default_connection", lambda: default)
+    monkeypatch.setattr(
+        conns,
+        "get_connection",
+        lambda connection_id: {
+            "conn-default": default,
+            "conn-workload": workload_connection,
+        }.get(connection_id),
+    )
+    monkeypatch.setattr(
+        registry,
+        "get_workload",
+        lambda workload_id: {
+            "id": workload_id,
+            "connection_id": "conn-workload",
+        },
+    )
+
+    connection, tenant_id, connection_id = iam._target(
+        SimpleNamespace(tenant_id="principal-tenant"),
+        "conn-default",
+        "wl-x",
+    )
+
+    assert connection is workload_connection
+    assert tenant_id == "tenant-workload"
+    assert connection_id == "conn-workload"
+
+
+def test_iam_unknown_workload_filter_fails_closed(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from app.api import iam
+    import app.workloads.registry as registry
+
+    monkeypatch.setattr(registry, "get_workload", lambda _workload_id: None)
+    with pytest.raises(HTTPException) as exc:
+        iam._target(SimpleNamespace(tenant_id="principal-tenant"), "conn-default", "missing")
+
+    assert exc.value.status_code == 404
+
+
+def test_policy_inventory_uses_workload_connection_for_cache_and_scan(monkeypatch):
+    from app.api import policy
+    import app.workloads.registry as registry
+
+    default = {"id": "conn-default", "tenant_id": "tenant-default", "is_default": True}
+    workload_connection = {"id": "conn-workload", "tenant_id": "tenant-workload"}
+    monkeypatch.setattr(conns, "get_default_connection", lambda: default)
+    monkeypatch.setattr(
+        conns,
+        "get_connection",
+        lambda connection_id: {
+            "conn-default": default,
+            "conn-workload": workload_connection,
+        }.get(connection_id),
+    )
+    workload = {"id": "wl-x", "connection_id": "conn-workload"}
+    monkeypatch.setattr(registry, "get_workload", lambda _workload_id: workload)
+    monkeypatch.setattr(policy, "get_workload", lambda _workload_id: workload)
+
+    connection, resolved_workload, connection_id = policy._inventory_scope(
+        "conn-default", "wl-x"
+    )
+
+    assert connection is workload_connection
+    assert resolved_workload is workload
+    assert connection_id == "conn-workload"
+
+
+def test_alerts_manager_unknown_workload_fails_closed(monkeypatch):
+    from app.alerts_manager import service
+    import app.workloads.registry as registry
+
+    monkeypatch.setattr(registry, "get_workload", lambda _workload_id: None)
+    with pytest.raises(ValueError, match="not found"):
+        service.resolve_selected_connection("conn-default", "missing")
 

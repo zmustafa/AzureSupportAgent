@@ -538,6 +538,7 @@ export function TelemetryCoveragePanel() {
               subId={subId}
               subName={subName}
               connectionId={connId}
+              onConnectionChange={setConnId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

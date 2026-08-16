@@ -437,16 +437,26 @@ export function BackupManagerPanel() {
   const [focusGapIds, setFocusGapIds] = useState<string[]>([]);
   const [focusVaultId, setFocusVaultId] = useState("");
 
+  const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads, staleTime: 60_000 });
+  const workloads = workloadsQ.data?.workloads ?? [];
+  const selectedWorkload = workloads.find((workload) => workload.id === workloadId);
+  const workloadConnectionId = String(selectedWorkload?.connection_id ?? "");
+  const effectiveConnId = scopeKind === "workload"
+    ? workloadConnectionId || (workloadsQ.isSuccess ? connId : "")
+    : connId;
+
   const scope: BackupManagerScope = useMemo(
     () => ({
-      connection_id: connId,
+      connection_id: effectiveConnId,
       workload_id: scopeKind === "workload" ? workloadId : "",
       subscription_id: scopeKind === "subscription" ? subId : "",
       management_group_id: scopeKind === "management_group" ? mgId : "",
     }),
-    [connId, scopeKind, workloadId, subId, mgId],
+    [effectiveConnId, scopeKind, workloadId, subId, mgId],
   );
-  const scopeReady = scopeKind === "workload" ? !!workloadId : scopeKind === "subscription" ? !!subId : !!mgId;
+  const scopeReady = scopeKind === "workload"
+    ? !!workloadId && workloadsQ.isSuccess && !!selectedWorkload
+    : scopeKind === "subscription" ? !!subId : !!mgId;
 
   useEffect(() => {
     const linkedWorkload = routeSearch.get("workload_id");
@@ -466,7 +476,18 @@ export function BackupManagerPanel() {
     }
   }, [connId, routeSearch, setConnId, setMgId, setMgName, setScopeKind, setSubId, setSubName, setWorkloadId]);
 
-  const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads, staleTime: 60_000 });
+  useEffect(() => {
+    if (scopeKind !== "workload" || !workloadId || !workloadsQ.data) return;
+    if (!selectedWorkload) {
+      setWorkloadId("");
+      return;
+    }
+    if (workloadConnectionId && workloadConnectionId !== connId) {
+      setConnId(workloadConnectionId);
+      setBanner(`Switched Azure connection to match ${selectedWorkload.name}.`);
+    }
+  }, [connId, scopeKind, selectedWorkload, setConnId, setWorkloadId, workloadConnectionId, workloadId, workloadsQ.data]);
+
   const capsQ = useQuery({
     queryKey: queryKeys.backupManager.capabilities(scope),
     queryFn: () => api.backupManagerCapabilities(scope),
@@ -519,8 +540,8 @@ export function BackupManagerPanel() {
   const serverRunning = job?.status === "running";
 
   const changesQ = useQuery({
-    queryKey: queryKeys.backupManager.changes(connId, 1, 100, "all", ""),
-    queryFn: () => api.backupManagerChanges(connId, 1, 100, "all", ""),
+    queryKey: queryKeys.backupManager.changes(effectiveConnId, 1, 100, "all", ""),
+    queryFn: () => api.backupManagerChanges(effectiveConnId, 1, 100, "all", ""),
     enabled: scopeReady && !caps?.demo,
     refetchInterval: (query) =>
       (query.state.data?.applying_count ?? 0) > 0 ? 8_000 : false,
@@ -655,7 +676,7 @@ export function BackupManagerPanel() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ConnectionScopePicker value={connId} onChange={(id) => {
+            <ConnectionScopePicker value={effectiveConnId} onChange={(id) => {
               if (id === connId) return;
               setConnId(id);
               setWorkloadId("");
@@ -691,9 +712,13 @@ export function BackupManagerPanel() {
                 <ScopePicker
                   scopeKind={scopeKind}
                   onScopeKindChange={() => {}}
-                  workloads={workloadsQ.data?.workloads ?? []}
+                  workloads={workloads}
                   workloadId={workloadId}
-                  onWorkloadChange={setWorkloadId}
+                  onWorkloadChange={(id) => {
+                    const workload = workloads.find((item) => item.id === id);
+                    if (workload?.connection_id) setConnId(workload.connection_id);
+                    setWorkloadId(id);
+                  }}
                   subId={subId}
                   subName={subName}
                   onSubPick={(id, name) => { setSubId(id); setSubName(name); }}

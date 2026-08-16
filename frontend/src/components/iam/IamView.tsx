@@ -35,7 +35,7 @@ import { OverviewTab } from "./IamOverview";
 import { PimTab } from "./IamPim";
 import { RolesTab } from "./IamRoles";
 import { ScopesTab } from "./IamScopes";
-import { IAM_QUERY_KEYS, IamConnectionContext, IamFreshness, RefreshConsole, useIamRefresh } from "./IamShared";
+import { IAM_QUERY_KEYS, IamConnectionChangeContext, IamConnectionContext, IamFreshness, RefreshConsole, useIamRefresh } from "./IamShared";
 
 // Renamed from /rbac, and later folded into the SHARED connection selection: a tenant switch is
 // a statement about the session, not about one page. Losing the stored value silently falls back
@@ -48,7 +48,9 @@ export function IamPanel({ tab = "overview" }: { tab?: IamTab }) {
   const [connectionId, setConnectionId] = usePersistedState(CONNECTION_KEY, "");
   return (
     <IamConnectionContext.Provider value={connectionId}>
-      <IamPanelBody tab={tab} connectionId={connectionId} setConnectionId={setConnectionId} />
+      <IamConnectionChangeContext.Provider value={setConnectionId}>
+        <IamPanelBody tab={tab} connectionId={connectionId} setConnectionId={setConnectionId} />
+      </IamConnectionChangeContext.Provider>
     </IamConnectionContext.Provider>
   );
 }
@@ -169,7 +171,7 @@ function IamPanelBody({
 
       {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700">{err}</div>}
 
-      {overviewQ.isLoading ? (
+      {overviewQ.isLoading && tab === "overview" ? (
         <div className="p-6"><Skeleton rows={8} /></div>
       ) : data && data.never_loaded && tab === "overview" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
@@ -191,9 +193,9 @@ function IamPanelBody({
             <RefreshConsole ctl={refreshCtl} lines={6} />
           </div>
         </div>
-      ) : !data ? (
+      ) : !data && tab === "overview" ? (
         <div className="p-6 text-sm text-gray-500">No data.</div>
-      ) : tab === "overview" ? (
+      ) : tab === "overview" && data ? (
         <OverviewTab data={data} refreshCtl={refreshCtl} onPurgeDemo={purgeDemo} purging={purging} />
       ) : tab === "findings" ? (
         <FindingsTab />

@@ -48,13 +48,13 @@ def _resolve(workload_id: str, connection_id: str | None):
     synthetic definition; real workloads come from the registry with their own connection."""
     if demo.is_demo(workload_id):
         return demo.demo_workload(), None
-    from app.core.azure_connections import connection_for_workload, resolve_connection
+    from app.core.azure_connections import connection_for_workload
     from app.workloads.registry import get_workload
 
     wl = get_workload(workload_id)
     if wl is None:
         return None, None
-    conn = resolve_connection(connection_id) if connection_id else connection_for_workload(wl)
+    conn = connection_for_workload(wl)
     return wl, conn
 
 

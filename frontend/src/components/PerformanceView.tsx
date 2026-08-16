@@ -811,7 +811,7 @@ export function PerformancePanel() {
         />
       ) : mainView === "fleet" ? (
         <PerformanceFleet
-          onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("profiler"); }}
+          onOpenWorkload={(id, connectionId) => { setScopeKind("workload"); setConnId(connectionId); setWorkloadId(id); setMainView("profiler"); }}
         />
       ) : (
       <>
@@ -842,6 +842,7 @@ export function PerformancePanel() {
               subId={subId}
               subName={subName}
               connectionId={connId}
+              onConnectionChange={setConnId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

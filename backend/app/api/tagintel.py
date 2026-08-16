@@ -86,28 +86,31 @@ async def _load(tid: str, cid: str, scope: str, force: bool, workload_id: str = 
         from app.architectures.reverse import collect_workload_inventory
         from app.core.azure_connections import connection_for_workload
         from app.workloads.registry import get_workload
+        from app.demo_catalog import is_demo_workload, resources_for
 
         wl = get_workload(workload_id)
         if wl is None:
             return None
         wl_scope = f"wl:{workload_id}"
+        demo_workload = is_demo_workload(workload_id)
+        conn = None if demo_workload else connection_for_workload(wl)
+        if not demo_workload and not conn:
+            raise HTTPException(status_code=409, detail="The workload's Azure connection is missing or disabled.")
+        cache_connection_id = str((conn or {}).get("id") or cid)
         if not force:
-            hit = inv_cache.get(tid, cid, scope=wl_scope)
+            hit = inv_cache.get(tid, cache_connection_id, scope=wl_scope)
             if not hit:
                 return None
             return {"payload": hit["payload"], "fetched_at": hit.get("fetched_at", ""), "age_seconds": hit.get("age_seconds", 0)}
         # Demo workloads serve their synthetic (intentionally messy) tag inventory from the shared
         # catalog instead of querying Azure — so Tag Intelligence is fully explorable offline.
-        from app.demo_catalog import is_demo_workload, resources_for
-
-        if is_demo_workload(workload_id):
+        if demo_workload:
             payload = {
                 "resources": _normalize_dump(resources_for(workload_id)),
                 "facets": {"subscriptions": []}, "summary": {}, "errors": [],
             }
-            fetched_at = inv_cache.set_(tid, cid, payload, scope=wl_scope)
+            fetched_at = inv_cache.set_(tid, cache_connection_id, payload, scope=wl_scope)
             return {"payload": payload, "fetched_at": fetched_at, "age_seconds": 0}
-        conn = _conn(cid or None) or connection_for_workload(wl)
         dump = await collect_workload_inventory(wl, conn)
         payload = {
             "resources": _normalize_dump(dump.get("resources", []) or []),
@@ -116,7 +119,7 @@ async def _load(tid: str, cid: str, scope: str, force: bool, workload_id: str = 
             "partial": bool(dump.get("partial")),
             "known_total": dump.get("known_total"),
         }
-        fetched_at = inv_cache.set_(tid, cid, payload, scope=wl_scope)
+        fetched_at = inv_cache.set_(tid, cache_connection_id, payload, scope=wl_scope)
         return {"payload": payload, "fetched_at": fetched_at, "age_seconds": 0}
 
     if force:
@@ -543,14 +546,13 @@ async def get_remediate_plans(principal: Principal = Depends(require_admin)):
 
 
 def _resolve_write_connection(connection_id: str, workload_id: str) -> dict[str, Any] | None:
-    """The connection a remediation write should run under — the workload's own connection for a
-    workload scope (unless overridden), otherwise the selected/default connection."""
+    """Resolve remediation writes without allowing workload resources to cross tenants."""
     if workload_id:
         from app.core.azure_connections import connection_for_workload
         from app.workloads.registry import get_workload
 
         wl = get_workload(workload_id)
-        return resolve_connection(connection_id or None) or (connection_for_workload(wl) if wl else None)
+        return connection_for_workload(wl) if wl else None
     return resolve_connection(connection_id or None)
 
 

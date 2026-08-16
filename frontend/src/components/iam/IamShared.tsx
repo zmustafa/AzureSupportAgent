@@ -12,6 +12,8 @@ import { streamIamRefresh, type IamOverview, type IamProgress, type IamRow, type
 // Shared via context so every tab + the refresh stream re-scope together without prop drilling.
 export const IamConnectionContext = createContext<string>("");
 export const useIamConnectionId = () => useContext(IamConnectionContext) || null;
+export const IamConnectionChangeContext = createContext<(connectionId: string) => void>(() => undefined);
+export const useIamConnectionChange = () => useContext(IamConnectionChangeContext);
 
 // RP6 — access-grid server page size (the grid pages through the full result set as you scroll).
 export const IAM_PAGE = 200;

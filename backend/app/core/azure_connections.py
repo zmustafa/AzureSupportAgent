@@ -156,7 +156,13 @@ def connection_for_workload(workload: dict[str, Any] | None) -> dict[str, Any] |
     reachable only via a non-default connection silently returns zero resources — the bug
     this helper prevents across every workload-scoped feature (coverage, radar, teleintel,
     evidence, performance profiler, …)."""
-    return resolve_connection((workload or {}).get("connection_id") or None)
+    connection_id = str((workload or {}).get("connection_id") or "")
+    if not connection_id:
+        return get_default_connection()
+    connection = get_connection(connection_id)
+    if not connection or connection.get("disabled"):
+        return None
+    return connection
 
 
 def connection_for_scope(
@@ -165,17 +171,15 @@ def connection_for_scope(
     connection_id: str | None = None,
     workload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """The Azure connection to use for any scoped feature (coverage, radar, perf, tag,
-    telemetry-intel, reservations, …), honoring an explicit tenant/connection override.
+    """Resolve scope connection, treating a workload's canonical connection as authoritative.
 
-    Resolution order:
-      1. ``connection_id`` — an explicit Azure-tenant picker selection ALWAYS wins (this is
-         what makes a subscription reachable only via a non-default connection work).
-      2. WORKLOAD scope with no override → the workload's own ``connection_id``.
-      3. otherwise (subscription / tenant scope, no override) → the default connection.
-
-    Centralizing this prevents the recurring 'subscription scope silently uses the default
-    connection → empty results' bug across every screen."""
+    Explicit picker state still selects subscription and tenant scopes. For workload scope,
+    stale or crafted picker state must never redirect the workload's resources to another tenant.
+    """
+    if scope_kind == "workload" and workload is not None:
+        workload_connection_id = str(workload.get("connection_id") or "")
+        if workload_connection_id:
+            return connection_for_workload(workload)
     if connection_id:
         return resolve_connection(connection_id)
     if scope_kind == "workload" and workload is not None:

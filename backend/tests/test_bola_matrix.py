@@ -104,7 +104,7 @@ _REVIEWED_CALL_SITES = {
     "architectures.py": 9,
     "assessments.py": 1,
     "backup_manager.py": 1,
-    "changeexplorer.py": 2,
+    "changeexplorer.py": 1,
     "chats.py": 3,
     "connections.py": 1,
     "entra.py": 1,
@@ -116,7 +116,7 @@ _REVIEWED_CALL_SITES = {
     "policy.py": 1,
     "quota.py": 6,
     "reservations.py": 2,
-    "tagintel.py": 3,
+    "tagintel.py": 2,
     "workloads.py": 16,
 }
 

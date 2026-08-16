@@ -334,6 +334,7 @@ export function TelemetryIntelligencePanel() {
               subId={subId}
               subName={subName}
               connectionId={connId}
+              onConnectionChange={setConnId}
               onSubPick={(id, name) => {
                 setSubId(id);
                 setSubName(name);

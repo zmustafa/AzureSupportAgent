@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { SubscriptionScopePicker } from "./SubscriptionScopePicker";
 import { AzureIcon } from "./AzureIcon";
 
@@ -23,10 +24,11 @@ export function ScopePicker({
   hideKindToggle = false,
   workloadPlaceholder,
   connectionId,
+  onConnectionChange,
 }: {
   scopeKind: ScopeKind;
   onScopeKindChange: (k: ScopeKind) => void;
-  workloads: { id: string; name: string }[];
+  workloads: { id: string; name: string; connection_id?: string | null }[];
   workloadId: string;
   onWorkloadChange: (id: string) => void;
   subId: string;
@@ -40,7 +42,26 @@ export function ScopePicker({
   workloadPlaceholder?: string;
   /** Enumerate subscriptions from THIS connection/tenant (defaults to the default connection). */
   connectionId?: string;
+  /** Keep the tenant picker aligned with the selected workload's canonical connection. */
+  onConnectionChange?: (connectionId: string) => void;
 }) {
+  const selectedWorkload = workloads.find((workload) => workload.id === workloadId);
+  useEffect(() => {
+    if (scopeKind !== "workload" && !workloadOnly) return;
+    const workloadConnectionId = selectedWorkload?.connection_id;
+    if (workloadConnectionId && workloadConnectionId !== connectionId) {
+      onConnectionChange?.(workloadConnectionId);
+    }
+  }, [connectionId, onConnectionChange, scopeKind, selectedWorkload?.connection_id, workloadOnly]);
+
+  const pickWorkload = (id: string) => {
+    const workloadConnectionId = workloads.find((workload) => workload.id === id)?.connection_id;
+    if (workloadConnectionId && workloadConnectionId !== connectionId) {
+      onConnectionChange?.(workloadConnectionId);
+    }
+    onWorkloadChange(id);
+  };
+
   return (
     <div className="flex items-center gap-2">
       {!workloadOnly && !hideKindToggle && (
@@ -68,7 +89,7 @@ export function ScopePicker({
           </span>
           <select
             value={workloadId}
-            onChange={(e) => onWorkloadChange(e.target.value)}
+            onChange={(e) => pickWorkload(e.target.value)}
             className="max-w-[240px] rounded-lg border py-1.5 pl-7 pr-2 text-xs"
           >
             {workloadPlaceholder !== undefined && <option value="">{workloadPlaceholder}</option>}

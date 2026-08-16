@@ -117,7 +117,7 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
               {/* OU3 — Attestation reads the shared owner directory (connection-independent), so
                   its connection picker was a no-op; hide it there while keeping the scope bar. */}
               {tab !== "attestation" && <ConnectionScopePicker value={connectionId} onChange={onConnectionChange} align="right" />}
-              <OwnershipScopeBar scope={scope} onChange={setScope} connectionId={connectionId} />
+              <OwnershipScopeBar scope={scope} onChange={setScope} connectionId={connectionId} onConnectionChange={onConnectionChange} />
             </div>
           )}
         </div>
@@ -155,7 +155,7 @@ export function OwnershipPanel({ tab }: { tab: OwnershipTab }) {
 
 // Section-wide scope selector (Tenant / Subscription / Workload), consistent with the
 // Proactive Support modules. Tenant = the whole directory (no filter).
-function OwnershipScopeBar({ scope, onChange, connectionId }: { scope: OwnershipScope; onChange: (s: OwnershipScope) => void; connectionId: string }) {
+function OwnershipScopeBar({ scope, onChange, connectionId, onConnectionChange }: { scope: OwnershipScope; onChange: (s: OwnershipScope) => void; connectionId: string; onConnectionChange: (id: string) => void }) {
   const workloadsQ = useQuery({ queryKey: ["workloads", "list"], queryFn: api.workloads });
   const workloads = workloadsQ.data?.workloads ?? [];
   return (
@@ -182,7 +182,12 @@ function OwnershipScopeBar({ scope, onChange, connectionId }: { scope: Ownership
           </span>
           <select
             value={scope.workloadId}
-            onChange={(e) => onChange({ ...scope, workloadId: e.target.value })}
+            onChange={(e) => {
+              const workloadId = e.target.value;
+              const workloadConnectionId = workloads.find((workload) => workload.id === workloadId)?.connection_id;
+              if (workloadConnectionId && workloadConnectionId !== connectionId) onConnectionChange(workloadConnectionId);
+              onChange({ ...scope, workloadId });
+            }}
             className="max-w-[220px] rounded-lg border py-1.5 pl-7 pr-2 text-xs"
           >
             <option value="">All workloads…</option>
@@ -259,7 +264,7 @@ function DirectoryTab() {
   }, [owners, dOq, kindFilter, sortBy]);
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full max-w-none">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <InlineSearch q={oq} setQ={setOq} shown={shownOwners.length} total={owners.length} placeholder="Search owners…" width="w-52" />
@@ -582,7 +587,7 @@ function AssignmentsTab({ scope, connectionId }: { scope: OwnershipScope; connec
   const total = subjectsQ.data?.total ?? 0;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full max-w-none">
       <div className="mb-4 grid grid-cols-3 gap-3">
         <Stat label="Ownable subjects" value={total} />
         <Stat label="Owned" value={owned} tone="emerald" />
@@ -828,7 +833,7 @@ function CoverageTab({ scope, onScopeChange, connectionId }: { scope: OwnershipS
   const showData = data && !data.never_loaded;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full max-w-none">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3">
         <div className="text-sm text-gray-600">
           {scope.kind === "tenant"
@@ -989,7 +994,7 @@ function EstateTab() {
   const browse = ownerQ.data?.estates ?? [];
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="w-full max-w-none space-y-6">
       <div>
         <h2 className="mb-1 text-sm font-semibold text-gray-700">My estate</h2>
         <p className="mb-3 text-xs text-gray-500">
@@ -1075,7 +1080,7 @@ function SuggestionsTab({ scope, connectionId }: { scope: OwnershipScope; connec
   const items = (suggQ.data?.suggestions ?? []).filter((s) => !dismissed.has(s.id));
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="w-full max-w-none">
       {suggQ.data?.note && (
         <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">{suggQ.data.note}</div>
       )}
@@ -1145,7 +1150,7 @@ function AttestationTab({ scope }: { scope: OwnershipScope }) {
   const leavers = leaverQ.data?.at_risk ?? [];
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="w-full max-w-none space-y-6">
       {leavers.length > 0 && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
           <div className="mb-2 text-sm font-semibold text-rose-700">⚠️ {leavers.length} owner(s) at risk (joiner-mover-leaver)</div>

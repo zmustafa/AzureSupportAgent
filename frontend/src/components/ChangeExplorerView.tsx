@@ -455,7 +455,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
         />
       ) : mainView === "fleet" ? (
         <ChangeExplorerFleet
-          onOpenWorkload={(id) => { setScopeKind("workload"); setWorkloadId(id); setMainView("explorer"); }}
+          onOpenWorkload={(id, connectionId) => { setScopeKind("workload"); setConnId(connectionId); setWorkloadId(id); setMainView("explorer"); }}
         />
       ) : (
       <>
@@ -483,6 +483,7 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
               subName={subName}
               onSubPick={(id, name) => { setSubId(id); setSubName(name); }}
               connectionId={connId}
+              onConnectionChange={setConnId}
             />
           </div>
           <div className="flex flex-col gap-0.5">

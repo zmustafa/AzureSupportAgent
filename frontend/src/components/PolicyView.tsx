@@ -165,7 +165,7 @@ export function PolicyPanel({ tab }: { tab: PolicyTab }) {
       forceRef.current = false;
       return api.policyInventory(effectiveConn || null, withCompliance, force, workloadId || null);
     },
-    enabled: !connQ.isLoading, // wait for connections so we hit the real default once
+    enabled: !connQ.isLoading && (!workloadId || wlQ.isSuccess), // workload ownership must resolve before the first cache request
     retry: false,
     staleTime: Infinity, // never auto-refetch; only Refresh/Scan re-pull from Azure
     gcTime: 60 * 60_000,

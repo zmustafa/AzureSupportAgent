@@ -482,6 +482,21 @@ def test_requested_unknown_connection_does_not_fall_back(monkeypatch) -> None:
         service.resolve_selected_connection("missing-connection")
 
 
+def test_workload_connection_mismatch_is_rejected_before_collection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        service,
+        "workload_context",
+        lambda _workload_id: ({"id": "workload-a", "connection_id": "connection-b"}, set(), set()),
+    )
+    monkeypatch.setattr(
+        azure_connections,
+        "get_connection",
+        lambda connection_id: {"id": connection_id, "disabled": False},
+    )
+    with pytest.raises(ValueError, match="different Azure connection"):
+        service.resolve_selected_connection("connection-a", "workload-a")
+
+
 @pytest.mark.asyncio
 async def test_workbook_endpoint_maps_unknown_requested_connection_to_404(monkeypatch) -> None:
     def missing(*_args: Any, **_kwargs: Any) -> dict[str, Any]:

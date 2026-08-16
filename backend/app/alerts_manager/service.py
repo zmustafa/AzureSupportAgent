@@ -258,6 +258,8 @@ def resolve_selected_connection(connection_id: str | None, workload_id: str | No
     from app.core.azure_connections import connection_for_scope, resolve_connection
 
     workload, _ids, _subs = _workload_context(workload_id)
+    if workload_id and not workload:
+        raise ValueError("Selected workload was not found.")
     connection = (
         connection_for_scope("workload", connection_id=connection_id, workload=workload)
         if workload_id
