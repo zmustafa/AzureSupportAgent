@@ -16,7 +16,7 @@
  *   upstream and downstream of them, and multiple tokens intersect. Searching two names shows
  *   the paths that involve both, instead of two disconnected fragments.
  */
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Sankey } from "recharts";
 import { AzureIcon } from "../AzureIcon";
 
@@ -259,6 +259,10 @@ export type SankeyExplorerProps = {
   showNodeValues?: boolean;
   maxLinksDefault?: number;
   heightPx?: number;
+  /** Fill the height supplied by a flex parent while retaining `heightPx` as a minimum. */
+  fillHeight?: boolean;
+  /** Optional caller-owned workspace to fullscreen instead of only the explorer section. */
+  fullscreenTargetRef?: RefObject<HTMLElement | null>;
   /**
    * Room reserved for the rightmost column's labels. Increase it when the last column has
    * long names and its labels are drawn outward — otherwise the SVG clips them, and drawing
@@ -271,7 +275,7 @@ export function SankeyExplorer({
   nodes, links, title, subtitle, iconKinds = new Set<string>(), labelRightKinds, colors,
   legend, formatValue, formatNodeValue, storageKey, searchPlaceholder = "Search the flow…",
   emptyMessage = "No flows match the selected filters.", onClearFilters, actions, filterBar, kpiBar,
-  onSelectNode, maxLinksDefault = 250, heightPx = 580, marginRight = 36, showNodeValues = false,
+  onSelectNode, maxLinksDefault = 250, heightPx = 580, fillHeight = false, fullscreenTargetRef, marginRight = 36, showNodeValues = false,
 }: SankeyExplorerProps) {
   const [flowQuery, setFlowQuery] = useState("");
   const deferredQuery = useDeferredValue(flowQuery.trim().toLowerCase());
@@ -322,13 +326,13 @@ export function SankeyExplorer({
 
   useEffect(() => {
     const onChange = () => {
-      setFullscreen(document.fullscreenElement === sectionRef.current);
+      setFullscreen(document.fullscreenElement === (fullscreenTargetRef?.current ?? sectionRef.current));
       clearTooltip();
       window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
     };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
+  }, [fullscreenTargetRef]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -448,7 +452,8 @@ export function SankeyExplorer({
 
   /** Size the canvas to the busiest column so nodes never overlap. */
   const requiredHeight = useMemo(() => {
-    if (!graph.nodes.length) return heightPx;
+    const minimumHeight = fillHeight ? (baseSize.height || heightPx) : heightPx;
+    if (!graph.nodes.length) return minimumHeight;
     const incoming = new Map<string, string[]>();
     for (const link of graph.links) incoming.set(link.target_id, [...(incoming.get(link.target_id) || []), link.source_id]);
     const depths = new Map<string, number>();
@@ -462,8 +467,8 @@ export function SankeyExplorer({
     };
     const columns = new Map<number, number>();
     for (const node of graph.nodes) { const depth = depthOf(node.id); columns.set(depth, (columns.get(depth) || 0) + 1); }
-    return Math.max(heightPx, Math.max(...columns.values(), 1) * 34 + 40);
-  }, [graph, heightPx]);
+    return Math.max(minimumHeight, Math.max(...columns.values(), 1) * 34 + 40);
+  }, [graph, heightPx, fillHeight, baseSize.height]);
 
   const highlightedLinkKeys = useMemo(() => {
     const highlighted = new Set<string>();
@@ -562,15 +567,18 @@ export function SankeyExplorer({
   const toggleFullscreen = async () => {
     clearTooltip();
     try {
-      if (document.fullscreenElement === sectionRef.current) await document.exitFullscreen();
-      else await sectionRef.current?.requestFullscreen();
+      const target = fullscreenTargetRef?.current ?? sectionRef.current;
+      if (document.fullscreenElement === target) await document.exitFullscreen();
+      else await target?.requestFullscreen();
     } catch { /* fullscreen is a nicety; failing to enter it must not break the view */ }
   };
 
   const legendEntries = legend ?? Object.entries(colors);
 
-  return <section ref={sectionRef} className={`overflow-hidden border bg-white ${fullscreen ? "flex h-screen w-screen flex-col rounded-none" : "rounded-xl"}`}>
-    <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+  const sectionOwnsFullscreen = fullscreen && !fullscreenTargetRef;
+
+  return <section ref={sectionRef} className={`overflow-hidden border bg-white ${sectionOwnsFullscreen ? "flex h-screen w-screen flex-col rounded-none" : fillHeight ? "flex h-full min-h-0 flex-col rounded-xl" : "rounded-xl"}`}>
+    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3">
       <div className="mr-auto">
         <h3 className="font-semibold">{title}</h3>
         {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
@@ -675,8 +683,8 @@ export function SankeyExplorer({
         else if (["-", "_", "Subtract"].includes(event.key)) { event.preventDefault(); changeZoom(zoom - ZOOM_STEP); }
         else if (event.key === "0") { event.preventDefault(); changeZoom(100); }
       }}
-      style={fullscreen ? undefined : { height: heightPx }}
-      className={`${fullscreen ? "min-h-0 flex-1" : ""} min-w-0 ${canPan ? "overflow-auto" : "overflow-hidden"} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
+      style={fullscreen || fillHeight ? undefined : { height: heightPx }}
+      className={`${fullscreen || fillHeight ? "min-h-0 flex-1" : ""} min-w-0 ${canPan ? "overflow-auto" : "overflow-hidden"} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}
     >
       {graph.nodes.length ? baseSize.width > 0 && baseSize.height > 0 && (
         <div className="relative" style={{ width: Math.max(baseSize.width, baseSize.width * zoom / 100), height: Math.max(baseSize.height, requiredHeight * zoom / 100) }}>
@@ -695,7 +703,7 @@ export function SankeyExplorer({
       )}
     </div>
     {hovered && <PathTooltip item={hovered} />}
-    <div className="flex flex-wrap justify-center gap-3 border-t px-4 py-2 text-[11px]">
+    <div className="flex shrink-0 flex-wrap justify-center gap-3 border-t px-4 py-2 text-[11px]">
       {legendEntries.map(([kind, color]) => (
         <span key={kind} className="flex items-center gap-1 capitalize">
           <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: color }} />{kind.replaceAll("_", " ")}

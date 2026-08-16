@@ -1030,6 +1030,14 @@ export function WorkloadsPanel() {
     />
   );
 
+  const knownBatches = [missionBatch.batch, deepReviewBatch.batch].filter(
+    (batch): batch is NonNullable<typeof missionBatch.batch> => !!batch,
+  );
+  const actionableBatches = knownBatches.filter((batch) => batch.status !== "succeeded");
+  const visibleBatches = actionableBatches.length
+    ? actionableBatches
+    : [...knownBatches].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 1);
+
   return (
     <div
       ref={scrollRef}
@@ -1089,8 +1097,10 @@ export function WorkloadsPanel() {
           </div>
         )}
         {msg && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>}
-        <DurableBatchBar batch={missionBatch.batch} onCancel={() => { void missionBatch.cancel(); }} onRetry={() => { void missionBatch.retry(); }} />
-        <DurableBatchBar batch={deepReviewBatch.batch} onCancel={() => { void deepReviewBatch.cancel(); }} onRetry={() => { void deepReviewBatch.retry(); }} />
+        {visibleBatches.map((batch) => {
+          const durable = batch.feature === "mission" ? missionBatch : deepReviewBatch;
+          return <DurableBatchBar key={batch.id} batch={batch} label={batch.feature === "mission" ? "Mission" : "Deep review"} onCancel={() => { void durable.cancel(); }} onRetry={() => { void durable.retry(); }} />;
+        })}
         {!showTrash && overlapCount > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             <span>⚠</span>

@@ -6,7 +6,9 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type IamScopeNode } from "../../api";
+import { usePersistedState } from "../../utils/persistedState";
 import { AzureIcon } from "../AzureIcon";
+import { PanelLeftIcon } from "../chat/icons";
 import { type AccessFilter, useIamConnectionId } from "./IamShared";
 
 function ScopeTreeRow({
@@ -57,9 +59,20 @@ function ScopeTreeRow({
   );
 }
 
-export function FilterRail({ filter, onChange }: { filter: AccessFilter | null; onChange: (f: AccessFilter | null) => void }) {
+export function FilterRail({
+  filter,
+  onChange,
+  collapsible = false,
+  storageKey = "azsup.iam.filterRail",
+}: {
+  filter: AccessFilter | null;
+  onChange: (f: AccessFilter | null) => void;
+  collapsible?: boolean;
+  storageKey?: string;
+}) {
   const [mode, setMode] = useState<"scope" | "workload">("scope");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = usePersistedState(`${storageKey}.collapsed.v1`, false);
   const connectionId = useIamConnectionId();
   const treeQ = useQuery({ queryKey: ["iam", "scope-tree", connectionId ?? ""], queryFn: () => api.iamScopeTree(connectionId), staleTime: 5 * 60 * 1000 });
   const wlQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
@@ -96,8 +109,27 @@ export function FilterRail({ filter, onChange }: { filter: AccessFilter | null; 
     });
   }
 
+  if (collapsible && collapsed) {
+    return (
+      <aside data-testid="iam-filter-rail" className="flex w-11 shrink-0 flex-col items-center border-r bg-gray-50 py-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          aria-label="Expand scope sidebar"
+          title="Expand scope sidebar"
+          className="flex h-8 w-8 items-center justify-center rounded text-gray-500 hover:bg-white hover:text-gray-800"
+        >
+          <PanelLeftIcon className="h-[18px] w-[18px]" collapsed />
+        </button>
+        {filter && (
+          <span className="mt-2 h-2 w-2 rounded-full bg-amber-500" title={`Filtered: ${filter.label}`} />
+        )}
+      </aside>
+    );
+  }
+
   return (
-    <div className="flex w-64 shrink-0 flex-col border-r bg-gray-50">
+    <aside data-testid="iam-filter-rail" className="flex w-64 shrink-0 flex-col border-r bg-gray-50">
       <div className="flex gap-1 border-b bg-white p-2">
         <button
           onClick={() => setMode("scope")}
@@ -111,6 +143,17 @@ export function FilterRail({ filter, onChange }: { filter: AccessFilter | null; 
         >
           Workloads
         </button>
+        {collapsible && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            aria-label="Collapse scope sidebar"
+            title="Collapse scope sidebar"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          >
+            <PanelLeftIcon className="h-4 w-4" />
+          </button>
+        )}
       </div>
       {filter && (
         <div className="flex items-center gap-1 border-b bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
@@ -159,6 +202,6 @@ export function FilterRail({ filter, onChange }: { filter: AccessFilter | null; 
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 }

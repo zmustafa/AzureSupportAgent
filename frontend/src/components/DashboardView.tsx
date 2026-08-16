@@ -729,7 +729,7 @@ export function DashboardPanel() {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <div className="w-full max-w-none space-y-6 p-6">
         {/* Hero — personalized greeting + estate health */}
         <div className="rounded-2xl border bg-gradient-to-br from-brand/10 to-violet-50 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">

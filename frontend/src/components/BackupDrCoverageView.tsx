@@ -21,8 +21,6 @@ import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRe
 import { Skeleton, useDebounced } from "../utils/perf";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
-import { PageIntro } from "./PageIntro";
-import { PAGE_INTROS } from "../help/content";
 import { BackupDrCoverageFleet } from "./coverage/BackupDrCoverageFleet";
 import { RunCleanup } from "./cleanup/RunCleanup";
 
@@ -578,7 +576,6 @@ export function BackupDrCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
-        <PageIntro {...PAGE_INTROS["/backupdr"]} icon="💾" storageKey="backupdr" />
         {enabled && tab === "backup" && (
           <CoverageHistory<BackupDrCoverage>
             feature="backupdr"

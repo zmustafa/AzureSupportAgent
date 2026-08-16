@@ -2480,7 +2480,7 @@ function FirewallBlocksCard({
 }
 
 // ================================================================= Panel
-export function SecurityPanel({ section }: { section: SecuritySection }) {
+export function SecurityPanel({ section, fullWidth = false }: { section: SecuritySection; fullWidth?: boolean }) {
   const body = useMemo(() => {
     switch (section) {
       case "users": return <UsersCard />;
@@ -2495,7 +2495,7 @@ export function SecurityPanel({ section }: { section: SecuritySection }) {
   }, [section]);
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-6 p-6">{body}</div>
+      <div className={`mx-auto w-full space-y-6 p-6 ${fullWidth ? "max-w-none" : "max-w-6xl 2xl:max-w-screen-2xl"}`}>{body}</div>
     </div>
   );
 }
@@ -2535,7 +2535,7 @@ export function AccessControlPanel({ section }: { section: string }) {
         </div>
       </div>
       <div className="min-h-0 flex-1">
-        <SecurityPanel section={active} />
+        <SecurityPanel section={active} fullWidth />
       </div>
     </div>
   );

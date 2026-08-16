@@ -249,55 +249,63 @@ function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: {
   ].slice(0, 12);
   const clean = rules.filter((rule) => rule.finding_status === "ok").length;
   const currency = costSummary?.currency ?? "USD";
+  const [costDetailsExpanded, setCostDetailsExpanded] = usePersistedState("azsup.alertsManager.costDetailsExpanded", false);
   const confidenceCounts = rules.reduce<Record<string, number>>((counts, rule) => {
     const confidence = rule.cost?.confidence ?? "none";
     counts[confidence] = (counts[confidence] ?? 0) + 1;
     return counts;
   }, {});
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-gray-400">Rationalization opportunity</div>
-          <div className="mt-2 text-3xl font-semibold text-amber-600">{overlaps.length}</div>
-          <p className="mt-1 text-xs text-gray-500">Rule groups that may evaluate the same symptom.</p>
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[10px] font-medium uppercase text-gray-400">Rationalization opportunity</div>
+          <div className="mt-1 text-xl font-semibold leading-5 text-amber-600">{overlaps.length}</div>
+          <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title="Rule groups that may evaluate the same symptom.">Rule groups that may evaluate the same symptom.</p>
         </div>
-        <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-gray-400">Coverage & routing gaps</div>
-          <div className="mt-2 text-3xl font-semibold text-red-600">{gaps.length}</div>
-          <p className="mt-1 text-xs text-gray-500">Missing baselines, disabled rules, or ineffective notification paths.</p>
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[10px] font-medium uppercase text-gray-400">Coverage & routing gaps</div>
+          <div className="mt-1 text-xl font-semibold leading-5 text-red-600">{gaps.length}</div>
+          <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title="Missing baselines, disabled rules, or ineffective notification paths.">Missing baselines, disabled rules, or ineffective notification paths.</p>
         </div>
-        <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-gray-400">Clean rules</div>
-          <div className="mt-2 text-3xl font-semibold text-emerald-600">{clean}</div>
-          <p className="mt-1 text-xs text-gray-500">No overlap or routing issue detected in this snapshot.</p>
+        <div className="rounded-lg border bg-white p-3">
+          <div className="text-[10px] font-medium uppercase text-gray-400">Clean rules</div>
+          <div className="mt-1 text-xl font-semibold leading-5 text-emerald-600">{clean}</div>
+          <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title="No overlap or routing issue detected in this snapshot.">No overlap or routing issue detected in this snapshot.</p>
         </div>
-        <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white p-4">
-          <div className="text-xs font-medium uppercase tracking-wide text-sky-600">Estimated monthly total</div>
-          <div className="mt-2 text-3xl font-semibold tabular-nums text-sky-700">{costSummary ? formatCost(costSummary.current.monthly_usd, currency) : "—"}</div>
-          <p className="mt-1 text-xs text-gray-500">{costSummary ? `${costRange(costSummary.current.monthly_min_usd, costSummary.current.monthly_max_usd, currency)} estimated range` : "Run a new analysis to calculate rule costs."}</p>
+        <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+          <div className="text-[10px] font-medium uppercase text-sky-600">Estimated monthly total</div>
+          <div className="mt-1 text-xl font-semibold leading-5 tabular-nums text-sky-700">{costSummary ? formatCost(costSummary.current.monthly_usd, currency) : "—"}</div>
+          <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title={costSummary ? `${costRange(costSummary.current.monthly_min_usd, costSummary.current.monthly_max_usd, currency)} estimated range` : "Run a new analysis to calculate rule costs."}>{costSummary ? `${costRange(costSummary.current.monthly_min_usd, costSummary.current.monthly_max_usd, currency)} estimated range` : "Run a new analysis to calculate rule costs."}</p>
         </div>
       </div>
       {costSummary && <section className="overflow-hidden rounded-xl border bg-white">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b px-3 py-2">
           <div><h2 className="text-sm font-semibold text-gray-900">Alert rule cost estimate</h2><p className="text-xs text-gray-500">Reference alert-rule charges only; this is not an Azure billing quote.</p></div>
-          <div className="text-right text-[10px] text-gray-500"><div className="font-medium text-gray-700">{currency} · per {costSummary.period}</div><div>Catalog {costSummary.catalog_effective_date || "date unavailable"}</div></div>
+          <div className="flex items-center gap-3">
+            <div className="text-right text-[10px] text-gray-500"><div className="font-medium text-gray-700">{currency} · per {costSummary.period}</div><div>Catalog {costSummary.catalog_effective_date || "date unavailable"}</div></div>
+            <button type="button" onClick={() => setCostDetailsExpanded(!costDetailsExpanded)} aria-expanded={costDetailsExpanded} className="rounded border bg-white px-2 py-1 text-[10px] font-medium text-gray-600 hover:bg-gray-50">
+              {costDetailsExpanded ? "▾ Hide breakdown" : "▸ Show breakdown"}
+            </button>
+          </div>
         </div>
-        <div className="grid gap-3 border-b bg-gray-50/60 p-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border bg-white p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Current enabled spend</div><div className="mt-1 text-lg font-semibold tabular-nums text-gray-900">{formatCost(costSummary.current.monthly_usd, currency)}</div><div className="text-[10px] text-gray-500">{costRange(costSummary.current.monthly_min_usd, costSummary.current.monthly_max_usd, currency)}</div></div>
-          <div className="rounded-lg border bg-white p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Potential disabled spend</div><div className="mt-1 text-lg font-semibold tabular-nums text-indigo-700">{formatCost(costSummary.potential_disabled_monthly, currency)}</div><div className="text-[10px] text-gray-500">If disabled rules were enabled · {costRange(costSummary.potential_disabled_monthly_min, costSummary.potential_disabled_monthly_max, currency)}</div></div>
-          <div className="rounded-lg border bg-white p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Estimate coverage</div><div className="mt-1 text-lg font-semibold tabular-nums text-gray-900">{costSummary.priced_count} priced</div><div className={`text-[10px] ${costSummary.unknown_count ? "text-rose-600" : "text-emerald-600"}`}>{costSummary.unknown_count} unknown / unpriced</div></div>
-          <div className="rounded-lg border bg-white p-3"><div className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Confidence</div><div className="mt-2 flex flex-wrap gap-1">{(["high", "medium", "low", "none"] as const).filter((level) => confidenceCounts[level]).map((level) => <span key={level} className={`rounded px-2 py-0.5 text-[10px] font-medium ${COST_CONFIDENCE_STYLE[level]}`}>{confidenceCounts[level]} {level}</span>)}</div><div className="mt-1 text-[10px] text-gray-500">Varies by rule and observable cardinality.</div></div>
+        <div className="grid border-b bg-gray-50/60 px-3 py-2 sm:grid-cols-2 lg:grid-cols-4 lg:divide-x">
+          <div className="min-w-0 px-2 py-0.5"><div className="text-[10px] font-medium uppercase text-gray-400">Current enabled spend</div><div className="mt-0.5 text-base font-semibold tabular-nums text-gray-900">{formatCost(costSummary.current.monthly_usd, currency)}</div><div className="truncate text-[10px] text-gray-500">{costRange(costSummary.current.monthly_min_usd, costSummary.current.monthly_max_usd, currency)}</div></div>
+          <div className="min-w-0 px-2 py-0.5"><div className="text-[10px] font-medium uppercase text-gray-400">Potential disabled spend</div><div className="mt-0.5 text-base font-semibold tabular-nums text-indigo-700">{formatCost(costSummary.potential_disabled_monthly, currency)}</div><div className="truncate text-[10px] text-gray-500" title={`If disabled rules were enabled · ${costRange(costSummary.potential_disabled_monthly_min, costSummary.potential_disabled_monthly_max, currency)}`}>If enabled · {costRange(costSummary.potential_disabled_monthly_min, costSummary.potential_disabled_monthly_max, currency)}</div></div>
+          <div className="min-w-0 px-2 py-0.5"><div className="text-[10px] font-medium uppercase text-gray-400">Estimate coverage</div><div className="mt-0.5 text-base font-semibold tabular-nums text-gray-900">{costSummary.priced_count} priced</div><div className={`text-[10px] ${costSummary.unknown_count ? "text-rose-600" : "text-emerald-600"}`}>{costSummary.unknown_count} unknown / unpriced</div></div>
+          <div className="min-w-0 px-2 py-0.5"><div className="text-[10px] font-medium uppercase text-gray-400">Confidence</div><div className="mt-1 flex flex-wrap gap-1">{(["high", "medium", "low", "none"] as const).filter((level) => confidenceCounts[level]).map((level) => <span key={level} className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${COST_CONFIDENCE_STYLE[level]}`}>{confidenceCounts[level]} {level}</span>)}</div><div className="mt-0.5 text-[10px] text-gray-500">Varies by rule</div></div>
         </div>
+        {costDetailsExpanded && <>
         <div className="grid divide-y lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-          <div className="p-4"><h3 className="text-xs font-semibold text-gray-800">Family breakdown</h3><div className="mt-2 space-y-2">{Object.entries(costSummary.by_family).map(([family, item]) => <div key={family} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 text-xs"><div className="min-w-0"><span className="font-medium text-gray-700">{COST_FAMILY_LABELS[family] ?? family.replaceAll("_", " ")}</span><span className="ml-1 text-[10px] text-gray-400">{item.rule_count} rule{item.rule_count === 1 ? "" : "s"}{item.unknown_count ? ` · ${item.unknown_count} unknown` : ""}</span></div><div className="text-right"><div className="tabular-nums text-gray-700">{formatCost(item.current.monthly_usd, currency)}</div><div className="text-[9px] text-gray-400">enabled</div></div><div className="min-w-[72px] text-right"><div className="tabular-nums text-indigo-600">{formatCost(item.disabled.monthly_usd, currency)}</div><div className="text-[9px] text-gray-400">disabled</div></div></div>)}</div></div>
-          <div className="p-4"><h3 className="text-xs font-semibold text-gray-800">Top-cost rules</h3>{costSummary.top_rules.length ? <div className="mt-2 space-y-2">{costSummary.top_rules.slice(0, 6).map((rule, index) => <div key={rule.rule_id || `${rule.rule_name}-${index}`} className="flex items-center gap-2 text-xs"><span className="w-4 text-[10px] text-gray-400">{index + 1}</span><div className="min-w-0 flex-1"><div className="truncate font-medium text-gray-700" title={rule.rule_name}>{rule.rule_name || "Unnamed rule"}</div><div className="text-[9px] capitalize text-gray-400">{COST_FAMILY_LABELS[rule.family] ?? rule.family} · {costStatusLabel(rule)} · {rule.confidence} confidence{rule.enabled ? "" : " · disabled"}</div></div><span className="whitespace-nowrap font-medium tabular-nums text-gray-800">{formatCost(rule.monthly_usd, currency)}</span></div>)}</div> : <div className="mt-4 text-xs text-gray-400">No priced rules in this snapshot.</div>}</div>
+          <div className="p-3"><h3 className="text-xs font-semibold text-gray-800">Family breakdown</h3><div className="mt-1.5 space-y-1.5">{Object.entries(costSummary.by_family).map(([family, item]) => <div key={family} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 text-xs"><div className="min-w-0"><span className="font-medium text-gray-700">{COST_FAMILY_LABELS[family] ?? family.replaceAll("_", " ")}</span><span className="ml-1 text-[10px] text-gray-400">{item.rule_count} rule{item.rule_count === 1 ? "" : "s"}{item.unknown_count ? ` · ${item.unknown_count} unknown` : ""}</span></div><div className="text-right"><div className="tabular-nums text-gray-700">{formatCost(item.current.monthly_usd, currency)}</div><div className="text-[9px] text-gray-400">enabled</div></div><div className="min-w-[72px] text-right"><div className="tabular-nums text-indigo-600">{formatCost(item.disabled.monthly_usd, currency)}</div><div className="text-[9px] text-gray-400">disabled</div></div></div>)}</div></div>
+          <div className="p-3"><h3 className="text-xs font-semibold text-gray-800">Top-cost rules</h3>{costSummary.top_rules.length ? <div className="mt-1.5 space-y-1.5">{costSummary.top_rules.slice(0, 6).map((rule, index) => <div key={rule.rule_id || `${rule.rule_name}-${index}`} className="flex items-center gap-2 text-xs"><span className="w-4 text-[10px] text-gray-400">{index + 1}</span><div className="min-w-0 flex-1"><div className="truncate font-medium text-gray-700" title={rule.rule_name}>{rule.rule_name || "Unnamed rule"}</div><div className="text-[9px] capitalize text-gray-400">{COST_FAMILY_LABELS[rule.family] ?? rule.family} · {costStatusLabel(rule)} · {rule.confidence} confidence{rule.enabled ? "" : " · disabled"}</div></div><span className="whitespace-nowrap font-medium tabular-nums text-gray-800">{formatCost(rule.monthly_usd, currency)}</span></div>)}</div> : <div className="mt-4 text-xs text-gray-400">No priced rules in this snapshot.</div>}</div>
         </div>
-        <details className="border-t px-4 py-3 text-xs"><summary className="cursor-pointer font-medium text-gray-700">Pricing status, scope, and assumptions</summary><div className="mt-2 max-w-4xl space-y-1 text-[11px] leading-5 text-gray-500"><p>{costSummary.catalog_scope}</p>{costSummary.assumptions.map((assumption) => <p key={assumption}>• {assumption}</p>)}<a href={costSummary.catalog_source} target="_blank" rel="noreferrer" className="inline-block text-brand hover:underline">Pricing catalog source ↗</a><div className="font-mono text-[9px] text-gray-400">{costSummary.catalog_version}</div></div></details>
+        <details className="border-t px-3 py-2 text-xs"><summary className="cursor-pointer font-medium text-gray-700">Pricing status, scope, and assumptions</summary><div className="mt-2 max-w-4xl space-y-1 text-[11px] leading-5 text-gray-500"><p>{costSummary.catalog_scope}</p>{costSummary.assumptions.map((assumption) => <p key={assumption}>• {assumption}</p>)}<a href={costSummary.catalog_source} target="_blank" rel="noreferrer" className="inline-block text-brand hover:underline">Pricing catalog source ↗</a><div className="font-mono text-[9px] text-gray-400">{costSummary.catalog_version}</div></div></details>
+        </>}
       </section>}
       {activityLogCoverage}
       <section className="overflow-hidden rounded-xl border bg-white">
-        <div className="border-b px-4 py-3">
+        <div className="border-b px-3 py-2">
           <h2 className="text-sm font-semibold text-gray-900">Priority review queue</h2>
           <p className="text-xs text-gray-500">Highest-confidence overlaps and actionable gaps first.</p>
         </div>
@@ -306,7 +314,7 @@ function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: {
         ) : (
           <div className="divide-y">
             {top.map((item) => (
-              <div key={item.key} className="flex items-start gap-3 px-4 py-3">
+              <div key={item.key} className="flex items-start gap-3 px-3 py-2">
                 <span className={`mt-0.5 rounded px-2 py-0.5 text-[10px] font-medium ${RISK_STYLE[item.risk] ?? RISK_STYLE.warning}`}>{item.kind}</span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-gray-800">{item.title || "Unnamed finding"}</div>

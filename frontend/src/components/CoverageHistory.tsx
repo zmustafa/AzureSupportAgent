@@ -142,6 +142,7 @@ export function CoverageHistory<T>({
       loading={runsQ.isLoading}
       emptyHint={<>No saved scans yet — click <b>↻ Refresh now</b> to record one.</>}
       testId="coverage-history"
+      storageKey={`azsup.history.coverage.${feature}`}
       showTrash={showTrash}
       onToggleTrash={() => setShowTrash((v) => !v)}
       trashedCount={trashed.length}

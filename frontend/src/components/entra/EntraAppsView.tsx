@@ -22,6 +22,11 @@ import {
 // registrations is about the credentials an app *expires on* (operational hygiene). Both are
 // about applications, so they belong on the same screen rather than in a separate product.
 const TABS = ["inventory", "consent", "registrations"] as const;
+const TAB_LABELS: Record<(typeof TABS)[number], string> = {
+  inventory: "Inventory",
+  consent: "Consent",
+  registrations: "Application Registrations",
+};
 
 const TIER_CHIP: Record<string, string> = {
   critical: "bg-red-100 text-red-700",
@@ -92,7 +97,7 @@ export function EntraAppsView({ connectionId }: { connectionId: string | null })
               tab === t ? "border-b-2 border-brand text-brand" : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>

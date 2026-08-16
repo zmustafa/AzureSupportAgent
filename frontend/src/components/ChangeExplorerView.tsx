@@ -29,6 +29,7 @@ import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { ChangeExplorerFleet } from "./changeexplorer/ChangeExplorerFleet";
 import { RunCleanup } from "./cleanup/RunCleanup";
 import { PageIntro } from "./PageIntro";
+import { HistoryDisclosure } from "./HistoryDisclosure";
 import { CHANGEEXPLORER_NAV, type ChangeExplorerTab } from "./navConfig";
 import { formatError } from "../utils/format";
 
@@ -849,14 +850,19 @@ function HistoryGrid({ runs, trashed, currentRunId, onLoad, onDelete, onRestore,
   const [confirmPurge, setConfirmPurge] = useState("");
   const rows = showTrash ? trashed : runs;
   return (
-    <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
-      <div className="flex items-center gap-2 border-b px-3 py-1.5">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{showTrash ? "Trash (deleted runs)" : "Previous runs (cached)"}</span>
-        <div className="ml-auto inline-flex overflow-hidden rounded-md border text-[10px]">
+    <HistoryDisclosure
+      storageKey="azsup.history.changeExplorer"
+      className="mt-3 overflow-hidden rounded-lg border bg-white"
+      headerClassName="px-3 py-1.5"
+      bodyClassName="overflow-x-auto border-t"
+      title={<span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{showTrash ? "Trash (deleted runs)" : "Previous runs (cached)"}</span>}
+      actions={(
+        <div className="inline-flex overflow-hidden rounded-md border text-[10px]">
           <button onClick={() => setShowTrash(false)} className={`px-2 py-0.5 ${!showTrash ? "bg-brand text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>History ({runs.length})</button>
           <button onClick={() => setShowTrash(true)} className={`px-2 py-0.5 ${showTrash ? "bg-brand text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>🗑 Trash ({trashed.length})</button>
         </div>
-      </div>
+      )}
+    >
       {rows.length === 0 ? (
         <p className="px-3 py-3 text-center text-[11px] text-gray-400">{showTrash ? "Trash is empty." : "No previous runs for this scope yet."}</p>
       ) : (
@@ -912,7 +918,7 @@ function HistoryGrid({ runs, trashed, currentRunId, onLoad, onDelete, onRestore,
         </tbody>
       </table>
       )}
-    </div>
+    </HistoryDisclosure>
   );
 }
 function fmtShort(iso: string): string {

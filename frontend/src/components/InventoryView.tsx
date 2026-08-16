@@ -20,6 +20,8 @@ import { DnsDebugModal } from "./DnsDebugModal";
 import { formatError } from "../utils/format";
 import { Skeleton } from "../utils/perf";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { PanelLeftIcon } from "./chat/icons";
+import { HistoryDisclosure } from "./HistoryDisclosure";
 
 // IP5 — the Location map pulls in topojson-client + the world-atlas 110m GeoJSON (heavy), so it
 // is code-split into its own chunk and only loaded when the Location tab is opened.
@@ -265,6 +267,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   const initList = (k: string) => { const v = new URLSearchParams(window.location.search).get(k); return v ? v.split(",").filter(Boolean) : []; };
   const initStr = (k: string) => new URLSearchParams(window.location.search).get(k) || "";
   const [scope, setScope] = useState<ScopeMode>(() => (initStr("scope") === "workloads" ? "workloads" : "tenant"));
+  const [filtersCollapsed, setFiltersCollapsed] = usePersistedState("azsup.inventory.filtersCollapsed", false);
   const [typeSel, setTypeSel] = useState<Set<string>>(() => new Set(initList("type")));
   const [locSel, setLocSel] = useState<Set<string>>(() => new Set(initList("loc")));
   const [subSel, setSubSel] = useState<Set<string>>(() => new Set(initList("sub")));
@@ -572,9 +575,22 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   return (
     <div className="flex h-full min-h-0">
       {/* Filters sidebar */}
-      <aside className="hidden w-60 shrink-0 overflow-y-auto border-r bg-white px-3 py-3 lg:block">
+      {filtersCollapsed ? (
+      <aside data-testid="inventory-filter-sidebar" className="hidden w-11 shrink-0 flex-col items-center border-r bg-white py-3 lg:flex">
+        <button type="button" onClick={() => setFiltersCollapsed(false)} aria-label="Expand inventory filters" title="Expand inventory filters" className="flex h-8 w-8 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <PanelLeftIcon className="h-[18px] w-[18px]" collapsed />
+        </button>
+        {!!hasFilters && <span className="mt-2 h-2 w-2 rounded-full bg-brand" title="Inventory filters are active" />}
+      </aside>
+      ) : (
+      <aside data-testid="inventory-filter-sidebar" className="hidden w-60 shrink-0 overflow-y-auto border-r bg-white px-3 py-3 lg:block">
         <div className="mb-3">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scope</div>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Scope</span>
+            <button type="button" onClick={() => setFiltersCollapsed(true)} aria-label="Collapse inventory filters" title="Collapse inventory filters" className="flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+              <PanelLeftIcon className="h-4 w-4" />
+            </button>
+          </div>
           <div className="flex rounded-lg border p-0.5 text-xs">
             <button
               onClick={() => setScope("workloads")}
@@ -683,6 +699,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
           ))}
         </FacetGroup>
       </aside>
+      )}
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -2539,8 +2556,12 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
           <Skeleton rows={4} className="max-w-md" />
         )}
 
-        <div>
-          <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Snapshots ({snaps.length})</h4>
+        <HistoryDisclosure
+          storageKey="azsup.history.inventorySnapshots"
+          bodyClassName="mt-2"
+          title={<h4 className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Snapshots</h4>}
+          count={<span className="text-[11px] text-gray-400">{snaps.length}</span>}
+        >
           {snaps.length === 0 ? <div className="text-[12px] text-gray-400">No snapshots yet.</div> : (
             <div className="space-y-1">
               {snaps.map((sn) => (
@@ -2552,7 +2573,7 @@ function ChangesMode({ connectionId, subName }: { connectionId: string; subName:
               ))}
             </div>
           )}
-        </div>
+        </HistoryDisclosure>
         {/* subName referenced to keep prop meaningful for future per-row sub display */}
         <span className="hidden">{Object.keys(subName).length}</span>
       </div>

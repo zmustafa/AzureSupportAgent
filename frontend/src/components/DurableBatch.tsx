@@ -57,8 +57,9 @@ export function useDurableBatch(feature: string, invalidateKeys: QueryKey[] = []
   return { query, batch, active, itemsByWorkload, launch, retry, cancel };
 }
 
-export function DurableBatchBar({ batch, onCancel, onRetry, cancelling = false }: {
+export function DurableBatchBar({ batch, label, onCancel, onRetry, cancelling = false }: {
   batch: WorkBatch | null;
+  label?: string;
   onCancel?: () => void;
   onRetry?: () => void;
   cancelling?: boolean;
@@ -72,7 +73,7 @@ export function DurableBatchBar({ batch, onCancel, onRetry, cancelling = false }
       : "border-blue-200 bg-blue-50 text-blue-800";
   return (
     <div data-testid={`work-batch-${batch.feature}`} className={`mt-2 flex flex-wrap items-center gap-3 rounded-md border px-3 py-2 text-xs ${tone}`}>
-      <span className="font-medium">Batch {batch.status}</span>
+      <span className="font-medium">{label ? `${label} batch` : "Batch"} {batch.status}</span>
       <span>{batch.completed}/{batch.total} complete</span>
       <span>{batch.succeeded} succeeded · {batch.partial} partial · {batch.failed} failed{batch.cancelled ? ` · ${batch.cancelled} cancelled` : ""}</span>
       <span className="text-current/70">Server-owned · safe to navigate or reload</span>

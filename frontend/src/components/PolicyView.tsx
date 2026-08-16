@@ -26,6 +26,7 @@ import {
 } from "../api";
 import { POLICY_NAV, type PolicyTab } from "./navConfig";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
+import { HistoryDisclosure } from "./HistoryDisclosure";
 import { TabStrip } from "./ui/TabStrip";
 import { Freshness } from "./ui/Freshness";
 // PP7 — code-split the heavy register/pivot + exemptions tabs out of the main Policy chunk.
@@ -989,16 +990,18 @@ function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connecti
 
       {/* Analysis history grid — every Coverage-gap analysis run for the selected scope. Click a
           row to reopen it above; nothing here is applied to Azure. */}
-      <div className="mt-4 border-t pt-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            🕑 Analysis history
-            <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{savedRuns.length}</span>
-          </h4>
+      <HistoryDisclosure
+        storageKey="azsup.history.policyCoverage"
+        className="mt-4 border-t pt-3"
+        bodyClassName="mt-2"
+        title={<h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">🕑 Analysis history</h4>}
+        count={<span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{savedRuns.length}</span>}
+        actions={(
           <span className="text-[11px] text-gray-400">
             {workloadId ? <>Scope: <b className="text-gray-600">🧩 {workloadName}</b></> : "🌐 All scopes"}
           </span>
-        </div>
+        )}
+      >
         {savedRuns.length === 0 ? (
           <div className="rounded-lg border border-dashed bg-gray-50/60 p-4 text-center text-xs text-gray-400">
             {runsQ.isLoading ? "Loading history…" : "No coverage analyses yet for this scope. Run one above to start building history."}
@@ -1049,7 +1052,7 @@ function CoverageAdvisor({ inv, connectionId }: { inv: PolicyInventory; connecti
             </table>
           </div>
         )}
-      </div>
+      </HistoryDisclosure>
     </Card>
   );
 }
@@ -2178,7 +2181,13 @@ function History({ connectionId }: { connectionId: string }) {
           </div>
         )}
       </Card>
-      <Card title={`Snapshots (${snaps.length})`} icon="">
+      <HistoryDisclosure
+        storageKey="azsup.history.policySnapshots"
+        className="rounded-xl border bg-white p-4 shadow-sm"
+        bodyClassName="mt-2"
+        title={<h3 className="text-sm font-semibold text-gray-800">Snapshots</h3>}
+        count={<span className="text-[11px] text-gray-400">{snaps.length}</span>}
+      >
         {snaps.length === 0 ? <Empty text="No snapshots yet." /> : (
           <Table head={["When", "By", "Assignments", "Exemptions", "Non-compliant"]}>
             {snaps.map((s) => (
@@ -2192,7 +2201,7 @@ function History({ connectionId }: { connectionId: string }) {
             ))}
           </Table>
         )}
-      </Card>
+      </HistoryDisclosure>
     </div>
   );
 }

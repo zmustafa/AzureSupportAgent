@@ -23,8 +23,6 @@ import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRe
 import { Skeleton, useDebounced } from "../utils/perf";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
-import { PageIntro } from "./PageIntro";
-import { PAGE_INTROS } from "../help/content";
 import { TelemetryCoverageFleet } from "./coverage/TelemetryCoverageFleet";
 import { RunCleanup } from "./cleanup/RunCleanup";
 
@@ -619,7 +617,6 @@ export function TelemetryCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
-        <PageIntro {...PAGE_INTROS["/telemetry"]} icon="🛰️" storageKey="telemetry" />
         {enabled && tab === "coverage" && (
           <CoverageHistory<TelemetryCoverage>
             feature="telemetry"

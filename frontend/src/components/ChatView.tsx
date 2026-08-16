@@ -2526,7 +2526,7 @@ export default function ChatView() {
     <div className="relative flex h-full">
       {/* Sidebar */}
       <aside
-        className={`flex shrink-0 flex-col overflow-hidden border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
+        className={`relative z-40 flex shrink-0 flex-col overflow-visible border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
           railCollapsed ? "w-14" : "w-64"
         }`}
       >
@@ -2716,7 +2716,14 @@ export default function ChatView() {
               <div className="flex items-center">
                 <Link
                   to="/proactive"
-                  onClick={(e) => { if (proactiveOpen) { e.preventDefault(); setProactiveOpen(false); } }}
+                  onClick={(e) => {
+                    if (proactiveOpen) {
+                      e.preventDefault();
+                      setProactiveOpen(false);
+                    } else {
+                      setProactiveOpen(true);
+                    }
+                  }}
                   className={`flex flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition ${
                     anyActive ? "bg-gray-200 font-medium text-gray-900" : "text-gray-700 hover:bg-gray-200/60"
                   }`}

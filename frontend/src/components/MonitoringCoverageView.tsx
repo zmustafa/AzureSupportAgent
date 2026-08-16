@@ -19,8 +19,6 @@ import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { DensityToggle } from "./DensityToggle";
 import { CoverageHistory, coverageRunsKey } from "./CoverageHistory";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
-import { PageIntro } from "./PageIntro";
-import { PAGE_INTROS } from "../help/content";
 import { isRefreshing, startBackgroundRefresh, takeRefreshError, useBackgroundRefresh } from "../utils/backgroundRefresh";
 import { Skeleton, useDebounced } from "../utils/perf";
 import { MonitoringCoverageFleet } from "./coverage/MonitoringCoverageFleet";
@@ -761,7 +759,6 @@ export function MonitoringCoveragePanel() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
-        <PageIntro {...PAGE_INTROS["/coverage"]} icon="📡" storageKey="coverage" />
         {enabled && tab === "coverage" && (
           <CoverageHistory<AmbaCoverage>
             feature="amba"

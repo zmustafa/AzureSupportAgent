@@ -349,15 +349,9 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
       {/* Header */}
-      <div className="border-b bg-white px-6 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-gray-900">Application Registrations</h1>
-            <p className="text-xs text-gray-500">
-              Snapshot of Entra ID app registrations — enterprise-app state, credentials, API permissions and owners.
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+      <div className="border-b bg-white px-6 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-500">
               {data?.never_loaded ? (
                 <span className="text-amber-600">Never loaded — press Refresh</span>

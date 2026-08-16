@@ -356,6 +356,7 @@ export function PerformancePanel() {
   // Which sub-tab of the analysis is shown: the metric heatmap or the full resource list.
   // PU2 — persisted so the chosen sub-tab survives navigation/reload.
   const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
+  const [heatmapExpanded, setHeatmapExpanded] = usePersistedState("azsup.performance.heatmapExpanded", true);
   // Top-level view: the single-scope Profiler vs the all-workloads Fleet overview.
   const [mainView, setMainView] = usePersistedState<"profiler" | "fleet" | "cleanup">("azsup.performance.view", "profiler");
   // Never LAND on the destructive-adjacent Cleanup tab: if it was the persisted view from a
@@ -896,6 +897,7 @@ export function PerformancePanel() {
           emptyHint={<>No profiles yet — pick a window and click <b>Run profile</b>.</>}
           rowClassName={(r) => (data?.id === r.id ? "bg-blue-50" : "")}
           testId="perf-history"
+          storageKey="azsup.history.performance"
           prependRow={runningHere && runningEntry ? (
             <tr className="border-t bg-amber-50/50" data-testid="perf-running-row">
               <td className="px-3 py-2 text-gray-700"><div className="leading-tight"><div className="whitespace-nowrap">{fmtTime(new Date(runningEntry.startedAt).toISOString())}</div><div className="text-[11px] text-gray-400">{fmtAgo(new Date(runningEntry.startedAt).toISOString())}</div></div></td>
@@ -1023,7 +1025,7 @@ export function PerformancePanel() {
             )}
 
             {/* Sub-tabs: the metric heatmap vs the full in-scope resource list */}
-            <div className="mb-3 flex gap-1 border-b">
+            <div className="mb-3 flex items-center gap-1 border-b">
               {([
                 ["analysis", "Heatmap"],
                 ["all", "All Resources"],
@@ -1036,16 +1038,30 @@ export function PerformancePanel() {
                   }`}
                 >
                   {label}
-                  {id === "all" && (data.all_resources?.length ?? 0) > 0 ? (
-                    <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">{data.all_resources!.length}</span>
-                  ) : null}
+                  {(id === "analysis" ? data.resources.length : (data.all_resources?.length ?? 0)) > 0 && (
+                    <span className="ml-1 rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">
+                      {id === "analysis" ? data.resources.length : data.all_resources!.length}
+                    </span>
+                  )}
                 </button>
               ))}
+              {perfTab === "analysis" && (
+                <button
+                  type="button"
+                  onClick={() => setHeatmapExpanded(!heatmapExpanded)}
+                  aria-expanded={heatmapExpanded}
+                  aria-label={heatmapExpanded ? "Collapse heatmap" : "Expand heatmap"}
+                  title={heatmapExpanded ? "Collapse heatmap" : "Expand heatmap"}
+                  className="ml-auto mb-1 flex h-6 w-6 items-center justify-center rounded text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                >
+                  {heatmapExpanded ? "▾" : "▸"}
+                </button>
+              )}
             </div>
 
             {perfTab === "all" ? (
               <AllResourcesTab resources={data.all_resources ?? []} />
-            ) : (
+            ) : !heatmapExpanded ? null : (
             <>
             {(data.bottlenecks ?? []).length > 0 && (
               <div className="mb-6">

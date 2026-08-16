@@ -120,12 +120,12 @@ const TIMEZONES: string[] = (() => {
 })();
 
 export function AutomationsPanel({ section }: { section: AutomationsSection }) {
-  // The Sub Agents section renders a long catalog of agent cards, so give it the app's
-  // wide responsive width (the other sections are form-like and read better when narrow).
-  const wide = section === "agents";
+  // Operational dashboards and catalogs use the full host; Connectors remains a narrower
+  // form surface so its credential fields do not become excessively wide.
+  const fullWidth = section === "overview" || ["tasks", "agents", "workbooks", "playbooks", "notifications"].includes(section);
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className={`mx-auto space-y-6 p-8 ${wide ? "max-w-5xl xl:max-w-6xl 2xl:max-w-screen-2xl" : "max-w-5xl"}`}>
+      <div className={`mx-auto w-full space-y-6 p-8 ${fullWidth ? "max-w-none" : "max-w-5xl"}`}>
         {section === "overview" && <OverviewSection />}
         {section === "tasks" && <TasksSection />}
         {section === "agents" && <AgentsSection />}

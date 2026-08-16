@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { HistoryDisclosure } from "./HistoryDisclosure";
 
 export type RunHistoryColumn<T> = {
   header: string;
@@ -28,6 +29,7 @@ export function RunHistoryShell<T extends { id: string }>({
   prependRow,
   suppressEmpty = false,
   testId = "run-history",
+  storageKey = "azsup.history.runs",
   showTrash,
   onToggleTrash,
   trashedCount,
@@ -54,6 +56,7 @@ export function RunHistoryShell<T extends { id: string }>({
   /** Don't show the empty state (e.g. when a prepended live row is present). */
   suppressEmpty?: boolean;
   testId?: string;
+  storageKey?: string;
   showTrash: boolean;
   onToggleTrash: () => void;
   trashedCount: number;
@@ -65,19 +68,23 @@ export function RunHistoryShell<T extends { id: string }>({
   emptyingTrash: boolean;
 }) {
   return (
-    <div className="mb-5">
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
-        <span className="text-[11px] text-gray-400">{countText}</span>
-        {headerExtra}
+    <HistoryDisclosure
+      storageKey={storageKey}
+      className="mb-5"
+      bodyClassName="mt-2"
+      title={<h2 className="text-sm font-semibold text-gray-900">{title}</h2>}
+      count={<span className="text-[11px] text-gray-400">{countText}</span>}
+      headerExtra={headerExtra}
+      actions={(
         <button
           onClick={onToggleTrash}
           title="Show trashed runs"
-          className={`ml-auto rounded-md border px-2.5 py-1 text-[11px] font-medium ${showTrash ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}
+          className={`rounded-md border px-2.5 py-1 text-[11px] font-medium ${showTrash ? "border-brand/40 bg-brand/5 text-brand" : "text-gray-600 hover:bg-gray-50"}`}
         >
           🗑 Trash{trashedCount ? ` (${trashedCount})` : ""}
         </button>
-      </div>
+      )}
+    >
 
       {message && (
         <div className={`mb-2 rounded-md border px-3 py-1.5 text-xs ${message.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>{message.text}</div>
@@ -149,6 +156,6 @@ export function RunHistoryShell<T extends { id: string }>({
           )}
         </div>
       )}
-    </div>
+    </HistoryDisclosure>
   );
 }

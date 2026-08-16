@@ -198,7 +198,7 @@ function SettingsOverview() {
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-5xl space-y-6 p-8">
+      <div className="w-full max-w-none space-y-6 p-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Settings</h1>
@@ -225,7 +225,7 @@ function SettingsOverview() {
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                 {g.name}
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
                 {g.items.map((i) => (
                   <Link
                     key={i.id}
@@ -266,9 +266,9 @@ export function AdminPanel({ section }: { section: AdminSection }) {
   if (section === "access" || ACCESS_SUB_IDS.has(section)) {
     return wrap(<AccessControlPanel section={section} />);
   }
-  // Standalone security sections (Active Sessions, Security Policy) keep their own panel.
+  // Standalone security sections use the full host through their shared panel.
   if (section === "sessions" || section === "policies" || section === "firewall") {
-    return wrap(<SecurityPanel section={section as SecuritySection} />);
+    return wrap(<SecurityPanel section={section as SecuritySection} fullWidth />);
   }
   // AMBA Reference Set gets a dedicated full-page two-pane rich editor.
   if (section === "amba") {

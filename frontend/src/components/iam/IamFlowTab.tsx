@@ -155,6 +155,7 @@ function Caveats({ notes, hiddenEligible, collapsed }: {
 
 export function IamFlowTab() {
   const connectionId = useIamConnectionId();
+  const fullscreenRef = useRef<HTMLDivElement | null>(null);
   const [scopeFilter, setScopeFilter] = useState<AccessFilter | null>(null);
   const [chain, setChain] = useState<FlowDimension[]>(DEFAULT_CHAIN);
   const [weight, setWeight] = useState<FlowWeight>("grants");
@@ -247,8 +248,14 @@ export function IamFlowTab() {
     <div className="flex h-full min-h-0">
       {/* Scope and workload focus. "Who can reach this workload" is this rail plus a preset,
           not a separate screen. */}
-      <FilterRail filter={scopeFilter} onChange={setScopeFilter} />
-      <div className="min-w-0 flex-1 space-y-3 overflow-auto p-4">
+      <FilterRail
+        filter={scopeFilter}
+        onChange={setScopeFilter}
+        collapsible
+        storageKey="azsup.iam.accessMap.filterRail"
+      />
+      <div ref={fullscreenRef} className="flex min-w-0 flex-1 flex-col overflow-auto bg-gray-50 p-4">
+      <div className="shrink-0 space-y-3">
       {/* What the diagram is counting. Ribbon width is meaningless without it. */}
       <div className="flex flex-wrap items-center gap-2">
         <Chip label="Grants" value={graph.totals.grants.toLocaleString()}
@@ -350,16 +357,16 @@ export function IamFlowTab() {
         hiddenEligible={eligibleShown ? 0 : eligibleAvailable}
         collapsed={graph.collapsedColumns}
       />
+      </div>
 
-      <div className="overflow-hidden rounded-lg border bg-white">
+      <div data-testid="accessmap-sankey-region" className="mt-3 min-h-[430px] flex-1">
         <SankeyExplorer
           storageKey="azsup.iam.accessMap"
           nodes={graph.nodes}
           links={graph.links}
-          // Sized so the whole diagram lands inside a 900px laptop viewport rather than
-          // trailing 200px below the fold. The explorer's own Full screen button is the
-          // escape hatch when someone actually wants to study it.
           heightPx={430}
+          fillHeight
+          fullscreenTargetRef={fullscreenRef}
           title="Access map"
           subtitle={
             weight === "grants"
@@ -381,7 +388,11 @@ export function IamFlowTab() {
         />
       </div>
 
-      {selected && <SelectionDetail node={selected} facts={facts} filters={filters} onClose={() => setSelected(null)} />}
+      {selected && (
+        <div className="mt-3 shrink-0">
+          <SelectionDetail node={selected} facts={facts} filters={filters} onClose={() => setSelected(null)} />
+        </div>
+      )}
       </div>
     </div>
   );
