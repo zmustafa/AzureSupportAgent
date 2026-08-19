@@ -15,6 +15,17 @@ updates:
       msgraph:
         patterns:
           - "msgraph-*"
+    ignore:
+      # mcp 2.0 is a TRANSPORT REWRITE, not a routine major: it swaps the httpx stack for
+      # httpx2/httpcore2 and splits the schema out into a new mcp-types package. pip resolves
+      # it cleanly anyway, so a green install proves nothing -- fastmcp-slim declares
+      # `mcp<2.0` only under its client/server/mcp EXTRAS, which are not installed. Meanwhile
+      # third_party/entraid-mcp-server pins `mcp[cli]<2` and is built into its OWN venv, so
+      # taking 2.x would split the two halves of the MCP integration across incompatible
+      # majors while app/mcp/client.py uses ClientSession/stdio_client directly.
+      # Scoped to major ONLY so 1.x security patches (e.g. CVE-2026-59950) still arrive.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
