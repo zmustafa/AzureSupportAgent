@@ -145,7 +145,7 @@ pyhanko-certvalidator==0.31.4
 pypdf==6.15.0
 python-bidi==0.6.10
 reportlab==4.5.1
-svglib==2.0.0
+svglib==2.2.0
 tinycss2==1.5.1
 tzlocal==5.4
 webencodings==0.5.1
