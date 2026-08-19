@@ -57,7 +57,7 @@ jaraco.context==6.1.2
 jaraco.functools==4.6.0
 jiter==0.15.0
 jmespath==1.1.0
-joserfc==1.7.0
+joserfc==1.7.4
 jsonref==1.1.0
 jsonschema==4.26.0
 jsonschema-path==0.5.0
