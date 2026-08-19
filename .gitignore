@@ -179,3 +179,10 @@ docs/.bundle/
 
 # --- UI Test Pilot run artifacts (screenshots + run reports) -----------------
 .uxshots/ui-test/
+
+# Scratch scripts written while investigating (diagnostics, one-off scans). These are
+# working notes, not product code, and they routinely quote live tenant/connection names
+# while hunting for them -- exactly what must never reach a public repo. The deploy flow
+# uses `git add -A`, so leaving this untracked-but-not-ignored was one command away from
+# publishing them.
+state/

@@ -256,8 +256,8 @@ async def login(
     if user.locked_until:
         from datetime import timezone
 
-        lu = user.locked_until if user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc)
-        if _aware_now() < lu:
+        locked_until_at = user.locked_until if user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc)
+        if _aware_now() < locked_until_at:
             await _ip_failure()
             raise HTTPException(status_code=423, detail="Account temporarily locked. Try again later.")
 

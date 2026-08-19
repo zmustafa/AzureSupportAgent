@@ -177,7 +177,7 @@ async def overview(
     principal: Principal = Depends(require_admin),
 ) -> dict[str, Any]:
     """KPIs + per-scope freshness + collector status. Reads cache only (never scans)."""
-    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
+    connection, tenant_id, _cid = _target(principal, connection_id)
     # Off the loop like every other compose call in this module. "Reads cache only" is not the
     # same as "is cheap": after any write the memo is gone and this recomposes the whole estate,
     # and this endpoint is polled by the screen that is open while a refresh runs.
@@ -1530,7 +1530,7 @@ async def export_workbook(
     Honors the active scope/workload filter for the access sheets. The analysis is tenant-wide
     by construction, so it is NOT filtered — a finding about a scope you filtered out is still
     true, and silently dropping it would make the export read cleaner than the tenant is."""
-    connection, tenant_id, _cid = _target(principal, connection_id)
+    connection, tenant_id, _cid = _target(principal, connection_id, workload_id)
     rows = await asyncio.to_thread(compose.build_master_rows, tenant_id)
     if scope_id or subscription_ids or workload_id:
         sub_id_list = [s for s in (subscription_ids or "").split(",") if s.strip()]

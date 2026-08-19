@@ -121,6 +121,7 @@ function IamPanelBody({
   }
 
   const data = overviewQ.data;
+  const ownsConsole = tab === "overview" && !!data?.never_loaded;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
@@ -171,8 +172,32 @@ function IamPanelBody({
 
       {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700">{err}</div>}
 
+      {/* The empty state below renders its own console; anywhere else a scan would be silent. */}
+      {refreshCtl.isBusy && !ownsConsole && (
+        <div className="border-b bg-gray-50 px-4 py-2">
+          <RefreshConsole ctl={refreshCtl} lines={4} />
+        </div>
+      )}
+
       {overviewQ.isLoading && tab === "overview" ? (
         <div className="p-6"><Skeleton rows={8} /></div>
+      ) : overviewQ.isError && tab === "overview" ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+          <div className="text-4xl">⚠️</div>
+          <div className="text-lg font-semibold text-gray-800">Could not load the access overview</div>
+          <p className="max-w-md text-sm text-red-700">{formatError(overviewQ.error)}</p>
+          {/* On an access review, silence reads as "nobody has access" -- say which one this is. */}
+          <p className="max-w-md text-xs text-gray-500">
+            This is a failure to read the review, not a finding that no access exists.
+          </p>
+          <button
+            onClick={() => void overviewQ.refetch()}
+            disabled={overviewQ.isFetching}
+            className="rounded bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
+          >
+            {overviewQ.isFetching ? "Retrying…" : "↻ Retry"}
+          </button>
+        </div>
       ) : data && data.never_loaded && tab === "overview" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <div className="text-4xl">🛡️</div>
@@ -194,7 +219,7 @@ function IamPanelBody({
           </div>
         </div>
       ) : !data && tab === "overview" ? (
-        <div className="p-6 text-sm text-gray-500">No data.</div>
+        <div className="p-6 text-sm text-gray-500">Could not load the access overview.</div>
       ) : tab === "overview" && data ? (
         <OverviewTab data={data} refreshCtl={refreshCtl} onPurgeDemo={purgeDemo} purging={purging} />
       ) : tab === "findings" ? (
