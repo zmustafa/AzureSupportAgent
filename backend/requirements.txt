@@ -130,7 +130,7 @@ uncalled-for==0.3.2
 urllib3==2.7.0
 uvicorn==0.52.1
 watchfiles==1.2.0
-websockets==16.0
+websockets==17.0.1
 yarl==1.24.2
 # --- PDF report export (assessments) — xhtml2pdf + its dependency tree (pure-Python, no
 # system libraries; works on Windows and Linux containers) ---
