@@ -11,15 +11,11 @@ Auth methods
                                cross-tenant and drives the Azure MCP server fully
                                (read + gated write). RECOMMENDED for enterprise.
 - ``service_principal_cert`` : Same, but a PEM CERTIFICATE instead of a secret.
-- ``azure_cli``              : Use the host's ``az login`` session for a specific
-                               tenant. Sign in ONCE on the server host; the Azure CLI
-                               keeps the session refreshed (~90 days, rolling) so this
-                               is effectively always-on with no token pasting.
 - ``default_chain``          : Use the host DefaultAzureCredential (managed identity in
                                cloud, or the machine's az login). Single-tenant.
 - ``az_cli_token``           : Paste the JSON from ``az account get-access-token`` run
                                on your own machine. Short-lived (~1h, no refresh token);
-                               best for quick/headless checks. Prefer ``azure_cli``.
+                               best for quick/headless checks.
 
 The shape mirrors the LLM provider registry: a flat dict keyed by connection id.
 """

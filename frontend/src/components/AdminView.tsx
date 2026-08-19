@@ -1273,8 +1273,6 @@ function ConnectionForm({
         </div>
       )}
 
-      {form.auth_method === "azure_cli" && <AzureCliFields tenantId={form.tenant_id} />}
-
       {form.auth_method === "az_cli_token" && <AzCliTokenFields form={form} set={set} />}
 
       {form.auth_method === "default_chain" && (
@@ -1375,36 +1373,6 @@ function ConnectionForm({
   );
 }
 
-function AzureCliFields({ tenantId }: { tenantId: string }) {
-  return (
-    <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-900">
-      <div className="mb-1 font-semibold">Sign in once — stays connected</div>
-      <p className="mb-2">
-        Uses the host's Azure CLI session for this tenant. The CLI keeps the session
-        refreshed automatically (~90 days, rolling), so you never paste tokens and it
-        won't expire after an hour — just like a normal{" "}
-        <code className="rounded bg-white px-1">az login</code> connection.
-      </p>
-      <ol className="list-decimal space-y-1 pl-4">
-        <li>
-          On the machine running this app, sign in to the tenant:
-          <pre className="mt-1 overflow-x-auto rounded bg-white px-2 py-1 font-mono text-[11px] text-gray-800">
-            az login --tenant {tenantId || "<TENANT_ID>"}
-          </pre>
-        </li>
-        <li>
-          Enter the Tenant ID above, then <strong>Save</strong> and <strong>Test</strong>.
-          That's it — no token to paste.
-        </li>
-      </ol>
-      <div className="mt-2 text-[11px] text-green-800">
-        Re-authentication is only needed if you sign out of the CLI or the session is
-        revoked. For a fully unattended service, use a service principal instead.
-      </div>
-    </div>
-  );
-}
-
 function CmdBlock({ cmd }: { cmd: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -1449,8 +1417,8 @@ function AzCliTokenFields({
         </ol>
         <div className="mt-2 text-[11px] text-blue-800">
           The token is short-lived (~1 hour) and cannot be refreshed — the Azure CLI
-          does not expose refresh tokens. For an always-on connection that auto-refreshes,
-          switch to <strong>“Azure CLI sign-in”</strong> above, or use a service principal.
+          does not expose refresh tokens. For an always-on connection, use a service
+          principal or <strong>Host identity</strong> instead.
         </div>
       </div>
       <div>

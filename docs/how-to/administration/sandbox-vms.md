@@ -54,6 +54,6 @@ Commands run on the remote host and may be irreversible. Keep strict mode on, us
 ## Related docs
 
 - [How-to guides]({{ site.baseurl }}/how-to/)
-- [Sandbox VM reference]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/)
+- [Sandbox VM reference]({{ site.baseurl }}/admin/sandbox-vms/)
 - [Approvals]({{ site.baseurl }}/security/approvals/)
 - [Auditing]({{ site.baseurl }}/security/auditing/)

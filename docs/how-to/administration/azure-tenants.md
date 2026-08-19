@@ -14,7 +14,7 @@ feature_ids: [ADMIN_NAV:tenants]
 ## Prerequisites
 
 - Product permission `connections.manage`.
-- Tenant and client identifiers plus credentials for a method offered by the form: service-principal secret, service-principal certificate, host/default credential chain, or pasted Azure CLI token.
+- Tenant and client identifiers plus credentials for a method offered by the form: service-principal secret, service-principal certificate, host/default credential chain, or pasted Azure CLI token. See [Azure Tenants]({{ site.baseurl }}/admin/azure-tenants/) to choose one.
 - Least-privilege Azure RBAC at the intended scope; Graph administrator consent only when Entra features are required.
 
 ## Route
@@ -25,7 +25,7 @@ feature_ids: [ADMIN_NAV:tenants]
 ## How to add and verify an Azure tenant connection
 
 1. Select **Add connection** and provide a non-sensitive display name.
-2. Choose an authentication method and complete only its visible fields.
+2. Choose an authentication method and complete only its visible fields. Each method has its own Azure-side setup — follow its page: [service principal (client secret)]({{ site.baseurl }}/admin/azure-tenants-service-principal-secret/), [service principal (certificate)]({{ site.baseurl }}/admin/azure-tenants-service-principal-certificate/), [host identity]({{ site.baseurl }}/admin/azure-tenants-host-identity/), or [pasted Azure CLI token]({{ site.baseurl }}/admin/azure-tenants-pasted-token/).
 3. Set the default subscription or Log Analytics workspace only when required by workflows.
 4. Keep **Read only** enabled and automatic writes disabled during onboarding.
 5. Save. Secret, certificate, and token fields are write-only; blank values on a later edit preserve stored values.
@@ -57,6 +57,6 @@ Only one connection is default. Prefer **Disabled** over deletion while assessin
 ## Related docs
 
 - [How-to guides]({{ site.baseurl }}/how-to/)
-- [Azure tenant reference]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/)
+- [Azure tenant reference]({{ site.baseurl }}/admin/azure-tenants/)
 - [Connection Capability recipe]({{ site.baseurl }}/how-to/coverage/connection-capability/)
 - [Entra setup]({{ site.baseurl }}/getting-started/entra-setup/)

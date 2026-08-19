@@ -25,4 +25,4 @@ Inventory dependents, add the replacement, test it, switch traffic, revoke the o
 ## Related pages
 
 - [Connectors]({{ site.baseurl }}/connectors/)
-- [Azure tenants]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/)
+- [Azure tenants]({{ site.baseurl }}/admin/azure-tenants/)

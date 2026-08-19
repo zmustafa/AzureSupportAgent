@@ -26,7 +26,12 @@ Looking for numbered procedures rather than reference material? Open the [admini
 ## Configuration
 
 - [AI providers]({{ site.baseurl }}/admin/ai-providers/)
-- [Azure tenants and sandbox VMs]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/)
+- [Azure tenants]({{ site.baseurl }}/admin/azure-tenants/)
+  - [Connect with a service principal (client secret)]({{ site.baseurl }}/admin/azure-tenants-service-principal-secret/)
+  - [Connect with a service principal (certificate)]({{ site.baseurl }}/admin/azure-tenants-service-principal-certificate/)
+  - [Connect with host identity]({{ site.baseurl }}/admin/azure-tenants-host-identity/)
+  - [Connect with a pasted Azure CLI token]({{ site.baseurl }}/admin/azure-tenants-pasted-token/)
+- [Sandbox VMs]({{ site.baseurl }}/admin/sandbox-vms/)
 - [General settings]({{ site.baseurl }}/admin/general-settings/)
 - [Connectors]({{ site.baseurl }}/connectors/)
 
@@ -56,8 +61,8 @@ The Settings sidebar groups its entries into Configuration, Security & access, T
 | Settings entry | Capability | Documented in |
 | --- | --- | --- |
 | AI Providers | `settings.read` / `settings.write` | [AI providers]({{ site.baseurl }}/admin/ai-providers/) |
-| Azure Tenants | `connections.manage` | [Azure tenants and sandbox VMs]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/) |
-| Sandbox VMs | `sandbox.exec` | [Azure tenants and sandbox VMs]({{ site.baseurl }}/admin/azure-tenants-sandbox-vms/) |
+| Azure Tenants | `connections.manage` | [Azure tenants]({{ site.baseurl }}/admin/azure-tenants/) |
+| Sandbox VMs | `sandbox.exec` | [Sandbox VMs]({{ site.baseurl }}/admin/sandbox-vms/) |
 | Connectors | `connectors.manage` | [Connectors]({{ site.baseurl }}/connectors/) |
 | General | `settings.read` / `settings.write` | [General settings]({{ site.baseurl }}/admin/general-settings/) |
 | Access Control | `users.manage` | [Access Control]({{ site.baseurl }}/admin/access-control/) |
