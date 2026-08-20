@@ -1,4 +1,4 @@
-"""Signal Registry integrity + per-signal behaviour.
+"""Signal Registry integrity + per-signal behavior.
 
 The registry is the single source of truth behind the score, the findings inbox, the
 scanners, the exports and the agent answers, so the invariants here matter more than the
@@ -29,7 +29,7 @@ def demo_snapshot(tmp_path_factory):
     root = tmp_path_factory.mktemp("entra-signals")
     cache.set_root_for_tests(root)
     demo.seed()
-    snap = snapshot_mod.analyse(demo.DEMO_TENANT, force=True)
+    snap = snapshot_mod.analyze(demo.DEMO_TENANT, force=True)
     yield snap
 
 
@@ -152,7 +152,7 @@ def test_unlicensed_signals_are_not_measured():
 
 
 def test_undetected_licence_still_attempts_the_check():
-    """Licence flags are advisory — a real 403 is authoritative, a guess is not."""
+    """License flags are advisory — a real 403 is authoritative, a guess is not."""
     from app.entra.licences import licence_ok
 
     assert licence_ok({"detected": False}, "p2") is True

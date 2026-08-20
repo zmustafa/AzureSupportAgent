@@ -283,7 +283,7 @@ export function LeastPrivilegeTab() {
         {d && !d.measured && (d.unresolved_roles ?? 0) > 0 && (
           <div data-testid="ciem-no-role-catalogue" className="rounded border border-red-300 bg-red-50 p-3">
             <div className="text-xs font-semibold text-red-900">
-              Nothing could be assessed — the role catalogue is missing
+              Nothing could be assessed — the role catalog is missing
             </div>
             <p className="mt-1 text-[11px] text-red-900">
               Usage was collected, but none of the {(d.unresolved_roles ?? 0).toLocaleString()} assignment(s)

@@ -605,7 +605,7 @@ def _revoke_pim_eligible(row: dict[str, Any], fmt: str) -> tuple[str, str, str]:
     # and came back as a 400 carrying an ASP.NET error page, which tells the operator nothing.
     # There is no GUID generator that works in both bash and PowerShell, and re-running the same
     # script with the same name is a no-op rather than a second removal — which is the safer of
-    # the two behaviours anyway.
+    # the two behaviors anyway.
     request_name = str(uuid.uuid4())
     list_url = (
         f"{scope}/providers/Microsoft.Authorization/roleEligibilitySchedules"

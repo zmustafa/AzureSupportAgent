@@ -16,7 +16,7 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 - Product permission `entra.read` to view setup, coverage and diagnostics.
 - Product permission `entra.admin` to re-check permissions or start a collection.
 - A connection that can obtain a Microsoft Graph application token for the tenant. If it cannot, every domain is blind and nothing below applies until that is fixed.
-- Knowledge of which consent tier the tenant has granted and whether it holds Entra ID P1 or P2, because consent and licence produce different failures that look identical on a tab.
+- Knowledge of which consent tier the tenant has granted and whether it holds Entra ID P1 or P2, because consent and license produce different failures that look identical on a tab.
 
 ## Route
 
@@ -27,12 +27,12 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 1. Open `/entra/setup` and read the collector coverage table. Every domain carries a state, an item count and a reason.
 
 2. Read `blind` as a consent problem: none of the alternative scopes in that domain's requirement group is granted. Several domains accept alternatives, so a domain is only blind when all of them are missing. Grant the tier and collect again.
-3. Read `unlicensed` as a licence problem: the scope is consented but the tenant lacks the Entra ID P1/P2 or Governance licence for that data. No amount of consent will change it.
+3. Read `unlicensed` as a license problem: the scope is consented but the tenant lacks the Entra ID P1/P2 or Governance license for that data. No amount of consent will change it.
 4. Read `partial` as a truncation or sub-call failure. The domain collected, but something inside it was capped or refused. The reason states which.
 5. Read an inconclusive probe result as "the answer is unknown", usually throttling or a transient Graph error. Do not grant scopes in response to it — re-check later instead.
-6. Understand why the distinction exists: only an HTTP 403 is evidence about consent, and Microsoft answers a missing licence with a 400 or a 403 carrying a licence marker, so responses are classified as permitted, denied, unlicensed or inconclusive rather than all mapped to "grant more permissions".
+6. Understand why the distinction exists: only an HTTP 403 is evidence about consent, and Microsoft answers a missing license with a 400 or a 403 carrying a license marker, so responses are classified as permitted, denied, unlicensed or inconclusive rather than all mapped to "grant more permissions".
 
-**Expected result:** Each unmeasured domain is attributed to consent, licence, truncation or an unknown, and only the consent cases produce an action.
+**Expected result:** Each unmeasured domain is attributed to consent, license, truncation or an unknown, and only the consent cases produce an action.
 
 **Verification:** The coverage banner on the affected tab names the same limitation, and the scope it names appears as missing in the tier list.
 
@@ -72,7 +72,7 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 4. Confirm the permission was added to the correct app registration, as an **Application** permission. An app-only token never carries delegated scopes, so a delegated grant on the right app looks exactly like no grant at all.
 5. When a score moves without any directory change, compare coverage first. A pillar that could not be measured is excluded from the weighted average rather than scored zero, so gaining or losing a scope changes which pillars are counted and moves the score on its own.
 6. Then compare the measured pillars and the finding diff against the previous run. Check whether findings were suppressed or snoozed in between: suppressed findings are excluded from the score, so a bulk suppression raises it without changing the tenant.
-7. Only compare scores over time within one tenant. Two tenants with different licences have different measurable surfaces, so the numbers are not comparable.
+7. Only compare scores over time within one tenant. Two tenants with different licenses have different measurable surfaces, so the numbers are not comparable.
 
 **Expected result:** Either a domain that moves to measured after the next collection, or a documented explanation for a score change that names coverage, suppression or a real finding as the cause.
 

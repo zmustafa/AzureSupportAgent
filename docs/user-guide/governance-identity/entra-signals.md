@@ -86,9 +86,9 @@ Patterns are counting rules, not predictions. Each result states its rule and ca
 
 - Every read on this tab is read-only. Nothing here dismisses a risk, confirms a compromise, blocks a user, resets a credential, or edits a policy. Remediate in the Microsoft Entra admin center or through your change process.
 - Sign-in analysis is sampled and bounded. It cannot prove absence: "no legacy sign-in succeeded in this window" is a statement about the window, not about the tenant.
-- The window is also bounded by Microsoft's own sign-in log retention for the tenant's licence. Events older than retention were never available to read.
+- The window is also bounded by Microsoft's own sign-in log retention for the tenant's license. Events older than retention were never available to read.
 - Unbounded dimensions are truncated to a top slice before storage — applications, failure codes, IP addresses, and users by volume. Counts outside a top slice are not shown.
-- Missing licence produces an explicit unavailable notice naming P1, P2, or Workload Identities Premium. It never produces a zero.
+- Missing license produces an explicit unavailable notice naming P1, P2, or Workload Identities Premium. It never produces a zero.
 - Exports and screenshots from this tab contain user principal names and risk verdicts. Handle them as identity material; do not paste live tenant, object, or user identifiers into tickets or prompts.
 
 ## Troubleshooting
@@ -97,7 +97,7 @@ Patterns are counting rules, not predictions. Each result states its rule and ca
 | --- | --- |
 | Every sign-in sub-view says analysis is unavailable | Either the tenant lacks Entra ID P1 or `AuditLog.Read.All` is not granted; the notice names which. |
 | Risky users says Identity Protection is unavailable | Entra ID P2 and `IdentityRiskyUser.Read.All` are both required. Sign-in views work without either. |
-| Risky workload identities is empty with a licence note | Requires Entra Workload Identities Premium; consent will not help. |
+| Risky workload identities is empty with a license note | Requires Entra Workload Identities Premium; consent will not help. |
 | Auth methods says the registration report is unavailable | Requires Entra ID P1 and `Reports.Read.All`. Grant, re-check permissions, then collect. |
 | A sampling banner is shown on every chart | The row cap truncated the window. Reduce the sign-in lookback window and collect again. |
 | Registration percentages exclude accounts you expect | Those users are absent from the registration report; the unreported count states how many. |

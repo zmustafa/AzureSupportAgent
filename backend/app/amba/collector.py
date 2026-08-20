@@ -797,7 +797,7 @@ def subscription_rows(subscriptions: Iterable[str]) -> list[dict[str, Any]]:
 def _is_scorable(rec: dict[str, Any]) -> bool:
     """Can this baseline entry be evaluated against real Azure alert rules?
 
-    ``builtin_seed`` computes ``deployable`` when it merges the catalogue, but an admin can
+    ``builtin_seed`` computes ``deployable`` when it merges the catalog, but an admin can
     hand-edit the reference set, so the same invariants are re-checked at scoring time:
     guidance-only entries (no metric name, or a static metric alert with no threshold) are
     kept in the reference for context but never scored as a gap."""

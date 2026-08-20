@@ -1948,7 +1948,7 @@ async def cost(
 ) -> dict[str, Any]:
     """Backup cost from the best available source.
 
-    Layers three inputs, each labelled so the caller knows what it is looking at: live retail
+    Layers three inputs, each labeled so the caller knows what it is looking at: live retail
     list prices (forward-looking), Log Analytics consumption (per-item truth), and Cost
     Management actuals (authoritative, but only ever attributed to the vault).
 

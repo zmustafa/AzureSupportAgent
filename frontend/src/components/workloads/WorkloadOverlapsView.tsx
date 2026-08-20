@@ -32,7 +32,7 @@ export function WorkloadOverlapsView() {
   const connQ = useQuery({ queryKey: ["azureConnections"], queryFn: api.azureConnections, retry: false });
   const conns: TenantOption[] = connQ.data?.connections ?? [];
   const defaultConn = conns.find((c) => c.is_default)?.id ?? "";
-  // null = not yet initialised (fall back to default once connections load).
+  // null = not yet initialized (fall back to default once connections load).
   const [connId, setConnId] = useState<string | null>(null);
   const effConn = connId ?? defaultConn;
 

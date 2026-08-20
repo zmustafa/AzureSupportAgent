@@ -8,7 +8,7 @@
  * defensible 1-10 scores.
  *
  * Three exports: FmeaPanel (route dispatcher), FmeaIndex (the list), FmeaView (the editor
- * grid that mirrors the classic FMEA worksheet, with colour-coded factor cells and RPN).
+ * grid that mirrors the classic FMEA worksheet, with color-coded factor cells and RPN).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -626,7 +626,7 @@ export function FmeaView({ fmeaId }: { fmeaId: string }) {
               href={fmeaApi.exportXlsxUrl(fmeaId)}
               onClick={() => { setExportNote("Excel workbook downloading…"); setTimeout(() => setExportNote(""), 2800); }}
               className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100"
-              title="Download a richly-formatted Excel workbook (one sheet per table, colour-scaled scores, live RPN formulas)"
+              title="Download a richly-formatted Excel workbook (one sheet per table, color-scaled scores, live RPN formulas)"
             >
               ⬇ Excel
             </a>
@@ -789,7 +789,7 @@ function NewFmeaModal({
             <h2 className="text-sm font-semibold text-gray-800">✨ New FMEA</h2>
             <button onClick={onClose} className="rounded-lg border px-2.5 py-1 text-[12px] text-gray-500 hover:bg-gray-50">Close</button>
           </div>
-          <p className="mt-1 text-[12px] text-gray-500">Pick a workload to analyse. Its FMEA is built from the workload's Architecture Memory.</p>
+          <p className="mt-1 text-[12px] text-gray-500">Pick a workload to analyze. Its FMEA is built from the workload's Architecture Memory.</p>
         </div>
         {buildable.length === 0 ? (
           <div className="px-4 py-8 text-center text-[12px] text-gray-500">

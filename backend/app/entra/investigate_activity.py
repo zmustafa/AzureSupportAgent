@@ -1,4 +1,4 @@
-"""Behavioural history for ONE principal — the activity half of Investigate.
+"""Behavioral history for ONE principal — the activity half of Investigate.
 
 Separate from ``collectors/risk.py`` on purpose. That module reads sign-ins tenant-wide and
 folds every page into an aggregator, keeping no raw row: the right shape for a posture
@@ -12,7 +12,7 @@ Four sources, three cheap and one not:
   risk             Graph /identityProtection/riskDetections   one filtered call
   azure_activity   Azure Activity Log, PER SUBSCRIPTION       ~30s a page, never implicit
 
-Reading this is a sensitive act — it is behavioural data about a named person. The route
+Reading this is a sensitive act — it is behavioral data about a named person. The route
 that calls this sits behind its own permission and records who asked, about whom, and why.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any
 
 log = logging.getLogger("app.entra.investigate_activity")
 
-# Microsoft Graph keeps sign-in and directory-audit data for ~30 days (licence dependent).
+# Microsoft Graph keeps sign-in and directory-audit data for ~30 days (license dependent).
 # Asking for more does not fail gracefully: directoryAudits rejects an over-long filter with
 # a 400 rather than returning what it has, so the window is clamped BEFORE the call and the
 # clamp is reported rather than silently applied.

@@ -7,7 +7,7 @@
  * fullscreen and the tooltip — and knows nothing about alerts or backups. Callers supply a
  * graph and the vocabulary to describe it.
  *
- * Two behaviours here are load-bearing and easy to lose in a rewrite:
+ * Two behaviors here are load-bearing and easy to lose in a rewrite:
  *
  * * **Routes are budgeted whole.** When there are more links than the limit, entire
  *   root-to-leaf routes are dropped rather than individual links, because a Sankey that shows
@@ -231,7 +231,7 @@ export type SankeyExplorerProps = {
   /** Node kinds whose label is drawn to the right of the bar. Defaults to all. */
   labelRightKinds?: ReadonlySet<string>;
   colors: Record<string, string>;
-  /** Legend entries; defaults to the colour map. */
+  /** Legend entries; defaults to the color map. */
   legend?: [string, string][];
   /** Renders a link's weight in the tooltip, e.g. "12 items" or "€41.20 / month". */
   formatValue?: (value: number) => string;

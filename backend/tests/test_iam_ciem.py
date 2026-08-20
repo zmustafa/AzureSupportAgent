@@ -2,7 +2,7 @@
 
 The tests that matter are the ones about what this refuses to conclude. Comparing granted
 actions to used actions is arithmetic; deciding an unused permission is unnecessary is a
-judgement that gets people locked out of production. Every guard below is a place where the
+judgment that gets people locked out of production. Every guard below is a place where the
 convenient answer is wrong:
 
   - unmeasured usage must never read as "nothing was used";
@@ -71,7 +71,7 @@ def _role(name, actions, *, data_actions=(), custom=False, not_actions=()):
     }
 
 
-# A deliberately REALISTIC catalogue. An earlier version declared only wildcards, which made the
+# A deliberately REALISTIC catalog. An earlier version declared only wildcards, which made the
 # observable action universe nearly empty and every role equally "narrow" — the same blind spot
 # that made pattern-counting useless in the first place. Real built-in roles declare hundreds of
 # literal actions, and the universe is what makes one role measurably wider than another.
@@ -188,7 +188,7 @@ def test_usage_limitations_always_name_the_data_plane_gap():
 def test_right_sizing_over_unmeasured_usage_returns_unmeasured_not_an_empty_list():
     """An empty recommendation list reads as "nothing is over-privileged". That is the reading
     a tenant that has never run a usage scan would get."""
-    out = rightsize.analyse([_row()], _index(), {"measured": False})
+    out = rightsize.analyze([_row()], _index(), {"measured": False})
     assert out["measured"] is False
     assert out["recommendations"] == []
     assert any("has not been collected" in l for l in out["limitations"])
@@ -198,12 +198,12 @@ def test_right_sizing_with_no_resolvable_role_is_not_reported_as_a_clean_result(
     """The failure that produced a false all-clear on a real tenant.
 
     A directory refresh wiped the collected role definitions, so `build_role_index` was empty,
-    every row fell out of the loop on "role actions unknown", and `analyse` returned an empty
+    every row fell out of the loop on "role actions unknown", and `analyze` returned an empty
     recommendation list with `measured: True` — which the UI rendered as "Nothing crossed the
     over-privilege threshold". 2,185 genuinely over-privileged assignments were reported as
     zero. Losing the ability to measure must never look like a measurement."""
     payload = _usage([{"principalId": "p1", "actions": ["Microsoft.Compute/virtualMachines/read"], "events": 5}])
-    out = rightsize.analyse([_row()], {}, payload)
+    out = rightsize.analyze([_row()], {}, payload)
 
     assert out["assessed"] == 0
     assert out["unresolved_roles"] == 1
@@ -213,17 +213,17 @@ def test_right_sizing_with_no_resolvable_role_is_not_reported_as_a_clean_result(
 
 
 def test_rows_skipped_for_an_unknown_role_are_counted_not_silently_dropped():
-    """A partial catalogue is the common case — the count is what stops the reader taking the
+    """A partial catalog is the common case — the count is what stops the reader taking the
     denominator for the whole estate."""
     payload = _usage([{"principalId": "p1", "actions": ["Microsoft.Compute/virtualMachines/read"], "events": 5}])
     rows = [
         _row(principalId="p1", effectivePrincipalId="p1",
              roleDefinitionId="/rd/reader", roleName="Reader"),
-        # A role this tenant's catalogue does not describe — no GUID key, no name key.
+        # A role this tenant's catalog does not describe — no GUID key, no name key.
         _row(principalId="p1", effectivePrincipalId="p1",
              roleDefinitionId="/rd/ghost", roleName="Ghost Role", scope="/s/2"),
     ]
-    out = rightsize.analyse(rows, _index(), payload)
+    out = rightsize.analyze(rows, _index(), payload)
 
     assert out["unresolved_roles"] == 1
     assert out["assessed"] == 1
@@ -235,8 +235,8 @@ def test_the_excluded_field_means_the_same_thing_whether_or_not_usage_was_measur
     """A field whose semantics change between branches — "roles left out of the analysis" in one
     and "empty, there was no analysis" in the other — is a trap for the next consumer. The
     data-plane caveat is true either way."""
-    unmeasured = rightsize.analyse([_row()], _index(), {"measured": False})
-    measured = rightsize.analyse([_row()], _index(), _usage([]))
+    unmeasured = rightsize.analyze([_row()], _index(), {"measured": False})
+    measured = rightsize.analyze([_row()], _index(), _usage([]))
     for out in (unmeasured, measured):
         assert any("Data-plane roles were excluded" in e for e in out["excluded"])
 
@@ -245,7 +245,7 @@ def test_a_break_glass_principal_is_reported_but_never_recommended_for_removal()
     """It is SUPPOSED to look unused. The exclusion is at the point recommendations are built,
     not a filter on the output that a later refactor could drop."""
     rows = [_row(effectivePrincipalId="bg", effectivePrincipalName="breakglass-admin")]
-    out = rightsize.analyse(rows, _index(), _usage([]))
+    out = rightsize.analyze(rows, _index(), _usage([]))
     entry = next(r for r in out["recommendations"] if r["principalId"] == "bg")
     assert entry["recommendation"] is None
     assert "SUPPOSED to look unused" in entry["note"]
@@ -256,17 +256,17 @@ def test_data_plane_roles_are_excluded_when_data_plane_logging_is_unavailable():
     """The Activity Log does not record data-plane operations at all. Recommending removal of a
     data-plane role on that evidence is a conclusion drawn from a source that cannot speak."""
     rows = [_row(roleName="Storage Blob Data Reader", roleDefinitionId="/rd/storage-blob-data-reader")]
-    out = rightsize.analyse(rows, _index(), _usage([]), data_plane_logged=False)
+    out = rightsize.analyze(rows, _index(), _usage([]), data_plane_logged=False)
     assert out["recommendations"] == []
     assert any("Data-plane roles were excluded" in e for e in out["excluded"])
 
-    included = rightsize.analyse(rows, _index(), _usage([]), data_plane_logged=True)
+    included = rightsize.analyze(rows, _index(), _usage([]), data_plane_logged=True)
     assert included["recommendations"], "with data-plane logging the role IS assessable"
 
 
 def test_every_recommendation_publishes_its_denominator_window_and_confidence():
     """"99.8% over-privileged" alone is a number designed to be quoted out of context."""
-    out = rightsize.analyse([_row()], _index(), _usage([{"principalId": "alice", "actions": ["microsoft.compute/virtualmachines/read"], "events": 3}]))
+    out = rightsize.analyze([_row()], _index(), _usage([{"principalId": "alice", "actions": ["microsoft.compute/virtualmachines/read"], "events": 3}]))
     rec = out["recommendations"][0]
     for key in ("usedActionCount", "grantedActionCount", "unusedRatio", "window", "confidence"):
         assert key in rec
@@ -278,7 +278,7 @@ def test_a_narrower_proposal_names_what_it_gives_up():
     """"Covers everything you did last quarter" and "safe" are different claims, and the gap
     between them is where a right-sizing recommendation causes an incident."""
     used = [{"principalId": "alice", "actions": ["microsoft.compute/virtualmachines/read"], "events": 5}]
-    out = rightsize.analyse([_row()], _index(), _usage(used))
+    out = rightsize.analyze([_row()], _index(), _usage(used))
     rec = out["recommendations"][0]
     assert rec["recommendation"] is not None
     assert rec["recommendation"]["residualRisk"]
@@ -297,7 +297,7 @@ def test_two_roles_at_one_scope_are_two_recommendations_with_distinct_ids():
         _row(roleDefinitionId="/rd/owner", roleName="Owner", assignmentId="a1"),
         _row(roleDefinitionId="/rd/reader", roleName="Reader", assignmentId="a2"),
     ]
-    out = rightsize.analyse(rows, _index(), _usage([]))
+    out = rightsize.analyze(rows, _index(), _usage([]))
     recs = out["recommendations"]
     assert len(recs) == 2, "two roles at one scope must produce two recommendations"
     assert {r["principalId"] for r in recs} == {"alice"}
@@ -364,7 +364,7 @@ def test_the_narrowest_index_does_not_double_count_roles_keyed_twice():
 
 def test_uncovered_actions_mean_no_proposal_rather_than_a_partial_one():
     used = [{"principalId": "alice", "actions": ["contoso.private/thing/write"], "events": 2}]
-    out = rightsize.analyse([_row()], _index(), _usage(used))
+    out = rightsize.analyze([_row()], _index(), _usage(used))
     rec = out["recommendations"][0]
     assert rec["recommendation"] is None
     assert "No combination of built-in roles covers" in rec["note"]
@@ -375,7 +375,7 @@ def test_a_principal_with_no_recorded_activity_is_not_told_no_role_covers_what_i
     everything this principal did" about principals who did NOTHING. That implies they did
     something unusual, and it invites the obvious wrong inference — remove all their access —
     from ninety days of silence that may just mean their activity is not logged."""
-    out = rightsize.analyse([_row()], _index(), _usage([]))
+    out = rightsize.analyze([_row()], _index(), _usage([]))
     rec = out["recommendations"][0]
     assert rec["recommendation"] is None
     assert "No operation by this principal was recorded" in rec["note"]
@@ -386,7 +386,7 @@ def test_a_principal_with_no_recorded_activity_is_not_told_no_role_covers_what_i
 def test_eligible_access_is_not_right_sized():
     """Eligible access is not held. Right-sizing it answers a question nobody asked."""
     rows = [_row(assignmentState=schema.STATE_ELIGIBLE)]
-    out = rightsize.analyse(rows, _index(), _usage([]))
+    out = rightsize.analyze(rows, _index(), _usage([]))
     assert out["assessed"] == 0
 
 
@@ -660,7 +660,7 @@ def test_unevaluated_abac_conditions_are_named_in_the_limitations():
 
 def test_disable_bypass_states_that_it_models_rbac_only():
     """A bypass credential is not an access row. Implying the simulation covered it would be
-    claiming to have modelled the one thing it cannot see."""
+    claiming to have modeled the one thing it cannot see."""
     out = simulator.simulate(
         _rows_for_sim(), [{"kind": simulator.DISABLE_BYPASS, "resource_id": "/subscriptions/x/rg/st"}]
     )
@@ -722,7 +722,7 @@ def _ctx(rows=None, role_defs=None, usage_payload=None, rightsizing=None):
         ctx._rightsizing = rightsizing
     elif usage_payload is not None:
         # Mirror production: the analysis is derived from the same usage payload.
-        ctx._rightsizing = rightsize.analyse(
+        ctx._rightsizing = rightsize.analyze(
             rows or [], effective.build_role_index(role_defs or CATALOGUE), usage_payload
         )
     return ctx
@@ -859,7 +859,7 @@ def test_a_role_used_across_several_subscriptions_needs_its_wide_assignable_scop
     assert _spec("lp.role_assignable_root").evaluate(_ctx(rows=rows, role_defs=defs)) == []
 
 
-# =========================================================================== role catalogue durability
+# =========================================================================== role catalog durability
 @pytest.mark.anyio
 async def test_a_directory_refresh_does_not_delete_the_collected_role_definitions(
     isolated_cache, monkeypatch
@@ -980,7 +980,7 @@ def test_a_low_confidence_finding_is_not_raised_at_all():
 
 def test_owner_used_as_reader_needs_recorded_activity_not_an_empty_log():
     """No recorded activity is the BLIND case, not the read-only case. Asserting read-only from
-    an empty log invents a behaviour profile."""
+    an empty log invents a behavior profile."""
     ctx = _ctx(rows=[_row()], role_defs=CATALOGUE, usage_payload=_usage([]))
     assert _spec("lp.owner_used_as_reader").evaluate(ctx) == []
 

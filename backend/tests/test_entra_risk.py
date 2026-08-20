@@ -337,7 +337,7 @@ def test_an_expired_paging_token_costs_one_page_not_the_whole_read():
 
 
 def test_a_failure_that_is_not_an_expired_token_still_surfaces():
-    """Resuming past a permission or licence error would hide it behind a partial dataset."""
+    """Resuming past a permission or license error would hide it behind a partial dataset."""
     import asyncio
 
     import pytest as _pytest
@@ -480,7 +480,7 @@ def test_identity_protection_uses_the_500_page_ceiling():
 
 
 def test_mfa_is_counted_from_conditional_access_grant_controls():
-    """The narrower claim we can actually substantiate, and it is labelled as such."""
+    """The narrower claim we can actually substantiate, and it is labeled as such."""
     agg = _aggregate([
         _signin(appliedConditionalAccessPolicies=[
             {"id": "p1", "displayName": "Require MFA", "result": "success",

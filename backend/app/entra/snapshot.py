@@ -214,8 +214,8 @@ def _permissions_summary(permissions: dict[str, Any]) -> dict[str, Any]:
 
 
 # -------------------------------------------------------------------------- analysis
-def analyse(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
-    """Load + analyse. Memoised on the domain generation timestamps."""
+def analyze(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
+    """Load + analyze. Memoised on the domain generation timestamps."""
     snapshot = load(tenant_id)
     key = tenant_id or "default"
     stamp = "|".join(
@@ -244,7 +244,7 @@ def analyse(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
     ca_analysis: dict[str, Any] = {}
     if model.domain_usable(snapshot["domains"].get("ca")):
         try:
-            ca_analysis = ca_engine.analyse(
+            ca_analysis = ca_engine.analyze(
                 data, confirmed_breakglass=state.get("breakglass") or {}, now=ctx.now
             )
         except Exception:  # noqa: BLE001 - a CA engine failure must not lose the rest
@@ -281,7 +281,7 @@ def _attach_derived(snapshot: dict[str, Any], analysis: dict[str, Any]) -> None:
     data["_azure_link"] = analysis.get("azure_link") or azure_link_mod.empty(
         "The Azure join has not been computed for this snapshot yet."
     )
-    # The memo short-circuits `analyse`, so a cached snapshot would otherwise carry
+    # The memo short-circuits `analyze`, so a cached snapshot would otherwise carry
     # federation rows with no population attached.
     _attach_federation_population(data)
 
@@ -434,7 +434,7 @@ async def refresh(
 
     invalidate(tenant_id)
     full = set(wanted) >= set(COLLECT_ORDER)
-    snapshot = analyse(tenant_id, force=True)
+    snapshot = analyze(tenant_id, force=True)
     if full:
         cache.mark_full_refresh(tenant_id)
         _record_history(tenant_id, snapshot)

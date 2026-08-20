@@ -29,7 +29,8 @@ Open the feature route listed in the selected guide.
 3. Use [Telemetry Coverage]({{ site.baseurl }}/how-to/coverage/telemetry-coverage/) for diagnostic-setting categories and destinations.
 4. Use [Backup & DR Coverage]({{ site.baseurl }}/how-to/coverage/backup-dr-coverage/) for backup, restore-test, replication, and resilience evidence.
 5. Use [Backup Manager]({{ site.baseurl }}/how-to/coverage/backup-manager/) to analyze a backup estate, sweep every workload, triage failed jobs, close gaps through approved changes, and reclaim stored analyses.
-6. Use [Connection Capability]({{ site.baseurl }}/how-to/coverage/connection-capability/) to explain collection blind spots or disabled writes.
+6. Use [Recovery Readiness]({{ site.baseurl }}/how-to/coverage/recovery-readiness/) to derive per-scenario RTO and RPO, find what has no recovery path at all, agree objectives and export an audit-ready report.
+7. Use [Connection Capability]({{ site.baseurl }}/how-to/coverage/connection-capability/) to explain collection blind spots or disabled writes.
 
 **Expected result:** You start from the feature whose collector and reference match the control being investigated.
 

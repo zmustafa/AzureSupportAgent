@@ -64,7 +64,7 @@ function certText(cert?: FabricCertificate): string {
 
 function TrustRow({ trust }: { trust: FabricTrust }) {
   const [open, setOpen] = useState(false);
-  const vendor = trust.vendor?.label || "Unrecognised provider";
+  const vendor = trust.vendor?.label || "Unrecognized provider";
   const share = trust.user_share != null ? `${Math.round(trust.user_share * 100)}%` : null;
   return (
     <div className="border-t first:border-t-0">
@@ -127,7 +127,7 @@ function TrustRow({ trust }: { trust: FabricTrust }) {
                   value={trust.signed_request_required == null
                     ? "not set"
                     : trust.signed_request_required ? "yes" : "no"} />
-            <Fact label="Prompt login behaviour" value={trust.prompt_login_behavior || "not set"} />
+            <Fact label="Prompt login behavior" value={trust.prompt_login_behavior || "not set"} />
           </div>
           {/* Thumbprint, subject and expiry only. The certificate itself is parsed in the
               collector and discarded — the same rule application credentials follow. */}
@@ -271,7 +271,7 @@ export function IdentityFabricCard({ fabric }: { fabric?: IdentityFabric }) {
         </div>
         {trusts.length > 0 && (
           <div className="mt-2 text-[11px] text-gray-500">
-            Authentication policy, multi-factor and lockout behaviour for federated users live
+            Authentication policy, multi-factor and lockout behavior for federated users live
             with the provider. Multi-factor registration figures elsewhere in this view describe
             the cloud-authenticated population only.
             {hybrid.features_readable && !hybrid.password_sync

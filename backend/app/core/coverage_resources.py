@@ -15,7 +15,7 @@ def build_all_resources(
 ) -> list[dict[str, Any]]:
     """Flat list of every in-scope resource, annotated with whether the reference covers it.
 
-    Accepts raw Resource Graph rows (camelCase keys) or already-normalised rows (snake_case);
+    Accepts raw Resource Graph rows (camelCase keys) or already-normalized rows (snake_case);
     sorted by type then name for a stable grid."""
     out: list[dict[str, Any]] = []
     for r in resources:

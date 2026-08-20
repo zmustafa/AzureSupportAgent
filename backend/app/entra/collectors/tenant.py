@@ -52,7 +52,7 @@ async def _one(client: GraphClient, path: str, notes: list[str], label: str) -> 
 async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
         notes: list[str] = []
-        await ctx.say("info", "Tenant: reading organisation profile and tenant policies…")
+        await ctx.say("info", "Tenant: reading organization profile and tenant policies…")
 
         orgs, _ = await client.get_all("/organization", select=_ORG_SELECT, top=0)
         org = as_dict(orgs[0]) if orgs else {}
@@ -63,7 +63,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         cross_tenant = await _one(client, "/policies/crossTenantAccessPolicy/default", notes, "crossTenantAccessPolicy")
 
         # Per-PARTNER cross-tenant configuration. The default policy says how you treat every
-        # organisation you have not named; this says which ones you HAVE named. Joined to the
+        # organization you have not named; this says which ones you HAVE named. Joined to the
         # guest domain rollup it answers the question no Entra blade answers: "we have 87
         # guests from this company and no policy governing them at all".
         partners: list[dict[str, Any]] = []
@@ -172,7 +172,7 @@ async def _identity_fabric(
 
     try:
         rows, _ = await client.get_all("/domains", select=_DOMAIN_SELECT, top=0)
-        fabric["domains"] = [federation.normalise_domain(as_dict(d)) for d in rows]
+        fabric["domains"] = [federation.normalize_domain(as_dict(d)) for d in rows]
         fabric["readable"] = True
     except GraphPermissionError as exc:
         fabric["blind_reason"] = f"Domain.Read.All or Directory.Read.All ({clip(exc.message, 100)})"
@@ -195,11 +195,11 @@ async def _identity_fabric(
         for cfg in as_list(as_dict(body).get("value")) or [as_dict(body)]:
             if not cfg:
                 continue
-            fabric["federation"].append(federation.normalise_federation(name, as_dict(cfg)))
+            fabric["federation"].append(federation.normalize_federation(name, as_dict(cfg)))
 
     try:
         idps, _ = await client.get_all("/identity/identityProviders", top=0)
-        fabric["external_idps"] = [federation.normalise_idp(as_dict(i)) for i in idps]
+        fabric["external_idps"] = [federation.normalize_idp(as_dict(i)) for i in idps]
         fabric["external_idps_readable"] = True
     except GraphPermissionError as exc:
         fabric["external_idps_reason"] = "IdentityProvider.Read.All"

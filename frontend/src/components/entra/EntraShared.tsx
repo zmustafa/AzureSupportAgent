@@ -335,7 +335,7 @@ export function FreshnessBadge({
 }
 
 /**
- * The coverage banner. Names the exact missing permission or licence rather than leaving a
+ * The coverage banner. Names the exact missing permission or license rather than leaving a
  * screen mysteriously empty.
  */
 export function CoverageBanner({ meta, onOpenSetup }: { meta?: EntraMeta; onOpenSetup?: () => void }) {
@@ -349,7 +349,7 @@ export function CoverageBanner({ meta, onOpenSetup }: { meta?: EntraMeta; onOpen
   const unlicensed = domains.filter((d) => d.status === "unlicensed");
   const errored = domains.filter((d) => d.status === "error");
   const truncated = domains.filter((d) => d.truncated);
-  // A "partial" domain collected fine but lost a sub-call — usually a licence or permission
+  // A "partial" domain collected fine but lost a sub-call — usually a license or permission
   // limit. Those notes are the difference between "we found nothing" and "we could not look".
   const limited = domains.filter((d) => d.status === "partial" && (d.notes ?? []).length > 0);
   const blockers = meta.blockers ?? [];
@@ -472,7 +472,7 @@ export function EntraEmpty({
   const copy = {
     cold: { icon: "⏳", title: "Not loaded yet", body: detail || "Nothing has been collected for this tenant yet." },
     blind: { icon: "🔒", title: "Not measured", body: detail || "The connection lacks the Microsoft Graph permission this needs." },
-    unlicensed: { icon: "💠", title: "Not measured", body: detail || "This requires a higher Entra ID licence tier." },
+    unlicensed: { icon: "💠", title: "Not measured", body: detail || "This requires a higher Entra ID license tier." },
     clean: { icon: "✅", title: "Nothing to report", body: detail || "No findings." },
   }[kind];
   return (
@@ -543,7 +543,7 @@ export type EntraTimePoint = { t: number; hot?: boolean };
  * select is the right control again.
  *
  * Matches the segmented control already used by Alerts Manager, including `aria-pressed`
- * so the active choice is announced rather than merely coloured.
+ * so the active choice is announced rather than merely colored.
  */
 export function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T;
@@ -737,7 +737,8 @@ export function domainNote(d: EntraDomainMeta): string {
 const BLOCKER_META: Record<string, { label: string; chip: string; verb: string }> = {
   consent: { label: "Needs consent", chip: "bg-amber-100 text-amber-800", verb: "Grant" },
   azure_role: { label: "Needs an Azure role", chip: "bg-orange-100 text-orange-800", verb: "Assign" },
-  licence: { label: "Needs a licence", chip: "bg-violet-100 text-violet-800", verb: "Requires" },
+  // The `license` KEY is the blocker kind the backend emits; only the label is user-visible.
+  licence: { label: "Needs a license", chip: "bg-violet-100 text-violet-800", verb: "Requires" },
   cap: { label: "Deliberate limit", chip: "bg-sky-100 text-sky-800", verb: "Capped at" },
 };
 

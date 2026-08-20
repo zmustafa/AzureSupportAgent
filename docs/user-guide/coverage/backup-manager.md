@@ -225,7 +225,7 @@ analysis or changes the id behind an action.
 
 Checkboxes and actions remain keyed by immutable ids after sorting. In particular, gap selection,
 Select all, remediation preview/submission, on-demand backup, job cancellation and retention-impact
-modelling cannot be retargeted by a row-order change.
+modeling cannot be retargeted by a row-order change.
 
 ## Workflow overview
 
@@ -267,7 +267,7 @@ Changing the period or the cost type is an explicit action and fetches that peri
 3. Click any bar or ribbon to highlight its complete paths; each node also shows its own weight.
 4. Use a preset, or build a chain and save it as a named perspective for later. Perspectives are stored per browser.
 
-Selecting a node offers the matching action — the unprotected terminal opens Gaps with those resources preselected, a vault opens its posture, a policy opens retention modelling.
+Selecting a node offers the matching action — the unprotected terminal opens Gaps with those resources preselected, a vault opens its posture, a policy opens retention modeling.
 
 ### Sweep the whole estate
 

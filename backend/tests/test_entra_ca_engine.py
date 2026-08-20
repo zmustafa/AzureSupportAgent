@@ -398,11 +398,11 @@ def test_fingerprint_changes_when_an_exclusion_is_added():
     assert ca_engine.policy_fingerprint(a) != ca_engine.policy_fingerprint(b)
 
 
-# ============================================================================ analyse
+# ============================================================================ analyze
 def test_analyse_is_deterministic():
     snap = _bg_snapshot()
-    a = ca_engine.analyse(snap, now=NOW)
-    b = ca_engine.analyse(snap, now=NOW)
+    a = ca_engine.analyze(snap, now=NOW)
+    b = ca_engine.analyze(snap, now=NOW)
     assert a["counts"] == b["counts"]
     assert [c["kind"] for c in a["conflicts"]] == [c["kind"] for c in b["conflicts"]]
     assert a["coverage"]["headline"] == b["coverage"]["headline"]

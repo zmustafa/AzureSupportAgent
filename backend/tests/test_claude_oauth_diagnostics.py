@@ -1,7 +1,7 @@
 """Regression: the staged "Test connection" diagnostics must treat ``claude_oauth`` as a
 keyless (OAuth) provider. Previously the config step demanded an ``api_key`` that the
 Claude Pro/Max OAuth flow never supplies, so Test connection failed at phase 1 with
-"Missing: api_key" even though the OAuth token (and model-catalogue refresh) worked.
+"Missing: api_key" even though the OAuth token (and model-catalog refresh) worked.
 """
 from __future__ import annotations
 

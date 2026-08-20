@@ -1739,6 +1739,24 @@ async def run_assessment(
     # Session is no longer needed once every control has run (scoring + AI use no Azure calls).
     close_sp_session(session_dir)
 
+    # --- Recovery Readiness contribution -------------------------------------
+    # Off by default: turning it on moves an existing tenant's Reliability score, which reads
+    # as a regression to anyone tracking a trend line.
+    if "reliability" in pillars:
+        try:
+            from app.resiliency import assessment as recovery_assessment
+
+            if recovery_assessment.enabled():
+                from app.resiliency import snapshot as recovery_store
+
+                recovery_snap = recovery_store.read(
+                    tenant_id, conn_id or "", "workload", workload_id)
+                recovery_findings = recovery_assessment.findings_from(recovery_snap)
+                checks = list(checks) + recovery_assessment.checks()
+                findings = list(findings) + recovery_findings
+        except Exception as exc:  # noqa: BLE001 - a contribution must not fail the run
+            logger.warning("recovery contribution skipped: %s", exc)
+
     # --- Score ---------------------------------------------------------------
     yield _event("status", phase="scoring", message="Scoring results…")
     sc = _scored(checks, findings)

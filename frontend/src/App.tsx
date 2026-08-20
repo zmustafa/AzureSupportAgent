@@ -219,6 +219,8 @@ export default function App() {
           <Route path="/backupdr" element={<ChatView />} />
           <Route path="/backup-manager" element={<ChatView />} />
           <Route path="/backup-manager/:tab" element={<ChatView />} />
+          <Route path="/resiliency" element={<ChatView />} />
+          <Route path="/resiliency/:tab" element={<ChatView />} />
           <Route path="/capability" element={<ChatView />} />
           <Route path="/evidence" element={<ChatView />} />
           <Route path="/cases" element={<ChatView />} />

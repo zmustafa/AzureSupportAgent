@@ -12,7 +12,7 @@ Splits deliberately from ``collectors/roles.py``:
 identity module never collected: approval-required, MFA-on-activation, justification,
 maximum duration and notification recipients all live there, and nothing else exposes them.
 
-Everything is P2-gated. On a tenant without P2 Graph answers with a **400 carrying a licence
+Everything is P2-gated. On a tenant without P2 Graph answers with a **400 carrying a license
 message** (not a 403), so the domain degrades to ``unlicensed`` rather than ``error``.
 """
 from __future__ import annotations

@@ -11,7 +11,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:compare, IAM_NAV:simulator]
 
 # IAM: change and simulation
 
-**Product permission:** `iam.read` for **Compare** and for the attribution run. `iam.simulate` for **Simulator** — modelling is read-only and cheap, but it produces a very confident-looking artifact, so it is a separate capability from plain read.
+**Product permission:** `iam.read` for **Compare** and for the attribution run. `iam.simulate` for **Simulator** — modeling is read-only and cheap, but it produces a very confident-looking artifact, so it is a separate capability from plain read.
 
 ## Purpose
 
@@ -54,16 +54,16 @@ Two decisions carry the model:
 | `deactivated` | Deactivated | Narrows access |
 | `path_changed` | Path changed | Neither — the route changed, the access did not |
 
-**Colour encodes direction, in both directions.** Widening changes are red, orange or amber; narrowing changes are green; a path change is blue. Only the five widening classes count towards *changes that increase risk*, the header's `N increase risk` figure and the **Only changes that increase risk** filter, and only those classes raise drift findings — a de-escalation is a change worth showing and never worth alerting on. A row also carries a `broader scope` marker when a re-scope moved outwards rather than in.
+**Color encodes direction, in both directions.** Widening changes are red, orange or amber; narrowing changes are green; a path change is blue. Only the five widening classes count towards *changes that increase risk*, the header's `N increase risk` figure and the **Only changes that increase risk** filter, and only those classes raise drift findings — a de-escalation is a change worth showing and never worth alerting on. A row also carries a `broader scope` marker when a re-scope moved outwards rather than in.
 
-**Escalation is decided by tier, not by role name.** Roles are placed in coarse ordered tiers — none, read, write, admin, owner — because comparing role names cannot tell you whether a change was an escalation. A deny row sits at the bottom tier. An unrecognised custom role is placed at *write*, never at none, so an unclassified role is never reported as a de-escalation from Reader. Scope movement is judged by depth: tenant root, management group, subscription, resource group, resource. The tiering is used only to *label* a change; whether somebody is actually allowed to do something is the evaluator's job on the [Effective Access]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) tab.
+**Escalation is decided by tier, not by role name.** Roles are placed in coarse ordered tiers — none, read, write, admin, owner — because comparing role names cannot tell you whether a change was an escalation. A deny row sits at the bottom tier. An unrecognized custom role is placed at *write*, never at none, so an unclassified role is never reported as a de-escalation from Reader. Scope movement is judged by depth: tenant root, management group, subscription, resource group, resource. The tiering is used only to *label* a change; whether somebody is actually allowed to do something is the evaluator's job on the [Effective Access]({{ site.baseurl }}/user-guide/governance-identity/iam-access-paths/) tab.
 
 **Nothing to compare against is not an all-clear.** When the comparison could not be made the header reads `not comparable`, the change count is replaced with an em dash, and a banner states that there is no earlier snapshot and that this is not a clean bill of health. A tenant with one scan must never be told its estate is stable on the day the product was installed.
 
 **Attribution: who made the change.** **Find out who** runs `POST /api/iam/attribute`, which joins the current diff to the Azure Activity Log per subscription. It is slow and is deliberately separate from the refresh. The summary line reports `X exact, Y inferred, Z unknown over the last N days`.
 
 - **exact** — matched on the assignment id.
-- **inferred** — matched on scope and time rather than on the assignment id, and labelled as such on the row.
+- **inferred** — matched on scope and time rather than on the assignment id, and labeled as such on the row.
 - **unknown actor** — no Activity Log event matched, because the retention window rolled past the change or because the match was ambiguous and was refused rather than guessed.
 
 An unattributed change is rendered as the words *unknown actor*, never as a blank cell, because an empty actor column reads as *nobody did this*. Where the actor is real it becomes a second investigable identity on the row — *whose access changed* and *who changed it* are different investigations, and the second is usually the next question. A change source is shown when the log carries one.
@@ -92,7 +92,7 @@ Served by `POST /api/iam/simulate`.
 | `assume_principal` | Assume a principal is compromised | principal id |
 | `add_delegation` | Onboard a delegation | principal id, scope, role name |
 
-Changes are added to a **basket** and simulated together, so the interactions between them are modelled rather than each one being modelled in isolation.
+Changes are added to a **basket** and simulated together, so the interactions between them are modeled rather than each one being modeled in isolation.
 
 **The result has three columns and one panel above them.**
 
@@ -107,7 +107,7 @@ The middle column is why the tab exists. Removing somebody from a group frequent
 
 **A failed simulation is never a green tick.** An unknown change kind or a malformed change is rejected as a 400 and a change whose referent has since been deleted is a 409; both are surfaced with their message and the explicit statement that nothing was simulated and this is not a result showing no impact. An ignored change would produce a reassuring "nothing happens" from a typo, which is the worst possible output because it looks like an answer.
 
-**Sampling is stated, seeded, and never drops the cohorts you came for.** Below the sampling threshold every row is modelled and the footer says `showing all N`. Above it the footer states the sample size, the population, the fixed seed and how many always-kept rows were retained. The seed is deliberately fixed: an answer that moves between identical runs cannot support a decision, and "run it again" becomes the first thing anybody does when they dislike the result. Privileged and other named cohorts are never sampled away, because a sample that drops the break-glass account is answering a different question from the one that was asked.
+**Sampling is stated, seeded, and never drops the cohorts you came for.** Below the sampling threshold every row is modeled and the footer says `showing all N`. Above it the footer states the sample size, the population, the fixed seed and how many always-kept rows were retained. The seed is deliberately fixed: an answer that moves between identical runs cannot support a decision, and "run it again" becomes the first thing anybody does when they dislike the result. Privileged and other named cohorts are never sampled away, because a sample that drops the break-glass account is answering a different question from the one that was asked.
 
 The footer also reports principals affected, grants unchanged, and standing privilege before and after. A limitations panel names what the model did not evaluate.
 
@@ -135,7 +135,7 @@ The footer also reports principals affected, grants unchanged, and standing priv
 - **`inferred` was matched on scope and time**, not on the assignment id. Treat it as a lead, not as attribution.
 - **`path_changed` is not a widening.** The access is the same; the route to it changed, which usually still matters for how it would be revoked.
 - **A tier-based escalation label is coarse by design.** Confirm what a custom role actually authorizes before treating an `escalated` row as a privilege increase.
-- **The Simulator models access, not Azure's behaviour.** It does not validate that a change is permitted, that it will succeed, or that a dependent workload will keep running.
+- **The Simulator models access, not Azure's behavior.** It does not validate that a change is permitted, that it will succeed, or that a dependent workload will keep running.
 - **`Retained anyway` is the column to act on.** A change with rows there does less than it appears to.
 
 ## Exports, history, scheduling, and integrations

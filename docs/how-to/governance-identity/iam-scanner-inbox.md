@@ -40,7 +40,7 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:findings, IAM_NAV:scanners]
 2. On `/iam/scanners`, use **Run now** on a single card, or **Run all now** to run every scanner.
 3. Read the confirmation. It states that the baseline was recorded and that the counts now describe changes since that run.
 4. On a card that has never run, expect the first-run notice: the first run records a baseline and deliberately notifies nothing, because everything would be new.
-5. Check the notification centre for what was delivered — new findings as one digest per scanner, resolutions as a single informational line, and anything on the always-immediate list published on its own.
+5. Check the notification center for what was delivered — new findings as one digest per scanner, resolutions as a single informational line, and anything on the always-immediate list published on its own.
 
 **Expected result:** A recorded baseline, and a delivered delta for anything that changed.
 
@@ -67,7 +67,7 @@ Reading the tab never records a run — the cards are computed without persistin
 1. On `/iam/findings`, set the grouping to **Group by pillar**.
 2. Scroll to the sections carrying a note instead of a count. `not measured — the inputs for these checks were not collected` and `not built — no check exists for this pillar yet` are both rendered as notes, never as a zero.
 3. For each `not measured` pillar, open `/iam/diagnostics` and find the collectors that could not read for the relevant scopes.
-4. Fix the permission, licence or connectivity cause, rescan, and re-check the pillar.
+4. Fix the permission, license or connectivity cause, rescan, and re-check the pillar.
 
 **Expected result:** A list of pillars that produced nothing because they could not be measured, separated from pillars that were checked and came back clean.
 
@@ -93,7 +93,7 @@ Suppressing or accepting a finding hides it from the default list for everybody 
 | A suppressed finding is visible | **Show suppressed** is ticked, or the underlying condition changed enough to produce a different fingerprint. |
 | The score card says "No grade" | Coverage is below the floor a grade requires. The card states the reason; increase coverage rather than reading it as a bad score. |
 | Section counts do not match the number of cards on screen | The header is a server tally over the whole filtered set; the cards are one page. The `showing N` marker states the difference. |
-| A sub-section count reads `N shown` | Sub-section counts are page counts, and are labelled whenever the parent section was truncated. Narrow the filter so the section is complete. |
+| A sub-section count reads `N shown` | Sub-section counts are page counts, and are labeled whenever the parent section was truncated. Narrow the filter so the section is complete. |
 | Severity chips read `—` | The query has not resolved. That is deliberately not a zero. |
 | Changing a state returns a permission error | State changes require `iam.write`. Viewing and running scanners require only `iam.read`. |
 

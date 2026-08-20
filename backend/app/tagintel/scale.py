@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Iterator, Sequence, TypeVar
 
-# Whole-estate cap on resources we enumerate / analyse in one pass (the "max 5k estate"
+# Whole-estate cap on resources we enumerate / analyze in one pass (the "max 5k estate"
 # contract). Kept identical to workloads.autopilot._MAX_RESOURCES so both flagship features
 # scale the same way.
 MAX_ESTATE = 5000

@@ -59,7 +59,7 @@ require_write = require_permission("iam.write")
 # Certification is a third capability. An auditor reads the review; they do not get to record
 # the decisions they are auditing, and a reader does not get to close a campaign.
 require_review = require_permission("iam.review")
-# Modelling a change is a fourth capability. It is read-only and cheap, but it produces a very
+# Modeling a change is a fourth capability. It is read-only and cheap, but it produces a very
 # confident-looking artifact, so it is kept separate from plain `iam.read`.
 require_simulate = require_permission("iam.simulate")
 log = logging.getLogger("app.api.iam")
@@ -633,7 +633,7 @@ async def list_scanners(
         card = scanners.run(spec, tenant_id, all_findings, results, persist=False)
         cards.append({
             **spec.public(),
-            **scanners.summarise(card),
+            **scanners.summarize(card),
             "due": scanners.due(spec, tenant_id),
         })
     return {
@@ -840,12 +840,12 @@ async def rightsizing(
     per page load on a realistic tenant, cold and warm alike, while the refresh path was already
     writing a perfectly good copy to disk that nothing read.
 
-    Runs OFF the event loop. It is pure CPU over a large role catalogue, and the first version
+    Runs OFF the event loop. It is pure CPU over a large role catalog, and the first version
     took 40 seconds inline — which did not merely make this endpoint slow, it stalled every other
     request in the process until SQLite began reporting "database is locked" on unrelated session
     writes. Even at two seconds a synchronous CPU burn has no business in an async handler."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
-    return await cpu.run(rightsize.analyse_for_tenant, tenant_id, force=force, label="right-sizing")
+    return await cpu.run(rightsize.analyze_for_tenant, tenant_id, force=force, label="right-sizing")
 
 
 # --------------------------------------------------------------------------- simulator
@@ -1552,14 +1552,14 @@ async def export_workbook(
     all_findings = [f.public() for r in results for f in r.findings]
     scanner_cards = await asyncio.to_thread(
         lambda: [
-            {**spec.public(), **scanners.summarise(
+            {**spec.public(), **scanners.summarize(
                 scanners.run(spec, tenant_id, all_findings, results, persist=False)
             ), "due": scanners.due(spec, tenant_id)}
             for spec in scanners.registry()
         ]
     )
 
-    # Everything the workbook needs is built INSIDE the thread. Passing `rightsize.analyse(...)`
+    # Everything the workbook needs is built INSIDE the thread. Passing `rightsize.analyze(...)`
     # or `escalation.graph_for_tenant(...)` as an ARGUMENT to `to_thread` evaluates it on the
     # event loop first — the call is threaded, its arguments are not — so the two most expensive
     # computations in the export were running exactly where they must not.
@@ -1571,7 +1571,7 @@ async def export_workbook(
             pivot_labels=pivots.PIVOT_LABELS,
             directory=directory,
             findings=findings_payload,
-            rightsizing=rightsize.analyse_for_tenant(tenant_id),
+            rightsizing=rightsize.analyze_for_tenant(tenant_id),
             bypass=cache.read_bypass(tenant_id),
             escalation=escalation.graph_for_tenant(
                 tenant_id, compose.build_master_rows(tenant_id),
@@ -1951,7 +1951,7 @@ async def data_plane_catalogue(principal: Principal = Depends(require_admin)) ->
 
 @router.get("/signals")
 async def list_signals(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
-    """The signal catalogue and the pillar weights — the same registry the score projects from."""
+    """The signal catalog and the pillar weights — the same registry the score projects from."""
     return {
         "signals": [s.public() for s in signals.all_signals()],
         "pillars": signals.PILLARS,
@@ -2010,7 +2010,7 @@ async def import_scanner_run(
 
     The app's service principal often cannot read the directory, billing or the management-group
     hierarchy; the scanner runs as a human who can. This lets that human produce the data and
-    this product analyse it without widening the app's permissions. Imported rows are flagged so
+    this product analyze it without widening the app's permissions. Imported rows are flagged so
     no screen can present them as a live scan."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
     payload = await file.read()

@@ -1,7 +1,7 @@
 """Server-side column sorting on the Entra grids that page or cap.
 
 These four endpoints hand the browser a slice, not the set. Sorting that slice in the
-browser and labelling the column "highest risk" is a lie by omission — it is the highest
+browser and labeling the column "highest risk" is a lie by omission — it is the highest
 risk *among the rows the server already picked by something else*. So the sort happens
 here, before the slice, and these tests pin the two properties that make it trustworthy:
 

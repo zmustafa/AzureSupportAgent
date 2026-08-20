@@ -263,7 +263,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   const view = tab;
   const setView = (v: InventoryTab) => navigate(v === "grid" ? "/inventory" : `/inventory/${v}`);
   const [, setParams] = useSearchParams();
-  // IU3 — initialise the facet filters from the URL so a shared link / refresh restores them.
+  // IU3 — initialize the facet filters from the URL so a shared link / refresh restores them.
   const initList = (k: string) => { const v = new URLSearchParams(window.location.search).get(k); return v ? v.split(",").filter(Boolean) : []; };
   const initStr = (k: string) => new URLSearchParams(window.location.search).get(k) || "";
   const [scope, setScope] = useState<ScopeMode>(() => (initStr("scope") === "workloads" ? "workloads" : "tenant"));
@@ -316,7 +316,7 @@ function InventoryBody({ inv, connectionId, refreshing, tab }: { inv: InventoryR
   }, []);
 
   // IU3 — reflect the active facet selections back into the URL (shareable / back-button aware).
-  // State is initialised FROM the URL above, so the first write is idempotent (no clobber loop).
+  // State is initialized FROM the URL above, so the first write is idempotent (no clobber loop).
   useEffect(() => {
     const next = new URLSearchParams(window.location.search);
     next.delete("workload_id");   // normalise the one-shot handoff param into ?wl=
@@ -1953,7 +1953,7 @@ function CostSplitBars({ rows, currency, colorAt }: {
   );
 }
 
-// Money donut: same SVG ring as Overview, but labelled with currency amounts.
+// Money donut: same SVG ring as Overview, but labeled with currency amounts.
 function CostDonut({ data, total, currency }: { data: { label: string; value: number }[]; total: number; currency: string }) {
   const top = data.slice(0, 10);
   let acc = 0;

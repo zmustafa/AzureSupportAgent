@@ -25,7 +25,7 @@ log = logging.getLogger("app.changeexplorer.ai_enrich")
 
 _AI_TIMEOUT_SECONDS = 25.0
 _BATCH = 10          # events per LLM call
-_MAX_EVENTS = 60     # whole-run cap on AI-analysed events (bounded cost/latency)
+_MAX_EVENTS = 60     # whole-run cap on AI-analyzed events (bounded cost/latency)
 _AI_CONCURRENCY = 10  # parallel LLM calls (batches run 10-at-a-time, not sequentially)
 _VALID = set(CATEGORIES)
 

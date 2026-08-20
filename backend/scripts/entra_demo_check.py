@@ -77,7 +77,7 @@ def simulator_section(data: dict, a: dict) -> None:
 
 def main() -> None:
     demo.seed()
-    snap = sm.analyse(demo.DEMO_TENANT, force=True)
+    snap = sm.analyze(demo.DEMO_TENANT, force=True)
     a = snap["_analysis"]
     s = a["score"]
     print(f"score={s['score']} grade={s['grade']!r} coverage={s['coverage']:.0%} "

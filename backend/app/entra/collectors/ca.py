@@ -179,7 +179,7 @@ def _slim_policy(p: dict[str, Any]) -> dict[str, Any]:
                 )
             ] or [
                 # Graph returns the transfer methods as a comma-joined string on some API
-                # versions; normalise both shapes to a list.
+                # versions; normalize both shapes to a list.
                 s.strip() for s in str(
                     as_dict(conditions.get("authenticationFlows")).get("transferMethods") or ""
                 ).split(",") if s.strip()

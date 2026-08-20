@@ -97,7 +97,7 @@ def test_private_loopback_and_link_local_are_blocked(url):
 )
 def test_alternative_ip_encodings_of_loopback_are_blocked(url):
     """Classic filter bypass: the same address written so a naive string check misses it.
-    The guard resolves via getaddrinfo, so the encoding is normalised before the check --
+    The guard resolves via getaddrinfo, so the encoding is normalized before the check --
     this pins that it stays that way."""
     assert _blocked(url), f"encoded loopback slipped through: {url}"
 

@@ -992,7 +992,7 @@ export function AutopilotModal({
     const decisions: { action: string; name?: string; from?: string; to?: string }[] = [];
     const chosen: WorkloadCandidate[] = [];
     candidates.forEach((c, i) => {
-      // Automatic size filtering is review policy, not a judgement that the AI boundary was
+      // Automatic size filtering is review policy, not a judgment that the AI boundary was
       // wrong. Do not poison grouping memory with hundreds of synthetic "reject" decisions.
       if (autoExcludedIndexes.has(i)) return;
       if (!effectiveSelected.has(i)) {

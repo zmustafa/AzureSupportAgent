@@ -56,7 +56,7 @@ _PRICES: dict[str, tuple[float, float]] = {
     "llama": (0.0, 0.0),
 }
 
-# Conservative fallback for models we don't recognise (rough mid-tier estimate) so
+# Conservative fallback for models we don't recognize (rough mid-tier estimate) so
 # spend is visible rather than silently $0.
 _DEFAULT_PRICE = (1.00, 3.00)
 

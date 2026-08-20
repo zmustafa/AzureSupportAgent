@@ -24,6 +24,7 @@ _ENTRA_IDENTITY_TOOLS = frozenset({
     "identity_investigate", "ca_evaluate", "identity_group_members",
     "ca_policies_for_app", "identity_findings",
 })
+_RECOVERY_TOOLS = frozenset({"recovery_posture", "recovery_gaps", "recovery_breaches"})
 _BUILTIN_TOOLS = frozenset({
     "net_web_fetch", "net_http_request", "net_dns_lookup", "net_port_check",
     "net_ping", "net_traceroute", "azure_metrics",
@@ -177,6 +178,10 @@ def infer_metadata(
         source = "entra_identity"
         domain = "identity"
         bundles.append("entra.conditional_access" if name.startswith("ca_") else "entra.users")
+    elif name in _RECOVERY_TOOLS:
+        source = "resiliency"
+        domain = "reliability"
+        bundles.extend(("azure.backup", "recovery"))
     elif name in _VM_TOOLS:
         source = "sandbox"
         domain = "networking"

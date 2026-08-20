@@ -54,7 +54,7 @@ _MUST_BE_THREADED = {
     "write_usage",
     "write_drift",
     "compute_reachability",
-    "analyse_for_tenant",
+    "analyze_for_tenant",
     "graph_for_tenant",
     "evaluate_all",
     "to_workbook",
@@ -221,14 +221,14 @@ async def test_the_session_heartbeat_is_not_awaited_on_the_request_path():
     assert "_schedule_slide" in src, "the heartbeat must be queued, not awaited inline"
 
 
-async def test_refresh_usage_does_not_analyse_on_the_loop():
+async def test_refresh_usage_does_not_analyze_on_the_loop():
     """The specific regression: the right-sizing analysis was moved off the loop at the
     /iam/rightsizing endpoint and left inline here, so the freeze came back during refreshes.
     One fixed call site is not a fixed defect."""
     from app.iam import orchestrator
 
     src = inspect.getsource(orchestrator.refresh_usage)
-    assert "cpu.run(rightsize.analyse_for_tenant" in src
+    assert "cpu.run(rightsize.analyze_for_tenant" in src
 
 
 async def test_the_cpu_cap_actually_serialises():

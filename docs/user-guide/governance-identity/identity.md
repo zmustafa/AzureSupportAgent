@@ -28,11 +28,11 @@ Nothing in this feature writes to the directory. It does not rotate credentials,
 ## Prerequisites and data sources
 
 - A connection that can obtain a Microsoft Graph application token for the tenant.
-- Admin-consented, read-only Graph application permissions. Consent is organised into three tiers; the tenant is usable at tier 1 and complete at tier 3. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
+- Admin-consented, read-only Graph application permissions. Consent is organized into three tiers; the tenant is usable at tier 1 and complete at tier 3. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
 - Entra ID P1 for Conditional Access, sign-in logs, and PIM schedules. Entra ID P2 for Identity Protection risk, PIM depth, access reviews, entitlement management, and lifecycle workflows.
 - Optional: an Azure ARM connection for the cross-plane and blast-radius views, and a Jira or ServiceNow connector for ticket handoff.
 
-Missing permission or licence produces an honestly labelled blind spot, never a silent zero. A pillar that could not be measured is excluded from the score instead of scoring 0.
+Missing permission or license produces an honestly labeled blind spot, never a silent zero. A pillar that could not be measured is excluded from the score instead of scoring 0.
 
 ## Tabs and actions
 
@@ -43,7 +43,7 @@ Missing permission or licence produces an honestly labelled blind spot, never a 
 | 👑 Privileged Access | `/entra/privileged` | Standing versus eligible privilege, PIM configuration health, who elevated and what they did | [Privileged access]({{ site.baseurl }}/user-guide/governance-identity/entra-privileged/) |
 | 🧩 Applications | `/entra/applications` | App and service-principal risk, credential expiry, ownership, granted Graph permissions, consent posture | [Applications and consent]({{ site.baseurl }}/user-guide/governance-identity/entra-applications/) |
 | 📊 Risk & sign-ins | `/entra/signals` | MFA registration truth, legacy authentication, failure clusters, Identity Protection risk, sign-in patterns | [Risk and sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/) |
-| 📜 Governance | `/entra/governance` | Access reviews, entitlement expiry, lifecycle workflows, guest (B2B) lifecycle and partner organisations, what is governed at all | [Governance]({{ site.baseurl }}/user-guide/governance-identity/entra-governance/) · [Guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
+| 📜 Governance | `/entra/governance` | Access reviews, entitlement expiry, lifecycle workflows, guest (B2B) lifecycle and partner organizations, what is governed at all | [Governance]({{ site.baseurl }}/user-guide/governance-identity/entra-governance/) · [Guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
 | 🕸️ Blast radius | `/entra/graph` | Escalation paths from an entry point to tenant-level power | [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) |
 | 📋 Findings & scanners | `/entra/findings` | The working queue: proactive scanners, the inbox, workflow state, bulk actions | [Findings and scanners]({{ site.baseurl }}/user-guide/governance-identity/entra-findings-scanners/) |
 | 🔍 Investigate | `/entra/investigate` | What one user, guest, group, application, managed identity, deleted object, or cross-tenant principal can reach and how that changed | [Investigate a principal]({{ site.baseurl }}/user-guide/governance-identity/entra-investigate/) |
@@ -110,7 +110,7 @@ Three rules govern every number on the screen:
 - **Coverage is separate from score.** A high score on 40 percent coverage is a statement about 40 percent of the tenant. Both figures are shown.
 - **Severity drives weight.** Critical findings cost the full signal weight, high 0.7, medium 0.4, low 0.2, and informational nothing.
 
-Compare scores over time within one tenant. Do not compare a score across tenants with different licences, because the measurable surface differs.
+Compare scores over time within one tenant. Do not compare a score across tenants with different licenses, because the measurable surface differs.
 
 ## Safety and limitations
 
@@ -118,7 +118,7 @@ Compare scores over time within one tenant. Do not compare a score across tenant
 - No secret or certificate value is ever retrieved or displayed — only identifiers, types, and expiry.
 - Finding state, break-glass confirmations, and saved simulations are stored locally and never written back to Entra.
 - Conditional Access simulation is an offline model of the snapshot, not a Microsoft what-if evaluation. Treat it as evidence for a change review, never as proof.
-- Sign-in and audit analysis is sampled and bounded by the Graph retention window for the licence.
+- Sign-in and audit analysis is sampled and bounded by the Graph retention window for the license.
 - Consent and directory changes are eventually consistent; a change made minutes ago may not appear until the next collection.
 - Exports contain sensitive identity metadata. Handle them as governance material and avoid pasting live tenant, object, or user identifiers into tickets or prompts.
 

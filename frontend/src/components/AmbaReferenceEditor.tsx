@@ -463,7 +463,7 @@ export function AmbaReferenceEditor() {
           ) : (
             <div className="space-y-1.5">
               <p className="pb-1 text-[11px] text-gray-500">
-                From the vendored AMBA {catalogQ.data?.amba_release} catalogue · {catalogEntries.length} published
+                From the vendored AMBA {catalogQ.data?.amba_release} catalog · {catalogEntries.length} published
                 alert{catalogEntries.length === 1 ? "" : "s"}.
               </p>
               {catalogEntries.map((c) => {

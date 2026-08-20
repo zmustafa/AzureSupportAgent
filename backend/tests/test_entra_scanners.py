@@ -269,7 +269,7 @@ def test_summary_names_what_changed_and_why_it_matters():
     scanner = sc.SCANNER_BY_ID["entra.credential_expiry"]
     result = sc.run(scanner, TENANT, _analysis([_finding("app.secret_expired", "a")]),
                     _ok_domains("apps"))
-    body = sc.summarise(result)
+    body = sc.summarize(result)
     assert "Credential expiry watch" in body
     assert "app.secret_expired on a" in body
     spec = sig.by_id("app.secret_expired")
@@ -281,7 +281,7 @@ def test_a_blocked_scanner_summarises_the_blockage():
     result = sc.run(scanner, TENANT, _analysis([]),
                     {"risk": {"name": "risk", "status": model.STATUS_BLIND,
                               "error": "Missing IdentityRiskyUser.Read.All"}})
-    assert "could not run" in sc.summarise(result)
+    assert "could not run" in sc.summarize(result)
 
 
 def test_notification_severity_tracks_the_worst_new_finding():

@@ -246,7 +246,7 @@ async def _identity_section(tenant_id: str, scope: dict[str, Any]) -> dict[str, 
     try:
         from app.entra import investigate, snapshot as snapshot_mod
 
-        snap = snapshot_mod.analyse(tenant_id)
+        snap = snapshot_mod.analyze(tenant_id)
         env, sections = await investigate.build_dossier(snap, tenant_id, principal_id)
         return {
             "principal": env["principal"],

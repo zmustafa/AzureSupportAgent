@@ -104,15 +104,15 @@ def _principal_type(obj: dict[str, Any]) -> str:
 
 
 def _is_licence_error(exc: GraphError) -> bool:
-    """Does this failure mean 'buy a licence' rather than 'grant a permission'?
+    """Does this failure mean 'buy a license' rather than 'grant a permission'?
 
-    Microsoft is not consistent about the status code: PIM reports a missing licence as a
+    Microsoft is not consistent about the status code: PIM reports a missing license as a
     **400 with a message**, while lifecycle workflows report one as a **403** — the same
     status as a genuine consent failure. The status is therefore not the signal; the message
     is. Reading the 403 as a consent problem told operators to grant a scope they already
     held, which is the one piece of advice guaranteed to waste their time.
 
-    Both a licence word and a product word are required, so an ordinary permission error
+    Both a license word and a product word are required, so an ordinary permission error
     that merely mentions licensing is not swallowed.
     """
     msg = (exc.message or "").lower()
@@ -281,7 +281,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
             notes.append(_pim_note("PIM eligibility schedules", exc, "PrivilegedAccess.Read.AzureAD"))
             pim_licensed = pim_licensed and not _is_licence_error(exc)
 
-        # --- normalise active assignments ------------------------------------------
+        # --- normalize active assignments ------------------------------------------
         assignments: list[dict[str, Any]] = []
         group_principals: list[str] = []
         for a in assigns_raw:

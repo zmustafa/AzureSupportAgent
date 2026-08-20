@@ -1,4 +1,4 @@
-"""Identity Posture Score behaviour.
+"""Identity Posture Score behavior.
 
 The score's credibility rests on three properties, each of which has a test here:
 determinism, "blind is not zero", and scale invariance. A score that quietly punishes a
@@ -20,7 +20,7 @@ def seeded(tmp_path_factory):
 
     cache.set_root_for_tests(tmp_path_factory.mktemp("entra-score"))
     demo.seed()
-    yield snapshot_mod.analyse(demo.DEMO_TENANT, force=True)
+    yield snapshot_mod.analyze(demo.DEMO_TENANT, force=True)
 
 
 def _score(snapshot, *, domain_meta=None, licences=None, ctx=None):

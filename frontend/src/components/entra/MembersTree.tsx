@@ -4,13 +4,14 @@ import { formatError } from "../../utils/format";
 import { InvestigateLink } from "./InvestigateLink";
 
 /**
- * The group membership tree.
+ * The group membership tree, in both directions.
  *
  * An indented disclosure tree rather than a node graph, deliberately. The question is "who
- * is in this group, and how do they get in" — that is a list with structure, and a list is
- * scannable top to bottom, searchable, virtualisable at 562 children, keyboard-navigable and
- * pasteable into a ticket. A force-directed canvas of 562 user nodes is a picture, not an
- * answer, and this tenant has groups that size.
+ * is in this group, and how do they get in" — or, upward, "which groups reach this
+ * principal" — and that is a list with structure. A list is scannable top to bottom,
+ * searchable, virtualisable at 562 children, keyboard-navigable and pasteable into a
+ * ticket. A force-directed canvas of 562 user nodes is a picture, not an answer, and this
+ * tenant has groups that size.
  *
  * Lazy by construction: one Graph call per branch opened. Nested membership exists in no
  * cache we hold — both collectors resolve it transitively, which throws the intermediate
@@ -19,15 +20,21 @@ import { InvestigateLink } from "./InvestigateLink";
  */
 
 const KIND_GLYPH: Record<string, string> = {
-  user: "👤", group: "👥", servicePrincipal: "🤖", device: "💻", unknown: "❔",
+  user: "👤", guest: "🌐", group: "👥", servicePrincipal: "🤖", managedIdentity: "⚙️",
+  directoryRole: "🛡️", administrativeUnit: "🏛️", device: "💻", unknown: "❔",
 };
 
 const KIND_LABEL: Record<string, string> = {
-  user: "User", group: "Group", servicePrincipal: "Service principal", device: "Device",
+  user: "User", guest: "Guest", group: "Group", servicePrincipal: "Service principal",
+  managedIdentity: "Managed identity", directoryRole: "Directory role",
+  administrativeUnit: "Administrative unit", device: "Device",
 };
 
 /** How many children to render before folding the rest behind a "show all". */
 const VISIBLE_CHILDREN = 50;
+
+/** Kinds that are principals and therefore have a dossier of their own. */
+const INVESTIGABLE = new Set(["user", "guest", "group", "servicePrincipal", "managedIdentity"]);
 
 type Loaded = Record<string, InvestigateTreeNode[]>;
 
@@ -97,13 +104,22 @@ function Row({
             {count}
           </span>
         )}
+        {node.kind === "directoryRole" && (
+          <Badge text="directory role"
+                 title="Held through this membership. A directory role reached via a group is the escalation path an access review is looking for."
+                 cls="border-rose-200 bg-rose-50 text-rose-800" />
+        )}
         {failed.has(node.id) && (
           <Badge text="unreadable" title="This branch could not be read — that is not the same as it being empty."
                  cls="border-amber-200 bg-amber-50 text-amber-800" />
         )}
-        <span className="ml-auto shrink-0">
-          <InvestigateLink principalId={node.id} label={node.display_name || node.id} />
-        </span>
+        {/* A directory role or administrative unit is not a principal — a dossier link to
+            one resolves to nothing, which reads as "deleted" and is a lie. */}
+        {INVESTIGABLE.has(node.kind) && (
+          <span className="ml-auto shrink-0">
+            <InvestigateLink principalId={node.id} label={node.display_name || node.id} />
+          </span>
+        )}
       </div>
       {isOpen && kids && <Children nodes={kids} depth={depth + 1} ancestors={[...ancestors, node.id]}
                                    loaded={loaded} open={open}
@@ -147,9 +163,18 @@ function Children({
 }
 
 export function MembersTree({
-  principalId, rootName, connectionId,
-}: { principalId: string; rootName: string; connectionId: string }) {
-  const [direction, setDirection] = useState<"down" | "up">("down");
+  principalId, rootName, connectionId, mode = "both", rootKind = "group",
+}: {
+  principalId: string;
+  rootName: string;
+  connectionId: string;
+  /** "up" renders only the upward view — the memberships section, where "who is inside
+   *  this" is not a question that applies to the subject. */
+  mode?: "both" | "up";
+  rootKind?: string;
+}) {
+  const [direction, setDirection] = useState<"down" | "up">(mode === "up" ? "up" : "down");
+  const [transitive, setTransitive] = useState(false);
   const [loaded, setLoaded] = useState<Loaded>({});
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -158,12 +183,13 @@ export function MembersTree({
   const [err, setErr] = useState("");
   const [started, setStarted] = useState(false);
 
-  const load = useCallback(async (ids: string[], dir: "down" | "up") => {
+  const load = useCallback(async (ids: string[], dir: "down" | "up", trans: boolean) => {
     setBusy((b) => new Set([...b, ...ids]));
     setErr("");
     try {
       const r = await api.entraInvestigateMembers(
-        principalId, { expand: ids, direction: dir }, connectionId || null);
+        principalId, { expand: ids, direction: dir, transitive: trans && dir === "up" },
+        connectionId || null);
       setLoaded((prev) => ({ ...prev, ...r.nodes }));
       setNotes(r.notes ?? []);
       // A branch the server answered with nothing AND named in a note is unreadable, not
@@ -181,11 +207,12 @@ export function MembersTree({
     }
   }, [principalId, connectionId]);
 
-  const begin = async (dir: "down" | "up") => {
+  const begin = async (dir: "down" | "up", trans = transitive) => {
     setDirection(dir);
+    setTransitive(trans);
     setStarted(true);
     setLoaded({}); setOpen(new Set()); setFailed(new Set());
-    await load([], dir);
+    await load([], dir, trans);
   };
 
   const onToggle = useCallback((id: string) => {
@@ -195,7 +222,9 @@ export function MembersTree({
       next.add(id);
       return next;
     });
-    if (!loaded[id]) void load([id], direction);
+    // A branch below the root is always a group and always read one direct level at a
+    // time — the transitive shortcut applies to the root only.
+    if (!loaded[id]) void load([id], direction, false);
   }, [loaded, load, direction]);
 
   const roots = loaded[principalId] ?? [];
@@ -205,28 +234,53 @@ export function MembersTree({
     return out;
   }, [roots]);
 
+  // A group dossier renders BOTH trees. Sharing one test id would make every selector
+  // ambiguous and silently target whichever happened to be first in the DOM.
+  const tid = mode === "up" ? "memberships" : "members";
+
   return (
-    <div className="rounded border bg-gray-50/60 p-2" data-testid="members-tree">
+    <div className="rounded border bg-gray-50/60 p-2" data-testid={`${tid}-tree`}>
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void begin("down")}
-          disabled={busy.size > 0}
-          data-testid="members-load-down"
-          className="rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
-        >
-          {started && direction === "down" ? "Reload members" : "Show member tree"}
-        </button>
+        {mode === "both" && (
+          <button
+            type="button"
+            onClick={() => void begin("down")}
+            disabled={busy.size > 0}
+            data-testid="members-load-down"
+            className="rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+          >
+            {started && direction === "down" ? "Reload members" : "Show member tree"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void begin("up")}
           disabled={busy.size > 0}
-          data-testid="members-load-up"
-          title="Which groups this group is itself a member of — where it inherits access from."
-          className="rounded border bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          data-testid={`${tid}-load-up`}
+          title={mode === "up"
+            ? "Read every group this principal belongs to, live from the directory — not just the ones that grant something."
+            : "Which groups this group is itself a member of — where it inherits access from."}
+          className={mode === "up"
+            ? "rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+            : "rounded border bg-white px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"}
         >
-          Show parent groups
+          {mode === "up"
+            ? (started ? "Reload from directory" : "Read every group live")
+            : "Show parent groups"}
         </button>
+        {mode === "up" && (
+          <label className="flex items-center gap-1 text-[11px] text-gray-600"
+                 title="Include groups reached through nesting. Direct membership answers 'where was this principal added'; transitive answers 'whose access reaches it'.">
+            <input
+              type="checkbox"
+              data-testid="memberships-transitive"
+              checked={transitive}
+              disabled={busy.size > 0}
+              onChange={(e) => { const v = e.target.checked; setTransitive(v); if (started) void begin("up", v); }}
+            />
+            include nested
+          </label>
+        )}
         <span className="text-[11px] text-gray-500">
           Read live from the directory, one level at a time. Nested membership is not cached.
         </span>
@@ -240,7 +294,7 @@ export function MembersTree({
             <span className="font-medium">
               {direction === "down"
                 ? `${roots.length} direct member(s)`
-                : `Member of ${roots.length} group(s)`}
+                : `Member of ${roots.length} ${transitive ? "group(s), nesting included" : "group(s) directly"}`}
             </span>
             {Object.entries(stats).map(([k, n]) => (
               <span key={k} className="rounded bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
@@ -259,13 +313,15 @@ export function MembersTree({
             <div className="text-[11px] text-gray-500">
               {direction === "down"
                 ? "This group has no direct members."
-                : "This group is not nested inside any other group."}
+                : mode === "up"
+                  ? "The directory returned no group for this principal."
+                  : "This group is not nested inside any other group."}
             </div>
           ) : (
             <div className="max-h-96 overflow-auto rounded border bg-white p-1">
               <div className="flex items-center gap-1.5 px-1 py-0.5 text-xs font-semibold text-gray-800">
                 <span className="w-4" />
-                <span aria-hidden="true">👥</span>
+                <span aria-hidden="true">{KIND_GLYPH[rootKind] ?? KIND_GLYPH.unknown}</span>
                 <span className="truncate">{rootName}</span>
               </div>
               <Children nodes={roots} depth={1} ancestors={[principalId]} loaded={loaded}

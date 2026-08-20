@@ -60,7 +60,7 @@ def _big_tenant() -> dict:
 def test_the_full_analysis_stays_within_budget_on_a_large_tenant():
     data = _big_tenant()
     start = time.perf_counter()
-    analysis = ca_engine.analyse(data)
+    analysis = ca_engine.analyze(data)
     elapsed = time.perf_counter() - start
     assert analysis["coverage"]["matrix"], "the analysis must actually produce a matrix"
     assert elapsed < BUDGET_S, (
@@ -82,7 +82,7 @@ def test_break_glass_detection_specifically_is_not_quadratic():
 
 
 def test_hoisting_the_sets_did_not_change_what_break_glass_detects():
-    """Same answers, faster - the optimisation must be behaviour-preserving."""
+    """Same answers, faster - the optimisation must be behavior-preserving."""
     data = _big_tenant()
     # Give one account every break-glass characteristic so the detector has something to find.
     data["people"]["users"].append({

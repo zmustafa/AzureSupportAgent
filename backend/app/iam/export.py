@@ -274,7 +274,7 @@ def to_workbook(
         [[c.get(h, "") for h in diag_headers] for c in overview.get("collectors", [])],
     )
 
-    # ---- 13+. The analysis. Everything below is a judgement the reader cannot reconstruct
+    # ---- 13+. The analysis. Everything below is a judgment the reader cannot reconstruct
     # from a list of role assignments, which is exactly why leaving it out made the workbook a
     # data dump rather than a review.
     if score is not None:

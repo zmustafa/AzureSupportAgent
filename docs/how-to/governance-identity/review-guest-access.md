@@ -4,7 +4,7 @@ title: Review guest (B2B) access and clean up stale invitations
 parent: Governance and identity
 grand_parent: How-to guides
 nav_order: 13
-description: Run a guest access review from the lifecycle funnel and the partner-organisation rollup, separate live tokens from live people, find partners no cross-tenant policy names, and export the campaign workbook.
+description: Run a guest access review from the lifecycle funnel and the partner-organization rollup, separate live tokens from live people, find partners no cross-tenant policy names, and export the campaign workbook.
 permalink: /how-to/governance-identity/review-guest-access/
 feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:governance]
 ---
@@ -31,8 +31,8 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 
 2. Read the **Not measured** tile *before* the **Dormant** tile. Guests whose sign-in activity was not collected are excluded from the funnel and are not dormant — nobody looked.
 3. Read the **Guest lifecycle** funnel top to bottom: invited, accepted, used it, still active. The red figure beside each step is the loss at that step — never accepted, never used, now dormant.
-4. Read **Where guests come from**. Any count against **Consumer email** is external access with no partner organisation behind it: when the engagement ends there is no admin to ask and no leaver process to inherit.
-5. Note the **Partner domains** tile. That is how many organisations you would have to contact to end every external relationship in the tenant.
+4. Read **Where guests come from**. Any count against **Consumer email** is external access with no partner organization behind it: when the engagement ends there is no admin to ask and no leaver process to inherit.
+5. Note the **Partner domains** tile. That is how many organizations you would have to contact to end every external relationship in the tenant.
 
 **Expected result:** A sized picture of external access with the unmeasured portion stated separately, rather than a single guest count.
 
@@ -45,10 +45,10 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 2. Read the **Invited** column. These objects exist because an invitation was sent and never taken up; the age is the object's creation time, which is the only field that survives acceptance.
 3. Sort by **Invited** descending to lead with the oldest. An invitation nobody accepted in a year will not be accepted now.
 4. Tick **Enabled only** if you want to exclude objects somebody has already disabled.
-5. Use the **Organisation** column to spot a partner where the whole cohort is pending — that is usually a collaboration that never started, not a set of individuals to chase.
+5. Use the **Organization** column to spot a partner where the whole cohort is pending — that is usually a collaboration that never started, not a set of individuals to chase.
 6. Export the workbook and use the **Guests** sheet, filtered to the `pending` lifecycle, as the removal list.
 
-**Expected result:** A dated list of unaccepted invitations, grouped by the organisation they were sent to.
+**Expected result:** A dated list of unaccepted invitations, grouped by the organization they were sent to.
 
 **Verification:** Confirm each candidate's external user state and creation date on the user object in the Microsoft Entra admin center before removing it. The snapshot has an age; the portal is live.
 
@@ -78,17 +78,17 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 
 **Verification:** Confirm the interactive and non-interactive sign-in timestamps on the user in the Microsoft Entra admin center. Revoking the sign-in sessions before disabling the account is what actually ends the live token; disabling alone leaves an issued token valid until it expires.
 
-## How to review by partner organisation instead of one guest at a time
+## How to review by partner organization instead of one guest at a time
 
-1. Switch the segmented control to **Partner organisations**. This is the unit a review is actually decided on — an engagement ends with a supplier, not with one identity at a time.
+1. Switch the segmented control to **Partner organizations**. This is the unit a review is actually decided on — an engagement ends with a supplier, not with one identity at a time.
 
-2. The rows are sorted by guest count so the largest exposure leads. The organisation name is the partner's resolved display name where Microsoft could answer, with the domain beneath it.
+2. The rows are sorted by guest count so the largest exposure leads. The organization name is the partner's resolved display name where Microsoft could answer, with the domain beneath it.
 3. Read the **Cross-tenant policy** column. **Named in policy** means a cross-tenant access policy names that partner tenant. **Default only** means it inherits whatever your tenant default allows. **Unknown** means the verdict could not be determined — it does **not** mean ungoverned.
 4. Hover any verdict to read the reason for it. If a banner above the grid says the partner list could not be read, every row is `unknown` for that reason alone and the column carries no information this snapshot.
-5. Prioritise **Default only** partners with a high guest count and an old **Oldest invite**. That is a long-standing relationship governed by nothing more specific than the tenant default.
-6. Select an organisation to jump into the People grid filtered to it, and confirm the individual rows before proposing anything.
+5. Prioritize **Default only** partners with a high guest count and an old **Oldest invite**. That is a long-standing relationship governed by nothing more specific than the tenant default.
+6. Select an organization to jump into the People grid filtered to it, and confirm the individual rows before proposing anything.
 
-**Expected result:** A per-organisation review list ordered by exposure, with the partners no cross-tenant policy names identified.
+**Expected result:** A per-organization review list ordered by exposure, with the partners no cross-tenant policy names identified.
 
 **Verification:** Confirm the cross-tenant access settings for that partner tenant in the Microsoft Entra admin center. The verdict is derived from the collected partner list, so a policy added after the last collection will not appear until you refresh.
 
@@ -96,8 +96,8 @@ No extra consent is needed for the partner-tenant resolution or the cross-tenant
 
 1. Apply the filters that define the campaign, then select **⬇ Export to Excel**. The workbook contains every Entra sheet; the two that matter here are under the Governance section.
 
-2. Use the **Guests** sheet as the per-person working document. It carries the lifecycle, both activity timestamps with their ages, whether sign-in was measured at all, the sponsors, and the licence count.
-3. Use the **Guest partner orgs** sheet as the per-organisation summary, including the cross-tenant verdict and the reason for it.
+2. Use the **Guests** sheet as the per-person working document. It carries the lifecycle, both activity timestamps with their ages, whether sign-in was measured at all, the sponsors, and the license count.
+3. Use the **Guest partner orgs** sheet as the per-organization summary, including the cross-tenant verdict and the reason for it.
 4. Note that the sheets are written in full and are not affected by the on-screen 1,000-row display cap.
 5. Keep the distinction between `never` and `not measured` intact when you filter or sort the sheet. They are written as different text on purpose; collapsing them revokes access nobody ever looked at.
 6. Redact or remove partner names, sign-in addresses, and object identifiers before sharing outside the review.
@@ -126,7 +126,7 @@ Removal happens in the Microsoft Entra admin center or through your approved cha
 
 Never act on a guest whose lifecycle reads **Not measured**. That state means sign-in activity was not collected, not that the access is unused.
 
-Exports and grids name real people and real partner organisations. Never paste tenant IDs, object IDs, sign-in addresses, or partner names into tickets, prompts, or shared examples.
+Exports and grids name real people and real partner organizations. Never paste tenant IDs, object IDs, sign-in addresses, or partner names into tickets, prompts, or shared examples.
 
 ## Troubleshooting
 
@@ -136,9 +136,9 @@ Exports and grids name real people and real partner organisations. Never paste t
 | **Dormant** is zero although the tenant clearly has stale guests | Same cause. Dormancy is never inferred without sign-in activity, so those guests are counted under **Not measured** instead. |
 | A guest with recent activity turns out to have left the partner months ago | Read **Last human sign-in**, not **Last any activity**. The second column includes non-interactive token refresh, which keeps moving with no person involved. |
 | Invitation ages look wrong for long-standing partners | **Invited** uses the object creation time because the external-state stamp is overwritten with the acceptance time. Confirm the creation date on the user object. |
-| The partner rollup shows one row containing every guest | Not reachable from this screen — the organisation is derived from the mail address, never the UPN suffix. If you see this, check whether the guests genuinely share one mail domain. |
+| The partner rollup shows one row containing every guest | Not reachable from this screen — the organization is derived from the mail address, never the UPN suffix. If you see this, check whether the guests genuinely share one mail domain. |
 | Every partner reads **Unknown** for cross-tenant policy | The partner list could not be read for this snapshot; a banner above the grid says so. The column carries no information until the next successful collection. Do not report those partners as ungoverned. |
-| One organisation reads **Unknown** while the rest resolve | That domain has no Entra tenant to resolve to — typically a consumer mailbox provider or an organisation not on Entra ID. |
+| One organization reads **Unknown** while the rest resolve | That domain has no Entra tenant to resolve to — typically a consumer mailbox provider or an organization not on Entra ID. |
 | The People grid stops at 1,000 rows | Display cap only. Narrow with the filters, or export; the workbook writes every row. |
 | Disabled guests appear in the counts | Intended: a disabled guest still holds group memberships and app assignments. Tick **Enabled only** to exclude them. |
 | Counts do not match the Microsoft Entra admin center | The snapshot has an age and the portal is live. Refresh from the Entra ID header, then compare. |

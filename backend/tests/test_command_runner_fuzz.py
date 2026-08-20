@@ -11,7 +11,7 @@ Layered defences, in order of how much they actually matter:
   1. `subprocess.run(argv, shell=False)`  -- the real control. No shell, so shell
      metacharacters in ARGUMENTS are inert.
   2. binary allowlist                     -- only known tools may run at all.
-  3. `_has_unquoted_shell_operator`       -- defence in depth; rejects `; | & > < \`` and
+  3. `_has_unquoted_shell_operator`       -- defense in depth; rejects `; | & > < \`` and
                                              `$(` outside quotes.
   4. newline / length caps.
 
@@ -63,7 +63,7 @@ def test_non_allowlisted_binaries_are_rejected(cmd):
 def test_allowlist_matching_is_case_insensitive_but_still_normalises():
     """`AZ vm list` is ACCEPTED -- allowlist matching is deliberately case-insensitive.
 
-    That is not a bypass: the validator normalises the resolved binary to its allowlisted
+    That is not a bypass: the validator normalizes the resolved binary to its allowlisted
     form (`binary == "az"`), so no unlisted executable can be reached this way. Pinned
     because a naive reading of the corpus above would suggest case should be rejected.
     """

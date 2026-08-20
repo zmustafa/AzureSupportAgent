@@ -30,7 +30,7 @@ export const DRIFT_COLOR: Record<string, string> = {
   live_uncontrolled: "#dc2626",
 };
 
-// Business-capability colours (workload_type → domain hue).
+// Business-capability colors (workload_type → domain hue).
 export const CAPABILITY_COLOR: Record<string, string> = {
   web_app: "#2563eb", website: "#2563eb", crm: "#db2777", erp: "#7c3aed",
   data_pipeline: "#0891b2", ai_ml: "#9333ea", networking: "#0d9488",
@@ -70,7 +70,7 @@ const WAF_COLOR: Record<string, string> = {
   security: "#6366f1", reliability: "#06b6d4", cost: "#10b981", operations: "#f59e0b", performance: "#ec4899",
 };
 
-/** A lens colour for a node, or "" to keep the kind default. */
+/** A lens color for a node, or "" to keep the kind default. */
 export function lensColor(lens: Lens, node: GraphNode): string {
   const d = node.data || {};
   if (lens === "risk" && node.kind === "workload") return RISK_COLOR[d.risk?.level || "ok"] || "";
@@ -92,7 +92,7 @@ export function lensColor(lens: Lens, node: GraphNode): string {
 
 export function ownerOf(node: GraphNode): string {
   // Prefer an explicitly resolved owner (stamped from the ownership registry); fall back to
-  // owner/team tags, then environment, so the lens still colours something useful offline.
+  // owner/team tags, then environment, so the lens still colors something useful offline.
   const resolved = node.data?.owner;
   if (resolved && typeof resolved === "string") return resolved;
   const tags = node.data?.tags;
@@ -116,7 +116,7 @@ function colorFromString(s: string): string {
 
 // Built loosely (Cytoscape stylesheet union types reject literal blobs) — presentation only.
 // Nodes render as white "chips" with the kind/Azure-service icon as a background-image and the
-// kind (or lens) colour as the ring (border), so the graph reads like the Portal.
+// kind (or lens) color as the ring (border), so the graph reads like the Portal.
 const HUB_KINDS = new Set(["tenant_connection", "management_group", "subscription", "workload"]);
 
 export function buildStylesheet(_lens: Lens, dark = false): any[] {
@@ -202,14 +202,14 @@ export function buildStylesheet(_lens: Lens, dark = false): any[] {
 const DEP_KINDS = new Set(["depends_on", "connects_to", "data_flow", "private_endpoint_to", "vnet_link", "subnet_link", "monitors", "identity_dependency"]);
 const FLOW_KINDS = new Set(["data_flow", "connects_to", "depends_on"]);
 
-/** The default ring (border) colour for a node: shared-service resources get a violet ring,
- * everything else its kind colour. */
+/** The default ring (border) color for a node: shared-service resources get a violet ring,
+ * everything else its kind color. */
 export function defaultRing(node: GraphNode): string {
   if (node.kind === "resource" && (node.data?.workloads || []).length > 1) return "#9333ea";
   return KIND_META[node.kind]?.color || "#94a3b8";
 }
 
-/** Risk/criticality halo colour for a node under a given lens (empty = no halo). */
+/** Risk/criticality halo color for a node under a given lens (empty = no halo). */
 export function haloColor(lens: Lens, node: GraphNode): string {
   if (node.kind !== "workload") return "";
   if (lens === "risk") return RISK_COLOR[node.data?.risk?.level || "ok"] || "";

@@ -40,7 +40,7 @@ _SLOW_TEST_FILES: set[str] = {
 
 
 # ------------------------------------------------------- tests that need a live Azure env
-# These assert behaviour that can only be exercised against a real Azure connection: they
+# These assert behavior that can only be exercised against a real Azure connection: they
 # shell out to `az` or resolve a configured connection, and fail with "Please run 'az login'"
 # or "No Azure connection is configured for this scope" when neither exists.
 #
@@ -109,6 +109,18 @@ def _isolate_alerts_manager_cache():
     alerts_manager_cache.reset_for_tests()
     yield
     alerts_manager_cache.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_membership_index():
+    """The reverse-membership memo is keyed on (tenant, snapshot stamp), and fixtures across
+    the suite share tenant "t" with no stamp. Without this, whichever test ran first decides
+    what every later one sees."""
+    from app.entra import investigate_members
+
+    investigate_members.reset_membership_index()
+    yield
+    investigate_members.reset_membership_index()
 
 
 def pytest_collection_modifyitems(config, items):  # noqa: ARG001

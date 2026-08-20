@@ -288,7 +288,7 @@ def _duration_seconds(value: Any) -> float | None:
 
 # --------------------------------------------------------------------------- shaping
 def shape_vault(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalise a Recovery Services vault or Backup vault row into one schema."""
+    """Normalize a Recovery Services vault or Backup vault row into one schema."""
     vault_id = str(row.get("id") or "")
     kind = _vault_kind(vault_id)
     security = _json(row.get("securitySettings")) or {}
@@ -303,7 +303,7 @@ def shape_vault(row: dict[str, Any]) -> dict[str, Any]:
     immutability = (security.get("immutabilitySettings") or {}) if isinstance(security, dict) else {}
 
     # Backup vaults express redundancy per datastore; Recovery Services vaults use a single
-    # standard-tier setting. Normalise both onto one lowercase token.
+    # standard-tier setting. Normalize both onto one lowercase token.
     redundancy_token = ""
     if kind == "backup":
         for entry in storage if isinstance(storage, list) else []:

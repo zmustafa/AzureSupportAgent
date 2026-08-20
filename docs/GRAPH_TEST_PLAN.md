@@ -31,7 +31,7 @@ plus 3 connection-less demo workloads (Contoso Hotels, Zava x2). Automated cover
 19. Visit /graph → hierarchy renders rooted at the tenant connection. ✅
 20. Edges: connection→subscription (contains), sub→workload (contains), workload→architecture (models). ✅
 21. Orphan workload (no sub) attaches under the connection, never floating. ✅
-22. Architecture with unknown workload hangs off connection, labelled "unlinked". ✅
+22. Architecture with unknown workload hangs off connection, labeled "unlinked". ✅
 23. Status strip shows N nodes · M edges and the correct counts line. ✅
 24. "inventory not scanned" message when no inventory cache for the connection. ✅
 25. Loading spinner shows while overview query is in flight. ✅
@@ -80,16 +80,16 @@ plus 3 connection-less demo workloads (Contoso Hotels, Zava x2). Automated cover
 62. Dependency edges only drawn between resources both present on canvas. ✅
 
 ## F. Lenses
-63. Risk lens colours workloads green/amber/red by risk level. ✅
-64. Capability lens colours workloads by workload_type. ✅
-65. Criticality lens colours workloads by criticality. ✅
+63. Risk lens colors workloads green/amber/red by risk level. ✅
+64. Capability lens colors workloads by workload_type. ✅
+65. Criticality lens colors workloads by criticality. ✅
 66. Change lens highlights recently-changed nodes (needs change overlay). ✅
-67. Cost lens colours subscriptions by spend band (needs cost overlay). ✅
-68. Ownership lens colours workloads by owner/team tag hash. ✅
-69. WAF lens colours findings by pillar. ✅
+67. Cost lens colors subscriptions by spend band (needs cost overlay). ✅
+68. Ownership lens colors workloads by owner/team tag hash. ✅
+69. WAF lens colors findings by pillar. ✅
 70. Shared-services lens highlights resources in >1 workload. ✅
 71. Switching lenses re-styles instantly without reload. ✅
-72. "No lens" resets to kind colours. ✅
+72. "No lens" resets to kind colors. ✅
 
 ## G. Layers & filters
 73. Uncheck a layer (e.g. Resource) → those nodes hidden. ✅
@@ -113,7 +113,7 @@ plus 3 connection-less demo workloads (Contoso Hotels, Zava x2). Automated cover
 87. Enable Coverage overlay + Focus workload → coverage_gap nodes appear. ✅
 88. Enable Retirements → retirement_item nodes appear (if radar cache). ✅
 89. Enable Access (rbac) → privileged principal nodes appear (if rbac cache). ✅
-90. Drift Focus → resources tagged ok/documented_missing/live_uncontrolled w/ colours. ✅
+90. Drift Focus → resources tagged ok/documented_missing/live_uncontrolled w/ colors. ✅
 91. Drift summary surfaced in status + drift_score present. ✅
 92. Toggling overlay/drift while focused re-builds the focused subgraph. ✅
 

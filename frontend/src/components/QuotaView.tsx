@@ -255,7 +255,7 @@ export function QuotaMonitorPanel() {
   }
 
   // QP5 — kick the scan off in the module-level registry so it survives navigation. The popup is
-  // just a live view of that registry; closing/minimising it doesn't stop the scan.
+  // just a live view of that registry; closing/minimizing it doesn't stop the scan.
   function runScan() {
     if (scanning) return;
     setMsg(null);
@@ -839,7 +839,7 @@ export function QuotaMonitorPanel() {
       </div>
 
       {/* QP5 — scan progress popup (minimisable). The scan runs in a module-level registry, so
-          closing/minimising this overlay does NOT stop it; a header chip lets you reopen it. */}
+          closing/minimizing this overlay does NOT stop it; a header chip lets you reopen it. */}
       {scanning && !scanMinimized && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-lg overflow-hidden rounded-xl border bg-white shadow-2xl">

@@ -1210,7 +1210,7 @@ async def _run_entra(ctx: MissionContext, *, force: bool, progress=None) -> Syst
         return SystemResult(status="fail", headline=error[:140], error=error,
                             attention=True, link=link)
 
-    snap = entra_snapshot.analyse(tenant_id, force=True)
+    snap = entra_snapshot.analyze(tenant_id, force=True)
     analysis = snap.get("_analysis") or {}
     head, value, attention = _entra_headline(analysis)
 
@@ -1231,7 +1231,7 @@ async def _state_entra(ctx: MissionContext) -> dict[str, Any] | None:
     from app.entra import snapshot as entra_snapshot
 
     tenant_id = _entra_tenant(ctx)
-    snap = entra_snapshot.analyse(tenant_id)
+    snap = entra_snapshot.analyze(tenant_id)
     if not snap.get("loaded"):
         return None
     head, value, attention = _entra_headline(snap.get("_analysis") or {})
@@ -1243,6 +1243,71 @@ async def _state_entra(ctx: MissionContext) -> dict[str, Any] | None:
         age = int(seconds)
     return {"status": "done", "headline": head, "score": value, "attention": attention,
             "age_seconds": age, "link": "/entra"}
+
+
+# --------------------------------------------------------------------------- recovery
+def _recovery_headline(snap: dict[str, Any]) -> tuple[str, int | None, bool]:
+    """Lead with the count nobody else produces, not a percentage.
+
+    A score invites comparison; "5 resources cannot be recovered from accidental deletion"
+    invites action, and it is the sentence this whole module exists to be able to write."""
+    summary = snap.get("summary") or {}
+    worst = summary.get("worst") or {}
+    gaps = int(worst.get("no_recovery_path") or 0)
+    total = int(summary.get("resources") or 0)
+    unknown = int((summary.get("protection") or {}).get("unknown") or 0)
+    scenario = str(worst.get("scenario") or "").replace("_", " ")
+    if gaps:
+        head = f"{gaps} of {total} resource(s) have no recovery path for {scenario}"
+    elif unknown:
+        head = f"No recovery gaps found; protection unknown for {unknown} resource(s)"
+    else:
+        head = f"{total} resource(s) analyzed, every applicable scenario recoverable"
+    determined = max(0, total - unknown)
+    score = int(round(100 * (determined - gaps) / determined)) if determined else None
+    return head, score, bool(gaps)
+
+
+async def _run_recovery(ctx: MissionContext, *, force: bool, progress=None) -> SystemResult:
+    from app.backup_manager import service
+    from app.resiliency import analyze as analyze_mod
+    from app.resiliency import snapshot as store
+
+    if progress:
+        await progress("Deriving recovery posture…")
+    tenant = ctx.tenant_id or "default"
+    connection = service.resolve_selected_connection(None, ctx.workload_id)
+    cid = str((connection or {}).get("id") or "")
+    from app.demo_catalog import is_demo_workload
+
+    subs: list[str] = []
+    if connection and not is_demo_workload(ctx.workload_id):
+        subs = sorted(await service.scope_subscriptions(connection, workload_id=ctx.workload_id))
+    snap = await analyze_mod.analyze(
+        connection, tenant_id=tenant, scope_kind="workload", scope_id=ctx.workload_id,
+        subscriptions=subs, workload_id=ctx.workload_id)
+    store.write(tenant, cid, "workload", ctx.workload_id, snap)
+    head, score, attention = _recovery_headline(snap)
+    return SystemResult(status="done", headline=head, score=score, attention=attention,
+                        link="/resiliency",
+                        result_ref={"kind": "recovery", "workload_id": ctx.workload_id})
+
+
+async def _state_recovery(ctx: MissionContext) -> dict[str, Any] | None:
+    from app.backup_manager import service
+    from app.resiliency import snapshot as store
+
+    try:
+        connection = service.resolve_selected_connection(None, ctx.workload_id)
+    except Exception:  # noqa: BLE001 - a missing connection is "never run", not an error
+        return None
+    snap = store.read(ctx.tenant_id or "default", str((connection or {}).get("id") or ""),
+                      "workload", ctx.workload_id)
+    if not snap.get("report_exists"):
+        return None
+    head, score, attention = _recovery_headline(snap)
+    return {"status": "done", "headline": head, "score": score, "attention": attention,
+            "age_seconds": None, "link": "/resiliency"}
 
 
 # --------------------------------------------------------------------------- registry
@@ -1263,6 +1328,7 @@ SYSTEMS: list[SystemDef] = [
     SystemDef(key="iam", label="IAM Access Review", icon="🔐", run=_run_rbac, last_state=_state_rbac, informational=True),
     SystemDef(key="identity", label="Identity Findings", icon="🪪", run=_run_identity, last_state=_state_identity),
     SystemDef(key="entra", label="Entra ID Posture", icon="🛡️", run=_run_entra, last_state=_state_entra),
+    SystemDef(key="recovery", label="Recovery Readiness", icon="♻️", run=_run_recovery, last_state=_state_recovery),
 ]
 
 _BY_KEY: dict[str, SystemDef] = {s.key: s for s in SYSTEMS}

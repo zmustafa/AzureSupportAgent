@@ -249,6 +249,17 @@ export function BackupIcon({ className }: { className?: string }) {
   );
 }
 
+/** Recovery Readiness: a restore arc with a clock hand — the question is how long, not whether. */
+export function RecoveryIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6" strokeLinecap="round" />
+      <path d="M16.6 2.8v2.9h-2.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 6.8V10l2.2 1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function EvidenceIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -372,7 +383,7 @@ export function PanelLeftIcon({ className, collapsed }: { className?: string; co
 /** War Room badge — a Spartan helmet (gold) with red crest and crossed spears inside a
  *  gold-ringed dark medallion. Used to brand the deep-investigation "war room": shown
  *  when launching one and beside deep-investigation chat titles in the sidebar. Rendered
- *  as a self-contained, multi-colour inline SVG (ignores currentColor). */
+ *  as a self-contained, multi-color inline SVG (ignores currentColor). */
 export function WarRoomIcon({ className }: { className?: string }) {
   return (
     <svg

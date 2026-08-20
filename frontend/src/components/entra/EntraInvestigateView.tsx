@@ -1,7 +1,7 @@
 /** Investigate — one identity, everything we know about it.
  *
  *  Sections are driven by `capabilities` from the server, NEVER by a switch on kind. A group
- *  has no sign-ins, a managed identity has no MFA, a guest has no licences: deciding that
+ *  has no sign-ins, a managed identity has no MFA, a guest has no licenses: deciding that
  *  here as well as on the server is how a component grows a bug per new principal kind.
  *
  *  Two rules the screen inherits from the API and must not soften:
@@ -10,7 +10,7 @@
  *    * the Azure Activity Log is never fetched implicitly. It is per-subscription and slow,
  *      and this screen is linked from dozens of places.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import type {
@@ -37,13 +37,15 @@ const KIND_GLYPH: Record<InvestigateKind, string> = {
  *
  *  `members` is groups-only and simply absent for every other kind, so listing it here costs
  *  nothing when it does not apply. It leads `recertification` because that is the default
- *  lens for a group, and "who is in this thing" is the first question asked of one. */
+ *  lens for a group, and "who is in this thing" is the first question asked of one.
+ *  `memberships` is its mirror — the groups the subject belongs to — and leads `offboarding`,
+ *  where the groups someone must be removed from are the whole job. */
 const LENSES = {
-  overview: { label: "Overview", order: ["activity", "access", "members", "findings", "timeline", "activations"] },
-  offboarding: { label: "Offboarding", order: ["access", "members", "activations", "timeline", "findings", "activity"] },
-  recertification: { label: "Recertification", order: ["members", "access", "activations", "findings", "timeline", "activity"] },
-  workload: { label: "Workload identity", order: ["access", "findings", "activity", "timeline", "activations"] },
-  support: { label: "Support", order: ["access", "members", "findings"] },
+  overview: { label: "Overview", order: ["activity", "access", "memberships", "members", "findings", "timeline", "activations"] },
+  offboarding: { label: "Offboarding", order: ["access", "memberships", "members", "activations", "timeline", "findings", "activity"] },
+  recertification: { label: "Recertification", order: ["members", "memberships", "access", "activations", "findings", "timeline", "activity"] },
+  workload: { label: "Workload identity", order: ["access", "memberships", "findings", "activity", "timeline", "activations"] },
+  support: { label: "Support", order: ["access", "memberships", "members", "findings"] },
 } as const;
 type Lens = keyof typeof LENSES;
 
@@ -56,12 +58,13 @@ const WINDOWS = [
 const SECTION_LABEL: Record<string, string> = {
   activity: "Activity", access: "Access", findings: "Findings",
   timeline: "Changes", activations: "Activations", members: "Members",
+  memberships: "Groups",
 };
 
 /**
  * The diff vocabulary from `app/iam/diff.py`. Rendering the raw class ("de_escalated") or —
  * worse — reading a field that does not exist and drawing a blank column, tells the reader
- * nothing. Widening access is coloured; narrowing it is not.
+ * nothing. Widening access is colored; narrowing it is not.
  */
 const CHANGE_CLASS: Record<string, { label: string; cls: string }> = {
   added: { label: "gained access", cls: "text-rose-700" },
@@ -136,7 +139,7 @@ function Table({ head, rows }: { head: string[]; rows: React.ReactNode[][] }) {
     <div className="max-h-72 overflow-auto rounded border">
       <table className="w-full text-left text-xs">
         <thead className="sticky top-0 bg-gray-50 text-[11px] uppercase text-gray-500">
-          <tr>{head.map((h) => <th key={h} className="px-2 py-1.5 font-medium">{h}</th>)}</tr>
+          <tr>{head.map((h, i) => <th key={i} className="px-2 py-1.5 font-medium">{h}</th>)}</tr>
         </thead>
         <tbody className="divide-y">
           {rows.map((r, i) => (
@@ -266,7 +269,7 @@ function Banners({ p }: { p: InvestigatePrincipal }) {
     out.push({ tone: "rose", text: "This object no longer exists in the directory. Its access assignments survived it — that is what you are looking at, and it is usually the finding." });
   }
   if (p.resolution === "cross_tenant") {
-    out.push({ tone: "violet", text: `This principal lives in another organisation's directory${p.managing_tenant?.name ? ` (${p.managing_tenant.name})` : ""} via Azure Lighthouse. Nothing about the principal itself is readable from this tenant.` });
+    out.push({ tone: "violet", text: `This principal lives in another organization's directory${p.managing_tenant?.name ? ` (${p.managing_tenant.name})` : ""} via Azure Lighthouse. Nothing about the principal itself is readable from this tenant.` });
   }
   if (p.resolution === "unreadable") {
     out.push({ tone: "amber", text: "The directory could not be read, so we cannot say what this principal is. This is not the same as it not existing." });
@@ -430,13 +433,13 @@ function ActivityPanel({
         </label>
       </div>
       <p className="mb-2 text-[11px] text-gray-500">
-        Reading a named identity's sign-in and audit history is behavioural data. Who asked, about
+        Reading a named identity's sign-in and audit history is behavioral data. Who asked, about
         whom, and why is recorded in the audit log.
       </p>
 
       {denied && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          Your role can see this identity's access and findings but not its behavioural history.
+          Your role can see this identity's access and findings but not its behavioral history.
           That split is deliberate — <code>investigate.activity</code> is granted separately.
         </div>
       )}
@@ -543,6 +546,19 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
 
   const sectionOrder = useMemo(() => LENSES[activeLens].order, [activeLens]);
 
+  // A lens lists every section it could show, and several are absent for most kinds — a group
+  // has no sign-ins, a user has no members. Both the jump links and the scroll target have to
+  // read from the same rule, or one of them points at a section that is not on the page.
+  const isRendered = useCallback((name: string) => {
+    if (!dossier) return false;
+    if (name === "activity") {
+      return ["signins", "audit", "risk", "azure_activity"].some((t) => caps.includes(t));
+    }
+    return !!dossier.sections[name as keyof typeof dossier.sections];
+  }, [dossier, caps]);
+
+  const jumpTargets = useMemo(() => sectionOrder.filter(isRendered), [sectionOrder, isRendered]);
+
   const recent = useRecent(connectionId, 8);
   // The dossier request is what WRITES the audit row this strip reads, so the strip has to be
   // re-read after it lands — otherwise the person you are looking at never joins the list.
@@ -556,16 +572,23 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
    * Without this the reader switches lens, sees no change (the control is at the top, the
    * section it promoted is 2,000px down), and concludes the button is broken. Switching a
    * lens must land you on what that lens leads with.
+   *
+   * Scrolling the lens bar itself does NOT do that: the bar is `sticky top-0`, so once the
+   * reader is anywhere below the fold it is already at the top of the viewport and
+   * `scrollIntoView` is a no-op — they stay exactly where they were and the promoted section
+   * is still off screen above them. The target has to be the leading SECTION, which carries
+   * `scroll-mt-14` to clear the bar.
    */
-  const scrollToSections = () => {
-    requestAnimationFrame(() => {
-      lensBarRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-
   const pickLens = (v: string) => {
     setLens(v as Lens);
-    scrollToSections();
+    const lead = LENSES[v as Lens].order.find(isRendered);
+    // Two frames: the first lets React commit the reorder, the second measures it.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const target = lead
+        ? document.querySelector(`[data-testid="investigate-section-${lead}"]`)
+        : lensBarRef.current;
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }));
   };
 
   if (!principalId) {
@@ -670,7 +693,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
               label="Lens"
             />
             <nav aria-label="Jump to section" className="flex flex-wrap items-center gap-1">
-              {sectionOrder.map((name) => (
+              {jumpTargets.map((name) => (
                 <button
                   key={name}
                   data-testid={`investigate-jump-${name}`}
@@ -732,12 +755,19 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                         </div>
                         <Table
                           head={["Role", "Scope", "Path", "Eligible"]}
-                          rows={d.azure_assignments.slice(0, 200).map((r) => [
-                            String(r.roleName ?? ""),
-                            String(r.subscriptionName || r.scope || ""),
-                            String(r.accessPath ?? ""),
-                            r.eligible ? "eligible" : "standing",
-                          ])}
+                          rows={d.azure_assignments.slice(0, 200).map((r) => {
+                            // "group" alone is a dead end: it says the access is inherited
+                            // and refuses to say from what. The composer already carries the
+                            // name — not showing it sent the reader to another tool.
+                            const via = String(r.sourceGroupName || r.membershipGroupName || "");
+                            const path = String(r.accessPath ?? "");
+                            return [
+                              String(r.roleName ?? ""),
+                              String(r.subscriptionName || r.scope || ""),
+                              via ? `${path} · ${via}` : path,
+                              r.eligible ? "eligible" : "standing",
+                            ];
+                          })}
                         />
                       </div>
                     )}
@@ -799,6 +829,71 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                         ])}
                       />
                     )}
+                  </div>
+                </Section>
+              );
+            }
+            if (name === "memberships") {
+              const s = dossier.sections.memberships;
+              // Absent for the Azure platform and for anything we could not resolve.
+              if (!s) return null;
+              const d = s.data;
+              return (
+                <Section key="memberships" id="memberships" title="Groups it belongs to"
+                         count={d.count} prov={s.provenance}
+                         empty="No group that grants Azure RBAC, an Entra directory role or a Conditional Access target contains this principal. Other memberships are not collected — read the directory live to see them."
+                         /* Same reasoning as `members`: the live read is the REMEDY for the
+                            cache only ever holding groups that grant something, so it must
+                            render when the list is empty or unreadable, not only when the
+                            cache already answered. */
+                         footer={
+                           <MembersTree principalId={principal.id}
+                                        rootName={principal.display_name || principal.id}
+                                        rootKind={principal.kind}
+                                        connectionId={connectionId}
+                                        mode="up" />
+                         }>
+                  <div className="space-y-2">
+                    {d.role_assignable_count > 0 && (
+                      <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
+                        {d.role_assignable_count} of these can be assigned an Entra directory
+                        role. Membership of one is a privilege-escalation path in its own right.
+                      </div>
+                    )}
+                    <Table
+                      head={["Group", "Why it matters", "Caveats", ""]}
+                      rows={d.groups.slice(0, 200).map((g) => [
+                        g.display_name || g.id,
+                        <span className="flex flex-wrap gap-1">
+                          {g.sources.map((src) => (
+                            <span key={src} className="rounded border bg-gray-50 px-1 py-0.5 text-[10px] text-gray-700">
+                              {d.source_labels[src] ?? src}
+                            </span>
+                          ))}
+                        </span>,
+                        <span className="flex flex-wrap gap-1">
+                          {g.role_assignable && (
+                            <span title="This group can be assigned an Entra directory role."
+                                  className="rounded border border-rose-200 bg-rose-50 px-1 py-0.5 text-[10px] text-rose-800">
+                              role-assignable
+                            </span>
+                          )}
+                          {g.dynamic && (
+                            <span title={g.membership_rule || "Membership is evaluated from a rule — removing this principal does not stick."}
+                                  className="rounded border border-sky-200 bg-sky-50 px-1 py-0.5 text-[10px] text-sky-800">
+                              dynamic
+                            </span>
+                          )}
+                          {g.on_prem_synced && (
+                            <span title="Membership is authored in on-premises AD. A change made in Entra is overwritten by the next sync."
+                                  className="rounded border border-amber-200 bg-amber-50 px-1 py-0.5 text-[10px] text-amber-800">
+                              on-prem
+                            </span>
+                          )}
+                        </span>,
+                        <InvestigateLink principalId={g.id} label={g.display_name || g.id} />,
+                      ])}
+                    />
                   </div>
                 </Section>
               );

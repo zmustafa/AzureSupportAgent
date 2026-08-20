@@ -11,7 +11,7 @@ Sources, richest first (all already present in the app):
 3. **Manual free-text** — always available; the API turns a typed name/email into an owner.
 
 All search functions are READ-ONLY, defensive (a directory failure degrades to the other
-sources), and tenant-scoped. Each result is normalised to a :class:`DirectoryHit` dict that
+sources), and tenant-scoped. Each result is normalized to a :class:`DirectoryHit` dict that
 the API materialises into an owner record + ``OwnerRef`` linkage on selection."""
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _hit(
     upn: str = "",
     group_id: str = "",
 ) -> dict[str, Any]:
-    """One normalised picker result. ``link`` carries whatever directory coordinates the
+    """One normalized picker result. ``link`` carries whatever directory coordinates the
     source could supply; the API stores them on the owner so notify / leaver-detection /
     group-expansion can use them later."""
     return {

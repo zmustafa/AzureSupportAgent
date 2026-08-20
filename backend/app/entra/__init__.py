@@ -7,7 +7,7 @@ estate tooling which answers *what is wrong with my resources*.
 Layout::
 
     graphclient.py      shared paged / batched / throttled Microsoft Graph client
-    licences.py         /subscribedSkus -> P1 / P2 / Governance / workload-premium flags
+    licenses.py         /subscribedSkus -> P1 / P2 / Governance / workload-premium flags
     permissions_probe.py token roles-claim + live probe -> per-domain blindness map
     cache.py            .data/entra/<tenant>/<domain>.json.gz  (+ index.json, state files)
     collectors/         one module per domain, each independently permission-gated

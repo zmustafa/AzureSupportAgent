@@ -181,7 +181,7 @@ def _short_type(arm_type: str) -> str:
 
 
 def _risk_level(failed: int, severity: str) -> str:
-    """Coarse risk band for lens colouring."""
+    """Coarse risk band for lens coloring."""
     sev = (severity or "").lower()
     if failed <= 0:
         return "ok"

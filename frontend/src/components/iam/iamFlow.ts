@@ -241,7 +241,7 @@ export function matchesFilters(fact: IamFlowFact, filters: FlowFilters): boolean
  *
  * Without this the default view of a real tenant put 1,148 principal bars in one column and
  * rendered as a solid block — the route budget then truncated it to 250 of 2,016 links, which
- * is honest and still unreadable. Collapsing the long tail into one labelled "N others" bar
+ * is honest and still unreadable. Collapsing the long tail into one labeled "N others" bar
  * keeps the shape of the answer *and* the total, and the operator narrows the focus to open it
  * up. A cap that silently dropped the tail would be the unacceptable version of this.
  */
@@ -377,7 +377,7 @@ export function buildAccessFlowGraph(
       const previous = `${previousEntry.dimension}::${previousEntry.value.id}`;
       // A ribbon leaving or entering a folded bar is drawn neutral, whatever it carries. It is
       // the widest thing on screen by construction — it is the whole long tail — and painting it
-      // in the privileged colour made "1,136 principals you cannot see" the loudest object on a
+      // in the privileged color made "1,136 principals you cannot see" the loudest object on a
       // page whose job is to show you the ones you can.
       const linkStatus = (collapsed || previousEntry.collapsed) ? "disabled" : status;
       // Keyed by the PAIR only. Including the status here produced a second, parallel link

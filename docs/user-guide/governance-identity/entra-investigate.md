@@ -14,13 +14,13 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:investigate]
 **App route:** `/entra/investigate` or `/entra/investigate?principal_id=<object-id>`
 
 **Product permissions:** `entra.read` opens the Entra shell; `investigate.read` resolves, searches,
-views and exports a dossier; `investigate.activity` separately permits behavioural history.
+views and exports a dossier; `investigate.activity` separately permits behavioral history.
 
 ## Purpose
 
 Investigate converges what the product already knows about one user, guest, group, service
 principal, managed identity, platform principal, deleted object, or cross-tenant principal. It
-keeps structural access separate from behavioural activity and preserves source freshness,
+keeps structural access separate from behavioral activity and preserves source freshness,
 truncation and unreadable states instead of turning missing evidence into a clean result.
 
 A principal whose snapshot state is disabled is marked twice in amber: the header shows
@@ -78,7 +78,7 @@ outside the query. Group-tree reads have the limits listed above and report note
 3. Choose the lens that matches the decision; for a disabled person, **Offboarding** leads with
    access and membership rather than activity.
 4. Review Access, Members, Findings, Changes and Activations with each section's provenance.
-5. Request behavioural activity only when justified and permitted; keep Azure Activity Log off
+5. Request behavioral activity only when justified and permitted; keep Azure Activity Log off
    unless resource-plane evidence is necessary.
 6. Export when a portable evidence artifact is required, then validate conclusions in the current
    Entra/Azure source before changing anything.
@@ -109,7 +109,7 @@ notification. Handoffs from Entra findings, guests and IAM preserve the principa
 
 - The dossier, warning and export do not disable, enable, remove, revoke or otherwise modify a
   directory object, Azure assignment or policy.
-- Behavioural history is separately permissioned and every request is audited because it concerns
+- Behavioral history is separately permissioned and every request is audited because it concerns
   a named identity. Enter a real internal justification, but do not copy identities into public
   examples or documentation.
 - The base dossier is cached and can be stale. Validate consequential state and assignments against
@@ -124,7 +124,7 @@ notification. Handoffs from Entra findings, guests and IAM preserve the principa
 | Symptom | Cause and resolution |
 | --- | --- |
 | A known disabled account has no amber badge/banner | The selected snapshot may predate the change, the wrong tenant/object may be selected, or enabled state is unreadable. Refresh Entra, reselect the exact object, and verify in the Entra admin center. |
-| Structural sections load but **Read activity** is denied | `investigate.read` covers the dossier; behavioural history requires `investigate.activity`. Request that capability or continue with structural evidence only. |
+| Structural sections load but **Read activity** is denied | `investigate.read` covers the dossier; behavioral history requires `investigate.activity`. Request that capability or continue with structural evidence only. |
 | A section says it could not be read | Its named cache or collector failed. Fix that source/consent and refresh; do not interpret the section as zero access or zero findings. |
 | A deleted assignment does not resolve to a name | The surviving assignment no longer has a directory object. Use its resolution and access evidence; do not relabel the raw ID as a live principal. |
 | Group tree reports truncation | Narrow the branches opened in one request. Each request is bounded to 25 expansions, 200 children per node and 1,000 total nodes. |

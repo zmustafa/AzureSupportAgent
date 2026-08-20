@@ -37,7 +37,7 @@ import { EntraCaExposureView } from "./EntraCaExposure";
 /**
  * Cell presentation.
  *
- * Every state carries a glyph as well as a colour. The grid is dense enough that colour alone
+ * Every state carries a glyph as well as a color. The grid is dense enough that color alone
  * would be the only carrier of meaning, which fails for roughly one in twelve male readers and
  * disappears entirely in a printed or screenshotted report — and this screen exists to be put
  * in front of other people.
@@ -423,7 +423,7 @@ function ClassMatrix({
  * The two classes that are conclusions rather than targets.
  *
  * They sit outside the matrix because no policy can name them, so a row of red cells against
- * them would imply work that cannot be done. They are labelled "Derived" in text — not merely
+ * them would imply work that cannot be done. They are labeled "Derived" in text — not merely
  * styled differently — because the distinction changes what the reader is supposed to do next.
  */
 function DerivedClasses({ data }: { data: EntraCaCoverage }) {
@@ -784,7 +784,7 @@ function ConflictsTab({ connectionId }: { connectionId: string | null }) {
     queryKey: ["entra-ca-conflicts", connectionId],
     queryFn: () => api.entraCaConflicts(connectionId),
   });
-  if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Analysing policies…</div>;
+  if (q.isLoading) return <div className="p-6 text-sm text-gray-500">Analyzing policies…</div>;
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   if (!q.data?.meta.loaded) return <EntraEmpty kind="cold" />;
   if (!q.data.conflicts.length)

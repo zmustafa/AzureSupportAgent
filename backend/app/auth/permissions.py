@@ -81,7 +81,7 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("cases.read", "View durable case files and their timelines"),
         ("cases.write", "Open, update, attach to, and resolve case files"),
         ("investigate.read", "Investigate one identity: who it is, what it can reach, and how that changed"),
-        ("investigate.activity", "Read a named identity's sign-in, audit and activity history (behavioural data)"),
+        ("investigate.activity", "Read a named identity's sign-in, audit and activity history (behavioral data)"),
     ]),
     ("Observability", [
         ("monitor.view", "View the Monitor dashboard"),
@@ -108,6 +108,8 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("backup_manager.drill_write", "Manage recovery drills and request Site Recovery test failovers"),
         ("backup_manager.reference_write", "Curate the backup failure knowledge base and protection baselines"),
         ("backup_manager.approve", "Approve and apply Backup Manager changes to Azure"),
+        ("resiliency.read", "View recovery readiness — per-scenario RTO/RPO, breaches and workload roll-up"),
+        ("resiliency.admin", "Set recovery objectives per tier and tune the restore-rate reference"),
         ("teleintel.read", "View App Insights correlation and KQL tools"),
     ]),
     ("Live diagnostics", [
@@ -185,7 +187,7 @@ _OPERATOR_PERMISSIONS: list[str] = [p for p in ALL_PERMISSIONS if p not in _ADMI
 
 # Auditor = read-only oversight across the whole product (+ audit log + monitor + chat).
 # ``investigate.activity`` is named explicitly because it does NOT end in ``.read``: reading a
-# named person's sign-in and audit history is behavioural data, deliberately held apart from the
+# named person's sign-in and audit history is behavioral data, deliberately held apart from the
 # structural reads. The auditor is nevertheless the persona that feature exists for — proving who
 # held privileged access in a period and what they did with it is the job.
 _AUDITOR_PERMISSIONS: list[str] = list(dict.fromkeys(

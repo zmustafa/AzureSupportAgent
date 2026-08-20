@@ -78,7 +78,7 @@ Capture state before any mutation and plan the reversal before running it. Assum
 | `timeout` status | The command exceeded `sandbox_command_timeout_seconds`, default 60. It may still be running on the host. Narrow it. |
 | Runs appear to queue | Four SSH sessions run concurrently across the application. |
 | Missing tool, installation fails | `allow_sudo` is off or the account cannot escalate. Install through the VM's maintenance process. |
-| Output ends mid-line | Storage truncation, not host behaviour. Narrow the command or write to a file and read it in parts. |
+| Output ends mid-line | Storage truncation, not host behavior. Narrow the command or write to a file and read it in parts. |
 
 ## Related docs
 

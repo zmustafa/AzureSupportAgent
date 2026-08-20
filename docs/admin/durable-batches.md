@@ -3,7 +3,7 @@ layout: default
 title: Durable Work Batches
 parent: Administration
 nav_order: 12
-description: Understand the server-owned control plane behind fleet and background work, its states, permissions, and restart behaviour.
+description: Understand the server-owned control plane behind fleet and background work, its states, permissions, and restart behavior.
 permalink: /admin/durable-batches/
 ---
 

@@ -72,7 +72,7 @@ def _federated_demo(tmp_path, monkeypatch):
     )
     demo.seed()
 
-    trust = federation.normalise_federation("contoso.com", {
+    trust = federation.normalize_federation("contoso.com", {
         "displayName": "PingFederate",
         "issuerUri": "http://contoso.com/PingFederate",
         "passiveSignInUri": "https://pf.contoso.com/idp/a/prp.wsf",
@@ -121,7 +121,7 @@ def _auth_methods():
 
 
 def _users() -> list[dict]:
-    snap = snapshot_mod.analyse(demo.DEMO_TENANT)
+    snap = snapshot_mod.analyze(demo.DEMO_TENANT)
     return ((snap.get("data") or {}).get("people") or {}).get("users") or []
 
 

@@ -66,7 +66,7 @@ def test_analysis_does_not_leak_between_tenants():
                                   "mfa_registered": False, "signin_known": False}],
                        "groups": [], "capabilities": {"mfa_registration_report": True},
                        "counts": {}}))
-    a = snapshot_mod.analyse("tenant-a")
+    a = snapshot_mod.analyze("tenant-a")
     objects = {f["object_id"] for f in a["_analysis"]["findings"]}
     assert "b-user" not in objects
 
@@ -81,8 +81,8 @@ def test_derived_joins_survive_the_analysis_memo():
         "people", {"users": [{"id": "u1", "upn": "u1@x", "enabled": True, "user_type": "Member"}],
                    "groups": [], "capabilities": {}, "counts": {}}))
 
-    first = snapshot_mod.analyse("tenant-memo", force=True)
-    second = snapshot_mod.analyse("tenant-memo")          # served from the memo
+    first = snapshot_mod.analyze("tenant-memo", force=True)
+    second = snapshot_mod.analyze("tenant-memo")          # served from the memo
 
     assert second["_analysis"] is first["_analysis"]
     for snap in (first, second):
@@ -110,7 +110,7 @@ def test_score_history_is_isolated_per_tenant():
 
 def test_cold_cache_reports_not_loaded_rather_than_failing():
     """Every GET must return a usable envelope on a cold cache — never a 500."""
-    snap = snapshot_mod.analyse("never-collected")
+    snap = snapshot_mod.analyze("never-collected")
     assert snap["loaded"] is False
     meta = snapshot_mod.meta_envelope(snap, "conn-x")
     assert meta["loaded"] is False

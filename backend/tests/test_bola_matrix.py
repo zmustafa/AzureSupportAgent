@@ -15,7 +15,7 @@ an endpoint passed a request-supplied id to ``resolve_connection``, the id did n
 resolve, and the caller was answered from the DEFAULT connection -- another tenant's
 data, returned with ``ok: true``. The fix was to use exact ``get_connection`` and 404.
 
-These tests pin the semantics so the behaviour cannot drift silently, and act as a
+These tests pin the semantics so the behavior cannot drift silently, and act as a
 tripwire when new call sites appear.
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ _API_DIR = Path(__file__).resolve().parents[1] / "app" / "api"
 
 
 def test_resolve_connection_falls_back_to_default_for_an_unknown_id():
-    """PINNED BEHAVIOUR, not an endorsement.
+    """PINNED BEHAVIOR, not an endorsement.
 
     An id that does not exist yields the DEFAULT connection -- which belongs to a
     different tenant. Any endpoint that passes a *user-supplied* id here will answer

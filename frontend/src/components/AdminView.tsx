@@ -3442,6 +3442,7 @@ function ScoringTaxonomyCard() {
         assessment_severity_weights: form.assessment_severity_weights,
         assessment_score_good: form.assessment_score_good,
         assessment_score_warn: form.assessment_score_warn,
+        assessments_include_recovery: form.assessments_include_recovery,
         architecture_category_colors: form.architecture_category_colors,
         workload_health_weights: form.workload_health_weights,
         workload_nightly_refresh: form.workload_nightly_refresh,
@@ -3514,12 +3515,38 @@ function ScoringTaxonomyCard() {
         </div>
       </Card>
 
+      <Card title="Recovery in the Reliability score">
+        <p className="mb-3 text-xs text-gray-500">
+          A tenant should not score well on Reliability while holding resources that cannot be
+          recovered at all. When this is on, an assessment that includes the Reliability pillar
+          picks up three aggregate controls from the latest Recovery Readiness analysis: no
+          recovery path, redundant but no point-in-time copy, and objectives breached.
+        </p>
+        <label className="flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={!!form.assessments_include_recovery}
+            onChange={(e) => set({ assessments_include_recovery: e.target.checked })}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+          />
+          <span>
+            Count Recovery Readiness against the Reliability pillar
+            <span className="mt-1 block text-xs text-gray-500">
+              Off by default. Turning it on <strong>lowers existing Reliability scores</strong>,
+              which reads as a regression to anyone tracking a trend — announce it rather than
+              shipping it quietly. A workload that has never been analyzed contributes nothing:
+              its controls report <em>not applicable</em> rather than failing, because reporting
+              our own absence as your risk would be worse than staying quiet.
+            </span>
+          </span>
+        </label>
+      </Card>
+
       <Card title="Score color bands">
         <p className="mb-3 text-xs text-gray-500">
           Thresholds for the green/amber/red badges shown on scores across the Assessments
           dashboard.
-        </p>
-        <div className="flex flex-wrap items-end gap-6">
+        </p>        <div className="flex flex-wrap items-end gap-6">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-gray-600">Healthy at or above</span>
             <div className="flex items-center gap-1">
@@ -4575,7 +4602,7 @@ function AIProviderCard() {
     }
   }
 
-  // Model lists are fetched only when the user clicks "Fetch model catalogue" / Refresh —
+  // Model lists are fetched only when the user clicks "Fetch model catalog" / Refresh —
   // never automatically on page load or provider switch (the catalog call can be slow and
   // hits the provider API). The dropdown falls back to the configured/free-text model id.
 
@@ -4663,9 +4690,9 @@ function AIProviderCard() {
       });
       qc.invalidateQueries({ queryKey: ["llmConfig"] });
       qc.invalidateQueries({ queryKey: ["activeLlm"] });
-      // Auto-refresh the model catalogue on the FIRST successful save of a connection — i.e.
+      // Auto-refresh the model catalog on the FIRST successful save of a connection — i.e.
       // when the viewed provider has no models loaded yet — so the admin doesn't have to click
-      // "↻ Refresh models" separately. Once a catalogue exists this won't re-fire on later saves.
+      // "↻ Refresh models" separately. Once a catalog exists this won't re-fire on later saves.
       if ((models[active]?.length ?? 0) === 0 && loadingModels !== active) {
         void refreshModels(active, active === "openrouter" ? forms[active]?.freeOnly : undefined);
       }
@@ -5388,7 +5415,7 @@ function AIProviderCard() {
 
             {(loadingModels === p.id || (refreshSteps[p.id]?.length ?? 0) > 0 || refreshResult[p.id]) && (
               <DiagnosticsPanel
-                title="Model catalogue refresh"
+                title="Model catalog refresh"
                 running={loadingModels === p.id}
                 steps={refreshSteps[p.id] ?? []}
                 result={refreshResult[p.id]}

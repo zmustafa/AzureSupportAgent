@@ -115,6 +115,50 @@ REPLACEMENTS: list[tuple[str, str, str]] = [
         "  mcp_read_only: boolean;\n  entra_mcp_enabled?: boolean;",
         "  mcp_read_only: boolean;\n  entra_mcp_enabled?: boolean;\n  /** Entra sign-in collection window, in days. Clamped to 1–90 by the server. */\n  entra_signin_lookback_days?: number;",
     ),
+    (
+        "investigate members body carries transitive, and the up direction accepts any principal",
+        """    body: { expand: string[]; direction?: "down" | "up" },""",
+        """    body: { expand: string[]; direction?: "down" | "up"; transitive?: boolean },""",
+    ),
+    (
+        "dossier carries group memberships",
+        """    /** Groups only. Absent for every other kind. */
+    members?: InvestigateSection<InvestigateMembers>;
+  };
+};""",
+        """    /** Groups only. Absent for every other kind. */
+    members?: InvestigateSection<InvestigateMembers>;
+    /** The way UP: groups this principal belongs to. Present for every kind that can be
+     *  in a group, which is everything except the Azure platform and the unresolvable. */
+    memberships?: InvestigateSection<InvestigateMemberships>;
+  };
+};
+
+/** One group this principal belongs to, and why that membership matters. */
+export type InvestigateMembership = {
+  id: string;
+  display_name: string;
+  /** grants_azure_rbac | grants_directory_role | targeted_by_ca — why the group was
+   *  expanded at all, and therefore why it is worth reading. */
+  sources: string[];
+  dynamic: boolean;
+  role_assignable: boolean;
+  on_prem_synced: boolean;
+  membership_rule: string;
+};
+
+export type InvestigateMemberships = {
+  groups: InvestigateMembership[];
+  count: number;
+  /** False means no membership source could be read — NOT that the principal is in no
+   *  group. The count is a floor in every case: only groups that grant something were
+   *  ever expanded. */
+  readable: boolean;
+  role_assignable_count: number;
+  /** Server-supplied wording for each `sources` value, so the client never invents one. */
+  source_labels: Record<string, string>;
+};""",
+    ),
 ]
 
 # Appended once, at the end: the fabric shapes the replacements above refer to.

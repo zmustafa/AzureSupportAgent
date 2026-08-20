@@ -2,7 +2,7 @@
 
 Free-text notes could not be grouped or deduplicated. One missing permission was reported
 once per domain that wanted it, and "grant a permission", "assign an Azure role", "buy a
-licence" and "we stopped early on purpose" were rendered identically -- so nothing on the
+license" and "we stopped early on purpose" were rendered identically -- so nothing on the
 coverage banner could be triaged.
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ def test_the_merged_row_keeps_the_more_specific_wording():
 
 
 def test_the_same_scope_under_different_kinds_stays_separate():
-    """A licence gap and a consent gap are different problems with different fixes."""
+    """A license gap and a consent gap are different problems with different fixes."""
     domains = {
         "pim": _domain("pim", [
             model.blocker(model.BLOCKER_CONSENT, "c", scope="X"),

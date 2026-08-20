@@ -212,7 +212,7 @@ def test_an_action_needing_no_standing_role_is_attributed_to_the_elevation():
 
 
 def test_a_standing_admin_could_have_done_it_without_elevating():
-    """The judgement this feature would be dangerous without: someone holding permanent
+    """The judgment this feature would be dangerous without: someone holding permanent
     Global Administrator did not need the activation to make the change."""
     assert activation_actions.classify(
         "entra", ["Global Administrator"], [], True) == activation_actions.POSSIBLE

@@ -43,13 +43,13 @@ CHANGE_CLASSES = (
     ACTIVATED, DEACTIVATED, PATH_CHANGED, ORPHANED,
 )
 
-# Which direction each class moves risk. The UI colours on this and the drift signals only fire
+# Which direction each class moves risk. The UI colors on this and the drift signals only fire
 # on the ones that make things worse — a de-escalation is a change worth showing and never worth
 # alerting on.
 WORSENING = frozenset({ADDED, ESCALATED, RE_SCOPED, ACTIVATED, ORPHANED})
 
 # Privilege tiers, coarse but ordered. Comparing role NAMES cannot tell you whether a change was
-# an escalation; comparing tiers can. Anything unrecognised sits at tier 1 (some access) rather
+# an escalation; comparing tiers can. Anything unrecognized sits at tier 1 (some access) rather
 # than 0, so an unknown custom role is never reported as a de-escalation from Reader.
 TIER_NONE = 0
 TIER_READ = 1

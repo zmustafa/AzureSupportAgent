@@ -154,7 +154,7 @@ SPECS: list[SignalSpec] = [
         remediation="Register a phishing-resistant method for every privileged account, then require it "
                     "with a Conditional Access authentication strength.",
         remediation_steps=(
-            "Entra admin centre > Protection > Authentication methods > Registration campaign.",
+            "Entra admin center > Protection > Authentication methods > Registration campaign.",
             "Ask each administrator to register FIDO2 or Windows Hello for Business.",
             "Create a Conditional Access policy targeting directory roles with a phishing-resistant strength.",
         ),
@@ -173,7 +173,7 @@ SPECS: list[SignalSpec] = [
         impact=IMPACT_RATIO, population=pop_enabled_members,
         remediation="Run an authentication-method registration campaign, then enforce MFA in Conditional Access.",
         remediation_steps=(
-            "Entra admin centre > Protection > Authentication methods > Registration campaign.",
+            "Entra admin center > Protection > Authentication methods > Registration campaign.",
             "Enable the campaign for the affected group and give it a grace period.",
             "Simulate the MFA policy before enforcing it to confirm nobody is hard-blocked.",
         ),
@@ -191,7 +191,7 @@ SPECS: list[SignalSpec] = [
         impact=IMPACT_RATIO, population=pop_enabled_members,
         remediation="Move users to the Authenticator app or a passkey, then disable SMS and voice tenant-wide.",
         remediation_steps=(
-            "Entra admin centre > Protection > Authentication methods > Policies.",
+            "Entra admin center > Protection > Authentication methods > Policies.",
             "Enable Microsoft Authenticator / FIDO2 for all users.",
             "Scope SMS and Voice down to an exception group, then disable them.",
         ),
@@ -210,7 +210,7 @@ SPECS: list[SignalSpec] = [
         impact=IMPACT_SATURATING, saturation=5,
         remediation="Issue FIDO2 keys or enable Windows Hello for Business for every privileged account.",
         remediation_steps=(
-            "Entra admin centre > Protection > Authentication methods > FIDO2 security key.",
+            "Entra admin center > Protection > Authentication methods > FIDO2 security key.",
             "Enable for the privileged group and register keys.",
             "Create an authentication strength policy requiring phishing-resistant MFA for admin roles.",
         ),
@@ -227,7 +227,7 @@ SPECS: list[SignalSpec] = [
         impact=IMPACT_BINARY,
         remediation="Disable SMS, voice and email one-time passcode in the authentication methods policy.",
         remediation_steps=(
-            "Entra admin centre > Protection > Authentication methods > Policies.",
+            "Entra admin center > Protection > Authentication methods > Policies.",
             "Set SMS, Voice call and Email OTP to Disabled (or scope to a small exception group).",
             "Confirm every affected user has registered a stronger method first.",
         ),

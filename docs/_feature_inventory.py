@@ -70,6 +70,13 @@ COMPONENT_REGISTRIES = [
         "id_field": True,
     },
     {
+        "namespace": "RESILIENCY_NAV",
+        "path": COMPONENTS / "ResiliencyView.tsx",
+        "anchor": "const TABS: { id: Tab; label: string; icon: string }[] = [",
+        "terminator": "];",
+        "id_field": True,
+    },
+    {
         "namespace": "EVIDENCE_CONTENT_TABS",
         "path": COMPONENTS / "EvidenceLockerView.tsx",
         "anchor": "const CONTENT_TABS = [",

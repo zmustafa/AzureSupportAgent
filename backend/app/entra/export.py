@@ -29,10 +29,10 @@ BLIND_STATUSES = frozenset({"blind", "error", "not_collected", "unlicensed"})
 #: Statuses that mean "we got rows, but something alongside them was degraded".
 DEGRADED_STATUSES = frozenset({"partial", "stale"})
 
-#: One tab colour per PARENT screen, so the fifty sheets group visually the way the UI does —
+#: One tab color per PARENT screen, so the fifty sheets group visually the way the UI does —
 #: every Conditional Access sheet purple, every Applications sheet cyan, and so on. Hues are
 #: kept far apart rather than pretty: two adjacent shades would suggest a relationship between
-#: sections that do not have one. The Index repeats the grouping as text, because a colour is
+#: sections that do not have one. The Index repeats the grouping as text, because a color is
 #: not readable to everyone and does not survive a print.
 SECTION_COLOURS: dict[str, str] = {
     "Overview": "44546A",              # slate — front matter and the blind-spot register
@@ -172,15 +172,15 @@ def to_workbook(
     )
 
     wb.sheet(
-        "Permissions & licences",
+        "Permissions & licenses",
         ["Kind", "Name", "State", "Detail"],
         [["Graph scope", s, "granted", ""] for s in (perms.get("granted") or [])]
         + [["Graph scope list", "", "verified" if perms.get("granted_known") else "NOT VERIFIED",
             perms.get("claim_error", "") or perms.get("token_error", "")]]
-        + [["Licence", k, "present" if v else "absent", ""]
+        + [["License", k, "present" if v else "absent", ""]
            for k, v in sorted((snapshot.get("licences") or {}).items())]
         + [["Domain permission", k, "ok" if (v or {}).get("ok") else "blocked",
-            ("licence blocked; " if (v or {}).get("licence_blocked") else "")
+            ("license blocked; " if (v or {}).get("licence_blocked") else "")
             + ", ".join(str(m) for m in ((v or {}).get("missing") or []))]
            for k, v in sorted((perms.get("domains") or {}).items())],
         note="" if perms.get("granted_known") else
@@ -204,7 +204,7 @@ def to_workbook(
             [[h.get("at", ""), h.get("score", ""), h.get("coverage", "")] for h in history],
         )
 
-    # Every registered check, whether it fired, and if not, why not. The catalogue is what makes
+    # Every registered check, whether it fired, and if not, why not. The catalog is what makes
     # the findings list interpretable: 0 findings for a signal that never ran is not a pass.
     from app.entra import signals as sig_mod
 
@@ -781,7 +781,7 @@ def to_workbook(
         from app.entra import guests as guests_mod
         from app.entra import snapshot as snapshot_mod
 
-        g = guests_mod.summarise(data.get("people") or {},
+        g = guests_mod.summarize(data.get("people") or {},
                                  stale_days=snapshot_mod.settings()["guest_stale_days"])
         g["domains"] = guests_mod.annotate_partners(
             g["domains"], (data.get("tenant") or {}).get("cross_tenant_partners") or {})

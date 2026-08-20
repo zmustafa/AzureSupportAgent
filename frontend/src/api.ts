@@ -4681,6 +4681,74 @@ function backupScopeQuery(scope: BackupManagerScope, extra: Record<string, strin
 export const api = {
   me: () => http<Me>("/me"),
 
+  // ---------------------------------------------------------------- Recovery Readiness
+  /** The vocabulary: scenarios, RTO classes and their wording. Served by the server so the
+   *  client never invents a label for `none` or `unknown` — they must not read alike. */
+  resiliencyMeta: () => http<ResiliencyMeta>("/resiliency/meta"),
+  /** Everything as of the last analysis. Cache-only; never triggers Azure work. */
+  resiliencySnapshot: (scope: ResiliencyScope) =>
+    http<ResiliencySnapshot>(`/resiliency/snapshot${resiliencyScopeQuery(scope)}`),
+  resiliencySummary: (scope: ResiliencyScope) =>
+    http<ResiliencySummaryResponse>(`/resiliency/summary${resiliencyScopeQuery(scope)}`),
+  resiliencyResources: (
+    scope: ResiliencyScope,
+    params: { scenario?: string; state?: string; search?: string; offset?: number; limit?: number } = {},
+  ) =>
+    http<ResiliencyResourcesResponse>(
+      `/resiliency/resources${resiliencyScopeQuery(scope, params as Record<string, string | number | undefined>)}`),
+  resiliencyResource: (scope: ResiliencyScope, resourceId: string) =>
+    http<{ resource: ResiliencyResource; generated_at: string; provenance: Record<string, ResiliencyProvenance> }>(
+      `/resiliency/resources/${resourceId.replace(/^\//, "")}${resiliencyScopeQuery(scope)}`),
+  resiliencyBreaches: (scope: ResiliencyScope) =>
+    http<ResiliencyBreachesResponse>(`/resiliency/breaches${resiliencyScopeQuery(scope)}`),
+  resiliencyWorkloads: (scope: ResiliencyScope) =>
+    http<{ report_exists: boolean; rows: ResiliencyWorkload[] }>(
+      `/resiliency/workloads${resiliencyScopeQuery(scope)}`),
+  resiliencyAnalyzeStart: (scope: ResiliencyScope) =>
+    http<{ job: ResiliencyJob | null }>(`/resiliency/analyze/start${resiliencyScopeQuery(scope)}`,
+      { method: "POST", body: "{}" }),
+  resiliencyAnalyzeJob: (scope: ResiliencyScope) =>
+    http<{ job: ResiliencyJob | null }>(`/resiliency/analyze/job${resiliencyScopeQuery(scope)}`),
+  resiliencyReference: () => http<ResiliencyReference>("/resiliency/reference"),
+  resiliencySaveReference: (body: Partial<ResiliencyReference>) =>
+    http<{ reference: ResiliencyReference; rejected: string[] }>("/resiliency/reference",
+      { method: "PUT", body: JSON.stringify(body) }),
+  /** The aggregate lens: which resource TYPES are weak, and the reasons that explain most
+   *  of it. Same function the exports use, so the screen and the workbook cannot disagree. */
+  resiliencyAnalysis: (scope: ResiliencyScope) =>
+    http<ResiliencyAnalysis>(`/resiliency/analysis${resiliencyScopeQuery(scope)}`),
+  resiliencyTrend: (scope: ResiliencyScope) =>
+    http<ResiliencyTrend>(`/resiliency/trend${resiliencyScopeQuery(scope)}`),
+  resiliencyExportUrl: (scope: ResiliencyScope, format: "xlsx" | "pdf" = "xlsx") =>
+    `${API_BASE}/resiliency/export${resiliencyScopeQuery(scope, { format })}`,
+  /** Blob rather than a plain link so a 409 (objectives not agreed) can be shown to the
+   *  reader instead of vanishing into a navigation that silently does nothing. Returns the
+   *  server's filename too — two names for one file is how a report gets filed under the
+   *  wrong scope. */
+  resiliencyExport: async (
+    scope: ResiliencyScope, format: "xlsx" | "pdf", signal?: AbortSignal,
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const path = `/resiliency/export${resiliencyScopeQuery(scope, { format })}`;
+    const res = await fetch(`${API_BASE}${path}`, {
+      credentials: "include", cache: "no-store", signal,
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.detail === "string") detail = body.detail;
+      } catch { /* non-JSON error body */ }
+      throw new HttpError(res.status, detail);
+    }
+    const disposition = res.headers.get("content-disposition") ?? "";
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    return { blob: await res.blob(), filename: match?.[1] ?? "" };
+  },
+  resiliencySaveEvidence: (scope: ResiliencyScope, body: { name?: string; retention_class?: string } = {}) =>
+    http<{ ok: boolean; evidence: { id: string; name: string; sha256: string } }>(
+      `/resiliency/evidence${resiliencyScopeQuery(scope)}`,
+      { method: "POST", body: JSON.stringify(body) }),
+
   // ---------------------------------------------------------------- Backup Manager
   backupManagerCapabilities: (scope: BackupManagerScope) =>
     http<BackupManagerCapabilities>(`/backup-manager/capabilities${backupScopeQuery(scope)}`),
@@ -6364,7 +6432,7 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) }),
   entraInvestigateMembers: (
     principalId: string,
-    body: { expand: string[]; direction?: "down" | "up" },
+    body: { expand: string[]; direction?: "down" | "up"; transitive?: boolean },
     connectionId?: string | null,
   ) =>
     http<InvestigateTree>(
@@ -10496,7 +10564,7 @@ export async function streamIamRefresh(
  * One thing stopping a domain from being fully measured.
  *
  * `kind` is what makes it triageable: consent and azure_role the operator can fix today,
- * licence costs money, cap is a deliberate bound and needs no action at all.
+ * license costs money, cap is a deliberate bound and needs no action at all.
  */
 export type EntraBlocker = {
   kind: "consent" | "azure_role" | "licence" | "cap";
@@ -10894,7 +10962,35 @@ export type InvestigateDossier = InvestigateEnvelope & {
     activations: InvestigateSection<Record<string, unknown>[]>;
     /** Groups only. Absent for every other kind. */
     members?: InvestigateSection<InvestigateMembers>;
+    /** The way UP: groups this principal belongs to. Present for every kind that can be
+     *  in a group, which is everything except the Azure platform and the unresolvable. */
+    memberships?: InvestigateSection<InvestigateMemberships>;
   };
+};
+
+/** One group this principal belongs to, and why that membership matters. */
+export type InvestigateMembership = {
+  id: string;
+  display_name: string;
+  /** grants_azure_rbac | grants_directory_role | targeted_by_ca — why the group was
+   *  expanded at all, and therefore why it is worth reading. */
+  sources: string[];
+  dynamic: boolean;
+  role_assignable: boolean;
+  on_prem_synced: boolean;
+  membership_rule: string;
+};
+
+export type InvestigateMemberships = {
+  groups: InvestigateMembership[];
+  count: number;
+  /** False means no membership source could be read — NOT that the principal is in no
+   *  group. The count is a floor in every case: only groups that grant something were
+   *  ever expanded. */
+  readable: boolean;
+  role_assignable_count: number;
+  /** Server-supplied wording for each `sources` value, so the client never invents one. */
+  source_labels: Record<string, string>;
 };
 
 export type InvestigateSignin = {
@@ -10993,7 +11089,7 @@ export type EntraSimulationResult = {
     newly_blocked: number; newly_challenged: number; newly_granted: number;
     protection_lost: number;
     /** Sign-in verdict unchanged, but the SESSION may now do less (or more). A change that
-     *  only touches session controls used to categorise as `unchanged` and vanish. */
+     *  only touches session controls used to categorize as `unchanged` and vanish. */
     session_tightened: number;
     unchanged: number;
   };
@@ -13106,6 +13202,7 @@ export interface AppSettings {
   assessment_severity_weights: Record<string, number>;
   assessment_score_good: number;
   assessment_score_warn: number;
+  assessments_include_recovery?: boolean;
   workload_health_weights?: Record<string, number>;
   workload_nightly_refresh?: boolean;
   architecture_category_colors: Record<string, string>;
@@ -17024,3 +17121,279 @@ export type IamManagedIdentity = {
   }[];
 };
 // <<< iam-escalation-types
+
+// ==================================================================== Recovery Readiness
+/** Recover from WHAT, in HOW LONG, losing HOW MUCH.
+ *
+ *  Three states in here are routinely confused, and the UI must never render them alike:
+ *   - `none`      no recovery path exists for that failure. Worse than slow, not a degree of slow.
+ *   - `unknown`   a source could not be read. NOT a claim that the resource is unprotected.
+ *   - absent      the scenario does not apply to this resource type. Never a pass. */
+export type ResiliencyScenario =
+  | "instance_loss" | "zone_loss" | "region_loss" | "data_corruption" | "accidental_delete";
+
+export type ResiliencyRtoClass =
+  | "automatic" | "minutes" | "hours" | "day_plus" | "none" | "unknown";
+
+export type ResiliencyRpoState = "known" | "none" | "unknown";
+export type ResiliencyConfidence = "high" | "medium" | "low";
+export type ResiliencyBreachState = "met" | "breached" | "undetermined" | "not_applicable";
+
+export type ResiliencyScope = {
+  workloadId?: string | null;
+  subscriptionId?: string | null;
+  managementGroupId?: string | null;
+  connectionId?: string | null;
+};
+
+export function resiliencyScopeQuery(
+  scope: ResiliencyScope, extra: Record<string, string | number | boolean | undefined> = {},
+): string {
+  const params = new URLSearchParams();
+  if (scope.workloadId) params.set("workload_id", scope.workloadId);
+  if (scope.subscriptionId) params.set("subscription_id", scope.subscriptionId);
+  if (scope.managementGroupId) params.set("management_group_id", scope.managementGroupId);
+  if (scope.connectionId) params.set("connection_id", scope.connectionId);
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export type ResiliencyEvidence = { kind: string; detail: string; source: string };
+
+export type ResiliencyProvenance = {
+  source: string; collected_at: string; unreadable: boolean; reason: string; truncated?: boolean;
+};
+
+export type ResiliencyVerdict = {
+  scenario: ResiliencyScenario;
+  /** Only meaningful when `rpo_state === "known"`. */
+  rpo_minutes: number | null;
+  rpo_state: ResiliencyRpoState;
+  rto_class: ResiliencyRtoClass;
+  /** A RANGE, never a midpoint, and only ever present alongside `rto_assumptions`. */
+  rto_band_minutes: [number, number] | null;
+  rto_assumptions: string[];
+  basis: ResiliencyEvidence[];
+  confidence: ResiliencyConfidence;
+  /** False means the scenario cannot happen to this resource type. Render as absent. */
+  applicable: boolean;
+  target?: { rpo_minutes?: number; rto_class?: ResiliencyRtoClass } | null;
+  breach?: { state: ResiliencyBreachState; rpo: boolean; rto: boolean;
+             target_rpo_minutes?: number; target_rto_class?: string; reason?: string };
+};
+
+export type ResiliencyResource = {
+  id: string; name: string; type: string; location: string;
+  resource_group: string; subscription_id: string;
+  workload_id?: string;
+  tier?: string; tier_label?: string; tier_source?: string;
+  redundancy: { zones: string[]; zone_redundant: boolean | null; replication: string; sku: string };
+  protection: {
+    /** THREE states, never a boolean — a boolean cannot express "we did not look". */
+    state: "protected" | "not_protected" | "unknown";
+    reason: string; policy_name: string; frequency: string;
+    retention_days: number | null; recovery_point_age_hours: number | null;
+    vault_redundancy: string;
+    native_backup: { kind: string; interval_minutes?: number | null; retention_days?: number | null;
+                     geo_redundant?: boolean };
+  };
+  dr: { replicated: boolean; rpo_seconds: number | null; replication_health: string;
+        last_test_failover_age_days: number | null };
+  advisor: Record<string, unknown>[];
+  findings: Record<string, unknown>[];
+  size_gb: number | null;
+  verdicts: Record<string, ResiliencyVerdict>;
+  worst: { rto_class: ResiliencyRtoClass; scenario: string; undetermined: number;
+           no_recovery_path: string[] };
+  demo_profile?: string;
+};
+
+export type ResiliencyScenarioCounts = {
+  determined: number; no_recovery_path: number; undetermined: number;
+  not_applicable: number; total: number;
+};
+
+export type ResiliencySummary = {
+  resources: number;
+  by_scenario: Record<string, ResiliencyScenarioCounts>;
+  protection: Record<string, number>;
+  worst: { scenario: string; no_recovery_path: number };
+};
+
+export type ResiliencyBreach = {
+  resource_id: string; name: string; type: string; scenario: ResiliencyScenario; tier: string;
+  rto_class: ResiliencyRtoClass; rpo_minutes: number | null; rpo_state: ResiliencyRpoState;
+  target: { rpo_minutes?: number; rto_class?: string } | null;
+  no_recovery_path: boolean; total_data_loss: boolean; basis: ResiliencyEvidence[];
+};
+
+export type ResiliencyWorkloadScenario = {
+  applicable: boolean;
+  rto_class: ResiliencyRtoClass;
+  rpo_minutes: number | null;
+  rpo_state: ResiliencyRpoState;
+  weakest_link: { id: string; name: string; type: string; reason: string;
+                  shared_platform?: boolean } | null;
+  /** The aggregate is computed over DETERMINED components only; the rest are counted here
+   *  so a quarter-measured application cannot look fully assessed. */
+  coverage: { determined: number; total: number };
+  /** Conservative assumptions travel in the payload, not just in UI copy, because an
+   *  exported figure has to carry the caveats that qualify it. */
+  assumptions: string[];
+  no_recovery_path?: { id: string; name: string }[];
+};
+
+export type ResiliencyWorkload = {
+  workload_id: string; name: string; tier: string; components: number;
+  scenarios: Record<string, ResiliencyWorkloadScenario>;
+  worst: { scenario: string; rto_class: ResiliencyRtoClass;
+           weakest_link: { id: string; name: string } | null };
+};
+
+export type ResiliencySnapshot = {
+  schema_version: number;
+  /** False is the UI's cue to offer the Analyze button rather than render zeros. */
+  report_exists: boolean;
+  generated_at: string;
+  demo: boolean;
+  reason: string;
+  scope: { scope_kind: string; scope_id: string; subscriptions: string[] };
+  summary: ResiliencySummary;
+  resources: ResiliencyResource[];
+  breaches: ResiliencyBreach[];
+  breach_summary: Record<string, number>;
+  workloads: ResiliencyWorkload[];
+  provenance: Record<string, ResiliencyProvenance>;
+  targets_acknowledged?: boolean;
+  /** Resolved per read from the connection's cloud; "" when the cloud is unrecognized. */
+  portal_host?: string;
+  truncation: Record<string, { exported: number; known_total: number }>;
+};
+
+export type ResiliencySummaryResponse = {
+  report_exists: boolean; generated_at: string; demo: boolean;
+  summary: ResiliencySummary; breach_summary: Record<string, number>;
+  provenance: Record<string, ResiliencyProvenance>; targets_acknowledged: boolean;
+};
+
+export type ResiliencyResourcesResponse = {
+  report_exists: boolean; generated_at: string; total: number;
+  rows: ResiliencyResource[]; provenance: Record<string, ResiliencyProvenance>;
+};
+
+export type ResiliencyBreachesResponse = {
+  report_exists: boolean; rows: ResiliencyBreach[]; summary: Record<string, number>;
+  targets_acknowledged: boolean;
+};
+
+export type ResiliencyMeta = {
+  scenarios: { id: ResiliencyScenario; label: string; description: string;
+               redundancy_helps: boolean }[];
+  rto_classes: { id: ResiliencyRtoClass; label: string }[];
+  rpo_states: string[];
+  confidence_levels: string[];
+};
+
+export type ResiliencyJob = {
+  key: string; status: "running" | "done" | "error"; started_at: string;
+  finished_at?: string; error: string;
+  messages: { level: string; message: string; at: string }[];
+};
+
+export type ResiliencyTier = {
+  id: string; label: string;
+  scenarios: Record<string, { rto_class: ResiliencyRtoClass; rpo_minutes: number }>;
+};
+
+export type ResiliencyReference = {
+  version: number; updated_at: string; updated_by: string;
+  restore_rates: Record<string, number>;
+  mechanism_minutes: Record<string, number>;
+  tiers: ResiliencyTier[];
+  default_tier: string;
+  /** Defaults are usable on screen immediately; an EXPORT that quotes them is refused until
+   *  a person has agreed them. */
+  targets_acknowledged: boolean;
+  targets_acknowledged_by: string;
+  targets_acknowledged_at: string;
+};
+
+/** RPO figures describe only resources whose recovery point could be MEASURED. `excluded`
+ *  is how many they leave out, and must be rendered wherever the median is. */
+export type ResiliencyRpoSpread = {
+  known: number[];
+  count_known: number;
+  none: number;
+  unknown: number;
+  not_applicable: number;
+  best_minutes: number | null;
+  median_minutes: number | null;
+  worst_minutes: number | null;
+  excluded: number;
+};
+
+export type ResiliencyTypeRow = {
+  type: string;
+  scenario: string;
+  resources: number;
+  not_applicable: number;
+  worst_rto_class: ResiliencyRtoClass;
+  /** Its own bucket, never folded into a percentage. */
+  undetermined: number;
+  rto_counts: Record<string, number>;
+  rpo: ResiliencyRpoSpread;
+  no_recovery_path: number;
+  breached: number;
+  dominant_reason: string;
+  dominant_reason_count: number;
+  examples: string[];
+};
+
+export type ResiliencyReasonRow = {
+  scenario: string; reason: string; kind: string; source: string;
+  resources: number; types: string[]; no_recovery_path: number; examples: string[];
+};
+
+export type ResiliencyAnalysis = {
+  report_exists: boolean;
+  generated_at?: string;
+  resources: number;
+  by_type: ResiliencyTypeRow[];
+  rto_distribution: Record<string, Record<string, number>>;
+  rpo_distribution: Record<string, ResiliencyRpoSpread>;
+  reasons: ResiliencyReasonRow[];
+  worst_offenders: {
+    id: string; name: string; type: string; location: string;
+    no_recovery_path: string[]; breached: string[]; undetermined: number; reasons: string[];
+  }[];
+  /** Redundant resources whose answer for corruption/deletion is at least two RTO classes
+   *  worse than their answer for infrastructure loss. The product's thesis as a list. */
+  redundancy_gap: {
+    id: string; name: string; type: string; replication: string;
+    zone_redundant: boolean | null; worse_for: string[];
+    infra_rto_class: ResiliencyRtoClass; logical_rto_class: ResiliencyRtoClass;
+    unrecoverable: boolean; reason: string;
+  }[];
+};
+
+export type ResiliencyTrendPoint = {
+  generated_at: string; resources: number; no_recovery_path: number;
+  undetermined: number; breaches: number;
+  protected: number; not_protected: number; protection_unknown: number;
+};
+
+export type ResiliencyTrend = {
+  /** False for a single point: one measurement is not a direction. */
+  available: boolean;
+  points: ResiliencyTrendPoint[];
+  reason?: string;
+  first?: ResiliencyTrendPoint;
+  last?: ResiliencyTrendPoint;
+  deltas?: Record<string, number>;
+  /** True when "fewer unrecoverable" came from losing visibility, not gaining protection. */
+  reading_degraded?: boolean;
+  caveat?: string;
+};

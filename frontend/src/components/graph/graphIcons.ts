@@ -1,6 +1,6 @@
 // Original, simplified monoline glyphs drawn in the Azure visual language (not copied
 // Microsoft assets). Rendered as data-URI SVGs and used as Cytoscape node background-images
-// so the estate graph reads like the Portal instead of flat coloured shapes.
+// so the estate graph reads like the Portal instead of flat colored shapes.
 import type { GraphNode, GraphNodeKind } from "../../api";
 
 const _cache = new Map<string, string>();

@@ -113,7 +113,7 @@ def _days_until(iso: str | None) -> int | None:
     return int((dt - _now()).total_seconds() // 86400)
 
 
-# --------------------------------------------------------------------------- normalise
+# --------------------------------------------------------------------------- normalize
 def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
     """Project a single app (demo or Graph-shaped) onto the grid row contract.
 
@@ -198,7 +198,7 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- aggregate
 def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build facet option counts + the summary KPIs from normalised app rows."""
+    """Build facet option counts + the summary KPIs from normalized app rows."""
     audiences: dict[str, int] = {}
     perms: dict[str, int] = {}
     owners: dict[str, int] = {}

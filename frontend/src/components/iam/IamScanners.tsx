@@ -194,7 +194,7 @@ export function ScannersTab() {
         {ran && !runAll.isPending && !runOne.isPending && (
           <div className="mb-2 rounded border border-green-300 bg-green-50 px-3 py-1.5 text-[11px] text-green-900">
             Baseline recorded. The counts below now describe changes since that run, and any new
-            findings have been delivered to the notification centre.
+            findings have been delivered to the notification center.
           </div>
         )}
         <div className="space-y-2">

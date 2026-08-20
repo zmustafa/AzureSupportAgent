@@ -26,7 +26,7 @@ def test_typed_reference_roundtrip(monkeypatch, tmp_path, mod):
     assert ref["version"] == 0  # fresh seed = builtin, unsaved
     assert ref["types"], "seed must include types"
     if mod is amba_ref:
-        # The AMBA baseline is imported from the upstream catalogue at a pinned release,
+        # The AMBA baseline is imported from the upstream catalog at a pinned release,
         # then layered with local extensions; spot-check both layers survive the merge.
         assert ref["amba_release"], "seed must record the upstream AMBA release tag"
         disks = {item["key"]: item for item in ref["types"]["microsoft.compute/disks"]["alerts"]}

@@ -13,7 +13,7 @@
  *    of 1,227 principals holding access, 25 of which we could not check".
  *  - group header counts come from the SERVER's count maps, never from the loaded page. A
  *    page-derived count shrinks as the reader scrolls.
- *  - the tiers are labelled by what is TRUE of them, not by alarm level. Most of this access is
+ *  - the tiers are labeled by what is TRUE of them, not by alarm level. Most of this access is
  *    dormant — a disabled account cannot obtain a token — and overstating it to make the screen
  *    feel urgent is how a security tool gets ignored.
  *  - "not measured" is never rendered as "never". Sign-in and usage both come from separate
@@ -377,7 +377,7 @@ function IdentityRow({
           {i.softDeleted && <Chip tone="red">recycle bin</Chip>}
           {i.onPremSynced === "true" && <Chip>on-prem</Chip>}
           {/* Only ever shown when a graph HAS been built. Rendering its absence would say
-              "cannot escalate" about a tenant nobody has analysed. */}
+              "cannot escalate" about a tenant nobody has analyzed. */}
           {i.escalationMeasured && i.escalationPaths > 0 && (
             <Chip tone="red">{i.escalationPaths} escalation</Chip>
           )}

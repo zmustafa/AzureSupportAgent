@@ -65,7 +65,7 @@ _SP_SELECT = [
 ]
 
 # ---------------------------------------------------------------- permission tiering
-# CRITICAL: can escalate to tenant control, or read/write all organisational content.
+# CRITICAL: can escalate to tenant control, or read/write all organizational content.
 _CRITICAL_PERMS = {
     "RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrite.All",
     "Application.ReadWrite.All", "Application.ReadWrite.OwnedBy", "Directory.ReadWrite.All",
@@ -121,7 +121,7 @@ def permission_tier(name: str) -> str:
         return TIER_HIGH
     if name in _MEDIUM_PERMS:
         return TIER_MEDIUM
-    # Unrecognised ".ReadWrite.All" style permissions are treated as high, not ignored.
+    # Unrecognized ".ReadWrite.All" style permissions are treated as high, not ignored.
     if name.endswith(".ReadWrite.All") or name.endswith("ReadWrite.Directory"):
         return TIER_HIGH
     if name.endswith(".Read.All"):
@@ -392,7 +392,7 @@ async def _signin_activity(client: GraphClient, ctx: CollectContext, now: dateti
     that has not been touched in a year is housekeeping; the same gap on one with daily traffic
     is live exposure, and the coverage matrix alone cannot tell them apart.
 
-    The return value ALWAYS carries ``measured``. When the tenant lacks the licence or the
+    The return value ALWAYS carries ``measured``. When the tenant lacks the license or the
     permission for sign-in logs, the honest answer is "not measured", never an empty app list —
     an empty list renders as "nothing unattributed", which is the reassuring reading of missing
     data. The `ca.unattributed_apps` detector treats unmeasured as unavailable for the same
@@ -434,7 +434,7 @@ async def _signin_activity(client: GraphClient, ctx: CollectContext, now: dateti
             "measured": False,
             "reason": "Sign-in activity could not be read for this tenant. This usually means the "
                       "AuditLog.Read.All permission is missing, or the tenant has no Entra ID P1 "
-                      "licence. Applications with no policy coverage are still listed, but "
+                      "license. Applications with no policy coverage are still listed, but "
                       "whether anyone is signing into them is unknown.",
             "active_app_ids": [],
         }
@@ -511,7 +511,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
             if app_id:
                 sp_by_appid[app_id] = rec
 
-        # --- permission catalogue (GUID -> name) ----------------------------------
+        # --- permission catalog (GUID -> name) ----------------------------------
         catalogue: dict[str, dict[str, str]] = {}
         for res_app_id, res_name in RESOURCE_APP_IDS.items():
             sp = sp_by_appid.get(res_app_id)

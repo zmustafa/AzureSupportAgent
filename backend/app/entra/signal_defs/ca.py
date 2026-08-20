@@ -361,7 +361,7 @@ SPECS: list[SignalSpec] = [
         benchmarks=("CIS 1.2", "MCSB IM-7"), impact=IMPACT_BINARY,
         remediation="Deploy the baseline policy set: block legacy auth, require MFA for admins, then for all users.",
         remediation_steps=(
-            "Entra admin centre > Protection > Conditional Access > Policies.",
+            "Entra admin center > Protection > Conditional Access > Policies.",
             "Start from the Microsoft-managed templates in report-only mode.",
             "Simulate each policy before enforcing it.",
         ),

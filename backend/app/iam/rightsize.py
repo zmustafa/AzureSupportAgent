@@ -3,7 +3,7 @@
 Two pieces of reference data and one search.
 
 **The narrowest-role index** (`action -> roles granting it, narrowest first`) is built once per
-tenant from the built-in catalogue. The plan lists four consumers for it and this is the third
+tenant from the built-in catalog. The plan lists four consumers for it and this is the third
 to arrive; it was deferred out of P4 because nothing needed it yet.
 
 **Set cover.** Given the actions a principal actually exercised, find the smallest set of
@@ -230,7 +230,7 @@ def _truncate_to_scope(segments: list[str]) -> str:
 
 
 # --------------------------------------------------------------------------- recommendations
-def analyse(
+def analyze(
     rows: list[dict[str, Any]],
     role_index: dict[str, effective.RoleActionSet],
     usage_payload: dict[str, Any],
@@ -295,7 +295,7 @@ def analyse(
     assessed = 0
     skipped_break_glass = 0
     # Rows dropped because their role's actions were never collected. Counted rather than
-    # silently skipped: when the role catalogue is missing, EVERY row takes this branch and the
+    # silently skipped: when the role catalog is missing, EVERY row takes this branch and the
     # function returns an empty recommendation list that is indistinguishable from "this tenant
     # is clean". That is the exact shape of the bug this counter exists to make visible.
     unresolved = 0
@@ -384,10 +384,10 @@ def _remember(key: tuple[str, tuple[str, int]], payload: dict[str, Any]) -> None
         _ANALYSIS_CACHE.popitem(last=False)
 
 
-def analyse_for_tenant(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
+def analyze_for_tenant(tenant_id: str, *, force: bool = False) -> dict[str, Any]:
     """The granted-vs-used analysis for a tenant's current snapshot, memoised and PERSISTED.
 
-    :func:`analyse` is pure CPU over (assignments x role catalogue): **two seconds** on a
+    :func:`analyze` is pure CPU over (assignments x role catalog): **two seconds** on a
     realistic 5,506-grant tenant even after the breadth memo, and it was previously re-run on
     every single request to `/iam/rightsizing` — cold AND warm, because the endpoint computed
     from scratch while a perfectly good cached copy sat on disk unread.
@@ -396,7 +396,7 @@ def analyse_for_tenant(tenant_id: str, *, force: bool = False) -> dict[str, Any]
     bump it, and persisting this analysis does not — so the stamp means exactly "the inputs this
     was derived from are still the current ones". ``force=True`` is what the refresh path uses.
 
-    Callers holding rows that did not come from the tenant cache must call :func:`analyse`."""
+    Callers holding rows that did not come from the tenant cache must call :func:`analyze`."""
     from app.iam import cache, compose
 
     version = cache.cache_version()
@@ -415,7 +415,7 @@ def analyse_for_tenant(tenant_id: str, *, force: bool = False) -> dict[str, Any]
                 return stored
 
     started = time.monotonic()
-    payload = analyse(
+    payload = analyze(
         compose.build_master_rows(tenant_id),
         effective.build_role_index(cache.read_directory(tenant_id).get("role_defs", [])),
         cache.read_usage(tenant_id),

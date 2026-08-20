@@ -389,7 +389,7 @@ def _apps() -> dict[str, Any]:
          "verified_publisher": "Contoso Ltd"},
     ]
     # Risk scores are computed with the same function the collector uses, so the demo can
-    # never drift away from production behaviour.
+    # never drift away from production behavior.
     from app.entra.collectors.apps import risk_score
 
     sp_by_object = {s["object_id"]: s for s in sps}
@@ -719,6 +719,6 @@ def seed(tenant_id: str = DEMO_TENANT) -> dict[str, Any]:
     from app.entra import snapshot as snapshot_mod
 
     snapshot_mod.invalidate(tenant_id)
-    snap = snapshot_mod.analyse(tenant_id, force=True)
+    snap = snapshot_mod.analyze(tenant_id, force=True)
     return {"tenant_id": tenant_id, "score": snap["_analysis"]["score"]["score"],
             "findings": len(snap["_analysis"]["findings"])}

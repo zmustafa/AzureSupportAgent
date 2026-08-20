@@ -1,6 +1,6 @@
 """Tests for the GitHub Copilot auth manager after the headless (device-flow) migration.
 
-These verify the browser-free behaviour:
+These verify the browser-free behavior:
   * ``refresh_token`` mints a fresh Copilot bearer from a stored OAuth token (no browser);
   * ``refresh_token`` returns ``None`` when there is no stored OAuth token;
   * ``status``/``sign_out`` work off the token cache only (no browser profile);

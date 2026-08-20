@@ -435,7 +435,7 @@ def test_score_over_demo_data_publishes_coverage_and_pillar_states(isolated_cach
 
 
 def test_an_unbuilt_pillar_is_still_possible_and_still_reports_honestly(monkeypatch):
-    """The behaviour the test above used to pin, kept explicitly now that every pillar in the
+    """The behavior the test above used to pin, kept explicitly now that every pillar in the
     shipped registry happens to be built."""
     only_priv = [s for s in signals.all_signals() if s.pillar == "priv"][:1]
     monkeypatch.setattr(signals, "_REGISTRY", only_priv)

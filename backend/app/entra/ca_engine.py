@@ -170,7 +170,7 @@ def _resolve_principals(
     """Resolve one side (include or exclude) of a policy's user condition.
 
     Returns ``(user_ids, is_all)``. ``is_all`` matters: "All users" must stay symbolic so a
-    policy that targets everyone is still recognised as such on a partial user snapshot.
+    policy that targets everyone is still recognized as such on a partial user snapshot.
     """
     out: set[str] = set()
     is_all = False
@@ -446,7 +446,7 @@ def build_cohorts(snapshot_data: dict[str, Any], breakglass_ids: set[str]) -> li
 
 
 def _looks_like_service_account(user: dict[str, Any]) -> bool:
-    """Heuristic, and labelled as such everywhere it surfaces.
+    """Heuristic, and labeled as such everywhere it surfaces.
 
     A service account is dangerous in a Conditional Access rollout precisely because it
     cannot satisfy an MFA grant — so the heuristic deliberately leans on 'no MFA method
@@ -790,7 +790,7 @@ def detect_breakglass(
 
 
 # ========================================================================= entry point
-def analyse(
+def analyze(
     snapshot_data: dict[str, Any],
     *,
     confirmed_breakglass: dict[str, Any] | None = None,

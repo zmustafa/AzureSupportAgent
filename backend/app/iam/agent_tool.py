@@ -259,7 +259,7 @@ def _make_unused_permissions(tenant_id: str):
         analysis = cache.read_rightsizing(tenant_id)
         if not analysis.get("measured"):
             # "Nothing unused" and "we never measured usage" must not read the same, especially
-            # to a model that will summarise this into a recommendation.
+            # to a model that will summarize this into a recommendation.
             reasons = analysis.get("limitations") or ["Usage has not been collected."]
             return ok(
                 "UNMEASURED — usage has not been collected for this tenant, so nothing here is a "
@@ -577,7 +577,7 @@ def build_iam_tools(tenant_id: str) -> list[ConnectorTool]:
         ConnectorTool(
             name="access_changed_since",
             description=(
-                "Summarise authorization changes since the previous cached scan — new access, "
+                "Summarize authorization changes since the previous cached scan — new access, "
                 "widened scope, escalated privilege. Says so when there is no baseline to "
                 "compare against instead of reporting no changes. Read-only."
             ),

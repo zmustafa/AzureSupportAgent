@@ -30,7 +30,7 @@ from app.iam import cache, compose, schema, usage
 # real (an access token lives up to about an hour, and refresh-token revocation is only
 # immediate for resources that support Continuous Access Evaluation). It is deliberately NOT a
 # bucket here, because populating it requires knowing WHEN each account was disabled, and Graph
-# exposes no such property. An empty tier labelled "residual sessions" would read as "we checked
+# exposes no such property. An empty tier labeled "residual sessions" would read as "we checked
 # and there are none", so it is published as a stated limitation instead of a fake zero.
 TIER_LIVE = "live_now"
 TIER_RESTORABLE = "restorable"
@@ -122,7 +122,7 @@ def signin_enrichment(tenant_id: str) -> dict[str, Any]:
       only one of the three that cannot be satisfied by a stream of failures;
     * ``servicePrincipal`` — from ``/reports/servicePrincipalSignInActivities``, which only
       covers apps seen inside a bounded window (see ``window_days`` on the payload). Its absence
-      therefore means "not seen in that window", **never** "never", and it is labelled that way
+      therefore means "not seen in that window", **never** "never", and it is labeled that way
       everywhere it is shown. It is also keyed by **appId**, not by object id.
     """
     empty = {"available": False, "generated_at": "", "by_id": {}, "sp_by_id": {}, "sp_window_days": 0}
@@ -272,7 +272,7 @@ def _resource_tree(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     The rollup used to flatten every scope to ``scopeDisplayName or scope`` and hand the UI a
     list of strings, which it then truncated to six with a "+4 more" that was not a control.
-    Everything needed to organise them — scope type, subscription, resource group, resource
+    Everything needed to organize them — scope type, subscription, resource group, resource
     type — was on the row and thrown away, so the reader could neither group by resource type
     nor recover the full ARM id of the thing they were being asked to act on."""
     by_scope: dict[str, dict[str, Any]] = {}

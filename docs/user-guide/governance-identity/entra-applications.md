@@ -24,10 +24,10 @@ Applications answers which non-human identities exist in the tenant, what they h
 - `entra.read` to view; `entra.admin` to refresh. Nothing on this tab writes to the directory.
 - Consent tier 1: `Application.Read.All` and `Directory.Read.All` for registrations, service principals, owners, credentials and granted app-role assignments. Without these the tab is blind.
 - Consent tier 2: `Policy.Read.PermissionGrant` for the consent posture and permission-grant policies, and `Synchronization.Read.All` for provisioning jobs. Missing either narrows the Consent sub-tab rather than emptying the grid.
-- No Entra ID P1 or P2 licence is required for the application inventory itself. Conditional Access relevance on the detail view depends on the Conditional Access collection, which does need P1.
+- No Entra ID P1 or P2 license is required for the application inventory itself. Conditional Access relevance on the detail view depends on the Conditional Access collection, which does need P1.
 - An Azure ARM connection with a completed RBAC scan for the Azure reach block. It reads the existing RBAC cache and starts no new Azure collection.
 
-Permission names and their risk tiers are resolved from the live Microsoft Graph service principal rather than a hard-coded list, so a new permission is named automatically and an unrecognised identifier is reported as unknown rather than silently dropped.
+Permission names and their risk tiers are resolved from the live Microsoft Graph service principal rather than a hard-coded list, so a new permission is named automatically and an unrecognized identifier is reported as unknown rather than silently dropped.
 
 See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
 
@@ -56,7 +56,7 @@ Risk is a weighted score out of 100, and the components are published by the API
 
 A component can be marked not applicable with a stated reason — an Azure-managed identity is not scored on credentials or ownership, because the platform owns both.
 
-**Selecting a row** opens the application detail panel, which carries: the risk breakdown component by component with points against weight; owners resolved to names, with an explicit callout when there are none; granted application permissions as tier-coloured chips; delegated consent separated into tenant-wide and per-user; requested-but-not-granted permissions, labelled as not being risk today; credentials with their name or identifier, their kind, and their expiry state; federated identity credentials with issuer and a flag for a wildcard subject; Conditional Access relevance, meaning which enforced policies target this application or all applications; Azure reach from the RBAC cache with a staleness note; provisioning jobs with their status and any quarantine; and the findings raised against this object. Redirect URIs are collected and feed the exposure component of the score. Sign-in audience, single sign-on mode, assignment requirement, and the owning tenant of an external application are shown as facts alongside the identifiers.
+**Selecting a row** opens the application detail panel, which carries: the risk breakdown component by component with points against weight; owners resolved to names, with an explicit callout when there are none; granted application permissions as tier-colored chips; delegated consent separated into tenant-wide and per-user; requested-but-not-granted permissions, labeled as not being risk today; credentials with their name or identifier, their kind, and their expiry state; federated identity credentials with issuer and a flag for a wildcard subject; Conditional Access relevance, meaning which enforced policies target this application or all applications; Azure reach from the RBAC cache with a staleness note; provisioning jobs with their status and any quarantine; and the findings raised against this object. Redirect URIs are collected and feed the exposure component of the score. Sign-in audience, single sign-on mode, assignment requirement, and the owning tenant of an external application are shown as facts alongside the identifiers.
 
 **Consent** reports the tenant posture — whether user consent is unrestricted, disabled, or restricted to low-risk permissions; whether the admin consent request workflow is enabled; and where guest invitations may come from — followed by a table of every delegated grant consented for all principals, with the client application, the resource, the scopes, and the highest tier among them. Permission grant policies are returned with the same payload.
 
@@ -110,7 +110,7 @@ enabled/deactivated state.
 - **No secret or certificate value is ever retrieved or displayed.** Only the credential's identifier or display name, its kind, and its expiry are collected. There is no code path that reads a secret value, and there could not be one — Microsoft Graph does not return it after creation.
 - **Credential rotation happens outside this product.** This screen tells you what is about to expire and who owns it; creating, replacing, and removing credentials is done in the Microsoft Entra admin center through your change process.
 - Microsoft first-party service principals are excluded from the grid, so the counts are about the tenant's own and its third-party applications.
-- Permission tiering is a judgement about blast radius, not a Microsoft classification. An unrecognised write-scoped permission is treated as high rather than ignored.
+- Permission tiering is a judgment about blast radius, not a Microsoft classification. An unrecognized write-scoped permission is treated as high rather than ignored.
 - Conditional Access relevance is derived from the snapshot's enforced policies and application targeting; it is not a Microsoft what-if evaluation.
 - Azure reach comes from the RBAC cache and can be older than the Entra snapshot. The panel says so when it is.
 - Exports and screenshots of this tab contain application identifiers and consent detail. Handle them as governance material.

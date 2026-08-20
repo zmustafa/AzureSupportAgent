@@ -269,7 +269,7 @@ def test_contributor_still_grants_what_it_does_not_subtract():
 # --------------------------------------------------------------------------- plane separation
 def test_a_control_plane_wildcard_never_grants_a_data_action():
     """Owner has actions ["*"] and no dataActions. It does NOT grant blob data access —
-    a real and frequently-misunderstood Azure behaviour."""
+    a real and frequently-misunderstood Azure behavior."""
     dec = _ev([_grant(OWNER, "Owner", scope=SUB)], action=BLOB_READ, plane=effective.PLANE_DATA)
     assert dec.verdict == NOT_GRANTED
     assert "data plane" in dec.reason

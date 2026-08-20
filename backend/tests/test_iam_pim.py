@@ -121,7 +121,7 @@ async def test_refused_requests_grant_nothing(monkeypatch, status):
 
 
 async def test_missing_p2_licence_is_skipped_not_failed(monkeypatch):
-    """PIM reports a missing licence as a 400 WITH A MESSAGE, not a 403. Calling that Failed
+    """PIM reports a missing license as a 400 WITH A MESSAGE, not a 403. Calling that Failed
     sends the operator chasing a permission problem that does not exist."""
     _patch_get_all(monkeypatch, [], err="HTTP 400: The tenant needs an AADP2 licence to use PIM", code=400)
     rows, st = await collectors.collect_pim_eligibility(

@@ -71,7 +71,7 @@ EDGE_KINDS: tuple[str, ...] = (
 MAX_NODES = 900
 GROUP_COLLAPSE_THRESHOLD = 25
 # How many targets one principal may reach through one primitive before the rest are
-# summarised as a count. A service principal that can seize 224 applications is one finding
+# summarized as a count. A service principal that can seize 224 applications is one finding
 # with a number, not 224 arrows.
 MAX_FAN_OUT = 12
 
@@ -908,7 +908,7 @@ def federation_map(data: dict[str, Any]) -> dict[str, Any]:
     edges: list[dict[str, Any]] = []
     for trust in trusts:
         domain = str(trust.get("domain") or "")
-        vendor = (trust.get("vendor") or {}).get("label") or "Unrecognised provider"
+        vendor = (trust.get("vendor") or {}).get("label") or "Unrecognized provider"
         mfa = trust.get("mfa_behaviour") or {}
         nid = f"efd:{domain.lower()}"
         nodes.append(_node(

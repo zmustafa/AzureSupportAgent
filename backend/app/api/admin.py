@@ -125,6 +125,10 @@ class AppSettingsUpdate(BaseModel):
     assessment_severity_weights: dict[str, int] | None = None
     assessment_score_good: int | None = None
     assessment_score_warn: int | None = None
+    # Recovery Readiness. Contributing to the Reliability pillar moves an existing tenant's
+    # score, so it is opt-in rather than a silent change to a number people track.
+    assessments_include_recovery: bool | None = None
+    resiliency_tools_enabled: bool | None = None
     architecture_category_colors: dict[str, str] | None = None
     # Policy exemption guardrails (enforced on create/extend).
     policy_exemption_require_justification: bool | None = None
@@ -350,7 +354,7 @@ async def list_llm_models(
 async def _fetch_provider_models(
     provider: str, prov: dict[str, Any], free_only: bool | None
 ) -> dict[str, Any]:
-    """Internal: fetch the raw model catalogue for a provider (live + fallback).
+    """Internal: fetch the raw model catalog for a provider (live + fallback).
     Caller is responsible for applying the per-provider hidden-models filter."""
     base_url = (prov.get("base_url") or "").strip()
     if base_url:
@@ -884,7 +888,7 @@ async def test_llm_provider_stream(
 
 # --- Staged "Refresh models" diagnostics (SSE) ----------------------------------------
 # Same shape as the Test connection stream, but the terminal phase fetches the model
-# catalogue from the provider so the admin sees where the list came from and how many
+# catalog from the provider so the admin sees where the list came from and how many
 # models were returned. The final `done` payload includes `models: [...]` so the UI can
 # update the model dropdown with the freshly-fetched list.
 
@@ -980,12 +984,12 @@ async def _diagnose_models(provider: str, free_only: bool | None):
         except Exception as exc:  # noqa: BLE001
             yield _ev("connect", "warn", f"Reached {host}, unusual response", str(exc)[:200], _ms_since(t0))
 
-    # ---- 4. Fetch model catalogue ----------------------------------------------
+    # ---- 4. Fetch model catalog ----------------------------------------------
     t0 = time.perf_counter()
     ids: list[str] = []
     fetch_err: str | None = None
     try:
-        # Always fetch the full catalogue here (include hidden) — the admin needs to
+        # Always fetch the full catalog here (include hidden) — the admin needs to
         # see every model to manage visibility; chat-picker filtering happens elsewhere.
         prov_cfg = load_config().get("providers", {}).get(provider, {})
         res = await _fetch_provider_models(provider, prov_cfg, free_only)

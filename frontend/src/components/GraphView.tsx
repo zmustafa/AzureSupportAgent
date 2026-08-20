@@ -227,7 +227,7 @@ export function GraphPanel() {
       opts.nodeSeparation = 90;
       opts.packComponents = true;
     } else if (real === "concentric") {
-      // Workload(s) in the centre, then resources, then findings/overlays on the outer rings.
+      // Workload(s) in the center, then resources, then findings/overlays on the outer rings.
       const tier = (n: any): number => {
         const k = n.data("kind");
         if (k === "workload" || k === "tenant_connection") return 4;
@@ -253,7 +253,7 @@ export function GraphPanel() {
 
   const stampOwners = useCallback(async (nodes: GraphNode[]) => {
     // Resolve the effective owner of each workload node from the ownership registry and stamp
-    // it into the node data so the Ownership lens colours by REAL assignments (not just tags).
+    // it into the node data so the Ownership lens colors by REAL assignments (not just tags).
     const subjects = nodes
       .filter((n) => n.kind === "workload" && n.data?.workload_id)
       .map((n) => ({ subject_kind: "workload", subject_id: String(n.data?.workload_id || "") }))
@@ -867,7 +867,7 @@ export function GraphPanel() {
     return [
       { text: "This is your estate graph — the tenant connection at the root.", kind: "tenant_connection" },
       { text: "Subscriptions hang off the connection.", kind: "subscription" },
-      { text: "Workloads are the primary objects — colour them by the Risk lens.", kind: "workload" },
+      { text: "Workloads are the primary objects — color them by the Risk lens.", kind: "workload" },
       { text: "Architectures model workloads; memory documents them.", kind: "architecture" },
     ].filter((s) => has(s.kind));
   }, [stats.nodes]);

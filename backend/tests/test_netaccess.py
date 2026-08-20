@@ -51,7 +51,7 @@ def test_forged_x_forwarded_for_does_not_bypass_allowlist(monkeypatch):
     """A caller must not be able to choose their own apparent IP by prepending to the header.
 
     The proxy APPENDS the address it actually saw, so anything injected by the caller sits to
-    the LEFT of it. Reading the leftmost entry (the previous behaviour) let any caller claim to
+    the LEFT of it. Reading the leftmost entry (the previous behavior) let any caller claim to
     be an allowlisted address.
     """
     from app.core.clientip import client_ip
@@ -324,7 +324,7 @@ def test_changing_the_rules_recompiles():
     assert netaccess.matches("203.0.113.7", [_rule("198.51.100.0/24")]) is False
 
 
-# =============================================================== middleware behaviour
+# =============================================================== middleware behavior
 
 
 def _set_config(tmp_path, monkeypatch, cfg):

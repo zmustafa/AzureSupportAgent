@@ -53,6 +53,7 @@ from app.api import (
     quota,
     radar,
     reservations,
+    resiliency,
     tagintel,
     telemetry,
     teleintel,
@@ -384,6 +385,10 @@ app.add_middleware(
         "Cache-Control",
         "X-Requested-With",
     ],
+    # Downloads fetched as a Blob (rather than a plain link) cannot read the server's
+    # filename unless it is exposed, so every such caller has to invent its own — and two
+    # names for one file is how a report gets filed under the wrong scope.
+    expose_headers=["Content-Disposition"],
     max_age=3600,
 )
 
@@ -670,6 +675,7 @@ api.include_router(alert_analysis.router)
 api.include_router(alerts_manager.router)
 api.include_router(amba.router)
 api.include_router(backup_manager.router)
+api.include_router(resiliency.router)
 api.include_router(telemetry.router)
 api.include_router(backupdr.router)
 api.include_router(coverage_reports.router)

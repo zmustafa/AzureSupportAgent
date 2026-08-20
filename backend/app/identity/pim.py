@@ -1,7 +1,7 @@
 """PIM / JIT lifecycle review — eligible-vs-active role drift, stale privileged access,
 and Just-In-Time activation review over time.
 
-Four signal groups, each normalised to a common *finding* shape (a superset of the Identity
+Four signal groups, each normalized to a common *finding* shape (a superset of the Identity
 dashboard finding so the UI + ticket/investigate handoffs can treat them uniformly):
 
     standing_access     — permanent/active assignments to privileged roles that should be
@@ -100,7 +100,7 @@ def _role_tier(role: str | None) -> str:
 
 
 def _pim_finding(**kw: Any) -> dict[str, Any]:
-    """Normalise a PIM finding to the common shape consumed by the UI + handoffs."""
+    """Normalize a PIM finding to the common shape consumed by the UI + handoffs."""
     return {
         "id": kw.get("id", ""),
         "kind": kw.get("kind", ""),

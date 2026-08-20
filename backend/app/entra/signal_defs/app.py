@@ -253,7 +253,7 @@ _mail = _granted_matching(
 _files = _granted_matching(
     lambda p: p.get("flags", {}).get("files"), "app.tenant_wide_files", "critical",
     lambda sp, names: f"'{sp.get('display_name')}' can read all SharePoint and OneDrive content ({', '.join(names)})",
-    "Tenant-wide file access reaches every document library and personal drive in the organisation.",
+    "Tenant-wide file access reaches every document library and personal drive in the organization.",
 )
 _chat = _granted_matching(
     lambda p: p.get("flags", {}).get("chat"), "app.tenant_wide_chat", "critical",
@@ -379,7 +379,7 @@ def _fic_untrusted(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, A
         out.append(model.finding(
             signal_id="app.fic_untrusted_issuer", severity="critical", pillar="app",
             object_kind="app", object_id=oid, object_name=name,
-            title=f"'{name}' trusts an unrecognised or wildcard federated identity credential",
+            title=f"'{name}' trusts an unrecognized or wildcard federated identity credential",
             detail="A federated credential is a credential-less way to obtain this application's "
                    "tokens. An unexpected issuer, or a wildcard subject, is a persistence mechanism.",
             evidence={"credentials": [
@@ -581,7 +581,7 @@ SPECS: list[SignalSpec] = [
         benchmarks=("MCSB IM-3",), impact=IMPACT_RATIO, population=pop_applications,
         remediation="Assign at least two directory owners and record a business owner.",
         remediation_steps=(
-            "Entra admin centre > App registrations > select the app > Owners.",
+            "Entra admin center > App registrations > select the app > Owners.",
             "Add two owners; prefer a group over an individual so departures do not orphan it.",
         ),
         doc_link=APP_DOC, evaluate=_ownerless,
@@ -606,7 +606,7 @@ SPECS: list[SignalSpec] = [
         benchmarks=("MCSB PA-7",), impact=IMPACT_SATURATING, saturation=2,
         remediation="Remove the permission and replace it with the narrowest scope the workload needs.",
         remediation_steps=(
-            "Entra admin centre > Enterprise applications > Permissions.",
+            "Entra admin center > Enterprise applications > Permissions.",
             "Revoke AppRoleAssignment.ReadWrite.All / RoleManagement.ReadWrite.Directory.",
             "Re-grant only the specific permission the workload actually calls.",
         ),
@@ -628,7 +628,7 @@ SPECS: list[SignalSpec] = [
         id="app.tenant_wide_mail", title="Applications that can read all mail",
         question="Which applications can read everyone's mailbox?",
         why="An application permission on mail is not scoped to one mailbox — it reaches every "
-            "mailbox in the organisation.",
+            "mailbox in the organization.",
         pillar="app", severity="critical", weight=9, object_kind="sp",
         domains=("apps",), requires=("Application.Read.All",),
         impact=IMPACT_SATURATING, saturation=2,
@@ -690,7 +690,7 @@ SPECS: list[SignalSpec] = [
         remediation="Restrict user consent to verified publishers and low-impact permissions, and "
                     "enable the admin consent request workflow.",
         remediation_steps=(
-            "Entra admin centre > Enterprise applications > Consent and permissions > User consent settings.",
+            "Entra admin center > Enterprise applications > Consent and permissions > User consent settings.",
             "Select 'Allow user consent for apps from verified publishers, for selected permissions'.",
             "Enable the admin consent request workflow so users have a route to ask.",
         ),
@@ -731,7 +731,7 @@ SPECS: list[SignalSpec] = [
         evaluate=_redirect_uri_risky,
     ),
     SignalSpec(
-        id="app.fic_untrusted_issuer", title="Federated credentials from unrecognised issuers",
+        id="app.fic_untrusted_issuer", title="Federated credentials from unrecognized issuers",
         question="Which external systems can mint tokens for your applications?",
         why="A federated identity credential is a credential-less persistence mechanism — no secret "
             "to expire, no secret to rotate, and nothing in the credential list to notice.",
@@ -752,7 +752,7 @@ SPECS: list[SignalSpec] = [
         impact=IMPACT_SATURATING, saturation=2,
         remediation="Resolve the provisioning error and restart the synchronisation job.",
         remediation_steps=(
-            "Entra admin centre > Enterprise applications > the app > Provisioning.",
+            "Entra admin center > Enterprise applications > the app > Provisioning.",
             "Review the quarantine reason and fix the credential or mapping error.",
             "Restart provisioning and confirm the next cycle succeeds.",
         ),

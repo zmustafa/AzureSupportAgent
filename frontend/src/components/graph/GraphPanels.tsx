@@ -258,7 +258,7 @@ export function ViewsPanel({ onApply, onSaveCurrent, onClose }: {
 
 // ----------------------------------------------------------------- zoom control
 // A vertical zoom slider + / − buttons + a "fit" button, anchored over the canvas. Zooms
-// about the viewport centre so the framing stays stable. Subscribes to cytoscape's own zoom
+// about the viewport center so the framing stays stable. Subscribes to cytoscape's own zoom
 // event so the slider stays in sync with wheel/pinch zoom too.
 export function ZoomControl({ cy, dark }: { cy: any; dark: boolean }) {
   const [zoom, setZoom] = useState(1);
@@ -369,7 +369,7 @@ export function Minimap({ cy }: { cy: any }) {
     if (!scale) return;
     const gx = (cx - ox) / scale;
     const gy = (cy2 - oy) / scale;
-    // Pan so the clicked graph point lands at the viewport centre.
+    // Pan so the clicked graph point lands at the viewport center.
     const z = cy.zoom();
     const vw = cy.width(), vh = cy.height();
     cy.animate({ pan: { x: vw / 2 - gx * z, y: vh / 2 - gy * z } }, { duration: 250 });

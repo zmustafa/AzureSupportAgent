@@ -3,7 +3,7 @@
 Why this exists: the app runs with a read-only service principal that often lacks Microsoft
 Graph directory permissions, billing reader, or management-group reader. The scanner
 (github.com/zmustafa/AzureEntraIDIAMScanner) runs interactively under ``az login`` as a human
-who *does* hold them. Import lets that human produce the data and this product analyse it —
+who *does* hold them. Import lets that human produce the data and this product analyze it —
 **without granting the app those permissions.** Because ``schema.SCANNER_COLUMNS`` is the
 scanner's header verbatim, a row is interchangeable and every tab, pivot and export works over
 imported data unchanged.

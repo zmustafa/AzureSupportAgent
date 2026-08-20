@@ -218,7 +218,7 @@ async def test_an_unknown_role_definition_degrades_to_the_guid_not_a_crash(monke
     row = buckets["/subscriptions/s1"][0]
     assert row["roleName"] == RD_OWNER
     # Unknown role => unknown privilege. Defaulting to privileged would invent findings;
-    # defaulting to not-privileged is the documented behaviour and matches the ARM collector.
+    # defaulting to not-privileged is the documented behavior and matches the ARM collector.
     assert row["roleIsPrivileged"] is False
 
 
@@ -792,7 +792,7 @@ async def test_every_untrustworthy_status_forces_a_recollect(isolated_cache, mon
 
 
 async def test_a_partially_collected_scope_is_NOT_forced_to_recollect(isolated_cache, monkeypatch):
-    """The bug this caught on a live tenant: no Entra ID P2 licence means every PIM endpoint
+    """The bug this caught on a live tenant: no Entra ID P2 license means every PIM endpoint
     returns 400, so every scope is permanently `PartiallyCollected`. Treating Partial as
     untrustworthy made delta refresh re-collect the entire estate — on exactly the tenants it
     was meant to help — while still reporting itself as a delta. Partial means "we have the rows,
@@ -814,7 +814,7 @@ def test_partial_needs_attention_but_is_not_untrustworthy():
     assert schema.UNTRUSTWORTHY_STATUSES < schema.ATTENTION_STATUSES
 
 
-# --------------------------------------------------------------------------- PIM licence memo
+# --------------------------------------------------------------------------- PIM license memo
 def _st(collector: str, status: str, message: str = "") -> Any:
     from app.iam.collectors import CollectorStatus
 
@@ -826,7 +826,7 @@ def test_pim_licence_memo_starts_unknown():
 
 
 def test_pim_licence_memo_latches_on_an_unlicensed_verdict():
-    """PIM answers "no P2 licence" with a 400 per scope, and there are three PIM endpoints. On a
+    """PIM answers "no P2 license" with a 400 per scope, and there are three PIM endpoints. On a
     26-subscription tenant that is 78 calls to learn one tenant-wide fact — and after the
     Resource Graph pivot it is the largest remaining cost in a refresh."""
     lic = orchestrator.PimLicence()
@@ -836,7 +836,7 @@ def test_pim_licence_memo_latches_on_an_unlicensed_verdict():
 
 
 def test_pim_licence_memo_ignores_permission_and_transient_failures():
-    """Only the LICENCE verdict is tenant-wide. A 403 on one scope says nothing about another
+    """Only the LICENSE verdict is tenant-wide. A 403 on one scope says nothing about another
     scope's permissions, and caching it would silently stop collecting PIM where it does work."""
     lic = orchestrator.PimLicence()
     lic.observe(

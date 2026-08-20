@@ -1,7 +1,7 @@
 """Build the Identity posture snapshot from Microsoft Graph (EntraID MCP) and Azure
 Resource Graph.
 
-Five signal groups, each normalised to a common *finding* shape so the dashboard and the
+Five signal groups, each normalized to a common *finding* shape so the dashboard and the
 ticket/investigate handoffs can treat them uniformly:
 
     expiring_credentials  — app/SP client secrets & certs near or past expiry  (cap. 2)
@@ -146,7 +146,7 @@ def _map_by_arm_id(arm_id: str | None, index: list[dict[str, Any]]) -> tuple[str
 
 # --------------------------------------------------------------------------- findings
 def _finding(**kw: Any) -> dict[str, Any]:
-    """Normalise a finding to the common shape consumed by the UI + handoffs."""
+    """Normalize a finding to the common shape consumed by the UI + handoffs."""
     return {
         "id": kw.get("id", ""),
         "kind": kw.get("kind", ""),

@@ -1,4 +1,4 @@
-"""The data-plane access catalogue: what holds data, which roles reach it, and which doors are
+"""The data-plane access catalog: what holds data, which roles reach it, and which doors are
 not role assignments at all.
 
 Azure RBAC is only one of the authorization systems in a tenant, and for most services it is not
@@ -21,12 +21,12 @@ the one that decides who can read the data. This module encodes three separate f
    product can NAME the blind spot. A service whose authorization we cannot enumerate must never
    contribute to a clean verdict, and the only thing worse than not checking is not saying so.
 
-Why a catalogue and not pure derivation: derivation from ``dataActions`` handles custom roles and
-roles Microsoft adds tomorrow, so it is the primary mechanism. The catalogue exists for the facts
+Why a catalog and not pure derivation: derivation from ``dataActions`` handles custom roles and
+roles Microsoft adds tomorrow, so it is the primary mechanism. The catalog exists for the facts
 derivation cannot know — which service a resource type belongs to, which doors exist beside RBAC,
 and which authorization systems are invisible from here.
 
-Every role name below was taken from a live tenant's role catalogue (981 definitions, 324 with
+Every role name below was taken from a live tenant's role catalog (981 definitions, 324 with
 dataActions), not from documentation. Several roles that are commonly assumed to be data-plane
 roles are deliberately ABSENT because they are not: ``AcrPull``/``AcrPush``/``AcrDelete`` are
 control-plane actions, ``Storage Blob Delegator`` grants a control-plane key-generation action,
@@ -635,7 +635,7 @@ def derive_tier(data_actions: tuple[str, ...] | list[str] | None) -> str:
 
 
 def role_tier(role_name: str, data_actions: tuple[str, ...] | list[str] | None = None) -> str:
-    """The tier for a named role, catalogue override first, then derivation.
+    """The tier for a named role, catalog override first, then derivation.
 
     The override exists for two cases derivation cannot get right: roles whose wildcard reads
     more dangerous than it is (`Key Vault Reader`), and roles that carry no dataActions at all
@@ -663,7 +663,7 @@ def is_privileged_data_role(role_name: str, data_actions: tuple[str, ...] | list
     """Whether a data-plane role deserves the `roleIsPrivileged` flag.
 
     Replaces a substring test for "owner"/"contributor" in the role NAME, which was wrong in both
-    directions on a real catalogue: it missed `Key Vault Administrator`, `Key Vault Secrets
+    directions on a real catalog: it missed `Key Vault Administrator`, `Key Vault Secrets
     Officer`, `Azure Kubernetes Service RBAC Cluster Admin` and `Storage File Data SMB Admin`,
     while flagging `Avere Contributor` and `AgFood Platform Sensor Partner Contributor` purely
     because the word appeared in their names.
@@ -675,5 +675,5 @@ def is_privileged_data_role(role_name: str, data_actions: tuple[str, ...] | list
 
 
 def public_catalogue() -> list[dict[str, Any]]:
-    """The catalogue as data, for the API and the coverage screen."""
+    """The catalog as data, for the API and the coverage screen."""
     return [s.public() for s in sorted(SERVICES, key=lambda s: s.priority)]

@@ -1,6 +1,6 @@
 """The Entra workbook export.
 
-The behaviour under test is almost entirely about honesty. A workbook is read offline, weeks
+The behavior under test is almost entirely about honesty. A workbook is read offline, weeks
 later, by somebody who cannot ask the tool a follow-up question — so a sheet that is empty
 because a Graph permission was refused has to say so IN THE FILE, and a number that was
 extrapolated from a sample has to carry that word next to it.
@@ -230,7 +230,7 @@ def test_activation_history_comes_from_the_ledger_not_just_the_snapshot():
     assert wb2["Activation sessions"].max_row - 1 == 1
 
 
-# =========================================================================== tab colours
+# =========================================================================== tab colors
 def _full_wb():
     """A workbook with every section populated, built from one readable snapshot."""
     snap = _snapshot(
@@ -257,7 +257,7 @@ def _full_wb():
 
 def test_every_sheet_from_one_parent_tab_shares_a_tab_colour():
     """The grouping a reader needs in a fifty-sheet file. Every Conditional Access sheet is the
-    same colour, and it is not the colour any other section uses."""
+    same color, and it is not the color any other section uses."""
     wb = _full_wb()
     by_section: dict[str, set[str]] = {}
     for name in wb.sheetnames:
@@ -272,7 +272,7 @@ def test_every_sheet_from_one_parent_tab_shares_a_tab_colour():
     # Every section is internally consistent...
     for section, colours in by_section.items():
         assert len(colours) == 1, f"{section} sheets disagree on colour: {colours}"
-    # ...and no two sections share one, or the colour would group the wrong things.
+    # ...and no two sections share one, or the color would group the wrong things.
     flat = [next(iter(c)) for c in by_section.values()]
     assert len(flat) == len(set(flat)), f"two sections share a colour: {flat}"
 
@@ -285,7 +285,7 @@ def test_the_conditional_access_sheets_are_all_in_that_section():
 
 
 def test_the_index_names_the_section_as_well_as_colouring_it():
-    """Colour alone is not readable to everyone and does not survive a monochrome print."""
+    """Color alone is not readable to everyone and does not survive a monochrome print."""
     wb = _full_wb()
     sections = _sections(wb)
     assert sections.get("CA policies") == "Conditional Access"
@@ -301,8 +301,8 @@ def test_the_palette_covers_every_section_that_is_used():
 def test_tab_colours_are_opaque_or_excel_draws_nothing():
     """The bug this pins shipped once already.
 
-    OOXML stores colours as aRGB and openpyxl pads a 6-digit value with ``00`` alpha \u2014 fully
-    transparent. Every assertion about colours being present and distinct still passed, the
+    OOXML stores colors as aRGB and openpyxl pads a 6-digit value with ``00`` alpha \u2014 fully
+    transparent. Every assertion about colors being present and distinct still passed, the
     round-trip read the value straight back, and Excel showed plain grey tabs. Only the alpha
     channel separates "purple" from "invisible"."""
     wb = _full_wb()
@@ -316,7 +316,7 @@ def test_tab_colours_are_opaque_or_excel_draws_nothing():
 
 
 def test_the_colour_reaches_the_worksheet_xml_opaque():
-    """Asserted on the FILE, not on the object model. The object model happily reports a colour
+    """Asserted on the FILE, not on the object model. The object model happily reports a color
     that the spreadsheet will never show."""
     import zipfile
 

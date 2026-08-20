@@ -33,6 +33,12 @@ DEMO_NETCHECK_ARCH = "demo-netcheck"
 
 
 # --------------------------------------------------------------------------- purge
+def _resiliency_store():
+    from app.resiliency import snapshot as store
+
+    return store
+
+
 def _purge_features(tenant_id: str) -> dict[str, Any]:
     """Clear only the regenerable per-feature demo data (caches, runs, snapshots). Does NOT
     touch the demo workload, demo architectures, or chats. Safe to run before a re-seed."""
@@ -72,6 +78,8 @@ def _purge_features(tenant_id: str) -> dict[str, Any]:
     step("performance_cache", lambda: _del_all(lambda w: perf_cache.delete_snapshot(tenant_id, "workload", w)))
     step("performance_runs", lambda: _del_all(lambda w: perf_runs.delete_scope_runs(tenant_id, "workload", w)))
     step("retirement_radar", lambda: _del_all(lambda w: radar_cache.delete_snapshot(tenant_id, "workload", w)))
+    step("recovery_readiness", lambda: _del_all(
+        lambda w: bool(_resiliency_store().clear(tenant_id, "", "workload", w))))
     step("telemetry_intelligence", lambda: ti_cache.delete_scope(tenant_id, DEMO_WORKLOAD_ID))
 
     # Coverage/posture trend series (one shared store across all 4 dashboards).
@@ -185,6 +193,33 @@ async def _purge_all(tenant_id: str, db: AsyncSession) -> dict[str, Any]:
     return {"removed": removed, "errors": errors}
 
 
+def _seed_recovery(tenant_id: str, workload_id: str) -> None:
+    """Run the REAL Recovery Readiness pipeline over the synthetic estate.
+
+    Not a pre-baked snapshot: the demo has to exercise the same collect -> join -> derive
+    path a live tenant does, or it hides exactly the bugs it should catch."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.resiliency import analyze as analyze_mod
+    from app.resiliency import snapshot as store
+
+    coro = analyze_mod.analyze(
+        None, tenant_id=tenant_id, scope_kind="workload", scope_id=workload_id,
+        subscriptions=[], workload_id=workload_id)
+    try:
+        # `_seed_all` is synchronous but is called straight from an async endpoint, so a
+        # loop is already running here and asyncio.run() would refuse. Tests call it with
+        # no loop at all, hence both paths.
+        asyncio.get_running_loop()
+    except RuntimeError:
+        snap = asyncio.run(coro)
+    else:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            snap = pool.submit(asyncio.run, coro).result()
+    store.write(tenant_id, "", "workload", workload_id, snap)
+
+
 # --------------------------------------------------------------------------- seed
 def _seed_all(tenant_id: str) -> dict[str, Any]:
     """Seed the demo workload + every feature's dummy data. Returns a per-area summary."""
@@ -232,6 +267,7 @@ def _seed_all(tenant_id: str) -> dict[str, Any]:
     _seed_each("backup_dr_coverage", lambda w: bdr_demo.seed_demo(tenant_id=tenant_id, scope_id=w))
     _seed_each("performance_profiler", lambda w: perf_demo.seed_demo(tenant_id=tenant_id, scope_id=w))
     _seed_each("retirement_radar", lambda w: radar_demo.seed_demo(tenant_id=tenant_id, scope_id=w))
+    _seed_each("recovery_readiness", lambda w: _seed_recovery(tenant_id, w))
     step("telemetry_intelligence", lambda: ti_demo.ensure_demo())
     step("iam", lambda: rbac_demo.seed_demo(tenant_id))
     step("reservations", lambda: res_cache.write_snapshot(tenant_id, res_demo.DEMO_SCOPE_ID, res_demo.seed_demo()))

@@ -31,7 +31,7 @@ The Findings tab answers *what is wrong right now*. The Scanners tab answers *wh
 
 ### Findings
 
-Served by `GET /api/iam/findings`, with the posture score from `GET /api/iam/score` and — only when you group by check — the signal catalogue from `GET /api/iam/signals`.
+Served by `GET /api/iam/findings`, with the posture score from `GET /api/iam/score` and — only when you group by check — the signal catalog from `GET /api/iam/signals`.
 
 **The score card, always with its coverage.** The score is never returned without the share of weighted checks that were actually measured, and the letter grade is genuinely absent below the coverage floor rather than shown with an asterisk. A grade derived from a third of the checks would be quoted without the caveat, so the card renders "No grade" and the reason instead. Each pillar shows a number or its state — `not measured` for a pillar whose inputs were not collected, `not built` for one no check exists for yet — and never a 0 or a 100 standing in for either.
 
@@ -107,7 +107,7 @@ The severity floor is inclusive and works downwards from critical: a floor of `w
 
 ### Delivery
 
-Running a scanner can publish its delta to the notification centre; both run endpoints take a `notify` flag that defaults to on. The delivery policy is:
+Running a scanner can publish its delta to the notification center; both run endpoints take a `notify` flag that defaults to on. The delivery policy is:
 
 - a new finding whose signal is on the always-immediate list is published on its own, at its own severity, as soon as it appears;
 - everything else new is published as one digest per scanner, with an exact count and a capped number of worked examples;
@@ -136,7 +136,7 @@ Neither tab honours the scope and workload filter rail; both are tenant-wide for
 - **An empty findings list is never an all-clear.** The empty state says so explicitly and points at the unmeasured panel.
 - **`new: 0` means nothing changed, not that nothing is wrong.** Read `total` beside it.
 - **A blocked scanner is a coverage defect**, not a passing check. Fix the collection, then re-run.
-- **Severity is the signal registry's classification.** It is a prioritisation aid; the evidence on the card is what supports a decision.
+- **Severity is the signal registry's classification.** It is a prioritization aid; the evidence on the card is what supports a decision.
 - **Suppressing a finding changes only this product.** Nothing is written to Azure and nothing is exempted anywhere else.
 - **Sub-group counts are page counts.** When a section says `showing N`, treat every count inside it as a floor.
 
@@ -168,7 +168,7 @@ Neither tab honours the scope and workload filter rail; both are tenant-wide for
 | The score shows "No grade" | Coverage is below the floor required for a grade. The card states the reason and the percentage; increase coverage rather than reading the number as a bad score. |
 | A pillar section says "not measured" with no findings | The inputs for that pillar's checks were never collected. Check Diagnostics for the collectors that could not read. |
 | Section counts do not add up to the number of cards on screen | The section header is a server tally over the whole filtered set; the cards are one page of it. The `showing N` marker beside the header states the difference. |
-| A sub-section count looks too low | It is counted from the page and is labelled `N shown` whenever its parent section was truncated. Narrow the filter to make the section complete. |
+| A sub-section count looks too low | It is counted from the page and is labeled `N shown` whenever its parent section was truncated. Narrow the filter to make the section complete. |
 | Severity chips read `—` | The findings query has not resolved. That is deliberately not a zero. |
 | Changing a finding's state returns a permission error | State changes require `iam.write`; viewing requires only `iam.read`. |
 

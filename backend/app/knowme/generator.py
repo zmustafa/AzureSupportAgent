@@ -1,7 +1,7 @@
 """AI generator for a Workload Know-Me document.
 
 Transforms an Architecture Memory (the authoritative technical source) plus the workload's
-real Azure scope into the labelled Know-Me sections — the way a senior engineer would write
+real Azure scope into the labeled Know-Me sections — the way a senior engineer would write
 a triage-ready reference for a responder. Grounded on the memory; fills subscriptions/RGs
 from real scope; emits ``⟦TODO⟧`` for anything a human must supply (people, coverage,
 escalation routing, SLAs) instead of inventing it.

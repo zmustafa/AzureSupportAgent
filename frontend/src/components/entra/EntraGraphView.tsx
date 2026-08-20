@@ -13,7 +13,7 @@ if (!_fcoseRegistered) {
   try { cytoscape.use(fcose as unknown as cytoscape.Ext); _fcoseRegistered = true; } catch { /* already registered */ }
 }
 
-/** Ring colour per identity node kind. Kept local so the Azure estate palette is untouched. */
+/** Ring color per identity node kind. Kept local so the Azure estate palette is untouched. */
 const KIND_COLOUR: Record<string, string> = {
   entra_user: "#475569",
   entra_guest: "#d97706",
@@ -248,7 +248,7 @@ function Canvas({ nodes, edges, lens, onSelect }: {
     cy.fit(undefined, 40);
   }, [nodes, edges, lens, onEscalation]);
 
-  // Zoom about the centre of the viewport, not the graph's origin: zooming towards a point
+  // Zoom about the center of the viewport, not the graph's origin: zooming towards a point
   // nobody is looking at throws the thing you were reading off the canvas.
   const zoomBy = useCallback((factor: number) => {
     const cy = cyRef.current;
@@ -468,7 +468,7 @@ export function EntraGraphView({ connectionId, onOpenSetup }:
             )}
           </>
         )}
-        <span className="ml-auto text-[11px] text-gray-500">Colour by</span>
+        <span className="ml-auto text-[11px] text-gray-500">Color by</span>
         <select value={lens} onChange={(e) => setLens(e.target.value as Lens)}
                 className="rounded border px-2 py-1 text-[13px]">
           {LENSES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}

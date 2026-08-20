@@ -79,13 +79,13 @@ class BulkAccess:
 class PimLicence:
     """Per-run memo of whether PIM is licensed on this tenant.
 
-    PIM answers "no Entra ID P2 licence" with a 400 **per scope**, and there are three PIM
+    PIM answers "no Entra ID P2 license" with a 400 **per scope**, and there are three PIM
     endpoints. On a 26-subscription unlicensed tenant that is 78 round trips to learn the same
     fact 78 times — and after the Resource Graph pivot it is the single largest cost in a
-    refresh. The licence is a tenant-wide property, so once one scope reports it missing the
+    refresh. The license is a tenant-wide property, so once one scope reports it missing the
     rest can be skipped with the same honest ``Skipped`` status they would have got anyway.
 
-    Deliberately narrow: **only** the licence verdict is memoised. A 403 on one scope says
+    Deliberately narrow: **only** the license verdict is memoised. A 403 on one scope says
     nothing about another scope's permissions, so those are never cached."""
 
     __slots__ = ("_unlicensed", "_message")
@@ -167,7 +167,7 @@ async def refresh_scope(
     Key Vault collectors are served from the tenant-wide Resource Graph sweep instead of four ARM
     round trips. PIM and classic administrators are not in Resource Graph, so they stay on ARM —
     but ``pim_licence`` lets a whole-tenant refresh stop re-asking the PIM endpoints once one
-    scope has established that the tenant has no Entra ID P2 licence."""
+    scope has established that the tenant has no Entra ID P2 license."""
     progress = progress or _noop
     started = time.monotonic()
     if scope.strip() in SENTINEL_SCOPES:
@@ -239,7 +239,7 @@ async def refresh_scope(
     # Activation controls first: the eligibility rows carry them, so they must be resolved
     # before the eligibility collector runs.
     if pim_licence is not None and pim_licence.known_unlicensed:
-        # An earlier scope already established the tenant has no Entra ID P2 licence. Asking the
+        # An earlier scope already established the tenant has no Entra ID P2 license. Asking the
         # other three endpoints on every remaining scope re-learns the same fact at ~1.5s a call
         # and, after the Resource Graph pivot, dominates the whole refresh. The reported status
         # is identical to what the calls would have produced.
@@ -636,7 +636,7 @@ def _preserve_principal_state(
     passing nothing would DELETE the account state a previous refresh collected. The disabled
     -access report would then show zero disabled principals — rendered as a clean bill of health
     produced entirely by having lost the data, which is the same defect shape that once wiped
-    the role catalogue and took right-sizing from 2,185 findings to zero.
+    the role catalog and took right-sizing from 2,185 findings to zero.
 
     A refresh that did not look at account state has no business deleting it."""
     if principal_state:
@@ -883,7 +883,7 @@ async def refresh_usage(
     # defect surviving in a second call site, which is why the freeze came back during refreshes.
     from app.iam import rightsize
 
-    analysis = await cpu.run(rightsize.analyse_for_tenant, tenant_id, force=True, label="right-sizing")
+    analysis = await cpu.run(rightsize.analyze_for_tenant, tenant_id, force=True, label="right-sizing")
 
     if not usage_mod.is_measured(payload):
         await progress("warning", "; ".join(payload.get("notes") or ["Usage could not be collected."]))
@@ -981,7 +981,7 @@ async def refresh_all(
 
     refreshed = 0
     stats: dict[str, Any] = {"arg_scopes": 0, "arm_scopes": 0, "skipped_unchanged": 0, "discrepancies": []}
-    # One memo for the whole run. Scoped to this refresh so a licence bought between runs is
+    # One memo for the whole run. Scoped to this refresh so a license bought between runs is
     # picked up on the next one rather than being cached until the process restarts.
     licence = PimLicence()
     all_role_defs: dict[str, dict[str, Any]] = {}
@@ -1115,7 +1115,7 @@ async def _changed_subscriptions(
     A subscription is refreshed if Resource Graph reports authorization activity since **its own**
     last collection, or if it has never been collected, or if its last collection produced no
     trustworthy rows. That last rule uses ``UNTRUSTWORTHY_STATUSES``, not ``ATTENTION_STATUSES``:
-    a tenant without an Entra ID P2 licence gets a 400 from every PIM endpoint, so every scope is
+    a tenant without an Entra ID P2 license gets a 400 from every PIM endpoint, so every scope is
     permanently ``PartiallyCollected``, and treating that as untrustworthy makes delta refresh
     re-collect the whole estate while still calling itself a delta."""
     from app.iam import arg

@@ -72,7 +72,7 @@ Each resource receives an explicit pricing state:
 | Not priced | The ARM type, region, or SKU cannot be mapped safely. No fallback amount is invented. |
 | Price unavailable | The public API and any stale cache could not supply a complete result. Other Azure-view overlays continue to work. |
 
-The toolbar total is labelled **Known baseline** and sums only deterministic fixed components. It also reports pricing coverage. It does not add unrelated component meters or estimate missing usage. Node tooltips and the inspector show service, product, SKU, meter, unit, effective date, currency, source, confidence, and stale state.
+The toolbar total is labeled **Known baseline** and sums only deterministic fixed components. It also reports pricing coverage. It does not add unrelated component meters or estimate missing usage. Node tooltips and the inspector show service, product, SKU, meter, unit, effective date, currency, source, confidence, and stale state.
 
 Retail pricing is not an invoice or Cost Management result. It excludes negotiated EA/MCA rates, reservations, Savings Plans, Azure Hybrid Benefit unless specifically identified, free grants, taxes, and actual usage. Use Azure Cost Management for actual billed spend; do not compare the retail baseline with an invoice as if they were equivalent.
 
@@ -133,7 +133,7 @@ Architectures integrate with:
 | Price says **Choose meter** | Select the resource, review the candidate product/SKU groups, choose the verified meter, save, and refresh. |
 | Price says **Not priced** | Confirm the node has a real ARM ID, exact ARM type, Azure region, and SKU. Unsupported types remain explicitly unmatched. |
 | Price says **Usage required** | Supply the relevant usage through a future cost model or use Cost Management; the canvas intentionally does not invent it. |
-| Retail refresh fails | Keep using the diagram; stale cached rates are labelled, and reachability/hosting overlays remain independent. |
+| Retail refresh fails | Keep using the diagram; stale cached rates are labeled, and reachability/hosting overlays remain independent. |
 
 ## Related docs
 

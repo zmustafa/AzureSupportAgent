@@ -193,7 +193,7 @@ def mark_full_refresh(tenant_id: str) -> None:
 
 
 def set_tenant_meta(tenant_id: str, **fields: Any) -> None:
-    """Set tenant-level index fields (licences, permissions, ...)."""
+    """Set tenant-level index fields (licenses, permissions, ...)."""
     data = read_index()
     entry = data.setdefault(_safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION})
     entry.update(fields)

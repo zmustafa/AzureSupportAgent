@@ -73,7 +73,7 @@ def _write_revs(data: dict[str, Any]) -> None:
 def load_reference() -> dict[str, Any]:
     """Return the active reference document, seeding it from the built-in set on first use.
 
-    Seed v9 replaced the hand-curated 37-type seed with the full upstream AMBA catalogue and
+    Seed v9 replaced the hand-curated 37-type seed with the full upstream AMBA catalog and
     a substantially wider alert schema (numeric severity, criterion type, separate evaluation
     frequency, activity-log/log-search facts, tiers, patterns). Merging the two shapes would
     produce half-populated entries, so crossing that boundary performs a clean reset — the

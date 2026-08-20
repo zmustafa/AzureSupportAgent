@@ -41,6 +41,7 @@ const TOP_LEVEL: [prefix: string, permission: string][] = [
   ["/telemetry-intel", "teleintel.read"],
   ["/telemetry", "coverage.read"],
   ["/backup-manager", "backup_manager.read"],
+  ["/resiliency", "resiliency.read"],
   ["/backupdr", "coverage.read"],
   ["/capability", "connections.read"],
   ["/evidence", "evidence.read"],

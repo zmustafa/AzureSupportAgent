@@ -1,6 +1,6 @@
 """The IAM signal registry — the spine of everything analytical on this screen.
 
-**Never implement a check outside ``signal_defs/``.** One catalogue projects into the posture
+**Never implement a check outside ``signal_defs/``.** One catalog projects into the posture
 score, the findings inbox, the scanners, notifications, exports and agent answers. A check
 written anywhere else exists in exactly one of those places and quietly diverges from the rest.
 
@@ -163,7 +163,7 @@ class SignalContext:
     # run means "there is nothing to compare against", not "nothing changed".
     drift: dict[str, Any] = field(default_factory=dict)
     drift_available: bool = False
-    # Minutes offset from UTC for the reader's local time. After-hours judgement uses it —
+    # Minutes offset from UTC for the reader's local time. After-hours judgment uses it —
     # judging raw UTC calls a Tokyo morning suspicious.
     utc_offset_minutes: int = 0
     # The usage slice from the SEPARATE usage job. It has its own freshness on purpose: the
@@ -179,7 +179,7 @@ class SignalContext:
     def rightsizing(self) -> dict[str, Any]:
         """Granted-vs-used analysis for this tenant.
 
-        Read from cache, not computed. The analysis is pure CPU over the whole role catalogue and
+        Read from cache, not computed. The analysis is pure CPU over the whole role catalog and
         is written by the usage job that produces its input; recomputing it here would put two
         seconds of work on the findings endpoint, which is one of the hottest in the product."""
         if self._rightsizing is None:

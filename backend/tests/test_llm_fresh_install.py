@@ -1,6 +1,6 @@
 """Fresh-install defaults for LLM provider config.
 
-Locks in the product behaviour: on a *fresh install* (no ``LLM_PROVIDER`` and no
+Locks in the product behavior: on a *fresh install* (no ``LLM_PROVIDER`` and no
 ``LLM_API_KEY`` in the environment) EVERY provider seeds as ``disabled`` — the admin
 sees the full provider list in the rail, all turned off, and enables one by setting it
 up. Env-driven deployments (a real credential, or an explicit ``LLM_PROVIDER``) keep

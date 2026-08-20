@@ -1,7 +1,7 @@
 """Import of a standalone all-azure-access scanner run.
 
 The value of this path is that it lets a human with real permissions produce the data and this
-product analyse it, without widening the app's own Azure/Graph access. That makes correctness of
+product analyze it, without widening the app's own Azure/Graph access. That makes correctness of
 the *parsing* important and correctness of the *provenance* critical — imported data must never
 be presentable as a live scan.
 

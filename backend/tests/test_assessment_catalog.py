@@ -1,4 +1,4 @@
-"""Structural + behavioural tests for the assessment check catalog and the metric-backed
+"""Structural + behavioral tests for the assessment check catalog and the metric-backed
 control engine (Phases 1-5 enhancements).
 
 These are pure/offline tests: catalog integrity is validated against the in-memory

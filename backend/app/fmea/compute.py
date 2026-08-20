@@ -11,7 +11,7 @@ from typing import Any
 
 # Risk bands by RPN. Tuned so a maxed-out factor triple (10x10x10 = 1000) lands in
 # "critical" and a benign one (1x1x1 = 1) lands in "low". These thresholds also drive the
-# per-cell colour ramp in the UI and the risk summary counts.
+# per-cell color ramp in the UI and the risk summary counts.
 _CRITICAL = 200
 _HIGH = 120
 _MEDIUM = 40
@@ -46,7 +46,7 @@ def rpn(severity: Any, occurrence: Any, detection: Any) -> int | None:
 
 
 def risk_band(value: int | None) -> str:
-    """Bucket an RPN into ``critical|high|medium|low|none`` for colouring and summaries."""
+    """Bucket an RPN into ``critical|high|medium|low|none`` for coloring and summaries."""
     if value is None:
         return "none"
     if value >= _CRITICAL:
@@ -59,7 +59,7 @@ def risk_band(value: int | None) -> str:
 
 
 def factor_band(value: Any) -> str:
-    """Bucket a single 1-10 factor into ``high|medium|low|none`` for the cell colour ramp."""
+    """Bucket a single 1-10 factor into ``high|medium|low|none`` for the cell color ramp."""
     n = normalize_factor(value)
     if n == 0:
         return "none"

@@ -1571,7 +1571,7 @@ function PoliciesTab({ snapshot, scope, caps, portalHost }: { snapshot: BackupSn
               </label>
               <button onClick={() => impactM.mutate()} disabled={impactM.isPending}
                 className="rounded-lg bg-brand-dark px-3 py-1.5 text-sm text-white disabled:opacity-50">
-                {impactM.isPending ? "Modelling…" : "Model impact"}
+                {impactM.isPending ? "Modeling…" : "Model impact"}
               </button>
             </div>
             {impactM.isError && <p className="mt-2 text-sm text-rose-700">{(impactM.error as Error).message}</p>}

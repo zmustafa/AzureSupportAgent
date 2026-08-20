@@ -1,6 +1,6 @@
 """Disabled principals that still hold access — the data path, the signals and the exports.
 
-Every test here exists because the opposite behaviour would be a *confident wrong answer*
+Every test here exists because the opposite behavior would be a *confident wrong answer*
 rather than an obvious failure. The whole feature is one claim ("these people should not still
 have this"), and the failure mode is always the same shape: an empty result that reads as a
 clean bill of health when it actually means nobody looked.
@@ -126,7 +126,7 @@ def test_on_prem_sync_is_carried_onto_the_row(seeded):
 
 # --------------------------------------------------------------------------- cache preservation
 def test_a_refresh_that_did_not_collect_state_must_not_delete_it(seeded):
-    """The defect that once wiped the role catalogue, applied to the newer map.
+    """The defect that once wiped the role catalog, applied to the newer map.
 
     ``refresh_directory``'s no-Graph-token branch rewrites the whole directory blob. If it
     passed no account state, the disabled-access report would show zero disabled principals —

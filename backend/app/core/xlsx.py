@@ -97,11 +97,11 @@ def safe_title(title: str, used: set[str] | None = None) -> str:
 
 
 def argb(colour: str) -> str:
-    """A colour as OPAQUE 8-digit ARGB.
+    """A color as OPAQUE 8-digit ARGB.
 
-    The alpha channel is the whole point. OOXML stores colours as aRGB, and openpyxl pads a
+    The alpha channel is the whole point. OOXML stores colors as aRGB, and openpyxl pads a
     6-digit value by prepending ``00`` — alpha zero, fully transparent — so Excel dutifully
-    renders nothing at all. Every tab colour looked correct in the file and in an openpyxl
+    renders nothing at all. Every tab color looked correct in the file and in an openpyxl
     round-trip, and was invisible when opened.
     """
     value = (colour or "").lstrip("#").upper()
@@ -130,17 +130,17 @@ class WorkbookBuilder:
         self._used: set[str] = set()
         self._header_font = Font(bold=True, color="FFFFFF")
         self._header_fill = PatternFill("solid", fgColor="0F6CBD")
-        #: The section subsequent sheets belong to: (label, tab colour). Set with `section`.
+        #: The section subsequent sheets belong to: (label, tab color). Set with `section`.
         self._section: tuple[str, str] = ("", "")
         #: (title, section, rows, note) for every sheet written, so an index can be built after.
         self.manifest: list[tuple[str, str, int, str]] = []
 
     def section(self, label: str, colour: str = "") -> None:
-        """Group the sheets that follow, and give their tabs a shared colour.
+        """Group the sheets that follow, and give their tabs a shared color.
 
         Carried on the builder rather than passed to every `sheet` call: a fifty-sheet workbook
-        has fifty chances to pass the wrong colour, and one sheet tinted like the wrong parent
-        tab is worse than no colour at all — it is a wrong label."""
+        has fifty chances to pass the wrong color, and one sheet tinted like the wrong parent
+        tab is worse than no color at all — it is a wrong label."""
         self._section = (label, argb(colour))
 
     # ---------------------------------------------------------------- sheets
@@ -201,8 +201,8 @@ class WorkbookBuilder:
         """A contents page. Written last, moved to the front.
 
         A fifty-sheet workbook without one is a filing cabinet with no labels. `Section` names
-        the parent screen each sheet came from — the same grouping the tab colours show, spelled
-        out, because colour alone is not readable to everyone."""
+        the parent screen each sheet came from — the same grouping the tab colors show, spelled
+        out, because color alone is not readable to everyone."""
         from openpyxl.styles import Alignment
 
         ws = self.wb.create_sheet(safe_title(title, self._used))

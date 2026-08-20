@@ -25,7 +25,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 ## How to grant a consent tier
 
-1. Open `/entra/setup` and select the connection for the tenant you intend to analyse.
+1. Open `/entra/setup` and select the connection for the tenant you intend to analyze.
 
 2. Read the **Microsoft Graph access** card. Confirm the token state and how many application permissions are currently known.
 3. Read the consent tier list. Each tier shows every scope with a granted or missing marker and a completeness state for the tier as a whole.
@@ -35,13 +35,13 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 **Expected result:** The app registration requests the tier 1 scopes as application permissions and the tenant has admin-consented to them.
 
-**Verification:** In the Microsoft Entra admin center, confirm each scope is listed as an application permission with consent granted for the organisation.
+**Verification:** In the Microsoft Entra admin center, confirm each scope is listed as an application permission with consent granted for the organization.
 
 ## How to confirm the grant reached the product
 
 1. Return to `/entra/setup` and select **Re-check permissions now**. This reads consent live from Microsoft; every other number on the page reflects the last collection.
 
-2. Read the result: what is granted now, what was **gained** since the previous check, what was **revoked**, which domains remain blind, and which are blocked by licence rather than consent.
+2. Read the result: what is granted now, what was **gained** since the previous check, what was **revoked**, which domains remain blind, and which are blocked by license rather than consent.
 3. If the result still reports a scope as missing a minute after granting it, wait and re-check. Consent propagation is not instant, and re-granting is not the fix.
 4. Note that a re-check never marks a domain as measured. Holding a permission and having collected the data are different facts.
 
@@ -67,7 +67,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 1. Open `/entra/setup` and read the **Collector coverage** table. Each collector domain carries a state, an item count, and a reason for anything short of measured.
 
-2. Interpret the state before acting: `measured` needs nothing; `partial` collected some of the domain and names why the rest did not; `blind` means no alternative scope in the requirement group is held; `unlicensed` means the scope is consented but the tenant lacks the licence; `error` points at the diagnostics; `stale` means the data came from an earlier snapshot.
+2. Interpret the state before acting: `measured` needs nothing; `partial` collected some of the domain and names why the rest did not; `blind` means no alternative scope in the requirement group is held; `unlicensed` means the scope is consented but the tenant lacks the license; `error` points at the diagnostics; `stale` means the data came from an earlier snapshot.
 3. Grant a further tier only against `blind` domains you actually need. Consent cannot fix `unlicensed`, and an inconclusive probe is not evidence of a missing permission.
 4. Repeat the grant, re-check, refresh sequence for the next tier.
 5. Treat the coverage banner on each tab as the honest caveat on that screen's numbers: a score computed over part of the model is a statement about that part only.

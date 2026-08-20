@@ -488,7 +488,7 @@ async def test_a_demo_workload_is_never_taken_to_resource_graph(monkeypatch) -> 
 
 @pytest.mark.anyio
 async def test_a_real_workload_still_queries_resource_graph(monkeypatch) -> None:
-    """The demo guard must not swallow real scopes: it is keyed on the demo catalogue, not on
+    """The demo guard must not swallow real scopes: it is keyed on the demo catalog, not on
     "the workload produced no subscriptions"."""
     calls: list[Any] = []
 

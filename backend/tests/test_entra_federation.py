@@ -37,7 +37,7 @@ def test_an_unknown_provider_is_reported_as_unknown_rather_than_guessed():
     """A confident wrong answer about the authentication perimeter is worse than no answer."""
     got = fed.fingerprint_vendor("urn:internal:sso", "https://login.internal.example/saml")
     assert got["key"] == fed.UNKNOWN_VENDOR
-    assert got["label"] == "Unrecognised provider"
+    assert got["label"] == "Unrecognized provider"
 
 
 def test_the_host_survives_even_when_only_one_endpoint_is_populated():
@@ -91,7 +91,7 @@ def test_a_malformed_certificate_is_reported_rather_than_raised():
     assert fed.certificate_facts("") == {}
 
 
-# ------------------------------------------------------------------------ behaviours
+# ------------------------------------------------------------------------ behaviors
 def test_an_unset_mfa_behaviour_is_reported_as_the_permissive_default():
     """Empty means Entra applies acceptIfMfaDoneByFederatedIdp, not "not configured"."""
     behaviour = fed.mfa_behaviour("")
@@ -247,7 +247,7 @@ def test_wsfed_is_noted_and_saml_is_not():
 
 # ------------------------------------------------------------------------ normalising
 def test_normalise_federation_derives_vendor_host_and_behaviour():
-    row = fed.normalise_federation("contoso.com", {
+    row = fed.normalize_federation("contoso.com", {
         "issuerUri": "http://contoso.com/PingFederate",
         "passiveSignInUri": "https://pf.contoso.com/idp/a/prp.wsf",
         "preferredAuthenticationProtocol": "wsFed",
@@ -269,7 +269,7 @@ def test_population_counts_only_the_domain_asked_for():
 
 # --------------------------------------------------------------- external providers
 def test_normalise_idp_labels_the_odata_type():
-    row = fed.normalise_idp({
+    row = fed.normalize_idp({
         "@odata.type": "#microsoft.graph.socialIdentityProvider",
         "id": "Google-OAUTH", "displayName": "Google", "clientId": "abc.apps.googleusercontent.com",
         "identityProviderType": "Google",
@@ -281,14 +281,14 @@ def test_normalise_idp_labels_the_odata_type():
 
 
 def test_normalise_idp_falls_back_to_the_raw_type_then_a_generic_label():
-    """An unrecognised provider is still named, and a typeless one is not blank."""
-    assert fed.normalise_idp({"@odata.type": "#microsoft.graph.brandNewIdp"})["kind_label"] == "brandNewIdp"
-    assert fed.normalise_idp({})["kind_label"] == "Identity provider"
+    """An unrecognized provider is still named, and a typeless one is not blank."""
+    assert fed.normalize_idp({"@odata.type": "#microsoft.graph.brandNewIdp"})["kind_label"] == "brandNewIdp"
+    assert fed.normalize_idp({})["kind_label"] == "Identity provider"
 
 
 def test_normalise_idp_never_carries_a_client_secret():
     """The secret is not requested, and must not survive even if Graph volunteers one."""
-    row = fed.normalise_idp({
+    row = fed.normalize_idp({
         "@odata.type": "#microsoft.graph.socialIdentityProvider",
         "id": "x", "clientId": "public-id", "clientSecret": "super-secret-value",
     })

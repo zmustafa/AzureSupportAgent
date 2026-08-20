@@ -6,7 +6,7 @@ only what has no equivalent there:
 
   identity_investigate     one principal, everything already collected, with provenance
   ca_evaluate              what happens when this person signs in here, from this device
-  identity_group_members   who is in a group, and what it is nested inside
+  identity_group_members   who is in a group, and which groups a principal belongs to
   ca_policies_for_app      which policies actually reach an application, and are they enforced
   identity_findings        the signals that fired against one principal
 
@@ -15,10 +15,10 @@ call the HTTP routes:
 
 * **Permission parity.** A question answered in chat must be as permissioned as the same
   question answered by clicking. ``investigate.activity`` is granted separately because
-  reading a named individual's behavioural history is a different act from reading their
+  reading a named individual's behavioral history is a different act from reading their
   access, and the agent must not become the way around that.
 * **No paraphrasing.** Each handler returns the engine's own structure. The moment a handler
-  summarises, provenance and the four resolution states collapse into prose and every
+  summarizes, provenance and the four resolution states collapse into prose and every
   guarantee the screens make is lost.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from typing import Any
 from app.connectors.base import ConnectorTool, err, ok
 
 # Per-tool switches. The two that answer the questions people actually ask are on by default;
-# the rest are opt-in because the combined Azure + Graph catalogue is already large enough to
+# the rest are opt-in because the combined Azure + Graph catalog is already large enough to
 # be trimmed for request size (see app/agent/github_copilot.py), and every added tool costs
 # every turn.
 TOOL_DEFAULTS: dict[str, bool] = {
@@ -49,7 +49,7 @@ def _enabled(settings: dict[str, Any], name: str) -> bool:
 
 
 # Raw Microsoft Graph tools (from the EntraID MCP server) that return a named individual's
-# BEHAVIOURAL history. Gating `identity_investigate` behind `investigate.activity` while these
+# BEHAVIORAL history. Gating `identity_investigate` behind `investigate.activity` while these
 # stay open to the same caller is theatre: the agent just calls these instead and assembles the
 # same answer with a thinner audit trail. They are withheld together or the split is not real.
 BEHAVIOURAL_GRAPH_TOOLS: frozenset[str] = frozenset({
@@ -117,7 +117,7 @@ async def _audit(principal: Any, action: str, target: str, meta: dict[str, Any])
 def _snapshot(tenant_id: str) -> dict[str, Any]:
     from app.entra import snapshot as snapshot_mod
 
-    return snapshot_mod.analyse(tenant_id)
+    return snapshot_mod.analyze(tenant_id)
 
 
 # --------------------------------------------------------------------------- tools
@@ -141,10 +141,10 @@ def _make_identity_investigate(tenant_id: str, principal: Any, connection_id: st
         activity_note = ""
         if wants_activity and not _allowed(principal, "investigate.activity"):
             # Answered, not thrown. And NOT silently dropped: a reader who asked for
-            # behavioural history and got a dossier without it would read the absence as
+            # behavioral history and got a dossier without it would read the absence as
             # "nothing happened".
             activity_note = (
-                "Behavioural history was requested but not returned: it needs the "
+                "Behavioral history was requested but not returned: it needs the "
                 "'investigate.activity' permission, which is granted separately from "
                 "'investigate.read' because reading a named person's sign-in and audit "
                 "history is a different act from reading their access."
@@ -200,7 +200,7 @@ def _make_ca_evaluate(tenant_id: str, principal: Any, connection_id: str = ""):
         snapshot = await asyncio.to_thread(_snapshot, tenant_id)
         data = snapshot.get("data") or {}
         # `_ca_analysis`, NOT `_analysis`, and its `policies` rather than the raw collector
-        # output under `data["ca"]`. The analysed set is what carries `effective_ids`,
+        # output under `data["ca"]`. The analyzed set is what carries `effective_ids`,
         # `app_classes` and `is_enforced` — everything `matches()` needs. Reading the raw set
         # made every policy fail to match, so the tool answered "granted, no policy applies"
         # for a Global Administrator in a tenant with 37 policies. A confidently wrong answer
@@ -266,29 +266,39 @@ def _make_identity_group_members(tenant_id: str, principal: Any, connection: dic
 
         if not _allowed(principal, "investigate.read"):
             return err("You do not have the 'investigate.read' permission.")
-        needle = str(args.get("group") or "").strip()
+        needle = str(args.get("group") or args.get("principal") or "").strip()
         if not needle:
-            return err("A group is required (object id or name).")
+            return err("A group or principal is required (object id, name or UPN).")
 
         snapshot = await asyncio.to_thread(_snapshot, tenant_id)
         subject = await investigate.resolve(snapshot.get("data") or {}, tenant_id, needle)
-        if subject.get("kind") != investigate.KIND_GROUP:
+        direction = "up" if str(args.get("direction") or "down") == "up" else "down"
+        kind = str(subject.get("kind") or "")
+        # Downward needs a group; upward works for anything that can be IN one, which is how
+        # "which groups is Alice in" gets answered at all.
+        if direction == "down" and kind != investigate.KIND_GROUP:
             return err(f"{subject.get('display_name') or needle} is a "
-                       f"{subject.get('kind')}, not a group — only groups have members.")
+                       f"{kind or 'principal'}, not a group — only groups have members. "
+                       "Ask with direction='up' for the groups it belongs to.")
+        if direction == "up" and subject.get("resolution") != investigate.RESOLVED:
+            return err(f"{needle} could not be resolved in this directory, so the groups it "
+                       "belongs to cannot be read. That is not a claim that it belongs to none.")
 
         gid = str(subject.get("id") or needle)
-        direction = "up" if str(args.get("direction") or "down") == "up" else "down"
         result = await investigate_members.expand(
-            connection, gid, expand_ids=list(args.get("expand") or []), direction=direction)
+            connection, gid, expand_ids=list(args.get("expand") or []), direction=direction,
+            root_kind=kind or investigate_members.TYPE_GROUP,
+            transitive=bool(args.get("transitive")) and direction == "up")
 
         await _audit(principal, "investigate.members", gid,
                      {"direction": direction, "name": subject.get("display_name") or ""})
 
         return _json(
-            {"group": {"id": gid, "name": subject.get("display_name")},
+            {"subject": {"id": gid, "name": subject.get("display_name"), "kind": kind},
              "direction": direction, **result,
              "how_to_read": (
-                 "These are DIRECT members, one level per branch. A child with "
+                 "Downward these are DIRECT members, one level per branch; upward they are "
+                 "the groups and directory roles this principal belongs to. A child with "
                  "`expandable: true` is a nested group — pass its id in `expand` to open it. "
                  "A branch listed in `notes` with no children was unreadable, not empty."
              )},
@@ -306,7 +316,7 @@ def _make_ca_policies_for_app(tenant_id: str, principal: Any):
         app = str(args.get("app") or "").strip().lower()
 
         snapshot = await asyncio.to_thread(_snapshot, tenant_id)
-        # The analysed set, for the same reason `ca_evaluate` uses it: the raw collector rows
+        # The analyzed set, for the same reason `ca_evaluate` uses it: the raw collector rows
         # lack the resolved targeting this filter reads.
         policies = (snapshot.get("_ca_analysis") or {}).get("policies") or []
         out = []
@@ -319,7 +329,7 @@ def _make_ca_policies_for_app(tenant_id: str, principal: Any):
             out.append({
                 "id": p.get("id"), "display_name": p.get("display_name"),
                 "state": p.get("state"),
-                # `is_enforced` is the analysed verdict and already accounts for report-only;
+                # `is_enforced` is the analyzed verdict and already accounts for report-only;
                 # deriving it from `state` here would disagree with every other screen.
                 "enforced": bool(p.get("is_enforced")),
                 "report_only": bool(p.get("is_report_only")),
@@ -426,12 +436,18 @@ def build_entra_identity_tools(
         (
             "identity_group_members",
             "Direct members of a group, one level at a time, keeping nested groups as "
-            "openable nodes. Also works upward: which groups a group belongs to.",
+            "openable nodes. Also works upward with direction='up': which groups and "
+            "directory roles a user, guest, group or workload identity belongs to.",
             {
                 "type": "object",
                 "properties": {
-                    "group": {"type": "string"},
+                    "group": {"type": "string",
+                              "description": "Object id, name or UPN. With direction='up' "
+                                             "this may be any principal, not just a group."},
                     "direction": {"type": "string", "enum": ["down", "up"]},
+                    "transitive": {"type": "boolean",
+                                   "description": "Upward only: include groups reached "
+                                                  "through nesting, not just direct ones."},
                     "expand": {"type": "array", "items": {"type": "string"},
                                "description": "Nested group ids to open in the same call."},
                 },

@@ -58,7 +58,7 @@ def now_iso() -> str:
 #
 # Free-text notes cannot be grouped, deduplicated or acted on. They produced a wall of prose
 # in which one missing scope was reported three times across two domains, and in which "grant
-# a permission", "assign an Azure role", "buy a licence" and "we stopped early to bound cost"
+# a permission", "assign an Azure role", "buy a license" and "we stopped early to bound cost"
 # all looked identical. A blocker names the KIND of obstacle, so the reader can tell what they
 # can fix today from what costs money from what is simply inherent.
 BLOCKER_CONSENT = "consent"        # a Microsoft Graph permission an admin can grant

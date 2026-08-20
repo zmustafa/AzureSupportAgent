@@ -14,7 +14,7 @@ revoking is also wrong here, because the product is read-only and would be asser
 it cannot cause.
 
 **Nobody reviews their own access.** Self-review is not certification. It is available only as an
-explicitly-labelled attestation campaign, and the label travels into the export so it cannot be
+explicitly-labeled attestation campaign, and the label travels into the export so it cannot be
 mistaken for the real thing later.
 
 **An item whose access changed since the baseline is re-presented, not updated.** The reviewer

@@ -1,4 +1,4 @@
-"""Integrity of the vendored AMBA catalogue and the report adapters built on top of it.
+"""Integrity of the vendored AMBA catalog and the report adapters built on top of it.
 
 These pin the defects found while reviewing the rendered PDF against live data:
 Markdown link syntax leaking into operator-facing prose, and a substring-based category
@@ -43,7 +43,7 @@ def alerts(reference: dict) -> list[dict]:
     return [a for spec in reference["types"].values() for a in spec["alerts"]]
 
 
-# --------------------------------------------------------------------------- catalogue
+# --------------------------------------------------------------------------- catalog
 def test_vendored_catalogue_is_present_and_pinned():
     assert CATALOG_PATH.exists(), "run scripts/import_amba_catalog.py"
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))

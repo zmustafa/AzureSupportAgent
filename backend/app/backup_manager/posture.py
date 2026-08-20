@@ -1,6 +1,6 @@
 """Vault security posture — the ransomware / recoverability readiness scorecard.
 
-Backup data is the last line of defence, so the questions that matter are not "is backup on"
+Backup data is the last line of defense, so the questions that matter are not "is backup on"
 but "can an attacker or a mistake destroy the backups, and can we still restore if the region
 goes away".  Each control from the editable reference is evaluated per vault into
 pass / warn / fail / n-a, weighted into a 0-100 score, and rolled up across the fleet.

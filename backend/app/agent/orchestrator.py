@@ -220,8 +220,8 @@ class Orchestrator:
         # connection's service-principal identity. Built only when enabled for this turn.
         self._entra = None
         self._entra_tool_names: set[str] = set()
-        # Graph tools withheld from THIS caller. Behavioural reads about a named individual
-        # sit behind `investigate.activity`; leaving the raw equivalents in the catalogue
+        # Graph tools withheld from THIS caller. Behavioral reads about a named individual
+        # sit behind `investigate.activity`; leaving the raw equivalents in the catalog
         # would make that permission unenforceable through chat.
         self._entra_blocked = frozenset(entra_blocked_tools or ())
         self._entra_tools = frozenset(str(v) for v in (entra_tools or []) if str(v))

@@ -283,7 +283,7 @@ def _guest_scope_gap(data: dict[str, Any], ctx: SignalContext) -> list[dict[str,
             object_kind="app_class", object_id=key, object_name=_class_label(cid),
             title=f"Guests are held to a weaker standard than members for {ctrl} on {_class_label(cid)}",
             detail="Members are fully covered by this control on this application class and guests "
-                   "are not. Guest accounts are governed by an organisation you do not control.",
+                   "are not. Guest accounts are governed by an organization you do not control.",
             evidence={"guest_state": gcell.get("state"), "member_state": mcell.get("state"),
                       "guests_uncovered": gcell.get("uncovered_total")},
             portal_link=model.portal_ca_policy(""),
@@ -528,7 +528,7 @@ SPECS: list[SignalSpec] = [
           tags=("reliability",)),
     _spec("ca.guest_scope_gap", "Guests held to a weaker standard",
           "Are guests covered wherever members are?",
-          "Guest accounts belong to organisations whose security you do not control, and they "
+          "Guest accounts belong to organizations whose security you do not control, and they "
           "very often fall outside policies written with employees in mind.",
           "high", 7, _guest_scope_gap,
           remediation="Include guest and external users in the policy, or write a guest policy."),

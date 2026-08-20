@@ -285,3 +285,237 @@ def bucket(rid: str, n: int) -> int:
     """Deterministic 0..n-1 from a resource id, for stable per-resource variation."""
     h = hashlib.sha1(rid.encode("utf-8"), usedforsecurity=False).hexdigest()
     return int(h[:8], 16) % max(1, n)
+
+
+# ====================================================================== recovery readiness
+# A SECOND axis, deliberately ORTHOGONAL to the health `tier` above.
+#
+# `tier` means "well-managed -> neglected". Deriving recoverability from it would make the
+# demo one-dimensional — everything green resilient, everything red not — and would fail to
+# show the one thing this product exists to say:
+#
+#     A resource can be flawlessly redundant, reported "resilient" by every other tool, and
+#     still carry a 24-hour RPO and NO recovery path at all for ransomware.
+#
+# For that, redundancy and recoverability have to be able to DISAGREE. So a resource's
+# resiliency profile is assigned independently of its tier.
+
+PROFILE_ZONE_REDUNDANT_NO_PITR = "zone_redundant_no_pitr"
+PROFILE_BACKED_UP_SINGLE_ZONE = "backed_up_single_zone"
+PROFILE_GEO_PAIRED_HOURLY = "geo_paired_hourly"
+PROFILE_SINGLE_INSTANCE_DAILY = "single_instance_daily"
+PROFILE_ORPHAN_NO_RECOVERY = "orphan_no_recovery"
+PROFILE_CONTINUOUS_REPLICATED = "continuous_replicated"
+PROFILE_LRS_VAULT_BACKUP = "lrs_vault_backup"
+PROFILE_UNMAPPABLE = "unmappable"
+
+#: What each profile demonstrates. Surfaced in the dev script so the narrative is checkable.
+PROFILE_STORY: dict[str, str] = {
+    PROFILE_ZONE_REDUNDANT_NO_PITR:
+        "Zone-perfect and reported resilient everywhere else; 24h RPO and no path for corruption.",
+    PROFILE_BACKED_UP_SINGLE_ZONE:
+        "Fails a zone-redundancy check, but survives ransomware.",
+    PROFILE_GEO_PAIRED_HOURLY: "The target state: geo-paired and frequently recoverable.",
+    PROFILE_SINGLE_INSTANCE_DAILY: "The ordinary majority.",
+    PROFILE_ORPHAN_NO_RECOVERY: "No recovery path at all. Not slow — none.",
+    PROFILE_CONTINUOUS_REPLICATED: "Measured 30-second RPO from replication.",
+    PROFILE_LRS_VAULT_BACKUP: "Backed up, into a vault that dies with the region.",
+    PROFILE_UNMAPPABLE: "No datasource mapping — unknown, which is not 'unprotected'.",
+}
+
+# Backup policy shapes, in the RAW schedule form the parser consumes, so the demo exercises
+# the real parser rather than a shortcut.
+_SCHED_DAILY_0200 = {"scheduleRunFrequency": "Daily", "scheduleRunTimes": ["2026-01-01T02:00:00Z"]}
+_SCHED_HOURLY_4H = {"scheduleRunFrequency": "Hourly", "hourlySchedule": {"interval": 4}}
+_SCHED_WINDOWED = {
+    "scheduleRunFrequency": "Hourly",
+    "hourlySchedule": {"interval": 4, "scheduleWindowStartTime": "2026-01-01T08:00:00Z",
+                       "scheduleWindowDuration": "PT10H"},
+}
+
+_PROFILES: dict[str, dict[str, Any]] = {
+    PROFILE_ZONE_REDUNDANT_NO_PITR: {
+        "zone_redundant": True, "zones": ["1", "2", "3"], "replication": "multi-region-write",
+        "native_backup": {"kind": "cosmos_periodic", "interval_minutes": 1440,
+                          "retention_days": 7, "geo_redundant": False},
+        "protected": False, "vault_redundancy": "", "soft_delete": False,
+    },
+    PROFILE_BACKED_UP_SINGLE_ZONE: {
+        "zone_redundant": False, "zones": [], "replication": "LRS",
+        "native_backup": {"kind": "none"},
+        "protected": True, "vault_redundancy": "GeoRedundant", "soft_delete": True,
+        "schedule": _SCHED_HOURLY_4H, "retention_days": 30, "recovery_point_age_hours": 2.0,
+        "policy_name": "hourly-30d",
+    },
+    PROFILE_GEO_PAIRED_HOURLY: {
+        "zone_redundant": True, "zones": ["1", "2", "3"], "replication": "GZRS",
+        "native_backup": {"kind": "storage_pitr", "interval_minutes": 5, "retention_days": 30,
+                          "geo_redundant": True},
+        "protected": True, "vault_redundancy": "GeoRedundant", "soft_delete": True,
+        "schedule": _SCHED_HOURLY_4H, "retention_days": 90, "recovery_point_age_hours": 1.5,
+        "policy_name": "hourly-90d-geo",
+    },
+    PROFILE_SINGLE_INSTANCE_DAILY: {
+        "zone_redundant": False, "zones": [], "replication": "LRS",
+        "native_backup": {"kind": "none"},
+        "protected": True, "vault_redundancy": "GeoRedundant", "soft_delete": True,
+        "schedule": _SCHED_DAILY_0200, "retention_days": 30, "recovery_point_age_hours": 9.0,
+        "policy_name": "DefaultPolicy",
+    },
+    PROFILE_ORPHAN_NO_RECOVERY: {
+        "zone_redundant": False, "zones": [], "replication": "LRS",
+        "native_backup": {"kind": "none"},
+        "protected": False, "vault_redundancy": "", "soft_delete": False,
+    },
+    PROFILE_CONTINUOUS_REPLICATED: {
+        "zone_redundant": False, "zones": ["1"], "replication": "LRS",
+        "native_backup": {"kind": "none"},
+        "protected": True, "vault_redundancy": "GeoRedundant", "soft_delete": True,
+        "schedule": _SCHED_DAILY_0200, "retention_days": 30, "recovery_point_age_hours": 5.0,
+        "policy_name": "DefaultPolicy",
+        "asr": {"rpo_seconds": 30, "replication_health": "Normal",
+                "protection_state": "Protected", "last_test_failover_age_days": 45},
+    },
+    PROFILE_LRS_VAULT_BACKUP: {
+        "zone_redundant": True, "zones": [], "replication": "LRS",
+        "native_backup": {"kind": "sql_pitr", "interval_minutes": 10, "retention_days": 7,
+                          "geo_redundant": False},
+        # The point of this row: protected, and the backups die with the region.
+        "protected": True, "vault_redundancy": "LocallyRedundant", "soft_delete": True,
+        "schedule": _SCHED_WINDOWED, "retention_days": 30, "recovery_point_age_hours": 3.0,
+        "policy_name": "biz-hours-lrs",
+    },
+    PROFILE_UNMAPPABLE: {
+        "zone_redundant": None, "zones": [], "replication": "",
+        "native_backup": {"kind": "unknown"},
+        "protected": None, "vault_redundancy": "", "soft_delete": None,
+    },
+}
+
+# Named assignments so the demo has rehearsed moments rather than whatever the hash gives.
+# Keyed by the catalog's short name.
+_PROFILE_BY_NAME: dict[str, str] = {
+    # --- Contoso Hotels -------------------------------------------------------------
+    "contoso-guests-cosmos": PROFILE_ZONE_REDUNDANT_NO_PITR,   # the money row
+    "contoso-pms-vm": PROFILE_ORPHAN_NO_RECOVERY,              # no recovery path
+    "contoso-pms-vm-datadisk": PROFILE_ORPHAN_NO_RECOVERY,
+    "contosohotelsmedia": PROFILE_GEO_PAIRED_HOURLY,
+    "contoso-sql/reservations": PROFILE_BACKED_UP_SINGLE_ZONE,
+    "contoso-redis": PROFILE_UNMAPPABLE,
+    "contoso-aks": PROFILE_SINGLE_INSTANCE_DAILY,
+    # --- Zava Shoes Website ---------------------------------------------------------
+    "zava-web-sql/catalog": PROFILE_LRS_VAULT_BACKUP,          # protected, region-fatal
+    "zavawebmedia": PROFILE_GEO_PAIRED_HOURLY,
+    "zava-web-redis": PROFILE_UNMAPPABLE,
+    "zava-web-search": PROFILE_UNMAPPABLE,
+    # --- Zava Shoes CRM -------------------------------------------------------------
+    "zava-crm-vm01": PROFILE_CONTINUOUS_REPLICATED,            # 30s RPO...
+    "zava-crm-vm02": PROFILE_SINGLE_INSTANCE_DAILY,            # ...beside 24h, same app
+    "zava-crm-pg": PROFILE_ORPHAN_NO_RECOVERY,
+    "zavacrmdocs": PROFILE_SINGLE_INSTANCE_DAILY,
+    "zava-crm-redis": PROFILE_UNMAPPABLE,
+}
+
+# Fallback for anything unnamed, so every resource still gets a coherent story.
+_PROFILE_FALLBACK = (
+    PROFILE_SINGLE_INSTANCE_DAILY, PROFILE_BACKED_UP_SINGLE_ZONE, PROFILE_GEO_PAIRED_HOURLY,
+)
+
+#: Recovery criticality per demo workload, so breach lists differ rather than looking
+#: decorative. Maps onto the Backup Manager tier registry ids.
+DEMO_CRITICALITY: dict[str, str] = {
+    CONTOSO_ID: "mission_critical",
+    ZAVA_WEB_ID: "business_critical",
+    ZAVA_CRM_ID: "standard",
+}
+
+# Approximate data volumes, needed for restore-time bands. Absent means "size unknown",
+# which must widen the band rather than assume a default.
+_SIZE_GB: dict[str, int] = {
+    "contoso-pms-vm": 512, "contoso-pms-vm-datadisk": 2048, "contosohotelsmedia": 1200,
+    "contoso-sql/reservations": 240, "contoso-guests-cosmos": 80, "contoso-aks": 64,
+    "zava-web-sql/catalog": 180, "zavawebmedia": 900,
+    "zava-crm-vm01": 256, "zava-crm-vm02": 256, "zavacrmdocs": 300,
+}
+
+
+def profile_for(scope_id: str, name: str, rid: str) -> str:
+    """Which resiliency profile a demo resource plays."""
+    named = _PROFILE_BY_NAME.get(name)
+    if named:
+        return named
+    return _PROFILE_FALLBACK[bucket(rid + "resil", len(_PROFILE_FALLBACK))]
+
+
+def criticality_for(scope_id: str) -> str:
+    return DEMO_CRITICALITY.get(scope_id, "standard")
+
+
+def resiliency_for(scope_id: str) -> list[dict[str, Any]]:
+    """Redundancy + native-backup configuration, in the shape the resiliency collector emits.
+
+    Deliberately NOT a pre-computed verdict: these rows go through the same derivation the
+    live collector feeds, so demo mode exercises the real pipeline. A demo that diverged
+    from production would hide exactly the bugs it should catch.
+    """
+    out: list[dict[str, Any]] = []
+    for res in resources_for(scope_id):
+        name, rid = res["name"], res["id"]
+        profile = profile_for(scope_id, name, rid)
+        spec = _PROFILES[profile]
+        out.append({
+            "id": rid.lower(),
+            "name": name,
+            "type": res["type"],
+            "location": res["location"],
+            "zones": list(spec.get("zones") or []),
+            "zone_redundant": spec.get("zone_redundant"),
+            "replication": spec.get("replication", ""),
+            "native_backup": dict(spec.get("native_backup") or {"kind": "unknown"}),
+            "soft_delete": spec.get("soft_delete"),
+            "size_gb": _SIZE_GB.get(name),
+            "demo_profile": profile,
+        })
+    return out
+
+
+def resiliency_backup_for(scope_id: str) -> list[dict[str, Any]]:
+    """Vault-backed protection facts, in the shape Backup Manager's instances carry.
+
+    Kept separate from :func:`resiliency_for` on purpose: they are two different sources in
+    production, and the join has to be exercised joining two things.
+    """
+    out: list[dict[str, Any]] = []
+    for res in resources_for(scope_id):
+        name, rid = res["name"], res["id"]
+        spec = _PROFILES[profile_for(scope_id, name, rid)]
+        protected = spec.get("protected")
+        if protected is None:
+            continue  # unmappable: absent from the backup estate, which is UNKNOWN not "no"
+        if not protected:
+            continue  # eligible and genuinely unprotected — the join infers this
+        out.append({
+            "datasource_id": rid.lower(),
+            "friendly_name": name,
+            "policy_name": spec.get("policy_name", ""),
+            "schedule_raw": spec.get("schedule"),
+            "retention_days": spec.get("retention_days"),
+            "recovery_point_age_hours": spec.get("recovery_point_age_hours"),
+            "vault_redundancy": spec.get("vault_redundancy", ""),
+            "soft_delete": spec.get("soft_delete"),
+            "protection_stopped": False,
+        })
+    return out
+
+
+def resiliency_asr_for(scope_id: str) -> list[dict[str, Any]]:
+    """Site Recovery replication facts for the demo estate."""
+    out: list[dict[str, Any]] = []
+    for res in resources_for(scope_id):
+        name, rid = res["name"], res["id"]
+        spec = _PROFILES[profile_for(scope_id, name, rid)]
+        asr = spec.get("asr")
+        if asr:
+            out.append({"source_id": rid.lower(), "friendly_name": name, **asr})
+    return out
+

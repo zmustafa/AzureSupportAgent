@@ -39,7 +39,7 @@ def main() -> None:
           f"users={len(((data.get('people') or {}).get('users')) or [])}")
 
     t = time.perf_counter()
-    analysis = ca_engine.analyse(data, tenant_id=TENANT)
+    analysis = ca_engine.analyze(data, tenant_id=TENANT)
     print(f"  analyse() -> {(time.perf_counter()-t)*1000:.0f} ms")
 
     cov = analysis["coverage"]
@@ -57,7 +57,7 @@ def main() -> None:
 
     from app.entra.signal_defs import ca_appclass
     wanted = {s.id for s in ca_appclass.SPECS}
-    findings = [f for f in (sm.analyse(TENANT)["_analysis"].get("findings") or [])
+    findings = [f for f in (sm.analyze(TENANT)["_analysis"].get("findings") or [])
                 if f.get("signal_id") in wanted]
     exp = ca_exposure.build(cov, findings)
     print(f"\nexposure rows ({len(exp['rows'])}), findings joined: {len(findings)}")

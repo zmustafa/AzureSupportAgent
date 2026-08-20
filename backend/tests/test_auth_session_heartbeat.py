@@ -146,7 +146,7 @@ async def test_a_failed_heartbeat_write_never_denies_a_valid_session(monkeypatch
         async def counting_rollback():
             # A pure counter: calling through to the real rollback after a stubbed commit
             # failure leaves SQLAlchemy's greenlet context inconsistent, which would fail the
-            # test for a reason that has nothing to do with the behaviour under test.
+            # test for a reason that has nothing to do with the behavior under test.
             rolled_back["n"] += 1
 
         monkeypatch.setattr(db, "commit", boom)

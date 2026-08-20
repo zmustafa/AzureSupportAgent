@@ -168,7 +168,7 @@ async def test_empty_access_policy_grants_nothing_and_is_dropped(monkeypatch):
 
 # --------------------------------------------------------------------------- classic admins
 async def test_classic_administrators_split_a_multi_role_entry(monkeypatch):
-    """ARM returns `role` as a delimited list. Taking it verbatim produces one row labelled
+    """ARM returns `role` as a delimited list. Taking it verbatim produces one row labeled
     "ServiceAdministrator;AccountAdministrator", which no filter or pivot can group."""
     _patch_get_all(monkeypatch, [
         {"id": "/subscriptions/s1/.../classicAdministrators/a1",
@@ -279,7 +279,7 @@ def test_plain_http_is_refused_because_the_request_carries_a_token():
 
 
 def test_protocol_relative_scope_does_not_escape_but_is_still_allowed_host():
-    """Guards against over-claiming: httpx normalises "//evil.com" back onto the base host, so
+    """Guards against over-claiming: httpx normalizes "//evil.com" back onto the base host, so
     this is NOT an escape and must not be cited as one."""
     import httpx
 

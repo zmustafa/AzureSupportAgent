@@ -91,7 +91,7 @@ Served by `GET /api/iam/diagnostics`, with the deny count read from `GET /api/ia
 | `Throttled` | Rate-limited — **no trustworthy rows** |
 | `Failed` | Errored — **no trustworthy rows** |
 
-The last three are the set that means *this scope produced nothing you can rely on*. `PartiallyCollected` is deliberately not in that set: a tenant without the licence for PIM endpoints is partial on every scope forever, and treating partial as untrustworthy would make every delta refresh re-collect the whole estate while still reporting that it had done a delta.
+The last three are the set that means *this scope produced nothing you can rely on*. `PartiallyCollected` is deliberately not in that set: a tenant without the license for PIM endpoints is partial on every scope forever, and treating partial as untrustworthy would make every delta refresh re-collect the whole estate while still reporting that it had done a delta.
 
 **Errors and warnings** lists every collected row carrying an attention status or an error message, with its collector, status and message.
 
@@ -143,7 +143,7 @@ The last three are the set that means *this scope produced nothing you can rely 
 | --- | --- |
 | A collector shows `Unauthorized` | The connection lacks read access at that scope. Nothing derived from that scope is trustworthy — fix the permission and re-collect before reading any other tab for it. |
 | A collector shows `Throttled` | Azure rate-limited the collection. Re-run the scope refresh; repeated throttling on a large estate is a reason to refresh scopes individually rather than all at once. |
-| A collector shows `PartiallyCollected` on every scope | Commonly a licensing gap — for example PIM endpoints refusing a tenant without the required licence. Read the message. Partial means rows arrived; it is not treated as untrustworthy. |
+| A collector shows `PartiallyCollected` on every scope | Commonly a licensing gap — for example PIM endpoints refusing a tenant without the required license. Read the message. Partial means rows arrived; it is not treated as untrustworthy. |
 | A scope shows a stale badge but was verified minutes ago | Staleness uses the more recent of collected and verified. If it is still marked stale, neither is inside the TTL. |
 | Insights is empty | No access scan has been loaded, or the filter excludes everything. Clear the filter by picking the tree root, then check Diagnostics. |
 | A pivot count does not match the Overview KPI | Pivots count every collected row including deny assignments; *Total grants* excludes denies because a deny removes access. |

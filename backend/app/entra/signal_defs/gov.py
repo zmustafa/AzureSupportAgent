@@ -5,7 +5,7 @@ The design rule that shapes every signal here: **absence is the finding**.
 Listing the access reviews a tenant has is a portal feature. Naming the privileged roles,
 role-assignable groups and guest population that *no review has ever looked at* is the
 product feature — and it is computable from the inventory alone, which is why most of these
-signals still fire on a tenant with no P2 licence at all. A free-tier tenant learning that
+signals still fire on a tenant with no P2 license at all. A free-tier tenant learning that
 18 privileged roles have never been reviewed is a better outcome than an empty screen
 saying "requires Entra ID P2".
 """
@@ -49,7 +49,7 @@ def _unreviewed(key: str, signal_id: str, severity: str, noun: str, needs: tuple
     """Factory for the 'this object class has never been reviewed' family.
 
     Deliberately computed from the inventory domains, so it reports on a tenant with no
-    governance licence — where the honest answer is "never reviewed", not "not measured"."""
+    governance license — where the honest answer is "never reviewed", not "not measured"."""
 
     def _inner(data: dict[str, Any], ctx: SignalContext) -> list[dict[str, Any]]:
         for need in needs:
@@ -216,7 +216,7 @@ def _entitlement_expiring(data: dict[str, Any], ctx: SignalContext) -> list[dict
             object_name=f"{row.get('principal_name')} \u2192 {row.get('package_name')}",
             title=f"Access package assignment expires in {days} day(s)",
             detail="Advance notice so the loss of access is planned rather than discovered. "
-                   "Expiring entitlement assignments are the intended behaviour — this is a "
+                   "Expiring entitlement assignments are the intended behavior — this is a "
                    "heads-up, not a fault.",
             evidence={"package": row.get("package_name"), "principal": row.get("principal_name"),
                       "principal_type": row.get("principal_type"),
@@ -291,7 +291,7 @@ def _lifecycle_workflow_failing(data: dict[str, Any], ctx: SignalContext) -> lis
             object_name=str(workflow.get("display_name") or ""),
             title=f"Lifecycle workflow '{workflow.get('display_name')}' has {failed} failed run(s)",
             detail="A configured workflow that does not complete is worse than no workflow, "
-                   "because the organisation believes offboarding is automated while access "
+                   "because the organization believes offboarding is automated while access "
                    "quietly survives.",
             evidence={"category": workflow.get("category"), "runs": runs,
                       "enabled": workflow.get("enabled"),
@@ -309,7 +309,7 @@ def _leaver_workflow_ineffective(data: dict[str, Any], ctx: SignalContext) -> li
     if not any(w.get("category") == "leaver" and w.get("enabled") for w in workflows):
         return []           # covered by gov.no_leaver_workflow instead
     # "Retains access" means exactly what the People pillar means by it: a disabled account
-    # that still holds a directory role or a licence.
+    # that still holds a directory role or a license.
     roles = domain(data, "roles")
     holders: set[str] = set()
     for bucket in ("assignments", "group_derived", "eligible"):
@@ -340,7 +340,7 @@ SPECS: list[SignalSpec] = [
         id="gov.privileged_roles_unreviewed", title="Privileged roles have never been reviewed",
         question="Which privileged directory roles are covered by no access review?",
         why="Standing privilege that nobody re-justifies is how an emergency grant from three "
-            "years ago becomes permanent. This is computable without a governance licence.",
+            "years ago becomes permanent. This is computable without a governance license.",
         pillar="gov", severity="high", weight=9, object_kind="tenant",
         domains=("roles",), impact=IMPACT_BINARY,
         remediation="Create a recurring access review over the privileged directory roles.",

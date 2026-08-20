@@ -327,7 +327,7 @@ def _apply_principal_state(
             r["principalOnPremSynced"] = str(entry.get("onPremSynced") or schema.ENABLED_UNKNOWN)
             r["principalUserType"] = str(entry.get("userType") or r.get("principalUserType") or "")
             continue
-        # No entry. Normalise the row anyway so the grid never renders a ragged column, and
+        # No entry. Normalize the row anyway so the grid never renders a ragged column, and
         # distinguish "there is no account to check" (a group, a classic admin keyed by e-mail)
         # from "we did not manage to check".
         #

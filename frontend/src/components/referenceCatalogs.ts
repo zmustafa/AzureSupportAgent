@@ -9,7 +9,7 @@ export { CATEGORY_COLOR };
 
 // Quick-pick ARM types for the "add resource type" dialog in the Telemetry and Backup/DR
 // editors. These reference sets are independent of AMBA (which now draws its own type list
-// from the vendored upstream catalogue via GET /amba/catalog), so the list lives here.
+// from the vendored upstream catalog via GET /amba/catalog), so the list lives here.
 // Any ARM type can still be typed in free-form.
 export const KNOWN_ARM_TYPES: { type: string; label: string; category: string }[] = [
   { type: "microsoft.compute/virtualmachines", label: "Virtual Machine", category: "compute" },

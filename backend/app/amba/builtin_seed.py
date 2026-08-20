@@ -1,8 +1,8 @@
-"""Built-in AMBA reference: the vendored upstream catalogue plus local enrichment.
+"""Built-in AMBA reference: the vendored upstream catalog plus local enrichment.
 
 Three layers are merged, in order:
 
-1. ``data/amba_catalog.json`` — the upstream Azure Monitor Baseline Alerts catalogue,
+1. ``data/amba_catalog.json`` — the upstream Azure Monitor Baseline Alerts catalog,
    imported verbatim from ``services/<Provider>/<type>/alerts.yaml`` at a pinned release
    tag by ``scripts/import_amba_catalog.py``. Never hand-edit this file.
 2. ``data/enrichment.json`` — operator-facing "why this matters" copy and display units
@@ -213,7 +213,7 @@ def _merged() -> dict[str, Any]:
 
 
 def amba_release() -> str:
-    """The upstream AMBA release tag the vendored catalogue was imported from."""
+    """The upstream AMBA release tag the vendored catalog was imported from."""
     return str(_merged().get("amba_release") or "")
 
 

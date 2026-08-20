@@ -288,7 +288,7 @@ def _priv_signin_unmanaged_device(data: dict[str, Any], ctx: SignalContext) -> l
             object_kind="user", object_id=uid, object_name=row.get("upn") or uid,
             title=f"Privileged user '{row.get('upn') or uid}' signed in from a non-compliant device",
             detail="Administrative work from an unmanaged endpoint puts tenant-wide credentials on "
-                   "a device the organisation cannot attest to. A device-compliance requirement "
+                   "a device the organization cannot attest to. A device-compliance requirement "
                    "on the admin cohort closes this.",
             evidence={"upn": row.get("upn"), "sign_ins": row.get("count"),
                       "device": row.get("device"), "last_seen": row.get("last_seen"),
@@ -471,7 +471,7 @@ SPECS: list[SignalSpec] = [
     SignalSpec(
         id="risk.priv_signin_unmanaged_device",
         title="Privileged sign-in from a non-compliant device",
-        question="Are administrators working from endpoints the organisation cannot attest to?",
+        question="Are administrators working from endpoints the organization cannot attest to?",
         why="Administrative credentials on an unmanaged device are one keylogger away from a "
             "tenant compromise, and no directory control can see that device.",
         pillar="risk", severity="high", weight=9, object_kind="user",

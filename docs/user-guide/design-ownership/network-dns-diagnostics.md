@@ -54,7 +54,7 @@ Source VM, target FQDN or private IP, port (default `443`), and protocol — `tc
 
 A chain of steps, each recording its command, status, evidence line, raw output, and duration: **DNS → ICMP → TCP → TLS → HTTP**. Which steps run depends on the protocol.
 
-The verdict summarises the chain:
+The verdict summarizes the chain:
 
 | Verdict | Meaning |
 | --- | --- |

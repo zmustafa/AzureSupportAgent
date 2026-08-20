@@ -72,7 +72,7 @@ async def _publish_immediate(tenant_id: str, scanner: scanners.ScannerSpec,
         },
         links=_link_for(finding),
         # The finding's own fingerprint: the same finding reappearing after a resolution is the
-        # same notification, and the notification centre can collapse it.
+        # same notification, and the notification center can collapse it.
         fingerprint=str(finding.get("id") or ""),
     )
 

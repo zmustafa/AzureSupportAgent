@@ -1,6 +1,6 @@
 """Server-side cache for the Entra ID **App Registrations** snapshot.
 
-The app-registrations pull is expensive on large tenants, so the normalised snapshot is
+The app-registrations pull is expensive on large tenants, so the normalized snapshot is
 cached — in-memory for instant hits plus file-persisted
 (``backend/.data/appregs_cache.json``) so a restart stays fast. A separate checkpoint file
 stores completed Graph pages during an in-progress refresh. It never replaces the last-good

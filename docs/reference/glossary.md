@@ -35,7 +35,7 @@ An **Assessment** scores a workload against the five Azure Well-Architected Fram
 
 ### FMEA (Failure Mode and Effects Analysis)
 
-An **FMEA** turns an architecture's Memory into scored risk tables. Each potential failure mode is scored for **Severity × Occurrence × Detection** (each 1–10); their product is the **Risk Priority Number (RPN)**, colour-coded by risk band. RPN is always computed server-side and never trusted from the model. Edit cells live, regenerate a single table, track recommended actions, owners and due dates, move a document through *draft → in review → published*, and export to CSV or Excel.
+An **FMEA** turns an architecture's Memory into scored risk tables. Each potential failure mode is scored for **Severity × Occurrence × Detection** (each 1–10); their product is the **Risk Priority Number (RPN)**, color-coded by risk band. RPN is always computed server-side and never trusted from the model. Edit cells live, regenerate a single table, track recommended actions, owners and due dates, move a document through *draft → in review → published*, and export to CSV or Excel.
 
 ### Deep Investigation (War Room)
 

@@ -108,7 +108,7 @@ def evaluate(tenant_id: str, *, utc_offset_minutes: int = 0) -> list[sig.SignalR
     count, so on a tenant twice this size that is most of a second of pure duplication.
 
     Keyed on the cache version, so it expires exactly when the rows do rather than on a timer.
-    The offset is part of the key because after-hours judgement depends on it.
+    The offset is part of the key because after-hours judgment depends on it.
 
     Safe to memoise because NO signal reads wall-clock time: `ctx.now` is unused by every
     signal_def, and the one time-sensitive check compares the reader's offset against timestamps

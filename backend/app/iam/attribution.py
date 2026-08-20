@@ -14,7 +14,7 @@ this trustworthy rather than merely plausible:
 
 2. **The window is clamped to real retention and the clamp is reported.** The Entra work found
    that `directoryAudits` *rejects* an over-long filter with a 400 rather than returning what it
-   has — losing the entire source instead of the excess. Assume the same class of behaviour and
+   has — losing the entire source instead of the excess. Assume the same class of behavior and
    clamp before asking.
 
 3. **`changeSource` separates IaC from a human in the portal.** "Granted by Terraform" and

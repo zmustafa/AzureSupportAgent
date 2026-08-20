@@ -192,7 +192,7 @@ export function IamFlowTab() {
   );
   /** All columns except the last; the final column must label inward or it clips. */
   const labelRightKinds = useMemo(() => new Set(chain.slice(0, -1)), [chain]);
-  // The legend is built from the colour map, so passing all sixteen dimensions drew sixteen
+  // The legend is built from the color map, so passing all sixteen dimensions drew sixteen
   // swatches under a four-column diagram - most of them for columns that are not on screen.
   const colors = useMemo(
     () => Object.fromEntries(chain.map((d) => [d, NODE_COLORS[d]]).filter(([, c]) => !!c)),

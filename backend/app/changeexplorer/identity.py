@@ -54,7 +54,7 @@ _ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 
 # Well-known first-party Microsoft appIds that show up as the "caller" for platform-initiated
 # control-plane writes (regional network manager, policy remediation, backup, etc.). These are
-# Azure acting on its own behalf — labelling them "unknown actor" is misleading noise on a
+# Azure acting on its own behalf — labeling them "unknown actor" is misleading noise on a
 # forensic screen, so we mark them as the platform.
 _PLATFORM_APPIDS = {
     "37182072-3c9c-4f6a-a4b3-b3f91cacffce",  # Azure Network (RNM-style) services

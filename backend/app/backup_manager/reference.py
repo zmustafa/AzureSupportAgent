@@ -227,7 +227,7 @@ def _sanitize_sla(raw: Any) -> dict[str, Any]:
 
 
 def sanitize(raw: Any) -> dict[str, Any]:
-    """Project an arbitrary payload onto the reference schema (drops anything unrecognised)."""
+    """Project an arbitrary payload onto the reference schema (drops anything unrecognized)."""
     raw = raw if isinstance(raw, dict) else {}
     seed = seed_reference()
     failure_kb = _sanitize_failure_kb(raw.get("failure_kb"))
@@ -280,7 +280,7 @@ def list_revisions() -> list[dict[str, Any]]:
 
 
 def save_reference(payload: Any, *, actor: str, reason: str = "") -> dict[str, Any]:
-    """Persist a sanitised reference, snapshotting the outgoing version first."""
+    """Persist a sanitized reference, snapshotting the outgoing version first."""
     current = load_reference()
     _snapshot(current, reason=reason or "Edited", actor=actor)
     doc = sanitize(payload)

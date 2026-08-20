@@ -1,7 +1,7 @@
 """Backup cost: live-priced estimation, actual-spend allocation, variance, and waste.
 
 Three sources answer three different questions, and the module carries all three with honest
-labelling rather than pretending one is the others:
+labeling rather than pretending one is the others:
 
 * **Cost Management** — what backup *actually cost*. Authoritative, lags 8-24h, and attributes
   every charge to the **vault**, never to the protected item.

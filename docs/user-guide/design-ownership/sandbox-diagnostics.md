@@ -46,7 +46,7 @@ That last one is worth stating plainly: the fingerprint is captured on first tru
 
 Commands are classified before execution. A command containing a mutating verb is treated as destructive.
 
-| Context | Destructive command behaviour |
+| Context | Destructive command behavior |
 | --- | --- |
 | VM with **strict mode** on (the default) | Blocked, returned as needing approval. It does not run. |
 | VM with strict mode off | Runs. |

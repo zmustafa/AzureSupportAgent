@@ -1,6 +1,6 @@
 """Identity Investigate — resolver, capabilities and provenance.
 
-The three behaviours these lock down are the ones the feature is built on:
+The three behaviors these lock down are the ones the feature is built on:
 
 * an unresolvable principal is a RESULT, not an error — deleted objects and Azure
   Lighthouse principals are often exactly what the reader clicked to ask about;

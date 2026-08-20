@@ -174,7 +174,7 @@ def _keyvault_control_to_data(ctx: SignalContext) -> list[Finding]:
 
 def _escalation_from_guest(ctx: SignalContext) -> list[Finding]:
     """An external account with a path to Owner. Always critical: the credential and its
-    lifecycle belong to another organisation."""
+    lifecycle belong to another organization."""
     g = _graph(ctx)
     guests = {
         str(r.get("effectivePrincipalId", "")).lower()
@@ -206,7 +206,7 @@ def _escalation_from_guest(ctx: SignalContext) -> list[Finding]:
                 subject_label=path["fromLabel"],
                 detail=(
                     f"An external (B2B) account can reach full control in {path['length']} step(s). "
-                    "Their credential and its lifecycle belong to another organisation."
+                    "Their credential and its lifecycle belong to another organization."
                 ),
                 count=path["length"],
                 evidence={"hops": [h["primitive"] for h in path.get("hops", [])]},
@@ -275,7 +275,7 @@ def _federated_unknown_issuer(ctx: SignalContext) -> list[Finding]:
     return [
         Finding(
             signal_id="esc.fic_unknown_issuer",
-            title=f"{len(unknown)} federated credential(s) trust an unrecognised issuer",
+            title=f"{len(unknown)} federated credential(s) trust an unrecognized issuer",
             severity="warning",
             pillar="esc",
             object_kind="tenant",
@@ -409,7 +409,7 @@ SIGNALS: list[SignalSpec] = [
         id="esc.escalation_from_guest",
         title="External account can escalate",
         pillar="esc", severity="critical", weight=8, object_kind="principal",
-        why="The credential and its lifecycle belong to another organisation.",
+        why="The credential and its lifecycle belong to another organization.",
         remediation="Remove the access or make it eligible-with-approval.",
         frameworks=("CIS-Azure:1.3", "NIST:AC-2"),
         evaluate=_escalation_from_guest,
@@ -425,7 +425,7 @@ SIGNALS: list[SignalSpec] = [
     ),
     SignalSpec(
         id="esc.fic_unknown_issuer",
-        title="Federated credential trusts an unrecognised issuer",
+        title="Federated credential trusts an unrecognized issuer",
         pillar="esc", severity="warning", weight=5, object_kind="tenant",
         why="An unreviewed OIDC issuer can mint tokens for an Azure identity.",
         remediation="Confirm each issuer is an approved provider.",

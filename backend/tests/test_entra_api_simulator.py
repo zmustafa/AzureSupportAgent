@@ -188,7 +188,7 @@ def test_application_inventory_is_risk_ranked_and_explains_the_score():
 def test_the_focus_picker_is_searchable_and_declares_what_it_is_hiding():
     """The picker used to be a plain dropdown capped at a fixed number. On a 20,000-seat
     tenant that put most of the directory out of reach with nothing on screen saying so, so
-    blast radius could not be pointed at the people it exists to analyse."""
+    blast radius could not be pointed at the people it exists to analyze."""
     everything = _run(entra_api.graph_targets(connection_id="conn-demo", principal=_Principal()))
     assert everything["principal_total"] >= len(everything["principals"])
     assert len(everything["principals"]) <= entra_api._PICK_LIMIT  # noqa: SLF001

@@ -7,7 +7,7 @@ that. It is to compute what is *not* governed. A tenant with 40 immaculate acces
 and 18 privileged roles that nobody has ever reviewed has a governance problem the portal
 will never show it, because the portal only draws what exists.
 
-That is why :func:`coverage` is the centrepiece and why it is deliberately computed from
+That is why :func:`coverage` is the centerpiece and why it is deliberately computed from
 the *inventory* domains rather than from the governance data. On a tenant with no P2 at
 all, every row still renders — framed as "never reviewed" rather than "review overdue" —
 so a free-tier tenant still learns that 24 privileged roles have never been looked at.
@@ -33,7 +33,7 @@ _MAX_ASSIGNMENTS = 20_000
 def _gov_note(feature: str, exc: GraphError, scope: str, licence: str) -> str:
     """One sentence naming the ACTUAL blocker.
 
-    Graph answers a missing Entra ID Governance licence with a **403** here, which is also
+    Graph answers a missing Entra ID Governance license with a **403** here, which is also
     what a genuine consent failure looks like, so the exception type alone cannot be
     trusted. Checking the message first stops the banner telling an operator to grant
     ``LifecycleWorkflows.Read.All`` when they already hold it and the tenant simply is not
@@ -62,7 +62,7 @@ _PACKAGE_IN_QUERY = re.compile(r"accessPackage/id\s+eq\s+'([0-9a-fA-F-]{36})'")
 def _scope_summary(scope: Any) -> dict[str, Any]:
     """Reduce an access-review scope union to something a grid can render.
 
-    Getting this wrong is silent and expensive: an unrecognised scope makes the review
+    Getting this wrong is silent and expensive: an unrecognized scope makes the review
     invisible to the coverage join, so a tenant that reviews its groups every month still
     reads "0 reviewed" against every object class. Two live bugs came from here — access
     package reviews were not matched at all, and the group branch took the last path
@@ -386,7 +386,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------- coverage
 # The synthesis, and the reason this module exists. Computed from the INVENTORY domains so
-# that it renders on a tenant with no governance licence at all — where every row reads
+# that it renders on a tenant with no governance license at all — where every row reads
 # "never reviewed", which is exactly the finding that tenant needs to see.
 COVERAGE_CLASSES: tuple[dict[str, str], ...] = (
     {"key": "privileged_roles", "label": "Privileged directory roles",

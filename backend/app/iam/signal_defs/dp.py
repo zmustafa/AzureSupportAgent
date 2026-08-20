@@ -49,7 +49,7 @@ def _scope_label(row: dict[str, Any]) -> str:
 
 
 def _role_defs(ctx: SignalContext) -> dict[str, list[str]]:
-    """role name (lowercased) -> its dataActions, from the collected catalogue."""
+    """role name (lowercased) -> its dataActions, from the collected catalog."""
     out: dict[str, list[str]] = {}
     for rd in (ctx.directory.get("role_defs") or []):
         name = str(rd.get("roleName", "")).strip().lower()
@@ -67,7 +67,7 @@ def _role_defs(ctx: SignalContext) -> dict[str, list[str]]:
 def _tiered_grants(ctx: SignalContext) -> list[tuple[dict[str, Any], str]]:
     """Every granting row paired with the tier of the role it carries.
 
-    Requires the role catalogue: without dataActions there is no way to tell a data-plane role
+    Requires the role catalog: without dataActions there is no way to tell a data-plane role
     from a control-plane one, and guessing from the name is exactly what this pillar replaces."""
     defs = _role_defs(ctx)
     ctx.require(

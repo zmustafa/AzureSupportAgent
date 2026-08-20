@@ -28,7 +28,7 @@ from typing import Any
 from app.azure.credentials import _token_expired, get_arm_token, get_graph_token
 from app.core.azure_connections import list_connections
 
-# Capability cell states (worst → best). The frontend colours these.
+# Capability cell states (worst → best). The frontend colors these.
 FULL = "full"          # works (subject to the identity's RBAC)
 DEGRADED = "degraded"  # works but limited / unverifiable / short-lived
 BLIND = "blind"        # cannot do this at all with the current credentials
@@ -40,6 +40,11 @@ CAPABILITIES: list[dict[str, str]] = [
      "desc": "List and read Azure Resource Manager resources, subscriptions and management groups."},
     {"key": "resource_graph", "label": "Resource Graph",
      "desc": "Run Azure Resource Graph (ARG) queries for inventory and change history."},
+    {"key": "recovery_readiness", "label": "Recovery posture",
+     "desc": "Read redundancy configuration, native PaaS backup settings and Azure Advisor "
+             "reliability recommendations for the per-scenario RTO/RPO analysis. Needs "
+             "Resource Graph plus Reader on the resources in scope; without it Recovery "
+             "Readiness reports 'unknown' rather than a verdict."},
     {"key": "graph_directory", "label": "Microsoft Graph token",
      "desc": "Acquire a raw Microsoft Graph access token (the app's own Graph client and the "
              "Entra-policy assessment controls). A managed identity with Directory.Read.All can do this."},
@@ -56,19 +61,19 @@ CAPABILITIES: list[dict[str, str]] = [
              "Support Agent. Needs Directory.Read.All (or User/Group/Application.Read.All)."},
     {"key": "entra_ca_read", "label": "Entra Conditional Access",
      "desc": "Read Conditional Access policies, named locations and authentication strengths. "
-             "Needs Policy.Read.All and an Entra ID P1 licence."},
+             "Needs Policy.Read.All and an Entra ID P1 license."},
     {"key": "entra_roles_read", "label": "Entra directory roles",
      "desc": "Read role definitions and assignments for the privileged-access analysis. "
              "Needs RoleManagement.Read.Directory."},
     {"key": "entra_pim_read", "label": "Entra PIM schedules",
      "desc": "Read PIM eligibility / assignment schedules and role management policies. "
-             "Needs PrivilegedAccess.Read.AzureAD and an Entra ID P2 licence."},
+             "Needs PrivilegedAccess.Read.AzureAD and an Entra ID P2 license."},
     {"key": "entra_logs_read", "label": "Entra sign-in & audit logs",
      "desc": "Read sign-in activity, the MFA registration report and directory audits. "
-             "Needs AuditLog.Read.All and an Entra ID P1 licence."},
+             "Needs AuditLog.Read.All and an Entra ID P1 license."},
     {"key": "entra_governance_read", "label": "Entra risk & governance",
      "desc": "Read Identity Protection risk, access reviews and entitlement management. "
-             "Needs the P2-tier scopes and an Entra ID P2 licence."},
+             "Needs the P2-tier scopes and an Entra ID P2 license."},
     {"key": "writes", "label": "Gated writes",
      "desc": "Execute approved mutating operations (remediation, tagging, deployments)."},
 ]
@@ -106,7 +111,7 @@ def _entra_directory_cell(conn: dict[str, Any]) -> dict[str, str]:
 
 
 # Entra columns -> the collector domain(s) whose permission state decides the cell, and the
-# licence tier the feature needs. Driven by the cached probe written by the last Entra
+# license tier the feature needs. Driven by the cached probe written by the last Entra
 # refresh, so the matrix and the /entra screens can never disagree.
 _ENTRA_COLUMNS: dict[str, tuple[tuple[str, ...], str]] = {
     "entra_bulk_read": (("people", "apps"), ""),
@@ -123,7 +128,7 @@ def _entra_cells(conn: dict[str, Any], graph_token_ok: bool) -> dict[str, dict[s
 
     Before the first refresh we can only say "depends on the consent granted to this app" —
     claiming FULL there would be a guess. Once a refresh has run, the per-domain permission
-    probe and the detected licence tier give a definitive answer per column.
+    probe and the detected license tier give a definitive answer per column.
     """
     from app.entra import cache as entra_cache  # local import: avoids an import cycle
     from app.entra.licences import licence_label
@@ -346,6 +351,22 @@ def _public_conn(conn: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _derive_recovery(caps: dict[str, dict[str, str]]) -> None:
+    """Recovery Readiness reads through Resource Graph, so it inherits that verdict.
+
+    Derived in one place rather than set per auth method: the per-method branches already
+    disagree about half a dozen cells, and a column that drifts from the thing it depends on
+    is worse than no column."""
+    source = caps.get("resource_graph")
+    if not source:
+        return
+    caps["recovery_readiness"] = _cell(
+        source.get("status", BLIND),
+        source.get("reason", ""),
+        source.get("remediation", ""),
+    )
+
+
 async def build_matrix(*, live: bool = False) -> dict[str, Any]:
     """Build the capability matrix across every configured connection."""
     conns = list_connections()
@@ -354,6 +375,7 @@ async def build_matrix(*, live: bool = False) -> dict[str, Any]:
         caps = _static_caps(conn)
         if live and not conn.get("disabled"):
             await _live_overlay(conn, caps)
+        _derive_recovery(caps)
         blind = [k for k, c in caps.items() if c.get("status") == BLIND]
         rows.append({
             **_public_conn(conn),

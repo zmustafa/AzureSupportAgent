@@ -163,7 +163,7 @@ export function SimulatorTab() {
       <div className="border-b bg-white px-4 py-3">
         <div className="text-sm font-semibold text-gray-800">What-if simulator</div>
         <p className="mt-1 text-[11px] text-gray-600">
-          Pure modelling over the last collected snapshot — no Azure call, no write. Build a basket
+          Pure modeling over the last collected snapshot — no Azure call, no write. Build a basket
           of changes so the interactions between them are modelled together rather than one at a time.
         </p>
 
@@ -219,7 +219,7 @@ export function SimulatorTab() {
               disabled={run.isPending}
               className="ml-auto rounded border bg-white px-2 py-1 text-xs text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
             >
-              {run.isPending ? "Modelling…" : `Simulate ${basket.length} change(s)`}
+              {run.isPending ? "Modeling…" : `Simulate ${basket.length} change(s)`}
             </button>
           </div>
         )}

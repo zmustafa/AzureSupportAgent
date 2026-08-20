@@ -39,7 +39,7 @@ _CACHE_PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_pr
 CACHE_TTL_SECONDS = 7 * 24 * 3600
 MAX_PAGES = 8
 
-# Our normalised datasource types -> the retail meter that prices one protected instance.
+# Our normalized datasource types -> the retail meter that prices one protected instance.
 # Keys are lowercase and matched loosely (see `instance_meter_key`).
 DATASOURCE_TO_METER: dict[str, str] = {
     "vm": "azure vm",
@@ -84,7 +84,7 @@ _FILES_REDUNDANCY_ALIASES = {
 
 
 def instance_meter_key(meter_name: str) -> str:
-    """Normalise `"Azure VM Protected Instance"` -> `"azure vm"`."""
+    """Normalize `"Azure VM Protected Instance"` -> `"azure vm"`."""
     text = str(meter_name or "").strip().lower()
     for suffix in (" protected instance", " snapshot instance"):
         if text.endswith(suffix):

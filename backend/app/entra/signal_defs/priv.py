@@ -374,7 +374,7 @@ SPECS: list[SignalSpec] = [
         benchmarks=("CIS 1.1.3", "MCSB PA-1"), impact=IMPACT_SATURATING, saturation=3,
         remediation="Convert to PIM-eligible assignments with approval and MFA on activation.",
         remediation_steps=(
-            "Entra admin centre > Roles and administrators > Global Administrator > Assignments.",
+            "Entra admin center > Roles and administrators > Global Administrator > Assignments.",
             "Change each permanent assignment to Eligible with an expiry.",
             "Keep only confirmed break-glass accounts permanent.",
         ),

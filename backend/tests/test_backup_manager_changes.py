@@ -141,7 +141,7 @@ async def test_stop_protection_only_ever_retains_data(stub_arm) -> None:
 
 @pytest.mark.asyncio
 async def test_any_other_stop_mode_is_refused_at_apply_time(stub_arm) -> None:
-    """Defence in depth: even a hand-crafted row cannot reach a data-deleting call."""
+    """Defense in depth: even a hand-crafted row cannot reach a data-deleting call."""
     change = _change(operation="delete", desired={"body": {}},
                      summary={"mechanism": "rsv_vm", "stop_mode": "delete_data"})
     submission, _context = await changes.apply_change(CONNECTION, change)

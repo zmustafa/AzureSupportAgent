@@ -1,6 +1,6 @@
 """AMBA coverage collector: detection correctness for every alert class.
 
-Each test pins a behaviour that was previously wrong or unrepresentable:
+Each test pins a behavior that was previously wrong or unrepresentable:
 false-PRESENT on log alerts, multi-resource metric rules reading as missing, dynamic
 thresholds, alert processing rule suppression, AMBA-ALZ threshold-override tags,
 action groups with no receivers, Service Health / Activity Log matching, and the

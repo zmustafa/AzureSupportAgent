@@ -3,7 +3,7 @@ and access review campaigns.
 
 The tests that matter here are the ones about what the product REFUSES to do: auto-approving an
 expired campaign, guessing an actor, emitting a revoke with no rollback, or showing a control as
-passing when nothing measured it. Each of those is a plausible, convenient behaviour that would
+passing when nothing measured it. Each of those is a plausible, convenient behavior that would
 make the feature look better and the evidence worthless.
 """
 from __future__ import annotations
@@ -224,7 +224,7 @@ def _event(**kw):
 
 def test_the_activity_log_window_is_clamped_to_real_retention_and_the_clamp_is_reported():
     """`directoryAudits` REJECTS an over-long filter with a 400 rather than returning less — the
-    whole source is lost if the query is not clamped. Assume the same class of behaviour."""
+    whole source is lost if the query is not clamped. Assume the same class of behavior."""
     _s, _e, note = attribution.clamp_window(365)
     assert note and "90" in note
     _s, _e, quiet = attribution.clamp_window(7)

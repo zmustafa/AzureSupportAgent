@@ -78,7 +78,7 @@ def _overprivileged(ctx: SignalContext) -> list[Finding]:
 def _owner_used_as_reader(ctx: SignalContext) -> list[Finding]:
     """Holds a tier-0 role, exercised only reads.
 
-    Stronger than the ratio check because it needs no threshold and no judgement: somebody with
+    Stronger than the ratio check because it needs no threshold and no judgment: somebody with
     the ability to delete the subscription spent the window looking at it."""
     _measured(ctx)
     used = usage.used_actions(ctx.usage)
@@ -94,7 +94,7 @@ def _owner_used_as_reader(ctx: SignalContext) -> list[Finding]:
         if not actions:
             # No recorded activity at all is the "blind" case, not the "read-only" case. It is
             # covered by the ratio check with its own confidence, and asserting read-only here
-            # would be inventing a behaviour profile from an empty log.
+            # would be inventing a behavior profile from an empty log.
             continue
         if any(not _looks_read(a) for a in actions):
             continue

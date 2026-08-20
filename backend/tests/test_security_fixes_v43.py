@@ -108,7 +108,7 @@ def test_main_no_longer_uses_the_prefix_check():
 # a one-second budget separates them by three orders of magnitude and will not flake on a
 # slow runner. If someone reintroduces a backtracking form, the test hangs then fails.
 #
-# The accompanying behaviour tests matter just as much. Two "obvious" rewrites attempted
+# The accompanying behavior tests matter just as much. Two "obvious" rewrites attempted
 # during this work were fast but silently WRONG (`\s+` collapsed intra-line spaces inside
 # quoted KQL literals), and three others were equivalent but slower than what they
 # replaced. Speed alone is not the property being pinned here.
@@ -228,7 +228,7 @@ def test_email_validation_accepts_real_addresses_and_rejects_consecutive_dots():
     for bad in ("a@b", "@b.co", "a@.co", "a b@c.co"):
         assert not _EMAIL_RE.fullmatch(bad), f"accepted an invalid address: {bad!r}"
 
-    # Behaviour CHANGE, pinned deliberately: the old pattern let the literal dot and the
+    # Behavior CHANGE, pinned deliberately: the old pattern let the literal dot and the
     # dot inside the character class share a character, so `a@b..co` validated.
     assert not _EMAIL_RE.fullmatch("a@b..co"), "consecutive dots must not validate"
 

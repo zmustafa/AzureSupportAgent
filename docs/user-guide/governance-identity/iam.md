@@ -84,7 +84,7 @@ Two rules govern how they render, and both exist to stop a reassuring number bei
 - **Deny assignments are not counted in *Total grants*.** A deny *removes* access, so folding denies into the headline would inflate it with rows that mean the opposite. They are counted on their own tile, and they have their own surface on the access grid and their own warning banner on Diagnostics. Every other tile on this row is computed over grants only.
 - **A missing figure renders as an em dash, never as 0.** A hard zero on a tenant that was never scanned is the most reassuring possible way to say *we did not look*, and it is the one rendering this product must not produce. The tile carries a *not measured* tooltip when it is showing a dash. Three tiles — Key Vault policies, classic admins and deny assignments — default an absent value to zero in the client rather than dashing it; the overview endpoint always computes all three, so in practice a zero on those tiles is a measured zero.
 
-A connection with no collection at all does not reach the tiles: the tab renders a wall offering **↻ Run access scan** and **🎬 Seed demo data** instead. The demo dataset is synthetic and is labelled with a `demo dataset` pill; the control to remove it appears only once demo data is loaded, and seeding is offered only on that empty state — an adjacent "load fake data" button in the main toolbar would be one mis-click from making a review of a live tenant unreadable.
+A connection with no collection at all does not reach the tiles: the tab renders a wall offering **↻ Run access scan** and **🎬 Seed demo data** instead. The demo dataset is synthetic and is labeled with a `demo dataset` pill; the control to remove it appears only once demo data is loaded, and seeding is offered only on that empty state — an adjacent "load fake data" button in the main toolbar would be one mis-click from making a review of a live tenant unreadable.
 
 ### The Access grid
 
@@ -117,7 +117,7 @@ Four things the diagram cannot express on its own are therefore reported beside 
 | PIM-eligible grants | Eligibility is permission to ask for a role, not access anyone currently holds. Excluded by default; tick **Include PIM-eligible** to see what could be activated |
 | Deny assignments | A deny *removes* access and a ribbon *adds* it. Drawing them together would state the opposite of the truth |
 | Groups whose membership could not be read | Shown as the group itself rather than dropped, so the access stays visible even when the people are not. "We could not enumerate the group" must never render as "nobody has this" |
-| The long tail of each column | Folded into one labelled "N more" bar. Every grant is still counted; raise **Per column** or narrow the focus to open it up |
+| The long tail of each column | Folded into one labeled "N more" bar. Every grant is still counted; raise **Per column** or narrow the focus to open it up |
 
 Selecting any bar lists the principals and roles behind it and links through to the Effective Access evaluator and the access grid, so the picture is a starting point rather than the end of the trail.
 
@@ -212,7 +212,7 @@ Apply least privilege, but do not remove emergency access, deployment identities
 | The header says `scanned just now` but a tab shows old data | The headline is the newest collection across all scopes. Check for the `N of M scopes stale` split beside it, then open Overview for the per-scope ages. |
 | The header shows nothing where freshness should be | The overview has not resolved, or its query failed. That is not the same as never scanned, so nothing is asserted. Check Diagnostics. |
 | Least Privilege says usage was not measured | No usage scan has run for this connection. Set the window and use **Scan usage**; it is separate from every access refresh control. |
-| Least Privilege says the role catalogue is missing | Usage was collected but no assignment could be compared against it, because the actions its role grants were never collected. Run **↻ Rescan** to re-collect role definitions, then re-run **Scan usage**. This is not a clean result. |
+| Least Privilege says the role catalog is missing | Usage was collected but no assignment could be compared against it, because the actions its role grants were never collected. Run **↻ Rescan** to re-collect role definitions, then re-run **Scan usage**. This is not a clean result. |
 | A KPI tile shows `—` | That figure was not measured. It is deliberately not rendered as 0. Check Diagnostics for the collector that could not read. |
 | *Total grants* looks lower than the number of rows in the grid | Deny assignments are excluded from *Total grants* because a deny removes access. They have their own tile and their own surface filter. |
 | A usage window longer than 90 days will not apply | Azure Activity Log retention is the ceiling. The popover states it; the request is not silently shortened. |

@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 # CIS Microsoft Azure Foundations Benchmark version that the ``cis`` control ids below are
-# pinned to. Centralised so the benchmark edition is unambiguous and easy to bump.
+# pinned to. Centralized so the benchmark edition is unambiguous and easy to bump.
 CIS_VERSION = "v5.0.0"
 
 # Version of the shipped control catalog. Stamped onto every AssessmentRun so historical
@@ -53,7 +53,7 @@ PILLAR_META: dict[str, dict[str, str]] = {
     "performance": {"label": "Performance Efficiency", "icon": "⚡"},
 }
 
-# Named assessment packs map a recognised Microsoft methodology to the pillar(s) it covers,
+# Named assessment packs map a recognized Microsoft methodology to the pillar(s) it covers,
 # so a user can launch "WARA" / "WASA" / a full WAF review by name. A pack is just a
 # convenient pillar bundle — the same deterministic + manual + signal controls run underneath.
 PACKS: dict[str, dict[str, Any]] = {

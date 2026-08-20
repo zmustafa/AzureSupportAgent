@@ -737,7 +737,7 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         status = model.STATUS_PARTIAL if notes else model.STATUS_OK
         blockers = []
         if sampled:
-            # A cap is not a permission gap and not a licence gap. It is a deliberate bound,
+            # A cap is not a permission gap and not a license gap. It is a deliberate bound,
             # and the only lever the reader has is a shorter lookback — so say the number and
             # say the lever, rather than "counts are a lower bound".
             blockers.append(model.blocker(

@@ -1,6 +1,6 @@
 """The IAM agent tools — what an LLM is allowed to say about somebody's access.
 
-These matter more than an ordinary read endpoint because a model **summarises**. A UI can show
+These matter more than an ordinary read endpoint because a model **summarizes**. A UI can show
 "unmeasured" in amber next to an empty list and a human reads the amber; a model handed the same
 empty list writes "no unused permissions were found" and the amber is gone. So every tool here
 has to carry its uncertainty *in the words*, not in a field the caller may drop.
@@ -218,7 +218,7 @@ async def test_who_can_reach_resource_says_when_the_bypass_sweep_never_ran(isola
     assert "No RBAC-bypass sweep has been run" in out
 
 
-# =========================================================================== behaviour
+# =========================================================================== behavior
 @pytest.mark.anyio
 async def test_why_access_names_the_assignment_and_where_it_was_made(isolated_cache, monkeypatch):
     """The question is asked by somebody about to REMOVE access, so the answer has to be the

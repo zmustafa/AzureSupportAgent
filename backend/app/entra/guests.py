@@ -13,7 +13,7 @@ Four things in here are load-bearing and were each got wrong at least once in th
    invitation is sent) and ``accepted_at`` is only read from the state-change stamp when the
    state actually says ``Accepted``.
 
-2. **The guest's organisation is NOT the UPN suffix.** A guest UPN looks like
+2. **The guest's organization is NOT the UPN suffix.** A guest UPN looks like
    ``ada_contoso.com#EXT#@yourtenant.onmicrosoft.com`` — the suffix is always the HOST
    tenant, so keying on it reports every guest as belonging to your own company. The domain
    comes from ``mail``, falling back to the segment after the last underscore of the
@@ -71,7 +71,7 @@ DOMAIN_CLASS_LABEL = {
 }
 
 #: Free/consumer mailbox providers. A guest on one of these cannot be de-provisioned by any
-#: partner organisation when an engagement ends — there is no counterparty to ask. That makes
+#: partner organization when an engagement ends — there is no counterparty to ask. That makes
 #: them a different governance class from a corporate partner, not merely a different domain.
 CONSUMER_DOMAINS = frozenset({
     "gmail.com", "googlemail.com", "outlook.com", "outlook.co.uk", "hotmail.com",
@@ -128,7 +128,7 @@ def guests_of(people_data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def guest_domain(user: dict[str, Any]) -> str:
-    """The guest's own organisation, never the host tenant.
+    """The guest's own organization, never the host tenant.
 
     ``mail`` first because it is the address the invitation was actually sent to. The
     ``#EXT#`` prefix is the fallback: Entra rewrites ``ada@contoso.com`` as
@@ -299,7 +299,7 @@ def funnel(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 def by_domain(rows: Iterable[dict[str, Any]],
               tenants: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Per partner organisation. This is the unit an enterprise actually decides on.
+    """Per partner organization. This is the unit an enterprise actually decides on.
 
     Nobody revokes a supplier's guests one at a time; they end an engagement and want
     every identity that came with it. Sorted by guest count so the biggest exposure leads.
@@ -345,7 +345,7 @@ def annotate_partners(domains: list[dict[str, Any]],
 
     Resolution needs no extra consent: ``findTenantInformationByDomainName`` was verified
     against v1.0 with the scopes this product already holds. So a domain that does NOT
-    resolve is a fact about the domain — a consumer mailbox, or an organisation with no
+    resolve is a fact about the domain — a consumer mailbox, or an organization with no
     Entra tenant behind it — and not a permission problem. Saying otherwise would send an
     operator to grant a scope that changes nothing.
 
@@ -368,7 +368,7 @@ def annotate_partners(domains: list[dict[str, Any]],
             d["governance"] = "unknown"
             d["governance_reason"] = (
                 "No Entra tenant is published for this domain, so no cross-tenant policy "
-                "can name it. Consumer mailboxes and organisations without Entra land here.")
+                "can name it. Consumer mailboxes and organizations without Entra land here.")
         elif tid in configured:
             d["governance"] = "governed"
             d["governance_reason"] = "A cross-tenant access policy names this partner tenant."
@@ -379,7 +379,7 @@ def annotate_partners(domains: list[dict[str, Any]],
     return domains
 
 
-def summarise(people_data: dict[str, Any], *, now: datetime | None = None,
+def summarize(people_data: dict[str, Any], *, now: datetime | None = None,
               stale_days: int = 90) -> dict[str, Any]:
     """Everything the Guests screen renders, computed once."""
     now = now or datetime.now(timezone.utc)

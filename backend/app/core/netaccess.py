@@ -75,7 +75,7 @@ class NetAccessError(ValueError):
 def parse_cidr(value: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
     """Parse a single address or CIDR into a network, or raise ``NetAccessError``.
 
-    ``strict=False`` so "203.0.113.7/24" is accepted and normalised rather than rejected for
+    ``strict=False`` so "203.0.113.7/24" is accepted and normalized rather than rejected for
     having host bits set — an operator writing that means the /24, and refusing it teaches
     nothing.
     """

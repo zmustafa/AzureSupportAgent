@@ -19,16 +19,16 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:governance]
 
 This tab is not an inventory of governance campaigns — the Microsoft Entra admin center already lists those. Its job is to compute what is *not* governed. A tenant with forty immaculate access reviews and a set of privileged roles nobody has ever reviewed has a governance problem the portal cannot show, because the portal only draws what exists.
 
-That is why the coverage table is the centrepiece and why it is computed from the inventory domains rather than from the governance data. On a tenant with no governance licence at all, every row still renders — framed as never reviewed rather than review overdue — so an unlicensed tenant still learns which object classes are governed by nothing.
+That is why the coverage table is the centerpiece and why it is computed from the inventory domains rather than from the governance data. On a tenant with no governance license at all, every row still renders — framed as never reviewed rather than review overdue — so an unlicensed tenant still learns which object classes are governed by nothing.
 
 ## Prerequisites and data sources
 
 - Product permission `entra.read`. `entra.admin` applies only to the write actions elsewhere in Entra ID, such as starting a collection or changing finding state; nothing on this tab requires it.
 - Consent tier 3 scopes: `AccessReview.Read.All`, `EntitlementManagement.Read.All`, and `LifecycleWorkflows.Read.All`. See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity/entra-setup-coverage/).
 - **Entra ID P2** is required for access reviews and entitlement management. **Entra ID Governance** is required for lifecycle workflows.
-- The coverage sub-view depends on the people, roles, and applications domains rather than the governance domain, so it renders without any governance licence.
+- The coverage sub-view depends on the people, roles, and applications domains rather than the governance domain, so it renders without any governance license.
 
-Licensing gates most of this tab, and Microsoft answers a missing governance licence with the same status code as a genuine consent failure. The collector inspects the message before blaming consent, so an unlicensed tenant is reported as **unlicensed**, not as denied and not as zero. Do not grant scopes in response to an unlicensed notice; the grant will not change anything.
+Licensing gates most of this tab, and Microsoft answers a missing governance license with the same status code as a genuine consent failure. The collector inspects the message before blaming consent, so an unlicensed tenant is reported as **unlicensed**, not as denied and not as zero. Do not grant scopes in response to an unlicensed notice; the grant will not change anything.
 
 ## Tabs and actions
 
@@ -37,14 +37,14 @@ Five sub-views, selected from the strip at the top of the tab. Each is a path se
 | Sub-view | Reads | What it shows |
 | --- | --- | --- |
 | Coverage | `/governance/coverage` | One row per object class with its count, how many are reviewed, how many are governed by an access package, and the resulting gap. Expanding a row lists the objects in that class |
-| Guests (B2B) | `/governance/guests` | The whole external population as a lifecycle, a partner-organisation rollup with its cross-tenant policy verdict, and the domain classes guests arrive from. See [Entra: guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
+| Guests (B2B) | `/governance/guests` | The whole external population as a lifecycle, a partner-organization rollup with its cross-tenant policy verdict, and the domain classes guests arrive from. See [Entra: guests (B2B)]({{ site.baseurl }}/user-guide/governance-identity/entra-guests/) |
 | Access reviews | `/governance/reviews` | Every review definition with status, recurrence, scope kind, days overdue, and named quality flags. An **Overdue only** checkbox filters the list |
 | Entitlement | `/governance/entitlement` | Access packages with resource and policy counts and hygiene markers, plus assignments expiring inside the window |
 | Lifecycle | `/governance/lifecycle` | Joiner, mover, and leaver workflows with category, enabled state, task count, run count, and failure rate |
 
 The governance overview read backing the header supplies the counts, the capability flags, and the governance-pillar findings for the snapshot.
 
-Guest lifecycle sits here rather than under the directory inventory because it is the same class of problem as the rest of this tab: an invitation nobody accepted and a partner nobody reviews are ungoverned access in exactly the way a review campaign that never runs is. Unlike the other four sub-views it needs no governance licence — it is derived from the people and tenant domains.
+Guest lifecycle sits here rather than under the directory inventory because it is the same class of problem as the rest of this tab: an invitation nobody accepted and a partner nobody reviews are ungoverned access in exactly the way a review campaign that never runs is. Unlike the other four sub-views it needs no governance license — it is derived from the people and tenant domains.
 
 Object classes on the **Coverage** table are fixed and each carries its own justification: privileged directory roles, role-assignable groups, guest accounts, high-privilege applications, and tenant-wide delegated consent.
 
@@ -77,7 +77,7 @@ Zero and unlicensed mean different things everywhere on this tab. Zero access pa
 ## Safety and limitations
 
 - Every read on this tab is read-only. Nothing here creates, stops, or decides a review, grants or revokes an assignment, or enables a workflow. Act in the Microsoft Entra admin center or through your change process.
-- Access-review scopes are OData query strings rather than typed objects, so scope kind is derived by parsing the query. An unrecognised scope shape is reported as unknown and does not count towards coverage.
+- Access-review scopes are OData query strings rather than typed objects, so scope kind is derived by parsing the query. An unrecognized scope shape is reported as unknown and does not count towards coverage.
 - Enumeration caps mean a very large tenant may report truncated lists. Check the snapshot notes before treating a count as complete.
 - Review instances are fetched only for definitions that are not already completed or applied, and only for a bounded number of them, so overdue figures cover active campaigns.
 - Directory and governance changes are eventually consistent. A campaign created minutes ago may not appear until the next collection.
@@ -89,10 +89,10 @@ Zero and unlicensed mean different things everywhere on this tab. Zero access pa
 | --- | --- |
 | Access reviews says the feature is unavailable | Entra ID P2 and `AccessReview.Read.All` are both required. Coverage still works without them. |
 | Entitlement says the feature is unavailable | Requires Entra ID P2 and `EntitlementManagement.Read.All`. |
-| Lifecycle says the feature is unavailable | Requires the Entra ID Governance licence and `LifecycleWorkflows.Read.All`. |
-| The domain reports unlicensed rather than not permitted | The scope is consented; the tenant lacks the licence. Granting more scopes will not help. |
+| Lifecycle says the feature is unavailable | Requires the Entra ID Governance license and `LifecycleWorkflows.Read.All`. |
+| The domain reports unlicensed rather than not permitted | The scope is consented; the tenant lacks the license. Granting more scopes will not help. |
 | Coverage shows everything unreviewed | Access reviews could not be read, so nothing counts as reviewed. The banner states this. |
-| A running review is not reducing a gap | Its scope did not resolve to a recognised object class, or it targets objects outside the fixed coverage classes. |
+| A running review is not reducing a gap | Its scope did not resolve to a recognized object class, or it targets objects outside the fixed coverage classes. |
 | A package shows no review despite a configured review | Check that the review is enabled on an assignment policy of that package, then refresh. |
 | Overdue days look wrong | They are computed against the snapshot. Refresh and re-read. |
 | A category is listed as missing but a workflow exists | The workflow is disabled; only enabled workflows count towards a category. |

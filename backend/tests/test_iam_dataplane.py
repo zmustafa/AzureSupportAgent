@@ -1,8 +1,8 @@
-"""Data-plane access catalogue and signals.
+"""Data-plane access catalog and signals.
 
-The behaviour under test is a classification, so most of these assert on the tier a REAL Azure
+The behavior under test is a classification, so most of these assert on the tier a REAL Azure
 role receives. Every role name and every dataAction string here was copied from a live tenant's
-role catalogue (981 definitions, 324 with dataActions) rather than from documentation — an
+role catalog (981 definitions, 324 with dataActions) rather than from documentation — an
 invented action string would make every test pass against a classifier that never runs.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from app.iam import dataplane as dp, schema
 from app.iam.signal_defs import dp as dp_signals
 from app.iam.signals import SignalContext, SignalUnavailable
 
-# Real dataActions, verbatim from a live catalogue.
+# Real dataActions, verbatim from a live catalog.
 KV_SECRETS_USER = ["Microsoft.KeyVault/vaults/secrets/getSecret/action"]
 KV_ADMIN = ["Microsoft.KeyVault/vaults/*"]
 KV_READER = ["Microsoft.KeyVault/vaults/*/read"]
@@ -71,7 +71,7 @@ def test_key_vault_reader_cannot_open_anything():
     credential finding, and a report that cries wolf on Key Vault Reader gets switched off
     before it reports Key Vault Administrator.
 
-    Asserted through :func:`derive_tier` as well as :func:`role_tier`, because the catalogue
+    Asserted through :func:`derive_tier` as well as :func:`role_tier`, because the catalog
     carries an explicit override for this role — testing only the public function would pass
     against a derivation that calls every Key Vault grant a credential."""
     assert dp.derive_tier(KV_READER) == dp.TIER_META
@@ -113,7 +113,7 @@ def test_a_role_with_no_data_actions_is_not_a_data_role():
 
 # =========================================================================== privileged flag
 def test_privileged_now_catches_the_roles_the_name_test_missed():
-    """On a real 981-role catalogue the old test — dataActions plus "owner"/"contributor" in the
+    """On a real 981-role catalog the old test — dataActions plus "owner"/"contributor" in the
     name — missed 118 dangerous roles, including every Key Vault officer role and AKS cluster
     admin."""
     for name, actions in [
@@ -132,7 +132,7 @@ def test_the_name_test_is_kept_as_well_never_swapped():
     Contributor` and eight others from privileged — a REDUCTION in coverage dressed up as a
     precision fix. This flag drives the privileged counts and the PIM screens, where a false
     negative hides access and a false positive only adds noise."""
-    # Read-tier dataActions: the catalogue alone would say "not privileged".
+    # Read-tier dataActions: the catalog alone would say "not privileged".
     assert dp.role_tier("Log Analytics Contributor", BLOB_READER) == dp.TIER_READ
     assert schema.role_is_privileged(
         "Log Analytics Contributor", has_data_actions=True, data_actions=BLOB_READER
@@ -143,7 +143,7 @@ def test_read_only_data_roles_are_not_privileged_by_the_catalogue():
     assert not dp.is_privileged_data_role("Storage Blob Data Reader", BLOB_READER)
 
 
-# =========================================================================== the catalogue
+# =========================================================================== the catalog
 def test_every_blind_service_states_a_reason():
     """A blind spot without a stated reason is indistinguishable from a pass."""
     for svc in dp.UNREADABLE:

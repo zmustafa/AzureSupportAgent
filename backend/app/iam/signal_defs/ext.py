@@ -1,6 +1,6 @@
 """External-access signals (pillar weight 14).
 
-Access held by someone who is not part of this organisation. Guest and multi-tenant detection is
+Access held by someone who is not part of this organization. Guest and multi-tenant detection is
 possible today from the composed rows; Lighthouse delegations arrive with their collector, and
 until then the pillar says so rather than reporting zero.
 """
@@ -69,14 +69,14 @@ def _guest_access(ctx: SignalContext) -> list[Finding]:
                 subject=pid,
                 # The UPN, not just the display name. Two guest objects for the same human
                 # (a second B2B invite, or the same person invited from two home tenants) are
-                # separate subjects with separate access — labelling both "Jane Doe" leaves a
+                # separate subjects with separate access — labeling both "Jane Doe" leaves a
                 # reviewer looking at two identical-looking rows with no way to act on either.
                 subject_label=_guest_label(rows[0]),
                 detail=(
                     f"{_who(rows[0])} is an external (B2B) account with "
                     f"{len(rows)} assignment(s)"
                     + (f", including {privileged[0].get('roleName')}." if privileged else ".")
-                    + " Their credential and its lifecycle belong to another organisation."
+                    + " Their credential and its lifecycle belong to another organization."
                 ),
                 count=len(rows),
                 evidence={
@@ -164,7 +164,7 @@ SIGNALS: list[SignalSpec] = [
         id="ext.guest_access",
         title="Guests hold access to this estate",
         pillar="ext", severity="warning", weight=6, object_kind="principal",
-        why="A guest's credential and its lifecycle belong to another organisation.",
+        why="A guest's credential and its lifecycle belong to another organization.",
         remediation="Confirm the access is still needed; prefer time-bound eligible assignments.",
         frameworks=("CIS-Azure:1.3", "NIST:AC-2", "MCSB:PA-4"),
         evaluate=_guest_access,

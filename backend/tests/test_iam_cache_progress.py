@@ -478,13 +478,13 @@ async def test_only_a_successful_run_teaches_the_estimator(isolated_cache):
 # =========================================================================== the rightsizing cache
 def _analyse_count(monkeypatch) -> list[int]:
     calls = [0]
-    real = rightsize.analyse
+    real = rightsize.analyze
 
     def _counting(*a, **k):
         calls[0] += 1
         return real(*a, **k)
 
-    monkeypatch.setattr(rightsize, "analyse", _counting)
+    monkeypatch.setattr(rightsize, "analyze", _counting)
     return calls
 
 
@@ -502,9 +502,9 @@ def test_rightsizing_is_not_recomputed_on_every_request(isolated_cache, monkeypa
     recomputed from scratch every time."""
     _seed_rows(monkeypatch)
     calls = _analyse_count(monkeypatch)
-    rightsize.analyse_for_tenant(TENANT)
-    rightsize.analyse_for_tenant(TENANT)
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     assert calls[0] == 1
 
 
@@ -512,9 +512,9 @@ def test_rightsizing_survives_a_process_restart(isolated_cache, monkeypatch):
     """The memo dies with the process; the disk copy is what makes the SECOND visit fast."""
     _seed_rows(monkeypatch)
     calls = _analyse_count(monkeypatch)
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     rightsize._ANALYSIS_CACHE.clear()  # a restart
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     assert calls[0] == 1
 
 
@@ -532,10 +532,10 @@ def test_repeat_rightsizing_reads_are_served_from_memory(isolated_cache, monkeyp
         return real_read(tenant_id)
 
     monkeypatch.setattr(cache, "read_rightsizing", counting_read)
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     before = reads[0]
-    rightsize.analyse_for_tenant(TENANT)
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     assert reads[0] == before, "a repeat read must not touch the blob at all"
 
 
@@ -544,18 +544,18 @@ def test_new_rows_invalidate_the_rightsizing_cache(isolated_cache, monkeypatch):
     would recommend revoking access that was already revoked, and miss what has since appeared."""
     _seed_rows(monkeypatch)
     calls = _analyse_count(monkeypatch)
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     cache.write_scope(TENANT, "/subscriptions/s2", rows=[_row()],
                       meta={"scopeType": schema.SCOPE_SUBSCRIPTION, "displayName": "sub-2"})
-    rightsize.analyse_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT)
     assert calls[0] == 2
 
 
 def test_forcing_a_rightsizing_rebuild_recomputes(isolated_cache, monkeypatch):
     _seed_rows(monkeypatch)
     calls = _analyse_count(monkeypatch)
-    rightsize.analyse_for_tenant(TENANT)
-    rightsize.analyse_for_tenant(TENANT, force=True)
+    rightsize.analyze_for_tenant(TENANT)
+    rightsize.analyze_for_tenant(TENANT, force=True)
     assert calls[0] == 2
 
 

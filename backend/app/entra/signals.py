@@ -1,8 +1,8 @@
-"""The Signal Registry — one declarative catalogue behind every surface.
+"""The Signal Registry — one declarative catalog behind every surface.
 
 The posture score, the findings list, the area screens, the proactive scanners, the
 assessment controls, the notifications, the agent answers and the exports are all
-*projections over this catalogue*. If a check is implemented anywhere other than
+*projections over this catalog*. If a check is implemented anywhere other than
 ``signal_defs/``, that is a bug: it is how the same logic ends up written five times and
 two screens end up disagreeing about what "privileged" means.
 
@@ -204,7 +204,7 @@ def by_id(signal_id: str) -> SignalSpec | None:
 
 
 def registry_version() -> int:
-    """Bumped implicitly by the catalogue size; recorded on every score history point so a
+    """Bumped implicitly by the catalog size; recorded on every score history point so a
     later comparison can say "the model changed" instead of silently drifting."""
     return len(registry())
 
@@ -289,7 +289,7 @@ def penalty_units(spec: SignalSpec, count: int, snapshot_data: dict[str, Any]) -
     200-user and a 200,000-user tenant:
 
     * ``binary`` — a tenant-level fact is either true or it is not.
-    * ``ratio`` — normalised by population, so growth alone never moves the score.
+    * ``ratio`` — normalized by population, so growth alone never moves the score.
     * ``saturating`` — small-N criticals: one permanent Global Administrator is bad in any
       tenant, and thirty is not ten times worse than three.
     """

@@ -1,10 +1,10 @@
-"""Entra licence detection from ``/subscribedSkus``.
+"""Entra license detection from ``/subscribedSkus``.
 
 Half the product needs Entra ID P1 or P2. Without detection, an unlicensed tenant gets
 silent empty screens and a score that looks catastrophic for the wrong reason.
 
-Licence flags are **advisory, not gating**: we always attempt the call and let a real 403
-be authoritative, because real tenants have odd licence mixes (some users P2, some P1) and
+License flags are **advisory, not gating**: we always attempt the call and let a real 403
+be authoritative, because real tenants have odd license mixes (some users P2, some P1) and
 a tenant-level flag is only ever an approximation. The flag exists to *explain* an empty
 pillar, not to prevent the attempt.
 """
@@ -104,7 +104,7 @@ async def detect(client: GraphClient) -> dict[str, Any]:
         return empty_flags(f"Organization.Read.All not granted — licence tier unknown ({exc.message[:120]}).")
     except GraphError as exc:
         return empty_flags(f"Could not read subscribed SKUs: {exc}")
-    except Exception as exc:  # noqa: BLE001 - licence detection is never fatal
+    except Exception as exc:  # noqa: BLE001 - license detection is never fatal
         log.warning("entra licence detection failed", exc_info=True)
         return empty_flags(f"Could not read subscribed SKUs: {exc}")
     return flags_from_skus(skus)

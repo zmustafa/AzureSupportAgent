@@ -1,7 +1,7 @@
 /** Group + collapse state for a list screen, extracted at its third use.
  *
  * The Findings tab worked this out first and paid for it in bugs; the Disabled Access tab needs
- * exactly the same behaviour, and copying it a third time would mean the two subtle rules below
+ * exactly the same behavior, and copying it a third time would mean the two subtle rules below
  * live in three places and get fixed in one.
  *
  * The HOOK is shared, not the rendering. Three screens disagree about how a group header should

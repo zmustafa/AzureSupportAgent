@@ -149,7 +149,7 @@ def test_noaccess_has_zero_permissions():
     assert _roles()["noaccess"] == []
 
 
-# ------------------------------------------------------------------- guard behaviour
+# ------------------------------------------------------------------- guard behavior
 def test_require_permission_allows_holder_and_admin_denies_others():
     dep = require_permission("inventory.read")
 

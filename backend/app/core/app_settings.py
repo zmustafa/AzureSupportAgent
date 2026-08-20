@@ -235,7 +235,7 @@ DEFAULTS: dict[str, Any] = {
     # slow, so the dashboard serves a cached snapshot until it ages past this. Default 6h.
     "identity_cache_ttl_s": 21600,
     # Max privileged users scanned for MFA status per refresh (the scan is N Graph calls;
-    # results are labelled "sampled" when more privileged users exist than this cap).
+    # results are labeled "sampled" when more privileged users exist than this cap).
     "identity_mfa_scan_cap": 50,
     # Normal app-registration refresh cap. Graph pages include credentials, requested API
     # permissions and expanded owners; the UI offers a deliberate Full tenant mode when a
@@ -276,7 +276,7 @@ DEFAULTS: dict[str, Any] = {
     # Restrict scoring to AMBA workload patterns (alz / hpc / avd / rag / avs). Empty = all.
     "amba_patterns": [],
     # Flag an existing rule whose severity differs from the baseline as misconfigured.
-    # Off by default because severity is commonly tuned per organisation.
+    # Off by default because severity is commonly tuned per organization.
     "amba_severity_counts_as_gap": False,
     # Honour the AMBA-ALZ `MonitorDisable=true` tag: excluded resources are listed
     # separately instead of being scored as coverage gaps.
@@ -350,7 +350,7 @@ DEFAULTS: dict[str, Any] = {
     "iam_tools_enabled": True,
     # --- Entra identity agent tools (Investigate + Conditional Access) --------------
     # Master switch, then a per-tool map. Only the two that answer the questions people
-    # actually ask are on by default: the combined Azure + Graph catalogue is already large
+    # actually ask are on by default: the combined Azure + Graph catalog is already large
     # enough to be TRIMMED for request size, so every extra tool costs every turn.
     "entra_identity_tools_enabled": True,
     "entra_identity_tools": {
@@ -360,11 +360,24 @@ DEFAULTS: dict[str, Any] = {
         "ca_policies_for_app": False,
         "identity_findings": False,
     },
-    # Behavioural Graph reads (sign-in logs, directory audit) exposed by the EntraID MCP
+    # Behavioral Graph reads (sign-in logs, directory audit) exposed by the EntraID MCP
     # server. Gating `identity_investigate` behind `investigate.activity` is worthless while
     # these stay open to the same user — the agent simply calls them instead and assembles
     # the same answer with a thinner audit trail. They travel together or the split is theatre.
     "entra_mcp_behavioural_tools_enabled": False,
+    # --- Recovery Readiness agent tools (per-scenario RTO/RPO) ----------------------
+    # `recovery_breaches` is opt-in: it repeats what `recovery_posture` already carries and
+    # only earns its place for someone working an objectives review.
+    "resiliency_tools_enabled": True,
+    "resiliency_tools": {
+        "recovery_posture": True,
+        "recovery_gaps": True,
+        "recovery_breaches": False,
+    },
+    # Whether Recovery Readiness contributes controls to the Assessments Reliability pillar.
+    # OFF for existing tenants: enabling it changes scores that people track as a trend, so
+    # it is a change to announce rather than to ship silently.
+    "assessments_include_recovery": False,
     # --- Policy exemption manager (create/modify/remove policy exemptions) ----------
     # Guardrails enforced server-side before any exemption write (create/extend) so exemptions
     # stay a controlled, hygienic security exception rather than a permanent escape hatch.

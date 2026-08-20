@@ -27,7 +27,7 @@ log = logging.getLogger("app.entra.federation")
 # Matched against the issuer URI and every federation endpoint host. Ordered: the first
 # hit wins, so the specific patterns sit above the generic ones.
 #
-# An unrecognised provider is reported as unrecognised WITH its host. A guess here would be
+# An unrecognized provider is reported as unrecognized WITH its host. A guess here would be
 # worse than silence — "Okta" printed under a tenant that federates to something else is a
 # claim about the authentication perimeter, and being confidently wrong about that is the
 # one thing this feature must not do.
@@ -64,11 +64,11 @@ def fingerprint_vendor(issuer_uri: str, *endpoints: str) -> dict[str, str]:
     for key, label, needles in _VENDOR_PATTERNS:
         if any(n in haystack for n in needles):
             return {"key": key, "label": label}
-    return {"key": UNKNOWN_VENDOR, "label": "Unrecognised provider"}
+    return {"key": UNKNOWN_VENDOR, "label": "Unrecognized provider"}
 
 
 def endpoint_host(*uris: str) -> str:
-    """The host an administrator would recognise, from whichever endpoint has one."""
+    """The host an administrator would recognize, from whichever endpoint has one."""
     for uri in uris:
         if not uri:
             continue
@@ -133,7 +133,7 @@ def _rfc4514(name: Any) -> str:
         return str(name)
 
 
-# ------------------------------------------------------------------------- behaviours
+# ------------------------------------------------------------------------- behaviors
 # What Entra does with an MFA claim from the federated identity provider. The default when
 # unset is the permissive one, which is why an empty string is reported as a real state
 # rather than "not configured".
@@ -161,7 +161,7 @@ def mfa_behaviour(value: str) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------ normalising
-def normalise_domain(raw: dict[str, Any]) -> dict[str, Any]:
+def normalize_domain(raw: dict[str, Any]) -> dict[str, Any]:
     """One row of `/domains`, trimmed to what a reader can act on."""
     return {
         "name": raw.get("id", "") or "",
@@ -179,7 +179,7 @@ def normalise_domain(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalise_federation(domain: str, raw: dict[str, Any]) -> dict[str, Any]:
+def normalize_federation(domain: str, raw: dict[str, Any]) -> dict[str, Any]:
     """One `/domains/{id}/federationConfiguration` entry, plus everything derived from it."""
     issuer = str(raw.get("issuerUri") or "")
     passive = str(raw.get("passiveSignInUri") or "")
@@ -225,7 +225,7 @@ def population(users: list[dict[str, Any]], domain: str) -> int:
 
 
 # ------------------------------------------------------------------ external providers
-# How Graph names the built-in social providers, mapped to something a reader recognises.
+# How Graph names the built-in social providers, mapped to something a reader recognizes.
 _IDP_LABELS = {
     "socialIdentityProvider": "Social",
     "builtInIdentityProvider": "Built-in",
@@ -235,7 +235,7 @@ _IDP_LABELS = {
 }
 
 
-def normalise_idp(raw: dict[str, Any]) -> dict[str, Any]:
+def normalize_idp(raw: dict[str, Any]) -> dict[str, Any]:
     """One `/identity/identityProviders` entry.
 
     These are the providers GUESTS authenticate with, which is a different perimeter from
@@ -243,7 +243,7 @@ def normalise_idp(raw: dict[str, Any]) -> dict[str, Any]:
     entirely in the cloud and still accept Google or a partner's SAML for external users.
 
     The client secret is never requested and never stored — only the identifier, which is
-    what an administrator needs to recognise the registration.
+    what an administrator needs to recognize the registration.
     """
     kind = str(raw.get("@odata.type") or "").split(".")[-1]
     return {

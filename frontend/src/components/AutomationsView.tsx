@@ -69,7 +69,7 @@ const ASSESSMENT_PILLARS = [
   { id: "operations", label: "⚙️ Operational Excellence" },
   { id: "performance", label: "⚡ Performance Efficiency" },
 ];
-// Recognised Well-Architected methodologies → the pillar bundle each one runs. Selecting a
+// Recognized Well-Architected methodologies → the pillar bundle each one runs. Selecting a
 // pack is a one-click way to schedule a WARA / WASA / full WAF review (mirrors the Run flow).
 const ASSESSMENT_PACKS: { id: string; short: string; label: string; icon: string; pillars: string[] }[] = [
   { id: "waf", short: "WAF", label: "Well-Architected Review", icon: "🏛️", pillars: ["security", "reliability", "cost", "operations", "performance"] },

@@ -76,12 +76,12 @@ An escalation review answers a question a role list cannot: *this principal is n
 ## How to model the fix before proposing it
 
 1. Open `/iam/simulator` (permission `iam.simulate`).
-2. Add the change you intend — typically `remove_assignment`, `convert_to_eligible`, `rescope_assignment` or `replace_role` — and add every related change to the same basket so their interactions are modelled together.
+2. Add the change you intend — typically `remove_assignment`, `convert_to_eligible`, `rescope_assignment` or `replace_role` — and add every related change to the same basket so their interactions are modeled together.
 3. Simulate, then read **Retained anyway** first. Access that looks revoked and is not — held through a second group, a direct assignment or an owned service principal — is the usual answer, and revoking it achieves nothing while leaving a false record of remediation behind.
 4. Read the orphaned-scopes panel above the columns. A scope left with no owner-level access is the outcome that gets a revocation reverted in a panic a fortnight later.
 5. Check the footer's standing-privilege before-and-after, and the sampling line if the population exceeded the sampling threshold.
 
-**Expected result:** A modelled outcome that distinguishes access genuinely lost from access that merely looks revoked.
+**Expected result:** A modeled outcome that distinguishes access genuinely lost from access that merely looks revoked.
 
 **Verification:** After the change is executed externally and the scope re-collected, `/iam/escalation` → **↻ Rebuild** no longer shows the path, and `/iam/compare` shows the corresponding `removed` or `de_escalated` change.
 

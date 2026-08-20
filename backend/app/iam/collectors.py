@@ -1061,7 +1061,7 @@ _PIM_API = "2020-10-01"  # Microsoft.Authorization PIM schedule + policy APIs
 # --------------------------------------------------------------------------- federated creds
 _FIC_API = "2023-01-31"
 
-# Issuers we recognise. Anything else is not necessarily malicious, but it IS unreviewed, and an
+# Issuers we recognize. Anything else is not necessarily malicious, but it IS unreviewed, and an
 # unreviewed OIDC issuer can mint tokens for an Azure identity with no secret and no expiry.
 KNOWN_FIC_ISSUERS = (
     "https://token.actions.githubusercontent.com",
@@ -1184,7 +1184,7 @@ def _is_permanent(props: dict[str, Any], derived_end: str) -> bool:
 
 
 def _pim_is_licence_error(message: str) -> bool:
-    """PIM reports a missing Entra ID P2 / Governance licence as a **400 with a message**, not a
+    """PIM reports a missing Entra ID P2 / Governance license as a **400 with a message**, not a
     403. Classifying it as Failed sends the operator chasing a permission problem that does not
     exist; classifying it as Unauthorized blames their consent."""
     text = (message or "").lower()

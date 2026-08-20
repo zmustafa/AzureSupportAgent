@@ -133,7 +133,7 @@ Data shapes:
 75. Usage, storage, transfer, operations, token, and multi-component meters never receive invented monthly quantities.
 76. Reservation rows cannot enter node projection even if a malformed upstream page includes one.
 77. Conceptual, no-direct-meter, unmatched, ambiguous, and unavailable nodes have distinct states and no false zero.
-78. Cache hit, forced refresh, stale fallback, corruption recovery, and complete outage are labelled.
+78. Cache hit, forced refresh, stale fallback, corruption recovery, and complete outage are labeled.
 79. Currency is explicit on response, node, component, badge, total, and tooltip.
 80. Tenant/permission checks for `/{id}/pricing` match architecture reads.
 81. Browser flow verifies load, currency refetch, fixed badge, usage state, ambiguous meter selection, refresh, stale/error state, and no canvas crash.

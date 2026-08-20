@@ -140,6 +140,7 @@ export const PROACTIVE_NAV: ProactiveItem[] = [
   { id: "telemetry", to: "/telemetry", label: "Telemetry Coverage", icon: "📊", permission: "coverage.read", writePermission: "coverage.manage", desc: "Measure diagnostic-settings coverage per resource type against the recommended baseline." },
   { id: "backupdr", to: "/backupdr", label: "Backup & DR Coverage", icon: "🔁", permission: "coverage.read", writePermission: "coverage.manage", desc: "Audit backup and disaster-recovery protection and generate remediation runbooks." },
   { id: "backup-manager", to: "/backup-manager", label: "Backup Manager", icon: "💾", permission: "backup_manager.read", desc: "Protection inventory, backup job triage, policy and vault administration, DR drills and approval-gated backup changes." },
+  { id: "resiliency", to: "/resiliency", label: "Recovery Readiness", icon: "♻️", permission: "resiliency.read", writePermission: "resiliency.admin", desc: "Recover from what, in how long, losing how much — per-scenario RTO/RPO derived from redundancy, backup frequency and replication, measured against your objectives. Redundancy does not protect you from a bad deployment." },
   { id: "capability", to: "/capability", label: "Connection Capability", icon: "🔌", permission: "connections.read", desc: "What each Azure connection can and can't reach — ARM, Graph, Log Analytics, Key Vault and gated writes — surfacing the blind spots that make an answer half-blind." },
   // Estate intelligence — what's deployed, how it's tagged, what changed.
   { id: "inventory", to: "/inventory", label: "Inventory", icon: "📋", group: "Estate intelligence", permission: "inventory.read", desc: "A unified resource grid with overview, location, cost and optimization lenses." },
@@ -382,7 +383,7 @@ export type IamTab =
 // horizontal scrollbar; at 11px they cost 140px, which fits. Keeping the label free of the
 // glyph also keeps the accessible name clean for the e2e selectors that match on it.
 //
-// Note that `effective` is labelled "Access" while `evaluate` is labelled "Effective Access".
+// Note that `effective` is labeled "Access" while `evaluate` is labeled "Effective Access".
 // The id/label mismatch is deliberate: `effective` has always been the raw grant grid, and
 // renaming its id would change what the existing `/iam/effective` URL means. The label moved
 // to the tab that actually evaluates effective permissions; the id stayed where the URL is.

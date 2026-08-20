@@ -157,7 +157,7 @@ def test_limitations_state_who_actually_enforces_app_restrictions():
 
 # --------------------------------------------------------------- session-only CHANGES
 # A change that only touches session controls leaves both verdicts identical. Before
-# `_session_delta` existed it categorised as "unchanged" and the case was DROPPED, so the
+# `_session_delta` existed it categorized as "unchanged" and the case was DROPPED, so the
 # simulator told an operator their new "browse but do not download" policy did nothing.
 def test_turning_on_a_session_control_is_not_reported_as_unchanged():
     before = {"verdict": sim.GRANTED, "protected": False,

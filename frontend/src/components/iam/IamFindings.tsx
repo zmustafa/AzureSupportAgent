@@ -53,7 +53,7 @@ const SUB_GROUP_OPTIONS: { id: GroupKey; label: string }[] = [
 //
 // This only works for the TOP level. A second level is a (primary, secondary) PAIR, and the
 // server publishes one map per single dimension — there is no honest pair count available, so
-// sub-group counts are counted from the page and are labelled as such whenever the section they
+// sub-group counts are counted from the page and are labeled as such whenever the section they
 // sit in was truncated. See `subCountLabel`.
 const COUNT_FIELD: Record<Exclude<GroupKey, "none">, "counts_by_pillar" | "counts_by_severity" | "counts_by_signal" | "counts_by_object_kind" | "counts_by_state"> = {
   pillar: "counts_by_pillar",
@@ -318,7 +318,7 @@ export function FindingsTab() {
   });
 
   const scoreQ = useIamScoreQuery();
-  // Only fetched when the reader actually groups by check — the catalogue is static and its
+  // Only fetched when the reader actually groups by check — the catalog is static and its
   // titles are the only thing that can name a signal group properly.
   const catalogQ = useQuery({
     queryKey: ["iam", "signals"],

@@ -19,6 +19,7 @@ Coverage views compare the estate with operational baselines and expose the conn
 | [Telemetry Coverage]({{ site.baseurl }}/user-guide/coverage/telemetry-coverage/) | Find missing diagnostic settings, categories, and approved destinations. |
 | [Backup & DR Coverage]({{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/) | Assess protection, recovery recency, resilience, and DR pairing. |
 | [Backup Manager]({{ site.baseurl }}/user-guide/coverage/backup-manager/) | Triage backup jobs and manage policies, vaults, DR drills, cost, and proposed changes. Sweep every workload from Fleet, and reclaim stored analyses from Cleanup. |
+| [Recovery Readiness]({{ site.baseurl }}/user-guide/coverage/recovery-readiness/) | Recover from what, in how long, losing how much. Per-scenario RTO and RPO derived from redundancy, backup frequency and replication, measured against objectives you agree. |
 | [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/) | See which configured connections can reach each required Azure surface. |
 
 ## Shared operating model

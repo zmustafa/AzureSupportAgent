@@ -33,7 +33,7 @@ Reference sets define what coverage and lifecycle features expect. Changes can a
 
 ### AMBA
 
-Curate recommended Azure Monitor alerts per resource type. The baseline is seeded from the published [Azure Monitor Baseline Alerts](https://azure.github.io/azure-monitor-baseline-alerts/) catalogue, imported at a pinned upstream release and vendored with the app, then layered with local additions.
+Curate recommended Azure Monitor alerts per resource type. The baseline is seeded from the published [Azure Monitor Baseline Alerts](https://azure.github.io/azure-monitor-baseline-alerts/) catalog, imported at a pinned upstream release and vendored with the app, then layered with local additions.
 
 Each entry covers the alert class (**metric**, **log search**, or **activity log**), metric/counter, operator, static or **dynamic** threshold (with sensitivity and failing periods), unit, aggregation window and evaluation frequency, dimensions, severity (0–4), classification, and its **tier**:
 
@@ -45,7 +45,7 @@ Entries also carry the AMBA **workload pattern** they belong to (Azure Landing Z
 
 Use the revision/history/reset controls shown; **+ Add from catalog** offers the published upstream entries for the selected resource type. **AMBA Change Requests** presents proposed before/after changes for approve or reject with rationale.
 
-To refresh the vendored catalogue to a newer AMBA release, run `python scripts/import_amba_catalog.py --tag <release>` from `backend/`, review the diff, and commit it.
+To refresh the vendored catalog to a newer AMBA release, run `python scripts/import_amba_catalog.py --tag <release>` from `backend/`, review the diff, and commit it.
 
 ### Telemetry
 

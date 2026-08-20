@@ -271,7 +271,7 @@ async def _plan_subsystems(
     """Quick, small completion that returns the subsystem plan (names + scope refs), deduped
     and capped at 8. Returns [] if nothing parseable came back."""
     if progress is not None:
-        await progress("pass", "🗺️ Planning the subsystems to analyse…")
+        await progress("pass", "🗺️ Planning the subsystems to analyze…")
     user = header + "\n\n".join(blocks) + f"\n\nARCHITECTURE MEMORY (authoritative technical source):\n{mem_block}"
     provider = build_provider()
     parts: list[str] = []
@@ -394,7 +394,7 @@ async def _stream_completion(
                 if len(names) > seen_tables:
                     seen_tables = len(names)
                     last_name = names[-1].strip() or f"table {seen_tables}"
-                    await progress("table", f"🧱 {prefix}Table {seen_tables}: “{last_name}” — analysing failure modes…")
+                    await progress("table", f"🧱 {prefix}Table {seen_tables}: “{last_name}” — analyzing failure modes…")
                 # More rows landed in the current table: report the running tally.
                 elif rows > last_rows and last_name:
                     await progress("row", f"📋 {prefix}“{last_name}” — {rows} failure mode{'s' if rows != 1 else ''} scored…")

@@ -1,4 +1,4 @@
-"""Cache behaviour: gzipped sidecars, the parse memo, schema versioning and user state.
+"""Cache behavior: gzipped sidecars, the parse memo, schema versioning and user state.
 
 The two properties that matter operationally:
 

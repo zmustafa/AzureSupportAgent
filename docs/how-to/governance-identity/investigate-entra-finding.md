@@ -16,7 +16,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:findings, ENTRA_NAV:investigate]
 - Product permission `entra.read` to read the inbox, a finding and its signal definition.
 - Product permission `entra.admin` to change finding state, apply a bulk action, or run a scanner.
 - Product permissions `entra.read` and `investigate.read` to open the Entra shell and a
-	principal dossier. `investigate.activity` is separately required to read behavioural history.
+	principal dossier. `investigate.activity` is separately required to read behavioral history.
 - A completed collection for the tenant. The inbox reads the snapshot; it never collects on its own.
 - Tier 1 consent produces findings across posture, applications and directory roles. Tier 2 and tier 3 consent, plus Entra ID P1/P2, are what make the risk, PIM and governance signals measurable rather than blind.
 
@@ -62,7 +62,7 @@ principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privil
 3. If the header and warning banner show **⚠ disabled**, treat that as the account state in the
 	cached snapshot—not as proof that assignments, group membership, active tokens, or historical
 	actions are gone. Prioritize the Access, Members, Activations, and Findings sections.
-4. Separate structural access from behavioural history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
+4. Separate structural access from behavioral history: activity requires its additional product permission and may be unavailable even when identity detail is visible.
 5. Follow handoffs to IAM or Conditional Access only when the destination preserves the same principal or scope.
 6. Validate significant conclusions against the named source record and the current Entra portal state.
 
@@ -89,7 +89,7 @@ principal; and the deep-dive tabs at `/entra/conditional-access`, `/entra/privil
 and available history remain reviewable rather than being hidden as though disablement removed them.
 
 **Verification:** The dossier warning matches the current Entra account state, every retained
-assignment is accounted for, unreadable/truncated sections remain labelled, and the activity/export
+assignment is accounted for, unreadable/truncated sections remain labeled, and the activity/export
 audit record identifies the reviewer and principal without changing Entra or Azure.
 
 ## How to snooze or suppress deliberately
@@ -138,7 +138,7 @@ The remediation itself always happens in Entra through your change process, with
 | A scanner says it cannot run | Its domain is blind or unlicensed; reporting zero findings would be indistinguishable from having looked. Fix coverage first. |
 | The score moved but no finding changed | Coverage changed. Compare measured pillars rather than the headline number. |
 | A known disabled account has no amber warning | The snapshot may predate disablement, the object may be unresolved, or enabled state was unreadable. Refresh the Entra snapshot and verify the same tenant/object in the Entra admin center. |
-| **Read activity** returns a permission error | Structural dossier reads use `investigate.read`; behavioural history requires the separate `investigate.activity` capability. |
+| **Read activity** returns a permission error | Structural dossier reads use `investigate.read`; behavioral history requires the separate `investigate.activity` capability. |
 
 ## Related docs
 

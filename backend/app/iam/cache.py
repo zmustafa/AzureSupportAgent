@@ -698,7 +698,7 @@ def write_rightsizing(
     """Persist the granted-vs-used analysis alongside the usage it derives from.
 
     Computed when usage is collected rather than on every findings read. It is pure CPU over the
-    whole role catalogue — two seconds on a real tenant, and findings is a hot endpoint. It also
+    whole role catalog — two seconds on a real tenant, and findings is a hot endpoint. It also
     correctly inherits usage's freshness: an analysis of week-old usage is a week-old analysis
     however recently it was recomputed.
 

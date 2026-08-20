@@ -1890,7 +1890,7 @@ function HealthGauge({ value }: { value: number }) {
   );
 }
 
-/** Donut chart from labelled segments, with a center total. */
+/** Donut chart from labeled segments, with a center total. */
 function Donut({
   segments,
   centerLabel,
@@ -1947,7 +1947,7 @@ function Donut({
 
 // ============================ NEW STATS VISUALIZATIONS ============================
 
-/** Horizontal labelled bars (cost, latency, …) with a formatted value column. */
+/** Horizontal labeled bars (cost, latency, …) with a formatted value column. */
 function HBars({ rows, color = "#6366f1" }: { rows: { label: string; value: number; display: string }[]; color?: string }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (

@@ -355,7 +355,7 @@ function LifecycleTab({ connectionId }: { connectionId: string | null }) {
   if (!d.meta.loaded) return <EntraEmpty kind="cold" />;
   if (!d.capabilities.lifecycle) {
     return <Unlicensed what="Lifecycle workflows are not available"
-                       why="Lifecycle workflows require the Entra ID Governance licence and LifecycleWorkflows.Read.All." />;
+                       why="Lifecycle workflows require the Entra ID Governance license and LifecycleWorkflows.Read.All." />;
   }
   return (
     <div className="space-y-4 p-4">

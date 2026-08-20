@@ -68,7 +68,7 @@ def _snap(policies, *, users=None, sps=None, admins=()) -> dict[str, Any]:
 
 
 def _run(snap, fn):
-    snap["_ca_analysis"] = ca_engine.analyse(snap)
+    snap["_ca_analysis"] = ca_engine.analyze(snap)
     return fn(snap, CTX)
 
 
@@ -138,7 +138,7 @@ def test_exclusion_defeats_control_is_silent_without_an_exclusion():
 def test_an_all_apps_policy_with_an_exclusion_does_not_report_the_class_as_covered():
     """The exclusion must break coverage, not merely raise a separate finding."""
     snap = _snap([_policy("p1", apps=["All"], exclude_apps=[ARM])])
-    analysis = ca_engine.analyse(snap)
+    analysis = ca_engine.analyze(snap)
     row = next(r for r in analysis["coverage"]["matrix"] if r["cohort"] == "members")
     cell = row["cells"]["management_apis|mfa"]
     assert cell["state"] != "covered", "an excluded app cannot count as covered"
@@ -250,7 +250,7 @@ def _bg_snap(policies, *, confirmed=("bg1",)):
 
 
 def _run_bg(snap, confirmed=("bg1",)):
-    snap["_ca_analysis"] = ca_engine.analyse(
+    snap["_ca_analysis"] = ca_engine.analyze(
         snap, confirmed_breakglass={u: {"confirmed": True} for u in confirmed})
     return sig._breakglass_inconsistent(snap, CTX)
 

@@ -215,7 +215,7 @@ def _apply_one(rows: list[dict[str, Any]], change: Change) -> list[dict[str, Any
 
     if kind == DISABLE_BYPASS:
         # A bypass is not an access row, so nothing changes in this row set. Saying so is the
-        # point: the simulator must not imply it modelled something it cannot see.
+        # point: the simulator must not imply it modeled something it cannot see.
         return rows
 
     if kind == ASSUME_PRINCIPAL:

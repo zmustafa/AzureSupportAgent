@@ -13,7 +13,7 @@
  *  - **Partner governance shows `unknown` when the cross-tenant list could not be read.**
  *    Rendering every partner as "ungoverned" because we could not look would be the loudest
  *    false claim on the page. A domain that simply has no Entra tenant behind it is a
- *    separate, honestly-labelled case.
+ *    separate, honestly-labeled case.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -232,7 +232,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
           {(d.by_class.consumer ?? 0) > 0 && (
             <div className="mt-2 text-[11px] text-rose-700">
               {d.by_class.consumer.toLocaleString()} guest(s) use a consumer mailbox. No partner
-              organisation can de-provision those when an engagement ends.
+              organization can de-provision those when an engagement ends.
             </div>
           )}
         </div>
@@ -246,7 +246,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
           </button>
           <button onClick={() => setView("partners")}
                   className={`border-l px-2.5 py-1 ${view === "partners" ? "bg-brand/10 font-medium text-brand" : "text-gray-600 hover:bg-gray-50"}`}>
-            Partner organisations ({d.domain_count.toLocaleString()})
+            Partner organizations ({d.domain_count.toLocaleString()})
           </button>
         </div>
 
@@ -292,7 +292,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
             <thead className="bg-gray-50 text-left text-[11px] uppercase text-gray-500">
               <tr>
                 <SortTh label="Guest" col="name" sort={guestSort} setSort={setGuestSort} firstDir={1} />
-                <SortTh label="Organisation" col="domain" sort={guestSort} setSort={setGuestSort} firstDir={1} />
+                <SortTh label="Organization" col="domain" sort={guestSort} setSort={setGuestSort} firstDir={1} />
                 <SortTh label="State" col="lifecycle" sort={guestSort} setSort={setGuestSort} firstDir={1} />
                 <SortTh label="Invited" col="invited" sort={guestSort} setSort={setGuestSort} />
                 <SortTh label="Last human sign-in" col="human" sort={guestSort} setSort={setGuestSort}
@@ -371,7 +371,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
           <table className="min-w-full text-xs">
             <thead className="bg-gray-50 text-left text-[11px] uppercase text-gray-500">
               <tr>
-                <SortTh label="Organisation" col="domain" sort={domainSort} setSort={setDomainSort} firstDir={1} />
+                <SortTh label="Organization" col="domain" sort={domainSort} setSort={setDomainSort} firstDir={1} />
                 <SortTh label="Guests" col="guests" sort={domainSort} setSort={setDomainSort} />
                 <SortTh label="Pending" col="pending" sort={domainSort} setSort={setDomainSort} />
                 <SortTh label="Dormant" col="dormant" sort={domainSort} setSort={setDomainSort} />

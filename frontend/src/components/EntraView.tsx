@@ -620,9 +620,9 @@ function Trend({ points, pillars }: { points: PostureTrendPoint[]; pillars: Entr
     setShown((s) => (s.includes(key) ? s.filter((k) => k !== key) : [...s, key]));
   const allShown = shown.length === pillars.length;
 
-  // Colour is fixed to the pillar's position in the model, not to its position in the
-  // selection. Keying it off the selection meant a pillar changed colour as its neighbours
-  // were toggled, and the chip and its line could disagree about which colour it was.
+  // Color is fixed to the pillar's position in the model, not to its position in the
+  // selection. Keying it off the selection meant a pillar changed color as its neighbours
+  // were toggled, and the chip and its line could disagree about which color it was.
   const colourOf = (key: string) =>
     SERIES_COLOURS[Math.max(0, pillars.findIndex((p) => p.key === key)) % SERIES_COLOURS.length];
 

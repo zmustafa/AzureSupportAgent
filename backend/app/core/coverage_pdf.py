@@ -518,7 +518,7 @@ def _adapt(feature: str, snap: dict[str, Any]) -> dict[str, Any]:
 
     counts: Counter[str] = Counter(normalize_severity(g["severity"]) for g in model["gaps"])
     model["severity_counts"] = {s: counts.get(s, 0) for s in SEV_ORDER}
-    # Gap rollups used by the exec + inventory sections. Labelled with the baseline's
+    # Gap rollups used by the exec + inventory sections. Labeled with the baseline's
     # display name where one exists, so the report reads "Storage Account" rather than
     # the ARM type's last segment ("storageaccounts").
     type_counts: Counter[str] = Counter(g["type"] for g in model["gaps"])

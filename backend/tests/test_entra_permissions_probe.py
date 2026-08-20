@@ -37,7 +37,7 @@ def test_a_licence_error_is_not_a_permission_error():
 
 
 def test_a_403_that_says_licence_is_a_licence_problem():
-    """Lifecycle workflows answer a licence gap with 403, the same status as a real denial.
+    """Lifecycle workflows answer a license gap with 403, the same status as a real denial.
 
     Read as a denial it told operators to grant LifecycleWorkflows.Read.All — which they
     already held — instead of saying the tenant is not licensed.

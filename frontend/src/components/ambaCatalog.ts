@@ -1,6 +1,6 @@
 // Presentation constants + helpers for the AMBA Reference Set editor and coverage matrix.
 //
-// The metric catalogue itself is NOT hard-coded here any more. It is served by
+// The metric catalog itself is NOT hard-coded here any more. It is served by
 // `GET /amba/catalog`, which is generated from the vendored upstream Azure Monitor Baseline
 // Alerts snapshot, so the editor's metric/threshold/window suggestions always match the
 // AMBA release the baseline was imported from. Free-text metrics remain allowed.
@@ -107,13 +107,13 @@ export function thresholdLabel(value: number | null | undefined, unit: string): 
 
 export type CatalogMetric = Partial<AmbaAlertRef> & { key: string; name: string };
 
-/** Baseline entries the upstream catalogue publishes for an ARM type. */
+/** Baseline entries the upstream catalog publishes for an ARM type. */
 export function catalogFor(catalog: AmbaCatalog | undefined, armType: string): CatalogMetric[] {
   const spec = catalog?.types?.[(armType || "").toLowerCase()];
   return (spec?.alerts ?? []) as CatalogMetric[];
 }
 
-/** Every ARM type the upstream catalogue knows about (for the "add resource type" picker). */
+/** Every ARM type the upstream catalog knows about (for the "add resource type" picker). */
 export function knownArmTypes(
   catalog: AmbaCatalog | undefined,
 ): { type: string; label: string; category: string; source: string; alertCount: number }[] {
@@ -176,7 +176,7 @@ export function blankAlert(overrides: Partial<AmbaAlertRef> = {}): AmbaAlertRef 
   };
 }
 
-/** Turn a catalogue entry into a full, editable alert definition. */
+/** Turn a catalog entry into a full, editable alert definition. */
 export function fromCatalog(entry: CatalogMetric): AmbaAlertRef {
   return blankAlert({ ...entry, source: (entry.source as "amba" | "local") ?? "amba" });
 }

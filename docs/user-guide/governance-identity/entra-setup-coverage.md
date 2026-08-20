@@ -21,9 +21,9 @@ Setup & coverage is the page that decides whether every other Entra tab can tell
 
 ## Prerequisites and data sources
 
-- A connection holding service-principal credentials (tenant ID, client ID, and a client secret or certificate) for the tenant you want to analyse.
+- A connection holding service-principal credentials (tenant ID, client ID, and a client secret or certificate) for the tenant you want to analyze.
 - A directory role that can grant admin consent in the Microsoft Entra admin center — this app cannot grant consent for you.
-- Entra ID P1 or P2 where the data itself is licence-gated.
+- Entra ID P1 or P2 where the data itself is license-gated.
 
 Data comes from two sources: the token's own scope claims, and a live probe that issues one cheap read per domain against Microsoft Graph.
 
@@ -41,7 +41,7 @@ Unlocks the posture score, applications, directory roles, and the Conditional Ac
 | `Application.Read.All` | App registrations and service principals |
 | `Policy.Read.All` | Conditional Access policies, named locations, authentication strengths |
 | `RoleManagement.Read.Directory` | Directory role definitions and assignments |
-| `Organization.Read.All` | Tenant profile, licence state, verified domains |
+| `Organization.Read.All` | Tenant profile, license state, verified domains |
 
 ### Tier 2 — Recommended
 
@@ -85,7 +85,7 @@ Adds PIM depth, Identity Protection risk, access reviews, entitlement management
 
 The card above the coverage table answers a question no other screen does: **does this tenant authenticate its own users?**
 
-A domain is either *managed* — Entra signs those users in — or *federated*, meaning an external identity provider does it and Entra accepts the result. The card names every federated domain, fingerprints the provider from its issuer URI and endpoints (PingFederate, PingOne, Okta, AD FS, OneLogin, Auth0, Shibboleth and others; an unrecognised provider is reported as unrecognised, with its host, rather than guessed), and states how many users sit behind it.
+A domain is either *managed* — Entra signs those users in — or *federated*, meaning an external identity provider does it and Entra accepts the result. The card names every federated domain, fingerprints the provider from its issuer URI and endpoints (PingFederate, PingOne, Okta, AD FS, OneLogin, Auth0, Shibboleth and others; an unrecognized provider is reported as unrecognized, with its host, rather than guessed), and states how many users sit behind it.
 
 Expanding a federated domain shows the trust in full:
 
@@ -93,7 +93,7 @@ Expanding a federated domain shows the trust in full:
 | --- | --- |
 | Identity | Issuer URI, provider host, protocol (WS-Fed or SAML) |
 | Endpoints | Passive and active sign-in, sign-out, metadata exchange |
-| Security | MFA claim behaviour, signed-request requirement, prompt-login behaviour |
+| Security | MFA claim behavior, signed-request requirement, prompt-login behavior |
 | Certificate | Signing and successor certificate expiry, thumbprint, automatic rollover result |
 
 The **MFA claim** row is the one that matters most. When `federatedIdpMfaBehavior` is unset, Entra applies the permissive default and accepts multi-factor authentication performed by the provider — so a Conditional Access policy requiring MFA can be satisfied by a system Entra does not control. The card says so explicitly, and the same condition is raised as a high-severity finding.
@@ -104,7 +104,7 @@ Below the trusts, the **guest sign-in** row lists the external identity provider
 
 Below that, the **hybrid** row reports directory synchronisation, its last run, password hash synchronisation, writeback settings and accidental-deletion prevention. On a federated tenant, password hash synchronisation being off means there is no fallback when the provider is unreachable and leaked-credential detection cannot run at all.
 
-A tenant with no federated domains gets a single sentence saying every domain authenticates in Entra ID — that is the good outcome, not an empty table. If the domain list itself cannot be read, the card says so rather than implying a clean perimeter. A snapshot collected before this check existed is labelled as such and asks for a refresh, which is a different statement again from a permission problem.
+A tenant with no federated domains gets a single sentence saying every domain authenticates in Entra ID — that is the good outcome, not an empty table. If the domain list itself cannot be read, the card says so rather than implying a clean perimeter. A snapshot collected before this check existed is labeled as such and asks for a refresh, which is a different statement again from a permission problem.
 
 The same facts are carried, in one line, to the two screens whose own numbers depend on them: the [Posture]({{ site.baseurl }}/user-guide/governance-identity/entra-posture/) header and the auth methods sub-view of [Risk & sign-ins]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/). The federation scope of [Blast radius]({{ site.baseurl }}/user-guide/governance-identity/entra-blast-radius/) draws the consequence.
 
@@ -132,11 +132,11 @@ Domain state is deliberately narrow, because "we got no data" has several very d
 | `measured` | The domain was collected successfully | Nothing |
 | `partial` | Some of the domain collected; the rest failed or was truncated | Read the reason; usually throttling or a capped enumeration |
 | `blind` | No alternative scope in the requirement group is granted | Grant the missing tier and re-collect |
-| `unlicensed` | The scope is consented, but the tenant lacks the Entra ID P1/P2 licence for the data | Nothing to fix with consent |
+| `unlicensed` | The scope is consented, but the tenant lacks the Entra ID P1/P2 license for the data | Nothing to fix with consent |
 | `error` | The collector failed for another reason | Read the message on the diagnostics view |
 | `stale` | Data came from an earlier snapshot | Refresh |
 
-Only an HTTP 403 is evidence about consent. Microsoft answers a missing Entra ID P2 or Governance licence with a 400 or a 403 carrying a licence marker in the message, so the probe classifies responses as permitted, denied, unlicensed, or inconclusive rather than mapping every failure to "grant more permissions". An inconclusive probe means the answer is unknown — do not grant scopes in response to it.
+Only an HTTP 403 is evidence about consent. Microsoft answers a missing Entra ID P2 or Governance license with a 400 or a 403 carrying a license marker in the message, so the probe classifies responses as permitted, denied, unlicensed, or inconclusive rather than mapping every failure to "grant more permissions". An inconclusive probe means the answer is unknown — do not grant scopes in response to it.
 
 Several domains accept alternative scopes. `Directory.Read.All` is a superset of a number of narrower reads, so a domain is only blind when *none* of its alternatives are held.
 

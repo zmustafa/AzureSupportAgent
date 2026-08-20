@@ -42,7 +42,7 @@ def _people(*users: dict[str, Any]) -> dict[str, Any]:
     return {"users": list(users)}
 
 
-# ============================================================ the organisation of a guest
+# ============================================================ the organization of a guest
 def test_the_guest_domain_is_the_partner_not_the_host_tenant():
     """The UPN suffix is ALWAYS the host tenant. Keying on it reports every guest in the
     directory as belonging to your own company."""
@@ -196,7 +196,7 @@ def test_a_resolved_partner_carries_its_real_name():
     people = _people(_guest(mail="a@fabrikam.com"))
     people["guest_domain_tenants"] = {
         "fabrikam.com": {"tenant_id": "t-1", "display_name": "Fabrikam"}}
-    s = guests.summarise(people, now=NOW, stale_days=90)
+    s = guests.summarize(people, now=NOW, stale_days=90)
     assert s["domains"][0]["partner_name"] == "Fabrikam"
     assert s["domains"][0]["partner_tenant_id"] == "t-1"
 
@@ -242,6 +242,6 @@ def test_only_guests_are_projected():
 
 def test_summarise_reports_both_numbers_never_a_bare_ratio():
     people = _people(_guest(id="a"), _guest(id="b", signin_known=False))
-    s = guests.summarise(people, now=NOW, stale_days=90)
+    s = guests.summarize(people, now=NOW, stale_days=90)
     assert s["counts"]["invited"] == 2
     assert s["signin_measured"] == 1

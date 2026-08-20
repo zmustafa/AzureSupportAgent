@@ -1551,6 +1551,19 @@ async def _start_message_turn(
             connection=turn_connection,
         )
 
+    # Recovery Readiness: per-scenario RTO/RPO and the resources with no recovery path.
+    # Same contract as the Entra tools — the caller's principal, so chat is exactly as
+    # permissioned as clicking, and the answers carry their basis.
+    if turn_connector_toolset is not None:
+        from app.resiliency.agent_tool import register_recovery_tools
+
+        register_recovery_tools(
+            turn_connector_toolset,
+            tenant_id=_turn_tenant_id,
+            principal=principal,
+            connection=turn_connection,
+        )
+
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
     if turn_agent is not None:
@@ -1566,7 +1579,7 @@ async def _start_message_turn(
         turn_entra_enabled = bool(_load_app_settings().get("entra_mcp_enabled", False))
         turn_azure_enabled = True
 
-    # Behavioural Graph reads (sign-in logs, directory audit) are withheld from a caller who
+    # Behavioral Graph reads (sign-in logs, directory audit) are withheld from a caller who
     # does not hold `investigate.activity`. Without this the first-party gate is decorative:
     # the agent would simply call the raw Graph equivalents instead.
     from app.entra.agent_tool import behavioural_graph_tools_blocked

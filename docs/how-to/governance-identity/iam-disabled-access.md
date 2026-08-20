@@ -91,7 +91,7 @@ The filter is greyed out unless a "never used" answer is actually available, and
 - **The sweep was truncated.** The Activity Log returns at most 6 MB per subscription. On one real tenant, **eleven subscriptions** tripped that cap in a single 90-day sweep — what came back was a *prefix* of the activity, and an operation missing from a prefix is not evidence the access went unused. Re-run the sweep over a shorter window to get a complete answer.
 - **The window closes before the account was alive.** A disabled account cannot obtain a token, so it cannot appear in the Activity Log at all. "No operations in the last 90 days" is exactly what you would expect of somebody disabled two years ago — it is a fact about the window, not about the person. The verdict is only offered when the window actually covers a period the account was still signing in.
 
-The practical effect is that this filter usually returns **fewer** people than you might expect, and sometimes none at all. That is the intended behaviour: the screen would rather tell you it cannot answer than hand you a list that looks like a decision.
+The practical effect is that this filter usually returns **fewer** people than you might expect, and sometimes none at all. That is the intended behavior: the screen would rather tell you it cannot answer than hand you a list that looks like a decision.
 
 ## How to export the disabled-access list
 

@@ -21,7 +21,7 @@ def main() -> None:
     data = sm.load(demo.DEMO_TENANT)["data"]
 
     t = time.perf_counter()
-    a = ca_engine.analyse(data)
+    a = ca_engine.analyze(data)
     print(f"demo tenant                          -> {(time.perf_counter()-t)*1000:7.0f} ms, {_cells(a)} cells")
 
     big = copy.deepcopy(data)
@@ -46,7 +46,7 @@ def main() -> None:
         for i in range(60)
     ]
     t = time.perf_counter()
-    a2 = ca_engine.analyse(big)
+    a2 = ca_engine.analyze(big)
     print(f"5,000 users / 800 apps / 60 policies -> {(time.perf_counter()-t)*1000:7.0f} ms, {_cells(a2)} cells")
 
 

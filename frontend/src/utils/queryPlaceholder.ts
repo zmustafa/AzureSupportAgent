@@ -2,12 +2,12 @@
  * Keep the previous page of data on screen — but never across a tenant change.
  *
  * `placeholderData: keepPreviousData` exists so a grid does not flash empty on every keystroke
- * or filter toggle. That is the right behaviour while the *question* changes and the *subject*
+ * or filter toggle. That is the right behavior while the *question* changes and the *subject*
  * does not.
  *
- * It is the wrong behaviour when the connection changes. The tenant picker updates immediately,
- * so for the whole length of the refetch the screen shows one organisation's rows underneath
- * another organisation's name, with no spinner and nothing to indicate the mismatch. A reader
+ * It is the wrong behavior when the connection changes. The tenant picker updates immediately,
+ * so for the whole length of the refetch the screen shows one organization's rows underneath
+ * another organization's name, with no spinner and nothing to indicate the mismatch. A reader
  * who glances at a count during that window attributes it to the wrong tenant — and on a large
  * estate the window is long enough to read, act on, and screenshot.
  *

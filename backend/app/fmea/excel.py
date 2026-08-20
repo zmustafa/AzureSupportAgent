@@ -3,7 +3,7 @@
 Renders the FMEA worksheet the way a reliability engineer expects to see it in Excel:
 a Summary sheet with the risk roll-up, then ONE sheet per table laid out exactly like the
 on-screen grid — grouped "Current Controls" and "FMEA Results" header bands, a green→amber→
-red colour scale on the Severity/Occurrence/Detection factor columns, risk-band conditional
+red color scale on the Severity/Occurrence/Detection factor columns, risk-band conditional
 formatting on the RPN columns, and **live RPN formulas** (=Severity×Occurrence×Detection) so
 the spreadsheet recalculates as a user edits the factors — matching the classic FMEA template
 note "RPN columns contain a formula to auto-calculate".
@@ -24,7 +24,7 @@ _TODO_RE = re.compile(r"⟦\s*TODO[\s\S]*?⟧", re.IGNORECASE)
 
 # Column layout (A..U), mirroring the grid. ``kind`` drives styling/formulas.
 #   text   — free text (wrapped)
-#   factor — a 1-10 score (colour-scaled)
+#   factor — a 1-10 score (color-scaled)
 #   rpn    — derived; written as a live Excel formula + band conditional formatting
 #   date   — ISO date (real Excel date when parseable)
 #   id     — the display row number

@@ -115,7 +115,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
       {/* How the tenant authenticates ------------------------------------------- */}
       <IdentityFabricCard fabric={setupQ.data?.identity_fabric} />
 
-      {/* Token + licence state -------------------------------------------------- */}
+      {/* Token + license state -------------------------------------------------- */}
       <div className="grid gap-3 md:grid-cols-2">
         <Card title="Microsoft Graph access">
           <Row label="Token">
@@ -150,7 +150,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
           {recheckError && <div className="mt-1 text-[12px] text-red-600">{recheckError}</div>}
           {recheck && <RecheckResult result={recheck} />}
         </Card>
-        <Card title="Licence tier">
+        <Card title="License tier">
           <div className="flex flex-wrap gap-2">
             {(["p1", "p2", "governance", "workload_id_premium"] as const).map((k) => (
               <span
@@ -166,7 +166,7 @@ export function EntraSetupView({ connectionId }: { connectionId: string | null }
           </div>
           {!meta.licences?.detected && (
             <div className="mt-2 text-xs text-gray-500">
-              {meta.licences?.reason || "Licence tier not detected — checks are still attempted."}
+              {meta.licences?.reason || "License tier not detected — checks are still attempted."}
             </div>
           )}
         </Card>
@@ -307,7 +307,7 @@ function RecheckResult({ result }: { result: EntraPermissionRecheck }) {
       {result.licence_blocked.length > 0 && (
         <div className="text-amber-800">
           Licensed-blocked: {result.licence_blocked.join(", ")} — the permission is held, but
-          the tenant licence does not include it. Granting more consent will not change this.
+          the tenant license does not include it. Granting more consent will not change this.
         </div>
       )}
       {result.needs_refresh && (

@@ -2,7 +2,7 @@
 
 The whole point of this layer is that opening the module — or switching tabs, or reloading the
 page — must not start an Azure sweep. Only an explicit analysis does. These tests pin that
-behaviour down, because it is invisible in the UI until it regresses and starts costing
+behavior down, because it is invisible in the UI until it regresses and starts costing
 operators minutes and Azure throttling.
 """
 from __future__ import annotations

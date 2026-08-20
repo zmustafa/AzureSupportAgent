@@ -106,7 +106,7 @@ def test_unrelated_400_is_not_retried():
 
 
 def test_pim_licence_error_is_classified_as_a_licence_limitation():
-    """PIM reports a missing licence as a 400 with a message, not a 403 — reporting it as a
+    """PIM reports a missing license as a 400 with a message, not a 403 — reporting it as a
     generic collection error would be misleading."""
     from app.entra.collectors.roles import _is_licence_error, _pim_note
 

@@ -349,7 +349,7 @@ def run(
     return result
 
 
-def summarise(card: dict[str, Any]) -> dict[str, Any]:
+def summarize(card: dict[str, Any]) -> dict[str, Any]:
     """A scanner card without the finding bodies.
 
     :func:`run` returns the full ``new`` and ``immediate`` finding objects because the

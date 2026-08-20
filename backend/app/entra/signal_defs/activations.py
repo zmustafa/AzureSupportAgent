@@ -280,7 +280,7 @@ SPECS: list[SignalSpec] = [
         benchmarks=("MCSB PA-2",), impact=IMPACT_SATURATING, saturation=5,
         remediation="Require justification on activation for every privileged role.",
         remediation_steps=(
-            "Entra admin centre > Identity Governance > PIM > Microsoft Entra roles > Settings.",
+            "Entra admin center > Identity Governance > PIM > Microsoft Entra roles > Settings.",
             "Select the role > Edit > Activation > tick 'Require justification on activation'.",
             "For Azure roles, do the same under PIM > Azure resources > the subscription.",
         ),

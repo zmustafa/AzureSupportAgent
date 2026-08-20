@@ -47,7 +47,7 @@ See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity
 
 **PIM config** lists privileged roles worst-configured first with a score out of 100 and one column per activation control: MFA on activation (satisfied by an authentication context), approval, justification, ticket, bounded duration (treated as satisfied at eight hours or less), notifications, and the raw maximum activation duration. If no policies were collected the tab reports the PIM domain state — `unlicensed`, `blind`, or genuinely clean — instead of an empty grid.
 
-**Activations** merges what the current snapshot can see with a durable local ledger. Six tiles — sessions, Entra ID, Azure, tier-0, out of hours, no reason given — double as filters, alongside a search over person, role, scope and reason, a plane selector (both, Entra ID, Azure resources), a tier selector (any, tier-0, tier-1), and a window of 7, 30, 90 days or everything recorded. The browser sends its own UTC offset so the working-day judgement is made in tenant-local time; the endpoint takes that offset plus a business-hours start and end hour, and returns facets for plane, tier-0, out-of-hours, missing and weak justification, activations granted by someone other than the requestor, and distinct principals. Selecting a session opens a drawer with its start, end, granted duration, outcome and stated reason.
+**Activations** merges what the current snapshot can see with a durable local ledger. Six tiles — sessions, Entra ID, Azure, tier-0, out of hours, no reason given — double as filters, alongside a search over person, role, scope and reason, a plane selector (both, Entra ID, Azure resources), a tier selector (any, tier-0, tier-1), and a window of 7, 30, 90 days or everything recorded. The browser sends its own UTC offset so the working-day judgment is made in tenant-local time; the endpoint takes that offset plus a business-hours start and end hour, and returns facets for plane, tier-0, out-of-hours, missing and weak justification, activations granted by someone other than the requestor, and distinct principals. Selecting a session opens a drawer with its start, end, granted duration, outcome and stated reason.
 
 Below the filters, an **activation window** bins every loaded session across the real span it covers, with tier-0 stacked in red. Drag either handle, click a column, or use the relative presets to brush a sub-window; the table follows it. The brush is a client-side slice of what was already returned, so it costs no round trip — widening past the loaded range is what the days selector above is for. Changing any filter clears the brush rather than silently hiding rows from the new result set.
 
@@ -87,12 +87,12 @@ The Azure half of cross-plane and of activation sessions comes from the RBAC cac
 | Symptom | Check |
 | --- | --- |
 | Permanence shows `unknown` for every row | PIM schedule data was not collected. Grant tier 3 and confirm the tenant has Entra ID P2. |
-| PIM config grid is empty | Read the state on the empty panel: `unlicensed` is a licence problem, `blind` is a consent problem. |
+| PIM config grid is empty | Read the state on the empty panel: `unlicensed` is a license problem, `blind` is a consent problem. |
 | PIM config is populated but there are no activations | Grant `RoleAssignmentSchedule.Read.Directory`; configuration and history are separate collections. |
 | Activation list stops about 30 days back | That is Graph retention. The ledger extends it forward from the first collection, not backwards. |
 | Cross-plane says unavailable | No Azure RBAC scan exists for this tenant. The banner carries the reason. |
 | Cross-plane shows a stale warning | The RBAC cache predates the Entra snapshot. Re-run the RBAC scan for a current join. |
-| Out-of-hours counts look wrong | The judgement uses the browser's UTC offset. Check that the machine's time zone matches the tenant's working day. |
+| Out-of-hours counts look wrong | The judgment uses the browser's UTC offset. Check that the machine's time zone matches the tenant's working day. |
 | Names appear as raw object IDs | The people collector failed or lacks permission; fix consent and refresh. |
 | Refresh returns a permission error | Collection requires `entra.admin`, not `entra.read`. |
 

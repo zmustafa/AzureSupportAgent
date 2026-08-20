@@ -92,7 +92,7 @@ const STATUS_ORDER = ["fail", "error", "manual", "waived", "pass", "not_applicab
 // The full set of Well-Architected pillars offered when running/scheduling an assessment.
 const ALL_PILLARS = ["security", "reliability", "cost", "operations", "performance"] as const;
 
-// Recognised Well-Architected methodologies → the pillar bundle each one runs. Selecting a
+// Recognized Well-Architected methodologies → the pillar bundle each one runs. Selecting a
 // pack is a one-click way to launch a WARA / WASA / full WAF review.
 const PACK_PRESETS: { id: string; short: string; label: string; icon: string; pillars: string[] }[] = [
   { id: "waf", short: "WAF", label: "Well-Architected Review", icon: "🏛️", pillars: [...ALL_PILLARS] },

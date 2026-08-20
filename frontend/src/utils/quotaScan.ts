@@ -2,7 +2,7 @@
 // for a while (regions × collectors). Keeping its state HERE — not in the QuotaView component —
 // means the scan survives navigating away and back: the fetch keeps streaming, progress keeps
 // accumulating, and the component re-subscribes via useSyncExternalStore on remount. The view can
-// then minimise the progress popup into a header chip instead of a blocking modal. Mirrors the
+// then minimize the progress popup into a header chip instead of a blocking modal. Mirrors the
 // Performance-Profiler / coverage background-refresh pattern.
 import { useSyncExternalStore } from "react";
 import { queryClient } from "../queryClient";

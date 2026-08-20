@@ -11,7 +11,7 @@ function Svg({ children, viewBox = "0 0 24 24" }: { children: ReactNode; viewBox
   );
 }
 
-// Slack — official 4-colour mark.
+// Slack — official 4-color mark.
 const Slack = (
   <Svg>
     <path fill="#36C5F0" d="M9.04 14.5a2.02 2.02 0 1 1-2.02-2.02h2.02v2.02Zm1.01 0a2.02 2.02 0 0 1 4.04 0v5.05a2.02 2.02 0 0 1-4.04 0V14.5Z" />

@@ -324,7 +324,7 @@ async def test_a_blocked_scanner_notifies_that_it_could_not_run(isolated_cache, 
 
 @pytest.mark.anyio
 async def test_a_permanently_blocked_scanner_repeats_one_fingerprint(isolated_cache, monkeypatch):
-    """So the notification centre can collapse it instead of raising a daily alarm forever."""
+    """So the notification center can collapse it instead of raising a daily alarm forever."""
     from app.iam import scanner_jobs
 
     sent: list[dict] = []
@@ -376,7 +376,7 @@ def test_the_card_list_does_not_ship_finding_bodies():
         "immediate": [{"id": "f1"}],
         "unmeasured": [], "first_run": True, "last_run_at": "",
     }
-    out = scanners.summarise(card)
+    out = scanners.summarize(card)
     assert "new" not in out
     assert "immediate" not in out
     assert "resolved_fingerprints" not in out
@@ -390,7 +390,7 @@ def test_the_card_list_does_not_ship_finding_bodies():
 def test_summarise_keeps_a_blocked_card_blocked():
     """`counts: None` is how a scanner says "I could not look". If trimming ever turned that
     into a zero, a blind scanner would render as a clean one."""
-    out = scanners.summarise({
+    out = scanners.summarize({
         "scanner_id": "s1", "blocked": ["Managed identities were not collected."],
         "counts": None, "by_severity": {}, "new": [], "immediate": [],
         "resolved_fingerprints": [],

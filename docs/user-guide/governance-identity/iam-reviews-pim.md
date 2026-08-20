@@ -38,7 +38,7 @@ The list view creates campaigns and shows their state; selecting one opens the d
 
 **Creating a campaign.** A name, a selector, and a reviewer strategy. Four selectors are offered on screen — all privileged access; external access (guests, Lighthouse delegations and multi-tenant service principals); service principals; and everything the findings engine flagged. Three reviewer strategies are offered — reviewed by the scope owner, reviewed by the principal's manager, and self-attestation. The API additionally accepts a fixed-reviewer strategy, a fallback reviewer, a description, a baseline run id, a due date and reminder days; the create form on screen sets name, selector and strategy only. A campaign is capped at a maximum item count so one careless selector cannot create a review nobody will ever finish.
 
-**Self-attestation is labelled everywhere it appears** — on the card, in the detail header, and in the evidence pack. Principals reviewing their own access is not independent certification and must not be mistaken for it six months later.
+**Self-attestation is labeled everywhere it appears** — on the card, in the detail header, and in the evidence pack. Principals reviewing their own access is not independent certification and must not be mistaken for it six months later.
 
 **Lifecycle.** `draft` → `active` → `completed`, with `expired` and `cancelled` as terminal states. **Activate** opens a draft for decisions. **Complete** closes an active campaign.
 
@@ -141,7 +141,7 @@ Both grids show only the first page and say `showing the first N — search to n
 | A row is flagged **JIT in name only** | The eligibility is permanent and activation requires neither approval nor MFA. Tighten the PIM policy in Azure. |
 | A campaign cannot be activated or completed | The operation is refused with a reason — usually the campaign is not in the state that operation requires. |
 | Evidence export is refused | The campaign is still running. Complete it first; an evidence pack for an open review is a moving target. |
-| A completed campaign is labelled `INCOMPLETE` | Items were never decided. They were not approved. Reopen the review process for them rather than treating the campaign as closed. |
+| A completed campaign is labeled `INCOMPLETE` | Items were never decided. They were not approved. Reopen the review process for them rather than treating the campaign as closed. |
 | Items I already decided are undecided again | They were re-presented by **Re-check** because the underlying access changed. The previous decision was about a different grant and was cleared deliberately. |
 | **Re-check** reports reverted claims | An item was marked applied but the access is still present in the latest scan. Verify the change actually ran in Azure. |
 | Remediation returns a note instead of a script | No revoke or reduce decisions have been recorded yet. |

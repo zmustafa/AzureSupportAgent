@@ -3,7 +3,7 @@
  * The single most important rendering rule here: **`indeterminate` is its own state.** It is
  * returned whenever an unevaluated ABAC condition or an unresolved role definition sits in the
  * decision path, and showing it as a yes (or a no) throws away the one thing that makes the
- * answer trustworthy. It gets its own colour, its own icon, and wording that cannot be misread
+ * answer trustworthy. It gets its own color, its own icon, and wording that cannot be misread
  * as a verdict.
  *
  * `VERDICT`, `ActionPicker` and `DecisionResult` are exported because the Effective Access tab

@@ -7,7 +7,7 @@ Three properties matter more than the number itself:
 2. **Explainable to the object** — every lost point maps to a signal, and every signal maps
    to the specific users, applications or policies responsible.
 3. **Blind is not zero** — a pillar that could not be measured (missing permission, missing
-   licence, collector error) is *excluded from the denominator* and reported as "not
+   license, collector error) is *excluded from the denominator* and reported as "not
    measured". A tenant without P2 must not look catastrophic because PIM data was
    unavailable. The score is therefore always published together with its coverage.
 """
@@ -165,7 +165,7 @@ def _pillar_state(unmeasured: list[Any], result: EvaluationResult) -> str:
 
     Classify every reason and pick the dominant one rather than the first match: a pillar
     where 17 signals are blind and 2 are unlicensed must say *blind*, because a missing
-    permission is the actionable fact and a licence upsell is not.
+    permission is the actionable fact and a license upsell is not.
     """
     if not unmeasured:
         return "not_collected"

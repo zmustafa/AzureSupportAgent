@@ -66,7 +66,7 @@ def _snapshot(users: list[dict], policies: list[dict], admin_ids: list[str] | No
 
 
 def _findings(snapshot: dict[str, Any], fn) -> list[dict[str, Any]]:
-    snapshot["_ca_analysis"] = ca_engine.analyse(snapshot)
+    snapshot["_ca_analysis"] = ca_engine.analyze(snapshot)
     return fn(snapshot, SignalContext(tenant_id="t1"))
 
 
@@ -115,7 +115,7 @@ def test_the_cell_the_detectors_read_still_carries_its_count_key():
     """Guards the exact rename that disarmed them."""
     snap = _snapshot([_user("u1"), _user("u2")],
                      [_policy("p1", include_users=["All"], exclude_users=["u2"])])
-    analysis = ca_engine.analyse(snap)
+    analysis = ca_engine.analyze(snap)
     row = next(r for r in analysis["coverage"]["matrix"] if r["cohort"] == "members")
     cell = row["cells"]["all_cloud_apps|mfa"]
     assert "uncovered_total" in cell, "the detectors gate on this key; renaming it silences them"

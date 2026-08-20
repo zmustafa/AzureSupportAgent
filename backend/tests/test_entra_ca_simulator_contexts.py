@@ -2,9 +2,9 @@
 
 Two things are asserted here that a passing simulation cannot otherwise distinguish:
 
-1. **The content surface is modelled.** Before, the only non-wildcard contexts were the two
+1. **The content surface is modeled.** Before, the only non-wildcard contexts were the two
    admin ones, so a change scoped to SharePoint, Exchange or Teams simulated as affecting
-   nobody — the simulator was blind to the applications the organisation's data lives in.
+   nobody — the simulator was blind to the applications the organization's data lives in.
 
 2. **"All cloud apps" does not reach a user action.** In Entra the target blade is exclusive:
    a policy targets cloud apps, or user actions, or an authentication context. Letting the
@@ -51,7 +51,7 @@ def test_every_targetable_taxonomy_class_has_a_simulation_context():
     derived = {c["id"] for c in ca_taxonomy.classes() if c.get("derived")}
     modelled = {c.app_class for c in ca_simulator.DEFAULT_CONTEXTS}
     missing = {c["id"] for c in ca_taxonomy.classes()} - derived - modelled
-    # `legacy_protocols` is modelled by the two legacy CLIENT contexts rather than by a class.
+    # `legacy_protocols` is modeled by the two legacy CLIENT contexts rather than by a class.
     missing -= {"legacy_protocols", "scoped_constructs", "custom_lob"}
     assert not missing, f"no simulation context covers: {sorted(missing)}"
 

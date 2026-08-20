@@ -1,6 +1,6 @@
 """A blocked collector must name the blocker the operator can actually act on.
 
-Graph is inconsistent: PIM reports a missing licence as a 400 with a message, lifecycle
+Graph is inconsistent: PIM reports a missing license as a 400 with a message, lifecycle
 workflows report one as a 403 -- the same status as a genuine consent failure. Reading the
 403 as 'not permitted' told operators to grant LifecycleWorkflows.Read.All when they already
 held it, and no amount of consent would ever have changed the outcome.

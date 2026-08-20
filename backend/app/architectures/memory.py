@@ -2,7 +2,7 @@
 
 An architecture *memory* is a structured, Markdown-friendly knowledge base that an
 architecture owns — think "Memory.md" for AI. It captures the intended design, security
-model, resiliency targets, known gaps, diagnostic hints, etc. across labelled sections.
+model, resiliency targets, known gaps, diagnostic hints, etc. across labeled sections.
 It is used to inform Deep Investigations (injected as expert context) when an incident
 occurs on the linked workload.
 
@@ -237,7 +237,7 @@ def upsert_memory(
     memories[architecture_id] = merged
     _write(data)
     # Auto-snapshot a revision (deduped by content signature) so history is captured.
-    # First write is labelled "Created" unless the caller gave a specific reason.
+    # First write is labeled "Created" unless the caller gave a specific reason.
     from app.architectures import memory_revisions
 
     snap_reason = ("Created" if reason == "Edited" else reason) if not existing else reason

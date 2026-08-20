@@ -30,7 +30,7 @@ const PRINCIPAL_KINDS = new Set([
  * policy id in the same field. A deep link that resolves to nothing is worse than no link,
  * so anything that fails either test gets no affordance at all.
  *
- * One function rather than six, because six copies of this judgement is six chances for one
+ * One function rather than six, because six copies of this judgment is six chances for one
  * of them to be wrong in a way nobody notices — the link just quietly goes nowhere.
  */
 export function investigatableId(

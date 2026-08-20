@@ -2,7 +2,7 @@
 
 Everything hard about CIEM is in what this module refuses to conclude. Comparing granted actions
 against used actions is arithmetic; deciding that an unused permission is an unnecessary one is
-a judgement, and it is wrong often enough to cause outages.
+a judgment, and it is wrong often enough to cause outages.
 
 Four rules, all of them load-bearing:
 
@@ -282,7 +282,7 @@ def action_universe(
     an unused ratio of **zero** and never appears in a report about over-privilege. Reader
     declares one too. The measure inverts precisely where it matters.
 
-    Expanding against the full Azure action catalogue is not available offline, so the universe
+    Expanding against the full Azure action catalog is not available offline, so the universe
     is built from what is actually observable: every LITERAL action any collected role declares,
     plus every action anybody was seen to use. It is concrete, it is derived from real data, and
     it can be published alongside the ratio so a reader can see what the percentage is *of*."""

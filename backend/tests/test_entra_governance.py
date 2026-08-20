@@ -1,7 +1,7 @@
 """Identity governance: coverage synthesis, review quality and lifecycle effectiveness.
 
-The behaviour these tests protect hardest is that the coverage view still works with no
-governance licence at all. A tenant that cannot read access reviews should learn that 18
+The behavior these tests protect hardest is that the coverage view still works with no
+governance license at all. A tenant that cannot read access reviews should learn that 18
 privileged roles have never been reviewed — not see an empty screen saying "requires P2".
 """
 from __future__ import annotations

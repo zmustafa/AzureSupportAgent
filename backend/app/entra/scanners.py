@@ -304,7 +304,7 @@ def due(scanner: ScannerSpec, tenant_id: str, ctx: sig.SignalContext) -> bool:
     return days >= (7 if scanner.cadence == "weekly" else 1)
 
 
-def summarise(result: dict[str, Any], *, limit: int = 8) -> str:
+def summarize(result: dict[str, Any], *, limit: int = 8) -> str:
     """The notification body. States what changed and why it matters — never a JSON dump."""
     counts = result["counts"]
     if result["blocked"]:

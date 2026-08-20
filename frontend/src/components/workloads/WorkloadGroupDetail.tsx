@@ -64,7 +64,7 @@ function RollupChips({ rollup }: { rollup: WorkloadGroupRollup }) {
   );
 }
 
-// Inline modal to edit the group's own metadata (name / description / owner / colour).
+// Inline modal to edit the group's own metadata (name / description / owner / color).
 function GroupEditModal({
   group,
   onClose,
@@ -113,7 +113,7 @@ function GroupEditModal({
               <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="team / person" className="mt-1 w-full rounded-lg border px-2 py-1.5 text-sm" />
             </label>
             <label>
-              <span className="text-xs font-medium text-gray-600">Colour</span>
+              <span className="text-xs font-medium text-gray-600">Color</span>
               <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="mt-1 h-9 w-12 cursor-pointer rounded-lg border" />
             </label>
           </div>

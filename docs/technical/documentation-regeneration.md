@@ -84,7 +84,7 @@ that no longer existed. Two committed scripts now close that loop, and both run 
 
 Reads application source only and emits `docs/_feature_inventory.json`: a sorted list of stable
 `NAMESPACE:id` values covering routes, every navigation and tab registry, the permission
-catalogue, and the connector registry. Each registry names the exact file and symbol it is
+catalog, and the connector registry. Each registry names the exact file and symbol it is
 extracted from.
 
 If a registry is renamed or moved, extraction **fails** rather than returning fewer ids. That
@@ -102,7 +102,7 @@ on three conditions:
 
 The layer rule is the site's own two-layer contract made executable: every visible area needs a
 feature reference **and** a how-to recipe. `PERMISSION` is the single exception — the permission
-catalogue is explained in one reference table, because a numbered procedure per permission key
+catalog is explained in one reference table, because a numbered procedure per permission key
 would produce dozens of pages that teach nothing.
 
 ### Running the checks

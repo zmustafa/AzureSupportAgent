@@ -15,7 +15,7 @@ An Entra app registration authenticating with a client secret. This is the most 
 
 ## When to choose this
 
-Choose it for any long-lived or production connection, for a tenant the application does not itself run in, and whenever Entra or identity features are needed. If organisational policy forbids shared secrets, use [a certificate]({{ site.baseurl }}/admin/azure-tenants-service-principal-certificate/) instead — the capability is identical.
+Choose it for any long-lived or production connection, for a tenant the application does not itself run in, and whenever Entra or identity features are needed. If organizational policy forbids shared secrets, use [a certificate]({{ site.baseurl }}/admin/azure-tenants-service-principal-certificate/) instead — the capability is identical.
 
 ## Step 1 — Create the app registration
 

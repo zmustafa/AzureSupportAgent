@@ -80,7 +80,7 @@ as unidentifiable and refused in Enforce mode, rather than being attributed to a
 
 ## Modes
 
-| Mode | Behaviour |
+| Mode | Behavior |
 |---|---|
 | **Off** | No evaluation. Anyone can reach the application. This is the default. |
 | **Monitor** | Records what *would* be blocked, but blocks nothing. |

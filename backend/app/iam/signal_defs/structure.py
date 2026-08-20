@@ -88,7 +88,7 @@ def _scope_hierarchy_flat(ctx: SignalContext) -> list[Finding]:
     return [
         Finding(
             signal_id="str.flat_scope_hierarchy",
-            title="Subscriptions are not organised under management groups",
+            title="Subscriptions are not organized under management groups",
             severity="info",
             pillar="str",
             object_kind="tenant",

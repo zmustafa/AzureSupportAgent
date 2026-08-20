@@ -7,7 +7,7 @@ monitored resource controls resource **tags** and **names**; any user activating
 role controls a PIM **justification**; any app owner controls an Entra app **display
 name**. All of that reaches an LLM that can call tools.
 
-`app/agent/result_sanitizer.py` is the defence-in-depth control. It is deliberately
+`app/agent/result_sanitizer.py` is the defense-in-depth control. It is deliberately
 CONSERVATIVE (see its module docstring) -- it neutralises only the highest-signal
 markers so legitimate diagnostic output survives. The real safety control is the
 approval gate for mutating tools.
@@ -173,7 +173,7 @@ def test_the_known_bypass_list_is_not_silently_emptied():
 #
 # This caught a real gap on 2026-07-31: app/agent/deep_investigation.py ran a second,
 # independent agent loop that called MCP tools and fed the results straight to the model
-# with NO sanitisation, while app/agent/orchestrator.py sanitised correctly. A sanitiser
+# with NO sanitisation, while app/agent/orchestrator.py sanitized correctly. A sanitiser
 # applied on one path and not another is the failure mode to guard against -- the
 # strength of the patterns matters far less than their uniform application.
 

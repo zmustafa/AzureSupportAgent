@@ -1,7 +1,7 @@
 """Unit tests for the shared Entra Graph client.
 
 Everything here runs against a fake transport — the point is to prove paging, `$batch`
-splitting, id chunking, throttling and fail-open behaviour without touching Microsoft Graph.
+splitting, id chunking, throttling and fail-open behavior without touching Microsoft Graph.
 """
 from __future__ import annotations
 

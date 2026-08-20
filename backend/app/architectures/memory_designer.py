@@ -2,7 +2,7 @@
 
 Given an architecture diagram, its workload's live resource inventory, and signals of
 known weaknesses (assessment findings + inventory hygiene flags), the LLM drafts the
-labelled Memory sections — the way a principal architect would document a system for
+labeled Memory sections — the way a principal architect would document a system for
 incident response. Grounded on real data; explicitly marks unknowns instead of inventing.
 
 Mirrors the architecture designer: a plain JSON completion via provider.stream +

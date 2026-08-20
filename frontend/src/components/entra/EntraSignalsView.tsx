@@ -950,7 +950,7 @@ function RiskyUsersTab({ connectionId }: { connectionId: string | null }) {
  * Evidence is deliberately open-ended — each pattern kind carries whatever proves it — so
  * this has to cope with anything JSON can hold. `String(v)` was fine until the unmanaged
  * -device pattern was aggregated into a single row carrying `top_accounts`, at which point
- * every reader saw "top_accounts: [object Object]". Objects and arrays are summarised by
+ * every reader saw "top_accounts: [object Object]". Objects and arrays are summarized by
  * whichever field actually names the thing; nothing is allowed to stringify to noise.
  */
 function evidenceText(value: unknown): string {

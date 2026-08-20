@@ -108,8 +108,8 @@ EXTRA_COLUMNS: tuple[str, ...] = (
     # --- cross-tenant delegation -------------------------------------------------------
     # The Azure Lighthouse MANAGING tenant — whose directory the principal actually lives in.
     # Distinct from `tenantId`, which is the tenant being scanned. Without its own column the
-    # delegation signal groups every managing tenant into one bucket labelled "unknown", which
-    # is precisely the fact a reader needs: *which* outside organisation holds this access.
+    # delegation signal groups every managing tenant into one bucket labeled "unknown", which
+    # is precisely the fact a reader needs: *which* outside organization holds this access.
     "managingTenantId",
     "managingTenantName",
     # --- Entra account state (disabled-access report) -----------------------------------
@@ -235,7 +235,7 @@ ATTENTION_STATUSES = frozenset(
 
 # The strictly narrower set meaning "this scope produced NO trustworthy rows".
 #
-# ``PartiallyCollected`` deliberately is NOT here. A tenant without an Entra ID P2 licence gets a
+# ``PartiallyCollected`` deliberately is NOT here. A tenant without an Entra ID P2 license gets a
 # 400 from every PIM endpoint, which makes every scope Partial forever — treating Partial as
 # untrustworthy made delta refresh re-collect the entire estate on exactly the tenants it was
 # meant to help, while still reporting that it had done a delta. Partial means "we got the rows,
@@ -351,11 +351,11 @@ def role_is_privileged(
     Azure RBAC: the canonical write/assign roles by name, plus any data-plane role that can
     modify data or reach a credential. Entra: the tenant-admin role set.
 
-    Pass ``data_actions`` whenever the role definition is at hand. The data-plane judgement is
+    Pass ``data_actions`` whenever the role definition is at hand. The data-plane judgment is
     then also made on what the role can actually DO, via :mod:`app.iam.dataplane`. The older test
     — "has dataActions and the name contains owner or contributor" — missed `Key Vault
     Administrator`, `Key Vault Secrets Officer`, `Azure Kubernetes Service RBAC Cluster Admin`
-    and `Storage File Data SMB Admin` on a real 981-role catalogue: 118 genuinely dangerous roles
+    and `Storage File Data SMB Admin` on a real 981-role catalog: 118 genuinely dangerous roles
     in all.
 
     The two tests are UNIONED, never swapped. The name test also produces false positives

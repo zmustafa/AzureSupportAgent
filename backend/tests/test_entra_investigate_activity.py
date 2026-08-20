@@ -1,6 +1,6 @@
 """Investigate activity — window clamping and per-principal log filters.
 
-The behaviours worth locking down are the ones that would otherwise produce a confident
+The behaviors worth locking down are the ones that would otherwise produce a confident
 lie: a silently shortened window reads as "nothing happened", and a workload identity
 filtered by the wrong id reads as "never signed in".
 """

@@ -191,7 +191,7 @@ export function PimTab() {
           {/* The KPI above counts eligible AND PRIVILEGED; this grid lists EVERY eligible
               assignment. On a real tenant that is 137 against 174 — two numbers a reader
               would take for the same measure, sitting a few inches apart under near-identical
-              labels. Both are correct; only the labelling was wrong, so the grid states its own
+              labels. Both are correct; only the labeling was wrong, so the grid states its own
               scope rather than hiding the 37 non-privileged rows to make the numbers agree. */}
           All eligible assignments ({eligibleTotal.toLocaleString()})
           {privilegedEligible !== null && privilegedEligible !== eligibleTotal && (

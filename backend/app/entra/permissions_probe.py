@@ -108,7 +108,7 @@ PROBE_DENIED = "denied"
 PROBE_UNLICENSED = "unlicensed"
 PROBE_INCONCLUSIVE = "inconclusive"
 
-# Graph reports a missing Entra ID P2 / Governance licence as a 400 with a message, not a
+# Graph reports a missing Entra ID P2 / Governance license as a 400 with a message, not a
 # 403 — the same quirk the roles collector already has to handle.
 _LICENCE_MARKERS = (
     "aadpremiumlicenserequired",
@@ -124,9 +124,9 @@ def classify_probe(status: int, code: str = "", message: str = "") -> str:
     """Decide what one probe response proves about PERMISSION specifically."""
     if 200 <= status < 300:
         return PROBE_PERMITTED
-    # Checked BEFORE the 403 rule: Graph answers a missing Entra ID Governance licence with
+    # Checked BEFORE the 403 rule: Graph answers a missing Entra ID Governance license with
     # a 403 on some collections and a 400 on others, so the status alone cannot distinguish
-    # "grant consent" from "buy a licence".
+    # "grant consent" from "buy a license".
     haystack = f"{code} {message}".lower()
     if any(marker in haystack for marker in _LICENCE_MARKERS):
         return PROBE_UNLICENSED
@@ -193,8 +193,8 @@ def evaluate_domains(
 
     * ``permitted``    a 200 proves the read works whatever the claims said -> clear it.
     * ``denied``       a 403 proves it does not -> mark it blind.
-    * ``unlicensed``   a licence error says nothing about consent, so the permission verdict
-                       is left alone and the collector reports the licence itself. No amount
+    * ``unlicensed``   a license error says nothing about consent, so the permission verdict
+                       is left alone and the collector reports the license itself. No amount
                        of granting will fix it, and telling someone to grant a scope they
                        already hold sends them in a circle.
     * ``inconclusive`` a malformed query, a throttle or an outage. Trusting it would blame

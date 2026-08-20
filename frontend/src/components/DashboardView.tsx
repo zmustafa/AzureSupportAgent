@@ -1478,7 +1478,7 @@ function CoverageLensTile({ lens, scopeName }: { lens: { key: string; label: str
   );
 }
 
-/** Small labelled stat used inside the Identity / RBAC posture cards. */
+/** Small labeled stat used inside the Identity / RBAC posture cards. */
 function MiniStat({ to, label, value, tone }: { to: string; label: string; value: number; tone: "red" | "amber" | "ok" }) {
   const cls = value === 0 || tone === "ok" ? "text-gray-700" : tone === "red" ? "text-red-700" : "text-amber-700";
   return (

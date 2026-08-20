@@ -61,9 +61,9 @@ Eleven node kinds are drawn: tenant, user, guest, group, directory role, applica
 
 Eleven edge kinds are drawn: `member_of`, `owns`, `active_in`, `eligible_for`, `granted`, `protected_by`, `excluded_from`, `escalates_to`, `can_access`, `in_tenant`, and `authenticates`. Escalation edges are dashed and heavier than the rest; exclusion edges are dashed.
 
-### Colour lenses
+### Color lenses
 
-**Colour by** re-rings the same nodes without rebuilding the graph: node kind, privilege tier, whether the node sits on an escalation path, guest versus member, or application risk score.
+**Color by** re-rings the same nodes without rebuilding the graph: node kind, privilege tier, whether the node sits on an escalation path, guest versus member, or application risk score.
 
 ### Escalation primitives
 
@@ -101,7 +101,7 @@ Three further qualifications matter:
 
 - **Only the named primitives are drawn.** There is no transitive guessing beyond them, so a real escalation route that no primitive describes will not appear. Absence of an edge is not evidence of safety.
 - **Confidence is part of the claim.** A `medium` primitive — password reset, Groups Administrator membership writes — depends on directory role restrictions and protected-account rules that the snapshot cannot fully evaluate. Verify before you act on one.
-- **Fan-out is summarised.** When one principal reaches many targets through the same primitive, only the first twelve arrows are drawn and the inspector states the true total. A service principal that can seize 224 applications is one finding with a number, not 224 arrows.
+- **Fan-out is summarized.** When one principal reaches many targets through the same primitive, only the first twelve arrows are drawn and the inspector states the true total. A service principal that can seize 224 applications is one finding with a number, not 224 arrows.
 
 Node counts are capped at 900. When a view exceeds the cap the header says **capped for legibility** and nodes beyond the cap — and every edge that touched them — are dropped from the payload. A truncated view is a partial view: narrow the scope, focus a specific principal, or filter to one primitive rather than drawing conclusions from what survived the cap. Dense graphs also hide labels by default and show them on hover, which is a legibility choice, not missing data.
 

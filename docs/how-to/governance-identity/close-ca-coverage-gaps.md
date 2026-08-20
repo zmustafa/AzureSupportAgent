@@ -86,7 +86,7 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:conditional-access, ENTRA_CA_NAV:co
 5. Return to the app, select **Refresh** on the freshness badge, and wait for the collection to finish.
 6. Re-run the saved simulation against the new snapshot, then re-read the coverage matrix. Do both: the re-run confirms the model no longer predicts a change, and the matrix confirms the cell actually moved.
 
-**Expected result:** The target cell reports enforced coverage for the cohort, and the headline uncovered figures fall by roughly the population you modelled.
+**Expected result:** The target cell reports enforced coverage for the cohort, and the headline uncovered figures fall by roughly the population you modeled.
 
 **Verification:** The uncovered list for that cell is empty or reduced to the exclusions you deliberately kept, and the Conditional Access pillar on `/entra` reflects the change in the next score.
 

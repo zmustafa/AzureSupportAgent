@@ -70,7 +70,7 @@ def _target(principal: Principal, connection_id: str | None) -> tuple[dict[str, 
 
 def _snapshot(principal: Principal, connection_id: str | None) -> tuple[dict[str, Any], str, str]:
     _conn, tenant_id, cid = _target(principal, connection_id)
-    return snapshot_mod.analyse(tenant_id), tenant_id, cid
+    return snapshot_mod.analyze(tenant_id), tenant_id, cid
 
 
 def _envelope(snapshot: dict[str, Any], cid: str, **body: Any) -> dict[str, Any]:
@@ -118,7 +118,7 @@ async def status(
     connection_id: str | None = None,
     principal: Principal = Depends(require_read),
 ) -> dict[str, Any]:
-    """Snapshot freshness, per-domain state, licences and granted permissions."""
+    """Snapshot freshness, per-domain state, licenses and granted permissions."""
     snapshot, tenant_id, cid = _snapshot(principal, connection_id)
     running = job.is_running(job.job_key(tenant_id))
     return _envelope(
@@ -193,7 +193,7 @@ async def setup_checklist(
 ) -> dict[str, Any]:
     """Which consent tier is granted, what each adds, and what is currently blind."""
     connection, tenant_id, cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyse(tenant_id)
+    snapshot = snapshot_mod.analyze(tenant_id)
     permissions = snapshot.get("permissions") or {}
     granted = set(permissions.get("granted") or [])
     tiers = []
@@ -350,7 +350,7 @@ async def permissions_recheck(
     after = set(permissions.get("granted") or [])
     domains = permissions.get("domains") or {}
     return _envelope(
-        snapshot_mod.analyse(tenant_id), cid,
+        snapshot_mod.analyze(tenant_id), cid,
         granted=sorted(after),
         gained=sorted(after - before),
         revoked=sorted(before - after),
@@ -1243,7 +1243,7 @@ async def privileged_activation_actions(
     from app.entra import activation_actions
 
     connection, tenant_id, cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyse(tenant_id)
+    snapshot = snapshot_mod.analyze(tenant_id)
     rows, _domain = _activation_sessions(snapshot, tenant_id)
     match = next((r for r in rows if str(r.get("id") or "") == session_id), None)
     if match is None:
@@ -1502,7 +1502,7 @@ async def investigate_dossier(
 ) -> dict[str, Any]:
     """Everything already collected about one principal, converged.
 
-    Reads caches only — this endpoint makes no Graph or ARM call. Behavioural history
+    Reads caches only — this endpoint makes no Graph or ARM call. Behavioral history
     lives behind ``POST /investigate/{id}/activity`` and its own permission."""
     snapshot, tenant_id, cid = _snapshot(principal, connection_id)
     env, sections = await investigate.build_dossier(snapshot, tenant_id, principal_id.strip())
@@ -1600,6 +1600,19 @@ async def investigate_export(
                       + (" Membership is rule-derived (dynamic group)." if m.get("dynamic") else "")
                       + (" Membership is authored in on-premises AD." if m.get("on_prem_synced") else "")),
             )
+        if "memberships" in sections:
+            gm = sections["memberships"]["data"]
+            wb.sheet(
+                "Group memberships",
+                ["Group", "Why it matters", "Role-assignable", "Dynamic", "On-prem synced",
+                 "Object id"],
+                [[coerce(g.get("display_name")),
+                  coerce("; ".join(gm["source_labels"].get(s, s) for s in g.get("sources") or [])),
+                  coerce(g.get("role_assignable")), coerce(g.get("dynamic")),
+                  coerce(g.get("on_prem_synced")), coerce(g.get("id"))]
+                 for g in gm["groups"]],
+                note=sections["memberships"]["provenance"]["reason"],
+            )
         # Provenance is a SHEET, not a footnote: an auditor reading "no findings" needs to
         # know whether that means none were raised or the domain could not be read.
         wb.sheet(
@@ -1638,6 +1651,9 @@ class InvestigateMembersBody(BaseModel):
 
     expand: list[str] = Field(default_factory=list, max_length=100)
     direction: str = Field(default="down", pattern="^(down|up)$")
+    # Upward only. "Every group whose access reaches me" and "where was I actually added"
+    # are different questions, and collapsing them would answer neither reliably.
+    transitive: bool = False
 
 
 @router.post("/investigate/{principal_id}/members")
@@ -1648,7 +1664,7 @@ async def investigate_members(
     principal: Principal = Depends(require_investigate),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """One level of the group's membership tree, per branch asked for.
+    """One level of the membership tree, per branch asked for, in either direction.
 
     POST because it is a live directory read and a recorded act, and because the set of
     opened branches is a body, not a URL.
@@ -1660,34 +1676,47 @@ async def investigate_members(
     asked for rather than made on everyone's behalf.
 
     Gated on ``investigate.read`` rather than ``investigate.activity``: group membership is
-    a structural fact about access, not behavioural data about a person.
+    a structural fact about access, not behavioral data about a person.
     """
     from app.entra import investigate_members as inv_members
 
     connection, tenant_id, cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyse(tenant_id)
+    snapshot = snapshot_mod.analyze(tenant_id)
     data = snapshot.get("data") or {}
 
     subject = await _resolve_principal(data, tenant_id, principal_id.strip())
     subject_id = str(subject.get("id") or principal_id)
+    kind = str(subject.get("kind") or "")
 
-    if subject.get("kind") != investigate.KIND_GROUP:
-        # Answered, not 400'd: asking a user for its members is a reasonable mistake to make
-        # from a deep link, and the answer is a sentence.
+    # Downward is groups-only; upward is for anything that can be IN a group, which is the
+    # whole point of lifting this — a user's group memberships are read the same way.
+    # Answered, not 400'd: asking a user for its members is a reasonable mistake to make
+    # from a deep link, and the answer is a sentence.
+    if body.direction == "down" and kind != investigate.KIND_GROUP:
         return _envelope(
             snapshot, cid, root=subject_id, direction=body.direction, nodes={}, truncated=False,
             notes=[f"{subject.get('display_name') or subject_id} is a "
-                   f"{subject.get('kind')}, not a group — only groups have members."],
+                   f"{kind or 'principal'}, not a group — only groups have members."],
+        )
+    if body.direction == "up" and subject.get("resolution") != investigate.RESOLVED:
+        return _envelope(
+            snapshot, cid, root=subject_id, direction=body.direction, nodes={}, truncated=False,
+            notes=["This principal could not be resolved in this directory, so the groups "
+                   "it belongs to cannot be read. That is not a claim that it belongs to "
+                   "none."],
         )
 
     result = await inv_members.expand(
         connection, subject_id, expand_ids=list(body.expand), direction=body.direction,
+        root_kind=kind or inv_members.TYPE_GROUP,
+        transitive=bool(body.transitive) and body.direction == "up",
     )
 
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,
         action="investigate.members", target=subject_id,
         metadata_json={"direction": body.direction, "branches": len(body.expand) + 1,
+                       "kind": kind, "transitive": bool(body.transitive),
                        "connection_id": cid},
     ))
     await db.commit()
@@ -1707,7 +1736,7 @@ async def investigate_activity(
 
     POST rather than GET for three reasons: it is expensive, it carries a justification,
     and it is a recorded act. Reading a named person's sign-in and audit history is
-    behavioural data, which is why it sits behind its own permission and why every call
+    behavioral data, which is why it sits behind its own permission and why every call
     lands in the audit log with who asked, about whom, and why.
 
     The Azure Activity Log is never included unless explicitly asked for: it is
@@ -1715,7 +1744,7 @@ async def investigate_activity(
     from app.entra import activation_actions
 
     connection, tenant_id, cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyse(tenant_id)
+    snapshot = snapshot_mod.analyze(tenant_id)
     data = snapshot.get("data") or {}
 
     subject = await _resolve_principal(data, tenant_id, principal_id.strip())
@@ -2464,7 +2493,7 @@ async def governance_guests(
     people = data.get("people") or {}
     tenant = data.get("tenant") or {}
     s = snapshot_mod.settings()
-    summary = guests_mod.summarise(people, stale_days=s["guest_stale_days"])
+    summary = guests_mod.summarize(people, stale_days=s["guest_stale_days"])
     summary["domains"] = guests_mod.annotate_partners(
         summary["domains"], tenant.get("cross_tenant_partners") or {})
     analysis = _analysis(snapshot)
@@ -2588,7 +2617,7 @@ async def governance_coverage(
     """The synthesis: for each object class that should be governed, is it?
 
     Computed from the INVENTORY domains, so it renders on a tenant with no governance
-    licence at all — where every row honestly reads "never reviewed"."""
+    license at all — where every row honestly reads "never reviewed"."""
     from app.entra.collectors.governance import COVERAGE_CLASSES, coverage
 
     snapshot, _tenant_id, cid = _snapshot(principal, connection_id)
@@ -2673,7 +2702,7 @@ async def export_workbook(
     Carries the raw directory too (users, groups, service principals, registrations), which the
     tabs only ever show counts of. **The Users sheet contains personal data.**"""
     connection, tenant_id, _cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyse(tenant_id)
+    snapshot = snapshot_mod.analyze(tenant_id)
 
     # The few things the screens compute rather than store. Passed in so the formatter stays
     # pure and can be unit-tested without a tenant.
@@ -2724,7 +2753,7 @@ async def graph_targets(
 
     ``q`` narrows the list server-side. Without it the picker is a plain list capped at
     ``_PICK_LIMIT``, which on a 20,000-seat tenant put 95% of the directory out of reach:
-    the blast-radius screen could not be pointed at most of the people it exists to analyse.
+    the blast-radius screen could not be pointed at most of the people it exists to analyze.
     """
     snapshot, _tenant_id, cid = _snapshot(principal, connection_id)
     data = snapshot.get("data") or {}
@@ -2919,7 +2948,7 @@ async def _notify_scanner_results(tenant_id: str, results: list[dict[str, Any]])
                 source="entra",
                 severity=scanners_mod.notification_severity(result),
                 title=f"{result['name']}: {result['counts']['new']} new finding(s)",
-                body=scanners_mod.summarise(result),
+                body=scanners_mod.summarize(result),
                 facts={"scanner_id": result["scanner_id"], **result["counts"],
                        "immediate": len(result["immediate"])},
                 links={"Open the findings inbox": "/entra/findings"},

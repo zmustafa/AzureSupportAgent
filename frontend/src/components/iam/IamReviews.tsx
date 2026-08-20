@@ -6,7 +6,7 @@
  *    implies everything was reviewed; a campaign that closed with 40% of its items untouched is
  *    a different artifact and says so;
  *  - undecided items are never rendered as approved, and the copy says so explicitly;
- *  - a **self-attestation** campaign is labelled everywhere it appears. Self-review is not
+ *  - a **self-attestation** campaign is labeled everywhere it appears. Self-review is not
  *    certification and must not be mistaken for it six months later.
  *
  * Remediation is displayed with its rollback and its `breaksIf` in the same block. The product

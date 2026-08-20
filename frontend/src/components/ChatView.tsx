@@ -31,6 +31,7 @@ import {
   ACCESS_SUB_IDS,
   AUTOMATIONS_NAV,
   PROACTIVE_NAV,
+  PROACTIVE_PATHS,
   POLICY_TAB_IDS,
   INVENTORY_TAB_IDS,
   TAGINTEL_TAB_IDS,
@@ -80,6 +81,7 @@ import {
   CoverageIcon,
   TelemetryIcon,
   BackupIcon,
+  RecoveryIcon,
   EvidenceIcon,
   KnowMeIcon,
   FmeaIcon,
@@ -176,6 +178,9 @@ const BackupDrCoveragePanel = lazy(() =>
 );
 const BackupManagerPanel = lazy(() =>
   import("./BackupManagerView").then((m) => ({ default: m.BackupManagerPanel })),
+);
+const ResiliencyPanel = lazy(() =>
+  import("./ResiliencyView").then((m) => ({ default: m.ResiliencyPanel })),
 );
 const EvidenceLockerPanel = lazy(() =>
   import("./EvidenceLockerView").then((m) => ({ default: m.EvidenceLockerPanel })),
@@ -639,6 +644,8 @@ export default function ChatView() {
   const inBackupDr = location.pathname.startsWith("/backupdr");
   // Backup Manager — the write/management plane for Azure Backup and Site Recovery.
   const inBackupManager = location.pathname.startsWith("/backup-manager");
+  // Recovery Readiness — recover from what, in how long, losing how much.
+  const inResiliency = location.pathname.startsWith("/resiliency");
   // Evidence Locker (investigation snapshots).
   const inEvidence = location.pathname.startsWith("/evidence");
   // Durable Case Files (the persistent incident spine).
@@ -761,10 +768,10 @@ export default function ChatView() {
   }, [inAutomations, inCustomAgents]);
   // Ownership, Architectures and Estate Graph now live UNDER Proactive Support, so opening
   // any of them (or the /proactive landing) keeps the group expanded.
-  const inAnyProactive = inInventory || inPolicy || inAssessments || inIam || inEntra
-    || inCoverage || inAlertsManager || inTelemetry || inBackupDr || inBackupManager || inEvidence || inRadar || inReservations
-    || inTeleIntel || inPerformance || inTagIntel || inChangeExplorer
-    || inOwnership || inArchitectures || inKnowMe || inFmea || inGraph || inProactive || inQuota || inCapability || inCases || inInsights;
+  // Derived from PROACTIVE_NAV rather than hand-listed: a hand-maintained list silently
+  // collapsed the whole menu when Recovery Readiness was added and nobody updated it.
+  const inAnyProactive = inProactive
+    || [...PROACTIVE_PATHS].some((path) => location.pathname.startsWith(path));
   useEffect(() => {
     setProactiveOpen(inAnyProactive);
   }, [inAnyProactive]);
@@ -2676,6 +2683,7 @@ export default function ChatView() {
             assessments: AssessmentIcon, performance: PerformanceIcon,
             coverage: CoverageIcon, "alerts-manager": CoverageIcon, telemetry: TelemetryIcon, backupdr: BackupIcon,
             "backup-manager": BackupIcon,
+            resiliency: RecoveryIcon,
             capability: CoverageIcon,
             inventory: InventoryIcon, tagintel: TagIcon, "change-explorer": ChangeIcon,
             policy: PolicyIcon, entra: IdentityIcon, iam: IamIcon,
@@ -2690,6 +2698,7 @@ export default function ChatView() {
             assessments: inAssessments, performance: inPerformance,
             coverage: inCoverage, "alerts-manager": inAlertsManager, telemetry: inTelemetry, backupdr: inBackupDr,
             "backup-manager": inBackupManager,
+            resiliency: inResiliency,
             capability: inCapability,
             inventory: inInventory, tagintel: inTagIntel, "change-explorer": inChangeExplorer,
             policy: inPolicy, entra: inEntra, iam: inIam,
@@ -3319,6 +3328,14 @@ export default function ChatView() {
           <PanelErrorBoundary name="Backup Manager">
             <Suspense fallback={<PanelLoading />}>
               <BackupManagerPanel />
+            </Suspense>
+          </PanelErrorBoundary>
+        </main>
+      ) : inResiliency ? (
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PanelErrorBoundary name="Recovery Readiness">
+            <Suspense fallback={<PanelLoading />}>
+              <ResiliencyPanel />
             </Suspense>
           </PanelErrorBoundary>
         </main>
