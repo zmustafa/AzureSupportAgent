@@ -30,6 +30,19 @@ require_read = require_permission("resiliency.read")
 require_admin = require_permission("resiliency.admin")
 
 _jobs: dict[str, dict[str, Any]] = {}
+# asyncio keeps only a WEAK reference to a task. Without a strong one here the analysis can
+# be collected mid-run, leaving the job "running" forever and the Analyze button disabled
+# for that scope until the process restarts.
+_tasks: set[asyncio.Task[None]] = set()
+
+#: The response NEVER carries the exception's own text. A source that failed for a reason the
+#: operator can act on — an expired credential, an unreadable table — is caught inside the
+#: collectors and reported as data on `provenance`, so nothing actionable is lost here; what
+#: reaches this handler is an unexpected fault whose detail belongs in the server log.
+ANALYSIS_FAILED = (
+    "The analysis failed before it produced a snapshot. The reason is in the server log. "
+    "Re-run it, and if it keeps failing narrow the scope to identify the resource involved."
+)
 
 
 def _export_payload(principal: Principal, scope: "ScopeParams") -> tuple[dict, dict, dict]:
@@ -50,7 +63,6 @@ def _export_payload(principal: Principal, scope: "ScopeParams") -> tuple[dict, d
         raise HTTPException(
             409, "The recovery objectives are still the shipped defaults. Acknowledge them "
                  "in Settings before exporting a report that quotes them.")
-    snap["targets_acknowledged"] = bool(reference_doc.get("targets_acknowledged"))
     scope_kind, scope_id = _scope(scope.workload_id, scope.subscription_id,
                                   scope.management_group_id)
     connection = _connection(scope.connection_id, scope.workload_id) or {}
@@ -116,6 +128,11 @@ def _read(principal: Principal, workload_id: str | None, subscription_id: str | 
     # send a sovereign customer to the public portal. Blank for demo data — those ids look
     # real enough to build a URL, and the link would open a 404 in the reader's own tenant.
     snap["portal_host"] = "" if snap.get("demo") else portal_host(connection)
+    # Same reason as portal_host: resolved per read, never trusted from the snapshot. "Has a
+    # person agreed to these numbers" is a fact about NOW, and the snapshot's copy is frozen
+    # at analyze time — serving that left the Acknowledge banner on screen, and the export
+    # refused, until the operator re-ran the whole analysis.
+    snap["targets_acknowledged"] = bool(reference.load().get("targets_acknowledged"))
     return snap
 
 
@@ -197,14 +214,16 @@ async def analyze_start(
                 # because the snapshot it would come from has already been overwritten.
                 history_store.record(principal.tenant_id, cid, scope_kind, scope_id, snap)
                 job["status"] = "done"
-            except Exception as exc:  # noqa: BLE001 - surfaced to the operator, not swallowed
+            except Exception:  # noqa: BLE001 - recorded for the operator, not swallowed
                 log.exception("resiliency: analysis failed")
                 job["status"] = "error"
-                job["error"] = service.safe_error(str(exc))
+                job["error"] = ANALYSIS_FAILED
             finally:
                 job["finished_at"] = service.now_iso()
 
-    asyncio.create_task(_run())
+    task = asyncio.create_task(_run())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
 
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,

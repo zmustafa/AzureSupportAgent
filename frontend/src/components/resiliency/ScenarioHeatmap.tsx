@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import type { ResiliencyScenario, ResiliencyVerdict } from "../../api";
 import { azurePortalResourceUrl } from "../../utils/azurePortal";
+import { AzureIcon, friendlyResourceType } from "../AzureIcon";
+import { useGroupedCollapse, type GroupDimension } from "../../utils/useGroupedCollapse";
 
 /**
  * The scenario heatmap — the product's thesis made visible in one glance.
@@ -140,67 +142,159 @@ export function HeatCell({
   );
 }
 
+export type HeatRow = {
+  id: string; name: string; type?: string; verdicts: Record<string, ResiliencyVerdict>;
+};
+
+/** Grouping the reader can choose. Resource type first: "every storage account is
+ *  unrecoverable for region loss" is one fix, and forty rows is a backlog. */
+const HEAT_DIMENSIONS: GroupDimension<HeatRow>[] = [
+  { key: "type", label: "Resource type",
+    of: (r) => (r.type || "unknown").toLowerCase(),
+    labelOf: (t) => (t === "unknown" ? "Unknown type" : friendlyResourceType(t)) },
+];
+
+/** The worst cell in a row, used to sort both rows and their groups. */
+function worstOf(row: HeatRow, scenarios: { id: ResiliencyScenario }[]): number {
+  const rank: Record<CellState, number> = {
+    no_path: 0, breached: 1, unknown: 2, met: 3, not_applicable: 4,
+  };
+  return Math.min(...scenarios.map((s) => rank[cellState(row.verdicts[s.id])]));
+}
+
+function ResourceCell({ row, portalHost }: { row: HeatRow; portalHost?: string }) {
+  return (
+    <td className="max-w-[280px] px-2 py-1 font-medium text-gray-800">
+      <span className="flex items-center gap-1.5">
+        <AzureIcon kind="resource" type={row.type} className="h-3.5 w-3.5" />
+        <span className="truncate" title={row.name}>{row.name}</span>
+        <PortalLink resourceId={row.id} portalHost={portalHost}
+                    label={`Open ${row.name} in the Azure portal`} />
+      </span>
+    </td>
+  );
+}
+
 export function ScenarioHeatmap({
-  rows, scenarios, classLabels, portalHost, onOpen,
+  rows, scenarios, classLabels, portalHost, onOpen, storagePrefix = "azsup.resiliency.heatmap",
 }: {
-  rows: { id: string; name: string; verdicts: Record<string, ResiliencyVerdict> }[];
+  rows: HeatRow[];
   scenarios: { id: ResiliencyScenario; label: string }[];
   classLabels: Record<string, string>;
   portalHost?: string;
   onOpen?: (resourceId: string, scenario: string) => void;
+  storagePrefix?: string;
 }) {
   // Worst rows first: the point of the screen is what is broken, not alphabetical order.
-  const ordered = useMemo(() => {
-    const rank: Record<CellState, number> = {
-      no_path: 0, breached: 1, unknown: 2, met: 3, not_applicable: 4,
-    };
-    return [...rows].sort((a, b) => {
-      const worst = (r: typeof a) =>
-        Math.min(...scenarios.map((s) => rank[cellState(r.verdicts[s.id])]));
-      return worst(a) - worst(b) || a.name.localeCompare(b.name);
-    });
-  }, [rows, scenarios]);
+  const ordered = useMemo(
+    () => [...rows].sort((a, b) => worstOf(a, scenarios) - worstOf(b, scenarios)
+      || a.name.localeCompare(b.name)),
+    [rows, scenarios]);
+
+  const grouped = useGroupedCollapse(ordered, HEAT_DIMENSIONS, {
+    storagePrefix, defaultGroupBy: "none",
+  });
+  const sections = grouped.sections;
+
+  const cells = (row: HeatRow) => scenarios.map((s) => (
+    <td key={s.id} className="px-1 py-0.5">
+      <HeatCell
+        verdict={row.verdicts[s.id]}
+        scenarioLabel={s.label}
+        classLabel={classLabels[row.verdicts[s.id]?.rto_class ?? "unknown"] ?? ""}
+        onClick={onOpen ? () => onOpen(row.id, s.id) : undefined}
+      />
+    </td>
+  ));
 
   return (
-    <div className="overflow-auto" data-testid="resiliency-heatmap">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-white">
-          <tr className="text-left text-gray-500">
-            <th className="px-2 py-1.5 font-medium">Resource</th>
-            {scenarios.map((s) => (
-              <th key={s.id} className="px-1 py-1.5 text-center font-medium" title={s.label}>
-                {s.label.replace(" loss", "").replace("Accidental deletion", "Deletion")}
-              </th>
+    <div data-testid="resiliency-heatmap">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+        <label className="inline-flex items-center gap-1">
+          <span>Group by</span>
+          <select value={grouped.groupBy} onChange={(e) => grouped.setGroupBy(e.target.value)}
+                  data-testid="heatmap-group-by"
+                  className="rounded border px-1.5 py-0.5 text-[11px]">
+            <option value="none">Nothing</option>
+            {HEAT_DIMENSIONS.map((d) => (
+              <option key={d.key} value={d.key}>{d.label}</option>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {ordered.map((row) => (
-            <tr key={row.id} className="border-t hover:bg-gray-50" data-testid="resiliency-row">
-              <td className="max-w-[280px] px-2 py-1 font-medium text-gray-800">
-                <span className="flex items-center gap-1.5">
-                  <span className="truncate" title={row.name}>{row.name}</span>
-                  <PortalLink resourceId={row.id} portalHost={portalHost}
-                              label={`Open ${row.name} in the Azure portal`} />
-                </span>
-              </td>
+          </select>
+        </label>
+        {sections && (
+          <>
+            <button onClick={grouped.collapseAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+              Collapse all
+            </button>
+            <button onClick={grouped.expandAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+              Expand all
+            </button>
+            <span className="text-gray-400">{sections.length} groups · {ordered.length} resources</span>
+          </>
+        )}
+      </div>
+
+      <div className="overflow-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-white">
+            <tr className="text-left text-gray-500">
+              <th className="px-2 py-1.5 font-medium">Resource</th>
               {scenarios.map((s) => (
-                <td key={s.id} className="px-1 py-0.5">
-                  <HeatCell
-                    verdict={row.verdicts[s.id]}
-                    scenarioLabel={s.label}
-                    classLabel={classLabels[row.verdicts[s.id]?.rto_class ?? "unknown"] ?? ""}
-                    onClick={onOpen ? () => onOpen(row.id, s.id) : undefined}
-                  />
-                </td>
+                <th key={s.id} className="px-1 py-1.5 text-center font-medium" title={s.label}>
+                  {s.label.replace(" loss", "").replace("Accidental deletion", "Deletion")}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {!ordered.length && (
-        <div className="p-6 text-center text-sm text-gray-400">No resources in scope.</div>
-      )}
+          </thead>
+          {sections ? (
+            sections.map((section) => {
+              const collapsed = grouped.isCollapsed(section.key);
+              // Worst class in the group, so a collapsed header still carries the finding.
+              const worst = Math.min(...section.items.map((r) => worstOf(r, scenarios)));
+              const worstState = (["no_path", "breached", "unknown", "met", "not_applicable"] as CellState[])[worst];
+              return (
+                <tbody key={section.key} data-testid="heatmap-group">
+                  <tr className="border-t bg-gray-50">
+                    <th colSpan={scenarios.length + 1} className="px-2 py-1 text-left font-medium">
+                      <button onClick={() => grouped.toggle(section.key)}
+                              data-testid="heatmap-group-header"
+                              className="flex w-full items-center gap-1.5 text-left text-gray-700">
+                        <span aria-hidden="true" className="text-gray-400">{collapsed ? "▸" : "▾"}</span>
+                        <AzureIcon kind="resource" type={section.key} className="h-3.5 w-3.5" />
+                        <span>{section.label}</span>
+                        <span className="text-gray-400">({section.total})</span>
+                        {/* The group's worst cell, so collapsing never hides the finding. */}
+                        <span className={CELL[worstState].cls} title={CELL[worstState].label}
+                              aria-label={`Worst in group: ${CELL[worstState].label}`}>
+                          {CELL[worstState].glyph}
+                        </span>
+                      </button>
+                    </th>
+                  </tr>
+                  {!collapsed && section.items.map((row) => (
+                    <tr key={row.id} className="border-t hover:bg-gray-50" data-testid="resiliency-row">
+                      <ResourceCell row={row} portalHost={portalHost} />
+                      {cells(row)}
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })
+          ) : (
+            <tbody>
+              {ordered.map((row) => (
+                <tr key={row.id} className="border-t hover:bg-gray-50" data-testid="resiliency-row">
+                  <ResourceCell row={row} portalHost={portalHost} />
+                  {cells(row)}
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table>
+        {!ordered.length && (
+          <div className="p-6 text-center text-sm text-gray-400">No resources in scope.</div>
+        )}
+      </div>
     </div>
   );
 }

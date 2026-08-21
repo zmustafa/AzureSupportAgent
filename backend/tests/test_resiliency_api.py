@@ -439,3 +439,154 @@ def test_a_missing_backup_estate_degrades_to_unknown_not_unprotected(monkeypatch
 
 def test_the_join_never_invents_a_resource_id():
     assert join.normalize_resource_id("garbage") == ""
+
+
+# ============================================================== acknowledgement is live
+def test_acknowledging_objectives_takes_effect_without_re_analysing():
+    """The banner and the export gate both read `targets_acknowledged`. The snapshot's copy is
+    frozen at analyze time, so serving it left the banner up (and the export refused) until the
+    operator re-ran the whole analysis."""
+    _analyse()
+    before = _run(api.get_snapshot(scope=_scope(), principal=_Principal()))
+    assert before["targets_acknowledged"] is False
+
+    reference.save({"targets_acknowledged": True})
+
+    after = _run(api.get_snapshot(scope=_scope(), principal=_Principal()))
+    assert after["targets_acknowledged"] is True, "the read still trusts the frozen copy"
+    # And it follows the registry back down, so this is a live read and not a one-way latch.
+    reference.save({"targets_acknowledged": False})
+    assert _run(api.get_snapshot(scope=_scope(), principal=_Principal()))[
+        "targets_acknowledged"] is False
+
+
+# ============================================================== error disclosure
+def test_a_failed_analysis_reports_a_canonical_message_not_the_exception(monkeypatch):
+    """CodeQL alert 576 (py/stack-trace-exposure): the job dict is returned by `analyze/start`
+    AND served by `analyze/job`, so anything written into `job["error"]` reaches the caller.
+    It used to be `str(exc)`, which hands internal detail to whoever can read the scope."""
+    secret = "psycopg OperationalError at /app/backend/app/secretmodule.py line 42"
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(analyze_mod, "analyze", _boom)
+    started = _run(api.analyze_start(scope=_scope(), principal=_Principal(), db=_FakeDB()))
+
+    # The background task owns the job dict; drain the loop so it has finished.
+    job = started["job"]
+    for _ in range(200):
+        if job.get("status") != "running":
+            break
+        _run(asyncio.sleep(0.01))
+
+    assert job["status"] == "error"
+    assert job["error"] == api.ANALYSIS_FAILED
+    assert secret not in job["error"]
+    assert "secretmodule" not in job["error"]
+    # The operator is still told where the detail is, so this is not a silent failure.
+    assert "server log" in job["error"]
+
+
+# ============================================================== workload scope
+SUB = "11111111-1111-1111-1111-111111111111"
+_MEMBER_VM = f"/subscriptions/{SUB}/resourcegroups/rg-app/providers/microsoft.compute/virtualmachines/app-vm"
+_MEMBER_DISK = f"/subscriptions/{SUB}/resourcegroups/rg-app/providers/microsoft.compute/disks/app-vm-os"
+_FOREIGN_VM = f"/subscriptions/{SUB}/resourcegroups/rg-other/providers/microsoft.compute/virtualmachines/finance-vm"
+
+
+def _arg_row(rid: str, rtype: str, *, props: dict | None = None) -> dict:
+    return {"id": rid, "name": rid.rsplit("/", 1)[-1], "type": rtype, "location": "westeurope",
+            "resourceGroup": rid.split("/")[4], "subscriptionId": SUB, "zones": [],
+            "skuName": "", "skuTier": "", "props": props or {}}
+
+
+_ESTATE = [
+    _arg_row(_MEMBER_VM, "microsoft.compute/virtualmachines", props={
+        "storageProfile": {"osDisk": {"managedDisk": {"id": _MEMBER_DISK}}, "dataDisks": []}}),
+    _arg_row(_MEMBER_DISK, "microsoft.compute/disks"),
+    _arg_row(_FOREIGN_VM, "microsoft.compute/virtualmachines", props={
+        "storageProfile": {"osDisk": {"managedDisk": {"id": "/subscriptions/x/d"}}}}),
+]
+
+
+def _fake_arg(monkeypatch, rows):
+    from app.resiliency import collect as collect_mod
+
+    async def _detailed(*_a, **_k):
+        return list(rows), {}, ""
+
+    monkeypatch.setattr(collect_mod.service, "arg_safe_detailed", _detailed)
+
+
+def test_a_workload_scope_collects_only_the_workload_not_the_whole_subscription(monkeypatch):
+    """Resource Graph can only filter by SUBSCRIPTION. A workload scope therefore returned
+    every resource in the workload's subscriptions, and `analyze` then stamped the
+    workload's id on all of them — the whole subscription, labeled as the workload."""
+    from app.resiliency import collect as collect_mod
+
+    _fake_arg(monkeypatch, _ESTATE)
+    rows, _meta = _run(collect_mod.collect({"id": "c"}, [SUB], member_ids={_MEMBER_VM}))
+    assert {r["id"] for r in rows} == {_MEMBER_VM, _MEMBER_DISK}
+    assert _FOREIGN_VM not in {r["id"] for r in rows}
+
+
+def test_a_workload_keeps_the_disks_attached_to_its_vms(monkeypatch):
+    """Workload discovery classifies disks as child noise, so they are never nodes. Filtering
+    on the node set alone drops exactly the resources most likely to have no recovery path."""
+    from app.resiliency import collect as collect_mod
+
+    _fake_arg(monkeypatch, _ESTATE)
+    rows, _meta = _run(collect_mod.collect({"id": "c"}, [SUB], member_ids={_MEMBER_VM}))
+    assert _MEMBER_DISK in {r["id"] for r in rows}, "the member VM's own disk was dropped"
+
+
+def test_collecting_without_a_member_set_still_returns_the_whole_subscription(monkeypatch):
+    """A subscription scope has no membership to honor — the filter must not leak into it."""
+    from app.resiliency import collect as collect_mod
+
+    _fake_arg(monkeypatch, _ESTATE)
+    rows, _meta = _run(collect_mod.collect({"id": "c"}, [SUB]))
+    assert len(rows) == 3
+
+
+def test_analysis_of_a_workload_never_labels_a_foreign_resource_with_it(monkeypatch):
+    from app.resiliency import collect as collect_mod
+
+    _fake_arg(monkeypatch, _ESTATE)
+
+    async def _no_advisor(*_a, **_k):
+        return [], ""
+
+    monkeypatch.setattr(analyze_mod.service, "arg_safe", _no_advisor)
+    monkeypatch.setattr(analyze_mod.service, "workload_context",
+                        lambda _wid: ({"name": "App"}, {_MEMBER_VM}, {SUB}))
+
+    snap = _run(analyze_mod.analyze(
+        {"id": "c"}, tenant_id="t-demo", scope_kind="workload", scope_id="wl-real",
+        subscriptions=[SUB], workload_id="wl-real"))
+
+    assert {r["id"] for r in snap["resources"]} == {_MEMBER_VM, _MEMBER_DISK}
+    assert all(r["workload_id"] == "wl-real" for r in snap["resources"])
+    assert collect_mod  # the collector, not a stubbed analyze, produced these rows
+
+
+def test_an_unreadable_workload_is_reported_as_unreadable_not_as_an_empty_estate(monkeypatch):
+    """The estate-honesty rule: zero resources because we could not resolve the workload is
+    not the same fact as zero resources because the workload is empty."""
+    _fake_arg(monkeypatch, _ESTATE)
+
+    async def _no_advisor(*_a, **_k):
+        return [], ""
+
+    monkeypatch.setattr(analyze_mod.service, "arg_safe", _no_advisor)
+    monkeypatch.setattr(analyze_mod.service, "workload_context",
+                        lambda _wid: (None, set(), set()))
+
+    snap = _run(analyze_mod.analyze(
+        {"id": "c"}, tenant_id="t-demo", scope_kind="workload", scope_id="wl-gone",
+        subscriptions=[SUB], workload_id="wl-gone"))
+
+    assert snap["resources"] == []
+    assert snap["provenance"]["configuration"]["unreadable"] is True
+    assert "could not be read" in snap["provenance"]["configuration"]["reason"]

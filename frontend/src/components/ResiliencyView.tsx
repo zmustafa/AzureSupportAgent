@@ -28,6 +28,8 @@ import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { Legend, PortalLink, ScenarioHeatmap, rpoText } from "./resiliency/ScenarioHeatmap";
+import { AzureIcon, friendlyResourceType } from "./AzureIcon";
+import { useGroupedCollapse, type GroupDimension } from "../utils/useGroupedCollapse";
 import { ResourceDrawer, useResource } from "./resiliency/ResourceDrawer";
 import { ObjectivesEditor } from "./resiliency/ObjectivesEditor";
 
@@ -147,7 +149,10 @@ export function ResiliencyPanel() {
   });
   const detail = useResource(scope, openResource);
 
-  const running = job.data?.job?.status === "running";
+  // The POST and its audit-log commit land before the job query knows anything, so without
+  // this the button stays enabled and inert for that window and the click reads as ignored.
+  const [starting, setStarting] = useState(false);
+  const running = starting || job.data?.job?.status === "running";
   // Keyed on WHICH run finished, not on the status string. A demo-sized analysis can finish
   // before the first poll, so status goes "done" -> "done" and an effect watching it never
   // re-fires — the second run then refreshed nothing at all.
@@ -185,11 +190,14 @@ export function ResiliencyPanel() {
   }, [snap?.resources, search]);
 
   async function analyze() {
+    if (starting) return;
     setErr("");
+    setStarting(true);
     try {
       await api.resiliencyAnalyzeStart(scope);
       await job.refetch();
     } catch (e) { setErr(formatError(e)); }
+    finally { setStarting(false); }
   }
 
   /** A plain <a href> cannot show a refusal: the 409 for un-agreed objectives would just
@@ -794,44 +802,130 @@ function TargetsTab({
           Ordered by consequence: no recovery path first, then total data loss, then the size
           of the miss weighted by tier.
         </p>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-gray-500">
-              {["Resource", "Scenario", "Tier", "RPO", "RTO", "Objective", "Why"].map((h) => (
-                <th key={h} className="px-2 py-1.5 font-medium">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {breaches.map((b, i) => (
-              <tr key={`${b.resource_id}-${b.scenario}-${i}`}
-                  className="cursor-pointer border-t hover:bg-gray-50"
-                  onClick={() => onOpen(b.resource_id)} data-testid="breach-row">
-                <td className="max-w-[200px] truncate px-2 py-1 font-medium">{b.name}</td>
-                <td className="px-2 py-1">{b.scenario.replace(/_/g, " ")}</td>
-                <td className="px-2 py-1 text-gray-500">{b.tier}</td>
-                <td className="px-2 py-1">{rpoText(b as never)}</td>
-                <td className={`px-2 py-1 ${b.no_recovery_path ? "font-semibold text-rose-700" : ""}`}>
-                  {classLabels[b.rto_class] ?? b.rto_class}
-                </td>
-                <td className="px-2 py-1 text-gray-500">
-                  {b.target?.rto_class ? (classLabels[b.target.rto_class] ?? b.target.rto_class) : "—"}
-                </td>
-                <td className="px-2 py-1 text-[11px] text-gray-600">
-                  {b.basis?.[0]?.detail ?? ""}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!breaches.length && (
-          <div className="p-4 text-center text-xs text-gray-400">
-            Nothing breaches its objective in this scope.
-          </div>
-        )}
+        <BreachTable breaches={breaches} classLabels={classLabels} onOpen={onOpen} />
       </div>
       )}
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------- breaches
+const BREACH_DIMENSIONS: GroupDimension<ResiliencyBreach>[] = [
+  { key: "type", label: "Resource type",
+    of: (b) => (b.type || "unknown").toLowerCase(),
+    labelOf: (t) => (t === "unknown" ? "Unknown type" : friendlyResourceType(t)) },
+  { key: "scenario", label: "Failure scenario",
+    of: (b) => b.scenario,
+    labelOf: (s) => s.replace(/_/g, " ") },
+  { key: "tier", label: "Criticality tier", of: (b) => b.tier || "untiered" },
+];
+
+const BREACH_COLUMNS = ["Resource", "Scenario", "Tier", "RPO", "RTO", "Objective", "Why"];
+
+function BreachTable({ breaches, classLabels, onOpen }: {
+  breaches: ResiliencyBreach[];
+  classLabels: Record<string, string>;
+  onOpen: (resourceId: string) => void;
+}) {
+  const grouped = useGroupedCollapse(breaches, BREACH_DIMENSIONS, {
+    storagePrefix: "azsup.resiliency.breaches", defaultGroupBy: "none",
+  });
+  const sections = grouped.sections;
+
+  const row = (b: ResiliencyBreach, i: number) => (
+    <tr key={`${b.resource_id}-${b.scenario}-${i}`}
+        className="cursor-pointer border-t hover:bg-gray-50"
+        onClick={() => onOpen(b.resource_id)} data-testid="breach-row">
+      <td className="max-w-[200px] px-2 py-1 font-medium">
+        <span className="flex items-center gap-1.5">
+          <AzureIcon kind="resource" type={b.type} className="h-3.5 w-3.5" />
+          <span className="truncate" title={b.name}>{b.name}</span>
+        </span>
+      </td>
+      <td className="px-2 py-1">{b.scenario.replace(/_/g, " ")}</td>
+      <td className="px-2 py-1 text-gray-500">{b.tier}</td>
+      <td className="px-2 py-1">{rpoText(b as never)}</td>
+      <td className={`px-2 py-1 ${b.no_recovery_path ? "font-semibold text-rose-700" : ""}`}>
+        {classLabels[b.rto_class] ?? b.rto_class}
+      </td>
+      <td className="px-2 py-1 text-gray-500">
+        {b.target?.rto_class ? (classLabels[b.target.rto_class] ?? b.target.rto_class) : "—"}
+      </td>
+      <td className="px-2 py-1 text-[11px] text-gray-600">{b.basis?.[0]?.detail ?? ""}</td>
+    </tr>
+  );
+
+  return (
+    <>
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+        <label className="inline-flex items-center gap-1">
+          <span>Group by</span>
+          <select value={grouped.groupBy} onChange={(e) => grouped.setGroupBy(e.target.value)}
+                  data-testid="breaches-group-by"
+                  className="rounded border px-1.5 py-0.5 text-[11px]">
+            <option value="none">Nothing</option>
+            {BREACH_DIMENSIONS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          </select>
+        </label>
+        {sections && (
+          <>
+            <button onClick={grouped.collapseAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+              Collapse all
+            </button>
+            <button onClick={grouped.expandAll} className="rounded border px-1.5 py-0.5 hover:bg-gray-50">
+              Expand all
+            </button>
+            <span className="text-gray-400">{sections.length} groups</span>
+          </>
+        )}
+      </div>
+
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-left text-gray-500">
+            {BREACH_COLUMNS.map((h) => <th key={h} className="px-2 py-1.5 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        {sections ? (
+          sections.map((section) => {
+            const collapsed = grouped.isCollapsed(section.key);
+            // Carried on the header so collapsing a group never hides the worst finding in it.
+            const noPath = section.items.filter((b) => b.no_recovery_path).length;
+            return (
+              <tbody key={section.key} data-testid="breaches-group">
+                <tr className="border-t bg-gray-50">
+                  <th colSpan={BREACH_COLUMNS.length} className="px-2 py-1 text-left font-medium">
+                    <button onClick={() => grouped.toggle(section.key)}
+                            data-testid="breaches-group-header"
+                            className="flex w-full items-center gap-1.5 text-left text-gray-700">
+                      <span aria-hidden="true" className="text-gray-400">{collapsed ? "▸" : "▾"}</span>
+                      {grouped.groupBy === "type" && (
+                        <AzureIcon kind="resource" type={section.key} className="h-3.5 w-3.5" />
+                      )}
+                      <span>{section.label}</span>
+                      <span className="text-gray-400">({section.total})</span>
+                      {!!noPath && (
+                        <span className="font-semibold text-rose-700">
+                          {noPath} with no recovery path
+                        </span>
+                      )}
+                    </button>
+                  </th>
+                </tr>
+                {!collapsed && section.items.map(row)}
+              </tbody>
+            );
+          })
+        ) : (
+          <tbody>{breaches.map(row)}</tbody>
+        )}
+      </table>
+      {!breaches.length && (
+        <div className="p-4 text-center text-xs text-gray-400">
+          Nothing breaches its objective in this scope.
+        </div>
+      )}
+    </>
   );
 }
 

@@ -233,11 +233,50 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- membership
+def _is_or_under(resource_id: str, parent: str) -> bool:
+    return resource_id == parent or resource_id.startswith(parent.rstrip("/") + "/")
+
+
+def expand_members(rows: list[dict[str, Any]], member_ids: set[str]) -> set[str]:
+    """Workload member ids, plus the managed disks attached to member VMs.
+
+    Workload discovery classifies disks as child noise and leaves them out of the node set
+    (``sculpt.NOISE_TYPE_SUBSTRINGS``). A VM's recovery story is mostly its disks, so
+    filtering on the node set alone would drop the resources most likely to have no
+    recovery path at all.
+    """
+    members = {m.lower() for m in member_ids if m}
+    if not members:
+        return members
+    attached: set[str] = set()
+    for row in rows:
+        if str(row.get("type") or "").lower() != "microsoft.compute/virtualmachines":
+            continue
+        rid = str(row.get("id") or "").lower()
+        if not any(_is_or_under(rid, m) for m in members):
+            continue
+        profile = (_as_json(row.get("props")) or {}).get("storageProfile") or {}
+        if not isinstance(profile, dict):
+            continue
+        for disk in [profile.get("osDisk") or {}, *(profile.get("dataDisks") or [])]:
+            managed = disk.get("managedDisk") if isinstance(disk, dict) else None
+            disk_id = str((managed or {}).get("id") or "").lower()
+            if disk_id:
+                attached.add(disk_id)
+    return members | attached
+
+
 # --------------------------------------------------------------------------- collection
 async def collect(
     connection: dict[str, Any], subscriptions: list[str], *, max_rows: int = MAX_ROWS,
+    member_ids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Configuration for every supported resource in scope.
+
+    ``member_ids`` narrows the result to one workload. Resource Graph can only filter by
+    subscription, so without it a workload scope returns every resource in the workload's
+    subscriptions — the whole subscription, labeled as the workload.
 
     Returns ``(rows, meta)``. ``meta`` carries ``error`` and ``partial`` so an unreadable or
     truncated sweep is reported as such — never as an empty estate.
@@ -247,6 +286,10 @@ async def collect(
     )
     if error:
         log.info("resiliency: configuration query degraded: %s", error)
+    if member_ids is not None:
+        members = expand_members(rows, member_ids)
+        rows = [r for r in rows
+                if any(_is_or_under(str(r.get("id") or "").lower(), m) for m in members)]
     shaped = [shape(r) for r in rows]
     shaped = [r for r in shaped if r["id"]]
     return shaped, {

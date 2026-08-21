@@ -94,17 +94,31 @@ async def analyze(
     demo = bool(workload_id) and is_demo_workload(workload_id)
     provenance: dict[str, Any] = {}
 
+    # Resource Graph filters by SUBSCRIPTION only. On a workload scope that returns every
+    # resource in the workload's subscriptions, and the loop below then stamps
+    # `workload_id` on all of them — the whole subscription, labeled as the workload.
+    members: set[str] | None = None
+    member_error = ""
+    if not demo and scope_kind == "workload":
+        workload, members, _subs = service.workload_context(workload_id or scope_id)
+        if workload is None:
+            members, member_error = set(), (
+                "The selected workload could not be read, so its members are unknown. "
+                "Nothing here is a statement about the estate.")
+
     # --- configuration -----------------------------------------------------------
     await _say(progress, "info", "Reading redundancy and backup configuration…")
     if demo:
         config, meta = collect.collect_demo(workload_id)
         provenance["configuration"] = _provenance("Demo estate", collected_at=generated_at)
     else:
-        config, meta = await collect.collect(connection or {}, subscriptions or [])
+        config, meta = await collect.collect(
+            connection or {}, subscriptions or [], member_ids=members)
         provenance["configuration"] = _provenance(
             "Resource Graph", collected_at=generated_at,
-            unreadable=bool(meta.get("error")) and not config,
-            reason=str(meta.get("error") or ""), truncated=bool(meta.get("partial")))
+            unreadable=bool(member_error) or (bool(meta.get("error")) and not config),
+            reason=member_error or str(meta.get("error") or ""),
+            truncated=bool(meta.get("partial")))
     await _say(progress, "ok", f"{len(config):,} resource(s) in scope")
 
     # --- protection ----------------------------------------------------------------
