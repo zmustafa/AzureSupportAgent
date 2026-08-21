@@ -42,21 +42,42 @@ REDUNDANT_REPLICATIONS = _GEO_REPLICATIONS | _ZONE_REPLICATIONS
 _SELF_HEALING_TYPES = frozenset({
     "microsoft.storage/storageaccounts",
     "microsoft.sql/servers/databases",
+    "microsoft.sql/managedinstances",
     "microsoft.documentdb/databaseaccounts",
     "microsoft.dbforpostgresql/flexibleservers",
     "microsoft.dbformysql/flexibleservers",
+    "microsoft.netapp/netappaccounts/capacitypools/volumes",
     "microsoft.web/sites",
     "microsoft.web/serverfarms",
+    "microsoft.web/staticsites",
     "microsoft.containerservice/managedclusters",
     "microsoft.keyvault/vaults",
     "microsoft.cache/redis",
+    "microsoft.cache/redisenterprise",
     "microsoft.search/searchservices",
     "microsoft.network/applicationgateways",
     "microsoft.network/loadbalancers",
     "microsoft.network/publicipaddresses",
+    "microsoft.network/azurefirewalls",
+    "microsoft.network/natgateways",
+    "microsoft.network/virtualnetworkgateways",
+    "microsoft.network/bastionhosts",
     "microsoft.cdn/profiles",
     "microsoft.network/trafficmanagerprofiles",
     "microsoft.logic/workflows",
+    "microsoft.app/containerapps",
+    "microsoft.app/managedenvironments",
+    "microsoft.desktopvirtualization/hostpools",
+    "microsoft.containerregistry/registries",
+    "microsoft.apimanagement/service",
+    "microsoft.eventhub/namespaces",
+    "microsoft.servicebus/namespaces",
+    "microsoft.datafactory/factories",
+    "microsoft.recoveryservices/vaults",
+    "microsoft.dataprotection/backupvaults",
+    # The scale set replaces a failed instance; the DATA on it is a separate question,
+    # answered by the logical scenarios.
+    "microsoft.compute/virtualmachinescalesets",
 })
 
 # A vault whose storage does not leave the region cannot serve a region-loss recovery.
@@ -88,6 +109,15 @@ def _pitr(native: dict[str, Any]) -> tuple[int | None, str, str] | None:
     if kind == "storage_pitr":
         return (int(interval) if interval else 5), CONFIDENCE_HIGH, (
             "Storage point-in-time restore")
+    if kind == "redis_rdb":
+        return (int(interval) if interval else None), CONFIDENCE_MEDIUM, (
+            f"Redis RDB persistence every {int(interval)} min" if interval
+            else "Redis RDB persistence, frequency not reported")
+    if kind == "redis_aof":
+        return 1, CONFIDENCE_MEDIUM, "Redis append-only file persistence"
+    if kind == "anf_snapshot":
+        return None, CONFIDENCE_MEDIUM, (
+            "Azure NetApp Files snapshot or backup policy; the interval is set on the policy")
     return None
 
 
@@ -281,7 +311,7 @@ def verdicts_for(
     rtype = str(config.get("type") or "")
     out: dict[str, Verdict] = {}
     for scenario in model.SCENARIOS:
-        ok, why = model.applies(rtype, scenario)
+        ok, why = model.applies(rtype, scenario, config)
         if not ok:
             out[scenario] = model.not_applicable(scenario, why)
             continue

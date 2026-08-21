@@ -281,32 +281,76 @@ def not_applicable(scenario: str, reason: str) -> Verdict:
 # Resource types that hold no durable state of their own. Their data lives elsewhere, so a
 # logical-loss verdict against them would describe a risk they do not carry — and, worse,
 # would render green.
+#
+# This is a DEFAULT, not a fact about the type: `applies()` lets a resource override it when
+# its own configuration says otherwise. A Redis with persistence enabled is a data store,
+# and the type alone cannot tell you which one you are looking at.
 STATELESS_TYPES: frozenset[str] = frozenset({
     "microsoft.web/sites",
     "microsoft.web/serverfarms",
+    "microsoft.web/staticsites",
     "microsoft.network/applicationgateways",
     "microsoft.network/loadbalancers",
     "microsoft.network/publicipaddresses",
     "microsoft.network/trafficmanagerprofiles",
+    "microsoft.network/azurefirewalls",
+    "microsoft.network/natgateways",
+    "microsoft.network/virtualnetworkgateways",
+    "microsoft.network/bastionhosts",
     "microsoft.cdn/profiles",
     "microsoft.logic/workflows",
     "microsoft.search/searchservices",
     "microsoft.cache/redis",
+    "microsoft.app/containerapps",
+    "microsoft.app/managedenvironments",
+    "microsoft.desktopvirtualization/hostpools",
+    "microsoft.datafactory/factories",
+    "microsoft.apimanagement/service",
+    # Messages in flight are transient and the namespace itself is redeployed. The queues
+    # and topics are configuration, not a data store to restore.
+    "microsoft.eventhub/namespaces",
+    "microsoft.servicebus/namespaces",
+    # Usually a stateless tier redeployed from an image. `shape()` sets `holds_data` when
+    # data disks say otherwise.
+    "microsoft.compute/virtualmachinescalesets",
 })
+
+# Types for which corruption is not a risk they carry, and why. Distinct from statelessness:
+# these hold durable state, so DELETION still matters — only the overwrite question is moot.
+CORRUPTION_NOT_APPLICABLE: dict[str, str] = {
+    "microsoft.keyvault/vaults": (
+        "Every write keeps the previous version of the object, so an overwrite is "
+        "recoverable without a backup."),
+    "microsoft.recoveryservices/vaults": (
+        "A vault holds recovery points rather than application data; the risk it carries is "
+        "losing the vault, not corruption inside it."),
+    "microsoft.dataprotection/backupvaults": (
+        "A vault holds recovery points rather than application data; the risk it carries is "
+        "losing the vault, not corruption inside it."),
+}
 
 # Global services have no single region or zone to lose.
 GLOBAL_TYPES: frozenset[str] = frozenset({
     "microsoft.cdn/profiles",
     "microsoft.network/trafficmanagerprofiles",
+    "microsoft.web/staticsites",
 })
 
 
-def applies(resource_type: str, scenario: str) -> tuple[bool, str]:
-    """Whether ``scenario`` is a real risk for ``resource_type``, and why not if it is not."""
+def applies(resource_type: str, scenario: str,
+            config: dict[str, Any] | None = None) -> tuple[bool, str]:
+    """Whether ``scenario`` is a real risk for ``resource_type``, and why not if it is not.
+
+    ``config`` is the shaped resource, when one is available. It can only ever make a
+    scenario apply that the type-level default would have excluded — never the reverse."""
     rtype = (resource_type or "").strip().lower()
     if scenario in (SCENARIO_ZONE_LOSS, SCENARIO_INSTANCE_LOSS) and rtype in GLOBAL_TYPES:
         return False, "This is a global service with no zonal footprint."
+    if scenario == SCENARIO_DATA_CORRUPTION and rtype in CORRUPTION_NOT_APPLICABLE:
+        return False, CORRUPTION_NOT_APPLICABLE[rtype]
     if scenario in LOGICAL_SCENARIOS and rtype in STATELESS_TYPES:
+        if (config or {}).get("holds_data"):
+            return True, ""
         if scenario == SCENARIO_DATA_CORRUPTION:
             return False, ("This resource holds no durable data of its own; corruption "
                            "applies to the data stores it reads.")
@@ -334,6 +378,7 @@ __all__ = [
     "CONFIDENCE_HIGH", "CONFIDENCE_MEDIUM", "CONFIDENCE_LOW", "weakest_confidence",
     "Evidence", "Provenance", "Verdict", "verdict", "not_applicable",
     "applies", "redundancy_helps", "STATELESS_TYPES", "GLOBAL_TYPES",
+    "CORRUPTION_NOT_APPLICABLE",
     "EV_BACKUP_POLICY", "EV_NATIVE_BACKUP", "EV_REPLICATION", "EV_ZONE_CONFIG", "EV_SKU",
     "EV_SOFT_DELETE", "EV_OBSERVED_RECOVERY_POINT", "EV_VAULT_REDUNDANCY", "EV_NO_PROTECTION",
 ]

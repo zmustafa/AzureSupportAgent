@@ -43,6 +43,7 @@ _FRIENDLY: dict[str, str] = {
     "microsoft.app/containerapps": "Container Apps",
     "microsoft.app/managedenvironments": "Container Apps Environments",
     "microsoft.cache/redis": "Redis Caches",
+    "microsoft.cache/redisenterprise": "Azure Managed Redis",
     "microsoft.servicebus/namespaces": "Service Bus Namespaces",
     "microsoft.eventhub/namespaces": "Event Hubs Namespaces",
     "microsoft.eventgrid/topics": "Event Grid Topics",
@@ -58,6 +59,10 @@ _FRIENDLY: dict[str, str] = {
     "microsoft.search/searchservices": "Cognitive Search",
     "microsoft.signalrservice/signalr": "SignalR",
     "microsoft.managedidentity/userassignedidentities": "Managed Identities",
+    "microsoft.netapp/netappaccounts/capacitypools/volumes": "NetApp Files Volumes",
+    "microsoft.dataprotection/backupvaults": "Backup Vaults",
+    "microsoft.desktopvirtualization/hostpools": "AVD Host Pools",
+    "microsoft.network/virtualnetworkgateways": "VPN / ExpressRoute Gateways",
 }
 
 

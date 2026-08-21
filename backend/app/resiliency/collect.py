@@ -54,26 +54,53 @@ _BASE = (
 
 #: Types we can say something meaningful about. Anything outside this list is reported as
 #: `unknown`, never as unprotected — see the join.
+#:
+#: Adding a type here is the easy half. It must ALSO be classified: a `shape()` branch, and a
+#: decision in `model.STATELESS_TYPES` / `model.GLOBAL_TYPES` /
+#: `derive._SELF_HEALING_TYPES`. `test_every_supported_type_is_classified_somewhere` enforces
+#: that, because a collected-but-unclassified type is `unknown` everywhere — noise, not
+#: coverage.
 SUPPORTED_TYPES: tuple[str, ...] = (
     "microsoft.compute/virtualmachines",
     "microsoft.compute/disks",
+    "microsoft.compute/virtualmachinescalesets",
     "microsoft.storage/storageaccounts",
     "microsoft.sql/servers/databases",
+    "microsoft.sql/managedinstances",
     "microsoft.documentdb/databaseaccounts",
     "microsoft.dbforpostgresql/flexibleservers",
     "microsoft.dbformysql/flexibleservers",
+    "microsoft.netapp/netappaccounts/capacitypools/volumes",
     "microsoft.containerservice/managedclusters",
     "microsoft.network/applicationgateways",
     "microsoft.network/loadbalancers",
     "microsoft.network/publicipaddresses",
+    "microsoft.network/azurefirewalls",
+    "microsoft.network/natgateways",
+    "microsoft.network/virtualnetworkgateways",
+    "microsoft.network/bastionhosts",
     "microsoft.cache/redis",
+    "microsoft.cache/redisenterprise",
     "microsoft.web/sites",
     "microsoft.web/serverfarms",
+    "microsoft.web/staticsites",
+    "microsoft.app/containerapps",
+    "microsoft.app/managedenvironments",
+    "microsoft.desktopvirtualization/hostpools",
     "microsoft.keyvault/vaults",
     "microsoft.search/searchservices",
     "microsoft.cdn/profiles",
     "microsoft.network/trafficmanagerprofiles",
     "microsoft.logic/workflows",
+    "microsoft.containerregistry/registries",
+    "microsoft.apimanagement/service",
+    "microsoft.eventhub/namespaces",
+    "microsoft.servicebus/namespaces",
+    "microsoft.datafactory/factories",
+    # The backup estate itself: a vault whose storage never leaves the region takes every
+    # recovery point with it when that region is lost.
+    "microsoft.recoveryservices/vaults",
+    "microsoft.dataprotection/backupvaults",
 )
 
 
@@ -121,6 +148,8 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
     replication = ""
     native: dict[str, Any] = {"kind": "unknown"}
     size_gb: int | None = None
+    soft_delete: bool | None = None
+    holds_data: bool | None = None
 
     if rtype == "microsoft.storage/storageaccounts":
         replication = _storage_replication(sku_name)
@@ -211,10 +240,139 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
         zone_redundant = len(zones) > 1
         native = {"kind": "none"}
 
+    elif rtype == "microsoft.cache/redis":
+        config = props.get("redisConfiguration") or {}
+        if not isinstance(config, dict):
+            config = {}
+        rdb = str(config.get("rdb-backup-enabled") or "").lower() == "true"
+        aof = str(config.get("aof-backup-enabled") or "").lower() == "true"
+        # A cache has nothing to lose; a Redis with persistence on is a data store. The type
+        # cannot tell you which, so the configuration decides.
+        holds_data = rdb or aof
+        if rdb:
+            frequency = config.get("rdb-backup-frequency")
+            native = {"kind": "redis_rdb",
+                      "interval_minutes": int(frequency) if frequency else None}
+        elif aof:
+            native = {"kind": "redis_aof", "interval_minutes": 1}
+        else:
+            native = {"kind": "none"}
+
+    elif rtype == "microsoft.cache/redisenterprise":
+        # Azure Managed Redis, the service Azure Cache for Redis is being retired in favour
+        # of. `zones` comes back EMPTY even on a zone-redundant cluster, so the read-only
+        # `redundancyMode` is the only property that answers the question: "ZR" is zone
+        # redundant, "LR" is a single zone. Reading `zones` here reported a cluster verified
+        # zone redundant as not zone redundant.
+        mode = str(props.get("redundancyMode") or "").strip().upper()
+        if mode:
+            zone_redundant = mode == "ZR"
+        elif zones:
+            zone_redundant = len(zones) > 1
+        # `native` deliberately stays "unknown". Persistence is configured on the child
+        # `databases` resource, which Resource Graph does not index at all, so this row
+        # cannot tell a pure cache from a persisted data store. Defaulting it to "none"
+        # would report a persisted database as having no recovery path, and treating the
+        # cluster as stateless would report it as redeployable. Both are claims the data
+        # does not support.
+
+    elif rtype == "microsoft.compute/virtualmachinescalesets":
+        zone_redundant = len(zones) > 1
+        profile = props.get("virtualMachineProfile") or {}
+        storage = (profile.get("storageProfile") or {}) if isinstance(profile, dict) else {}
+        disks = (storage.get("dataDisks") or []) if isinstance(storage, dict) else []
+        # Most scale sets are stateless web tiers that are redeployed rather than restored.
+        # Attached data disks are the signal that this one is not.
+        holds_data = bool(disks)
+        native = {"kind": "none"}
+
+    elif rtype == "microsoft.sql/managedinstances":
+        zone_redundant = bool(props.get("zoneRedundant"))
+        # No retention here on purpose: `backupRetentionDays` is a property of the
+        # DATABASES, not of the instance, so reading it off the instance always yields None.
+        native = {"kind": "sql_pitr", "interval_minutes": 10,
+                  "geo_redundant": str(props.get("requestedBackupStorageRedundancy")
+                                       or "").lower().startswith("geo")}
+        storage_gb = props.get("storageSizeInGB")
+        if storage_gb:
+            size_gb = int(storage_gb)
+
+    elif rtype == "microsoft.netapp/netappaccounts/capacitypools/volumes":
+        zone_redundant = len(zones) > 1
+        protection = props.get("dataProtection") or {}
+        if not isinstance(protection, dict):
+            protection = {}
+        snapshots = bool((protection.get("snapshot") or {}).get("snapshotPolicyId"))
+        vaulted = bool((protection.get("backup") or {}).get("backupPolicyId"))
+        if (protection.get("replication") or {}).get("remoteVolumeResourceId"):
+            replication = "cross-region"
+        native = {"kind": "anf_snapshot"} if (snapshots or vaulted) else {"kind": "none"}
+        threshold = props.get("usageThreshold")
+        if threshold:
+            size_gb = int(int(threshold) // (1024 ** 3))
+
+    elif rtype in ("microsoft.recoveryservices/vaults",
+                   "microsoft.dataprotection/backupvaults"):
+        token = str(
+            (props.get("redundancySettings") or {}).get("standardTierStorageRedundancy")
+            or ((props.get("storageSettings") or [{}])[0] or {}).get("type") or "").lower()
+        if token:
+            replication = "GRS" if "geo" in token else "ZRS" if "zone" in token else "LRS"
+            zone_redundant = "zone" in token or "geo" in token
+        security = props.get("securitySettings") or {}
+        soft = (security.get("softDeleteSettings") or {}) if isinstance(security, dict) else {}
+        state = str(soft.get("softDeleteState") or "").lower()
+        soft_delete = state in ("enabled", "alwayson") if state else None
+        native = {"kind": "none"}
+
+    elif rtype == "microsoft.containerregistry/registries":
+        zone_redundant = str(props.get("zoneRedundancy") or "").lower() == "enabled"
+        policies = props.get("policies") or {}
+        soft = (policies.get("softDeletePolicy") or {}) if isinstance(policies, dict) else {}
+        if soft:
+            soft_delete = str(soft.get("status") or "").lower() == "enabled"
+        native = {"kind": "none"}
+
+    elif rtype == "microsoft.apimanagement/service":
+        extra = props.get("additionalLocations")
+        if isinstance(extra, list) and extra:
+            replication = "multi-region"
+        zone_redundant = len(zones) > 1 if zones else None
+        native = {"kind": "none"}
+
+    elif rtype in ("microsoft.eventhub/namespaces", "microsoft.servicebus/namespaces",
+                   "microsoft.app/managedenvironments", "microsoft.app/containerapps"):
+        flag = props.get("zoneRedundant")
+        zone_redundant = bool(flag) if flag is not None else (len(zones) > 1 if zones else None)
+        native = {"kind": "none"}
+
+    elif rtype in ("microsoft.network/azurefirewalls", "microsoft.network/natgateways",
+                   "microsoft.network/virtualnetworkgateways",
+                   "microsoft.network/bastionhosts",
+                   "microsoft.desktopvirtualization/hostpools",
+                   "microsoft.datafactory/factories"):
+        zone_redundant = len(zones) > 1 if zones else None
+        native = {"kind": "none"}
+
+    elif rtype == "microsoft.web/staticsites":
+        zone_redundant = True  # content is served globally, with no zonal footprint
+        replication = "global"
+        native = {"kind": "none"}
+
     elif rtype in ("microsoft.cdn/profiles", "microsoft.network/trafficmanagerprofiles"):
         zone_redundant = True  # global services have no zonal footprint to lose
         replication = "global"
         native = {"kind": "none"}
+
+    elif rtype == "microsoft.keyvault/vaults":
+        # Soft delete is what stands between a deleted vault and every key it held. Purge
+        # protection is what stops that window being skipped, so it strengthens the answer
+        # rather than replacing it.
+        soft_delete = bool(props.get("enableSoftDelete"))
+        purge = bool(props.get("enablePurgeProtection"))
+        native = {"kind": "keyvault_soft_delete" if soft_delete else "none",
+                  "retention_days": props.get("softDeleteRetentionInDays"),
+                  "purge_protection": purge}
 
     return {
         "id": service.canonical_id(str(row.get("id") or "")),
@@ -229,7 +387,8 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
         "sku": sku_name,
         "native_backup": native,
         "size_gb": size_gb,
-        "soft_delete": None,
+        "soft_delete": soft_delete,
+        "holds_data": holds_data,
     }
 
 
