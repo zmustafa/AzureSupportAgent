@@ -516,3 +516,157 @@ def test_a_readable_estate_is_not_flagged_as_unreadable():
     assert not any("ESTATE COULD NOT BE READ" in c for c in flat)
     assert "Not read" not in _pdf_text(
         pdf_report.build(_snapshot(), reference_doc=reference.load()))
+
+
+# ============================================================== PDF presentation
+def _built() -> str:
+    return _pdf_text(pdf_report.build(_snapshot(), reference_doc=reference.load()))
+
+
+def test_the_pdf_never_prints_a_raw_html_entity():
+    """`viz_card` escapes its subtitle, so an `&middot;` written into it reached the page
+    as literal text on every scenario card."""
+    text = _built()
+    for entity in ("&middot;", "&mdash;", "&amp;", "&times;", "&ldquo;", "&nbsp;"):
+        assert entity not in text, f"{entity} rendered literally"
+
+
+def test_the_pdf_leads_with_the_scope_not_the_product_name():
+    """A report that gets emailed to an exec should identify its subject. The product name
+    belongs in the footer."""
+    text = _built()
+    assert text.index("Workload \u2014 Contoso Hotels") < text.index("Azure Support Agent")
+    assert "Workload \u2014 Contoso Hotels" in text.split("\n")[0]
+
+
+def test_the_pdf_speaks_the_same_vocabulary_as_the_screen():
+    """Wire values are not display text."""
+    text = _built()
+    for wire in ("microsoft.storage/storageaccounts", "storage/storageaccounts",
+                 "mission_critical", "vm_restore_mbps", "sql_restore_gb_per_hour"):
+        assert wire not in text, f"{wire} reached the page"
+    assert "Storage Accounts" in text
+    assert "Mission critical" in text or "Business critical" in text
+
+
+def test_every_scenario_card_states_its_own_denominator():
+    """Per-scenario counts differ from the estate total because some resources cannot
+    experience some failures. That exclusion used to be invisible, so the numbers on this
+    page did not add up to the number on the cover."""
+    assert "of 4 resources can experience this" in _built()
+
+
+def test_a_scenario_card_names_the_resources_the_failure_cannot_touch():
+    """The mixed case: when a scenario applies to only some of the estate, the card has to
+    say so, or the reader is left with a denominator that silently changed."""
+    rows = [_row(f"sa{i}") for i in range(3)]
+    odd = _row("sa-odd")
+    odd["verdicts"]["region_loss"] = _verdict(model.RTO_NONE, applicable=False)
+    text = _pdf_text(pdf_report.build(_snapshot(rows=rows + [odd]),
+                                      reference_doc=reference.load()))
+    assert "3 of 4 resources can experience this" in text
+    assert "1 not applicable" in text
+
+
+def test_a_prose_column_is_replaced_by_a_code_and_a_legend():
+    """A prose column in a wide grid renders one word per line under xhtml2pdf and repeats
+    the same sentence for dozens of rows. Codes keep the grid readable; the legend keeps the
+    full text in the document."""
+    text = _built()
+    assert "Reason legend" in text
+    assert "R1" in text
+    # The full sentence still has to be present exactly once, in the legend.
+    assert "daily backup only" in text
+
+
+def test_what_to_do_next_lists_only_missing_mechanisms():
+    """A reason that explains a HEALTHY verdict is not work to do. Listing
+    "platform-managed service; a failed instance is replaced without operator action" as an
+    action item made the section nonsense."""
+    text = _built()
+    assert "What to do next" in text
+    start = text.index("What to do next")
+    section = text[start:start + 2500]
+    assert "replaced without operator action" not in section
+
+
+def test_the_report_stays_within_a_readable_length():
+    """27 pages for 4 resources was a rendering fault, not content. This is a canary: if a
+    layout change re-inflates the document, it fires."""
+    from pypdf import PdfReader
+
+    pdf = pdf_report.build(_snapshot(), reference_doc=reference.load())
+    assert len(PdfReader(io.BytesIO(pdf)).pages) <= 16
+
+
+def test_the_cover_does_not_repeat_the_confidentiality_mark():
+    text = _built()
+    assert text.count("Confidential") == len(
+        PdfReader(io.BytesIO(pdf_report.build(_snapshot(),
+                                              reference_doc=reference.load()))).pages), \
+        "Confidential should appear once per page (the footer) and nowhere else"
+
+
+# ============================================================== portal links
+def _linked_snapshot():
+    """A snapshot whose ids are real ARM ids on a resolvable cloud."""
+    snap = _snapshot()
+    snap["portal_host"] = "portal.azure.com"
+    return snap
+
+
+def _pdf_links(content: bytes) -> list[str]:
+    reader = PdfReader(io.BytesIO(content))
+    out = []
+    for page in reader.pages:
+        for annot in page.get("/Annots") or []:
+            action = (annot.get_object().get("/A") or {})
+            uri = action.get("/URI")
+            if uri:
+                out.append(str(uri))
+    return out
+
+
+def test_the_pdf_links_each_resource_into_the_azure_portal():
+    links = _pdf_links(pdf_report.build(_linked_snapshot(), reference_doc=reference.load()))
+    assert links, "no portal links were emitted"
+    assert all(u.startswith("https://portal.azure.com/#@/resource/subscriptions/")
+               for u in links), links[:3]
+    assert any("/sa0" in u for u in links), "the resource itself is not addressed"
+
+
+def test_demo_ids_are_never_turned_into_portal_links():
+    """Demo ids look real enough to build a URL, and that URL would open a 404 in the
+    reader's own tenant. `portal_host` is blank for demo data and must stay decisive."""
+    snap = _linked_snapshot()
+    snap["demo"] = True
+    snap["portal_host"] = ""
+    assert _pdf_links(pdf_report.build(snap, reference_doc=reference.load())) == []
+
+
+def test_an_unresolvable_cloud_produces_no_links_rather_than_a_guess():
+    snap = _linked_snapshot()
+    snap["portal_host"] = "not-a-portal.example.com"
+    assert _pdf_links(pdf_report.build(snap, reference_doc=reference.load())) == []
+
+
+def test_the_workbook_carries_a_clickable_portal_column():
+    content = export_mod.build(_linked_snapshot(), reference_doc=reference.load())
+    wb = load_workbook(io.BytesIO(content))
+    for sheet in ("Resources", "Breaches", "Recovery matrix"):
+        headers = [c.value for c in wb[sheet][1]] + [c.value for c in wb[sheet][2]]
+        assert "Open in Azure" in headers, f"{sheet} has no portal column"
+    links = [c.hyperlink.target
+             for row in wb["Resources"].iter_rows()
+             for c in row if c.hyperlink is not None]
+    assert links, "the portal column has no real hyperlinks"
+    assert all(u.startswith("https://portal.azure.com/") for u in links)
+
+
+def test_the_workbook_portal_column_is_empty_for_demo_data():
+    snap = _linked_snapshot()
+    snap["portal_host"] = ""
+    wb = load_workbook(io.BytesIO(export_mod.build(snap, reference_doc=reference.load())))
+    links = [c.hyperlink for row in wb["Resources"].iter_rows()
+             for c in row if c.hyperlink is not None]
+    assert links == []

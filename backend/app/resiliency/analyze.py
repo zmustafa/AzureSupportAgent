@@ -188,6 +188,8 @@ async def analyze(
         "demo": demo,
         "reason": "",
         "scope": {"scope_kind": scope_kind, "scope_id": scope_id,
+                  # Reports lead with this. Without it they print the raw id at 30px.
+                  "scope_name": _workload_name(demo, workload_id, scope_id),
                   "subscriptions": subscriptions or []},
         "summary": join.summarize(rows),
         "resources": rows,

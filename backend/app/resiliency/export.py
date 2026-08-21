@@ -70,6 +70,16 @@ def _scenario_label(scenario: str) -> str:
     return model.SCENARIO_LABEL.get(scenario, scenario)
 
 
+def _portal(resource_id: Any, host: str, label: str = "Open in Azure") -> Any:
+    """A real clickable cell, or blank. `host` is empty for demo data and for a cloud we
+    could not resolve, and a link into the wrong tenant is worse than no link."""
+    from app.core.azure_portal import resource_url_for_host
+    from app.core.xlsx import hyperlink
+
+    url = resource_url_for_host(resource_id, host)
+    return hyperlink(label, url) if url else ""
+
+
 def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = None,
           trend: dict[str, Any] | None = None) -> bytes:
     from openpyxl.styles import Font
@@ -81,6 +91,8 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
     scope = snapshot.get("scope") or {}
     rows = snapshot.get("resources") or []
     facts = analysis.analyze(snapshot, reason_limit=200)
+    # Blank for demo data, so a synthetic id never becomes a link into somebody's tenant.
+    host = str(snapshot.get("portal_host") or "")
 
     # ---------------------------------------------------------------- front matter
     wb.section("Overview", C_FRONT)
@@ -141,10 +153,10 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
 
     # ---------------------------------------------------------------- detail
     wb.section("Detail", C_DETAIL)
-    _matrix_sheet(wb, rows)
-    _resources_sheet(wb, rows)
+    _matrix_sheet(wb, rows, host)
+    _resources_sheet(wb, rows, host)
     _evidence_sheet(wb, rows)
-    _breaches_sheet(wb, snapshot)
+    _breaches_sheet(wb, snapshot, host)
     _workloads_sheet(wb, snapshot)
 
     # ---------------------------------------------------------------- objectives
@@ -259,7 +271,7 @@ def _thesis_sheet(wb: Any, facts: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------- detail
-def _matrix_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
+def _matrix_sheet(wb: Any, rows: list[dict[str, Any]], host: str = "") -> None:
     from app.core.xlsx import coerce
 
     out = []
@@ -271,7 +283,8 @@ def _matrix_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
             breach = verdict.get("breach") or {}
             target = verdict.get("target") or {}
             out.append([
-                coerce(row.get("name")), coerce(row.get("id")), coerce(row.get("type")),
+                coerce(row.get("name")), coerce(row.get("id")), _portal(row.get("id"), host),
+                coerce(row.get("type")),
                 coerce(row.get("subscription_id")), coerce(row.get("resource_group")),
                 coerce(row.get("location")), coerce(row.get("tier_label")),
                 coerce(_scenario_label(scenario)),
@@ -286,7 +299,8 @@ def _matrix_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
             ])
     wb.sheet(
         "Recovery matrix",
-        ["Resource", "Resource ID", "Type", "Subscription", "Resource group", "Region",
+        ["Resource", "Resource ID", "Open in Azure", "Type", "Subscription",
+         "Resource group", "Region",
          "Tier", "Scenario", "RPO", "RTO class", "RTO band", "Confidence",
          "Against objective", "Target RPO", "Target RTO", "Why", "Assumptions"],
         out,
@@ -295,15 +309,17 @@ def _matrix_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
     )
 
 
-def _resources_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
+def _resources_sheet(wb: Any, rows: list[dict[str, Any]], host: str = "") -> None:
     from app.core.xlsx import coerce
 
     wb.sheet(
         "Resources",
-        ["Resource", "Resource ID", "Type", "Region", "Zone redundant", "Replication",
+        ["Resource", "Resource ID", "Open in Azure", "Type", "Region", "Zone redundant",
+         "Replication",
          "Protection", "Backup frequency", "Retention (days)", "Recovery point age (h)",
          "Vault redundancy", "Replicated", "Worst scenario", "Worst RTO"],
-        [[coerce(r.get("name")), coerce(r.get("id")), coerce(r.get("type")),
+        [[coerce(r.get("name")), coerce(r.get("id")), _portal(r.get("id"), host),
+          coerce(r.get("type")),
           coerce(r.get("location")),
           coerce((r.get("redundancy") or {}).get("zone_redundant")),
           coerce((r.get("redundancy") or {}).get("replication")),
@@ -352,14 +368,15 @@ def _evidence_sheet(wb: Any, rows: list[dict[str, Any]]) -> None:
     )
 
 
-def _breaches_sheet(wb: Any, snapshot: dict[str, Any]) -> None:
+def _breaches_sheet(wb: Any, snapshot: dict[str, Any], host: str = "") -> None:
     from app.core.xlsx import coerce
 
     wb.sheet(
         "Breaches",
-        ["Resource", "Resource ID", "Type", "Scenario", "Tier", "RPO", "RTO class",
-         "Target RPO (min)", "Target RTO", "No recovery path", "Why"],
-        [[coerce(b.get("name")), coerce(b.get("resource_id")), coerce(b.get("type")),
+        ["Resource", "Resource ID", "Open in Azure", "Type", "Scenario", "Tier", "RPO",
+         "RTO class", "Target RPO (min)", "Target RTO", "No recovery path", "Why"],
+        [[coerce(b.get("name")), coerce(b.get("resource_id")),
+          _portal(b.get("resource_id"), host), coerce(b.get("type")),
           coerce(_scenario_label(b.get("scenario", ""))),
           coerce(b.get("tier")), coerce(_rpo_text(b)),
           coerce(_class_label(b.get("rto_class", ""))),

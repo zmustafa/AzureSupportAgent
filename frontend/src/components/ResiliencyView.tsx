@@ -241,79 +241,83 @@ export function ResiliencyPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="shrink-0 border-b bg-white px-5 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <div className="min-w-0 flex-1">
             <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
               <span aria-hidden="true">♻️</span> Recovery Readiness
             </h1>
-            <p className="mt-0.5 max-w-3xl text-[13px] text-gray-500">
-              Recover from what, in how long, losing how much — per-scenario RTO and RPO derived
-              from redundancy, backup frequency and replication, measured against your objectives.
+            <p className="mt-0.5 max-w-xl text-balance text-[13px] leading-snug text-gray-500">
+              Recover from what, in how long, losing how much — measured against your objectives.
               Redundancy does <span className="font-medium text-red-700">not</span> protect you
               from a bad deployment.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ConnectionScopePicker value={connId} align="right" onChange={(id) => {
-              if (id === connId) return;
-              setConnId(id); setWorkloadId(""); setSubId(""); setSubName("");
-            }} />
-            <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
-              {(["workload", "subscription"] as const).map((k) => (
-                <button key={k} type="button" aria-pressed={scopeKind === k}
-                        onClick={() => setScopeKind(k)}
-                        className={`rounded-md px-2.5 py-1 ${scopeKind === k ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
-                  {k === "workload" ? "Workload" : "Subscription"}
-                </button>
-              ))}
+          {/* Scope and actions are separate rows. Sharing one row made the entire cluster
+              drop below the title the moment an analysis existed, because the four action
+              buttons pushed it past the width available beside the heading. */}
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <ConnectionScopePicker value={connId} align="right" onChange={(id) => {
+                if (id === connId) return;
+                setConnId(id); setWorkloadId(""); setSubId(""); setSubName("");
+              }} />
+              <div className="flex items-center rounded-lg border bg-gray-50 p-0.5 text-xs">
+                {(["workload", "subscription"] as const).map((k) => (
+                  <button key={k} type="button" aria-pressed={scopeKind === k}
+                          onClick={() => setScopeKind(k)}
+                          className={`rounded-md px-2.5 py-1 ${scopeKind === k ? "bg-white font-medium text-gray-900 shadow-sm" : "text-gray-500"}`}>
+                    {k === "workload" ? "Workload" : "Subscription"}
+                  </button>
+                ))}
+              </div>
+              <ScopePicker
+                scopeKind={scopeKind}
+                onScopeKindChange={() => {}}
+                workloads={workloads}
+                workloadId={workloadId}
+                onWorkloadChange={(id) => {
+                  const workload = workloads.find((item) => item.id === id);
+                  if (workload?.connection_id) setConnId(workload.connection_id);
+                  setWorkloadId(id);
+                }}
+                subId={subId}
+                subName={subName}
+                onSubPick={(id, name) => { setSubId(id); setSubName(name); }}
+                workloadPlaceholder="Select a workload…"
+                connectionId={connId}
+                hideKindToggle
+              />
             </div>
-            <ScopePicker
-              scopeKind={scopeKind}
-              onScopeKindChange={() => {}}
-              workloads={workloads}
-              workloadId={workloadId}
-              onWorkloadChange={(id) => {
-                const workload = workloads.find((item) => item.id === id);
-                if (workload?.connection_id) setConnId(workload.connection_id);
-                setWorkloadId(id);
-              }}
-              subId={subId}
-              subName={subName}
-              onSubPick={(id, name) => { setSubId(id); setSubName(name); }}
-              workloadPlaceholder="Select a workload…"
-              connectionId={connId}
-              hideKindToggle
-            />
             {snap?.report_exists && (
-              <>
-                <span className="text-[11px] text-gray-500">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="whitespace-nowrap text-[11px] text-gray-500">
                   Analyzed {String(snap.generated_at).slice(0, 16).replace("T", " ")}
                   {snap.demo && " · demo data"}
                 </span>
                 <button onClick={() => void download("xlsx")} disabled={!!busy}
                         data-testid="resiliency-export"
                         title="Every row: the complete workbook, including the reasoning and provenance sheets."
-                        className="rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                        className="whitespace-nowrap rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   {busy === "xlsx" ? "Building…" : "⬇ Excel"}
                 </button>
                 <button onClick={() => void download("pdf")} disabled={!!busy}
                         data-testid="resiliency-export-pdf"
                         title="The readable report: the argument, the analysis and the appendices."
-                        className="rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                        className="whitespace-nowrap rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   📄 PDF
                 </button>
                 <button onClick={() => void saveEvidence()} disabled={!!busy}
                         data-testid="resiliency-evidence"
                         title="Freeze this analysis as an immutable Evidence Locker snapshot."
-                        className="rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                        className="whitespace-nowrap rounded-lg border bg-white px-3 py-1.5 text-[13px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   {busy === "evidence" ? "Saving…" : "🗄 Evidence"}
                 </button>
                 <button onClick={analyze} disabled={running} data-testid="resiliency-reanalyze"
                         title="Recovery Readiness never re-reads Azure on its own. Everything you see is from the last analysis."
-                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-gray-700 disabled:opacity-50">
+                        className="whitespace-nowrap rounded-lg bg-gray-900 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-gray-700 disabled:opacity-50">
                   {running ? "Analyzing…" : "↻ Analyze again"}
                 </button>
-              </>
+              </div>
             )}
           </div>
         </div>

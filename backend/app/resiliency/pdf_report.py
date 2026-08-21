@@ -76,8 +76,106 @@ def _scenario_label(scenario: str) -> str:
 
 
 def _short_type(value: Any) -> str:
+    """The same words the screen uses. A report that says `compute/disks` while the app says
+    "Managed Disks" makes the reader do the translation."""
+    from app.workloads.summarize import friendly_type
+
     t = str(value or "")
-    return t.split(".", 1)[1] if t.lower().startswith("microsoft.") and "." in t else t
+    return friendly_type(t) if t else "—"
+
+
+#: Scope kinds as a reader names them. The cover leads with this, so it cannot be `.title()`
+#: on a wire value ("Management_Group").
+SCOPE_KIND_LABEL: dict[str, str] = {
+    "workload": "Workload",
+    "subscription": "Subscription",
+    "management_group": "Management group",
+    "managementgroup": "Management group",
+}
+
+
+def _humanize_key(key: Any) -> str:
+    """`vm_restore_mbps` -> "VM restore (MB/s)". Raw registry keys are wire values."""
+    text = str(key or "").strip()
+    if not text:
+        return "—"
+    unit = ""
+    for suffix, label in (("_mbps", " (MB/s)"), ("_gb_per_hour", " (GB/hour)"),
+                         ("_minutes", " (minutes)"), ("_hours", " (hours)")):
+        if text.endswith(suffix):
+            text, unit = text[: -len(suffix)], label
+            break
+    words = [w for w in text.replace("-", "_").split("_") if w]
+    out = " ".join(w.upper() if w.lower() in {"vm", "sql", "asr", "pitr", "rpo", "rto", "db"}
+                   else w for w in words)
+    return (out[:1].upper() + out[1:] if out else text) + unit
+
+
+def _tier_label(m: dict[str, Any], tier_id: Any) -> str:
+    """`mission_critical` is a wire value and must never reach a page."""
+    raw = str(tier_id or "").strip()
+    if not raw:
+        return "—"
+    for tier in (m.get("reference") or {}).get("tiers") or []:
+        if str(tier.get("id") or "") == raw:
+            return str(tier.get("label") or raw)
+    return _humanize_key(raw)
+
+
+def _scope_heading(m: dict[str, Any]) -> str:
+    """"Workload — Contoso Reservations". The reader cares what this is about, not what
+    generated it, so this is the largest thing on the cover and in the running header."""
+    kind = SCOPE_KIND_LABEL.get(str(m["scope_kind"] or "").lower().replace(" ", "_"))
+    name = m["scope_name"]
+    return f"{kind} — {name}" if kind else str(name)
+
+
+def _joined(parts: Any, sep: str = "; ") -> str:
+    """Join only the non-empty pieces — an empty first element produced a leading "; "."""
+    return sep.join(p for p in (str(x or "").strip() for x in (parts or [])) if p)
+
+
+def _resource(m: dict[str, Any], name: Any, resource_id: Any, *, width: int = 26) -> str:
+    """A resource name, linked into the Azure portal when a link is defensible.
+
+    Blank ``portal_host`` (demo data, or a cloud we could not resolve) yields plain text —
+    a link that opens someone else's 404 is worse than no link at all.
+    """
+    from app.core.azure_portal import resource_url_for_host
+
+    label = esc_breakable(name, width=width)
+    url = resource_url_for_host(resource_id, m.get("portal_host"))
+    return f'<a href="{esc(url)}">{label}</a>' if url else label
+
+
+class _Codes:
+    """Distinct prose reasons to short codes, with a legend rendered under the table.
+
+    Two problems, one fix. xhtml2pdf sizes columns from content and gives a prose column in
+    a wide table barely one word per line; and the same sentence repeats verbatim for dozens
+    of rows. A code plus one legend row says it once and keeps the grid readable. Nothing is
+    lost — the legend carries the full text.
+    """
+
+    def __init__(self, prefix: str = "R") -> None:
+        self._codes: dict[str, str] = {}
+        self._prefix = prefix
+
+    def code(self, text: Any) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        return self._codes.setdefault(cleaned, f"{self._prefix}{len(self._codes) + 1}")
+
+    def legend(self, title: str = "Reason legend") -> str:
+        if not self._codes:
+            return ""
+        rows = "".join(f"<tr><td class='num'>{esc(code)}</td><td>{esc(text)}</td></tr>"
+                       for text, code in self._codes.items())
+        return (f'<h3>{esc(title)}</h3>'
+                f'<table class="grid compact" cellpadding="0" cellspacing="0">'
+                f'<thead><tr><th class="num">Code</th><th>Reason</th></tr></thead>'
+                f'{rows}</table>')
 
 
 def _minutes_text(minutes: Any) -> str:
@@ -132,6 +230,9 @@ def _adapt(snapshot: dict[str, Any], reference_doc: dict[str, Any] | None,
         "scope_kind": str(scope.get("scope_kind") or ""),
         "scope_id": str(scope.get("scope_id") or ""),
         "scope_name": str(scope.get("scope_name") or scope.get("scope_id") or "this scope"),
+        # Resolved per read and blank for demo data, so a synthetic id never becomes a link
+        # that 404s in the reader's own tenant.
+        "portal_host": str(snapshot.get("portal_host") or ""),
         "generated_at": str(snapshot.get("generated_at") or ""),
         "demo": bool(snapshot.get("demo")),
         "unreadable": snapshot_store.estate_unreadable(snapshot),
@@ -162,12 +263,15 @@ def _kpi_strip(m: dict[str, Any]) -> str:
     def _n(value: Any) -> str:
         return "\u2014" if blank else str(value)
     kpis = [
-        ("Resources", _n(m["resources"]), "in this analysis"),
-        ("No recovery path", _n(m["no_path_resources"]), m["worst_scenario"] or "\u2014"),
-        ("Redundant, worse for logical", _n(len(m["facts"]["redundancy_gap"])),
-         "corruption / deletion"),
-        ("Breaching objectives", _n(len(m["breaches"])), "against agreed targets"),
-        ("Undetermined", _n(m["undetermined"]), "could not be read"),
+        ("Resources", _n(m["resources"]), "analyzed in this scope"),
+        ("Resources with no recovery path", _n(m["no_path_resources"]),
+         f"worst: {m['worst_scenario']}" if m["worst_scenario"] else "—"),
+        ("Resources redundant but exposed", _n(len(m["facts"]["redundancy_gap"])),
+         "to corruption / deletion"),
+        ("Resource-scenario pairs breaching", _n(len(m["breaches"])),
+         "against agreed objectives"),
+        ("Resource-scenario pairs undetermined", _n(m["undetermined"]),
+         "a source could not be read"),
     ]
     cells = "".join(
         f'<td class="kpi"><div class="kpi-num" style="color:{INK}">{esc(value)}</div>'
@@ -199,8 +303,10 @@ def _headline_card(m: dict[str, Any]) -> str:
       <div class="score-num" style="color:{colour}">{count}</div>
       <div class="score-lbl">resources with no recovery path</div>
       <div class="muted" style="font-size:8.5px">
-        Across {esc(str(m['no_path_pairs']))} resource-scenario pairs.
-        {esc(str(m['undetermined']))} could not be determined.
+        This leads the report rather than the {esc(str(len(m['breaches'])))} objective
+        breaches because a missing mechanism cannot be tuned — it has to be built.
+        {esc(str(m['no_path_pairs']))} resource-scenario pairs are affected;
+        {esc(str(m['undetermined']))} more could not be determined.
       </div>
     </td></tr></table>
     """
@@ -219,9 +325,10 @@ def _cover(m: dict[str, Any]) -> str:
       <table class="cover-hero" cellpadding="0" cellspacing="0">
         <tr>
           <td class="cover-left">
-            <div class="cover-brand">Azure Support Agent</div>
-            <div class="cover-sub">Recovery Readiness Report</div>
-            <div class="cover-pack">{esc(m['scope_name'])}</div>
+            <div class="cover-brand">{esc(_scope_heading(m))}</div>
+            <div class="cover-sub">Recovery Readiness</div>
+            <div class="cover-pack">{fmt_date(m['generated_at'])} &middot;
+              {esc(str(m['resources']))} resources</div>
             <div class="cover-summary">
               Recover from what, in how long, losing how much. Every figure here is derived
               from configuration &mdash; redundancy, backup frequency, replication &mdash;
@@ -241,24 +348,18 @@ def _cover(m: dict[str, Any]) -> str:
       {_thesis_callout(m)}
 
       <table class="cover-meta" cellpadding="0" cellspacing="0">
-        <tr><td class="k">Scope</td><td class="v">{esc(m['scope_name'])}</td>
-            <td class="k">Scope type</td><td class="v">{esc(m['scope_kind'].title() or '—')}</td></tr>
         <tr><td class="k">Analyzed</td><td class="v">{fmt_date(m['generated_at'])}</td>
             <td class="k">Objectives</td><td class="v">{esc(ack)}</td></tr>
-        <tr><td class="k">Resources</td><td class="v">{m['resources']}</td>
-            <td class="k">Objectives version</td>
-            <td class="v">{esc(str(m['reference'].get('version', '—')))}</td></tr>
       </table>
 
+      <div class="cover-section-lbl">Inside</div>
       <table class="cover-includes" cellpadding="0" cellspacing="0">
-        <tr><td><b>Inside</b></td><td>Executive summary &middot; how to read this report
-        &middot; trend &middot; recovery by failure scenario &middot; RTO/RPO by resource
-        type &middot; why &mdash; the dominant reasons &middot; resources that cannot be
-        recovered &middot; breaches &middot; workload roll-up &middot; appendices.</td></tr>
+        <tr><td>Executive summary &middot; how to read this report
+        &middot; what to do next &middot; recovery by failure scenario &middot; RTO/RPO by
+        resource type &middot; why &mdash; the dominant reasons &middot; resources that
+        cannot be recovered &middot; breaches &middot; workload roll-up &middot;
+        appendices.</td></tr>
       </table>
-
-      <div class="cover-foot">Confidential &middot; for internal use. Generated
-      {fmt_date(_now_iso())} by Azure Support Agent.</div>
     </div>
     """
 
@@ -272,7 +373,7 @@ def _thesis_callout(m: dict[str, Any]) -> str:
                 'Where a resource is redundant, its answer for corruption and deletion is '
                 'in the same league as its answer for infrastructure loss.</div>'
                 '</td></tr></table>')
-    names = ", ".join(esc(r["name"]) for r in rows[:3])
+    names = ", ".join(_resource(m, r["name"], r.get("id"), width=40) for r in rows[:3])
     more = f" and {len(rows) - 3} more" if len(rows) > 3 else ""
     worst = rows[0]
     headline = (
@@ -284,7 +385,8 @@ def _thesis_callout(m: dict[str, Any]) -> str:
     <table class="callout" cellpadding="0" cellspacing="0"><tr><td>
       <div class="callout-h">{esc(headline)}</div>
       <div class="callout-b">Zone and geo replication copy corruption and deletion, usually
-      within seconds. {esc(worst['name'])} recovers from infrastructure loss in
+      within seconds. {_resource(m, worst['name'], worst.get('id'), width=40)} recovers from
+      infrastructure loss in
       &ldquo;{esc(_class_label(worst['infra_rto_class']).lower())}&rdquo; and from
       {esc(', '.join(worst['worse_for']).lower())} in
       &ldquo;{esc(_class_label(worst['logical_rto_class']).lower())}&rdquo;. Every
@@ -296,18 +398,27 @@ def _thesis_callout(m: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- sections
 def _executive(m: dict[str, Any], anchor: str = "exec") -> str:
     prot = m["protection"]
+    trend = m["trend"]
+    # A whole page saying "no trend yet" is a page nobody needs; one line here is the fact.
+    trend_note = ""
+    if not trend.get("available"):
+        reason = esc(trend.get("reason") or "No history has been recorded for this scope.")
+        trend_note = (f'<p class="muted"><b>Trend:</b> {reason} A direction is deliberately '
+                      f'not drawn from a single measurement &mdash; a line through one point '
+                      f'invites a reader to see a change that was never measured.</p>')
     return f"""
     <div class="pagebreak"></div><a name="{anchor}"></a>
     <h1>Recovery Readiness &mdash; Executive summary</h1>
     <p class="lead">
       {esc(str(m['resources']))} resources were analyzed against five failure scenarios.
       {esc(str(m['no_path_resources']))} have no recovery path from at least one of them,
-      and {esc(str(len(m['breaches'])))} miss the objective set for their criticality tier.
+      and {esc(str(len(m['breaches'])))} resource-scenario pairs miss the objective set for
+      their criticality tier.
     </p>
-    {_kpi_strip(m)}
     <h2>Protection coverage</h2>
     <table class="grid" cellpadding="0" cellspacing="0">
-      <tr><th>State</th><th class="num">Resources</th><th>What it means</th></tr>
+      <thead><tr><th>State</th><th class="num">Resources</th>
+        <th>What it means</th></tr></thead>
       <tr><td>{swatch('#16a34a')}&nbsp;Protected</td>
           <td class="num">{prot.get('protected', 0)}</td>
           <td>A backup or replication mechanism was found.</td></tr>
@@ -318,6 +429,51 @@ def _executive(m: dict[str, Any], anchor: str = "exec") -> str:
           <td class="num">{prot.get('unknown', 0)}</td>
           <td><b>We could not look.</b> This is not a statement that they are unprotected.</td></tr>
     </table>
+    {trend_note}
+    """
+
+
+def _actions_section(m: dict[str, Any], anchor: str = "actions") -> str:
+    """The report diagnosed well and then stopped. This turns the same facts into an ordered
+    work list: one row here is usually one change, and it names what the change buys."""
+    actions: list[tuple[str, str, str]] = []
+    for r in m["facts"]["reasons"]:
+        # Only reasons that describe something MISSING. A reason like "platform-managed
+        # service; a failed instance is replaced without operator action" explains a healthy
+        # verdict, and listing it as work to do would be nonsense.
+        if not r["no_recovery_path"]:
+            continue
+        actions.append((
+            esc(r["reason"]),
+            f"{r['no_recovery_path']} of {r['resources']} resource(s) &middot; "
+            f"{esc(_scenario_label(r['scenario']))}",
+            f"{r['no_recovery_path']} gain a recovery path for this failure"))
+    gap = m["facts"]["redundancy_gap"]
+    if gap:
+        actions.append((
+            "Only replication protects these resources &mdash; there is no independent copy",
+            f"{len(gap)} resource(s) &middot; corruption / deletion",
+            "Replication copies the damage; a real backup is the only way back"))
+    if not actions:
+        return ""
+    rows = "".join(
+        f"<tr><td><b>{i + 1}</b></td><td>{what}</td><td>{scope}</td>"
+        f"<td class='why'>{buys}</td></tr>"
+        for i, (what, scope, buys) in enumerate(actions))
+    return f"""
+    <div class="pagebreak"></div><a name="{anchor}"></a>
+    <h1>What to do next</h1>
+    <p class="lead">Every row here is a missing recovery mechanism, ordered by how many
+    resources it would restore. A missing mechanism cannot be tuned &mdash; it has to be
+    built &mdash; which is why this list comes before anything about speed.</p>
+    <table class="grid compact" cellpadding="0" cellspacing="0">
+      <thead><tr><th>Order</th><th>What is missing</th><th>Where it bites</th>
+        <th>What fixing it gains</th></tr></thead>
+      {rows}
+    </table>
+    <p class="muted">Derived from the same reasons shown later in the report; nothing here
+    is a recommendation the analysis did not already evidence. Resources already meeting
+    their objective are deliberately absent &mdash; this is a list of gaps, not a summary.</p>
     """
 
 
@@ -328,7 +484,8 @@ def _how_to_read(m: dict[str, Any], anchor: str = "how-to-read") -> str:
     <div class="pagebreak"></div><a name="{anchor}"></a>
     <h1>How to read this report</h1>
     <table class="grid" cellpadding="0" cellspacing="0">
-      <tr><th style="width:26%">Rule</th><th>Why it is stated rather than assumed</th></tr>
+      <thead><tr><th>Rule</th>
+        <th>Why it is stated rather than assumed</th></tr></thead>
       <tr><td><b>Derived, not drilled</b></td>
           <td>Every RTO and RPO here comes from configuration. Nothing has been proven by a
           recovery rehearsal, and a figure that has never been tested should not be quoted
@@ -361,15 +518,9 @@ def _how_to_read(m: dict[str, Any], anchor: str = "how-to-read") -> str:
 
 def _trend_section(m: dict[str, Any], anchor: str = "trend") -> str:
     trend = m["trend"]
+    # Handled as a one-line note in the executive summary when there is nothing to draw.
     if not trend.get("available"):
-        reason = esc(trend.get("reason") or "No history has been recorded for this scope.")
-        return f"""
-        <div class="pagebreak"></div><a name="{anchor}"></a>
-        <h1>Trend</h1>
-        <p class="muted">{reason} A direction is deliberately not drawn from a single
-        measurement &mdash; a line through one point invites a reader to see a change that
-        was never measured.</p>
-        """
+        return ""
     points = trend.get("points") or []
     series = [float(p.get("no_recovery_path", 0)) for p in points]
     deltas = trend.get("deltas") or {}
@@ -419,6 +570,7 @@ def _sparkline_uri(series: list[float]) -> str:
 
 def _scenarios_section(m: dict[str, Any], anchor: str = "scenarios") -> str:
     cards = []
+    total_resources = int(m["resources"])
     for scenario in model.SCENARIOS:
         dist = m["facts"]["rto_distribution"][scenario]
         applicable = sum(dist[c] for c in model.RTO_CLASSES)
@@ -427,12 +579,17 @@ def _scenarios_section(m: dict[str, Any], anchor: str = "scenarios") -> str:
         slices = [(RTO_COLOR[c], dist[c]) for c in model.RTO_CLASSES if dist[c]]
         legend = [(_class_label(c), str(dist[c]), RTO_COLOR[c])
                   for c in model.RTO_CLASSES if dist[c]]
-        centre = str(dist[model.RTO_NONE]) if dist[model.RTO_NONE] else str(applicable)
-        sub = ("no recovery path" if dist[model.RTO_NONE] else "resources")
+        # The centre is this card's OWN denominator. Scenario counts differ from the estate
+        # total because some resources cannot experience some failures, and that exclusion
+        # was previously invisible — the reader just saw numbers that would not add up.
+        not_applicable = max(0, total_resources - applicable)
+        sub = f"{applicable} of {total_resources} resources can experience this"
+        if not_applicable:
+            sub += f" \u00b7 {not_applicable} not applicable"
         helps = ("Redundancy does not help here."
                  if scenario in model.LOGICAL_SCENARIOS else "Redundancy helps here.")
         cards.append(
-            f'<td>{viz_card(_scenario_label(scenario), f"{sub} &middot; {helps}", _donut(slices, centre), legend)}</td>')
+            f'<td>{viz_card(_scenario_label(scenario), f"{sub}. {helps}", _donut(slices, str(applicable)), legend)}</td>')
 
     grid = ""
     for i in range(0, len(cards), 2):
@@ -445,39 +602,65 @@ def _scenarios_section(m: dict[str, Any], anchor: str = "scenarios") -> str:
     <h1>Recovery by failure scenario</h1>
     <p class="lead">The same resource has a different answer for each failure. A scope that
     looks healthy on the left three and red on the right two is the estate every
-    zone-centric tool calls resilient.</p>
+    zone-centric tool calls resilient. The number in each ring is how many resources that
+    failure applies to &mdash; not every resource can experience every failure.</p>
     <table class="viz-grid" cellpadding="0" cellspacing="0">{grid}</table>
+    {_colour_legend()}
     """
+
+
+def _colour_legend() -> str:
+    """Colour carries meaning on every page and was never defined. On a mono printer the
+    distinction disappears entirely, so each class is named as well as coloured."""
+    cells = "".join(
+        f'<td class="lgd">{swatch(RTO_COLOR[c])}&nbsp;{esc(_class_label(c))}</td>'
+        for c in model.RTO_CLASSES)
+    return (f'<table class="legend-bar" cellpadding="0" cellspacing="0"><tr>{cells}</tr>'
+            f'</table><p class="muted">These colours mean the same thing everywhere in this '
+            f'report. &ldquo;No recovery path&rdquo; is a different kind of answer from '
+            f'&ldquo;a day or more&rdquo;, not a worse degree of it.</p>')
 
 
 def _donut(slices: list[tuple[str, int]], centre: str) -> str:
     from app.core.pdf_common import donut_svg
 
-    total = sum(count for _, count in slices) or 1
-    return donut_svg([(colour, (count / total) * 100) for colour, count in slices],
+    # COUNTS, not percentages: donut_svg normalizes internally and prints the slice total in
+    # the middle, so feeding it percentages made every donut read "100".
+    return donut_svg([(colour, float(count)) for colour, count in slices],
                      center=centre, accent=ACCENT)
 
 
 def _by_type_section(m: dict[str, Any], anchor: str = "by-type") -> str:
     entries = m["facts"]["by_type"]
     shown = entries[:MAX_TYPES]
+    codes = _Codes()
     parts = []
     for e in shown:
         count = e["dominant_reason_count"]
-        explains = f" <b>(&times;{count})</b>" if count > 1 else ""
+        explains = f" (&times;{count})" if count > 1 else ""
+        # Counts are folded into prose cells rather than given a column each. A column whose
+        # data is one digit is ~8pt wide, and no header word fits in 8pt — which is why the
+        # headers used to overprint each other.
+        res = str(e["resources"])
+        if e["undetermined"]:
+            res += f" ({e['undetermined']} undet.)"
+        recovery = []
+        if e["no_recovery_path"]:
+            recovery.append(f"<b style='color:#b91c1c'>{e['no_recovery_path']} no path</b>")
+        if e["breached"]:
+            recovery.append(f"{e['breached']} breach")
+        rpo = esc(_minutes_text(e["rpo"]["median_minutes"]))
+        if e["rpo"]["excluded"]:
+            rpo += f" ({e['rpo']['excluded']} excl.)"
         parts.append(
             "<tr>"
-            f"<td>{esc_breakable(_short_type(e['type']))}</td>"
+            f"<td>{esc(_short_type(e['type']))}</td>"
             f"<td>{esc(_scenario_label(e['scenario']))}</td>"
-            f"<td class='num'>{e['resources']}</td>"
-            f"<td class='num' style='color:#b91c1c; font-weight:bold'>"
-            f"{e['no_recovery_path'] or ''}</td>"
-            f"<td class='num'>{e['breached'] or ''}</td>"
+            f"<td class='num'>{esc(res)}</td>"
+            f"<td>{' &middot; '.join(recovery) or '&mdash;'}</td>"
             f"<td>{_rto_cell(e['worst_rto_class'])}</td>"
-            f"<td class='num'>{e['undetermined'] or ''}</td>"
-            f"<td class='num'>{esc(_minutes_text(e['rpo']['median_minutes']))}</td>"
-            f"<td class='num'>{e['rpo']['excluded'] or ''}</td>"
-            f"<td class='why'>{esc_breakable(e['dominant_reason'], width=44)}{explains}</td>"
+            f"<td class='num'>{rpo}</td>"
+            f"<td>{esc(codes.code(e['dominant_reason']))}{explains}</td>"
             "</tr>")
     rows = "".join(parts)
     omitted = ""
@@ -491,18 +674,18 @@ def _by_type_section(m: dict[str, Any], anchor: str = "by-type") -> str:
     is usually one change &mdash; the last column names the reason that explains the most
     resources in that row.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr>
-        <th>Resource type</th><th>Scenario</th><th class="num">Res.</th>
-        <th class="num">No path</th><th class="num">Breach</th><th>Worst RTO</th>
-        <th class="num">Undet.</th><th class="num">Median RPO</th><th class="num">RPO excl.</th>
-        <th>Dominant reason</th>
-      </tr>
+      <thead><tr>
+        <th>Resource type</th><th>Scenario</th><th class="num">Resources</th>
+        <th>Recovery</th><th>Worst RTO</th><th class="num">RPO</th>
+        <th>Why</th>
+      </tr></thead>
       {rows}
     </table>
-    <p class="muted">&ldquo;Median RPO&rdquo; covers only resources whose recovery point
-    could be measured; &ldquo;RPO excl.&rdquo; is how many it leaves out. A type that cannot
-    experience a scenario is absent from that scenario rather than shown as meeting its
-    objective.</p>
+    {codes.legend('Dominant reason legend')}
+    <p class="muted">&ldquo;RPO&rdquo; is the median recovery point, and covers only
+    resources whose recovery point could be measured; the count in brackets is how many it
+    leaves out. A type that cannot experience a scenario is absent from that scenario rather
+    than shown as meeting its objective.</p>
     {omitted}
     """
 
@@ -514,11 +697,11 @@ def _reasons_section(m: dict[str, Any], anchor: str = "reasons") -> str:
     rows = "".join(
         f"<tr>"
         f"<td>{esc(_scenario_label(r['scenario']))}</td>"
-        f"<td>{esc_breakable(r['reason'], width=54)}</td>"
+        f"<td>{esc(r['reason'])}</td>"
         f"<td class='num'>{r['resources']}</td>"
         f"<td class='num' style='color:#b91c1c; font-weight:bold'>"
         f"{r['no_recovery_path'] or ''}</td>"
-        f"<td class='why'>{esc_breakable(', '.join(_short_type(t) for t in r['types'][:4]), width=30)}</td>"
+        f"<td class='why'>{esc(', '.join(_short_type(t) for t in r['types'][:4]))}</td>"
         f"</tr>"
         for r in reasons
     )
@@ -529,8 +712,9 @@ def _reasons_section(m: dict[str, Any], anchor: str = "reasons") -> str:
     list moves more resources than working down a resource list, because one row here can be
     one change.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Scenario</th><th>Reason</th><th class="num">Resources</th>
-          <th class="num">No path</th><th>Types affected</th></tr>
+      <thead><tr><th>Scenario</th><th>Reason</th>
+          <th class="num">Resources</th><th class="num">No path</th>
+          <th>Types affected</th></tr></thead>
       {rows}
     </table>
     """
@@ -548,12 +732,13 @@ def _no_path_section(m: dict[str, Any], anchor: str = "no-path") -> str:
         </td></tr></table>
         """
     shown = offenders[:MAX_NO_PATH]
+    codes = _Codes()
     rows = "".join(
         f"<tr>"
-        f"<td>{esc_breakable(o['name'], width=26)}</td>"
-        f"<td>{esc_breakable(_short_type(o['type']), width=24)}</td>"
+        f"<td>{_resource(m, o['name'], o.get('id'))}</td>"
+        f"<td>{esc(_short_type(o['type']))}</td>"
         f"<td style='color:#b91c1c; font-weight:bold'>{esc(', '.join(o['no_recovery_path']))}</td>"
-        f"<td class='why'>{esc_breakable('; '.join(o['reasons']), width=48)}</td>"
+        f"<td>{esc(codes.code(_joined(o['reasons'])))}</td>"
         f"</tr>"
         for o in shown
     )
@@ -567,9 +752,11 @@ def _no_path_section(m: dict[str, Any], anchor: str = "no-path") -> str:
     <p class="lead">No mechanism exists for the listed failure. This is not a slow recovery;
     it is the absence of one, which is why it leads every ranking in this report.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Resource</th><th>Type</th><th>Cannot recover from</th><th>Why</th></tr>
+      <thead><tr><th>Resource</th><th>Type</th>
+        <th>Cannot recover from</th><th>Why</th></tr></thead>
       {rows}
     </table>
+    {codes.legend()}
     {omitted}
     """
 
@@ -586,16 +773,17 @@ def _breaches_section(m: dict[str, Any], anchor: str = "breaches") -> str:
         </td></tr></table>
         """
     shown = breaches[:MAX_BREACHES]
+    codes = _Codes()
     rows = "".join(
         f"<tr>"
-        f"<td>{esc_breakable(b.get('name', ''), width=26)}</td>"
+        f"<td>{_resource(m, b.get('name', ''), b.get('resource_id'))}</td>"
         f"<td>{esc(_scenario_label(b.get('scenario', '')))}</td>"
-        f"<td>{esc(b.get('tier', ''))}</td>"
+        f"<td>{esc(_tier_label(m, b.get('tier', '')))}</td>"
         f"<td>{esc(_rpo_text(b))}</td>"
         f"<td>{_rto_cell(str(b.get('rto_class', '')))}</td>"
         f"<td>{esc(_minutes_text((b.get('target') or {}).get('rpo_minutes')))} / "
         f"{esc(_class_label(str((b.get('target') or {}).get('rto_class', ''))))}</td>"
-        f"<td class='why'>{esc_breakable('; '.join(e.get('detail', '') for e in b.get('basis') or []), width=40)}</td>"
+        f"<td>{esc(codes.code(_joined(e.get('detail', '') for e in b.get('basis') or [])))}</td>"
         f"</tr>"
         for b in shown
     )
@@ -615,10 +803,11 @@ def _breaches_section(m: dict[str, Any], anchor: str = "breaches") -> str:
     then the size of the miss weighted by tier.</p>
     {ack}
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Resource</th><th>Scenario</th><th>Tier</th><th>RPO</th><th>RTO</th>
-          <th>Objective (RPO / RTO)</th><th>Why</th></tr>
+      <thead><tr><th>Resource</th><th>Scenario</th><th>Tier</th><th>RPO</th><th>RTO</th>
+          <th>Objective (RPO / RTO)</th><th>Why</th></tr></thead>
       {rows}
     </table>
+    {codes.legend()}
     {omitted}
     """
 
@@ -630,6 +819,7 @@ def _workloads_section(m: dict[str, Any], anchor: str = "workloads") -> str:
     if not workloads:
         return ""
     rows = []
+    codes = _Codes()
     for wl in workloads:
         for scenario, spec in (wl.get("scenarios") or {}).items():
             if not spec.get("applicable"):
@@ -638,12 +828,12 @@ def _workloads_section(m: dict[str, Any], anchor: str = "workloads") -> str:
             coverage = spec.get("coverage") or {}
             rows.append(
                 f"<tr><td>{esc_breakable(wl.get('name', ''), width=24)}</td>"
-                f"<td>{esc(wl.get('tier', ''))}</td>"
+                f"<td>{esc(_tier_label(m, wl.get('tier', '')))}</td>"
                 f"<td>{esc(_scenario_label(scenario))}</td>"
                 f"<td>{esc(_rpo_text(spec))}</td>"
                 f"<td>{_rto_cell(str(spec.get('rto_class', '')))}</td>"
-                f"<td>{esc_breakable(weakest.get('name', ''), width=22)}</td>"
-                f"<td class='why'>{esc_breakable(weakest.get('reason', ''), width=36)}</td>"
+                f"<td>{_resource(m, weakest.get('name', ''), weakest.get('id'), width=22)}</td>"
+                f"<td>{esc(codes.code(weakest.get('reason', '')))}</td>"
                 f"<td class='num'>{coverage.get('determined', 0)}/{coverage.get('total', 0)}</td>"
                 f"</tr>")
     assumptions = "".join(f"<li>{esc(line)}</li>" for line in rollup.ASSUMPTIONS)
@@ -654,10 +844,15 @@ def _workloads_section(m: dict[str, Any], anchor: str = "workloads") -> str:
     time is. &ldquo;A day or more, because of one un-backed-up legacy virtual machine&rdquo;
     is a work item; &ldquo;a day or more&rdquo; is a statistic.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Workload</th><th>Tier</th><th>Scenario</th><th>RPO</th><th>RTO</th>
-          <th>Weakest link</th><th>Why</th><th class="num">Coverage</th></tr>
+      <thead><tr><th>Workload</th><th>Tier</th><th>Scenario</th><th>RPO</th><th>RTO</th>
+          <th>Weakest link</th><th>Why</th>
+          <th class="num">Coverage</th></tr></thead>
       {''.join(rows)}
     </table>
+    {codes.legend('Weakest-link reason legend')}
+    <p class="muted">&ldquo;Coverage&rdquo; is how many components of that workload could be
+    determined for that scenario, out of how many the scenario applies to. The denominator
+    moves between rows because not every component can experience every failure.</p>
     <h3>Assumptions behind every roll-up</h3>
     <ul class="muted">{assumptions}
       <li>Undetermined components are excluded from the aggregate and counted in Coverage,
@@ -668,20 +863,25 @@ def _workloads_section(m: dict[str, Any], anchor: str = "workloads") -> str:
 
 # --------------------------------------------------------------------------- appendices
 def _matrix_appendix(m: dict[str, Any], anchor: str = "appendix-matrix") -> str:
+    # The same sentence repeats for dozens of rows here, which is what made this appendix six
+    # pages long. Each distinct reason gets a code; the legend below carries the full text, so
+    # nothing is lost and the eye can find the rows that differ.
+    codes = _Codes()
     rows = []
     for row in m["rows"]:
         for scenario in model.SCENARIOS:
             verdict = (row.get("verdicts") or {}).get(scenario) or {}
             if not verdict.get("applicable", True):
                 continue
+            why = _joined(e.get("detail", "") for e in verdict.get("basis") or [])
             rows.append(
-                f"<tr><td>{esc_breakable(row.get('name', ''), width=24)}</td>"
-                f"<td>{esc_breakable(_short_type(row.get('type')), width=22)}</td>"
+                f"<tr><td>{_resource(m, row.get('name', ''), row.get('id'), width=24)}</td>"
+                f"<td>{esc(_short_type(row.get('type')))}</td>"
                 f"<td>{esc(_scenario_label(scenario))}</td>"
                 f"<td>{esc(_rpo_text(verdict))}</td>"
                 f"<td>{_rto_cell(str(verdict.get('rto_class', '')))}</td>"
                 f"<td>{esc(verdict.get('confidence', ''))}</td>"
-                f"<td class='why'>{esc_breakable('; '.join(e.get('detail', '') for e in verdict.get('basis') or []), width=40)}</td>"
+                f"<td>{esc(codes.code(why))}</td>"
                 f"</tr>")
     total = len(rows)
     shown = rows[:MAX_MATRIX]
@@ -689,16 +889,19 @@ def _matrix_appendix(m: dict[str, Any], anchor: str = "appendix-matrix") -> str:
     if total > MAX_MATRIX:
         omitted = (f'<p class="muted">Showing {MAX_MATRIX} of {total} rows. The remaining '
                    f'{total - MAX_MATRIX} are in the Excel workbook, which is not bounded.</p>')
+    legend = codes.legend()
     return f"""
     <div class="pagebreak"></div><a name="{anchor}"></a>
     <h1>Appendix A &mdash; Recovery matrix</h1>
-    <p class="muted">One row per resource per applicable scenario.</p>
+    <p class="muted">One row per resource per applicable scenario. &ldquo;Why&rdquo; is a
+    code into the reason legend that follows the table.</p>
     {omitted}
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Resource</th><th>Type</th><th>Scenario</th><th>RPO</th><th>RTO</th>
-          <th>Conf.</th><th>Why</th></tr>
+      <thead><tr><th>Resource</th><th>Type</th><th>Scenario</th><th>RPO</th><th>RTO</th>
+          <th>Conf.</th><th>Why</th></tr></thead>
       {''.join(shown)}
     </table>
+    {legend}
     """
 
 
@@ -716,10 +919,10 @@ def _objectives_appendix(m: dict[str, Any], anchor: str = "appendix-objectives")
                 f"<td>{esc(_class_label(str(target.get('rto_class', ''))))}</td>"
                 f"<td class='num'>{esc(_minutes_text(target.get('rpo_minutes')))}</td></tr>")
     rate_rows = "".join(
-        f"<tr><td>{esc(key)}</td><td class='num'>{esc(str(value))}</td></tr>"
+        f"<tr><td>{esc(_humanize_key(key))}</td><td class='num'>{esc(str(value))}</td></tr>"
         for key, value in (doc.get("restore_rates") or {}).items())
     mech_rows = "".join(
-        f"<tr><td>{esc(key)}</td><td class='num'>{esc(str(value))}</td></tr>"
+        f"<tr><td>{esc(_humanize_key(key))}</td><td class='num'>{esc(str(value))}</td></tr>"
         for key, value in (doc.get("mechanism_minutes") or {}).items())
     return f"""
     <div class="pagebreak"></div><a name="{anchor}"></a>
@@ -745,7 +948,7 @@ def _objectives_appendix(m: dict[str, Any], anchor: str = "appendix-objectives")
 
 def _methodology(m: dict[str, Any], anchor: str = "appendix-meta") -> str:
     prov_rows = "".join(
-        f"<tr><td>{esc(name)}</td><td>{esc(p.get('source', ''))}</td>"
+        f"<tr><td>{esc(_humanize_key(name))}</td><td>{esc(p.get('source', ''))}</td>"
         f"<td>{esc(fmt_date(p.get('collected_at')))}</td>"
         f"<td>{'YES' if p.get('unreadable') else 'no'}</td>"
         f"<td class='why'>{esc(p.get('reason', ''))}</td></tr>"
@@ -770,7 +973,8 @@ def _methodology(m: dict[str, Any], anchor: str = "appendix-meta") -> str:
     <p class="muted">&ldquo;No findings&rdquo; and &ldquo;could not look&rdquo; are opposite
     facts. A section that could not be read says so here.</p>
     <table class="grid compact" cellpadding="0" cellspacing="0">
-      <tr><th>Section</th><th>Source</th><th>Collected</th><th>Unreadable</th><th>Reason</th></tr>
+      <thead><tr><th>Section</th><th>Source</th><th>Collected</th>
+        <th>Unreadable</th><th>Reason</th></tr></thead>
       {prov_rows}
     </table>
     <h2>Completeness</h2>
@@ -784,8 +988,7 @@ def _methodology(m: dict[str, Any], anchor: str = "appendix-meta") -> str:
       real restore and setting the rate in Appendix B will make every band more accurate.</li>
     </ul>
     <table class="meta" cellpadding="0" cellspacing="0">
-      <tr><td class="k">Scope</td><td class="v">{esc(m['scope_name'])}</td></tr>
-      <tr><td class="k">Scope type</td><td class="v">{esc(m['scope_kind'] or '—')}</td></tr>
+      <tr><td class="k">Scope</td><td class="v">{esc(_scope_heading(m))}</td></tr>
       <tr><td class="k">Analyzed at</td><td class="v">{fmt_date(m['generated_at'])}</td></tr>
       <tr><td class="k">Report generated</td><td class="v">{fmt_date(_now_iso())}</td></tr>
       <tr><td class="k">Demo data</td><td class="v">{'yes' if m['demo'] else 'no'}</td></tr>
@@ -834,22 +1037,37 @@ def _doc_css() -> str:
 
 .trend-img {{ display: block; width: 500px; margin: 6px 0 8px 0; border: 0.5px solid {LINE}; }}
 .grid .why {{ color: {MUTED}; font-size: 7.5px; }}
+/* xhtml2pdf sizes columns from the first row's `width` ATTRIBUTE, in absolute units.
+   CSS width on th (and table-layout:fixed) is ignored, which is why the prose column was
+   crushed to one word per line while narrow headers overprinted each other. */
+.grid th {{ vertical-align: bottom; }}
+.grid tr {{ page-break-inside: avoid; }}
+.legend-bar {{ width: 100%; margin: 8px 0 2px 0; }}
+.legend-bar .lgd {{ font-size: 8px; color: {MUTED}; padding: 3px 4px;
+    border: 0.5px solid {LINE}; text-align: center; }}
 h1 {{ color: {ACCENT}; border-bottom-color: {ACCENT}; }}
-.cover-brand {{ color: {ACCENT}; }}
+.cover-brand {{ color: {ACCENT}; font-size: 26px; line-height: 1.15; }}
+.cover-sub {{ font-size: 13px; }}
 a {{ color: {BRAND}; }}
 ul.muted {{ margin: 2px 0 6px 16px; padding: 0; }}
 ul.muted li {{ margin-bottom: 3px; }}
 """
 
 
-def _shell(header_right: str, body: str) -> str:
+def _shell(header_left: str, header_right: str, body: str) -> str:
+    # Scope first, product last: a page found on a desk should identify its subject.
     header = (
         '<table cellpadding="0" cellspacing="0" width="18cm"><tr>'
-        '<td><span class="brand">Azure Support Agent</span> &nbsp; Recovery Readiness Report</td>'
+        f'<td><span class="brand">{esc(header_left)}</span> &nbsp; Recovery Readiness</td>'
         f'<td style="text-align:right">{esc(header_right)}</td>'
         "</tr></table>"
     )
-    footer = "Confidential &nbsp;&middot;&nbsp; page <pdf:pagenumber> of <pdf:pagecount>"
+    footer = ("Confidential &nbsp;&middot;&nbsp; Azure Support Agent &nbsp;&middot;&nbsp; "
+              "page <pdf:pagenumber> of <pdf:pagecount>")
+    # Applied once here rather than on sixteen table tags: xhtml2pdf repeats the first N rows
+    # of a table on every page it spans, so a continuation page keeps its column headings
+    # instead of presenting unlabelled data.
+    body = body.replace('<table class="grid', '<table repeat="1" class="grid')
     return ("<html><head><meta charset='utf-8'><style>" + _doc_css()
             + "</style></head><body>" + running_frames(header, footer) + body + "</body></html>")
 
@@ -857,10 +1075,17 @@ def _shell(header_right: str, body: str) -> str:
 def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = None,
           trend: dict[str, Any] | None = None) -> bytes:
     m = _adapt(snapshot, reference_doc, trend)
+    has_trend = bool((trend or {}).get("available"))
+    has_actions = bool(m["facts"]["reasons"] or m["facts"]["redundancy_gap"])
     entries: list[tuple[str, str, int]] = [
         ("exec", "Recovery Readiness — Executive summary", 0),
         ("how-to-read", "How to read this report", 0),
-        ("trend", "Trend", 0),
+    ]
+    if has_actions:
+        entries.append(("actions", "What to do next", 0))
+    if has_trend:
+        entries.append(("trend", "Trend", 0))
+    entries += [
         ("scenarios", "Recovery by failure scenario", 0),
         ("by-type", "RTO and RPO by resource type", 0),
     ]
@@ -877,7 +1102,8 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
         ("appendix-objectives", "Appendix B — Objectives and the constants behind every band", 0),
         ("appendix-meta", "Appendix C — Provenance and methodology", 0),
     ]
-    header_right = f"{m['scope_name']} · {fmt_date(m['generated_at'])}"
+    header_right = fmt_date(m['generated_at'])
+    header_left = _scope_heading(m)
 
     def _compose(page_map: dict[str, int] | None) -> str:
         parts = [
@@ -885,6 +1111,10 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
             _toc(entries, page_map),
             _executive(m),
             _how_to_read(m),
+        ]
+        if has_actions:
+            parts.append(_actions_section(m))
+        parts += [
             _trend_section(m),
             _scenarios_section(m),
             _by_type_section(m),
@@ -897,7 +1127,7 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
         parts += [_matrix_appendix(m), _objectives_appendix(m), _methodology(m)]
         return "".join(parts)
 
-    return render_two_pass(lambda body: _shell(header_right, body), _compose, entries)
+    return render_two_pass(lambda body: _shell(header_left, header_right, body), _compose, entries)
 
 
 __all__ = ["build", "MAX_NO_PATH", "MAX_BREACHES", "MAX_MATRIX"]
