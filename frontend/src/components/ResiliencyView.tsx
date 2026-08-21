@@ -14,11 +14,11 @@
  *   * no bare numbers — every RTO/RPO carries its basis and confidence.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
-  ResiliencyAnalysis, ResiliencyBreach, ResiliencyMeta, ResiliencyReference,
+  ResiliencyAnalysis, ResiliencyBreach, ResiliencyJob, ResiliencyMeta, ResiliencyReference,
   ResiliencyResource, ResiliencyScope, ResiliencySnapshot, ResiliencyTrend, ResiliencyWorkload,
 } from "../api";
 import { formatError } from "../utils/format";
@@ -56,8 +56,8 @@ function toScope(kind: ScopeKind, workloadId: string, subId: string,
 }
 
 /** Shown on every tab until this scope has been analyzed at least once. */
-function NeedsAnalysis({ onAnalyze, running, message }: {
-  onAnalyze: () => void; running: boolean; message: string;
+function NeedsAnalysis({ onAnalyze, running, message, startedAt }: {
+  onAnalyze: () => void; running: boolean; message: string; startedAt?: string;
 }) {
   return (
     <div className="rounded-xl border border-dashed bg-white p-10 text-center"
@@ -73,8 +73,8 @@ function NeedsAnalysis({ onAnalyze, running, message }: {
         numbers never move while you are working a decision.
       </p>
       <button onClick={onAnalyze} disabled={running} data-testid="resiliency-analyze"
-              className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-        {running ? "Analyzing…" : "Analyze recovery posture"}
+              className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium tabular-nums text-white disabled:opacity-50">
+        {running ? `Analyzing… ${elapsedText(startedAt)}` : "Analyze recovery posture"}
       </button>
       {message && <div className="mt-2 text-xs text-gray-500">{message}</div>}
     </div>
@@ -87,6 +87,117 @@ function Stat({ label, value, tone = "" }: { label: string; value: React.ReactNo
       <div className="text-[11px] uppercase text-gray-500">{label}</div>
       <div className={`text-xl font-semibold tabular-nums ${tone || "text-gray-900"}`}>{value}</div>
     </div>
+  );
+}
+
+function elapsedText(startedAt?: string | null, finishedAt?: string | null): string {
+  if (!startedAt) return "";
+  const seconds = Math.max(0, Math.round(
+    ((finishedAt ? Date.parse(finishedAt) : Date.now()) - Date.parse(startedAt)) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+//: The steps `analyze()` announces, in order. Progress is the count reached, not a guess.
+const ANALYSIS_STEPS = 6;
+
+/**
+ * Live progress for a running analysis.
+ *
+ * The sweep takes tens of seconds against a real estate, so a button that only says
+ * "Analyzing…" leaves the operator unable to tell a slow subscription from a hung one. Each
+ * line names the source it read and what it returned, and the run continues server-side if
+ * they navigate away — the poll reconnects to it on the way back.
+ */
+function AnalysisProgress({ job }: { job?: ResiliencyJob | null }) {
+  const [, tick] = useState(0);
+  const [dismissed, setDismissed] = useState("");
+  const running = job?.status === "running";
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => tick((v) => v + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const finishedAt = job?.finished_at ?? "";
+  useEffect(() => {
+    if (!job || job.status !== "done" || !finishedAt) return;
+    const timer = window.setTimeout(() => setDismissed(finishedAt), 6000);
+    return () => window.clearTimeout(timer);
+  }, [job, finishedAt]);
+
+  if (!job || (finishedAt && dismissed === finishedAt)) return null;
+  // A finished run is worth confirming, but only while it is still news — otherwise the
+  // completion banner replays on every page load until the next analysis.
+  if (job.status !== "running" && finishedAt && Date.now() - Date.parse(finishedAt) > 60_000) {
+    return null;
+  }
+
+  const lines = job.messages ?? [];
+  const failed = job.status === "error";
+  const current = failed ? (job.error || "The analysis failed.")
+    : (lines.at(-1)?.message || "Starting the recovery analysis…");
+  // A finished run is complete regardless of how many steps it announced — demo scopes and
+  // connections without Advisor legitimately emit fewer.
+  const pct = job.status === "running"
+    ? Math.min(95, Math.round((Math.max(lines.length, 1) / ANALYSIS_STEPS) * 100))
+    : 100;
+
+  return (
+    <section role="status" aria-live="polite" data-testid="resiliency-progress"
+             className={`mb-3 overflow-hidden rounded-xl border ${
+               failed ? "border-rose-200 bg-rose-50" : "border-sky-200 bg-sky-50/70"}`}>
+      <div className="flex items-start gap-3 px-4 py-3">
+        <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${
+          running ? "animate-pulse bg-sky-500" : failed ? "bg-rose-500" : "bg-emerald-500"}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-gray-900">
+              {running ? "Analyzing recovery posture" : failed ? "Analysis failed" : "Analysis complete"}
+            </span>
+            <span className="text-[10px] tabular-nums text-gray-500">
+              Elapsed {elapsedText(job.started_at, job.finished_at)}
+            </span>
+            {running && (
+              <span className="rounded bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">
+                Running on server
+              </span>
+            )}
+            <span className="text-[10px] tabular-nums text-gray-500">{lines.length} step(s)</span>
+          </div>
+          <p className="mt-0.5 text-xs text-gray-700">{current}</p>
+          {running && (
+            <p className="mt-1 text-[10px] text-gray-500">
+              This analysis continues on the server if you switch tabs or close the page.
+              Come back to reconnect to it.
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="h-1 bg-sky-100">
+        <div className={`h-full transition-all duration-500 ${failed ? "bg-rose-500" : "bg-sky-500"}`}
+             style={{ width: `${pct}%` }} />
+      </div>
+      {lines.length > 0 && (
+        <ol className="max-h-56 space-y-1 overflow-auto border-t border-sky-100 bg-white/70 px-4 py-2">
+          {lines.map((line, i) => (
+            <li key={`${line.at}-${i}`} className="flex gap-2 text-[11px] leading-5 text-gray-600"
+                data-testid="resiliency-progress-step">
+              <span className={line.level === "error" ? "text-rose-500"
+                : line.level === "ok" ? "text-emerald-500" : "text-sky-500"}>
+                {line.level === "error" ? "!" : "✓"}
+              </span>
+              <span className="tabular-nums text-gray-400">
+                {String(line.at).slice(11, 19)}
+              </span>
+              <span className="min-w-0 flex-1">{line.message}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 
@@ -109,6 +220,18 @@ export function ResiliencyPanel() {
     () => toScope(scopeKind, workloadId, subId, connId),
     [scopeKind, workloadId, subId, connId]);
   const scopeReady = scopeKind === "workload" ? !!workloadId : !!subId;
+
+  /** Backup Manager owns the protection facts this report joins, and it only produces them
+   *  when an operator runs it. Naming that gap without a way to close it makes the reader
+   *  hunt for the screen; the scope travels so they do not have to re-pick it. */
+  const backupManagerHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (connId) params.set("connection_id", connId);
+    if (scopeKind === "workload" && workloadId) params.set("workload_id", workloadId);
+    if (scopeKind === "subscription" && subId) params.set("subscription_id", subId);
+    const query = params.toString();
+    return query ? `/backup-manager?${query}` : "/backup-manager";
+  }, [connId, scopeKind, workloadId, subId]);
 
   const [openResource, setOpenResource] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -160,12 +283,10 @@ export function ResiliencyPanel() {
     ? (job.data.job.finished_at || job.data.job.started_at || "") : "";
   useEffect(() => {
     if (!finishedRun) return;
-    // Everything DERIVED from the snapshot, not just the snapshot. The Analysis tab, the
-    // Trend strip and the drawer are separate queries, and leaving them cached showed an
-    // empty Analysis tab after the first run until the user reloaded the page.
-    for (const key of ["snapshot", "analysis", "trend", "resource"]) {
-      void qc.invalidateQueries({ queryKey: ["resiliency", key] });
-    }
+    // The WHOLE feature, not just the snapshot. The Analysis tab, the trend strip, the
+    // drawer and the reference are separate queries, and leaving any of them cached showed
+    // stale content after a run until the reader reloaded the page.
+    void qc.invalidateQueries({ queryKey: ["resiliency"] });
   }, [finishedRun, qc]);
 
   const snap = snapshot.data;
@@ -341,6 +462,8 @@ export function ResiliencyPanel() {
                      data-testid="resiliency-error">{err}</div>}
         {note && <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
                       data-testid="resiliency-note">{note}</div>}
+        {/* On every tab: a reader who switched tabs mid-run must still see it is running. */}
+        <AnalysisProgress job={job.data?.job} />
         {/* Above the content and on EVERY tab: an empty grid on a scope we could not read
             is indistinguishable from a clean one, and the Overview banner is below the fold. */}
         {estateUnreadable && (
@@ -360,12 +483,14 @@ export function ResiliencyPanel() {
           </div>
         ) : !snap?.report_exists ? (
           <NeedsAnalysis onAnalyze={analyze} running={running}
+                         startedAt={job.data?.job?.started_at}
                          message={job.data?.job?.messages?.slice(-1)[0]?.message ?? ""} />
         ) : (
           <>
             {tab === "overview" && (
               <OverviewTab snap={snap} scenarios={scenarios} classLabels={classLabels}
                            trend={trendQ.data} unreadable={estateUnreadable}
+                           backupManagerHref={backupManagerHref}
                            onOpen={(rid) => setOpenResource(rid)} />
             )}
             {tab === "analysis" && (
@@ -427,12 +552,21 @@ export function ResiliencyPanel() {
 }
 
 // ---------------------------------------------------------------------------- overview
-function OverviewTab({ snap, scenarios, classLabels, trend, unreadable, onOpen }: {
+/** Provenance keys are wire values; these are what a reader is shown. */
+const SOURCE_LABEL: Record<string, string> = {
+  configuration: "Resource configuration",
+  protection: "Backup protection",
+  advisor: "Azure Advisor",
+};
+
+function OverviewTab({ snap, scenarios, classLabels, trend, unreadable, backupManagerHref,
+                      onOpen }: {
   snap: ResiliencySnapshot;
   scenarios: { id: string; label: string; description: string; redundancy_helps: boolean }[];
   classLabels: Record<string, string>;
   trend: ResiliencyTrend | undefined;
   unreadable: string;
+  backupManagerHref: string;
   onOpen: (id: string, scenario: string) => void;
 }) {
   const summary = snap.summary;
@@ -450,7 +584,18 @@ function OverviewTab({ snap, scenarios, classLabels, trend, unreadable, onOpen }
           <div className="font-semibold">Some sources could not be read</div>
           <ul className="ml-4 list-disc">
             {Object.entries(snap.provenance ?? {}).filter(([, p]) => p.unreadable).map(([name, p]) => (
-              <li key={name}><span className="font-medium">{name}</span>: {p.reason}</li>
+              <li key={name}>
+                <span className="font-medium">{SOURCE_LABEL[name] ?? name}</span>: {p.reason}
+                {name === "protection" && (
+                  <>
+                    {" "}
+                    <Link to={backupManagerHref} data-testid="resiliency-open-backup-manager"
+                          className="font-medium text-amber-900 underline hover:text-amber-700">
+                      Run a Backup Manager analysis for this scope →
+                    </Link>
+                  </>
+                )}
+              </li>
             ))}
           </ul>
         </div>

@@ -460,12 +460,21 @@ export function BackupManagerPanel() {
 
   useEffect(() => {
     const linkedWorkload = routeSearch.get("workload_id");
+    const linkedSub = routeSearch.get("subscription_id");
     const linkedMg = routeSearch.get("management_group_id");
     const linkedConnection = routeSearch.get("connection_id");
     if (linkedConnection && linkedConnection !== connId) setConnId(linkedConnection);
     if (linkedWorkload) {
       setMgId(""); setMgName("");
       setSubId(""); setSubName("");
+    } else if (linkedSub) {
+      // Recovery Readiness scopes by subscription too, and a deep link that silently landed
+      // on the last-used scope would run the analysis against the wrong estate.
+      setScopeKind("subscription");
+      setWorkloadId("");
+      setMgId(""); setMgName("");
+      setSubId(linkedSub);
+      setSubName(linkedSub);
     } else if (linkedMg) {
       setScopeKind("management_group");
       setWorkloadId("");
