@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
+from app.core.app_settings import load_settings
 from app.entra.graphclient import (
     GraphAuthError,
     GraphClient,
@@ -113,6 +114,79 @@ def _days_until(iso: str | None) -> int | None:
     return int((dt - _now()).total_seconds() // 86400)
 
 
+# --------------------------------------------------------------------------- sign-in activity
+# Microsoft's per-application sign-in report covers a rolling window. Three facts have to stay
+# distinct here, because collapsing them is how a live application gets deleted:
+#   * a date            — it was signed into then
+#   * no row, measured  — nothing signed into it inside the window (NOT "never")
+#   * not measured      — we could not read the report at all (NOT "never" either)
+SIGNIN_WINDOW_DAYS = 30
+SIGNIN_BUCKET_RECENT = "Last 7 days"
+SIGNIN_BUCKET_WINDOW = "8-30 days"
+SIGNIN_BUCKET_OLD = "Over 30 days"
+SIGNIN_BUCKET_NONE = "No sign-in in 30 days"
+SIGNIN_BUCKET_UNKNOWN = "Not measured"
+SIGNIN_BUCKETS = (
+    SIGNIN_BUCKET_RECENT,
+    SIGNIN_BUCKET_WINDOW,
+    SIGNIN_BUCKET_OLD,
+    SIGNIN_BUCKET_NONE,
+    SIGNIN_BUCKET_UNKNOWN,
+)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _newest_signin(*blocks: Any) -> str:
+    """Newest ``lastSignInDateTime`` across Graph activity blocks, or "".
+
+    Graph emits ISO-8601 UTC, which sorts lexically, so ``max`` is exact without parsing.
+    """
+    stamps = [str(_as_dict(b).get("lastSignInDateTime") or "") for b in blocks]
+    return max((s for s in stamps if s), default="")
+
+
+def _days_since(iso: str | None) -> int | None:
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0, int((_now() - dt).total_seconds() // 86400))
+
+
+def signin_bucket(app: dict[str, Any]) -> str:
+    """Facet bucket for one normalized app row."""
+    if not app.get("lastSignInKnown"):
+        return SIGNIN_BUCKET_UNKNOWN
+    days = app.get("lastSignInDays")
+    if days is None:
+        return SIGNIN_BUCKET_NONE
+    if days <= 7:
+        return SIGNIN_BUCKET_RECENT
+    if days <= SIGNIN_WINDOW_DAYS:
+        return SIGNIN_BUCKET_WINDOW
+    return SIGNIN_BUCKET_OLD
+
+
+def unmeasured_signin_activity(reason: str) -> dict[str, Any]:
+    """Snapshot-level block stating that sign-in activity could not be read, and why."""
+    return {
+        "measured": False,
+        "reason": reason,
+        "window_days": SIGNIN_WINDOW_DAYS,
+        "source": "servicePrincipalSignInActivities",
+        "complete": False,
+        "apps_with_activity": 0,
+        "credentials": {"measured": False, "reason": reason, "count": 0},
+    }
+
+
 # --------------------------------------------------------------------------- normalize
 def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
     """Project a single app (demo or Graph-shaped) onto the grid row contract.
@@ -134,12 +208,17 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
             expiry_days.append(d)
             if d < 0:
                 expired += 1
+        last_used = str(c.get("lastUsed") or "") or None
         credentials.append(
             {
+                "keyId": str(c.get("keyId") or ""),
                 "type": c.get("type", "secret"),
                 "displayName": c.get("displayName") or "",
                 "endDateTime": c.get("endDateTime"),
                 "daysUntilExpiry": d,
+                "lastUsed": last_used,
+                "lastUsedKnown": bool(c.get("lastUsedKnown")),
+                "lastUsedDays": _days_since(last_used),
             }
         )
     next_expiry = min(expiry_days) if expiry_days else None
@@ -168,6 +247,9 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
     if enterprise_state not in ENTERPRISE_APP_STATES:
         enterprise_state = "unknown"
 
+    activity = _as_dict(raw.get("signInActivity"))
+    last_signin = str(activity.get("last") or "") or None
+
     return {
         "id": raw.get("id") or "",
         "appId": raw.get("appId") or "",
@@ -187,6 +269,13 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
         "owners": owners,
         "ownerless": len(owners) == 0,
         "highRisk": high_risk,
+        # `lastSignInKnown` is the tenant-level fact "the report was read". Without it a
+        # missing date is indistinguishable from an unreadable report.
+        "lastSignIn": last_signin,
+        "lastSignInKnown": bool(activity.get("known")),
+        "lastSignInDays": _days_since(last_signin),
+        "lastSignInDelegated": str(activity.get("delegated") or "") or None,
+        "lastSignInApplication": str(activity.get("application") or "") or None,
         "enterpriseAppState": enterprise_state,
         "servicePrincipalId": raw.get("servicePrincipalId") or None,
         "servicePrincipalType": raw.get("servicePrincipalType") or "",
@@ -203,6 +292,7 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
     perms: dict[str, int] = {}
     owners: dict[str, int] = {}
     states: dict[str, int] = {state: 0 for state in ENTERPRISE_APP_STATES}
+    signins: dict[str, int] = {bucket: 0 for bucket in SIGNIN_BUCKETS}
     summary = {
         "total": len(apps),
         "withSecrets": 0,
@@ -217,6 +307,10 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         "deactivated": 0,
         "notInstantiated": 0,
         "stateUnknown": 0,
+        "signedIn7d": 0,
+        "signedIn30d": 0,
+        "noRecentSignIn": 0,
+        "signInNotMeasured": 0,
     }
     for a in apps:
         audiences[a["signInAudience"]] = audiences.get(a["signInAudience"], 0) + 1
@@ -248,6 +342,16 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
             summary["stateUnknown"] += 1
         summary["applicationPerms"] += a["applicationPermissionsCount"]
         summary["delegatedPerms"] += a["delegatedPermissionsCount"]
+        bucket = signin_bucket(a)
+        signins[bucket] += 1
+        if bucket == SIGNIN_BUCKET_UNKNOWN:
+            summary["signInNotMeasured"] += 1
+        elif bucket in (SIGNIN_BUCKET_NONE, SIGNIN_BUCKET_OLD):
+            summary["noRecentSignIn"] += 1
+        else:
+            summary["signedIn30d"] += 1
+            if bucket == SIGNIN_BUCKET_RECENT:
+                summary["signedIn7d"] += 1
         for p in a["permissions"]:
             if p["value"]:
                 perms[p["value"]] = perms.get(p["value"], 0) + 1
@@ -262,6 +366,8 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         "permissions": _facet(perms),
         "owners": _facet(owners),
         "enterpriseAppStates": _facet(states),
+        # Ordered newest-first rather than by count, so the buckets read as a timeline.
+        "signInActivity": [{"value": b, "count": signins[b]} for b in SIGNIN_BUCKETS],
         "summary": summary,
     }
 
@@ -273,6 +379,27 @@ def _iso_in(days: int) -> str:
 
 def _created(days_ago: int) -> str:
     return (_now() - timedelta(days=days_ago)).isoformat()
+
+
+def _signed_in(days_ago: int | None) -> str:
+    return "" if days_ago is None else (_now() - timedelta(days=days_ago, hours=3)).isoformat()
+
+
+def demo_signin_activity(apps: list[dict[str, Any]]) -> dict[str, Any]:
+    """The snapshot-level sign-in block for the demo dataset (measured, clearly labeled)."""
+    return {
+        "measured": True,
+        "reason": "",
+        "window_days": SIGNIN_WINDOW_DAYS,
+        "source": "demo",
+        "complete": True,
+        "apps_with_activity": sum(1 for a in apps if a.get("lastSignIn")),
+        "credentials": {
+            "measured": True,
+            "reason": "",
+            "count": sum(1 for a in apps for c in a["credentials"] if c.get("lastUsed")),
+        },
+    }
 
 
 def build_demo_app_registrations() -> list[dict[str, Any]]:
@@ -502,6 +629,10 @@ def build_demo_app_registrations() -> list[dict[str, Any]]:
         "active", "active", "deactivated", "active", "active", "active",
         "not_instantiated", "active", "unknown", "active", "active", "active",
     )
+    # Days since the last sign-in; None = measured but nothing signed into it in the window.
+    # Index 2 (Legacy Migration Tool) and 8 (Partner B2B Gateway) are the dormant-but-dangerous
+    # pair, and index 9 is deliberately older than the window so that bucket is reachable too.
+    demo_signins: tuple[int | None, ...] = (0, 3, None, 12, 0, 21, 5, 2, None, 45, 1, 9)
     for index, app in enumerate(raw):
         state = demo_states[index]
         app["enterpriseAppState"] = state
@@ -516,6 +647,22 @@ def build_demo_app_registrations() -> list[dict[str, Any]]:
             "demo" if state != "not_instantiated" else "not_found"
         )
         app["enterpriseAppStateSource"] = "demo"
+
+        days_ago = demo_signins[index]
+        last = _signed_in(days_ago)
+        kinds = {p["type"] for p in app["permissions"]}
+        app["signInActivity"] = {
+            "known": True,
+            "last": last,
+            "delegated": last if "Delegated" in kinds else "",
+            "application": last if "Application" in kinds else "",
+        }
+        # Only the first credential is shown as used, so the demo carries the question the
+        # per-credential report exists to answer: which of these can be retired?
+        for position, credential in enumerate(app["credentials"]):
+            credential["keyId"] = f"c0000000-0000-0000-{index + 1:04d}-{position + 1:012d}"
+            credential["lastUsed"] = last if position == 0 else ""
+            credential["lastUsedKnown"] = True
     return [_normalise_app(r) for r in raw]
 
 
@@ -536,17 +683,147 @@ def _perms_from_graph_app(detail: dict[str, Any], resolver: dict[str, str] | Non
     return out
 
 
-def _creds_from_graph_app(detail: dict[str, Any]) -> list[dict[str, Any]]:
+def _creds_from_graph_app(
+    detail: dict[str, Any],
+    *,
+    last_used: dict[str, str] | None = None,
+    used_known: bool = False,
+) -> list[dict[str, Any]]:
+    used = last_used or {}
     out: list[dict[str, Any]] = []
-    for pw in detail.get("passwordCredentials") or []:
-        out.append(
-            {"type": "secret", "displayName": pw.get("displayName") or "", "endDateTime": pw.get("endDateTime")}
-        )
-    for kc in detail.get("keyCredentials") or []:
-        out.append(
-            {"type": "certificate", "displayName": kc.get("displayName") or "", "endDateTime": kc.get("endDateTime")}
-        )
+    for kind, key in (("secret", "passwordCredentials"), ("certificate", "keyCredentials")):
+        for cred in detail.get(key) or []:
+            key_id = str(cred.get("keyId") or "")
+            out.append({
+                "keyId": key_id,
+                "type": kind,
+                "displayName": cred.get("displayName") or "",
+                "endDateTime": cred.get("endDateTime"),
+                "lastUsed": used.get(key_id.lower(), ""),
+                "lastUsedKnown": used_known,
+            })
     return out
+
+
+async def _signin_activity(
+    client: GraphClient,
+    say: ProgressFn,
+    *,
+    max_items: int,
+) -> dict[str, Any]:
+    """Last sign-in per application, from the beta service-principal activity report.
+
+    Returns ``{"block": <snapshot-level meta>, "by_app": {appId(lower): {...}}}``. Any failure
+    degrades to ``measured: False`` with an operator-actionable reason — never to an empty map,
+    which would render as "nothing has signed into any of these".
+    """
+    empty: dict[str, dict[str, str]] = {}
+    if not client.beta_available(True):
+        return {
+            "block": unmeasured_signin_activity(
+                "Sign-in activity comes from a Microsoft Graph beta report, and beta endpoints "
+                "are turned off for this deployment. Enable them in General settings to show "
+                "when each application was last signed into."
+            ),
+            "by_app": empty,
+        }
+    await say("info", "Reading per-application sign-in activity…", phase="signin_activity")
+    try:
+        rows, truncated = await client.get_all(
+            "/reports/servicePrincipalSignInActivities", top=999, max_items=max_items, beta=True,
+        )
+    except GraphPermissionError:
+        log.info("app-registrations sign-in activity denied")
+        return {
+            "block": unmeasured_signin_activity(
+                "Microsoft Graph denied the sign-in activity report. Grant AuditLog.Read.All as an "
+                "application permission to this connection, then refresh."
+            ),
+            "by_app": empty,
+        }
+    except GraphError as exc:
+        log.info("app-registrations sign-in activity unavailable: status=%d", exc.status)
+        licence = (
+            " This report also requires a Microsoft Entra ID P1 or P2 license."
+            if exc.status in (400, 403, 404)
+            else ""
+        )
+        return {
+            "block": unmeasured_signin_activity(
+                f"The sign-in activity report could not be read (HTTP {exc.status or 'network'}).{licence}"
+            ),
+            "by_app": empty,
+        }
+
+    by_app: dict[str, dict[str, str]] = {}
+    for row in rows:
+        row = _as_dict(row)
+        app_id = str(row.get("appId") or "").lower()
+        if not app_id:
+            continue
+        delegated = _newest_signin(
+            row.get("delegatedClientSignInActivity"), row.get("delegatedResourceSignInActivity")
+        )
+        application = _newest_signin(
+            row.get("applicationAuthenticationClientSignInActivity"),
+            row.get("applicationAuthenticationResourceSignInActivity"),
+        )
+        last = _newest_signin(row.get("lastSignInActivity")) or max(
+            (s for s in (delegated, application) if s), default=""
+        )
+        if last or delegated or application:
+            by_app[app_id] = {"last": last, "delegated": delegated, "application": application}
+    await say("ok", f"Sign-in activity read — {len(by_app):,} application(s) with recent sign-ins.",
+              phase="signin_activity", current=len(by_app))
+    return {
+        "block": {
+            "measured": True,
+            "reason": "",
+            "window_days": SIGNIN_WINDOW_DAYS,
+            "source": "servicePrincipalSignInActivities",
+            "complete": not truncated,
+            "apps_with_activity": len(by_app),
+            "credentials": {"measured": False, "reason": "", "count": 0},
+        },
+        "by_app": by_app,
+    }
+
+
+async def _credential_activity(
+    client: GraphClient,
+    say: ProgressFn,
+    *,
+    max_items: int,
+) -> dict[str, Any]:
+    """Last use per credential (secret/certificate keyId), from the beta credential report.
+
+    This is what turns "this app has three secrets" into "two of these three can be retired".
+    """
+    empty: dict[str, str] = {}
+    if not client.beta_available(True):
+        return {"measured": False, "reason": "Beta Graph endpoints are turned off.", "by_key": empty}
+    try:
+        rows, truncated = await client.get_all(
+            "/reports/appCredentialSignInActivities", top=999, max_items=max_items, beta=True,
+        )
+    except GraphError as exc:
+        log.info("app-registrations credential activity unavailable: status=%d", exc.status)
+        return {
+            "measured": False,
+            "reason": f"Per-credential usage could not be read (HTTP {exc.status or 'network'}).",
+            "by_key": empty,
+        }
+    by_key: dict[str, str] = {}
+    for row in rows:
+        row = _as_dict(row)
+        key_id = str(row.get("keyId") or "").lower()
+        last = _newest_signin(row.get("signInActivity"))
+        if key_id and last and last > by_key.get(key_id, ""):
+            by_key[key_id] = last
+    await say("ok", f"Credential usage read — {len(by_key):,} credential(s) used recently.",
+              phase="signin_activity", current=len(by_key))
+    return {"measured": True, "reason": "", "by_key": by_key, "complete": not truncated}
+
 
 
 async def _graph_permission_resolver(client: GraphClient) -> dict[str, str]:
@@ -729,7 +1006,13 @@ async def _collect_real(
         enterprise_state_by_app_id[saved_app_id] = _enterprise_state_projection(saved)
 
     await _say("info", "Connecting to Microsoft Entra (Graph)…", phase="connect", mode=mode)
-    async with GraphClient(connection, concurrency=2) as client:
+    # The sign-in activity reports are beta-only, and GraphClient silently falls back to v1.0
+    # when beta is off — which would 400 on a URL that does not exist there.
+    async with GraphClient(
+        connection,
+        concurrency=2,
+        beta=bool(load_settings().get("entra_enable_beta_endpoints", True)),
+    ) as client:
         await _say("info", "Loading the Microsoft Graph permission catalog (appRoles + delegated scopes)…")
         resolver = await _graph_permission_resolver(client)
         await _say("info", f"Permission catalog loaded — {len(resolver)} permission id(s) resolvable to friendly names.")
@@ -849,6 +1132,22 @@ async def _collect_real(
 
         truncated = bool(next_link)
         stop_reason = "complete" if not truncated else ("full_safety_limit" if full else "configured_limit")
+
+        # One tenant-wide read each, after enumeration: both reports are one row per object,
+        # so doing them per page would multiply the cost for no extra information.
+        signin = await _signin_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT)
+        signin_block, signin_by_app = signin["block"], signin["by_app"]
+        creds = (
+            await _credential_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT)
+            if signin_block["measured"]
+            else {"measured": False, "reason": signin_block["reason"], "by_key": {}}
+        )
+        signin_block["credentials"] = {
+            "measured": bool(creds["measured"]),
+            "reason": str(creds.get("reason") or ""),
+            "count": len(creds["by_key"]),
+        }
+
         await _say(
             "info", f"Processing {len(apps_raw)} fetched application registration(s)…",
             phase="process", current=0, total=len(apps_raw), pages=pages,
@@ -866,12 +1165,17 @@ async def _collect_real(
                     owners.append(owner.get("displayName") or owner.get("userPrincipalName") or "")
                 elif isinstance(owner, str):
                     owners.append(owner)
+            activity = signin_by_app.get(str(app.get("appId") or "").lower()) or {}
             out.append(_normalise_app({
                 "id": app.get("id"), "appId": app.get("appId"),
                 "displayName": app.get("displayName"), "signInAudience": app.get("signInAudience"),
                 "createdDateTime": app.get("createdDateTime"), "publisherDomain": app.get("publisherDomain"),
-                "tags": app.get("tags") or [], "credentials": _creds_from_graph_app(app),
+                "tags": app.get("tags") or [],
+                "credentials": _creds_from_graph_app(
+                    app, last_used=creds["by_key"], used_known=bool(creds["measured"]),
+                ),
                 "permissions": _perms_from_graph_app(app, resolver), "owners": [o for o in owners if o],
+                "signInActivity": {"known": signin_block["measured"], **activity},
                 **_enterprise_state_projection(app),
             }))
             if index == len(apps_raw) or index % 100 == 0:
@@ -889,6 +1193,7 @@ async def _collect_real(
             "resumed": resumed, "retries": client.stats.retries,
             "throttles": client.stats.throttled,
             "duration_seconds": round(time.monotonic() - started, 1),
+            "signin_activity": signin_block,
         }
 
 
@@ -980,6 +1285,17 @@ async def collect_app_registrations(
     await _say("info", "Aggregating facets (audiences, permissions, owners, enterprise-app state) and summary KPIs…", phase="aggregate")
     apps.sort(key=lambda a: a["displayName"].lower())
     agg = aggregate(apps)
+    if source == "microsoft_graph":
+        signin_activity = enumeration.pop("signin_activity", None) or unmeasured_signin_activity(
+            "Sign-in activity was not read during this refresh."
+        )
+    elif source == "demo_dummy_data":
+        signin_activity = demo_signin_activity(apps)
+    else:
+        enumeration.pop("signin_activity", None)
+        signin_activity = unmeasured_signin_activity(
+            "Sign-in activity was not read because the application inventory could not be enumerated."
+        )
     truncated = bool(enumeration.get("truncated")) if source == "microsoft_graph" else False
     await _say("ok", f"Snapshot complete — {len(apps)} app registration(s).", phase="complete", current=len(apps), total=enumeration.get("graph_total"), percent=100 if enumeration.get("complete") else None)
     return {
@@ -995,8 +1311,10 @@ async def collect_app_registrations(
             "permissions": agg["permissions"],
             "owners": agg["owners"],
             "enterpriseAppStates": agg["enterpriseAppStates"],
+            "signInActivity": agg["signInActivity"],
         },
         "summary": agg["summary"],
+        "signin_activity": signin_activity,
         "truncated": truncated,
         "limit": limit,
         "graph_total": enumeration.get("graph_total"),
@@ -1024,8 +1342,10 @@ def build_demo_snapshot(tenant_id: str = "default") -> dict[str, Any]:
             "permissions": agg["permissions"],
             "owners": agg["owners"],
             "enterpriseAppStates": agg["enterpriseAppStates"],
+            "signInActivity": agg["signInActivity"],
         },
         "summary": agg["summary"],
+        "signin_activity": demo_signin_activity(apps),
     }
 
 

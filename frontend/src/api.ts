@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:35001/api";
 export { API_BASE };
 
 export interface Chat {
@@ -271,10 +271,15 @@ export type PimOverview = {
 
 
 export type AppRegCredential = {
+  keyId: string;
   type: "secret" | "certificate";
   displayName: string;
   endDateTime?: string | null;
   daysUntilExpiry: number | null;
+  // `lastUsedKnown` false means the per-credential report was unreadable — NOT "never used".
+  lastUsed: string | null;
+  lastUsedKnown: boolean;
+  lastUsedDays: number | null;
 };
 
 export type AppRegPermission = {
@@ -305,6 +310,13 @@ export type AppRegistration = {
   owners: string[];
   ownerless: boolean;
   highRisk: boolean;
+  // Three distinct facts, never collapse them: a date; measured-but-no-sign-in
+  // (lastSignInKnown && !lastSignIn); and unreadable (!lastSignInKnown).
+  lastSignIn: string | null;
+  lastSignInKnown: boolean;
+  lastSignInDays: number | null;
+  lastSignInDelegated: string | null;
+  lastSignInApplication: string | null;
   enterpriseAppState: EnterpriseAppState;
   servicePrincipalId: string | null;
   servicePrincipalType: string;
@@ -314,6 +326,16 @@ export type AppRegistration = {
 };
 
 export type AppRegFacet = { value: string; count: number };
+
+export type AppRegSignInActivity = {
+  measured: boolean;
+  reason: string;
+  window_days: number;
+  source: string;
+  complete: boolean;
+  apps_with_activity: number;
+  credentials: { measured: boolean; reason: string; count: number };
+};
 
 export type AppRegistrationsResponse = {
   generated_at: string;
@@ -330,6 +352,7 @@ export type AppRegistrationsResponse = {
     permissions: AppRegFacet[];
     owners: AppRegFacet[];
     enterpriseAppStates: AppRegFacet[];
+    signInActivity: AppRegFacet[];
   };
   summary: {
     total: number;
@@ -345,7 +368,12 @@ export type AppRegistrationsResponse = {
     deactivated: number;
     notInstantiated: number;
     stateUnknown: number;
+    signedIn7d: number;
+    signedIn30d: number;
+    noRecentSignIn: number;
+    signInNotMeasured: number;
   };
+  signin_activity?: AppRegSignInActivity;
   cached: boolean;
   never_loaded?: boolean;
   fetched_at: string;

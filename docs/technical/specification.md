@@ -560,7 +560,7 @@ Backend:
 
 ```pwsh
 cd c:\dev\aznetagent\backend
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir c:\dev\aznetagent\backend --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir c:\dev\aznetagent\backend --host 127.0.0.1 --port 35001
 ```
 
 Frontend:
@@ -580,8 +580,8 @@ cd c:\dev\aznetagent\backend
 Useful health checks:
 
 ```pwsh
-Invoke-WebRequest http://127.0.0.1:8000/openapi.json -UseBasicParsing
-Invoke-WebRequest http://localhost:5173 -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:35001/openapi.json -UseBasicParsing
+Invoke-WebRequest http://localhost:35000 -UseBasicParsing
 ```
 
 ### Docker Compose

@@ -22,7 +22,10 @@ export default defineConfig({
     // banner in src/pwa.ts.
   ],
   server: {
-    port: 5173,
+    // Pinned local dev ports: frontend 35000, backend 35001. strictPort matters here —
+    // without it a busy 35000 slides Vite onto 35001, which is the backend.
+    port: 35000,
+    strictPort: true,
     host: true,
   },
   build: {

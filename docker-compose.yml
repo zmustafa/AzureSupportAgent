@@ -57,6 +57,7 @@ services:
     environment:
       VITE_API_BASE: http://localhost:8000/api
     ports:
-      - "5173:5173"
+      # Vite binds 35000 via vite.config.ts strictPort; the backend keeps 8000 here.
+      - "35000:35000"
     depends_on:
       - backend

@@ -18,7 +18,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api"
+BASE = "http://127.0.0.1:35001/api"
 JAR = http.cookiejar.CookieJar()
 OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -37,7 +37,7 @@ def get(path: str, body: dict | None = None):
     if data:
         req.add_header("Content-Type", "application/json")
         req.add_header("Sec-Fetch-Site", "same-origin")  # the app rejects cookie-bearing
-        req.add_header("Origin", "http://127.0.0.1:8000")  # cross-origin state changes
+        req.add_header("Origin", "http://127.0.0.1:35001")  # cross-origin state changes
     with OPENER.open(req, timeout=180) as resp:
         return json.loads(resp.read() or b"{}")
 

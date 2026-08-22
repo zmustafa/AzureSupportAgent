@@ -9,11 +9,11 @@ import time
 
 import httpx
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:35001/api"
 CONN = sys.argv[1]
 DOMAINS = sys.argv[2:]
 
-C = httpx.Client(timeout=1800, headers={"Origin": "http://127.0.0.1:8000",
+C = httpx.Client(timeout=1800, headers={"Origin": "http://127.0.0.1:35001",
                                         "Sec-Fetch-Site": "same-origin"})
 C.post(f"{API}/auth/login", json={"username": "admin", "password": "admin"})
 

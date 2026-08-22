@@ -30,7 +30,7 @@ from pathlib import Path
 
 import httpx
 
-BASE = "http://localhost:8000"
+BASE = "http://localhost:35001"
 
 # Budgets, set from measurement rather than aspiration — a gate nobody can pass is a gate that
 # gets deleted. Taken during back-to-back forced escalation rebuilds (~45 s each of pure Python

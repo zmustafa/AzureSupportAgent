@@ -14,6 +14,7 @@ COPY . .
 RUN chown -R node:node /app
 USER node
 
-EXPOSE 5173
+# Vite's dev port comes from vite.config.ts (strictPort), so this must track it.
+EXPOSE 35000
 
 CMD ["npm", "run", "dev"]

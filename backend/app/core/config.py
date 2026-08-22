@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     cookie_samesite: str = "lax"
     # Public base URL of this API (used to build OIDC/SAML redirect URIs).
-    public_base_url: str = "http://localhost:8000"
+    public_base_url: str = "http://localhost:35001"
     # Trusted reverse-proxy IPs (comma-separated). When set, the app honors the
     # ``X-Forwarded-For`` header only for requests whose direct client IP is in this
     # allowlist; otherwise it falls back to ``request.client.host`` to prevent IP
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     secrets_encryption_key: str = ""
 
     # CORS
-    frontend_origin: str = "http://localhost:5173"
+    frontend_origin: str = "http://localhost:35000"
 
     @property
     def resolved_database_url(self) -> str:

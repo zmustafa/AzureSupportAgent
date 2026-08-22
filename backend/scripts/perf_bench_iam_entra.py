@@ -27,7 +27,7 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api"
+BASE = "http://127.0.0.1:35001/api"
 JAR = http.cookiejar.CookieJar()
 OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -65,7 +65,7 @@ def get_json(path: str):
 
 
 def openapi_paths(prefix: str) -> list[str]:
-    spec = json.load(urllib.request.urlopen("http://127.0.0.1:8000/openapi.json", timeout=60))
+    spec = json.load(urllib.request.urlopen("http://127.0.0.1:35001/openapi.json", timeout=60))
     return sorted(
         p for p in spec["paths"]
         if p.startswith(prefix) and "get" in spec["paths"][p] and p not in SKIP

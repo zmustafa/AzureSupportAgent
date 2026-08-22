@@ -15,7 +15,7 @@ OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
 def get(path: str, body: dict | None = None):
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request("http://127.0.0.1:8000/api" + path, data=data)
+    req = urllib.request.Request("http://127.0.0.1:35001/api" + path, data=data)
     if data:
         req.add_header("Content-Type", "application/json")
     with OPENER.open(req, timeout=90) as resp:

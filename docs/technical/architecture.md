@@ -85,10 +85,10 @@ shared UI:
 
 ```pwsh
 # Backend (from backend/, venv active)
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 35001
 
 # Frontend (from frontend/)
-npm run dev          # Vite dev server on :5173
+npm run dev          # Vite dev server on :35000
 
 # Tests / checks
 python -m pytest -q  # backend
@@ -96,7 +96,7 @@ npx tsc --noEmit     # frontend types
 ```
 
 Backend defaults to `environment=local` (which enables `/docs`). The SPA talks to
-`VITE_API_BASE` (default `http://localhost:8000/api`).
+`VITE_API_BASE` (default `http://localhost:35001/api`).
 
 ## Build & deploy
 

@@ -24,13 +24,13 @@ from typing import Any
 
 import httpx
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:35001/api"
 USER = "admin"
 PASSWORD = "admin"
 
 # The app blocks cookie-bearing state-changing requests that cannot prove same-origin
 # (CSRF defence in main.py). A same-origin API client declares it explicitly.
-SAME_ORIGIN_HEADERS = {"Origin": "http://127.0.0.1:8000", "Sec-Fetch-Site": "same-origin"}
+SAME_ORIGIN_HEADERS = {"Origin": "http://127.0.0.1:35001", "Sec-Fetch-Site": "same-origin"}
 
 PASS = 0
 FAIL = 0

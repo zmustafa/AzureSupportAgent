@@ -5,8 +5,8 @@ import time
 import httpx
 
 CONN = sys.argv[1] if len(sys.argv) > 1 else ""
-API = "http://127.0.0.1:8000/api"
-C = httpx.Client(timeout=900, headers={"Origin": "http://127.0.0.1:8000",
+API = "http://127.0.0.1:35001/api"
+C = httpx.Client(timeout=900, headers={"Origin": "http://127.0.0.1:35001",
                                        "Sec-Fetch-Site": "same-origin"})
 C.post(f"{API}/auth/login", json={"username": "admin", "password": "admin"})
 

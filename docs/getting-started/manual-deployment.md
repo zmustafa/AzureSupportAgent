@@ -26,7 +26,7 @@ Prefer a guided path? Use [one-click installation]({{ site.baseurl }}/getting-st
 
 ## API prefix
 
-Every backend endpoint is served under `/api` (for example `/api/me`, `/api/chats`, `/api/admin/...`). Only `/healthz` and `/readyz` live at the root. The frontend reads its base from `VITE_API_BASE`, defaulting to `http://localhost:8000/api` for local development. This keeps API routes from colliding with the SPA's client-side routes such as `/inventory`, `/admin`, and `/policy`.
+Every backend endpoint is served under `/api` (for example `/api/me`, `/api/chats`, `/api/admin/...`). Only `/healthz` and `/readyz` live at the root. The frontend reads its base from `VITE_API_BASE`, defaulting to `http://localhost:35001/api` for local development. This keeps API routes from colliding with the SPA's client-side routes such as `/inventory`, `/admin`, and `/policy`.
 
 ## Azure access modes
 

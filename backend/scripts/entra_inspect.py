@@ -9,8 +9,8 @@ import sys
 
 import httpx
 
-API = "http://127.0.0.1:8000/api"
-HEADERS = {"Origin": "http://127.0.0.1:8000", "Sec-Fetch-Site": "same-origin"}
+API = "http://127.0.0.1:35001/api"
+HEADERS = {"Origin": "http://127.0.0.1:35001", "Sec-Fetch-Site": "same-origin"}
 
 
 def main() -> None:

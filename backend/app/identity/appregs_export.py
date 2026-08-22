@@ -67,6 +67,25 @@ def _enterprise_state_label(app: dict[str, Any]) -> str:
     }.get(str(app.get("enterpriseAppState") or "unknown"), "Unknown")
 
 
+def _last_signin_cells(app: dict[str, Any]) -> tuple[Any, str]:
+    """(date, status) for one app. A blank date must never be read as "never signed in"."""
+    if not app.get("lastSignInKnown"):
+        return "", "Not measured"
+    last = app.get("lastSignIn")
+    if not last:
+        return "", "No sign-in in the reported window"
+    return last, f"{app.get('lastSignInDays')} day(s) ago"
+
+
+def _last_used_cells(credential: dict[str, Any]) -> tuple[Any, str]:
+    if not credential.get("lastUsedKnown"):
+        return "", "Not measured"
+    last = credential.get("lastUsed")
+    if not last:
+        return "", "Not used in the reported window"
+    return last, f"{credential.get('lastUsedDays')} day(s) ago"
+
+
 def to_workbook(snap: dict[str, Any]) -> bytes:
     """Build the multi-sheet app-registrations workbook from a snapshot dict."""
     from io import BytesIO
@@ -131,8 +150,18 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
         ("Enterprise application state unknown", "stateUnknown"),
         ("Application permissions", "applicationPerms"),
         ("Delegated permissions", "delegatedPerms"),
+        ("Signed in (last 7 days)", "signedIn7d"),
+        ("Signed in (last 30 days)", "signedIn30d"),
+        ("No recent sign-in", "noRecentSignIn"),
+        ("Sign-in activity not measured", "signInNotMeasured"),
     ]:
         ws0.append([label, summary.get(key, 0)])
+    signin_meta: dict[str, Any] = snap.get("signin_activity") or {}
+    ws0.append([])
+    ws0.append([
+        "Sign-in activity",
+        "Measured" if signin_meta.get("measured") else (signin_meta.get("reason") or "Not measured"),
+    ])
     ws0.column_dimensions["A"].width = 30
     ws0.column_dimensions["B"].width = 24
 
@@ -143,7 +172,8 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
          "Enterprise app state", "Service principal ID", "Service principal type",
          "Microsoft disable status",
          "Secrets", "Certs", "Next expiry (days)", "Expired creds",
-         "App permissions", "Delegated permissions", "High risk", "Ownerless", "Owners", "Created"],
+         "App permissions", "Delegated permissions", "High risk", "Ownerless", "Owners",
+         "Last sign-in", "Sign-in status", "Created"],
         [
             [
                 a.get("displayName", ""), a.get("appId", ""), a.get("id", ""),
@@ -154,7 +184,8 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
                 a.get("nextExpiryDays"), a.get("expiredCredentials", 0),
                 a.get("applicationPermissionsCount", 0), a.get("delegatedPermissionsCount", 0),
                 bool(a.get("highRisk")), bool(a.get("ownerless")),
-                "; ".join(a.get("owners") or []), a.get("createdDateTime", ""),
+                "; ".join(a.get("owners") or []),
+                *_last_signin_cells(a), a.get("createdDateTime", ""),
             ]
             for a in apps
         ],
@@ -169,10 +200,12 @@ def to_workbook(snap: dict[str, Any]) -> bytes:
                 c.get("type", ""), c.get("displayName", ""),
                 c.get("endDateTime", ""), c.get("daysUntilExpiry"),
                 "Expired" if (c.get("daysUntilExpiry") is not None and c["daysUntilExpiry"] < 0) else "Active",
+                *_last_used_cells(c),
             ])
     _sheet(
         "Credentials",
-        ["Application", "App ID", "Type", "Credential name", "Expires", "Days until expiry", "Status"],
+        ["Application", "App ID", "Type", "Credential name", "Expires", "Days until expiry",
+         "Status", "Last used", "Usage status"],
         cred_rows,
     )
 

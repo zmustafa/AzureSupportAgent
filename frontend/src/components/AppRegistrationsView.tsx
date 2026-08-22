@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegRefreshMode, type AppRegistration, type AppRegistrationsResponse, type EnterpriseAppState } from "../api";
-import { formatError } from "../utils/format";
+import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegRefreshMode, type AppRegistration, type AppRegistrationsResponse, type EnterpriseAppState } from "../api";import { formatError } from "../utils/format";
 import { Skeleton, useDebounced, VirtualList } from "../utils/perf";
 
 function agoText(seconds: number | null): string {
@@ -72,6 +71,67 @@ function ExpiryBadge({ days }: { days: number | null }) {
   );
 }
 
+// Mirrors appregs.signin_bucket on the backend — the facet values must match exactly.
+const SIGNIN_BUCKETS = ["Last 7 days", "8-30 days", "Over 30 days", "No sign-in in 30 days", "Not measured"] as const;
+type SignInBucket = (typeof SIGNIN_BUCKETS)[number];
+const DORMANT_BUCKETS: SignInBucket[] = ["Over 30 days", "No sign-in in 30 days"];
+
+function signinBucket(a: AppRegistration): SignInBucket {
+  if (!a.lastSignInKnown) return "Not measured";
+  if (a.lastSignInDays == null) return "No sign-in in 30 days";
+  if (a.lastSignInDays <= 7) return "Last 7 days";
+  if (a.lastSignInDays <= 30) return "8-30 days";
+  return "Over 30 days";
+}
+
+function daysAgoText(days: number): string {
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+}
+
+/** Last sign-in for one app. Renders three DIFFERENT things, because they are three
+ *  different facts: a date, "measured but nothing signed in", and "we could not look". */
+function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: number }) {
+  if (!a.lastSignInKnown) {
+    return (
+      <span
+        data-testid="appregs-signin-unmeasured"
+        title="Sign-in activity could not be read for this tenant. This is NOT a statement that the application is unused."
+        className="whitespace-nowrap rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500"
+      >
+        not measured
+      </span>
+    );
+  }
+  if (!a.lastSignIn || a.lastSignInDays == null) {
+    return (
+      <span
+        data-testid="appregs-signin-none"
+        title={`Nothing signed into this application in the last ${windowDays} days. Microsoft's report does not go back further, so this is not proof it was never used.`}
+        className="whitespace-nowrap rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+      >
+        none in {windowDays}d
+      </span>
+    );
+  }
+  const stale = a.lastSignInDays > 30;
+  return (
+    <span
+      data-testid="appregs-signin-date"
+      title={`${new Date(a.lastSignIn).toLocaleString()}${a.lastSignInApplication ? "\napp-only (client credentials)" : ""}${a.lastSignInDelegated ? "\ndelegated (on behalf of a user)" : ""}`}
+      className={`whitespace-nowrap tabular-nums text-xs ${stale ? "text-amber-700" : "text-gray-700"}`}
+    >
+      {daysAgoText(a.lastSignInDays)}
+    </span>
+  );
+}
+
+/** Last use of one credential — the answer to "which of these secrets can I retire?". */
+function LastUsedBadge({ lastUsed, known, days }: { lastUsed: string | null; known: boolean; days: number | null }) {
+  if (!known) return <span className="text-[10px] text-gray-400" title="Per-credential usage could not be read.">usage not measured</span>;
+  if (!lastUsed || days == null) return <span className="text-[10px] text-amber-700" title="Not used inside the reported window.">not used recently</span>;
+  return <span className="text-[10px] text-gray-500" title={new Date(lastUsed).toLocaleString()}>used {daysAgoText(days)}</span>;
+}
+
 function FacetGroup({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -128,6 +188,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   const [highRiskOnly, setHighRiskOnly] = useState(false);
   const [permSel, setPermSel] = useState<Set<string>>(new Set());
   const [ownerSel, setOwnerSel] = useState<Set<string>>(new Set());
+  const [signinSel, setSigninSel] = useState<Set<SignInBucket>>(new Set());
   const [permSearch, setPermSearch] = useState("");
 
   const q = useQuery({
@@ -262,16 +323,17 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
       for (const o of ownerSel) if (owners.has(o)) ok = true;
       if (!ok) return false;
     }
+    if (signinSel.size && !signinSel.has(signinBucket(a))) return false;
     const t = dText.trim().toLowerCase();
     if (t) {
       const state = ENTERPRISE_STATE_META[a.enterpriseAppState ?? "unknown"].label;
-      const hay = `${a.displayName} ${a.appId} ${a.publisherDomain} ${a.tags.join(" ")} ${a.owners.join(" ")} ${state} ${a.servicePrincipalType ?? ""} ${a.disabledByMicrosoftStatus ?? ""}`.toLowerCase();
+      const hay = `${a.displayName} ${a.appId} ${a.publisherDomain} ${a.tags.join(" ")} ${a.owners.join(" ")} ${state} ${a.servicePrincipalType ?? ""} ${a.disabledByMicrosoftStatus ?? ""} ${signinBucket(a)}`.toLowerCase();
       if (!hay.includes(t)) return false;
     }
     return true;
   }
 
-  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, stateSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, dText]);
+  const filtered = useMemo(() => apps.filter(matches), [apps, audSel, stateSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, signinSel, dText]);
 
   // Counts for the fixed facet rows (computed over the full app set, like the other facets).
   const facetCounts = useMemo(() => {
@@ -293,9 +355,12 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     permSearch.trim() ? f.value.toLowerCase().includes(permSearch.trim().toLowerCase()) : true,
   );
   const stateCounts = new Map((data?.facets.enterpriseAppStates ?? []).map((f) => [f.value, f.count]));
+  const signinCounts = new Map((data?.facets.signInActivity ?? []).map((f) => [f.value, f.count]));
+  const signinMeta = data?.signin_activity;
+  const signinWindow = signinMeta?.window_days ?? 30;
 
   const anyFilter =
-    audSel.size || stateSel.size || permTypeSel.size || credSel.size || highRiskOnly || permSel.size || ownerSel.size || text.trim();
+    audSel.size || stateSel.size || permTypeSel.size || credSel.size || highRiskOnly || permSel.size || ownerSel.size || signinSel.size || text.trim();
 
   function clearAll() {
     setAudSel(new Set());
@@ -305,12 +370,13 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
     setHighRiskOnly(false);
     setPermSel(new Set());
     setOwnerSel(new Set());
+    setSigninSel(new Set());
     setText("");
   }
 
   function exportCsv() {
     const rows = [
-      ["Name", "AppId", "Audience", "EnterpriseAppState", "ServicePrincipalId", "ServicePrincipalType", "MicrosoftDisableStatus", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners"],
+      ["Name", "AppId", "Audience", "EnterpriseAppState", "ServicePrincipalId", "ServicePrincipalType", "MicrosoftDisableStatus", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners", "LastSignIn", "SignInStatus"],
       ...filtered.map((a) => [
         a.displayName,
         a.appId,
@@ -326,6 +392,8 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
         a.nextExpiryDays == null ? "" : String(a.nextExpiryDays),
         a.highRisk ? "yes" : "no",
         a.owners.join("; "),
+        a.lastSignIn ?? "",
+        signinBucket(a),
       ]),
     ];
     const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -343,6 +411,15 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   // IU5 — toggle a credential facet from a KPI tile.
   const toggleCred = (c: CredFilter) => { const n = new Set(credSel); n.has(c) ? n.delete(c) : n.add(c); setCredSel(n); };
   const toggleState = (state: EnterpriseAppState) => { const n = new Set(stateSel); n.has(state) ? n.delete(state) : n.add(state); setStateSel(n); };
+  const toggleSignin = (b: SignInBucket) => { const n = new Set(signinSel); n.has(b) ? n.delete(b) : n.add(b); setSigninSel(n); };
+  // "No recent sign-in" is TWO buckets: no row at all, and a date older than the window.
+  // The KPI counts both, so clicking it must select both or the count won't match the grid.
+  const dormantActive = DORMANT_BUCKETS.every((b) => signinSel.has(b));
+  const toggleDormant = () => {
+    const n = new Set(signinSel);
+    for (const b of DORMANT_BUCKETS) dormantActive ? n.delete(b) : n.add(b);
+    setSigninSel(n);
+  };
 
   const s = data?.summary;
 
@@ -440,7 +517,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
         {/* KPI row */}
         {s && (
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-10">
             <Kpi label="App registrations" value={s.total} active={!anyFilter} onClick={clearAll} />
             <Kpi label="Deactivated" value={s.deactivated ?? 0} tone={s.deactivated ? "text-red-600" : undefined} active={stateSel.has("deactivated")} onClick={() => toggleState("deactivated")} />
             <Kpi label="With secrets" value={s.withSecrets} active={credSel.has("secrets")} onClick={() => toggleCred("secrets")} />
@@ -449,7 +526,15 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
             <Kpi label="Expired creds" value={s.expired} tone={s.expired ? "text-red-600" : undefined} active={credSel.has("expired")} onClick={() => toggleCred("expired")} />
             <Kpi label="High risk" value={s.highRisk} tone={s.highRisk ? "text-red-600" : undefined} active={highRiskOnly} onClick={() => setHighRiskOnly(!highRiskOnly)} />
             <Kpi label="Ownerless" value={s.ownerless} tone={s.ownerless ? "text-amber-600" : undefined} active={ownerSel.has("(ownerless)")} onClick={() => { const n = new Set(ownerSel); n.has("(ownerless)") ? n.delete("(ownerless)") : n.add("(ownerless)"); setOwnerSel(n); }} />
+            <Kpi label={`No sign-in ≥${signinWindow}d`} value={s.noRecentSignIn ?? 0} tone={s.noRecentSignIn ? "text-amber-600" : undefined} active={dormantActive} onClick={toggleDormant} />
             <Kpi label="App / Delegated perms" value={s.applicationPerms + s.delegatedPerms} />
+          </div>
+        )}
+        {/* One honest banner beats 500 "unknown" cells: say WHY the column is empty. */}
+        {signinMeta && !signinMeta.measured && (
+          <div data-testid="appregs-signin-banner" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+            <b>Sign-in activity not measured.</b> {signinMeta.reason} Until it can be read, an empty
+            Last sign-in column means “unknown” — not “never used”.
           </div>
         )}
         {/* IU4 — stale-cache nudge once the snapshot is more than a day old. */}
@@ -591,6 +676,12 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               <FacetRow key={f.value} label={f.value} count={f.count} active={ownerSel.has(f.value)} onClick={() => toggle(ownerSel, f.value, setOwnerSel)} />
             ))}
           </FacetGroup>
+
+          <FacetGroup title="Last sign-in">
+            {SIGNIN_BUCKETS.map((b) => (
+              <FacetRow key={b} label={b} count={signinCounts.get(b) ?? 0} active={signinSel.has(b)} onClick={() => toggleSignin(b)} />
+            ))}
+          </FacetGroup>
         </aside>
 
         {/* Grid */}
@@ -634,9 +725,11 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               <>
                 {/* IP1 — virtualized header + rows (expandable detail rendered inline; VirtualList
                     measures variable heights). Was a plain <table> mapping every row. */}
-                <div className="sticky top-0 z-10 grid grid-cols-[2fr_1fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
+                <div className="sticky top-0 z-10 grid grid-cols-[2fr_0.8fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_0.9fr_1.1fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
                   <span>Name</span><span>Audience</span><span>State</span><span className="text-center">Secrets</span><span className="text-center">Certs</span>
-                  <span className="text-center">App perms</span><span className="text-center">Delegated</span><span>Next expiry</span><span>Owners</span><span>Risk</span>
+                  <span className="text-center">App perms</span><span className="text-center">Delegated</span><span>Next expiry</span>
+                  <span title={`From Microsoft's per-application sign-in report, which covers the last ${signinWindow} days.`}>Last sign-in</span>
+                  <span>Owners</span><span>Risk</span>
                 </div>
                 <VirtualList
                   items={filtered}
@@ -648,7 +741,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                       <div className="border-b border-gray-100">
                         <div
                           onClick={() => setExpanded(open ? null : a.id)}
-                          className="grid cursor-pointer grid-cols-[2fr_1fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_1.4fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
+                          className="grid cursor-pointer grid-cols-[2fr_0.8fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_0.9fr_1.1fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className="text-gray-400">{open ? "▾" : "▸"}</span>
@@ -667,6 +760,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                           <span className="text-center tabular-nums">{a.applicationPermissionsCount ? <span className="font-medium text-red-600">{a.applicationPermissionsCount}</span> : <span className="text-gray-300">0</span>}</span>
                           <span className="text-center tabular-nums">{a.delegatedPermissionsCount || <span className="text-gray-300">0</span>}</span>
                           <span><ExpiryBadge days={a.nextExpiryDays} /></span>
+                          <span className="min-w-0 pr-1"><LastSignInCell a={a} windowDays={signinWindow} /></span>
                           <span className="truncate text-xs text-gray-600">
                             {a.ownerless ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
                           </span>
@@ -702,6 +796,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                                         <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] uppercase text-gray-600">{c.type === "certificate" ? "cert" : "secret"}</span>
                                         <span className="text-gray-700">{c.displayName || "(unnamed)"}</span>
                                         <ExpiryBadge days={c.daysUntilExpiry} />
+                                        <LastUsedBadge lastUsed={c.lastUsed} known={c.lastUsedKnown} days={c.lastUsedDays} />
                                       </li>
                                     ))}
                                   </ul>

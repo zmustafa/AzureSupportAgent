@@ -81,6 +81,59 @@ def test_aggregate_facets_and_summary():
     assert state_counts["deactivated"] == s["deactivated"] >= 1
 
 
+def test_demo_signin_activity_covers_recent_dormant_and_stale():
+    """The demo set has to exercise every rendered state, or the UI is untested by it."""
+    snap = _snap()
+    meta = snap["signin_activity"]
+    assert meta["measured"] is True and meta["source"] == "demo"
+    assert meta["credentials"]["measured"] is True
+
+    by_name = {a["displayName"]: a for a in snap["apps"]}
+    recent = by_name["Contoso Payments API"]
+    assert recent["lastSignInKnown"] is True
+    assert recent["lastSignIn"] and recent["lastSignInDays"] == 0
+
+    # Dormant: measured, but nothing signed in. This must NOT look like "never".
+    dormant = by_name["Legacy Migration Tool"]
+    assert dormant["lastSignInKnown"] is True
+    assert dormant["lastSignIn"] is None and dormant["lastSignInDays"] is None
+    assert appregs.signin_bucket(dormant) == appregs.SIGNIN_BUCKET_NONE
+
+    # Older than the report window is its own state, not "no sign-in".
+    stale = by_name["Internal Wiki SSO"]
+    assert appregs.signin_bucket(stale) == appregs.SIGNIN_BUCKET_OLD
+
+    # Per-credential usage: the first credential is used, later ones are retirement candidates.
+    gateway = by_name["Partner B2B Gateway"]
+    assert [c["lastUsedKnown"] for c in gateway["credentials"]] == [True, True]
+    assert all(c["lastUsed"] is None for c in gateway["credentials"])
+
+
+def test_signin_buckets_partition_the_app_set():
+    apps = appregs.build_demo_app_registrations()
+    agg = appregs.aggregate(apps)
+    buckets = {f["value"]: f["count"] for f in agg["signInActivity"]}
+
+    assert list(buckets) == list(appregs.SIGNIN_BUCKETS)  # timeline order, not count order
+    assert sum(buckets.values()) == len(apps)
+    s = agg["summary"]
+    assert s["signedIn30d"] + s["noRecentSignIn"] + s["signInNotMeasured"] == len(apps)
+    assert s["signedIn7d"] <= s["signedIn30d"]
+    # Non-vacuous: the dormant bucket is genuinely populated.
+    assert s["noRecentSignIn"] >= 2
+
+
+def test_unmeasured_activity_is_never_counted_as_dormant():
+    apps = appregs.build_demo_app_registrations()
+    for a in apps:
+        a["lastSignInKnown"] = False
+        a["lastSignIn"] = None
+        a["lastSignInDays"] = None
+    s = appregs.aggregate(apps)["summary"]
+    assert s["signInNotMeasured"] == len(apps)
+    assert s["noRecentSignIn"] == 0 and s["signedIn30d"] == 0
+
+
 def test_cache_roundtrip(tmp_path, monkeypatch):
     from app.identity import appregs_cache
 
@@ -121,10 +174,13 @@ def test_workbook_multi_sheet():
     headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
     assert "Enterprise app state" in headers
     assert "Service principal ID" in headers
+    assert "Last sign-in" in headers and "Sign-in status" in headers
 
     # Credentials sheet: header + one row per credential across all apps.
     cred_total = sum(len(a.get("credentials") or []) for a in snap["apps"])
     assert wb["Credentials"].max_row == cred_total + 1
+    cred_headers = [cell.value for cell in next(wb["Credentials"].iter_rows(min_row=1, max_row=1))]
+    assert "Last used" in cred_headers and "Usage status" in cred_headers
 
     # API Permissions sheet: header + one row per granted permission.
     perm_total = sum(len(a.get("permissions") or []) for a in snap["apps"])

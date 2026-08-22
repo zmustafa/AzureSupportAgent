@@ -22,7 +22,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api"
+BASE = "http://127.0.0.1:35001/api"
 JAR = http.cookiejar.CookieJar()
 OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -37,7 +37,7 @@ def call(path: str, body: dict | None = None, method: str = ""):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method or ("POST" if data is not None else "GET"))
     req.add_header("Sec-Fetch-Site", "same-origin")
-    req.add_header("Origin", "http://127.0.0.1:8000")
+    req.add_header("Origin", "http://127.0.0.1:35001")
     if data:
         req.add_header("Content-Type", "application/json")
     try:

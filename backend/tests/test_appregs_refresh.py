@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from app.entra.graphclient import GraphError, GraphPage, GraphResponse
+from app.entra.graphclient import GraphError, GraphPage, GraphPermissionError, GraphResponse
 from app.identity import appregs, appregs_cache, appregs_job
 
 
@@ -41,6 +41,9 @@ class FakeGraphClient:
     retry_events: list[tuple[int, int, float]] = []
     batch_requests: list[str] = []
     service_principals: dict[str, GraphResponse | dict[str, Any] | None] = {}
+    beta: bool = True
+    # path -> rows, or an exception to raise
+    reports: dict[str, Any] = {}
 
     def __init__(self, *_args, **_kwargs) -> None:
         self.stats = SimpleNamespace(retries=0, throttled=0)
@@ -50,6 +53,15 @@ class FakeGraphClient:
 
     async def __aexit__(self, *_args):
         return None
+
+    def beta_available(self, beta: bool = True) -> bool:
+        return (not beta) or self.beta
+
+    async def get_all(self, path: str, **_kwargs):
+        configured = self.reports.get(path)
+        if isinstance(configured, BaseException):
+            raise configured
+        return list(configured or []), False
 
     async def get(self, *_args, **_kwargs):
         return {"value": [{"appRoles": [], "oauth2PermissionScopes": []}]}
@@ -102,6 +114,8 @@ def _reset_job_state(monkeypatch, tmp_path):
     FakeGraphClient.retry_events = []
     FakeGraphClient.batch_requests = []
     FakeGraphClient.service_principals = {}
+    FakeGraphClient.beta = True
+    FakeGraphClient.reports = {}
     monkeypatch.setattr(appregs, "GraphClient", FakeGraphClient)
     monkeypatch.setattr(appregs_cache, "_CACHE_PATH", tmp_path / "snapshots.json")
     monkeypatch.setattr(appregs_cache, "_CHECKPOINT_PATH", tmp_path / "checkpoints.json")
@@ -143,6 +157,107 @@ async def test_exactly_the_limit_is_complete_when_graph_has_no_next_page():
     assert meta["complete"] is True
     assert meta["truncated"] is False
     assert meta["stop_reason"] == "complete"
+
+
+# --------------------------------------------------------------- sign-in activity
+SIGNIN_PATH = "/reports/servicePrincipalSignInActivities"
+CRED_PATH = "/reports/appCredentialSignInActivities"
+
+
+def _app_with_creds(index: int, key_ids: list[str]) -> dict[str, Any]:
+    row = _raw(index)
+    row["passwordCredentials"] = [
+        {"keyId": k, "displayName": f"secret-{k}", "endDateTime": "2099-01-01T00:00:00Z"}
+        for k in key_ids
+    ]
+    return row
+
+
+@pytest.mark.asyncio
+async def test_signin_activity_joins_by_app_id_case_insensitively():
+    rows = [_raw(0), _raw(1)]
+    rows[0]["appId"] = "APP-UPPER"
+    rows[1]["appId"] = "app-quiet"
+    FakeGraphClient.pages = {"first": GraphPage(rows, "", 2)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {
+                "appId": "app-upper",  # Graph casing differs from the application object
+                "lastSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"},
+                "delegatedClientSignInActivity": {"lastSignInDateTime": "2026-08-19T09:00:00Z"},
+                "applicationAuthenticationClientSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"},
+            },
+        ],
+    }
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    by_id = {a["appId"]: a for a in apps}
+
+    assert meta["signin_activity"]["measured"] is True
+    assert meta["signin_activity"]["apps_with_activity"] == 1
+    assert by_id["APP-UPPER"]["lastSignIn"] == "2026-08-20T09:00:00Z"
+    assert by_id["APP-UPPER"]["lastSignInApplication"] == "2026-08-20T09:00:00Z"
+    assert by_id["APP-UPPER"]["lastSignInDelegated"] == "2026-08-19T09:00:00Z"
+    # Measured, but this one has no row: known WITHOUT a date.
+    assert by_id["app-quiet"]["lastSignInKnown"] is True
+    assert by_id["app-quiet"]["lastSignIn"] is None
+    assert appregs.signin_bucket(by_id["app-quiet"]) == appregs.SIGNIN_BUCKET_NONE
+
+
+@pytest.mark.asyncio
+async def test_denied_signin_report_never_reads_as_never_signed_in():
+    FakeGraphClient.pages = {"first": GraphPage([_raw(i) for i in range(3)], "", 3)}
+    FakeGraphClient.reports = {SIGNIN_PATH: GraphPermissionError(403, "Insufficient privileges")}
+
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    block = meta["signin_activity"]
+    assert block["measured"] is False
+    assert "AuditLog.Read.All" in block["reason"]
+    assert all(a["lastSignInKnown"] is False and a["lastSignIn"] is None for a in apps)
+    assert all(appregs.signin_bucket(a) == appregs.SIGNIN_BUCKET_UNKNOWN for a in apps)
+    # A denied report must not be reported as a fleet of dormant applications.
+    assert appregs.aggregate(apps)["summary"]["noRecentSignIn"] == 0
+    # The inventory itself still succeeded.
+    assert len(apps) == 3 and meta["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_beta_disabled_reports_not_measured_without_failing_the_refresh():
+    FakeGraphClient.beta = False
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    assert len(apps) == 1
+    assert meta["signin_activity"]["measured"] is False
+    assert "beta" in meta["signin_activity"]["reason"].lower()
+    assert apps[0]["lastSignInKnown"] is False
+
+
+@pytest.mark.asyncio
+async def test_credential_usage_joins_by_key_id_and_degrades_on_its_own():
+    FakeGraphClient.pages = {
+        "first": GraphPage([_app_with_creds(0, ["KEY-A", "key-b"])], "", 1),
+    }
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [{"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"}}],
+        CRED_PATH: [{"keyId": "key-a", "signInActivity": {"lastSignInDateTime": "2026-08-18T09:00:00Z"}}],
+    }
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    creds = {c["keyId"]: c for c in apps[0]["credentials"]}
+
+    assert meta["signin_activity"]["credentials"] == {"measured": True, "reason": "", "count": 1}
+    assert creds["KEY-A"]["lastUsed"] == "2026-08-18T09:00:00Z"
+    # Measured but unused — the retirement candidate, distinct from unmeasured.
+    assert creds["key-b"]["lastUsedKnown"] is True and creds["key-b"]["lastUsed"] is None
+
+    # The credential report failing must not take the per-app dates down with it.
+    FakeGraphClient.reports[CRED_PATH] = GraphError(400, "not licensed")
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    assert apps[0]["lastSignIn"] == "2026-08-20T09:00:00Z"
+    assert meta["signin_activity"]["measured"] is True
+    assert meta["signin_activity"]["credentials"]["measured"] is False
+    assert all(c["lastUsedKnown"] is False for c in apps[0]["credentials"])
 
 
 @pytest.mark.asyncio

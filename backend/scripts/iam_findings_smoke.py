@@ -11,7 +11,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api"
+BASE = "http://127.0.0.1:35001/api"
 
 # The app authenticates with a session cookie, not a bearer token.
 JAR = http.cookiejar.CookieJar()

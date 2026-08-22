@@ -15,7 +15,7 @@ import time
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api"
+BASE = "http://127.0.0.1:35001/api"
 JAR = http.cookiejar.CookieJar()
 OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(JAR))
 
@@ -27,7 +27,7 @@ def call(path: str, body: dict | None = None):
         req.add_header("Content-Type", "application/json")
         # main.py rejects cookie-bearing state-changing requests without proof of same-origin.
         req.add_header("Sec-Fetch-Site", "same-origin")
-        req.add_header("Origin", "http://127.0.0.1:8000")
+        req.add_header("Origin", "http://127.0.0.1:35001")
     with OPENER.open(req, timeout=600) as resp:
         return json.loads(resp.read() or b"{}")
 

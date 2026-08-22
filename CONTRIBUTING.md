@@ -41,10 +41,10 @@ Run the backend (uses SQLite locally; set `DATABASE_URL` for PostgreSQL):
 
 ```pwsh
 $env:DEV_AUTH = "true"   # local dev: bypass login with an admin principal
-python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 35001
 ```
 
-Health check: <http://127.0.0.1:8000/healthz>
+Health check: <http://127.0.0.1:35001/healthz>
 
 ### Frontend
 
@@ -53,7 +53,7 @@ npm --prefix frontend install
 npm --prefix frontend run dev
 ```
 
-App: <http://localhost:5173>
+App: <http://localhost:35000>
 
 ### Full stack via Docker Compose
 
