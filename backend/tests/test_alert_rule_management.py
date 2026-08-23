@@ -194,7 +194,12 @@ async def test_rule_apply_blocks_stale_state(monkeypatch) -> None:
     async def get_live(*_args, **_kwargs):
         return live, 200, ""
 
+    async def token(*_args, **_kwargs):
+        return "t"
+
     monkeypatch.setattr(rules, "get_rule", get_live)
+    # This test is about the stale-state check, not about authentication.
+    monkeypatch.setattr(service, "_token", token)
     resource, status, error = await rules.apply_rule_change({"read_only": False}, change)
     assert resource is None
     assert status == 409

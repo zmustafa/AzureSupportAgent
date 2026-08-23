@@ -285,7 +285,13 @@ async def test_update_change_blocks_stale_azure_state(monkeypatch) -> None:
     async def live(*_args, **_kwargs):
         return changed_live, 200, ""
 
+    async def token(*_args, **_kwargs):
+        return "t"
+
     monkeypatch.setattr(service, "get_arm_resource", live)
+    # This test is about the stale-state check, not about authentication. Without this the
+    # call reaches the default credential chain and waits on the Azure CLI.
+    monkeypatch.setattr(service, "_token", token)
     resource, status, error = await service.apply_action_group_change({"read_only": False}, change)
     assert resource is None
     assert status == 409

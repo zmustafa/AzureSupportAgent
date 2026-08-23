@@ -192,7 +192,12 @@ def test_demo_snapshot_has_all_resources_tab_data():
 def test_profiler_uses_workloads_own_connection(monkeypatch):
     """Regression: the profiler must scan a workload with ITS OWN connection, not the default.
     A workload whose subscription is only reachable via a non-default connection used to
-    return zero resources because the API hard-coded get_default_connection()."""
+    return zero resources because the API hard-coded get_default_connection().
+
+    The resolution moved from ``resolve_connection`` to ``connection_for_scope``, which also
+    made the workload's own connection AUTHORITATIVE — so the second half pins the stronger
+    property: picker state cannot redirect a workload's resources to another tenant.
+    """
     from app.api import perfprofile
 
     wl = {"id": "wl-x", "connection_id": "conn-workload", "nodes": []}
@@ -200,17 +205,30 @@ def test_profiler_uses_workloads_own_connection(monkeypatch):
     import app.workloads.registry as reg
 
     monkeypatch.setattr(reg, "get_workload", lambda scope_id, **kw: wl if scope_id == "wl-x" else None)
-    seen = {}
+    looked_up: list[str] = []
 
-    def _fake_resolve(cid):
-        seen["cid"] = cid
-        return {"id": cid or "default-conn"}
+    def _fake_get_connection(connection_id: str):
+        looked_up.append(connection_id)
+        return {"id": connection_id}
 
-    monkeypatch.setattr(conns, "resolve_connection", _fake_resolve)
+    monkeypatch.setattr(conns, "get_connection", _fake_get_connection)
+    monkeypatch.setattr(conns, "get_default_connection", lambda: {"id": "default-conn"})
 
     connection, workload = perfprofile._conn_and_workload("workload", "wl-x")
-    assert seen["cid"] == "conn-workload"  # resolved the workload's own connection id
+    assert looked_up == ["conn-workload"]  # resolved the workload's own connection id
     assert connection == {"id": "conn-workload"}
     assert workload is wl
+
+    # An explicit picker connection must NOT override the workload's own one.
+    looked_up.clear()
+    connection, _ = perfprofile._conn_and_workload("workload", "wl-x", "conn-from-picker")
+    assert looked_up == ["conn-workload"]
+    assert connection == {"id": "conn-workload"}
+
+    # A workload with no connection of its own still falls back to the default.
+    looked_up.clear()
+    wl.pop("connection_id")
+    connection, _ = perfprofile._conn_and_workload("workload", "wl-x")
+    assert connection == {"id": "default-conn"}
 
 

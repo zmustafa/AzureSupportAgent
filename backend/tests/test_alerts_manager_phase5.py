@@ -313,8 +313,19 @@ async def test_bulk_simulator_resolves_visible_cross_subscription_group(monkeypa
             }],
         }]
 
+    async def scope_context(*_args, **_kwargs):
+        return {
+            "scope": {"kind": "subscription", "id": "source", "name": "source"},
+            "resources": [], "workloads": [], "subscriptions": [],
+            "completeness": {"complete": True, "partial": False, "warnings": []},
+        }
+
     monkeypatch.setattr(rules, "list_rules", list_rules)
     monkeypatch.setattr(service, "list_action_groups", list_groups)
+    # This test is about route resolution, not about the resource universe. Left unstubbed,
+    # the third branch of the gather runs a real Resource Graph query and blocks on the
+    # network until it times out.
+    monkeypatch.setattr(advisory, "_scope_resource_context", scope_context)
     result = await advisory.bulk_simulate_notification_paths({}, subscription_id="source")
     assert result["routes"][0]["outcome"] == "deliver"
     assert result["routes"][0]["action_group_name"] == "team"

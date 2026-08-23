@@ -123,6 +123,26 @@ def _isolate_membership_index():
     investigate_members.reset_membership_index()
 
 
+@pytest.fixture(autouse=True)
+def _no_azure_cli(monkeypatch):
+    """Never let a unit test shell out to the Azure CLI.
+
+    `credentials._cli_token` is the last resort of the default credential chain, and it runs
+    `az account get-access-token` with a 40-second timeout. A test that forgets to stub its
+    token path does not fail — it *waits*, and on a host where process start is slow that is
+    40 seconds per occurrence. Measured on this suite: the ten slowest tests were every one of
+    them a multiple of that timeout, together ~650 seconds.
+
+    Tests that need a working token stub `get_arm_token` (or the connection) themselves.
+    """
+    from app.azure import credentials
+
+    async def _blocked(*_args, **_kwargs):
+        return None, "Azure CLI is unavailable to tests; stub the token instead."
+
+    monkeypatch.setattr(credentials, "_cli_token", _blocked)
+
+
 def pytest_collection_modifyitems(config, items):  # noqa: ARG001
     """Auto-tag the heavy suites as ``slow`` so the default ``-m 'not slow'`` run is fast,
     and skip the Azure-dependent tests when no connection is configured."""
