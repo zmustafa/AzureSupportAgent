@@ -16,6 +16,7 @@ Two deliberate design choices:
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.entra import guests as guests_mod
@@ -55,10 +56,26 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         truncated = False
 
         # --- pass 1: inventory -------------------------------------------------
-        await ctx.say("info", "People: collecting users…")
-        users_raw, user_trunc = await client.get_all(
-            "/users", select=_USER_SELECT, top=999, max_items=ctx.max_users
+        # The four reads below cover the same population but are independent of each other,
+        # and each is a full paged enumeration. Run serially they add up; issued together they
+        # cost about as much as the slowest one. `return_exceptions` keeps the existing
+        # fail-open contract: a pass that is unlicensed or unpermitted degrades on its own
+        # rather than taking the domain with it.
+        await ctx.say("info", "People: collecting users, sign-in activity, "
+                              "registration details and sponsors…")
+        inventory, activity_res, registration_res, sponsors_res = await asyncio.gather(
+            client.get_all("/users", select=_USER_SELECT, top=999, max_items=ctx.max_users),
+            client.get_all("/users", select=["id", "signInActivity"], top=999,
+                           max_items=ctx.max_users),
+            client.get_all("/reports/authenticationMethods/userRegistrationDetails", top=999),
+            client.get_all("/users", select=["id"], top=999, max_items=ctx.max_users,
+                           filter="userType eq 'Guest'",
+                           expand="sponsors($select=id,displayName)"),
+            return_exceptions=True,
         )
+        if isinstance(inventory, BaseException):
+            raise inventory
+        users_raw, user_trunc = inventory
         truncated = truncated or user_trunc
         if user_trunc:
             notes.append(f"User collection capped at {ctx.max_users:,} — counts are a lower bound.")
@@ -113,10 +130,9 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         # --- pass 2: sign-in activity (P1) -------------------------------------
         signin_available = False
         try:
-            await ctx.say("info", "People: merging last sign-in activity…")
-            activity, act_trunc = await client.get_all(
-                "/users", select=["id", "signInActivity"], top=999, max_items=ctx.max_users
-            )
+            if isinstance(activity_res, BaseException):
+                raise activity_res
+            activity, act_trunc = activity_res
             truncated = truncated or act_trunc
             merged = 0
             for row in activity:
@@ -145,8 +161,9 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         # --- pass 3: MFA registration report (P1) ------------------------------
         mfa_available = False
         try:
-            await ctx.say("info", "People: reading the authentication-method registration report…")
-            reg, _ = await client.get_all("/reports/authenticationMethods/userRegistrationDetails", top=999)
+            if isinstance(registration_res, BaseException):
+                raise registration_res
+            reg, _ = registration_res
             for row in reg:
                 row = as_dict(row)
                 uid = str(row.get("id") or "")
@@ -187,12 +204,9 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         # never ran look identical once merged, and "nobody is accountable for this guest" is
         # a finding while "we did not ask" is not.
         try:
-            await ctx.say("info", "People: resolving guest sponsors…")
-            sponsored, sp_trunc = await client.get_all(
-                "/users", select=["id"], top=999, max_items=ctx.max_users,
-                filter="userType eq 'Guest'",
-                expand="sponsors($select=id,displayName)",
-            )
+            if isinstance(sponsors_res, BaseException):
+                raise sponsors_res
+            sponsored, sp_trunc = sponsors_res
             truncated = truncated or sp_trunc
             seen = 0
             for row in sponsored:
@@ -222,9 +236,9 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         # this company and no policy governing them", which is the whole point of the
         # partner view.
         #
-        # One `$batch` per 20 domains rather than a call each: ~400 distinct domains on a
-        # real tenant is 20 round trips, not 400. Verified live that the function works on
-        # v1.0 with the scopes already held, and it returns the partner's real display name
+        # One `$batch` per 20 domains rather than a call each: ~400 distinct domains at
+        # production scale is 20 round trips, not 400. The function works on v1.0 with the
+        # scopes already held, and it returns the partner's own display name
         # ("Fabrikam"), which beats showing a bare domain.
         guest_domains = sorted({
             guests_mod.guest_domain(u) for u in users.values()
