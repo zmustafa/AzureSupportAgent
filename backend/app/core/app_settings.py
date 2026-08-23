@@ -259,6 +259,24 @@ DEFAULTS: dict[str, Any] = {
     # Allow Microsoft Graph beta endpoints (CA what-if evaluate, risky workload identities,
     # workload-identity sign-ins). Turning this off keeps the product fully functional on v1.0.
     "entra_enable_beta_endpoints": True,
+    # Requests in flight during a collection. The slowest phases are `$batch` fan-outs that
+    # sit idle waiting on the gate; the client narrows itself on 429 and recovers, so this is
+    # a ceiling rather than a promise.
+    "entra_graph_concurrency": 12,
+    # Per-application sign-in outcomes. Each is one slow Graph call (~7s even when the app has
+    # no events), so the scope is bounded:
+    #   off     - aggregate report only; the failed-sign-in column reads "not measured"
+    #   visible - only applications the inventory grid renders (excludes first-party Microsoft)
+    #   all     - every service principal, including first-party
+    "entra_signin_outcome_scope": "visible",
+    # How stale a cached per-application outcome may get before it is read again.
+    "entra_signin_outcome_ttl_s": 86400,
+    # Ceiling on per-application reads in one pass. Apps beyond it are picked up next run,
+    # stalest first, so a large tenant degrades into slower freshness rather than a stalled job.
+    "entra_signin_outcome_max_per_run": 100,
+    # Wall-clock ceiling on that pass. Per-call latency varies by an order of magnitude between
+    # tenants, so a count alone does not bound the cost; whichever limit is hit first wins.
+    "entra_signin_outcome_max_seconds": 300,
     # --- AMBA Monitoring Coverage --------------------------------------------------
     # Server-side cache TTL (seconds) for coverage snapshots — the Resource Graph scans
     # are slow, so the dashboard serves a cached snapshot until it ages past this (6h).
@@ -594,6 +612,18 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     current["entra_signin_lookback_days"] = max(1, min(90, int(current.get("entra_signin_lookback_days", 30) or 30)))
     current["entra_max_users"] = max(100, min(2000000, int(current.get("entra_max_users", 250000) or 250000)))
     current["entra_enable_beta_endpoints"] = bool(current.get("entra_enable_beta_endpoints", True))
+    current["entra_graph_concurrency"] = max(
+        1, min(24, int(current.get("entra_graph_concurrency", 12) or 12)))
+    if str(current.get("entra_signin_outcome_scope") or "").lower() not in ("off", "visible", "all"):
+        current["entra_signin_outcome_scope"] = "visible"
+    else:
+        current["entra_signin_outcome_scope"] = str(current["entra_signin_outcome_scope"]).lower()
+    current["entra_signin_outcome_ttl_s"] = max(
+        0, min(604800, int(current.get("entra_signin_outcome_ttl_s", 86400) or 86400)))
+    current["entra_signin_outcome_max_per_run"] = max(
+        1, min(5000, int(current.get("entra_signin_outcome_max_per_run", 100) or 100)))
+    current["entra_signin_outcome_max_seconds"] = max(
+        0, min(3600, int(current.get("entra_signin_outcome_max_seconds", 300) or 300)))
     # AMBA: clamp cache TTL + tolerance; coerce the misconfig flag.
     current["amba_cache_ttl_s"] = max(0, min(604800, int(current.get("amba_cache_ttl_s", 21600) or 21600)))
     current["amba_misconfig_counts_as_gap"] = bool(current.get("amba_misconfig_counts_as_gap", True))

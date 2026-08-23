@@ -1,5 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:35001/api";
-export { API_BASE };
+import { API_BASE, HttpError, http, httpBlob, httpUpload, downloadBlob, apiBase } from "./api/http";
+export { API_BASE, HttpError, downloadBlob, apiBase };
 
 export interface Chat {
   id: string;
@@ -85,96 +85,6 @@ export interface AuthConfig {
 export interface ActiveLlm {
   provider: string;
   model: string;
-}
-
-export class HttpError extends Error {
-  status: number;
-  detail: string;
-  constructor(status: number, detail: string) {
-    super(detail || `${status}`);
-    this.status = status;
-    this.detail = detail;
-  }
-}
-
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    // API responses are dynamic and must never come from the browser HTTP cache
-    // (e.g. a stale /me after switching roles). React Query handles app-level caching.
-    cache: "no-store",
-    ...init,
-  });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json();
-      if (body && typeof body.detail === "string") detail = body.detail;
-      else if (Array.isArray(body?.detail)) detail = body.detail.map((item: unknown) => typeof item === "string" ? item : JSON.stringify(item)).join("\n");
-      else if (body?.detail && typeof body.detail === "object") detail = typeof body.detail.message === "string" ? body.detail.message : JSON.stringify(body.detail);
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new HttpError(res.status, detail);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function httpBlob(path: string, init?: RequestInit): Promise<Blob> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    cache: "no-store",
-    ...init,
-  });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json();
-      if (body && typeof body.detail === "string") detail = body.detail;
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new HttpError(res.status, detail);
-  }
-  return res.blob();
-}
-
-/** Absolute API origin, e.g. for SSO redirects (full-page navigations). */
-export const apiBase = API_BASE;
-
-/** POST a multipart form (file upload). Lets the browser set the multipart boundary. */
-async function httpUpload<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    body: form,
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json();
-      if (body && typeof body.detail === "string") detail = body.detail;
-    } catch {
-      /* non-JSON */
-    }
-    throw new HttpError(res.status, detail);
-  }
-  return res.json() as Promise<T>;
-}
-
-/** Trigger a browser download of a Blob with a filename. */
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ---- Identity dashboard ---------------------------------------------------------
@@ -312,9 +222,19 @@ export type AppRegistration = {
   highRisk: boolean;
   // Three distinct facts, never collapse them: a date; measured-but-no-sign-in
   // (lastSignInKnown && !lastSignIn); and unreadable (!lastSignInKnown).
+  // `lastSignIn` is a SUCCESSFUL sign-in. `lastAttempt` may be a rejected one — Graph counts
+  // a failed credential as sign-in activity, so an expired secret keeps producing a date.
   lastSignIn: string | null;
   lastSignInKnown: boolean;
   lastSignInDays: number | null;
+  lastAttempt: string | null;
+  lastAttemptDays: number | null;
+  // Derived: an attempt Graph stamped AFTER the last success cannot have been the success.
+  lastFailedSignIn: string | null;
+  lastFailedSignInDays: number | null;
+  // False when the per-event log has not been read for this application yet. The pass is
+  // bounded, so an empty cell is only "no failures" once this is true.
+  lastFailedSignInKnown?: boolean;
   lastSignInDelegated: string | null;
   lastSignInApplication: string | null;
   enterpriseAppState: EnterpriseAppState;
@@ -335,6 +255,13 @@ export type AppRegSignInActivity = {
   complete: boolean;
   apps_with_activity: number;
   credentials: { measured: boolean; reason: string; count: number };
+  // Whether success and failure can be told apart at all for this tenant.
+  failures?: { measured: boolean; reason: string; pending?: number; checked?: number };
+  // Microsoft stops maintaining this aggregate on unlicensed tenants and keeps serving the
+  // last build. `stale` means "absent from the report" is unknown, not idle.
+  stale?: boolean;
+  as_of?: string;
+  stale_reason?: string;
 };
 
 export type AppRegistrationsResponse = {
@@ -6303,7 +6230,7 @@ export const api = {
 
   // ---------------------------------------------------------------- Entra ID Support Agent
   // Every read is cache-only: a cold cache returns meta.loaded=false, never a 500 and never
-  // a silent live tenant scan. `entraRefresh` is the only call that touches Microsoft Graph.
+  // a silent live scan. `entraRefresh` is the only call that touches Microsoft Graph.
   entraStatus: (connectionId?: string | null) =>
     http<EntraStatus>(`/entra/status${entraQs(connectionId)}`),
   entraRefresh: (connectionId?: string | null, domains?: string[]) =>
@@ -6476,8 +6403,15 @@ export const api = {
     connectionId?: string | null,
   ) => http<{ meta: EntraMeta; apps: EntraAppRow[]; total: number; offset: number; limit: number;
               counts: Record<string, number>; capabilities: Record<string, boolean>;
+              signin: { measured: boolean; outcomes_measured: boolean; reason: string;
+                        window_days: number; scope: string; pending: boolean;
+                        pending_count: number; checked_total: number; in_scope_total: number };
               risk_components: { key: string; label: string; weight: number }[] }>(
     `/entra/apps${entraQs(connectionId, params as Record<string, string | number | undefined>)}`),
+  entraRefreshSignInOutcomes: (connectionId?: string | null) =>
+    http<{ ran: boolean; reason?: string; checked?: number; remaining?: number;
+           with_events?: number; state: Record<string, unknown> }>(
+      `/entra/apps/signin-outcomes/refresh${entraQs(connectionId)}`, { method: "POST", body: "{}" }),
   entraApp360: (objectId: string, connectionId?: string | null) =>
     http<EntraApp360>(`/entra/apps/${encodeURIComponent(objectId)}${entraQs(connectionId)}`),
   entraAppsConsent: (connectionId?: string | null) =>
@@ -7108,7 +7042,7 @@ export const api = {
    * Access Map facts.
    *
    * The server interns the fact table (per-column label dictionaries + rows of integers)
-   * because the object form measured 4 MiB on a real tenant against 520 KiB interned. Decoding
+   * because the object form measured 4 MiB at production scale against 520 KiB interned. Decoding
    * here keeps that entirely a transport concern — every caller sees ordinary objects.
    */
   iamFlow: async (params?: { scope_id?: string; subscription_ids?: string; workload_id?: string; principal_id?: string; connection_id?: string | null }): Promise<IamFlow> => {
@@ -11070,6 +11004,11 @@ export type EntraAppRow = {
   credential_count: number; expiring_credentials: number; expired_credentials: number;
   assigned_principals: number; orphaned: boolean; risk_score: number;
   platform_managed: boolean;
+  // Derived: an attempt Graph stamped after the last success. "" = no evidence of a failure.
+  last_failed_signin: string;
+  // Newest sign-in seen inside the reporting window. "" = none seen, which is only the same
+  // as "never signed in" when the envelope says sign-in was measured.
+  last_signin: string;
 };
 
 export type EntraRiskComponent = {

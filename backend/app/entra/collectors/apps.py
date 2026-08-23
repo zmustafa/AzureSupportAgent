@@ -24,7 +24,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from app.entra import model
+from app.core.signin_activity import failed_signin
+from app.entra import model, signin_outcomes
 from app.entra.collectors import CollectContext, as_dict, as_list, batch_collection, clip, guarded
 from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError
 
@@ -236,7 +237,7 @@ def risk_score(app: dict[str, Any], sp: dict[str, Any] | None, *, azure_roles: i
     """0-100 risk for one application, with the contribution of every component.
 
     Sorting an inventory by this is the fastest route from "3,000 applications" to "look at
-    these six first", which is the only way the screen is usable at real tenant size.
+    these six first", which is the only way the screen is usable at production directory size.
     """
     sp = sp or {}
     platform = is_platform_managed(sp)
@@ -385,12 +386,21 @@ def _credentials(raw: list[Any], kind: str, now: datetime) -> list[dict[str, Any
 SIGNIN_WINDOW_DAYS = 30
 
 
-async def _signin_activity(client: GraphClient, ctx: CollectContext, now: datetime) -> dict[str, Any]:
-    """Which applications were actually signed into recently.
+async def _signin_activity(client: GraphClient, ctx: CollectContext,
+                           now: datetime) -> dict[str, Any]:
+    """Which applications were actually signed into recently, and which were rejected.
 
     This exists to answer "is anyone USING the app nobody protects?". A gap on an application
     that has not been touched in a year is housekeeping; the same gap on one with daily traffic
     is live exposure, and the coverage matrix alone cannot tell them apart.
+
+    Two sources, in order of authority:
+
+    * ``/reports/servicePrincipalSignInActivities`` — one row per application, one call, but it
+      does not separate a success from a rejected attempt and can serve a stale build.
+    * ``/auditLogs/signIns`` scoped per application — carries ``status.errorCode``, so it is
+      the only source that can say *failed*. One slow call per app, so it is read out of band
+      and only its cached result is applied here.
 
     The return value ALWAYS carries ``measured``. When the tenant lacks the license or the
     permission for sign-in logs, the honest answer is "not measured", never an empty app list —
@@ -410,34 +420,88 @@ async def _signin_activity(client: GraphClient, ctx: CollectContext, now: dateti
             top=999, max_items=ctx.max_apps, beta=True,
         )
         active: dict[str, str] = {}
+        failed: dict[str, str] = {}
         for r in rows:
             r = as_dict(r)
             app_id = str(r.get("appId") or "").lower()
-            last = str(
-                (as_dict(r.get("lastSignInActivity")).get("lastSignInDateTime"))
-                or r.get("lastSignInActivity") or ""
-            )
-            if app_id and last and last >= since:
+            if not app_id:
+                continue
+            activity = as_dict(r.get("lastSignInActivity"))
+            # Graph does not emit `lastSuccessfulSignInDateTime` for service principals, so
+            # the attempt stamp is the only signal this report offers. Prefer a real success
+            # where one exists.
+            last = str(activity.get("lastSuccessfulSignInDateTime")
+                       or activity.get("lastSignInDateTime") or "")
+            if last and last >= since:
                 active[app_id] = last
+            # Only set when Graph actually distinguishes the two. Without a premium licence
+            # the sign-in logs that carry an error code are unreadable, so this stays empty
+            # rather than branding every application as failing.
+            rejected = failed_signin(
+                str(activity.get("lastSignInDateTime") or ""),
+                str(activity.get("lastSuccessfulSignInDateTime") or ""),
+            ) if activity.get("lastSuccessfulSignInDateTime") else ""
+            if rejected:
+                failed[app_id] = rejected
         await ctx.say("ok", f"Applications: {len(active):,} app(s) with sign-in activity")
-        return {
+        block = {
             "measured": True,
             "source": "servicePrincipalSignInActivities",
             "window_days": SIGNIN_WINDOW_DAYS,
             "active_app_ids": sorted(active),
             "last_seen": active,
+            "last_failed": failed,
             "complete": not truncated,
         }
     except Exception as exc:  # noqa: BLE001 - any Graph failure means "not measured"
         await ctx.say("warn", f"Applications: sign-in activity unavailable ({clip(str(exc), 120)})")
-        return {
+        block = {
             "measured": False,
             "reason": "Sign-in activity could not be read for this tenant. This usually means the "
                       "AuditLog.Read.All permission is missing, or the tenant has no Entra ID P1 "
                       "license. Applications with no policy coverage are still listed, but "
                       "whether anyone is signing into them is unknown.",
             "active_app_ids": [],
+            "last_seen": {},
+            "last_failed": {},
         }
+
+    await _apply_cached_outcomes(ctx, block)
+    return block
+
+
+async def _apply_cached_outcomes(ctx: CollectContext, block: dict[str, Any]) -> None:
+    """Overlay whatever per-event outcomes are already cached, in place.
+
+    No Graph calls: the per-application reads are slow and mostly empty, so they run out of
+    band after the refresh (`signin_outcomes.run_backfill`) and land here on the next one. The
+    `outcomes` sub-block reports which state the failure column is actually in, so an empty
+    cell is never rendered as a confident "no failures".
+    """
+    scope, _ttl, _cap, _budget = signin_outcomes.settings()
+    if scope == signin_outcomes.SCOPE_OFF:
+        block["outcomes"] = {
+            "measured": False, "scope": scope,
+            "reason": "Per-application sign-in outcomes are turned off, so a rejected sign-in "
+                      "cannot be told apart from a successful one.",
+        }
+        return
+
+    entries = signin_outcomes.read_cache(ctx.tenant_id)
+    if not entries:
+        block["outcomes"] = {
+            "measured": False, "scope": scope, "pending": True,
+            "reason": "Per-application sign-in outcomes have not been read yet. They are "
+                      "collected in the background after a refresh.",
+        }
+        return
+
+    by_app = signin_outcomes.cached_by_app(entries)
+    signin_outcomes.merge_outcomes(block, by_app)
+    block["measured"] = True
+    block["source"] = "auditLogs/signIns + servicePrincipalSignInActivities"
+    block["outcomes"] = {"measured": True, "reason": "", "scope": scope, "cached": len(entries)}
+    await ctx.say("ok", f"Applications: {len(by_app):,} app(s) with a cached sign-in outcome")
 
 
 async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:

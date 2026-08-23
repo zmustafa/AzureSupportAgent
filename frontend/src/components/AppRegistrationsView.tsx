@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, streamAppRegistrationsRefresh, type AppRegProgress, type AppRegRefreshMode, type AppRegistration, type AppRegistrationsResponse, type EnterpriseAppState } from "../api";import { formatError } from "../utils/format";
 import { Skeleton, useDebounced, VirtualList } from "../utils/perf";
+import { cmp, SortScopeNote, useEntraSorted, useSortState, type SortDir, type SortState } from "./entra/EntraShared";
 
 function agoText(seconds: number | null): string {
   if (seconds == null) return "never";
@@ -34,6 +35,101 @@ const ENTERPRISE_STATE_META: Record<EnterpriseAppState, { label: string; cls: st
   not_instantiated: { label: "No local enterprise app", cls: "bg-gray-100 text-gray-600", title: "No corresponding service principal exists in this tenant." },
   unknown: { label: "Unknown", cls: "bg-amber-100 text-amber-700", title: "The enterprise-application state could not be determined." },
 };
+
+/** Columns the grid can sort by, in header order. */
+type AppRegSortKey =
+  | "name" | "audience" | "state" | "secrets" | "certs"
+  | "appPerms" | "delegated" | "nextExpiry" | "lastSignIn" | "lastFailed" | "owners" | "risk";
+
+/**
+ * One definition of the column track, used by the header and the rows.
+ *
+ * They must stay identical or the header labels stop lining up with their data. Widths were
+ * rebalanced when the headers became sortable: a sort arrow costs each label ~10px, which
+ * was enough to truncate "Secrets", "App perms", "Delegated" and "Last sign-in".
+ * Written out in full so Tailwind's scanner sees the literal class.
+ */
+const GRID_COLS =
+  "grid-cols-[1.65fr_0.7fr_0.8fr_0.6fr_0.55fr_0.75fr_0.75fr_0.9fr_0.95fr_0.95fr_0.9fr_0.55fr]";
+
+/** Most-interesting first when descending, per the Entra grid convention. */
+const ENTERPRISE_STATE_RANK: Record<string, number> = {
+  deactivated: 3, unknown: 2, not_instantiated: 1, active: 0,
+};
+
+/**
+ * Sort value for the sign-in column.
+ *
+ * Three facts share this column and must not collapse into one. An unreadable report is
+ * genuinely unknown, so it is null and the null rule pins it to the bottom. But "measured,
+ * and it never signed in" is NOT unknown — it is the staleness extreme, and it is exactly
+ * the row a dormancy review is hunting for. Ranking it below every real date keeps it
+ * reachable by sorting instead of stranding it with the unmeasured rows.
+ */
+function signInSortValue(a: AppRegistration): number | null {
+  if (!a.lastSignInKnown) return null;
+  if (!a.lastSignIn) return 0;
+  const t = new Date(a.lastSignIn).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function compareAppRegs(a: AppRegistration, b: AppRegistration, key: AppRegSortKey): number {
+  switch (key) {
+    case "audience":
+      return cmp.text(AUDIENCE_LABEL[a.signInAudience] ?? a.signInAudience,
+                      AUDIENCE_LABEL[b.signInAudience] ?? b.signInAudience);
+    case "state": return cmp.rank(ENTERPRISE_STATE_RANK, a.enterpriseAppState, b.enterpriseAppState);
+    case "secrets": return cmp.num(a.secretsCount, b.secretsCount);
+    case "certs": return cmp.num(a.certsCount, b.certsCount);
+    case "appPerms": return cmp.num(a.applicationPermissionsCount, b.applicationPermissionsCount);
+    case "delegated": return cmp.num(a.delegatedPermissionsCount, b.delegatedPermissionsCount);
+    case "nextExpiry": return cmp.num(a.nextExpiryDays, b.nextExpiryDays);
+    case "lastSignIn": return cmp.num(signInSortValue(a), signInSortValue(b));
+    case "lastFailed": return cmp.date(a.lastFailedSignIn, b.lastFailedSignIn);
+    case "owners":
+      return cmp.text(a.ownerless ? "" : a.owners.join(", "),
+                      b.ownerless ? "" : b.owners.join(", "));
+    case "risk": return cmp.bool(a.highRisk, b.highRisk);
+    default: return cmp.text(a.displayName, b.displayName);
+  }
+}
+
+/**
+ * A sortable header cell for this CSS-grid layout.
+ *
+ * `SortTh` in EntraShared renders a `<th>`, and this grid has no table to put one in. The
+ * behaviour — first-click direction, arrow glyphs, toggle — is deliberately identical, so
+ * the two grids feel the same. No `aria-sort`/`columnheader`: those are only meaningful
+ * inside a table/grid role, and claiming them here would mislead a screen reader.
+ */
+function SortHead({ label, col, sort, setSort, align = "left", firstDir = -1, title }: {
+  label: string;
+  col: AppRegSortKey;
+  sort: SortState<AppRegSortKey>;
+  setSort: (s: SortState<AppRegSortKey>) => void;
+  align?: "left" | "center";
+  firstDir?: SortDir;
+  title?: string;
+}) {
+  const active = sort.key === col;
+  const state = active ? (sort.dir === -1 ? "sorted descending" : "sorted ascending") : "not sorted";
+  return (
+    <button
+      type="button"
+      data-testid={`appregs-sort-${col}`}
+      onClick={() => setSort({ key: col, dir: active ? ((sort.dir * -1) as SortDir) : firstDir })}
+      title={title || `Sort by ${label.toLowerCase()}`}
+      aria-label={`${label}, ${state}. Activate to sort.`}
+      className={`flex min-w-0 items-center hover:text-gray-800 ${
+        align === "center" ? "justify-center" : ""} ${active ? "text-gray-800" : ""}`}
+    >
+      <span className="truncate uppercase tracking-wide">{label}</span>
+      <span className={`ml-0.5 shrink-0 text-[9px] leading-none ${active ? "text-brand" : "text-gray-300"}`}>
+        {active ? (sort.dir === -1 ? "▼" : "▲") : "↕"}
+      </span>
+    </button>
+  );
+}
 
 function EnterpriseStateBadge({ state }: { state?: EnterpriseAppState }) {
   const meta = ENTERPRISE_STATE_META[state ?? "unknown"];
@@ -72,13 +168,16 @@ function ExpiryBadge({ days }: { days: number | null }) {
 }
 
 // Mirrors appregs.signin_bucket on the backend — the facet values must match exactly.
-const SIGNIN_BUCKETS = ["Last 7 days", "8-30 days", "Over 30 days", "No sign-in in 30 days", "Not measured"] as const;
+const SIGNIN_BUCKETS = ["Last 7 days", "8-30 days", "Over 30 days", "Attempted, never succeeded", "No sign-in in 30 days", "Not measured"] as const;
 type SignInBucket = (typeof SIGNIN_BUCKETS)[number];
-const DORMANT_BUCKETS: SignInBucket[] = ["Over 30 days", "No sign-in in 30 days"];
+// A rejected attempt is not usage, so the dormancy KPI counts it too.
+const DORMANT_BUCKETS: SignInBucket[] = ["Over 30 days", "Attempted, never succeeded", "No sign-in in 30 days"];
 
 function signinBucket(a: AppRegistration): SignInBucket {
   if (!a.lastSignInKnown) return "Not measured";
-  if (a.lastSignInDays == null) return "No sign-in in 30 days";
+  if (a.lastSignInDays == null) {
+    return a.lastAttempt ? "Attempted, never succeeded" : "No sign-in in 30 days";
+  }
   if (a.lastSignInDays <= 7) return "Last 7 days";
   if (a.lastSignInDays <= 30) return "8-30 days";
   return "Over 30 days";
@@ -88,8 +187,9 @@ function daysAgoText(days: number): string {
   return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
 }
 
-/** Last sign-in for one app. Renders three DIFFERENT things, because they are three
- *  different facts: a date, "measured but nothing signed in", and "we could not look". */
+/** Last sign-in for one app. Renders four DIFFERENT things, because they are four different
+ *  facts: a successful date, a rejected attempt, "measured but nothing signed in", and "we
+ *  could not look". Showing an attempt as a sign-in makes a broken integration look live. */
 function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: number }) {
   if (!a.lastSignInKnown) {
     return (
@@ -103,6 +203,18 @@ function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: num
     );
   }
   if (!a.lastSignIn || a.lastSignInDays == null) {
+    // Something tried and was turned away. Neither "in use" nor "dormant" — a third answer.
+    if (a.lastAttempt && a.lastAttemptDays != null) {
+      return (
+        <span
+          data-testid="appregs-signin-failed"
+          title={`Last attempt ${new Date(a.lastAttempt).toLocaleString()} — it did not succeed.\nMicrosoft's report counts a rejected credential as sign-in activity, so a date here is an attempt, not use.\nNo successful sign-in in the last ${windowDays} days.`}
+          className="whitespace-nowrap rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700"
+        >
+          failed {daysAgoText(a.lastAttemptDays)}
+        </span>
+      );
+    }
     return (
       <span
         data-testid="appregs-signin-none"
@@ -125,8 +237,55 @@ function LastSignInCell({ a, windowDays }: { a: AppRegistration; windowDays: num
   );
 }
 
-/** Last use of one credential — the answer to "which of these secrets can I retire?". */
-function LastUsedBadge({ lastUsed, known, days }: { lastUsed: string | null; known: boolean; days: number | null }) {
+/** The most recent rejected sign-in.
+ *
+ *  Three states, and the middle one is the point: Microsoft's per-application report does not
+ *  separate success from failure, and the per-event logs that do need an Entra ID P1 licence.
+ *  Where that is the case the column must say so, because an empty column reads as
+ *  "nothing is failing". */
+function LastFailedCell({ a, measured, reason }: {
+  a: AppRegistration; measured: boolean; reason: string;
+}) {
+  if (!measured) {
+    return (
+      <span
+        data-testid="appregs-lastfailed-unmeasured"
+        title={reason || "Sign-in failures cannot be read for this tenant."}
+        className="whitespace-nowrap text-[10px] text-gray-400"
+      >
+        not measured
+      </span>
+    );
+  }
+  // The per-event read is bounded, so the tenant-level "measured" does not mean THIS
+  // application was covered. Without the per-app flag an unread one renders as a dash,
+  // which reads as "nothing failed" — the opposite of what is known.
+  if (!a.lastFailedSignInKnown) {
+    return (
+      <span
+        data-testid="appregs-lastfailed-pending"
+        title="Not read yet. Sign-in outcomes are collected a batch at a time; refresh again to extend the coverage."
+        className="whitespace-nowrap text-[10px] text-amber-600"
+      >
+        not read yet
+      </span>
+    );
+  }
+  if (!a.lastFailedSignIn || a.lastFailedSignInDays == null) {
+    return <span className="text-[10px] text-gray-300" title="No sign-in failure in the reported window.">—</span>;
+  }
+  return (
+    <span
+      data-testid="appregs-lastfailed"
+      title={`${new Date(a.lastFailedSignIn).toLocaleString()}\nThis attempt was stamped after the last successful sign-in, so it did not succeed.`}
+      className="whitespace-nowrap rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600"
+    >
+      {daysAgoText(a.lastFailedSignInDays)}
+    </span>
+  );
+}
+
+/** Last use of one credential — the answer to "which of these secrets can I retire?". */function LastUsedBadge({ lastUsed, known, days }: { lastUsed: string | null; known: boolean; days: number | null }) {
   if (!known) return <span className="text-[10px] text-gray-400" title="Per-credential usage could not be read.">usage not measured</span>;
   if (!lastUsed || days == null) return <span className="text-[10px] text-amber-700" title="Not used inside the reported window.">not used recently</span>;
   return <span className="text-[10px] text-gray-500" title={new Date(lastUsed).toLocaleString()}>used {daysAgoText(days)}</span>;
@@ -335,6 +494,10 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   const filtered = useMemo(() => apps.filter(matches), [apps, audSel, stateSel, permTypeSel, credSel, highRiskOnly, permSel, ownerSel, signinSel, dText]);
 
+  // Default mirrors the order the server already sends, so the first paint is unchanged.
+  const [sort, setSort] = useSortState<AppRegSortKey>("app-registrations", { key: "name", dir: 1 });
+  const sorted = useEntraSorted(filtered, sort, compareAppRegs);
+
   // Counts for the fixed facet rows (computed over the full app set, like the other facets).
   const facetCounts = useMemo(() => {
     let application = 0, delegated = 0, secrets = 0, certs = 0, expiring = 0, expired = 0, none = 0, highRisk = 0;
@@ -358,6 +521,8 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
   const signinCounts = new Map((data?.facets.signInActivity ?? []).map((f) => [f.value, f.count]));
   const signinMeta = data?.signin_activity;
   const signinWindow = signinMeta?.window_days ?? 30;
+  const failuresMeasured = signinMeta?.failures?.measured ?? false;
+  const failuresReason = signinMeta?.failures?.reason ?? "";
 
   const anyFilter =
     audSel.size || stateSel.size || permTypeSel.size || credSel.size || highRiskOnly || permSel.size || ownerSel.size || signinSel.size || text.trim();
@@ -376,7 +541,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
 
   function exportCsv() {
     const rows = [
-      ["Name", "AppId", "Audience", "EnterpriseAppState", "ServicePrincipalId", "ServicePrincipalType", "MicrosoftDisableStatus", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners", "LastSignIn", "SignInStatus"],
+      ["Name", "AppId", "Audience", "EnterpriseAppState", "ServicePrincipalId", "ServicePrincipalType", "MicrosoftDisableStatus", "Secrets", "Certs", "AppPerms", "DelegatedPerms", "NextExpiryDays", "HighRisk", "Owners", "LastSignIn", "LastFailedSignIn", "SignInStatus"],
       ...filtered.map((a) => [
         a.displayName,
         a.appId,
@@ -393,6 +558,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
         a.highRisk ? "yes" : "no",
         a.owners.join("; "),
         a.lastSignIn ?? "",
+        a.lastFailedSignIn ?? "",
         signinBucket(a),
       ]),
     ];
@@ -535,6 +701,12 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
           <div data-testid="appregs-signin-banner" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
             <b>Sign-in activity not measured.</b> {signinMeta.reason} Until it can be read, an empty
             Last sign-in column means “unknown” — not “never used”.
+          </div>
+        )}
+        {signinMeta && signinMeta.measured && signinMeta.stale && (
+          <div data-testid="appregs-signin-stale-banner" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+            <b>Sign-in report is out of date.</b> {signinMeta.stale_reason} Applications it does not
+            mention show “not measured” rather than “no sign-in”.
           </div>
         )}
         {/* IU4 — stale-cache nudge once the snapshot is more than a day old. */}
@@ -723,16 +895,36 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
               <div className="py-16 text-center text-sm text-gray-400">No app registrations match the current filters.</div>
             ) : (
               <>
+                {/* Sorting reorders the rows the server actually sent. When the listing was
+                    capped that is a narrower claim than the header implies, so say so. */}
+                <SortScopeNote
+                  shown={data?.enumeration?.fetched ?? data?.limit ?? apps.length}
+                  total={data?.graph_total ?? 0}
+                  sorted="the loaded app registrations"
+                />
                 {/* IP1 — virtualized header + rows (expandable detail rendered inline; VirtualList
                     measures variable heights). Was a plain <table> mapping every row. */}
-                <div className="sticky top-0 z-10 grid grid-cols-[2fr_0.8fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_0.9fr_1.1fr_0.6fr] gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500">
-                  <span>Name</span><span>Audience</span><span>State</span><span className="text-center">Secrets</span><span className="text-center">Certs</span>
-                  <span className="text-center">App perms</span><span className="text-center">Delegated</span><span>Next expiry</span>
-                  <span title={`From Microsoft's per-application sign-in report, which covers the last ${signinWindow} days.`}>Last sign-in</span>
-                  <span>Owners</span><span>Risk</span>
+                <div className={`sticky top-0 z-10 grid ${GRID_COLS} gap-0 border-b bg-gray-50 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-500`}>
+                  <SortHead label="Name" col="name" sort={sort} setSort={setSort} firstDir={1} />
+                  <SortHead label="Audience" col="audience" sort={sort} setSort={setSort} firstDir={1} />
+                  <SortHead label="State" col="state" sort={sort} setSort={setSort} />
+                  <SortHead label="Secrets" col="secrets" sort={sort} setSort={setSort} align="center" />
+                  <SortHead label="Certs" col="certs" sort={sort} setSort={setSort} align="center" />
+                  <SortHead label="App perms" col="appPerms" sort={sort} setSort={setSort} align="center" />
+                  <SortHead label="Delegated" col="delegated" sort={sort} setSort={setSort} align="center" />
+                  <SortHead label="Next expiry" col="nextExpiry" sort={sort} setSort={setSort} firstDir={1}
+                            title="Days until the next credential expires — soonest first." />
+                  <SortHead label="Last sign-in" col="lastSignIn" sort={sort} setSort={setSort} firstDir={1}
+                            title={`From Microsoft's per-application sign-in report, which covers the last ${signinWindow} days. It does NOT separate a successful sign-in from a rejected one, so a date here can be a failed attempt. Sorts oldest first.`} />
+                  <SortHead label="Last failed sign-in" col="lastFailed" sort={sort} setSort={setSort}
+                            title={failuresMeasured
+                              ? "The most recent sign-in attempt that did not succeed."
+                              : failuresReason} />
+                  <SortHead label="Owners" col="owners" sort={sort} setSort={setSort} firstDir={1} />
+                  <SortHead label="Risk" col="risk" sort={sort} setSort={setSort} />
                 </div>
                 <VirtualList
-                  items={filtered}
+                  items={sorted}
                   estimateSize={48}
                   max="100%"
                   render={(a: AppRegistration) => {
@@ -741,7 +933,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                       <div className="border-b border-gray-100">
                         <div
                           onClick={() => setExpanded(open ? null : a.id)}
-                          className="grid cursor-pointer grid-cols-[2fr_0.8fr_0.9fr_0.6fr_0.6fr_0.7fr_0.7fr_1fr_0.9fr_1.1fr_0.6fr] items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50"
+                          className={`grid cursor-pointer ${GRID_COLS} items-center gap-0 px-3 py-2 text-sm hover:bg-gray-50`}
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className="text-gray-400">{open ? "▾" : "▸"}</span>
@@ -761,6 +953,7 @@ export function AppRegistrationsView({ connectionId = null }: { connectionId?: s
                           <span className="text-center tabular-nums">{a.delegatedPermissionsCount || <span className="text-gray-300">0</span>}</span>
                           <span><ExpiryBadge days={a.nextExpiryDays} /></span>
                           <span className="min-w-0 pr-1"><LastSignInCell a={a} windowDays={signinWindow} /></span>
+                          <span className="min-w-0 pr-1"><LastFailedCell a={a} measured={failuresMeasured} reason={failuresReason} /></span>
                           <span className="truncate text-xs text-gray-600">
                             {a.ownerless ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">ownerless</span> : a.owners.join(", ")}
                           </span>

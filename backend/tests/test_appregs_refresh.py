@@ -5,11 +5,13 @@ import asyncio
 import copy
 import re
 import time
+from unittest import mock
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from app.entra import cache as entra_cache
 from app.entra.graphclient import GraphError, GraphPage, GraphPermissionError, GraphResponse
 from app.identity import appregs, appregs_cache, appregs_job
 
@@ -44,6 +46,11 @@ class FakeGraphClient:
     beta: bool = True
     # path -> rows, or an exception to raise
     reports: dict[str, Any] = {}
+    #: `/auditLogs/signIns` per-app responses: appId -> rows, or an exception for every app.
+    #: Default None = the endpoint answers with nothing, which is a state directories reach.
+    signin_events: Any = None
+    #: appIds the per-event sign-in log was actually queried for.
+    signin_reads: list = []
 
     def __init__(self, *_args, **_kwargs) -> None:
         self.stats = SimpleNamespace(retries=0, throttled=0)
@@ -63,7 +70,17 @@ class FakeGraphClient:
             raise configured
         return list(configured or []), False
 
-    async def get(self, *_args, **_kwargs):
+    async def get(self, *args, **kwargs):
+        path = str(args[0]) if args else ""
+        if path.endswith("/auditLogs/signIns"):
+            if isinstance(self.signin_events, BaseException):
+                raise self.signin_events
+            # The collector scopes each call to one appId; pull it back out of the filter.
+            clause = str((kwargs.get("params") or {}).get("$filter") or "")
+            app_id = clause.split("appId eq '", 1)[-1].split("'", 1)[0] if "appId eq '" in clause else ""
+            rows = (self.signin_events or {}).get(app_id, [])
+            FakeGraphClient.signin_reads.append(app_id)
+            return {"value": list(rows)}
         return {"value": [{"appRoles": [], "oauth2PermissionScopes": []}]}
 
     async def get_count(self, _collection: str):
@@ -116,6 +133,12 @@ def _reset_job_state(monkeypatch, tmp_path):
     FakeGraphClient.service_principals = {}
     FakeGraphClient.beta = True
     FakeGraphClient.reports = {}
+    FakeGraphClient.signin_events = None
+    FakeGraphClient.signin_reads = []
+    # The sign-in outcome cache is on disk; without this these tests read each other's
+    # writes and stop reflecting the Graph fixtures they set up.
+    entra_cache.set_root_for_tests(tmp_path / "entra")
+    entra_cache.clear_memo()
     monkeypatch.setattr(appregs, "GraphClient", FakeGraphClient)
     monkeypatch.setattr(appregs_cache, "_CACHE_PATH", tmp_path / "snapshots.json")
     monkeypatch.setattr(appregs_cache, "_CHECKPOINT_PATH", tmp_path / "checkpoints.json")
@@ -183,9 +206,18 @@ async def test_signin_activity_joins_by_app_id_case_insensitively():
         SIGNIN_PATH: [
             {
                 "appId": "app-upper",  # Graph casing differs from the application object
-                "lastSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"},
-                "delegatedClientSignInActivity": {"lastSignInDateTime": "2026-08-19T09:00:00Z"},
-                "applicationAuthenticationClientSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"},
+                "lastSignInActivity": {
+                    "lastSignInDateTime": "2026-08-20T09:00:00Z",
+                    "lastSuccessfulSignInDateTime": "2026-08-20T09:00:00Z",
+                },
+                "delegatedClientSignInActivity": {
+                    "lastSignInDateTime": "2026-08-19T09:00:00Z",
+                    "lastSuccessfulSignInDateTime": "2026-08-19T09:00:00Z",
+                },
+                "applicationAuthenticationClientSignInActivity": {
+                    "lastSignInDateTime": "2026-08-20T09:00:00Z",
+                    "lastSuccessfulSignInDateTime": "2026-08-20T09:00:00Z",
+                },
             },
         ],
     }
@@ -201,6 +233,284 @@ async def test_signin_activity_joins_by_app_id_case_insensitively():
     assert by_id["app-quiet"]["lastSignInKnown"] is True
     assert by_id["app-quiet"]["lastSignIn"] is None
     assert appregs.signin_bucket(by_id["app-quiet"]) == appregs.SIGNIN_BUCKET_NONE
+
+
+@pytest.mark.asyncio
+async def test_attempt_only_rows_still_report_a_sign_in():
+    """The shape Graph ACTUALLY returns for service principals.
+
+    A sampled directory returned 132/132 rows carrying only `lastSignInDateTime` —
+    `lastSuccessfulSignInDateTime` is never emitted by the servicePrincipal report. Treating
+    its absence as "never signed in" would blank the column for every application, and
+    treating it as a failure would brand every application as broken.
+    """
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {
+                "appId": "app-0",
+                "lastSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"},
+                "applicationAuthenticationClientSignInActivity": {
+                    "lastSignInDateTime": "2026-08-20T09:00:00Z",
+                },
+            },
+        ],
+    }
+    apps, _ = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    assert apps[0]["lastSignIn"] == "2026-08-20T09:00:00Z"
+    assert apps[0]["lastSignInApplication"] == "2026-08-20T09:00:00Z"
+    # No success/failure split is possible, so nothing may be claimed as failed.
+    assert apps[0]["lastFailedSignIn"] is None
+    assert appregs.signin_bucket(apps[0]) != appregs.SIGNIN_BUCKET_FAILED
+
+
+@pytest.mark.asyncio
+async def test_a_real_success_stamp_is_preferred_over_the_attempt_where_graph_emits_one():
+    """Where the two ARE distinguishable, the later attempt is reported as a failure."""
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {
+                "appId": "app-0",
+                "lastSignInActivity": {
+                    "lastSignInDateTime": "2026-08-20T09:00:00Z",
+                    "lastSuccessfulSignInDateTime": "2026-01-02T09:00:00Z",
+                },
+            },
+        ],
+    }
+    apps, _ = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    assert apps[0]["lastSignIn"] == "2026-01-02T09:00:00Z", "the success, not the attempt"
+    assert apps[0]["lastFailedSignIn"] == "2026-08-20T09:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_report_reports_unknown_rather_than_no_sign_in():
+    """Microsoft freezes this aggregate on unlicensed tenants and keeps serving the old build.
+
+    Measured: 132 rows whose newest stamp was seven months old, zero inside
+    the window, and the application actively signing in was absent entirely. Read literally
+    that says "nothing has signed in" — the reassuring misreading of missing data.
+    """
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0), _raw(1)], "", 2)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            # Only app-0 is in the report, and its stamp is far outside the window.
+            {"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": "2025-01-13T00:11:51Z"}},
+        ],
+    }
+    # The per-event log is the thing that would rescue this; deny it so the fallback shows.
+    FakeGraphClient.signin_events = GraphPermissionError(403, "no premium license")
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    by_id = {a["appId"]: a for a in apps}
+
+    block = meta["signin_activity"]
+    assert block["measured"] is True
+    assert block["stale"] is True
+    assert block["as_of"].startswith("2025-01-13")
+    assert "P1" in block["stale_reason"]
+
+    # The app the stale report DOES mention keeps its real (old) date.
+    assert by_id["app-0"]["lastSignIn"] == "2025-01-13T00:11:51Z"
+    assert by_id["app-0"]["lastSignInKnown"] is True
+
+    # The app it does not mention is UNKNOWN, not idle.
+    assert by_id["app-1"]["lastSignInKnown"] is False
+    assert by_id["app-1"]["lastSignIn"] is None
+    assert appregs.signin_bucket(by_id["app-1"]) == appregs.SIGNIN_BUCKET_UNKNOWN
+    # And it must not inflate the dormancy count, which drives the cleanup KPI.
+    assert appregs.aggregate(apps)["summary"]["noRecentSignIn"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_busy_foreign_service_principal_cannot_mask_a_stale_report():
+    """The report is one row per SERVICE PRINCIPAL, tenant-wide.
+
+    Microsoft's own service principals sign in constantly, so computing report freshness
+    across every row let one of them hold `as_of` at today while every application this
+    tenant owns was months stale — and the "report is out of date" banner never fired.
+    Freshness has to be judged on the rows that belong to this tenant.
+    """
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": "2025-01-13T00:11:51Z"}},
+            # Not a registration in this tenant, and signed in moments ago.
+            {"appId": "00000003-0000-0000-c000-000000000000",
+             "lastSignInActivity": {"lastSignInDateTime": appregs._signed_in(0)}},
+        ],
+    }
+    FakeGraphClient.signin_events = GraphPermissionError(403, "no premium license")
+    _apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    block = meta["signin_activity"]
+    assert block["as_of"].startswith("2025-01-13"), "a foreign row must not set report freshness"
+    assert block["stale"] is True, "the stale banner has to fire despite the busy foreign row"
+
+
+@pytest.mark.asyncio
+async def test_service_principals_this_tenant_does_not_own_are_not_retained():
+    """The report is an order of magnitude larger than the applications on screen."""
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": appregs._signed_in(1)}},
+            *({"appId": f"foreign-{i}",
+               "lastSignInActivity": {"lastSignInDateTime": appregs._signed_in(1)}}
+              for i in range(50)),
+        ],
+    }
+    _apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    assert meta["signin_activity"]["apps_with_activity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_credential_usage_for_other_tenants_objects_is_not_retained():
+    row = _raw(0)
+    row["passwordCredentials"] = [{"keyId": "KEY-MINE", "endDateTime": appregs._signed_in(-90)}]
+    FakeGraphClient.pages = {"first": GraphPage([row], "", 1)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": appregs._signed_in(1)}},
+        ],
+        CRED_PATH: [
+            {"keyId": "key-mine", "signInActivity": {"lastSignInDateTime": appregs._signed_in(1)}},
+            *({"keyId": f"key-foreign-{i}",
+               "signInActivity": {"lastSignInDateTime": appregs._signed_in(1)}}
+              for i in range(30)),
+        ],
+    }
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    assert meta["signin_activity"]["credentials"]["count"] == 1
+    # The one credential that IS ours still resolves, matched case-insensitively.
+    assert apps[0]["credentials"][0]["lastUsed"]
+
+
+@pytest.mark.asyncio
+async def test_a_current_report_still_treats_a_missing_row_as_measured_and_idle():
+    """Non-vacuity: the stale rule must not fire on a healthy report."""
+    recent = appregs._signed_in(2)
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0), _raw(1)], "", 2)}
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": recent}},
+        ],
+    }
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+    by_id = {a["appId"]: a for a in apps}
+
+    assert meta["signin_activity"]["stale"] is False
+    assert by_id["app-1"]["lastSignInKnown"] is True, "a fresh report CAN say 'nothing signed in'"
+    assert appregs.signin_bucket(by_id["app-1"]) == appregs.SIGNIN_BUCKET_NONE
+
+
+@pytest.mark.asyncio
+async def test_per_app_events_supply_the_real_success_and_failure():
+    """The per-event log is the only source that separates the two, and it wins.
+
+    Measured: a tenant-wide query is refused (403) but a query scoped
+    to one appId is allowed, and `source=sp` is required or the endpoint answers with the
+    USER stream and returns nothing.
+    """
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    # The aggregate is stale and does not even mention this app.
+    FakeGraphClient.reports = {
+        SIGNIN_PATH: [
+            {"appId": "other", "lastSignInActivity": {"lastSignInDateTime": "2025-01-13T00:11:51Z"}},
+        ],
+    }
+    FakeGraphClient.signin_events = {
+        "app-0": [
+            # Newest first, exactly as `$orderby=createdDateTime desc` returns them.
+            {"createdDateTime": "2026-08-22T17:28:26Z", "status": {"errorCode": 0}},
+            {"createdDateTime": "2026-08-22T09:00:00Z", "status": {"errorCode": 700027}},
+            {"createdDateTime": "2026-08-21T09:00:00Z", "status": {"errorCode": 0}},
+        ],
+    }
+    apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    block = meta["signin_activity"]
+    assert block["failures"]["measured"] is True
+    # A live per-event read makes the aggregate's staleness irrelevant.
+    assert block["stale"] is False
+
+    app = apps[0]
+    assert app["lastSignIn"] == "2026-08-22T17:28:26Z", "newest SUCCESS"
+    assert app["lastFailedSignIn"] == "2026-08-22T09:00:00Z", "newest FAILURE"
+    assert app["lastSignInKnown"] is True
+    assert appregs.signin_bucket(app) == appregs.SIGNIN_BUCKET_RECENT
+
+
+@pytest.mark.asyncio
+async def test_an_app_whose_every_event_failed_reports_no_sign_in():
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {SIGNIN_PATH: []}
+    FakeGraphClient.signin_events = {
+        "app-0": [{"createdDateTime": "2026-08-22T09:00:00Z", "status": {"errorCode": 700027}}],
+    }
+    apps, _ = await appregs._collect_real({"id": "c1"}, limit=50)
+
+    assert apps[0]["lastSignIn"] is None, "a rejected attempt is not a sign-in"
+    assert apps[0]["lastFailedSignIn"] == "2026-08-22T09:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_a_second_refresh_reuses_the_cached_outcomes():
+    """Each per-event read is a slow call that usually returns nothing, so a refresh an hour
+    later must not repeat the whole set."""
+    FakeGraphClient.pages = {"first": GraphPage([_raw(i) for i in range(3)], "", 3)}
+    FakeGraphClient.reports = {SIGNIN_PATH: []}
+    FakeGraphClient.signin_events = {
+        f"app-{i}": [{"createdDateTime": "2026-08-22T09:00:00Z", "status": {"errorCode": 0}}]
+        for i in range(3)
+    }
+    conn = {"id": "c1", "tenant_id": "t-cache"}
+
+    await appregs._collect_real(conn, limit=50)
+    assert sorted(FakeGraphClient.signin_reads) == ["app-0", "app-1", "app-2"], \
+        "the first pass must actually read"
+
+    FakeGraphClient.signin_reads = []
+    apps, meta = await appregs._collect_real(conn, limit=50)
+
+    assert FakeGraphClient.signin_reads == [], "a cached outcome inside the TTL must not be re-read"
+    assert meta["signin_activity"]["failures"]["measured"] is True
+    assert apps[0]["lastSignIn"] == "2026-08-22T09:00:00Z", "cached data must still be applied"
+
+
+@pytest.mark.asyncio
+async def test_an_application_not_yet_read_is_not_reported_as_having_no_failures():
+    """The pass is bounded, so some applications are unread. A blank failure cell on one of
+    those means "not read yet" — rendering it as "no failures" is the opposite claim."""
+    FakeGraphClient.pages = {"first": GraphPage([_raw(i) for i in range(3)], "", 3)}
+    FakeGraphClient.reports = {SIGNIN_PATH: []}
+    FakeGraphClient.signin_events = {f"app-{i}": [] for i in range(3)}
+
+    with mock.patch.object(appregs._outcomes, "settings",
+                           return_value=(appregs._outcomes.SCOPE_VISIBLE, 86400, 1, 300)):
+        apps, meta = await appregs._collect_real({"id": "c1", "tenant_id": "t-cap"}, limit=50)
+
+    known = [a for a in apps if a["lastFailedSignInKnown"]]
+    unknown = [a for a in apps if not a["lastFailedSignInKnown"]]
+    assert len(known) == 1, "only the one application within the cap was read"
+    assert len(unknown) == 2
+    assert meta["signin_activity"]["failures"]["pending"] == 2, "the rest must be reported"
+
+
+@pytest.mark.asyncio
+async def test_turning_outcomes_off_reports_unmeasured_rather_than_no_failures():
+    FakeGraphClient.pages = {"first": GraphPage([_raw(0)], "", 1)}
+    FakeGraphClient.reports = {SIGNIN_PATH: []}
+    FakeGraphClient.signin_events = {"app-0": []}
+
+    with mock.patch.object(appregs._outcomes, "settings",
+                           return_value=(appregs._outcomes.SCOPE_OFF, 86400, 100, 300)):
+        apps, meta = await appregs._collect_real({"id": "c1", "tenant_id": "t-off"}, limit=50)
+
+    assert meta["signin_activity"]["failures"]["measured"] is False
+    assert apps[0]["lastFailedSignInKnown"] is False
 
 
 @pytest.mark.asyncio
@@ -240,8 +550,20 @@ async def test_credential_usage_joins_by_key_id_and_degrades_on_its_own():
         "first": GraphPage([_app_with_creds(0, ["KEY-A", "key-b"])], "", 1),
     }
     FakeGraphClient.reports = {
-        SIGNIN_PATH: [{"appId": "app-0", "lastSignInActivity": {"lastSignInDateTime": "2026-08-20T09:00:00Z"}}],
-        CRED_PATH: [{"keyId": "key-a", "signInActivity": {"lastSignInDateTime": "2026-08-18T09:00:00Z"}}],
+        SIGNIN_PATH: [{
+            "appId": "app-0",
+            "lastSignInActivity": {
+                "lastSignInDateTime": "2026-08-20T09:00:00Z",
+                "lastSuccessfulSignInDateTime": "2026-08-20T09:00:00Z",
+            },
+        }],
+        CRED_PATH: [{
+            "keyId": "key-a",
+            "signInActivity": {
+                "lastSignInDateTime": "2026-08-18T09:00:00Z",
+                "lastSuccessfulSignInDateTime": "2026-08-18T09:00:00Z",
+            },
+        }],
     }
     apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
     creds = {c["keyId"]: c for c in apps[0]["credentials"]}

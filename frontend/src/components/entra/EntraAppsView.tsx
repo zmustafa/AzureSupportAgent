@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type EntraApp360, type EntraAppRow } from "../../api";
 import { formatError } from "../../utils/format";
 import { useDebounced } from "../../utils/perf";
@@ -39,7 +39,7 @@ const TIER_CHIP: Record<string, string> = {
 // The inventory grid pages server-side, so its columns sort server-side too — the keys
 // below are exactly the ones `GET /entra/apps` accepts. Sorting the loaded page in the
 // browser would silently mean "top by credentials among the 200 rows risk picked".
-type AppsSortKey = "risk" | "name" | "permissions" | "credentials" | "owners" | "assigned" | "tier";
+type AppsSortKey = "risk" | "name" | "permissions" | "credentials" | "owners" | "assigned" | "tier" | "failed" | "signin";
 /** What the server already does when asked for nothing. Never sent as a parameter. */
 const APPS_SORT_DEFAULT: SortState<AppsSortKey> = { key: "risk", dir: -1 };
 
@@ -152,9 +152,13 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
   if (q.isError) return <div className="p-6 text-sm text-red-600">{formatError(q.error)}</div>;
   const d = q.data!;
   if (!d.meta.loaded) return <EntraEmpty kind="cold" />;
+  // Defaulted, not assumed: an older cached snapshot carries no `signin` block, and treating a
+  // missing one as measured would render every empty cell as a confident "never signed in".
+  const signin = d.signin ?? SIGNIN_META_DEFAULT;
 
   return (
     <div className="p-4">
+      <SignInOutcomeBanner signin={signin} connectionId={connectionId} />
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           value={search}
@@ -190,12 +194,17 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
               <SortTh label="Credentials" col="credentials" sort={sort} setSort={setSort} className="px-2" />
               <SortTh label="Owners" col="owners" sort={sort} setSort={setSort} className="px-2"
                       title="Sort by owner count — applications whose owners could not be read are not counted as zero" />
+              <SortTh label="Last sign-in" col="signin" sort={sort} setSort={setSort} className="px-2"
+                      title={`Newest sign-in seen in the last ${signin.window_days} days.`} />
+              <SortTh label="Last failed sign-in" col="failed" sort={sort} setSort={setSort} className="px-2"
+                      title="Most recent sign-in attempt that did not succeed, read from the per-event sign-in log." />
               <SortTh label="Assigned" col="assigned" sort={sort} setSort={setSort} className="px-2" />
             </tr>
           </thead>
           <tbody>
             {d.apps.map((a) => (
-              <AppRow key={a.object_id + a.app_id} app={a} onOpen={() => setSelected(a.object_id)} />
+              <AppRow key={a.object_id + a.app_id} app={a} signin={signin}
+                      onOpen={() => setSelected(a.object_id)} />
             ))}
           </tbody>
         </table>
@@ -210,7 +219,80 @@ function Inventory({ connectionId }: { connectionId: string | null }) {
   );
 }
 
-function AppRow({ app, onOpen }: { app: EntraAppRow; onOpen: () => void }) {
+type SignInMeta = {
+  measured: boolean; outcomes_measured: boolean; reason: string; window_days: number;
+  scope: string; pending: boolean; pending_count: number;
+  checked_total: number; in_scope_total: number;
+};
+
+const SIGNIN_META_DEFAULT: SignInMeta = {
+  measured: false, outcomes_measured: false, reason: "", window_days: 30,
+  scope: "", pending: false, pending_count: 0, checked_total: 0, in_scope_total: 0,
+};
+
+/**
+ * Says what the two sign-in columns currently know.
+ *
+ * The per-application read is slow and runs in the background after a refresh, so the columns
+ * can be legitimately incomplete. Without this the user cannot tell a measured "no failures"
+ * from an unread one, which are opposite facts that render the same.
+ */
+function SignInOutcomeBanner({ signin, connectionId }: { signin: SignInMeta; connectionId: string | null }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+
+  if (signin.scope === "off") {
+    return (
+      <div data-testid="appsinv-signin-off"
+           className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-600">
+        Per-application sign-in outcomes are turned off, so a rejected sign-in cannot be told
+        apart from a successful one. Set <code>entra_signin_outcome_scope</code> to
+        {" "}<code>visible</code> to turn them back on.
+      </div>
+    );
+  }
+  if (!signin.pending && signin.outcomes_measured && !note) return null;
+
+  const run = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const r = await api.entraRefreshSignInOutcomes(connectionId);
+      setNote(r.ran
+        ? `Read ${r.checked ?? 0} application(s); ${r.remaining ?? 0} still to check.`
+        : r.reason || "Nothing to read.");
+      await qc.invalidateQueries({ queryKey: ["entra-apps"] });
+    } catch (e) {
+      setNote(formatError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="appsinv-signin-pending"
+         className="mb-3 flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+      <span>
+        {signin.pending
+          ? <>Sign-in outcomes are still being read — <b>{signin.pending_count}</b> application(s) to go.
+             Until that finishes, an empty <i>Last failed sign-in</i> means “not yet read”, not “no failures”.</>
+          : signin.reason || "Per-application sign-in outcomes have not been read yet."}
+      </span>
+      <button
+        onClick={run}
+        disabled={busy}
+        data-testid="appsinv-signin-run"
+        className="ml-auto rounded border border-amber-300 bg-white px-2 py-0.5 font-medium hover:bg-amber-100 disabled:opacity-50"
+      >
+        {busy ? "Reading…" : "Read now"}
+      </button>
+      {note && <span className="w-full text-amber-800">{note}</span>}
+    </div>
+  );
+}
+
+function AppRow({ app, signin, onOpen }: { app: EntraAppRow; signin: SignInMeta; onOpen: () => void }) {
   const tone = app.risk_score >= 80 ? "bg-red-500" : app.risk_score >= 50 ? "bg-amber-500" : "bg-gray-400";
   return (
     <tr onClick={onOpen} className="cursor-pointer border-b last:border-b-0 hover:bg-gray-50">
@@ -270,9 +352,58 @@ function AppRow({ app, onOpen }: { app: EntraAppRow; onOpen: () => void }) {
           <span className="text-xs text-gray-400">unknown</span>
         )}
       </td>
+      <td className="px-2 py-1.5">
+        {app.last_signin ? (
+          <span
+            title={`${new Date(app.last_signin).toLocaleString()}\nNewest sign-in seen in the last ${signin.window_days} days.`}
+            className="whitespace-nowrap text-gray-700"
+          >
+            {daysAgo(app.last_signin)}
+          </span>
+        ) : signin.measured ? (
+          <span className="text-xs text-gray-400"
+                title={`No sign-in in the last ${signin.window_days} days. This is not the same as "never".`}>
+            none in {signin.window_days}d
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400"
+                title={signin.reason || "Sign-in activity was not measured for this tenant."}>
+            not measured
+          </span>
+        )}
+      </td>
+      <td className="px-2 py-1.5">
+        {app.last_failed_signin ? (
+          <span
+            title={`${new Date(app.last_failed_signin).toLocaleString()}\nThis sign-in was rejected.`}
+            className="whitespace-nowrap rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-600"
+          >
+            {daysAgo(app.last_failed_signin)}
+          </span>
+        ) : signin.outcomes_measured ? (
+          <span className="text-gray-300" title="No failed sign-in observed in the window.">—</span>        ) : signin.pending ? (
+          <span className="text-xs text-amber-600" data-testid="appsinv-failed-pending"
+                title={`Still reading the per-event sign-in log (${signin.pending_count} application(s) left). Until it finishes an empty cell means "not yet read", not "no failures".`}>
+            measuring…
+          </span>        ) : (
+          <span className="text-xs text-gray-400"
+                title={signin.reason ||
+                  "Failed sign-ins come from the per-event sign-in log, which was not readable for this tenant."}>
+            not measured
+          </span>
+        )}
+      </td>
       <td className="px-2 py-1.5 text-gray-600">{app.assigned_principals || "—"}</td>
     </tr>
   );
+}
+
+/** "3d ago" for a stamp, or "" when it cannot be parsed. */
+function daysAgo(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const days = Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+  return days === 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
 }
 
 function App360Drawer({

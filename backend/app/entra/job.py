@@ -87,6 +87,27 @@ async def _finish(key: str, *, status: str, error: str = "") -> None:
         cond.notify_all()
 
 
+async def _backfill_signin_outcomes(
+    tenant_id: str,
+    connection: dict[str, Any] | None,
+    domains: list[str] | None,
+    progress,
+) -> None:
+    """Read per-application sign-in outcomes after the refresh, not inside it.
+
+    Detached because the reads are slow and overwhelmingly empty; a failure here leaves the
+    snapshot exactly as the refresh built it.
+    """
+    if domains and "apps" not in domains:
+        return
+    try:
+        from app.entra import signin_outcomes
+
+        await signin_outcomes.run_backfill(tenant_id, connection, progress=progress)
+    except Exception:  # noqa: BLE001 - the refresh already succeeded; this is enrichment
+        log.warning("sign-in outcome backfill failed", exc_info=True)
+
+
 def start_job(
     *,
     tenant_id: str,
@@ -126,6 +147,7 @@ def start_job(
             )
             if result.get("ok"):
                 await _finish(key, status="done")
+                await _backfill_signin_outcomes(tenant_id, connection, domains, _progress)
             else:
                 await _finish(key, status="error", error=str(result.get("error") or "Refresh failed."))
         except Exception as exc:  # noqa: BLE001 - record on the job, never crash the loop

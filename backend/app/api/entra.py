@@ -3,7 +3,7 @@
 Contract (see docs/improvement-plans/entra-support-agent/20-api-contract.md):
 
 * **Every GET reads the cache only.** A cold cache returns HTTP 200 with ``meta.loaded=false``
-  and a prompt to refresh — never a 500, never a silent live tenant scan.
+  and a prompt to refresh — never a 500, never a silent live scan.
 * **Every response carries ``meta``** with freshness, coverage, per-domain status, licences
   and the permission summary. The frontend renders ``meta`` before it renders data, which is
   what makes blindness impossible to hide.
@@ -751,7 +751,7 @@ def _exposure_findings(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     """Only the application-class exposure detectors.
 
     Filtering on ``object_kind in ("app_class", "app")`` looks equivalent and is not: every
-    app-hygiene signal in the product emits ``object_kind="app"``, so a real tenant dragged in
+    app-hygiene signal in the product emits ``object_kind="app"``, so a production-sized directory dragged in
     277 expired-certificate and multi-tenant-consent findings. They key off an application GUID
     rather than a class id, so they landed in no row while still inflating every count on the
     page.
@@ -1864,7 +1864,7 @@ async def apps_inventory(
     tier: str | None = None,
     ownerless: bool = False,
     risk_min: int = Query(default=0, ge=0, le=100),
-    sort: str | None = Query(default=None, pattern="^(risk|name|permissions|credentials|owners|assigned|tier)$"),
+    sort: str | None = Query(default=None, pattern="^(risk|name|permissions|credentials|owners|assigned|tier|failed|signin)$"),
     dir: str = Query(default="desc", pattern="^(asc|desc)$"),
     offset: int = 0,
     limit: int = Query(default=200, ge=1, le=2000),
@@ -1876,17 +1876,20 @@ async def apps_inventory(
     data = snapshot.get("data") or {}
     apps = data.get("apps") or {}
     sps = {str(s["object_id"]): s for s in apps.get("service_principals") or []}
+    signin = apps.get("signin_activity") or {}
+    failed_by_app = signin.get("last_failed") or {}
+    seen_by_app = signin.get("last_seen") or {}
 
     rows = []
     for app in apps.get("applications") or []:
         sp = sps.get(app.get("sp_object_id")) or {}
-        rows.append(_app_row(app, sp))
+        rows.append(_app_row(app, sp, failed_by_app, seen_by_app))
     # Enterprise applications with no local registration (third-party consented apps).
     local = {a.get("sp_object_id") for a in apps.get("applications") or []}
     for oid, sp in sps.items():
         if oid in local or sp.get("is_first_party"):
             continue
-        rows.append(_app_row({}, sp))
+        rows.append(_app_row({}, sp, failed_by_app, seen_by_app))
 
     if search:
         needle = search.lower()
@@ -1908,6 +1911,10 @@ async def apps_inventory(
         "assigned": lambda r: r.get("assigned_principals"),
         "tier": lambda r: (_TIER_ORDER.index(r["max_permission_tier"])
                            if r.get("max_permission_tier") in _TIER_ORDER else None),
+        # "" means no failure was observed, which must not sort as an old date.
+        "failed": lambda r: r.get("last_failed_signin") or None,
+        # Same rule for a sign-in that was never seen.
+        "signin": lambda r: r.get("last_signin") or None,
     }, sort, dir)
 
     return _envelope(
@@ -1916,7 +1923,49 @@ async def apps_inventory(
         sort=sort or "", dir=dir,
         counts=apps.get("counts") or {}, capabilities=apps.get("capabilities") or {},
         risk_components=_risk_component_meta(),
+        # Lets the grid say "not measured" instead of rendering an empty cell as "no failure".
+        signin=_signin_meta(signin, tenant_id),
     )
+
+
+def _signin_meta(signin: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+    """What the grid needs to caption the two sign-in columns honestly."""
+    from app.entra import signin_outcomes
+
+    outcomes = (signin.get("outcomes") or {}) if isinstance(signin, dict) else {}
+    state = signin_outcomes.job_state(tenant_id)
+    return {
+        "measured": bool(signin.get("measured")),
+        "outcomes_measured": bool(outcomes.get("measured")),
+        "reason": str(signin.get("reason") or outcomes.get("reason") or ""),
+        "window_days": int(signin.get("window_days") or 30),
+        "scope": str(outcomes.get("scope") or state.get("scope") or ""),
+        # True while the background pass still has applications left to read, so an empty
+        # failure cell can say "measuring" rather than implying "nothing failed".
+        "pending": bool(outcomes.get("pending")) or int(state.get("pending") or 0) > 0,
+        "pending_count": int(state.get("pending") or 0),
+        "checked_total": int(outcomes.get("cached") or 0),
+        "in_scope_total": int(state.get("total") or 0),
+    }
+
+
+@router.post("/apps/signin-outcomes/refresh")
+async def refresh_signin_outcomes(
+    connection_id: str | None = None,
+    principal: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Read the next slice of per-application sign-in outcomes without a full refresh.
+
+    The pass is capped per run, so a large tenant is filled in over several calls rather than
+    one that never returns.
+    """
+    from app.entra import signin_outcomes
+
+    connection, tenant_id, cid = _target(principal, connection_id)
+    if connection is None:
+        raise HTTPException(status_code=400, detail="No Azure connection is configured.")
+    result = await signin_outcomes.run_backfill(tenant_id, connection)
+    return {"connection_id": cid, **result, "state": signin_outcomes.job_state(tenant_id)}
 
 
 def _risk_component_meta() -> list[dict[str, Any]]:
@@ -1928,11 +1977,14 @@ def _risk_component_meta() -> list[dict[str, Any]]:
 _TIER_ORDER = ["low", "medium", "high", "critical"]
 
 
-def _app_row(app: dict[str, Any], sp: dict[str, Any]) -> dict[str, Any]:
+def _app_row(app: dict[str, Any], sp: dict[str, Any],
+             failed_by_app: dict[str, str] | None = None,
+             seen_by_app: dict[str, str] | None = None) -> dict[str, Any]:
     perms = sp.get("granted_app_permissions") or []
     creds = (app.get("credentials") or []) + (sp.get("credentials") or [])
     expiring = [c for c in creds if c.get("days_left") is not None and 0 <= c["days_left"] <= 90]
     risk = app.get("risk") or sp.get("risk") or {}
+    app_id = app.get("app_id") or sp.get("app_id", "")
     return {
         "object_id": app.get("object_id") or sp.get("object_id", ""),
         "sp_object_id": sp.get("object_id", ""),
@@ -1959,6 +2011,11 @@ def _app_row(app: dict[str, Any], sp: dict[str, Any]) -> dict[str, Any]:
         "orphaned": sp.get("orphaned", False),
         "risk_score": int(risk.get("score") or 0),
         "platform_managed": bool(risk.get("platform_managed")),
+        # An attempt Graph stamped after the last success — i.e. a rejected sign-in. "" means
+        # no evidence of one, which is NOT the same as the report being unreadable.
+        "last_failed_signin": str((failed_by_app or {}).get(str(app_id).lower(), "")),
+        # Newest sign-in observed inside the reporting window. "" means none was seen.
+        "last_signin": str((seen_by_app or {}).get(str(app_id).lower(), "")),
     }
 
 
@@ -2006,7 +2063,10 @@ async def app_360(
     granted_names = {p["permission"] for p in sp.get("granted_app_permissions") or []}
     return _envelope(
         snapshot, cid,
-        app={**_app_row(app, sp), "created_at": app.get("created_at", ""),
+        app={**_app_row(app, sp,
+                        (apps.get("signin_activity") or {}).get("last_failed") or {},
+                        (apps.get("signin_activity") or {}).get("last_seen") or {}),
+             "created_at": app.get("created_at", ""),
              "sign_in_audience": app.get("sign_in_audience", ""),
              "notes": app.get("notes", ""), "sso_mode": sp.get("sso_mode", ""),
              "assignment_required": sp.get("assignment_required", False),

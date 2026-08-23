@@ -29,6 +29,8 @@ from typing import Any, Awaitable, Callable
 from uuid import UUID
 
 from app.core.app_settings import load_settings
+from app.core.signin_activity import failed_signin
+from app.entra import signin_outcomes as _outcomes
 from app.entra.graphclient import (
     GraphAuthError,
     GraphClient,
@@ -37,6 +39,7 @@ from app.entra.graphclient import (
     GraphRequest,
     GraphResponse,
 )
+from app.entra.signin_outcomes import read_signin_outcomes
 
 log = logging.getLogger("app.identity.appregs")
 
@@ -115,37 +118,76 @@ def _days_until(iso: str | None) -> int | None:
 
 
 # --------------------------------------------------------------------------- sign-in activity
-# Microsoft's per-application sign-in report covers a rolling window. Three facts have to stay
+# Microsoft's per-application sign-in report covers a rolling window. Four facts have to stay
 # distinct here, because collapsing them is how a live application gets deleted:
-#   * a date            — it was signed into then
+#   * a successful date — it was signed into then
+#   * an attempt only  — something tried and was REJECTED (an expired or wrong credential
+#                        still produces sign-in activity). This is not usage.
 #   * no row, measured  — nothing signed into it inside the window (NOT "never")
 #   * not measured      — we could not read the report at all (NOT "never" either)
 SIGNIN_WINDOW_DAYS = 30
 SIGNIN_BUCKET_RECENT = "Last 7 days"
 SIGNIN_BUCKET_WINDOW = "8-30 days"
 SIGNIN_BUCKET_OLD = "Over 30 days"
+SIGNIN_BUCKET_FAILED = "Attempted, never succeeded"
 SIGNIN_BUCKET_NONE = "No sign-in in 30 days"
 SIGNIN_BUCKET_UNKNOWN = "Not measured"
 SIGNIN_BUCKETS = (
     SIGNIN_BUCKET_RECENT,
     SIGNIN_BUCKET_WINDOW,
     SIGNIN_BUCKET_OLD,
+    SIGNIN_BUCKET_FAILED,
     SIGNIN_BUCKET_NONE,
     SIGNIN_BUCKET_UNKNOWN,
 )
+
+#: Requests in flight against Graph for the whole refresh. Every call this collector makes
+#: passes through one `GraphClient` semaphore opened at this width, so it is the ceiling for
+#: enumeration, owner batches and per-app sign-in reads alike. The client narrows itself on
+#: 429 and recovers, so this is a ceiling rather than a promise.
+GRAPH_CONCURRENCY = 6
+
+#: Sign-in outcomes are one Graph call per application (tenant-wide is refused without a
+#: premium licence), so the total is bounded.
+SIGNIN_OUTCOME_MAX_APPS = _outcomes.SIGNIN_OUTCOME_MAX_APPS
+#: Requests in flight. This is an upper bound only — the REAL gate is `GraphClient`'s own
+#: semaphore, which `_collect_real` opens at `GRAPH_CONCURRENCY`. Setting this higher than
+#: that buys nothing: the extra tasks just queue on the client's semaphore.
+SIGNIN_OUTCOME_CONCURRENCY = GRAPH_CONCURRENCY
+#: One page of newest-first events per app, folded locally into (last success, last failure).
+SIGNIN_OUTCOME_PAGE = _outcomes.SIGNIN_OUTCOME_PAGE
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _newest_signin(*blocks: Any) -> str:
-    """Newest ``lastSignInDateTime`` across Graph activity blocks, or "".
+def _newest_stamp(field: str, *blocks: Any) -> str:
+    """Newest value of ``field`` across Graph activity blocks, or "".
 
     Graph emits ISO-8601 UTC, which sorts lexically, so ``max`` is exact without parsing.
     """
-    stamps = [str(_as_dict(b).get("lastSignInDateTime") or "") for b in blocks]
+    stamps = [str(_as_dict(b).get(field) or "") for b in blocks]
     return max((s for s in stamps if s), default="")
+
+
+def _newest_signin(*blocks: Any) -> str:
+    """Newest sign-in ATTEMPT. Graph counts a failure as a sign-in, so this is not usage."""
+    return _newest_stamp("lastSignInDateTime", *blocks)
+
+
+def _newest_success(*blocks: Any) -> str:
+    """Newest SUCCESSFUL sign-in, where Graph reports one.
+
+    **Measured: the service-principal report never populates this.** A sampled directory
+    returned 132/132 rows carrying only ``lastSignInDateTime`` and ``lastSignInRequestId``;
+    ``lastSuccessfulSignInDateTime`` is part of the shared ``signInActivity`` type (it is
+    populated for USERS) but the servicePrincipalSignInActivities report omits it entirely.
+
+    Kept because it is correct wherever Graph does emit it, and treating its absence as
+    "no success" is what makes callers fall back rather than invent one.
+    """
+    return _newest_stamp("lastSuccessfulSignInDateTime", *blocks)
 
 
 def _days_since(iso: str | None) -> int | None:
@@ -166,12 +208,24 @@ def signin_bucket(app: dict[str, Any]) -> str:
         return SIGNIN_BUCKET_UNKNOWN
     days = app.get("lastSignInDays")
     if days is None:
-        return SIGNIN_BUCKET_NONE
+        # Rejected attempts are a broken integration, not usage and not dormancy — either
+        # reading would send a reviewer the wrong way.
+        return SIGNIN_BUCKET_FAILED if app.get("lastAttempt") else SIGNIN_BUCKET_NONE
     if days <= 7:
         return SIGNIN_BUCKET_RECENT
     if days <= SIGNIN_WINDOW_DAYS:
         return SIGNIN_BUCKET_WINDOW
     return SIGNIN_BUCKET_OLD
+
+
+#: Why the failed-sign-in column cannot be populated from the aggregate report: it carries only
+#: `lastSignInDateTime`, and the per-event logs that do carry an error code
+#: (`/auditLogs/signIns`) answer 403 tenant-wide without an Entra ID P1 licence.
+FAILURES_UNAVAILABLE = (
+    "Microsoft's per-application report does not separate successful from failed sign-ins, "
+    "and the per-event sign-in logs that do need an Entra ID P1 licence. A date in Last "
+    "sign-in may therefore be a rejected attempt."
+)
 
 
 def unmeasured_signin_activity(reason: str) -> dict[str, Any]:
@@ -184,6 +238,7 @@ def unmeasured_signin_activity(reason: str) -> dict[str, Any]:
         "complete": False,
         "apps_with_activity": 0,
         "credentials": {"measured": False, "reason": reason, "count": 0},
+        "failures": {"measured": False, "reason": FAILURES_UNAVAILABLE},
     }
 
 
@@ -249,6 +304,12 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
 
     activity = _as_dict(raw.get("signInActivity"))
     last_signin = str(activity.get("last") or "") or None
+    last_attempt = str(activity.get("attempt") or "") or None
+    # An observed failure from the per-event log is authoritative. Otherwise fall back to the
+    # inference, which only fires where Graph emits both stamps.
+    last_failed = (
+        str(activity.get("failed") or "") or failed_signin(last_attempt, last_signin) or None
+    )
 
     return {
         "id": raw.get("id") or "",
@@ -271,9 +332,19 @@ def _normalise_app(raw: dict[str, Any]) -> dict[str, Any]:
         "highRisk": high_risk,
         # `lastSignInKnown` is the tenant-level fact "the report was read". Without it a
         # missing date is indistinguishable from an unreadable report.
+        # `lastSignIn` is a SUCCESS. `lastAttempt` may be a failure — Graph reports a rejected
+        # credential as sign-in activity, so the two must never be merged into "last used".
         "lastSignIn": last_signin,
         "lastSignInKnown": bool(activity.get("known")),
         "lastSignInDays": _days_since(last_signin),
+        "lastAttempt": last_attempt,
+        "lastAttemptDays": _days_since(last_attempt),
+        # An attempt stamped after the last success cannot have been the success.
+        "lastFailedSignIn": last_failed,
+        "lastFailedSignInDays": _days_since(last_failed),
+        # False when the per-event log has not been read for this application yet, so a blank
+        # cell can say "not read" instead of implying "nothing failed".
+        "lastFailedSignInKnown": bool(activity.get("failedKnown")),
         "lastSignInDelegated": str(activity.get("delegated") or "") or None,
         "lastSignInApplication": str(activity.get("application") or "") or None,
         "enterpriseAppState": enterprise_state,
@@ -346,7 +417,8 @@ def aggregate(apps: list[dict[str, Any]]) -> dict[str, Any]:
         signins[bucket] += 1
         if bucket == SIGNIN_BUCKET_UNKNOWN:
             summary["signInNotMeasured"] += 1
-        elif bucket in (SIGNIN_BUCKET_NONE, SIGNIN_BUCKET_OLD):
+        elif bucket in (SIGNIN_BUCKET_NONE, SIGNIN_BUCKET_OLD, SIGNIN_BUCKET_FAILED):
+            # A rejected attempt is not a sign-in, so it counts towards "no recent sign-in".
             summary["noRecentSignIn"] += 1
         else:
             summary["signedIn30d"] += 1
@@ -399,6 +471,8 @@ def demo_signin_activity(apps: list[dict[str, Any]]) -> dict[str, Any]:
             "reason": "",
             "count": sum(1 for a in apps for c in a["credentials"] if c.get("lastUsed")),
         },
+        # The demo set fabricates its own outcomes, so it can show what a P1 tenant would.
+        "failures": {"measured": True, "reason": ""},
     }
 
 
@@ -651,9 +725,14 @@ def build_demo_app_registrations() -> list[dict[str, Any]]:
         days_ago = demo_signins[index]
         last = _signed_in(days_ago)
         kinds = {p["type"] for p in app["permissions"]}
+        # Index 8 is the "expired credential, still being retried" case: something attempts a
+        # sign-in daily and is rejected every time, so Graph reports activity while the app
+        # has not actually authenticated. Without it the failed-attempt path is unexercised.
+        attempt = _signed_in(1) if index == 8 else last
         app["signInActivity"] = {
             "known": True,
             "last": last,
+            "attempt": attempt,
             "delegated": last if "Delegated" in kinds else "",
             "application": last if "Application" in kinds else "",
         }
@@ -710,8 +789,16 @@ async def _signin_activity(
     say: ProgressFn,
     *,
     max_items: int,
+    known_app_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Last sign-in per application, from the beta service-principal activity report.
+
+    ``known_app_ids`` narrows the report to this tenant's own registrations. The report is one
+    row per SERVICE PRINCIPAL — every first-party Microsoft identity, every multi-tenant app
+    anyone consented to, every managed identity — so it is an order of magnitude larger than
+    the set of applications this screen shows. Keeping the rest is not just memory: ``as_of``
+    below would then be dominated by Microsoft's own service principals, which sign in
+    constantly, and a tenant whose every application is dormant would still look fresh.
 
     Returns ``{"block": <snapshot-level meta>, "by_app": {appId(lower): {...}}}``. Any failure
     degrades to ``measured: False`` with an operator-actionable reason — never to an empty map,
@@ -756,25 +843,56 @@ async def _signin_activity(
         }
 
     by_app: dict[str, dict[str, str]] = {}
+    scanned = 0
     for row in rows:
         row = _as_dict(row)
         app_id = str(row.get("appId") or "").lower()
         if not app_id:
             continue
-        delegated = _newest_signin(
-            row.get("delegatedClientSignInActivity"), row.get("delegatedResourceSignInActivity")
+        scanned += 1
+        if known_app_ids is not None and app_id not in known_app_ids:
+            continue
+        delegated_blocks = (
+            row.get("delegatedClientSignInActivity"), row.get("delegatedResourceSignInActivity"),
         )
-        application = _newest_signin(
+        app_blocks = (
             row.get("applicationAuthenticationClientSignInActivity"),
             row.get("applicationAuthenticationResourceSignInActivity"),
         )
-        last = _newest_signin(row.get("lastSignInActivity")) or max(
-            (s for s in (delegated, application) if s), default=""
+        last_block = (row.get("lastSignInActivity"),)
+        # Graph does not report a per-application success separately (see `_newest_success`),
+        # so the attempt stamp is the only signal there is. Prefer a real success where one
+        # exists and fall back to the attempt, rather than reporting a working application as
+        # never signed in.
+        delegated = _newest_success(*delegated_blocks) or _newest_signin(*delegated_blocks)
+        application = _newest_success(*app_blocks) or _newest_signin(*app_blocks)
+        attempt = _newest_signin(*last_block, *delegated_blocks, *app_blocks)
+        success = (
+            _newest_success(*last_block)
+            or max((s for s in (_newest_success(*delegated_blocks),
+                                _newest_success(*app_blocks)) if s), default="")
+            or attempt
         )
-        if last or delegated or application:
-            by_app[app_id] = {"last": last, "delegated": delegated, "application": application}
-    await say("ok", f"Sign-in activity read — {len(by_app):,} application(s) with recent sign-ins.",
-              phase="signin_activity", current=len(by_app))
+        if success or attempt:
+            by_app[app_id] = {
+                "last": success, "attempt": attempt,
+                "delegated": delegated, "application": application,
+            }
+    if known_app_ids is None:
+        await say("ok", f"Sign-in activity read — {len(by_app):,} service principal(s) reported "
+                        "activity.", phase="signin_activity", current=len(by_app))
+    else:
+        await say("ok", f"Sign-in activity read — {len(by_app):,} of your "
+                        f"{len(known_app_ids):,} application registration(s) had recent activity "
+                        f"({scanned:,} service principal(s) scanned).",
+                  phase="signin_activity", current=len(by_app))
+    # Freshness of the REPORT, not of any one application. Microsoft stops maintaining this
+    # aggregate on tenants without the required licence, and it then keeps serving whatever
+    # it last built. Measured: 132 rows whose newest stamp was seven months
+    # old and zero inside the window. Read literally that says "nothing has signed in", while
+    # the portal showed sign-ins the same day. An app absent from a stale report is UNKNOWN.
+    as_of = max((v.get("attempt") or v.get("last") or "" for v in by_app.values()), default="")
+    stale = bool(as_of) and _days_since(as_of) is not None and _days_since(as_of) > SIGNIN_WINDOW_DAYS
     return {
         "block": {
             "measured": True,
@@ -784,6 +902,15 @@ async def _signin_activity(
             "complete": not truncated,
             "apps_with_activity": len(by_app),
             "credentials": {"measured": False, "reason": "", "count": 0},
+            "failures": {"measured": False, "reason": FAILURES_UNAVAILABLE},
+            "stale": stale,
+            "as_of": as_of,
+            "stale_reason": (
+                f"Microsoft's per-application sign-in report has not been updated for this "
+                f"tenant since {as_of[:10]}. Applications missing from it are reported as "
+                f"unknown rather than unused. Keeping it current requires a Microsoft Entra "
+                f"ID P1 or P2 license."
+            ) if stale else "",
         },
         "by_app": by_app,
     }
@@ -794,10 +921,14 @@ async def _credential_activity(
     say: ProgressFn,
     *,
     max_items: int,
+    known_key_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Last use per credential (secret/certificate keyId), from the beta credential report.
 
     This is what turns "this app has three secrets" into "two of these three can be retired".
+
+    ``known_key_ids`` narrows it to credentials on this tenant's own registrations; the report
+    itself is tenant-wide, one row per credential on any service principal.
     """
     empty: dict[str, str] = {}
     if not client.beta_available(True):
@@ -814,16 +945,93 @@ async def _credential_activity(
             "by_key": empty,
         }
     by_key: dict[str, str] = {}
+    scanned = 0
     for row in rows:
         row = _as_dict(row)
         key_id = str(row.get("keyId") or "").lower()
-        last = _newest_signin(row.get("signInActivity"))
-        if key_id and last and last > by_key.get(key_id, ""):
+        if not key_id:
+            continue
+        scanned += 1
+        if known_key_ids is not None and key_id not in known_key_ids:
+            continue
+        # A rejected assertion still lands in this report, so an expired credential keeps
+        # producing "activity". Prefer a real success; Graph omits it for service principals,
+        # in which case the attempt stamp is all there is.
+        last = _newest_success(row.get("signInActivity")) or _newest_signin(row.get("signInActivity"))
+        if last and last > by_key.get(key_id, ""):
             by_key[key_id] = last
-    await say("ok", f"Credential usage read — {len(by_key):,} credential(s) used recently.",
+    await say("ok", f"Credential usage read — {len(by_key):,} of your credential(s) used recently"
+                    + (f" ({scanned:,} scanned)." if known_key_ids is not None else "."),
               phase="signin_activity", current=len(by_key))
     return {"measured": True, "reason": "", "by_key": by_key, "complete": not truncated}
 
+
+
+async def _signin_outcomes(
+    client: GraphClient,
+    say: ProgressFn,
+    app_ids: list[str],
+    tenant_id: str,
+    *,
+    max_apps: int = SIGNIN_OUTCOME_MAX_APPS,
+) -> dict[str, Any]:
+    """Last successful and last failed sign-in per application, cached and bounded.
+
+    The Graph work lives in `app.entra.signin_outcomes` so the Entra applications inventory
+    reads the same data the same way. Each read is a slow call that mostly returns nothing, so
+    only applications whose cached answer has aged out are re-read, and the pass stops at the
+    configured count or time budget. ``checked`` names the applications actually covered —
+    without it an unread application renders as "no failures", which is the opposite claim.
+    """
+    if not app_ids:
+        return {"measured": False, "reason": "No applications to query.", "by_app": {},
+                "checked": set(), "pending": 0}
+
+    scope, ttl_s, cap, budget_s = _outcomes.settings()
+    if scope == _outcomes.SCOPE_OFF:
+        return {"measured": False, "reason": FAILURES_UNAVAILABLE, "by_app": {},
+                "checked": set(), "pending": 0}
+
+    entries = _outcomes.read_cache(tenant_id) if tenant_id else {}
+    wanted = _outcomes.select_stale(app_ids, entries, ttl_s=ttl_s, cap=min(cap, max_apps))
+    known = {a for a in app_ids if a in entries}
+
+    if not wanted:
+        await say("ok", f"Sign-in outcomes — {len(known):,} application(s) already current.",
+                  phase="signin_activity", current=len(known))
+        return {"measured": bool(known), "reason": "", "checked": known, "pending": 0,
+                "by_app": _outcomes.cached_by_app(entries)}
+
+    await say("info",
+              f"Reading sign-in outcomes for {len(wanted):,} of {len(app_ids):,} application(s)"
+              f"{f' ({len(known):,} already cached)' if known else ''}\u2026",
+              phase="signin_activity", total=len(wanted))
+    result = await read_signin_outcomes(
+        client, wanted,
+        max_apps=max_apps,
+        window_days=SIGNIN_WINDOW_DAYS,
+        concurrency=SIGNIN_OUTCOME_CONCURRENCY,
+        max_seconds=budget_s,
+    )
+    if not result.get("measured"):
+        # A failed pass must not erase what earlier passes already proved.
+        return {"measured": bool(known), "reason": str(result.get("reason") or ""),
+                "checked": known, "pending": len(app_ids) - len(known),
+                "by_app": _outcomes.cached_by_app(entries)}
+
+    entries = _outcomes.record(entries, list(result.get("checked") or []),
+                              _as_dict(result.get("by_app")))
+    if tenant_id:
+        _outcomes.write_cache(tenant_id, entries)
+    known = {a for a in app_ids if a in entries}
+    pending = len(app_ids) - len(known)
+    await say("ok",
+              f"Sign-in outcomes read — {len(result.get('by_app') or {}):,} application(s) "
+              f"with events"
+              + (f", {pending:,} still to check." if pending else "."),
+              phase="signin_activity", current=len(known))
+    return {"measured": True, "reason": "", "checked": known, "pending": pending,
+            "by_app": _outcomes.cached_by_app(entries)}
 
 
 async def _graph_permission_resolver(client: GraphClient) -> dict[str, str]:
@@ -1010,7 +1218,7 @@ async def _collect_real(
     # when beta is off — which would 400 on a URL that does not exist there.
     async with GraphClient(
         connection,
-        concurrency=2,
+        concurrency=GRAPH_CONCURRENCY,
         beta=bool(load_settings().get("entra_enable_beta_endpoints", True)),
     ) as client:
         await _say("info", "Loading the Microsoft Graph permission catalog (appRoles + delegated scopes)…")
@@ -1134,11 +1342,26 @@ async def _collect_real(
         stop_reason = "complete" if not truncated else ("full_safety_limit" if full else "configured_limit")
 
         # One tenant-wide read each, after enumeration: both reports are one row per object,
-        # so doing them per page would multiply the cost for no extra information.
-        signin = await _signin_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT)
+        # so doing them per page would multiply the cost for no extra information. Enumeration
+        # has finished, so both can be narrowed to the objects this tenant actually owns —
+        # the reports themselves cover every service principal in the directory.
+        known_app_ids = {
+            str(_as_dict(a).get("appId") or "").lower() for a in apps_raw
+            if _as_dict(a).get("appId")
+        }
+        known_key_ids = {
+            str(_as_dict(c).get("keyId") or "").lower()
+            for a in apps_raw
+            for key in ("passwordCredentials", "keyCredentials")
+            for c in (_as_dict(a).get(key) or [])
+            if _as_dict(c).get("keyId")
+        }
+        signin = await _signin_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT,
+                                        known_app_ids=known_app_ids)
         signin_block, signin_by_app = signin["block"], signin["by_app"]
         creds = (
-            await _credential_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT)
+            await _credential_activity(client, _say, max_items=APPREGS_FULL_SAFETY_LIMIT,
+                                       known_key_ids=known_key_ids)
             if signin_block["measured"]
             else {"measured": False, "reason": signin_block["reason"], "by_key": {}}
         )
@@ -1147,6 +1370,33 @@ async def _collect_real(
             "reason": str(creds.get("reason") or ""),
             "count": len(creds["by_key"]),
         }
+
+        # The aggregate above is the cheap tenant-wide read; this is the authoritative
+        # per-application one. Where it answers, it wins — it is the only source that
+        # separates a successful sign-in from a rejected one.
+        outcomes = await _signin_outcomes(
+            client, _say, [str(a.get("appId") or "").lower() for a in apps_raw
+                           if isinstance(a, dict) and a.get("appId")],
+            str(connection.get("tenant_id") or ""),
+        )
+        outcomes_checked: set[str] = set(outcomes.get("checked") or ())
+        signin_block["failures"] = {
+            "measured": bool(outcomes["measured"]),
+            "reason": str(outcomes.get("reason") or ""),
+            # Applications still queued for their first read. Until this reaches zero an empty
+            # failure cell means "not read yet", not "nothing failed".
+            "pending": int(outcomes.get("pending") or 0),
+            "checked": len(outcomes_checked),
+        }
+        if outcomes["measured"]:
+            signin_block["source"] = "auditLogs/signIns + servicePrincipalSignInActivities"
+            # A live per-event read makes the aggregate's staleness irrelevant.
+            signin_block["stale"] = False
+            for app_id, seen in outcomes["by_app"].items():
+                row = signin_by_app.setdefault(app_id, {})
+                if seen.get("success"):
+                    row["last"] = seen["success"]
+                row["failed"] = seen.get("failed", "")
 
         await _say(
             "info", f"Processing {len(apps_raw)} fetched application registration(s)…",
@@ -1166,6 +1416,14 @@ async def _collect_real(
                 elif isinstance(owner, str):
                     owners.append(owner)
             activity = signin_by_app.get(str(app.get("appId") or "").lower()) or {}
+            # An app WITH a row has a real date. An app missing from a STALE report has not
+            # been measured — reporting it as idle is how a live application gets deleted.
+            signin_known = bool(signin_block["measured"]) and (
+                bool(activity) or not signin_block.get("stale")
+            )
+            # Whether the per-event log was read for THIS application. The pass is bounded, so
+            # a blank failure cell on an unread app must not be shown as "no failures".
+            failed_known = str(app.get("appId") or "").lower() in outcomes_checked
             out.append(_normalise_app({
                 "id": app.get("id"), "appId": app.get("appId"),
                 "displayName": app.get("displayName"), "signInAudience": app.get("signInAudience"),
@@ -1175,7 +1433,7 @@ async def _collect_real(
                     app, last_used=creds["by_key"], used_known=bool(creds["measured"]),
                 ),
                 "permissions": _perms_from_graph_app(app, resolver), "owners": [o for o in owners if o],
-                "signInActivity": {"known": signin_block["measured"], **activity},
+                "signInActivity": {"known": signin_known, "failedKnown": failed_known, **activity},
                 **_enterprise_state_projection(app),
             }))
             if index == len(apps_raw) or index % 100 == 0:
@@ -1237,7 +1495,7 @@ async def collect_app_registrations(
         "throttles": 0,
         "duration_seconds": 0.0,
     }
-    # When a connection IS configured the user wants their REAL tenant — never silently
+    # When a connection IS configured the user wants their own directory — never silently
     # substitute demo data (it looks deceptively real). A Graph auth/config error or a live
     # enumeration failure yields an empty snapshot + an actionable note instead.
     connection_failed = False
