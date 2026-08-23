@@ -27,16 +27,19 @@ failure spikes are counted, not predicted. Every pattern finding carries its raw
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 
-from app.entra import model
+from app.entra import cache, model
 from app.entra.collectors import CollectContext, as_dict, as_list, clip, guarded
 from app.entra.collectors.roles import _is_licence_error
 from app.entra.graphclient import GraphClient, GraphError, GraphPermissionError
+
+log = logging.getLogger("app.entra.collectors.risk")
 
 DOMAIN = "risk"
 
@@ -44,7 +47,7 @@ DOMAIN = "risk"
 # sampled. 200k rows at ~40 fields is a few seconds of paging and bounded memory.
 MAX_SIGNIN_ROWS = 200_000
 
-# Graph page-size ceilings, both found against a live tenant:
+# Graph page-size ceilings, both established by measurement:
 #   * /auditLogs/signIns accepts the usual 999.
 #   * /identityProtection/* rejects anything above 500 with
 #     "Invalid page size specified: '999'. Must be between 1 and 500 inclusive."
@@ -143,8 +146,12 @@ def _bucket(store: dict[str, dict[str, Any]], key: str, seed: dict[str, Any]) ->
     return row
 
 
-class _Aggregator:
-    """Folds sign-in rows into counters. Never retains a row."""
+class _DayAgg:
+    """Folds sign-in rows for ONE day into counters. Never retains a row.
+
+    One day is the unit because it is the smallest span that can be persisted, re-merged and
+    aged out of a rolling window without re-reading Graph.
+    """
 
     def __init__(self) -> None:
         self.total = 0
@@ -152,7 +159,6 @@ class _Aggregator:
         self.failure = 0
         self.interactive = 0
         self.mfa_challenged = 0
-        self.by_day: dict[str, dict[str, int]] = {}
         self.by_app: dict[str, dict[str, Any]] = {}
         self.by_user: dict[str, dict[str, Any]] = {}
         self.by_client_app: dict[str, int] = defaultdict(int)
@@ -210,14 +216,6 @@ class _Aggregator:
         )
         if mfa_enforced:
             self.mfa_challenged += 1
-
-        day = _day(created)
-        if day:
-            bucket = _bucket(self.by_day, day, {"total": 0, "success": 0, "failure": 0, "mfa": 0})
-            bucket["total"] += 1
-            bucket["failure" if failed else "success"] += 1
-            if mfa_enforced:
-                bucket["mfa"] += 1
 
         user_id = str(raw.get("userId") or "")
         upn = str(raw.get("userPrincipalName") or "")
@@ -327,67 +325,199 @@ class _Aggregator:
                 if user_id:
                     row["users"].add(user_id)
 
-    # -- rendering -------------------------------------------------------------
+    # -- persistence -----------------------------------------------------------
+    #: Which fields of each entity map are counters, id sets, or "keep the newest".
+    _SHAPES = {
+        "by_app": (("total", "failure"), ("users",), ("last_seen",)),
+        "by_user": (("total", "failure"), (), ("last_seen",)),
+        "by_failure": (("count",), ("users",), ()),
+        "legacy": (("total", "success"), ("users", "apps"), ("last_success",)),
+        "report_only": (("would_block", "would_challenge", "would_pass"), ("users",), ()),
+        "unmanaged_signins": (("count",), (), ("last_seen",)),
+        "fatigue_by_user": (("denials",), (), ("last_seen",)),
+    }
+    _COUNTER_MAPS = ("by_client_app", "by_country", "by_ca_result", "device_compliance")
+    _SCALARS = ("total", "success", "failure", "interactive", "mfa_challenged")
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {k: getattr(self, k) for k in self._SCALARS}
+        out["window_start"] = self.window_start
+        out["window_end"] = self.window_end
+        for name in self._COUNTER_MAPS:
+            out[name] = dict(getattr(self, name))
+        for name, (_c, sets, _m) in self._SHAPES.items():
+            out[name] = {
+                key: {k: (sorted(v) if k in sets else v) for k, v in row.items()}
+                for key, row in getattr(self, name).items()
+            }
+        out["spray_by_ip"] = {ip: sorted(users) for ip, users in self.spray_by_ip.items()}
+        out["legacy_success_users"] = sorted(self.legacy_success_users)
+        return out
+
+    @classmethod
+    def from_json(cls, blob: dict[str, Any]) -> "_DayAgg":
+        day = cls()
+        for k in cls._SCALARS:
+            setattr(day, k, int(blob.get(k) or 0))
+        day.window_start = str(blob.get("window_start") or "")
+        day.window_end = str(blob.get("window_end") or "")
+        for name in cls._COUNTER_MAPS:
+            getattr(day, name).update({str(k): int(v) for k, v in (blob.get(name) or {}).items()})
+        for name, (_c, sets, _m) in cls._SHAPES.items():
+            store = getattr(day, name)
+            for key, row in (blob.get(name) or {}).items():
+                store[key] = {k: (set(v) if k in sets else v) for k, v in dict(row).items()}
+        day.spray_by_ip.update(
+            {ip: set(users) for ip, users in (blob.get("spray_by_ip") or {}).items()})
+        day.legacy_success_users |= set(blob.get("legacy_success_users") or [])
+        return day
+
+    def absorb(self, other: "_DayAgg") -> None:
+        """Fold another day's counters into this one."""
+        for k in self._SCALARS:
+            setattr(self, k, getattr(self, k) + getattr(other, k))
+        if other.window_start and (not self.window_start or other.window_start < self.window_start):
+            self.window_start = other.window_start
+        if other.window_end > self.window_end:
+            self.window_end = other.window_end
+        for name in self._COUNTER_MAPS:
+            dst = getattr(self, name)
+            for key, n in getattr(other, name).items():
+                dst[key] += n
+        for name, (counters, sets, maxes) in self._SHAPES.items():
+            dst = getattr(self, name)
+            for key, row in getattr(other, name).items():
+                cur = dst.get(key)
+                if cur is None:
+                    dst[key] = {k: (set(v) if k in sets else v) for k, v in row.items()}
+                    continue
+                for c in counters:
+                    cur[c] = cur.get(c, 0) + row.get(c, 0)
+                for s in sets:
+                    cur[s] = set(cur.get(s) or ()) | set(row.get(s) or ())
+                for m in maxes:
+                    if str(row.get(m) or "") > str(cur.get(m) or ""):
+                        cur[m] = row[m]
+                # Labels: keep the first non-empty rather than letting a blank row erase one.
+                for k, v in row.items():
+                    if k not in counters and k not in sets and k not in maxes and not cur.get(k):
+                        cur[k] = v
+        for ip, users in other.spray_by_ip.items():
+            self.spray_by_ip[ip] |= users
+        self.legacy_success_users |= other.legacy_success_users
+
+
+class _Aggregator:
+    """Per-day sign-in buckets, merged on render.
+
+    Splitting by day is what makes the read incremental: whole days already counted are
+    reloaded from the rollup cache, and only the newest partial day onwards is re-read from
+    Graph. Rendering merges them back into one shape, so the payload is identical to what a
+    single flat pass produced.
+    """
+
+    def __init__(self) -> None:
+        self.days: dict[str, _DayAgg] = {}
+
+    def bucket(self, day: str) -> _DayAgg:
+        agg = self.days.get(day)
+        if agg is None:
+            agg = _DayAgg()
+            self.days[day] = agg
+        return agg
+
+    def add(self, raw: dict[str, Any]) -> None:
+        day = _day(str(as_dict(raw).get("createdDateTime") or "")) or "unknown"
+        self.bucket(day).add(raw)
+
+    @property
+    def total(self) -> int:
+        return sum(d.total for d in self.days.values())
+
+    def merged(self) -> _DayAgg:
+        out = _DayAgg()
+        for _day_key, day in sorted(self.days.items()):
+            out.absorb(day)
+        return out
+
+    def by_day_rows(self) -> list[dict[str, Any]]:
+        return [{"day": d, "total": v.total, "success": v.success,
+                 "failure": v.failure, "mfa": v.mfa_challenged}
+                for d, v in sorted(self.days.items()) if d != "unknown"]
+
+    def prune(self, oldest_day: str) -> None:
+        for day in [d for d in self.days if d < oldest_day]:
+            self.days.pop(day, None)
+
+    def to_json(self) -> dict[str, Any]:
+        return {day: agg.to_json() for day, agg in self.days.items()}
+
+    def load_days(self, blob: dict[str, Any]) -> None:
+        for day, payload in (blob or {}).items():
+            self.days[str(day)] = _DayAgg.from_json(dict(payload))
+
     def payload(self, *, sampled: bool, lookback_days: int) -> dict[str, Any]:
+        m = self.merged()
         by_app = sorted(
             ({**r, "users": len(r["users"]),
               "failure_rate": round(r["failure"] / r["total"], 3) if r["total"] else 0.0}
-             for r in self.by_app.values()),
+             for r in m.by_app.values()),
             key=lambda r: -r["total"],
         )[:_TOP_APPS]
         by_user = sorted(
-            (dict(r) for r in self.by_user.values()), key=lambda r: -r["total"],
+            (dict(r) for r in m.by_user.values()), key=lambda r: -r["total"],
         )[:_TOP_USERS]
         failures = sorted(
-            ({**r, "users": len(r["users"])} for r in self.by_failure.values()),
+            ({**r, "users": len(r["users"])} for r in m.by_failure.values()),
             key=lambda r: -r["count"],
         )[:_TOP_FAILURES]
         legacy = sorted(
-            ({**r, "users": len(r["users"]), "apps": len(r["apps"])} for r in self.legacy.values()),
+            ({**r, "users": len(r["users"]), "apps": len(r["apps"])} for r in m.legacy.values()),
             key=lambda r: -r["total"],
         )
         report_only = sorted(
-            ({**r, "users": len(r["users"])} for r in self.report_only.values()),
+            ({**r, "users": len(r["users"])} for r in m.report_only.values()),
             key=lambda r: -r["would_block"],
         )
         return {
-            "window_start": self.window_start,
-            "window_end": self.window_end,
+            "window_start": m.window_start,
+            "window_end": m.window_end,
             "lookback_days": lookback_days,
             "sampled": sampled,
-            "total": self.total,
-            "success": self.success,
-            "failure": self.failure,
-            "interactive": self.interactive,
-            "mfa_challenged": self.mfa_challenged,
+            "total": m.total,
+            "success": m.success,
+            "failure": m.failure,
+            "interactive": m.interactive,
+            "mfa_challenged": m.mfa_challenged,
             # What that number MEANS. `authenticationRequirement` is not a v1.0 signIn
             # property, so this counts sign-ins where a Conditional Access policy enforced
             # MFA — a narrower claim than "the user was challenged", and the UI says so.
             "mfa_metric": "ca_enforced",
-            "failure_rate": round(self.failure / self.total, 4) if self.total else 0.0,
-            "by_day": [{"day": d, **v} for d, v in sorted(self.by_day.items())],
+            "failure_rate": round(m.failure / m.total, 4) if m.total else 0.0,
+            "by_day": self.by_day_rows(),
             "by_app": by_app,
             "by_user_top": by_user,
-            "by_client_app": dict(sorted(self.by_client_app.items(), key=lambda kv: -kv[1])),
-            "by_country": dict(sorted(self.by_country.items(), key=lambda kv: -kv[1])[:60]),
-            "by_ca_result": dict(self.by_ca_result),
+            "by_client_app": dict(sorted(m.by_client_app.items(), key=lambda kv: -kv[1])),
+            "by_country": dict(sorted(m.by_country.items(), key=lambda kv: -kv[1])[:60]),
+            "by_ca_result": dict(m.by_ca_result),
             "by_failure_code": failures,
             "legacy": legacy,
-            "legacy_success_users": len(self.legacy_success_users),
+            "legacy_success_users": len(m.legacy_success_users),
             "report_only_impact": report_only,
-            "device_compliance": dict(self.device_compliance),
+            "device_compliance": dict(m.device_compliance),
             "unmanaged_signin_users": sorted(
-                (dict(r) for r in self.unmanaged_signins.values()),
+                (dict(r) for r in m.unmanaged_signins.values()),
                 key=lambda r: -r["count"],
             )[:_MAX_UNMANAGED_USERS],
-            "unmanaged_signin_user_total": len(self.unmanaged_signins),
+            "unmanaged_signin_user_total": len(m.unmanaged_signins),
         }
 
     def patterns(self) -> list[dict[str, Any]]:
         """Deterministic, explainable detections over the aggregates."""
         out: list[dict[str, Any]] = []
+        m = self.merged()
 
-        for ip, users in self.spray_by_ip.items():
+        for ip, users in m.spray_by_ip.items():
             if len(users) >= SPRAY_MIN_USERS:
                 out.append({
                     "kind": "password_spray",
@@ -400,7 +530,7 @@ class _Aggregator:
                                  "threshold": SPRAY_MIN_USERS, "error_code": "50126"},
                 })
 
-        for row in self.fatigue_by_user.values():
+        for row in m.fatigue_by_user.values():
             if row["denials"] >= FATIGUE_MIN_DENIALS:
                 who = row.get("label") or row["upn"] or row["user_id"]
                 out.append({
@@ -416,39 +546,41 @@ class _Aggregator:
                                  "error_code": "500121"},
                 })
 
-        days = [v["failure"] for _, v in sorted(self.by_day.items())]
+        rows = self.by_day_rows()
+        days = [r["failure"] for r in rows]
         if len(days) >= 5:
             baseline = sorted(days)[len(days) // 2] or 1
-            for day, v in sorted(self.by_day.items()):
-                if v["failure"] >= max(50, baseline * SPIKE_FACTOR):
+            for r in rows:
+                day, failures = r["day"], r["failure"]
+                if failures >= max(50, baseline * SPIKE_FACTOR):
                     out.append({
                         "kind": "failure_spike",
                         "key": day,
                         "label": f"Sign-in failure spike on {day}",
                         "rule": f"Daily failures exceeded {SPIKE_FACTOR}\u00d7 the trailing median "
                                 f"for the window (and at least 50 failures)",
-                        "count": v["failure"],
-                        "evidence": {"day": day, "failures": v["failure"],
+                        "count": failures,
+                        "evidence": {"day": day, "failures": failures,
                                      "median_failures": baseline, "factor": SPIKE_FACTOR},
                     })
 
         # ONE aggregate row, not one per user. Emitting a row per affected account turned
-        # this list into 1,261 entries on a real tenant, which buried the spray and fatigue
+        # this list into 1,261 entries at production scale, which buried the spray and fatigue
         # detections that actually needed attention.
-        if self.unmanaged_signins:
-            worst = sorted(self.unmanaged_signins.values(), key=lambda r: -r["count"])
-            total_signins = sum(r["count"] for r in self.unmanaged_signins.values())
+        if m.unmanaged_signins:
+            worst = sorted(m.unmanaged_signins.values(), key=lambda r: -r["count"])
+            total_signins = sum(r["count"] for r in m.unmanaged_signins.values())
             out.append({
                 "kind": "unmanaged_device_signin",
                 "key": "tenant",
-                "label": f"{len(self.unmanaged_signins):,} account(s) signed in successfully "
+                "label": f"{len(m.unmanaged_signins):,} account(s) signed in successfully "
                          f"from a non-compliant device",
                 "rule": "A successful interactive sign-in from a device Intune reports as "
                         "non-compliant. Severity depends on whether the account is "
                         "privileged, which is resolved where the finding is raised.",
-                "count": len(self.unmanaged_signins),
+                "count": len(m.unmanaged_signins),
                 "evidence": {
-                    "accounts": len(self.unmanaged_signins),
+                    "accounts": len(m.unmanaged_signins),
                     "sign_ins": total_signins,
                     "top_accounts": [
                         {"upn": r.get("label") or r["upn"] or r["user_id"],
@@ -464,6 +596,64 @@ class _Aggregator:
 def _is_expired_skiptoken(exc: GraphError) -> bool:
     """Graph's continuation tokens have a lifetime shorter than a large sign-in read."""
     return "skip token" in str(exc).lower() and "expired" in str(exc).lower()
+
+
+#: Bump when `_DayAgg.to_json` changes shape, so a stale rollup is re-read rather than merged
+#: into a format it no longer matches.
+ROLLUP_VERSION = 2
+ROLLUP_STATE = "signin_rollup"
+
+
+def _resume_point(ctx: CollectContext, agg: "_Aggregator", since: str) -> tuple[str, int]:
+    """Load reusable day buckets into ``agg``; return (resume timestamp, days reused).
+
+    An empty resume timestamp means "read the whole window". The newest stored day is always
+    discarded and re-read: it was partial when it was written, and counting it twice is worse
+    than paying for one day of events.
+    """
+    blob = as_dict(cache.read_state(ctx.tenant_id, ROLLUP_STATE, {}))
+    if int(blob.get("version") or 0) != ROLLUP_VERSION:
+        return "", 0
+    # A widened window cannot be served from a narrower rollup, and a narrowed one would keep
+    # counting days it no longer covers.
+    if int(blob.get("lookback_days") or 0) != int(ctx.signin_lookback_days):
+        return "", 0
+
+    agg.load_days(as_dict(blob.get("days")))
+    agg.days.pop("unknown", None)
+    agg.prune(since[:10])
+    if not agg.days:
+        return "", 0
+
+    newest = max(agg.days)
+    agg.days.pop(newest, None)
+    if not agg.days:
+        return "", 0
+    return f"{newest}T00:00:00Z", len(agg.days)
+
+
+def _save_rollup(ctx: CollectContext, agg: "_Aggregator", *, sampled: bool) -> None:
+    """Persist the day buckets for the next run.
+
+    A capped read stops part-way through the OLDEST day it reached, so that one day is an
+    undercount and is dropped. Everything newer than it was read in full and is kept —
+    discarding those too would mean the tenants slow enough to hit the cap are the only ones
+    that never benefit from the rollup, which is exactly backwards.
+    """
+    days = dict(agg.days)
+    if sampled and days:
+        days.pop(min(days), None)
+    try:
+        cache.write_state(ctx.tenant_id, ROLLUP_STATE, {
+            "version": ROLLUP_VERSION,
+            "lookback_days": int(ctx.signin_lookback_days),
+            # Records that the window is only partly covered, not that the buckets are unusable.
+            "sampled": bool(sampled),
+            "updated_at": cache.now_iso(),
+            "days": {d: agg.days[d].to_json() for d in days},
+        })
+    except Exception:  # noqa: BLE001 - the domain is already collected; caching is a bonus
+        log.warning("could not persist the sign-in rollup", exc_info=True)
 
 
 async def _read_signins(
@@ -568,20 +758,43 @@ async def collect(client: GraphClient, ctx: CollectContext) -> dict[str, Any]:
         # one page instead of the whole domain.
         agg = _Aggregator()
         sampled = False
-        since = (datetime.now(timezone.utc) - timedelta(days=ctx.signin_lookback_days)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ")
-        await ctx.say("info", f"Risk: aggregating sign-ins since {since[:10]}\u2026")
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(days=ctx.signin_lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Whole days already counted are reloaded from the rollup; only the newest partial day
+        # onwards is re-read. Without this every refresh re-downloads the entire window to
+        # learn about the events since the last one.
+        resume_from, reused_days = _resume_point(ctx, agg, since)
+        read_from = resume_from or since
+        if reused_days:
+            await ctx.say("info", f"Risk: reusing {reused_days:,} day(s) of sign-in aggregates; "
+                                  f"reading from {read_from[:10]}\u2026")
+        else:
+            await ctx.say("info", f"Risk: aggregating sign-ins since {since[:10]}\u2026")
         try:
-            read, sampled, resumes = await _read_signins(client, ctx, agg, since)
+            read, capped, resumes = await _read_signins(client, ctx, agg, read_from)
             caps["signins"] = True
             if resumes:
                 await ctx.say("warn", f"Risk: paging token expired {resumes}x; resumed from the "
                                       "last event read")
-            if sampled:
+            agg.prune(since[:10])
+            # Coverage is a property of the days actually held, not of whether THIS read hit
+            # the cap. A warm read of two days never hits it, and reporting that as a complete
+            # window would claim thirty days of evidence the rollup has never held.
+            covered_from = min(agg.days) if agg.days else ""
+            sampled = capped or (bool(covered_from) and covered_from > since[:10])
+            if capped:
                 notes.append(
                     f"Sign-in analysis was capped at {MAX_SIGNIN_ROWS:,} events \u2014 every "
                     "chart derived from it is marked as sampled.")
-            await ctx.say("ok", f"Risk: {read:,} sign-in(s) aggregated")
+            elif sampled:
+                notes.append(
+                    f"Sign-in analysis covers {covered_from} onwards, not the full "
+                    f"{ctx.signin_lookback_days}-day window: an earlier read hit the "
+                    f"{MAX_SIGNIN_ROWS:,}-event cap. Coverage extends with each refresh.")
+            _save_rollup(ctx, agg, sampled=capped)
+            await ctx.say("ok", f"Risk: {read:,} sign-in(s) read, "
+                                f"{agg.total:,} aggregated over {len(agg.days):,} day(s)"
+                                + (f" from {covered_from}" if sampled and covered_from else ""))
 
         except GraphPermissionError as exc:
             notes.append("Sign-in logs not permitted (needs AuditLog.Read.All): "
