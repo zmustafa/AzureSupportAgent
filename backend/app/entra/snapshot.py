@@ -10,7 +10,6 @@ page load do not re-evaluate 60 signals over 100,000 users.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -78,6 +77,7 @@ def settings() -> dict[str, Any]:
         "max_users": int(s.get("entra_max_users", 250000) or 250000),
         "max_activation_hours": 8.0,
         "beta": bool(s.get("entra_enable_beta_endpoints", True)),
+        "graph_concurrency": int(s.get("entra_graph_concurrency", 12) or 12),
     }
 
 
@@ -370,7 +370,11 @@ async def refresh(
             await progress(level, message)
 
     await say("info", f"Connecting to Microsoft Graph for tenant {tenant_id}…")
-    async with GraphClient(connection, beta=s["beta"]) as client:
+    # Wider than the client default because the slowest phases here are `$batch` fan-outs
+    # (group owners, guest domains, app assignments) that sit idle waiting on the gate. The
+    # client narrows itself on 429 and recovers, so this is a ceiling rather than a promise.
+    async with GraphClient(connection, beta=s["beta"],
+                           concurrency=int(s.get("graph_concurrency") or 12)) as client:
         token, token_err = await client.probe_token()
         if not token:
             await say("error", f"No Microsoft Graph token: {token_err}")

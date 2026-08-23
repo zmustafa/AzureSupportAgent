@@ -161,7 +161,10 @@ def test_get_page_reports_retry_after_throttling(monkeypatch):
     assert page.items == [{"id": "a"}]
     assert retries and retries[0][0:2] == (429, 1)
     assert 3 <= retries[0][2] <= 3.5
-    assert slept == [retries[0][2]]
+    # The retry also re-enters the adaptive gate, which holds callers off for the same
+    # Retry-After window. Under a real clock that second wait is already elapsed and costs
+    # nothing; here `sleep` is faked so time never moves and it is recorded again.
+    assert slept[0] == retries[0][2]
 
 
 def test_get_count_reads_plain_integer_with_eventual_consistency():
@@ -264,7 +267,9 @@ def test_batch_sub_request_retry_honours_header_and_reports_progress(monkeypatch
     responses = asyncio.run(run())
     assert responses[0].ok
     assert calls == 2
-    assert slept == [4.0]
+    # See the note in test_get_page_reports_retry_after_throttling: the retry re-enters the
+    # adaptive gate, which under a faked clock records the same window a second time.
+    assert slept[0] == 4.0
     assert retries == [(429, 1, 4.0)]
 
 

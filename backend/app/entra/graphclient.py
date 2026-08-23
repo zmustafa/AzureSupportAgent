@@ -16,7 +16,8 @@ Capabilities
   sub-request status and per sub-request 429 retry.
 * **Bulk resolve** — ``POST /directoryObjects/getByIds`` chunked at the Graph maximum 1000.
 * **Throttling** — honours ``Retry-After`` exactly, exponential backoff with jitter on
-  429/503/504, and a bounded concurrency semaphore.
+  429/503/504, and an adaptive concurrency gate that halves its width on 429 and widens
+  again as requests succeed.
 * **Delta** — ``/delta`` with token round-trip for the large collections.
 * **Fail-open** — a 403 raises :class:`GraphPermissionError` which collectors catch to mark
   their domain blind; the rest of the snapshot still builds.
@@ -51,6 +52,8 @@ _MAX_RETRIES = 5
 _MAX_BACKOFF_S = 60.0
 _DEFAULT_TIMEOUT = 60.0
 _GRAPH_HOST = "graph.microsoft.com"
+#: Consecutive clean responses before the adaptive gate widens by one.
+_GATE_GROW_AFTER = 8
 
 
 # --------------------------------------------------------------------------- errors
@@ -98,6 +101,9 @@ class GraphStats:
     ms: float = 0.0
     truncated_calls: int = 0
     top_retries: int = 0
+    #: Times the adaptive gate halved its width, and the narrowest it reached.
+    gate_narrowed: int = 0
+    gate_min_limit: int = 0
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -113,6 +119,8 @@ class GraphStats:
             "ms": round(self.ms, 1),
             "truncated_calls": self.truncated_calls,
             "top_retries": self.top_retries,
+            "gate_narrowed": self.gate_narrowed,
+            "gate_min_limit": self.gate_min_limit,
             "errors": self.errors[:20],
         }
 
@@ -163,6 +171,71 @@ class GraphPage:
     total: int | None = None
 
 
+# --------------------------------------------------------------------------- throttle gate
+class AdaptiveGate:
+    """Concurrency gate that narrows on 429 and widens again as requests succeed.
+
+    A plain semaphore is not enough once the fan-out is wide. Each request backs off in
+    isolation, but the semaphore immediately admits a replacement, so a throttled tenant
+    keeps being hammered right through the ``Retry-After`` window it just asked us to wait
+    out. This shares one verdict across every caller on the client: multiplicative decrease
+    on 429, additive increase on sustained success — the control law TCP uses.
+    """
+
+    def __init__(self, ceiling: int, *, floor: int = 1) -> None:
+        self.ceiling = max(1, int(ceiling))
+        self.floor = max(1, min(int(floor), self.ceiling))
+        self._limit = float(self.ceiling)
+        self._in_flight = 0
+        self._resume_at = 0.0
+        self._streak = 0
+        self._cond = asyncio.Condition()
+        self.narrowed = 0
+        self.min_limit = self.ceiling
+
+    @property
+    def limit(self) -> int:
+        return max(self.floor, int(self._limit))
+
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    async def acquire(self) -> None:
+        pause = self._resume_at - self._now()
+        if pause > 0:
+            # Everyone waits out the window, not just the request that was refused. One
+            # sleep, never a re-check loop: re-checking spins hard if the clock does not
+            # advance, and a 429 arriving while we queue is already covered by the
+            # narrowed width plus that request's own backoff.
+            await asyncio.sleep(min(pause, _MAX_BACKOFF_S))
+        async with self._cond:
+            while self._in_flight >= self.limit:
+                await self._cond.wait()
+            self._in_flight += 1
+
+    async def release(self) -> None:
+        async with self._cond:
+            self._in_flight = max(0, self._in_flight - 1)
+            self._cond.notify_all()
+
+    def record_ok(self) -> None:
+        self._streak += 1
+        if self._streak >= _GATE_GROW_AFTER and self._limit < self.ceiling:
+            self._streak = 0
+            self._limit = min(float(self.ceiling), self._limit + 1.0)
+
+    def record_throttled(self, retry_after: float = 0.0) -> None:
+        """Halve the width and, when Graph named a wait, hold every caller off for it."""
+        self._streak = 0
+        was = self.limit
+        self._limit = max(float(self.floor), self._limit / 2.0)
+        if self.limit < was:
+            self.narrowed += 1
+            self.min_limit = min(self.min_limit, self.limit)
+        if retry_after > 0:
+            self._resume_at = max(self._resume_at, self._now() + min(retry_after, _MAX_BACKOFF_S))
+
+
 # --------------------------------------------------------------------------- client
 class GraphClient:
     """Bounded, throttle-aware Microsoft Graph reader for one Azure connection.
@@ -188,12 +261,13 @@ class GraphClient:
     ) -> None:
         self._conn = conn or {}
         self._beta_enabled = bool(beta)
-        self._sem = asyncio.Semaphore(max(1, int(concurrency)))
+        self._gate = AdaptiveGate(max(1, int(concurrency)))
         self._timeout = timeout
         self._token: str | None = None
         self._token_error: str = ""
         self._client: httpx.AsyncClient | None = None
         self.stats = GraphStats()
+        self.stats.gate_min_limit = self._gate.ceiling
 
     # -- lifecycle ---------------------------------------------------------------
     async def __aenter__(self) -> "GraphClient":
@@ -264,34 +338,44 @@ class GraphClient:
         attempt = 0
         while True:
             started = time.monotonic()
-            async with self._sem:
-                try:
-                    resp = await self._http().request(method, url, json=json_body, headers=hdrs)
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    self.stats.ms += (time.monotonic() - started) * 1000
-                    attempt += 1
-                    if attempt > _MAX_RETRIES:
-                        raise GraphError(0, f"Network error after {attempt} attempts: {exc}", url) from exc
-                    self.stats.retries += 1
-                    delay = self._backoff(attempt, None)
-                    if on_retry is not None:
-                        try:
-                            await on_retry(0, attempt, delay)
-                        except Exception:  # noqa: BLE001 - telemetry must not break a request
-                            pass
-                    await asyncio.sleep(delay)
-                    continue
+            netfail: Exception | None = None
+            await self._gate.acquire()
+            try:
+                resp = await self._http().request(method, url, json=json_body, headers=hdrs)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                netfail = exc
+            finally:
+                # Freed before any backoff sleep, so a retry never squats on a permit.
+                await self._gate.release()
+
+            if netfail is not None:
+                self.stats.ms += (time.monotonic() - started) * 1000
+                attempt += 1
+                if attempt > _MAX_RETRIES:
+                    raise GraphError(0, f"Network error after {attempt} attempts: {netfail}", url) from netfail
+                self.stats.retries += 1
+                delay = self._backoff(attempt, None)
+                if on_retry is not None:
+                    try:
+                        await on_retry(0, attempt, delay)
+                    except Exception:  # noqa: BLE001 - telemetry must not break a request
+                        pass
+                await asyncio.sleep(delay)
+                continue
+
             self.stats.requests += 1
             self.stats.ms += (time.monotonic() - started) * 1000
 
             if resp.status_code in (429, 503, 504):
                 attempt += 1
+                delay = self._backoff(attempt, resp.headers.get("Retry-After"))
                 if resp.status_code == 429:
                     self.stats.throttled += 1
+                    # Narrow the whole client, not just this request's next attempt.
+                    self._throttle(delay)
                 if attempt > _MAX_RETRIES:
                     raise GraphError(resp.status_code, f"Throttled/unavailable after {attempt} attempts", url)
                 self.stats.retries += 1
-                delay = self._backoff(attempt, resp.headers.get("Retry-After"))
                 if on_retry is not None:
                     try:
                         await on_retry(resp.status_code, attempt, delay)
@@ -299,6 +383,8 @@ class GraphClient:
                         pass
                 await asyncio.sleep(delay)
                 continue
+
+            self._gate.record_ok()
 
             if resp.status_code == 401:
                 # One re-auth attempt (token may have expired mid-collection).
@@ -321,6 +407,17 @@ class GraphClient:
                 raise GraphError(resp.status_code, self._error_text(resp) or resp.reason_phrase, url)
 
             return resp
+
+    def _throttle(self, delay: float) -> None:
+        """Record a 429 against the shared gate and mirror its state into stats."""
+        self._gate.record_throttled(delay)
+        self.stats.gate_narrowed = self._gate.narrowed
+        self.stats.gate_min_limit = self._gate.min_limit
+
+    @property
+    def concurrency(self) -> int:
+        """Configured in-flight ceiling. Fan-outs should not ask for more than this."""
+        return self._gate.ceiling
 
     @staticmethod
     def _backoff(attempt: int, retry_after: str | None) -> float:
@@ -514,7 +611,7 @@ class GraphClient:
                 # Several Graph collections (roleDefinitions, authenticationStrengthPolicies,
                 # authenticationContextClassReferences, ...) reject `$top` outright with a 400
                 # and lose the entire domain. Retrying once without it is cheap and turns a
-                # whole-domain failure into a normal read. Verified against a live tenant.
+                # whole-domain failure into a normal read. Verified by measurement.
                 if top and not items and _rejects_top(exc):
                     self.stats.top_retries += 1
                     return await self.get_all(
@@ -626,6 +723,8 @@ class GraphClient:
                     _MAX_BACKOFF_S,
                     (delay if delay > 0 else 2.0 ** attempt) + random.uniform(0, 0.5),
                 )
+                # A throttled sub-request is the same tenant-wide signal as a throttled GET.
+                self._throttle(delay)
                 self.stats.retries += 1
                 if on_retry is not None:
                     try:
