@@ -643,67 +643,81 @@ app.add_middleware(_CsrfGuard)
 # All application endpoints live under /api so the SPA can own every other path
 # (client-side routes like /inventory, /admin, /policy collide with API prefixes
 # otherwise). The frontend talks to this via VITE_API_BASE=/api in production.
+#
+# Sub-routers are registered DIRECTLY on `app` with the /api prefix rather than nested inside
+# this router. `include_router` re-creates every route it copies, so nesting made all ~1,077
+# sub-router routes pay a second full registration pass: measured 2,012 ms nested vs 999 ms
+# flat, for a route set proven byte-identical (same sha256 over path+methods+name+model).
+# `api` still exists for the handful of endpoints defined directly below.
 api = APIRouter(prefix="/api")
 
-api.include_router(auth.router)
-api.include_router(users.router)
-api.include_router(meta.router)
-api.include_router(chats.router)
-api.include_router(charts.router)
-api.include_router(admin.router)
-api.include_router(admin_demo.router)
-api.include_router(firewall.router)
-api.include_router(connections.router)
-api.include_router(connectors.router)
-api.include_router(automations.router)
-api.include_router(backup.router)
-api.include_router(workbooks.router)
-api.include_router(playbooks.router)
-api.include_router(notifications.router)
-api.include_router(workloads.router)
-api.include_router(work_batches.router)
-api.include_router(assessments.router)
-api.include_router(architectures.router)
-api.include_router(fmea.router)
-api.include_router(policy.router)
-api.include_router(inventory.router)
-api.include_router(tagintel.router)
-api.include_router(changeexplorer.router)
-api.include_router(identity.router)
-api.include_router(entra.router)
-api.include_router(alert_analysis.router)
-api.include_router(alerts_manager.router)
-api.include_router(amba.router)
-api.include_router(backup_manager.router)
-api.include_router(resiliency.router)
-api.include_router(telemetry.router)
-api.include_router(backupdr.router)
-api.include_router(coverage_reports.router)
-api.include_router(netcheck.router)
-api.include_router(dnsdebug.router)
-api.include_router(evidence.router)
-api.include_router(graph.router)
-api.include_router(radar.router)
-api.include_router(teleintel.router)
-api.include_router(perfprofile.router)
-api.include_router(missions.router)
-api.include_router(iam.router, prefix="/iam")
+for _sub in (
+    auth.router,
+    users.router,
+    meta.router,
+    chats.router,
+    charts.router,
+    admin.router,
+    admin_demo.router,
+    firewall.router,
+    connections.router,
+    connectors.router,
+    automations.router,
+    backup.router,
+    workbooks.router,
+    playbooks.router,
+    notifications.router,
+    workloads.router,
+    work_batches.router,
+    assessments.router,
+    architectures.router,
+    fmea.router,
+    policy.router,
+    inventory.router,
+    tagintel.router,
+    changeexplorer.router,
+    identity.router,
+    entra.router,
+    alert_analysis.router,
+    alerts_manager.router,
+    amba.router,
+    backup_manager.router,
+    resiliency.router,
+    telemetry.router,
+    backupdr.router,
+    coverage_reports.router,
+    netcheck.router,
+    dnsdebug.router,
+    evidence.router,
+    graph.router,
+    radar.router,
+    teleintel.router,
+    perfprofile.router,
+    missions.router,
+):
+    app.include_router(_sub, prefix="/api")
+
+app.include_router(iam.router, prefix="/api/iam")
 # Legacy alias: /rbac was renamed to /iam. Kept (hidden from the schema, Deprecation-tagged)
 # so existing bookmarks, saved automations and API clients keep working. Remove one release
 # after the frontend has moved.
-api.include_router(
+app.include_router(
     iam.router,
-    prefix="/rbac",
+    prefix="/api/rbac",
     include_in_schema=False,
     dependencies=[Depends(iam.deprecated_rbac_alias)],
 )
-api.include_router(reservations.router)
-api.include_router(quota.router)
-api.include_router(ownership.router)
-api.include_router(vms.router)
-api.include_router(capability.router)
-api.include_router(cases.router)
-api.include_router(insights.router)
+
+for _sub in (
+    reservations.router,
+    quota.router,
+    ownership.router,
+    vms.router,
+    capability.router,
+    cases.router,
+    insights.router,
+):
+    app.include_router(_sub, prefix="/api")
 
 
 # Health/readiness probes stay at the root (no auth, no /api) for Container Apps.

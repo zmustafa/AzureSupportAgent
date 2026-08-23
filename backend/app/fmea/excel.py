@@ -17,6 +17,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.core.xlsx import cell_safe
 from app.fmea import compute
 
 # ⟦TODO: … | key=…⟧ placeholder tokens are human-only hints — never export the raw token.
@@ -143,8 +144,8 @@ def build_fmea_xlsx(doc: dict[str, Any], workload_name: str) -> bytes:
     ws.title = "Summary"
     ws["A1"] = title
     ws["A1"].font = title_font
-    ws.append(["Workload", workload_name or "—"])
-    ws.append(["Status", str(doc.get("status", "draft")).replace("_", " ").title()])
+    ws.append(["Workload", cell_safe(workload_name or "—")])
+    ws.append(["Status", cell_safe(str(doc.get("status", "draft")).replace("_", " ").title())])
     ws.append(["Generated", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
     ws.append([])
     ws.append(["Risk band", "Count"])
@@ -171,7 +172,7 @@ def build_fmea_xlsx(doc: dict[str, Any], workload_name: str) -> bytes:
     for t in doc.get("tables", []) or []:
         rows = t.get("rows", []) or []
         top = max((compute.rpn(r.get("severity"), r.get("occurrence"), r.get("detection")) or 0) for r in rows) if rows else 0
-        ws.append([t.get("name", "Table"), len(rows), top])
+        ws.append([cell_safe(t.get("name", "Table")), len(rows), top])
     ws.column_dimensions["A"].width = 32
     ws.column_dimensions["B"].width = 14
     ws.column_dimensions["C"].width = 12
@@ -265,7 +266,7 @@ def build_fmea_xlsx(doc: dict[str, Any], workload_name: str) -> bytes:
                         cell.number_format = "yyyy-mm-dd"
                     cell.alignment = center_mid
                 else:  # text
-                    cell.value = _strip_todo(row.get(col["key"]))
+                    cell.value = cell_safe(_strip_todo(row.get(col["key"])))
 
         # ---- widths, freeze, autofilter ----
         for i, col in enumerate(_COLUMNS):

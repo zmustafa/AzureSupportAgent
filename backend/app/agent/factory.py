@@ -1,13 +1,16 @@
 """Provider factory: builds the active LLM provider from runtime config."""
 from __future__ import annotations
 
-from app.agent.claude_provider import ClaudeProvider
-from app.agent.codex_provider import CodexProvider
-from app.agent.github_copilot import GitHubCopilotChatProvider
-from app.agent.openai_provider import OpenAIProvider
 from app.agent.provider import LLMProvider
 from app.core.config import Settings
 from app.core.llm_config import get_active
+
+# The four provider modules are imported INSIDE the branches below, not here. Only
+# openai_provider pulls a heavyweight SDK (`openai`, ~717 ms) and it is the single eager
+# importer of it, so deferring here keeps it off the startup path entirely -- and
+# app.agent.factory is imported at module level by 17 modules, so it is always on that path.
+# A startup self-check imports all four after the server is listening, so a broken install
+# still fails loudly rather than at first use.
 
 # Providers that speak the plain OpenAI Chat Completions API (with a base_url).
 _OPENAI_COMPATIBLE = {
@@ -43,6 +46,8 @@ def build_provider_for(
     provider = (cfg["provider"] or "openai").lower()
 
     if provider == "github_copilot":
+        from app.agent.github_copilot import GitHubCopilotChatProvider
+
         # GitHub Copilot uses its own web-chat-thread protocol (not OpenAI-compatible) and
         # authenticates from a browser session (app.agent.github_copilot_auth), which is the
         # source of truth. Do NOT pass the stored config api_key — a stale captured token
@@ -51,6 +56,8 @@ def build_provider_for(
             model=cfg["model"], base_url=cfg["base_url"]
         )
     if provider == "chatgpt":
+        from app.agent.codex_provider import CodexProvider
+
         # ChatGPT Codex uses the OAuth Responses API (not chat/completions). The OAuth
         # token (auto-refreshed in app.agent.chatgpt_oauth) is the source of truth, so we
         # deliberately do NOT pass the stored config api_key — it may be a stale captured
@@ -59,11 +66,15 @@ def build_provider_for(
             model=cfg["model"], base_url=cfg["base_url"]
         )
     if provider == "claude":
+        from app.agent.claude_provider import ClaudeProvider
+
         # Anthropic native Messages API with native tool calling.
         return ClaudeProvider(
             model=cfg["model"], api_key=cfg["api_key"], base_url=cfg["base_url"]
         )
     if provider == "claude_oauth":
+        from app.agent.claude_provider import ClaudeProvider
+
         # Claude Pro/Max subscription via OAuth. The token (auto-refreshed in
         # app.agent.claude_oauth) is the source of truth, so we deliberately do NOT pass
         # the stored config api_key. The provider adds the Bearer token + oauth beta
@@ -72,6 +83,8 @@ def build_provider_for(
             model=cfg["model"], base_url=cfg["base_url"], use_oauth=True
         )
     if provider == "azure_foundry":
+        from app.agent.openai_provider import OpenAIProvider
+
         # Azure AI Foundry model-inference endpoint (…services.ai.azure.com/models):
         # OpenAI-compatible chat/completions with an api-version query param + Bearer auth.
         # Normalize the saved endpoint to the "/models" inference root the SDK appends to.
@@ -86,6 +99,8 @@ def build_provider_for(
             api_version=cfg["api_version"] or "2024-05-01-preview",
         )
     if provider in _OPENAI_COMPATIBLE:
+        from app.agent.openai_provider import OpenAIProvider
+
         return OpenAIProvider(
             provider=provider,
             api_key=cfg["api_key"],

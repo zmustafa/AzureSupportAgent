@@ -1022,11 +1022,11 @@ async def export_activity_log_coverage(
         management_group_id=management_group_id, principal=principal, db=db,
     )
     if format == "xlsx":
-        content, media_type = activity_export.to_workbook(payload), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        content, media_type = await asyncio.to_thread(activity_export.to_workbook, payload), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     elif format == "json":
         content, media_type = activity_export.to_json(payload), "application/json"
     else:
-        content, media_type = activity_export.to_csv(payload), "text/csv; charset=utf-8"
+        content, media_type = await asyncio.to_thread(activity_export.to_csv, payload), "text/csv; charset=utf-8"
     scope_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(payload["scope"]["id"])).strip("-") or "scope"
     db.add(_audit(principal, "alerts_manager.activity_log_coverage.exported", f"{payload['scope']['kind']}:{payload['scope']['id']}", {
         "format": format, "connection_id": payload["connection_id"], "sanitized": True,

@@ -9,6 +9,7 @@ drift-since-last-scan. Admin-only; all Azure access is read-only.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -959,7 +960,7 @@ async def post_export_xlsx(req: XlsxExportReq, _: Principal = Depends(require_ad
     from app.policy.xlsx_export import build_workbook
 
     sheets = [s.model_dump() for s in req.sheets]
-    data = build_workbook(sheets)
+    data = await asyncio.to_thread(build_workbook, sheets)
     safe = "".join(c for c in (req.filename or "policy-export") if c.isalnum() or c in "-_") or "policy-export"
     return Response(
         content=data,

@@ -9,6 +9,8 @@ import io
 import json
 from typing import Any
 
+from app.core.xlsx import cell_safe
+
 _CSV_COLUMNS = [
     "eventTime", "riskLabel", "riskScore", "category", "resourceName", "resourceType",
     "resourceGroup", "subscriptionId", "operation", "actor", "actorType", "source",
@@ -22,7 +24,9 @@ def to_csv(events: list[dict[str, Any]], *, high_risk_only: bool = False) -> str
     w = csv.writer(buf)
     w.writerow(_CSV_COLUMNS)
     for e in rows:
-        w.writerow([e.get(c, "") for c in _CSV_COLUMNS])
+        # Activity Log actor/resource names are attacker-influenceable and land in a CSV a
+        # reviewer opens in Excel.
+        w.writerow([cell_safe(e.get(c, "")) for c in _CSV_COLUMNS])
     return buf.getvalue()
 
 

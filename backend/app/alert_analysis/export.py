@@ -6,6 +6,8 @@ import io
 import json
 from typing import Any
 
+from app.core.xlsx import cell_safe
+
 _COLUMNS = (
     "row_kind",
     "finding_status",
@@ -65,14 +67,16 @@ _COLUMNS = (
 
 
 def _safe(value: Any) -> Any:
+    """Flatten containers to a cell-friendly scalar, then neutralize formula injection.
+
+    The flattening is this export's own concern; the guard is delegated to the shared
+    definition so there is one place to audit.
+    """
     if isinstance(value, (list, tuple, set)):
         value = "; ".join(str(item) for item in value)
     elif isinstance(value, dict):
         value = json.dumps(value, sort_keys=True, default=str)
-    if not isinstance(value, str) or not value:
-        return value
-    stripped = value.lstrip("\t\r\n ")
-    return "'" + value if stripped and stripped[0] in "=+-@" else value
+    return cell_safe(value)
 
 
 def _portal(resource_id: str) -> str:

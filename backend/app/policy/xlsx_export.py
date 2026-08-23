@@ -11,6 +11,8 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
+from app.core.xlsx import cell_safe
+
 
 def _safe_title(title: str) -> str:
     """Excel sheet titles: ≤31 chars, no : \\ / ? * [ ]."""
@@ -22,11 +24,12 @@ def _safe_title(title: str) -> str:
 def _coerce(v: Any) -> Any:
     if v is None:
         return ""
+    # cell_safe returns non-strings unchanged, so numeric/bool handling is untouched.
     if isinstance(v, (int, float, str)):
-        return v
+        return cell_safe(v)
     if isinstance(v, bool):
         return "Yes" if v else "No"
-    return str(v)
+    return cell_safe(str(v))
 
 
 def build_workbook(sheets: list[dict[str, Any]]) -> bytes:
@@ -65,7 +68,7 @@ def build_workbook(sheets: list[dict[str, Any]]) -> bytes:
         bold_level0 = spec.get("bold_level0", True)
 
         ws = wb.create_sheet(name)
-        ws.append(columns)
+        ws.append([cell_safe(c) for c in columns])
         for c in range(1, len(columns) + 1):
             cell = ws.cell(row=1, column=c)
             cell.font = header_font

@@ -12,17 +12,20 @@ import csv
 import io
 from typing import Any
 
+from app.core.xlsx import cell_safe
+
 # The canonical owner columns we export (and the import target fields mirror these).
 EXPORT_COLUMNS = ["display_name", "email", "department", "kind", "source", "notes", "tags", "assignment_count"]
 
 
 def _csv_safe(value: Any) -> str:
-    """Neutralize ``= + - @`` spreadsheet formula-injection vectors."""
-    s = "" if value is None else str(value)
-    stripped = s.lstrip("\t\r\n ")
-    if stripped and stripped[0] in ("=", "+", "-", "@"):
-        return "'" + s
-    return s
+    """Stringify a value, then neutralize spreadsheet formula-injection vectors.
+
+    This intentionally stringifies everything (unlike :func:`cell_safe`, which passes numbers
+    through) because every column of this sheet is round-tripped through the CSV importer as
+    text. The guard itself is delegated so there is one definition of it.
+    """
+    return str(cell_safe("" if value is None else str(value)))
 
 
 def owners_to_rows(owners: list[dict[str, Any]], assignment_counts: dict[str, int] | None = None) -> list[dict[str, Any]]:

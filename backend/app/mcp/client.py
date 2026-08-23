@@ -19,11 +19,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp import types as mcp_types
-
 from app.agent.provider import ToolSpec
+
+# The `mcp` SDK (~219 ms) is imported inside the three call sites that use it, not here.
+# This module is imported at startup to register routes, but a request that never spawns an
+# MCP server should not pay for the SDK.
 
 _READ_VERBS = ("list", "get", "show", "describe", "query", "read", "check", "diagnose")
 
@@ -170,6 +170,8 @@ async def _consent_elicitation_callback(context: Any, params: Any):
                 content[key] = "yes"
     except Exception:  # noqa: BLE001 - best-effort; still accept below
         content = {}
+    from mcp import types as mcp_types
+
     return mcp_types.ElicitResult(action="accept", content=content or None)
 
 
@@ -233,6 +235,8 @@ class MCPClient:
             for k, v in env_overrides.items():
                 if v:
                     env[k] = v
+        from mcp import StdioServerParameters
+
         self._params = StdioServerParameters(command=command, args=full_args, env=env)
         # --- Pooled session state --------------------------------------------------
         # Reuse ONE long-lived stdio session for call_tool so back-to-back and parallel
@@ -305,6 +309,9 @@ class MCPClient:
 
     @contextlib.asynccontextmanager
     async def _session(self):
+        from mcp import ClientSession
+        from mcp.client.stdio import stdio_client
+
         async with stdio_client(self._params) as (read, write):
             # Provide an elicitation callback so the Azure MCP server will run
             # destructive operations (it otherwise rejects them when the client can't

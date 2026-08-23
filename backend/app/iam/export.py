@@ -11,32 +11,12 @@ import io
 import json
 from typing import Any
 
+from app.core.xlsx import cell_safe
 from app.iam import schema
 
-
-# Excel / LibreOffice interpret a cell that starts with one of these characters as a
-# formula — `=cmd|'...'!A1` is the classic vector for CSV-injection RCE on the
-# admin's workstation. Prefixing with a single quote forces literal-text interpretation.
-_FORMULA_TRIGGERS = ("=", "+", "-", "@")
-# Tab / CR / LF can also kick off formula interpretation in some spreadsheet apps.
-_FORMULA_LEADING_WS = ("\t", "\r", "\n")
-
-
-def _csv_safe(value: Any) -> Any:
-    """Neutralize CSV / Excel formula-injection vectors in a single cell value.
-
-    Strings that begin with ``= + - @`` (or with leading whitespace followed by
-    one of those) are prefixed with a leading apostrophe so the spreadsheet
-    treats them as plain text. Non-string values pass through unchanged.
-    """
-    if not isinstance(value, str) or not value:
-        return value
-    stripped = value.lstrip("\t\r\n ")
-    if stripped and stripped[0] in _FORMULA_TRIGGERS:
-        return "'" + value
-    if value[0] in _FORMULA_LEADING_WS and stripped and stripped[0] in _FORMULA_TRIGGERS:
-        return "'" + value
-    return value
+#: Kept as a module-local name because `app/api/assessments.py` imports it from here. The
+#: behaviour is the shared one - the guard has exactly one definition, in app/core/xlsx.py.
+_csv_safe = cell_safe
 
 
 def to_csv(rows: list[dict[str, Any]], columns: tuple[str, ...] | None = None) -> str:
@@ -64,7 +44,7 @@ def to_json(rows: list[dict[str, Any]], columns: tuple[str, ...] | None = None) 
 # outside the workbook.
 #
 # `effect` leads deliberately. It used to be absent entirely, which meant the eight Deny
-# assignments on a real tenant sat in a sheet called "Effective Access" among 5,506 Allow rows
+# assignments at production scale sat in a sheet called "Effective Access" among 5,506 Allow rows
 # with nothing to tell them apart — anyone filtering or pivoting that sheet counted a control as
 # a grant. `principalExists` is here for the same reason: 100 rows on that tenant point at
 # principals that no longer exist, and without the column they read as live access.

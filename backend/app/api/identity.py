@@ -11,6 +11,7 @@ when the snapshot is stale or missing. Only ``POST /identity/refresh`` (the dash
 button) recomputes under a per-tenant lock and overwrites the cache. Admin-gated."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -390,7 +391,7 @@ async def app_registrations_workbook(
     from app.identity import appregs_export
 
     snap = await _appregs_snapshot(principal, connection_id=connection_id, force=False)
-    content = appregs_export.to_workbook(snap)
+    content = await asyncio.to_thread(appregs_export.to_workbook, snap)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

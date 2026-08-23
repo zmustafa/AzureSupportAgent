@@ -1509,7 +1509,8 @@ async def export_rows(
         return Response(content=body, media_type="application/json", headers={"Content-Disposition": "attachment; filename=allAzureAccess.json"})
     if fmt == "json":
         return Response(content=export.to_json(rows), media_type="application/json", headers={"Content-Disposition": f"attachment; filename=iam-access-{tab}.json"})
-    return Response(content=export.to_csv(rows), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=iam-access-{tab}.csv"})
+    csv_body = await asyncio.to_thread(export.to_csv, rows)
+    return Response(content=csv_body, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=iam-access-{tab}.csv"})
 
 
 @router.get("/export/workbook")

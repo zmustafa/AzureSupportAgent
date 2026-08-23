@@ -310,10 +310,10 @@ async def export_snapshot(
         from app.core import coverage_trends
 
         points = coverage_trends.series("alert_analysis", principal.tenant_id or "default", scope_kind, scope_id)
-        content = export.to_workbook(snapshot, points)
+        content = await asyncio.to_thread(export.to_workbook, snapshot, points)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     elif format == "csv":
-        content = export.to_csv(snapshot)
+        content = await asyncio.to_thread(export.to_csv, snapshot)
         media_type = "text/csv; charset=utf-8"
     else:
         content = export.to_json(snapshot)

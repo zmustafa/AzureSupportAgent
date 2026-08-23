@@ -7,6 +7,8 @@ import json
 import re
 from typing import Any
 
+from app.core.xlsx import cell_safe
+
 _SECRET_KEY = re.compile(r"(?:secret|token|password|credential|authorization|signature|sig|sas|key)$", re.IGNORECASE)
 _URL_QUERY = re.compile(r"(https?://[^\s?\"']+)\?[^\s\"']+", re.IGNORECASE)
 _COLUMNS = (
@@ -16,11 +18,15 @@ _COLUMNS = (
 
 
 def _safe_scalar(value: Any) -> Any:
+    """Redact URL query strings, then neutralize formula injection.
+
+    The redaction is NOT optional and is why this cannot simply become ``cell_safe``: query
+    strings in this export can carry tokens. The guard half is delegated so there is one
+    definition of it.
+    """
     if not isinstance(value, str):
         return value
-    value = _URL_QUERY.sub(r"\1?<redacted>", value)
-    stripped = value.lstrip("\t\r\n ")
-    return "'" + value if stripped and stripped[0] in "=+-@" else value
+    return cell_safe(_URL_QUERY.sub(r"\1?<redacted>", value))
 
 
 def sanitize(value: Any, *, key: str = "") -> Any:

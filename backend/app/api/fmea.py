@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from app.architectures import registry as arch_registry
+from app.core.xlsx import cell_safe
 from app.core.genjob import JobRegistry
 from app.core.security import Principal, require_permission
 from app.fmea import compute
@@ -359,10 +360,11 @@ async def export_fmea_endpoint(fmea_id: str, format: str = "csv", principal: Pri
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([doc.get("title") or f"FMEA — {wl_name}"])
+    writer.writerow([cell_safe(doc.get("title") or f"FMEA — {wl_name}")])
     for table in doc.get("tables", []) or []:
         writer.writerow([])
-        writer.writerow([table.get("name", "Table")] + ([table.get("scope_ref", "")] if table.get("scope_ref") else []))
+        writer.writerow([cell_safe(table.get("name", "Table"))]
+                        + ([cell_safe(table.get("scope_ref", ""))] if table.get("scope_ref") else []))
         writer.writerow([label for _key, label in _CSV_COLUMNS])
         for row in table.get("rows", []) or []:
             writer.writerow([_csv_cell(row.get(key)) for key, _label in _CSV_COLUMNS])
@@ -375,7 +377,7 @@ async def export_fmea_endpoint(fmea_id: str, format: str = "csv", principal: Pri
 def _csv_cell(value: Any) -> str:
     if value is None:
         return ""
-    return str(value)
+    return str(cell_safe(str(value)))
 
 
 # ------------------------------------------------------------------------- AI generation

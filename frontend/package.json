@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "budget": "node scripts/bundle-budget.mjs",
+    "budget:report": "node scripts/bundle-budget.mjs --report"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

@@ -6,6 +6,7 @@ are persisted per (tenant, workload) with history + trash. Admin-gated. No write
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -399,9 +400,11 @@ async def export_run(run_id: str, format: str = "csv", principal: Principal = De
     events = run.get("events", [])
     name = (run.get("workloadName", "changes") or "changes").replace(" ", "_")
     if format == "csv":
-        return {"filename": f"{name}_changes.csv", "mime": "text/csv", "content": export_mod.to_csv(events)}
+        body = await asyncio.to_thread(export_mod.to_csv, events)
+        return {"filename": f"{name}_changes.csv", "mime": "text/csv", "content": body}
     if format == "csv_high":
-        return {"filename": f"{name}_high_risk.csv", "mime": "text/csv", "content": export_mod.to_csv(events, high_risk_only=True)}
+        body = await asyncio.to_thread(export_mod.to_csv, events, high_risk_only=True)
+        return {"filename": f"{name}_high_risk.csv", "mime": "text/csv", "content": body}
     if format == "json":
         return {"filename": f"{name}_run.json", "mime": "application/json", "content": export_mod.to_json(run)}
     if format == "exec":

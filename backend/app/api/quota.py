@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
+from app.core.xlsx import cell_safe
 from app.core.security import Principal, require_permission
 from app.models import AuditLog, QuotaScanRun
 from app.quota import cache, demo
@@ -470,7 +471,7 @@ async def export(
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     writer.writeheader()
     for r in results:
-        writer.writerow({c: r.get(c, "") for c in cols})
+        writer.writerow({c: cell_safe(r.get(c, "")) for c in cols})
     return Response(
         content=buf.getvalue(), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="quota-{stamp}.csv"'},
