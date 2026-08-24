@@ -121,7 +121,11 @@ function IamPanelBody({
   }
 
   const data = overviewQ.data;
-  const ownsConsole = tab === "overview" && !!data?.never_loaded;
+  // Overview draws its own console in BOTH branches that reach it — the empty state and the
+  // loaded tab — so the shared strip would be a second copy of the same log. The other
+  // branches (loading, error, no data) draw none, and there the strip is the only progress.
+  const ownsConsole = tab === "overview" && !!data
+    && !overviewQ.isLoading && !overviewQ.isError;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-gray-50">
@@ -172,7 +176,8 @@ function IamPanelBody({
 
       {err && <div className="border-b bg-red-50 px-4 py-2 text-sm text-red-700">{err}</div>}
 
-      {/* The empty state below renders its own console; anywhere else a scan would be silent. */}
+      {/* Shown only where the active tab draws no console of its own; otherwise a scan on any
+          other tab would run silently. */}
       {refreshCtl.isBusy && !ownsConsole && (
         <div className="border-b bg-gray-50 px-4 py-2">
           <RefreshConsole ctl={refreshCtl} lines={4} />

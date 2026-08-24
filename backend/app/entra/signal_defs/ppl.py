@@ -311,7 +311,10 @@ def _guest_accepted_never_used(data: dict[str, Any], ctx: SignalContext) -> list
     for u in guests.guests_of(domain(data, "people")):
         if not u.get("signin_known"):
             continue
-        if guests.lifecycle(u, now=ctx.now, stale_days=ctx.guest_stale_days) != guests.STATE_NEVER_USED:
+        # Asked directly rather than via the lifecycle string: a guest that was disabled AFTER
+        # never using its access still holds that access, and displaying it as "Disabled"
+        # must not delete the finding.
+        if not guests.never_used(u):
             continue
         invited = guests.invited_at(u)
         out.append(model.finding(

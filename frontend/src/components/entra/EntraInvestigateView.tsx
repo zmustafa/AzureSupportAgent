@@ -386,7 +386,7 @@ function ActivityPanel({
   const [err, setErr] = useState("");
   const [denied, setDenied] = useState(false);
 
-  const cheap = ["signins", "audit", "risk"].filter((t) => capabilities.includes(t));
+  const cheap = ["signins", "signins_noninteractive", "audit", "risk"].filter((t) => capabilities.includes(t));
   const canAzure = capabilities.includes("azure_activity");
 
   async function run(withAzure: boolean) {
@@ -461,22 +461,39 @@ function ActivityPanel({
               ))}
             </div>
           )}
-          {result.sections.signins && (
-            <Section id="signins" title="Sign-ins" count={result.sections.signins.data.length}
-                     prov={result.sections.signins.provenance} empty="No sign-in recorded in this window.">
-              <Table
-                head={["When", "App", "Result", "From", "CA"]}
-                rows={result.sections.signins.data.map((s: InvestigateSignin) => [
-                  s.at.slice(0, 19).replace("T", " "),
-                  s.app,
-                  s.success ? <span className="text-emerald-700">success</span>
-                            : <span className="text-rose-700" title={s.failure_reason}>{s.failure_code}</span>,
-                  [s.city, s.country].filter(Boolean).join(", ") || s.ip,
-                  s.ca_status,
-                ])}
-              />
-            </Section>
-          )}
+          {(() => {
+            // Portal vocabulary: a workload identity's sign-ins are all it has, so the
+            // interactive/non-interactive split is a user distinction only.
+            const kind = result.principal?.kind;
+            const interactiveTitle =
+              kind === "servicePrincipal" ? "Service principal sign-ins"
+              : kind === "managedIdentity" ? "Managed identity sign-ins"
+              : "User sign-ins (interactive)";
+            return ([
+              ["signins", interactiveTitle, "No sign-in recorded in this window."],
+              ["signins_noninteractive", "User sign-ins (non-interactive)",
+               "No non-interactive sign-in recorded in this window."],
+            ] as const).map(([key, title, empty]) => {
+              const sec = result.sections[key];
+              if (!sec) return null;
+              return (
+                <Section key={key} id={key} title={title} count={sec.data.length}
+                         prov={sec.provenance} empty={empty}>
+                  <Table
+                    head={["When", "App", "Result", "From", "CA"]}
+                    rows={sec.data.map((s: InvestigateSignin) => [
+                      s.at.slice(0, 19).replace("T", " "),
+                      s.app,
+                      s.success ? <span className="text-emerald-700">success</span>
+                                : <span className="text-rose-700" title={s.failure_reason}>{s.failure_code}</span>,
+                      [s.city, s.country].filter(Boolean).join(", ") || s.ip,
+                      s.ca_status,
+                    ])}
+                  />
+                </Section>
+              );
+            });
+          })()}
           {result.sections.risk && (
             <Section id="risk" title="Risk detections" count={result.sections.risk.data.length}
                      prov={result.sections.risk.provenance} empty="Identity Protection raised nothing in this window.">
@@ -552,7 +569,8 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
   const isRendered = useCallback((name: string) => {
     if (!dossier) return false;
     if (name === "activity") {
-      return ["signins", "audit", "risk", "azure_activity"].some((t) => caps.includes(t));
+      return ["signins", "signins_noninteractive", "audit", "risk", "azure_activity"]
+        .some((t) => caps.includes(t));
     }
     return !!dossier.sections[name as keyof typeof dossier.sections];
   }, [dossier, caps]);

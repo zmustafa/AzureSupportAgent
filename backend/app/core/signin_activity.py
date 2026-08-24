@@ -17,6 +17,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+#: ``lastSuccessfulSignInDateTime`` began on 2023-12-01 and was NOT backfilled. Before that
+#: date a missing success stamp is a gap in the data, not evidence that anything failed —
+#: inferring a refusal from it would libel every account that last signed in earlier.
+SUCCESS_STAMP_FROM = datetime(2023, 12, 1, tzinfo=timezone.utc)
+
 
 def _parse(value: str | None) -> datetime | None:
     """ISO-8601 -> aware datetime, or None. Never raises on Graph junk."""
@@ -27,6 +32,28 @@ def _parse(value: str | None) -> datetime | None:
     except (ValueError, TypeError):
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def latest(*values: str | None) -> str:
+    """The newest of several Graph stamps, compared as datetimes rather than as strings.
+
+    Same trap as below: ``"...:00.5Z" < "...:00Z"`` lexically, because ``'.'`` sorts under
+    ``'Z'``, so ``max()`` over the raw strings can return the older stamp."""
+    best: datetime | None = None
+    out = ""
+    for value in values:
+        parsed = _parse(value)
+        if parsed is not None and (best is None or parsed > best):
+            best, out = parsed, str(value)
+    return out
+
+
+def refusal_provable(attempt: str | None) -> bool:
+    """True when a missing success stamp is evidence of failure rather than a gap.
+
+    Only attempts made after the success stamp existed can be disproved by its absence."""
+    parsed = _parse(attempt)
+    return bool(parsed and parsed >= SUCCESS_STAMP_FROM)
 
 
 def failed_signin(attempt: str | None, success: str | None) -> str:

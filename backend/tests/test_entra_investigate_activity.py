@@ -49,7 +49,10 @@ def test_the_azure_activity_log_is_never_eager():
 
 
 def test_the_cheap_graph_sources_are_eager():
-    assert set(act.EAGER_TYPES) == {act.TYPE_SIGNINS, act.TYPE_AUDIT, act.TYPE_RISK}
+    # Non-interactive is one more filtered call on the same endpoint, so it is as cheap as
+    # the rest. Azure staying out is asserted separately above.
+    assert set(act.EAGER_TYPES) == {act.TYPE_SIGNINS, act.TYPE_SIGNINS_NONINTERACTIVE,
+                                    act.TYPE_AUDIT, act.TYPE_RISK}
 
 
 # --------------------------------------------------------------------------- scoping
@@ -140,3 +143,93 @@ def test_signin_rows_are_normalised_with_an_explicit_success_flag(monkeypatch):
     assert err == ""
     assert [r["success"] for r in rows] == [True, False]
     assert rows[1]["failure_reason"] == "Invalid credentials"
+
+
+# ------------------------------------------------------------------ non-interactive sign-ins
+def _capture(seen: dict):
+    async def fake_pages(connection, path, params, cap, version=act.GRAPH_V1):
+        seen["path"] = path
+        seen["filter"] = params["$filter"]
+        seen["cap"] = cap
+        seen["version"] = version
+        return [], ""
+
+    return fake_pages
+
+
+def test_non_interactive_names_the_event_type_and_uses_beta(monkeypatch):
+    """Graph returns interactive sign-ins and nothing else unless the type is named, and
+    signInEventTypes does not exist on v1.0 — so both halves of this matter."""
+    seen: dict = {}
+    monkeypatch.setattr(act, "beta_endpoints_enabled", lambda: True)
+    monkeypatch.setattr(act, "_graph_pages", _capture(seen))
+    import asyncio
+    asyncio.run(act.noninteractive_signins({}, {"id": "u-1", "kind": inv.KIND_USER}, "S", "E"))
+    assert "signInEventTypes/any(t: t eq 'nonInteractiveUser')" in seen["filter"]
+    assert "userId eq 'u-1'" in seen["filter"]
+    assert seen["version"] == act.GRAPH_BETA
+
+
+def test_the_interactive_read_stays_a_separate_unfiltered_call(monkeypatch):
+    """Guards the split. Folding both into one query looks like a simplification and is not:
+    non-interactive volume would push interactive rows off the end of a shared budget."""
+    seen: dict = {}
+    monkeypatch.setattr(act, "_graph_pages", _capture(seen))
+    import asyncio
+    asyncio.run(act.signins({}, {"id": "u-1", "kind": inv.KIND_USER}, "S", "E"))
+    assert "signInEventTypes" not in seen["filter"]
+    assert seen["version"] == act.GRAPH_V1
+    assert seen["cap"] == act.MAX_SIGNIN_ROWS
+
+
+def test_the_two_reads_have_independent_row_budgets(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(act, "beta_endpoints_enabled", lambda: True)
+    monkeypatch.setattr(act, "_graph_pages", _capture(seen))
+    import asyncio
+    asyncio.run(act.noninteractive_signins({}, {"id": "u-1", "kind": inv.KIND_USER}, "S", "E"))
+    assert seen["cap"] == act.MAX_NONINTERACTIVE_SIGNIN_ROWS
+
+
+def test_beta_switched_off_reports_a_reason_rather_than_an_empty_list(monkeypatch):
+    """No rows plus no reason renders as "this account had no background activity", which on
+    an offboarding review is the opposite of what we actually know."""
+    async def fake_pages(*_a, **_k):  # pragma: no cover - must not run
+        raise AssertionError("must not call beta when it is disabled")
+
+    monkeypatch.setattr(act, "beta_endpoints_enabled", lambda: False)
+    monkeypatch.setattr(act, "_graph_pages", fake_pages)
+    import asyncio
+    rows, err = asyncio.run(
+        act.noninteractive_signins({}, {"id": "u-1", "kind": inv.KIND_USER}, "S", "E"))
+    assert rows == []
+    assert "beta" in err.lower()
+
+
+def test_non_interactive_rows_are_shaped_like_interactive_ones(monkeypatch):
+    async def fake_pages(connection, path, params, cap, version=act.GRAPH_V1):
+        return [{"createdDateTime": "2026-01-01T00:00:00Z", "appDisplayName": "Outlook",
+                 "isInteractive": False, "status": {"errorCode": 0}}], ""
+
+    monkeypatch.setattr(act, "beta_endpoints_enabled", lambda: True)
+    monkeypatch.setattr(act, "_graph_pages", fake_pages)
+    import asyncio
+    rows, _ = asyncio.run(
+        act.noninteractive_signins({}, {"id": "u-1", "kind": inv.KIND_USER}, "S", "E"))
+    assert rows[0]["success"] is True
+    assert rows[0]["app"] == "Outlook"
+    assert rows[0]["interactive"] is False
+
+
+def test_only_users_carry_the_non_interactive_capability():
+    """A workload identity's own sign-ins are the whole of its history; the split is a user
+    distinction, and a section that cannot apply is explained rather than dropped."""
+    for kind in (inv.KIND_USER, inv.KIND_GUEST):
+        caps, _ = inv.capabilities_for(kind, inv.RESOLVED)
+        assert act.TYPE_SIGNINS_NONINTERACTIVE in caps
+
+    for kind in (inv.KIND_SP, inv.KIND_MI, inv.KIND_GROUP):
+        caps, notes = inv.capabilities_for(kind, inv.RESOLVED)
+        assert act.TYPE_SIGNINS_NONINTERACTIVE not in caps
+        assert any("on-interactive" in n for n in notes)
+

@@ -1760,6 +1760,16 @@ async def investigate_activity(
             unreadable=bool(err), reason=(f"Sign-in log {err}" if err else ""),
             truncated=len(rows) >= inv_activity.MAX_SIGNIN_ROWS))
 
+    if inv_activity.TYPE_SIGNINS_NONINTERACTIVE in wanted:
+        rows, err = await inv_activity.noninteractive_signins(
+            connection, subject, start_iso, end_iso)
+        sections[inv_activity.TYPE_SIGNINS_NONINTERACTIVE] = investigate.section(
+            rows, investigate.provenance(
+                "Microsoft Graph /auditLogs/signIns (beta, signInEventTypes=nonInteractiveUser)",
+                collected_at=end_iso,
+                unreadable=bool(err), reason=(f"Non-interactive sign-in log {err}" if err else ""),
+                truncated=len(rows) >= inv_activity.MAX_NONINTERACTIVE_SIGNIN_ROWS))
+
     if inv_activity.TYPE_RISK in wanted:
         rows, err = await inv_activity.risk_detections(connection, subject, start_iso, end_iso)
         sections[inv_activity.TYPE_RISK] = investigate.section(rows, investigate.provenance(

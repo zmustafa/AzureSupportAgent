@@ -939,7 +939,8 @@ def to_workbook(
             "Guests",
             ["Guest", "Sign-in address", "Organization", "Domain class", "Lifecycle",
              "Account", "Invited", "Invited (days)", "Accepted", "Last human sign-in",
-             "Human (days)", "Last any activity", "Any (days)", "Sign-in measured",
+             "Human (days)", "Last any activity", "Any (days)", "Last refused sign-in",
+             "Refused (days)", "Sign-in measured",
              "Sponsors", "Company", "Licenses"],
             [[r["display_name"], r["mail"] or r["upn"], r["domain"], r["domain_class"],
               guests_mod.LIFECYCLE_LABEL.get(r["lifecycle"], r["lifecycle"]),
@@ -954,13 +955,18 @@ def to_workbook(
               r["last_human_days_ago"],
               r["last_any_signin"] if r["signin_known"] else "",
               r["last_any_days_ago"],
+              # A blank sign-in date next to a value HERE means refused, not never tried.
+              r["last_refused_signin"] if r["signin_known"] else "",
+              r["last_refused_days_ago"],
               "yes" if r["signin_known"] else "no",
               "; ".join(s.get("display_name", "") for s in r["sponsors"]),
               r["company_name"], r["licence_count"]]
              for r in g["guests"]],
-            note="A blank sign-in date means EITHER never signed in OR never measured — read "
-                 "'Sign-in measured' to tell which. " + (_caveat(snapshot, "people") or ""),
-            dates={"Invited", "Accepted", "Last human sign-in", "Last any activity"},
+            note="A blank sign-in date means never signed in, never measured, OR refused — read "
+                 "'Sign-in measured' and 'Last refused sign-in' to tell which. Sign-in dates "
+                 "count only attempts that SUCCEEDED. " + (_caveat(snapshot, "people") or ""),
+            dates={"Invited", "Accepted", "Last human sign-in", "Last any activity",
+                   "Last refused sign-in"},
             highlight={"Last human sign-in": "stale_date"},
         )
         wb.sheet(

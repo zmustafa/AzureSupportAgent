@@ -52,6 +52,9 @@ CAP_ACCESS = "access"
 CAP_FINDINGS = "findings"
 CAP_TIMELINE = "timeline"
 CAP_SIGNINS = "signins"
+# Non-interactive sign-ins are a separate capability, not a detail of the one above: only a
+# user has them, and they are read from a different endpoint that a tenant can have disabled.
+CAP_SIGNINS_NONINTERACTIVE = "signins_noninteractive"
 CAP_AUDIT = "audit"
 CAP_AZURE_ACTIVITY = "azure_activity"
 CAP_RISK = "risk"
@@ -68,9 +71,11 @@ CAP_REGISTRATION = "registration"
 # silently dropped, so "no sign-in section" reads as "groups do not sign in" and not as
 # "this group has never signed in".
 _CAPABILITIES_BY_KIND: dict[str, tuple[str, ...]] = {
-    KIND_USER: (CAP_ACCESS, CAP_FINDINGS, CAP_TIMELINE, CAP_SIGNINS, CAP_AUDIT,
+    KIND_USER: (CAP_ACCESS, CAP_FINDINGS, CAP_TIMELINE, CAP_SIGNINS,
+                CAP_SIGNINS_NONINTERACTIVE, CAP_AUDIT,
                 CAP_AZURE_ACTIVITY, CAP_RISK, CAP_REGISTRATION, CAP_MEMBERSHIPS),
-    KIND_GUEST: (CAP_ACCESS, CAP_FINDINGS, CAP_TIMELINE, CAP_SIGNINS, CAP_AUDIT,
+    KIND_GUEST: (CAP_ACCESS, CAP_FINDINGS, CAP_TIMELINE, CAP_SIGNINS,
+                 CAP_SIGNINS_NONINTERACTIVE, CAP_AUDIT,
                  CAP_AZURE_ACTIVITY, CAP_RISK, CAP_REGISTRATION, CAP_MEMBERSHIPS),
     # A group is both: it contains members and is itself nested inside other groups, and
     # the way up is the escalation path a recertification reader is looking for.
@@ -89,6 +94,9 @@ _CAPABILITIES_UNRESOLVED = (CAP_ACCESS, CAP_FINDINGS, CAP_TIMELINE)
 
 _ABSENCE_REASON = {
     CAP_SIGNINS: "Groups do not sign in — there is no sign-in history to read.",
+    CAP_SIGNINS_NONINTERACTIVE: (
+        "Non-interactive sign-ins are a user category. A workload identity's own sign-ins are "
+        "already the whole of its sign-in history, and groups do not sign in at all."),
     CAP_AUDIT: "Groups do not act; they are acted upon. Audit events name the actor, not the group.",
     CAP_AZURE_ACTIVITY: "Groups do not act, so they never appear as the actor on an Azure change.",
     CAP_RISK: "Identity Protection scores users, not workload identities or groups.",
@@ -121,7 +129,8 @@ def capabilities_for(kind: str, resolution: str) -> tuple[list[str], list[str]]:
     notes: list[str] = []
     if kind in (KIND_GROUP, KIND_SP, KIND_MI):
         for cap, reason in _ABSENCE_REASON.items():
-            if cap not in caps and cap in (CAP_SIGNINS, CAP_AUDIT, CAP_RISK, CAP_REGISTRATION):
+            if cap not in caps and cap in (CAP_SIGNINS, CAP_SIGNINS_NONINTERACTIVE,
+                                           CAP_AUDIT, CAP_RISK, CAP_REGISTRATION):
                 notes.append(reason)
     if kind == KIND_PLATFORM:
         notes.append("This is Azure acting on its own behalf, not a principal in your "

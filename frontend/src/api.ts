@@ -10982,6 +10982,7 @@ export type InvestigateActivity = {
   window: { start: string; end: string; days: number };
   sections: Partial<{
     signins: InvestigateSection<InvestigateSignin[]>;
+    signins_noninteractive: InvestigateSection<InvestigateSignin[]>;
     audit: InvestigateSection<InvestigateAction[]>;
     azure_activity: InvestigateSection<InvestigateAction[]>;
     risk: InvestigateSection<InvestigateRisk[]>;
@@ -11282,10 +11283,12 @@ export type EntraGuestRow = {
   lifecycle: string;
   invited_at: string; invited_days_ago: number | null;
   accepted_at: string; accepted_days_ago: number | null;
-  /** Interactive only — the one that evidences a person. */
+  /** Interactive only, and only when corroborated as successful. */
   last_human_signin: string; last_human_days_ago: number | null;
-  /** Includes non-interactive token refresh. Live, but not necessarily a human. */
+  /** Last sign-in that actually succeeded, including non-interactive token refresh. */
   last_any_signin: string; last_any_days_ago: number | null;
+  /** Last attempt that provably did NOT succeed. Distinguishes refused from never tried. */
+  last_refused_signin: string; last_refused_days_ago: number | null;
   signin_known: boolean;
   company_name: string; department: string; job_title: string;
   sponsors: { id: string; display_name: string }[];
@@ -11309,6 +11312,7 @@ export type EntraGuests = {
   counts: {
     invited: number; pending: number; accepted: number;
     never_used: number; dormant: number; active: number; not_measured: number;
+    disabled: number;
   };
   by_class: Record<string, number>;
   domain_count: number;

@@ -24,6 +24,11 @@ import { cmp, CoverageBanner, EntraEmpty, SortTh, useEntraSorted, useSortState }
 import { InvestigateLink } from "./InvestigateLink";
 
 const LIFECYCLE_META: Record<string, { label: string; cls: string; why: string }> = {
+  disabled: {
+    label: "Disabled", cls: "bg-slate-200 text-slate-800",
+    why: "The account is blocked from signing in. It still carries whatever it was granted, "
+      + "which is why it is listed rather than filtered out.",
+  },
   pending: {
     label: "Invitation pending", cls: "bg-amber-100 text-amber-900",
     why: "Invited, never accepted. A directory object nobody needs.",
@@ -82,7 +87,10 @@ function Funnel({ c }: { c: EntraGuests["counts"] }) {
   const steps = [
     { label: "Invited", value: c.invited, lost: c.pending, lostLabel: "never accepted" },
     { label: "Accepted", value: c.accepted, lost: c.never_used, lostLabel: "never used" },
-    { label: "Used it", value: c.accepted - c.never_used, lost: c.dormant, lostLabel: "now dormant" },
+    // Disabled accounts leave the engagement funnel here: they cannot sign in, so counting
+    // them as "used it" would claim usage the account is incapable of.
+    { label: "Used it", value: Math.max(0, c.accepted - c.never_used - (c.disabled || 0)),
+      lost: c.dormant, lostLabel: "now dormant" },
     { label: "Still active", value: c.active, lost: 0, lostLabel: "" },
   ];
   const max = Math.max(1, c.invited);
@@ -110,6 +118,13 @@ function Funnel({ c }: { c: EntraGuests["counts"] }) {
           {c.not_measured.toLocaleString()} guest(s) are excluded from the funnel because their
           sign-in activity was not collected — that is an absence of measurement, not a lifecycle
           outcome.
+        </div>
+      )}
+      {(c.disabled || 0) > 0 && (
+        <div className="mt-1 text-[11px] text-gray-500">
+          {(c.disabled || 0).toLocaleString()} guest(s) are excluded because the account is
+          disabled and cannot sign in. They are still listed below — a disabled guest keeps
+          whatever it was granted.
         </div>
       )}
     </div>
@@ -195,7 +210,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
     <div className="min-h-0 flex-1 overflow-auto p-4">
       <CoverageBanner meta={d.meta} />
 
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
         <Tile label="Guests" value={c.invited} />
         <Tile label="Pending invite" value={c.pending} tone="text-amber-600"
               title="Invited and never accepted." />
@@ -204,6 +219,8 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
         <Tile label="Dormant" value={c.dormant} tone="text-rose-600"
               title={`No sign-in for ${d.stale_days} days or more.`} />
         <Tile label="Active" value={c.active} tone="text-emerald-600" />
+        <Tile label="Disabled" value={c.disabled || 0} tone="text-slate-600"
+              title="Blocked from signing in, but still carrying whatever it was granted." />
         <Tile label="Not measured" value={c.not_measured} tone="text-gray-400"
               title="Sign-in activity was not collected — NOT evidence the account is unused." />
         <Tile label="Partner domains" value={d.domain_count} tone="text-sky-600" />
@@ -326,14 +343,26 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
                     <td className="px-2 py-1.5 tabular-nums text-gray-700" title={r.invited_at}>
                       {days(r.invited_days_ago)}
                     </td>
-                    {/* Interactive only. Kept apart from the combined column on purpose. */}
+                    {/* Interactive only, and only when it demonstrably succeeded. A refused
+                        attempt shows as refused: "never" would erase that anyone tried. */}
                     <td className="px-2 py-1.5 tabular-nums text-gray-700"
-                        title={r.signin_known ? (r.last_human_signin || "never") : "not measured"}>
-                      {r.signin_known ? (r.last_human_signin ? days(r.last_human_days_ago) : "never") : "—"}
+                        title={r.signin_known ? (r.last_human_signin || "no successful interactive sign-in") : "not measured"}>
+                      {!r.signin_known ? "—"
+                        : r.last_human_signin ? days(r.last_human_days_ago)
+                        : r.last_refused_signin
+                          ? <span className="text-amber-700"
+                                  title={`Last attempt refused — ${r.last_refused_signin}`}>
+                              refused {days(r.last_refused_days_ago)}
+                            </span>
+                          : "never"}
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-gray-500"
-                        title="Includes non-interactive token refresh — live, but not necessarily a person.">
-                      {r.signin_known ? (r.last_any_signin ? days(r.last_any_days_ago) : "never") : "—"}
+                        title="Last sign-in that actually succeeded, including non-interactive token refresh — live, but not necessarily a person.">
+                      {!r.signin_known ? "—"
+                        : r.last_any_signin ? days(r.last_any_days_ago)
+                        : r.last_refused_signin
+                          ? <span className="text-amber-700">refused {days(r.last_refused_days_ago)}</span>
+                          : "never"}
                     </td>
                     <td className="px-2 py-1.5">
                       {r.enabled

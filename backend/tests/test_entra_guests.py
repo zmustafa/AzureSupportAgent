@@ -32,6 +32,10 @@ def _guest(**over: Any) -> dict[str, Any]:
         "created_at": _ago(400),
         "last_signin": _ago(3),
         "last_noninteractive_signin": _ago(2),
+        # A sign-in that SUCCEEDS always stamps this too. Omitting it while setting the
+        # attempt stamps models a state Graph cannot produce (post-2023) — an attempt that
+        # never succeeded — so the default guest carries it.
+        "last_successful_signin": _ago(2),
         "signin_known": True,
     }
     base.update(over)
@@ -105,21 +109,26 @@ def test_a_pending_guest_has_no_acceptance_date():
 
 
 # ============================================================ lifecycle
-def test_the_five_states_partition_the_population():
+def test_the_states_partition_the_population():
     """Overlapping states would double-count the funnel and make the totals disagree with the
     grid underneath them."""
     people = _people(
         _guest(id="p", external_user_state="PendingAcceptance"),
-        _guest(id="n", last_signin="", last_noninteractive_signin=""),
-        _guest(id="d", last_signin=_ago(200), last_noninteractive_signin=_ago(200)),
-        _guest(id="a", last_signin=_ago(1), last_noninteractive_signin=_ago(1)),
+        _guest(id="n", last_signin="", last_noninteractive_signin="",
+               last_successful_signin=""),
+        _guest(id="d", last_signin=_ago(200), last_noninteractive_signin=_ago(200),
+               last_successful_signin=_ago(200)),
+        _guest(id="a", last_signin=_ago(1), last_noninteractive_signin=_ago(1),
+               last_successful_signin=_ago(1)),
         _guest(id="u", signin_known=False),
+        _guest(id="x", enabled=False),
     )
     rows = guests.project_all(people, now=NOW, stale_days=90)
     counts = guests.funnel(rows)
-    assert counts["invited"] == 5
+    assert counts["invited"] == 6
     assert (counts["pending"] + counts["never_used"] + counts["dormant"]
-            + counts["active"] + counts["not_measured"]) == counts["invited"]
+            + counts["active"] + counts["not_measured"]
+            + counts["disabled"]) == counts["invited"]
     by_id = {r["id"]: r["lifecycle"] for r in rows}
     assert by_id == {
         "p": guests.STATE_PENDING,
@@ -127,6 +136,7 @@ def test_the_five_states_partition_the_population():
         "d": guests.STATE_DORMANT,
         "a": guests.STATE_ACTIVE,
         "u": guests.STATE_UNKNOWN,
+        "x": guests.STATE_DISABLED,
     }
 
 
@@ -145,7 +155,8 @@ def test_pending_beats_sign_in_state():
 
 
 def test_the_guest_threshold_is_honoured_not_the_employee_one():
-    u = _guest(last_signin=_ago(45), last_noninteractive_signin=_ago(45))
+    u = _guest(last_signin=_ago(45), last_noninteractive_signin=_ago(45),
+               last_successful_signin=_ago(45))
     assert guests.lifecycle(u, now=NOW, stale_days=90) == guests.STATE_ACTIVE
     assert guests.lifecycle(u, now=NOW, stale_days=30) == guests.STATE_DORMANT
 
@@ -154,7 +165,10 @@ def test_the_guest_threshold_is_honoured_not_the_employee_one():
 def test_a_refresh_token_is_not_a_person():
     """On a real estate this routinely accounts for a large share of the apparently-active
     guest population. Reporting only the combined figure hides all of it."""
-    u = _guest(last_signin=_ago(300), last_noninteractive_signin=_ago(1))
+    # The interactive sign-in worked 300 days ago and the token has refreshed since, so the
+    # newest SUCCESS is the refresh — which is exactly what the combined column should show.
+    u = _guest(last_signin=_ago(300), last_noninteractive_signin=_ago(1),
+               last_successful_signin=_ago(1))
     row = guests.project(u, now=NOW, stale_days=90)
     assert row["last_human_days_ago"] == 300
     assert row["last_any_days_ago"] == 1
@@ -166,6 +180,63 @@ def test_last_any_signin_includes_the_successful_stamp():
     u = _guest(last_signin=_ago(50), last_noninteractive_signin=_ago(60),
                last_successful_signin=_ago(2))
     assert guests.last_any_signin(u) == _ago(2)
+
+
+# ============================================================ disabled, and refused sign-ins
+def test_a_disabled_guest_reads_as_disabled_not_active():
+    """The account column said Disabled while the state column said Active, about the same
+    row. A disabled account cannot sign in, so grading it on sign-in states a contradiction."""
+    u = _guest(enabled=False, last_signin=_ago(1), last_noninteractive_signin=_ago(1),
+               last_successful_signin=_ago(1))
+    assert guests.lifecycle(u, now=NOW, stale_days=90) == guests.STATE_DISABLED
+
+
+def test_disabled_outranks_every_other_state():
+    for over in ({"external_user_state": "PendingAcceptance"},
+                 {"signin_known": False},
+                 {"last_signin": "", "last_noninteractive_signin": "",
+                  "last_successful_signin": ""},
+                 {"last_signin": _ago(400), "last_noninteractive_signin": _ago(400),
+                  "last_successful_signin": _ago(400)}):
+        u = _guest(enabled=False, **over)
+        assert guests.lifecycle(u, now=NOW, stale_days=90) == guests.STATE_DISABLED
+
+
+def test_a_refused_sign_in_is_not_counted_as_a_sign_in():
+    """The exact shape seen in the field: every interactive and non-interactive attempt failed
+    because the account is disabled, yet both stamps moved. Reading them as usage reported a
+    locked-out guest as having signed in days ago."""
+    u = _guest(enabled=False, last_signin=_ago(11), last_noninteractive_signin=_ago(11),
+               last_successful_signin="")
+    row = guests.project(u, now=NOW, stale_days=90)
+    assert row["last_human_signin"] == ""
+    assert row["last_any_signin"] == ""
+    assert row["last_human_days_ago"] is None
+    assert row["last_any_days_ago"] is None
+    # Not silently blanked: "refused 11 days ago" and "never tried" are different facts.
+    assert row["last_refused_days_ago"] == 11
+
+
+def test_a_success_after_the_failure_still_counts():
+    """Guards over-correction. Only an attempt LATER than the last success is a refusal."""
+    u = _guest(last_signin=_ago(5), last_noninteractive_signin=_ago(5),
+               last_successful_signin=_ago(5))
+    row = guests.project(u, now=NOW, stale_days=90)
+    assert row["last_human_days_ago"] == 5
+    assert row["last_refused_signin"] == ""
+    assert row["lifecycle"] == guests.STATE_ACTIVE
+
+
+def test_an_attempt_older_than_the_success_stamp_is_not_called_a_refusal():
+    """``lastSuccessfulSignInDateTime`` began 2023-12-01 and was not backfilled. Before that a
+    missing success is a gap in the data, and inferring a refusal from it would wrongly report
+    every long-dormant guest as having been refused."""
+    old = "2022-06-01T00:00:00Z"
+    u = _guest(last_signin=old, last_noninteractive_signin=old, last_successful_signin="")
+    row = guests.project(u, now=NOW, stale_days=90)
+    assert row["last_refused_signin"] == ""
+    assert row["last_any_signin"] == old
+    assert row["lifecycle"] == guests.STATE_DORMANT
 
 
 # ============================================================ rollups
