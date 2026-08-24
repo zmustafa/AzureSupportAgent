@@ -1304,26 +1304,9 @@ async def privileged_cross_plane(
     data = snapshot.get("data") or {}
     link = data.get("_azure_link") or {}
 
-    from app.entra.signal_defs.priv_pim import entra_power
+    from app.entra import crossplane
 
-    users = {str(u["id"]): u for u in (data.get("people") or {}).get("users") or []}
-    rows = []
-    for pid, entra in entra_power(data).items():
-        azure = (link.get("principals") or {}).get(pid) or {}
-        u = users.get(pid) or {}
-        rows.append({
-            "principal_id": pid,
-            "name": entra.get("name") or u.get("upn") or u.get("display_name") or azure.get("name") or pid,
-            "kind": entra.get("kind", "user"),
-            "entra_roles": entra.get("roles") or [],
-            "entra_permissions": entra.get("permissions") or [],
-            "azure_roles": azure.get("powerful_roles") or [],
-            "azure_all_roles": azure.get("role_count", 0),
-            "azure_broad_scopes": azure.get("broad_scopes") or [],
-            "azure_subscriptions": azure.get("subscriptions") or [],
-            "both_planes": bool(azure.get("powerful_roles")),
-        })
-    rows.sort(key=lambda r: (not r["both_planes"], -len(r["azure_roles"]), r["name"]))
+    rows = crossplane.rows(data)
     return _envelope(
         snapshot, cid, rows=rows[:1000], total=len(rows),
         azure_link={"available": link.get("available", False), "reason": link.get("reason", ""),
@@ -2780,7 +2763,20 @@ async def export_workbook(
         "complete": bool(granted) and all(s in granted for s in tier["scopes"]),
     } for tier in permissions_probe.TIERS]
 
-    scanner_cards = [s.public() for s in scanners_mod.registry()]
+    # Exactly what GET /entra/scanners builds. `public()` alone carries no run history and no
+    # blocked reason, so the workbook's Blocked column read "no" for every scanner including
+    # the ones that could not run at all.
+    scanner_runs = scanners_mod.read_runs(tenant_id)
+    domain_meta = snapshot.get("domains") or {}
+    scanner_cards = []
+    for scanner in scanners_mod.registry():
+        last = scanner_runs.get(scanner.id) or {}
+        scanner_cards.append({
+            **scanner.public(),
+            "last_run": last.get("at", ""),
+            "last_counts": last.get("counts") or {},
+            "blocked": scanners_mod.unavailable_reason(scanner, domain_meta),
+        })
 
     # The screen merges the snapshot's sessions with the durable ledger so history reaches past
     # Graph's 30-day retention. Reading the snapshot alone loses those older sessions.

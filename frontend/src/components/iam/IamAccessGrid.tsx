@@ -9,6 +9,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { api } from "../../api";
 import { useDebounced } from "../../utils/perf";
 import { AzureIcon } from "../AzureIcon";
+import { useExportDownload } from "../ExportProgress";
 import { FilterRail } from "./IamFilterRail";
 import { IAM_PAGE, PATH_LABEL, PrivBadge, EffectChip, scopeCell, type AccessFilter, useIamConnectionId } from "./IamShared";
 import { InvestigateLink } from "../entra/InvestigateLink";
@@ -126,12 +127,13 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
     workload_id: filter?.workload_id,
     connection_id: connectionId,
   };
-  // RU6 — transient export-feedback toast (the download is an <a href>, so confirm on click).
-  const [exportToast, setExportToast] = useState("");
-  const noteExport = (fmt: string) => { setExportToast(`${fmt} export started — honors the active scope & filters`); setTimeout(() => setExportToast(""), 3000); };
+  // One instance serves all three buttons; the label passed to `start` keeps their duration
+  // estimates apart, because a filtered CSV and the scope-wide workbook are not the same wait.
+  const download = useExportDownload("IAM export");
 
   return (
     <div className="flex h-full min-h-0">
+      {download.dialog}
       <FilterRail
         filter={filter}
         onChange={setFilter}
@@ -166,10 +168,9 @@ export function AccessGrid({ tab, initialPrivOnly = false }: { tab: string; init
           </label>
           <span className="ml-auto text-xs text-gray-500">{rows.length < total ? `${rows.length.toLocaleString()} / ${total.toLocaleString()}` : total.toLocaleString()} grant(s)</span>
           {q.isFetchingNextPage && <span className="text-[11px] text-gray-400">loading more…</span>}
-          {exportToast && <span className="rounded bg-green-50 px-1.5 py-0.5 text-[11px] font-medium text-green-700">✓ {exportToast}</span>}
-          <a href={api.iamExportUrl("csv", tab, exportFilter)} onClick={() => noteExport("CSV")} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ CSV</a>
-          <a href={api.iamExportUrl("json", tab, exportFilter)} onClick={() => noteExport("JSON")} title="Export the current grid (honors the active filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50">⬇ JSON</a>
-          <a href={api.iamWorkbookUrl(workbookFilter)} onClick={() => noteExport("Excel")} title="Multi-tab workbook of every IAM view (honors the active scope/workload, not the grid's search or lens)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
+          <button type="button" onClick={() => download.start(api.iamExportUrl("csv", tab, exportFilter), `iam-access-${tab}.csv`, "CSV export")} disabled={download.phase !== "idle"} title="Export the current grid (honors scope, search, surface, principal-type & privileged filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ CSV</button>
+          <button type="button" onClick={() => download.start(api.iamExportUrl("json", tab, exportFilter), `iam-access-${tab}.json`, "JSON export")} disabled={download.phase !== "idle"} title="Export the current grid (honors the active filters)" className="rounded border px-2 py-1 text-xs text-brand hover:bg-gray-50 disabled:opacity-50">⬇ JSON</button>
+          <button type="button" onClick={() => download.start(api.iamWorkbookUrl(workbookFilter), "iam-access-review.xlsx", "IAM workbook")} disabled={download.phase !== "idle"} title="Multi-tab workbook of every IAM view (honors the active scope/workload, not the grid's search or lens)" className="rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50">⬇ Excel (all tabs)</button>
         </div>
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
           {q.isLoading ? (

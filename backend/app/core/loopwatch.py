@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 
 log = logging.getLogger("app.core.loopwatch")
@@ -33,6 +34,10 @@ INTERVAL_S = 0.25
 # blocking call shows up in hundreds. 0.5 s is well clear of scheduler noise and well below the
 # point a human calls the app frozen.
 DEFAULT_THRESHOLD_S = 0.5
+
+#: Only sample a stack for the serious stalls. Walking frames on every sub-second blip would
+#: add cost to the exact situation the monitor exists to observe.
+_STACK_THRESHOLD_S = float(os.getenv("LOOPWATCH_STACK_THRESHOLD_S", "2.0"))
 
 _task: asyncio.Task | None = None
 _max_lag_s = 0.0
@@ -51,6 +56,41 @@ def reset() -> None:
     _events = 0
 
 
+def _blocking_stack(limit: int = 12) -> str:
+    """Where the loop's own thread is executing right now.
+
+    The probe runs immediately AFTER the stall, so the frame that blocked has usually returned
+    and this is a best-effort sample rather than proof. It is still the difference between
+    "something blocked for 72 seconds" and a filename: eight thousand warnings that name no
+    code tell you there is a problem and nothing about where to look.
+
+    Frames from the standard library, site-packages and this module are dropped so application
+    code is what survives.
+    """
+    import sys
+    import traceback
+
+    try:
+        frames = sys._current_frames()
+    except Exception:  # pragma: no cover - not available on every implementation
+        return ""
+    frame = frames.get(threading.main_thread().ident or 0)
+    if frame is None:
+        return ""
+    try:
+        stack = traceback.extract_stack(frame)
+    except Exception:  # pragma: no cover
+        return ""
+    ours = [
+        f"{f.filename.rsplit('/app/', 1)[-1]}:{f.lineno} in {f.name}"
+        for f in stack
+        if "site-packages" not in f.filename
+        and "/lib/python" not in f.filename
+        and "loopwatch" not in f.filename
+    ]
+    return " <- ".join(reversed(ours[-limit:]))
+
+
 async def _probe(threshold_s: float) -> None:
     global _max_lag_s, _events
     while True:
@@ -62,11 +102,12 @@ async def _probe(threshold_s: float) -> None:
         if lag >= threshold_s:
             _events += 1
             # `debug=True` on the loop additionally names the offending handle. This message is
-            # the trigger to go and look; it deliberately does not guess at a cause.
+            # the trigger to go and look; the stack sample is a hint, not a verdict.
+            where = _blocking_stack() if lag >= _STACK_THRESHOLD_S else ""
             log.warning(
                 "event loop blocked for %.2fs (threshold %.2fs) — a synchronous call is running "
-                "on the loop; every request in the process was stalled for that long",
-                lag, threshold_s,
+                "on the loop; every request in the process was stalled for that long%s",
+                lag, threshold_s, f" | main thread at: {where}" if where else "",
             )
 
 

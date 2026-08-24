@@ -34,6 +34,7 @@ import {
 } from "../../api";
 import { usePersistedState } from "../../utils/persistedState";
 import { useGroupedCollapse, type GroupDimension } from "../../utils/useGroupedCollapse";
+import { useExportDownload } from "../ExportProgress";
 import { useIamConnectionId } from "./IamShared";
 import {
   ageLabel,
@@ -855,6 +856,10 @@ export function LeaversTab() {
     }
   }
 
+  // Above the early returns below — a hook after any of them changes the hook order between
+  // renders. The server stamps the date into these filenames, so none is passed here.
+  const download = useExportDownload("Disabled-access export");
+
   if (q.isLoading && !d) return <div className="p-4 text-sm text-gray-500">Loading…</div>;
   if (q.isError) return <div className="p-4 text-sm text-red-700">{String(q.error)}</div>;
   if (!d) return <div className="p-4 text-sm text-gray-500">No data.</div>;
@@ -883,6 +888,7 @@ export function LeaversTab() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {download.dialog}
       <div className="space-y-2 border-b p-3">
         <div className="text-sm text-gray-800" data-testid="leavers-headline">
           <span className="font-semibold">{t.identities ?? 0}</span> disabled identit
@@ -998,27 +1004,33 @@ export function LeaversTab() {
               {previewing ? "Building…" : "Preview script"}
             </button>
             <span className="text-gray-500">Export</span>
-            <a
-              href={api.iamLeaversExportUrl("csv", "identities", selectorFilter)}
-              className="rounded border px-2 py-1 hover:bg-gray-50"
+            <button
+              type="button"
+              onClick={() => download.start(api.iamLeaversExportUrl("csv", "identities", selectorFilter), "iam-disabled-access-identities.csv", "People CSV")}
+              disabled={download.phase !== "idle"}
+              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-identities-csv"
             >
               People (CSV)
-            </a>
-            <a
-              href={api.iamLeaversExportUrl("csv", "grants", selectorFilter)}
-              className="rounded border px-2 py-1 hover:bg-gray-50"
+            </button>
+            <button
+              type="button"
+              onClick={() => download.start(api.iamLeaversExportUrl("csv", "grants", selectorFilter), "iam-disabled-access-grants.csv", "Grants CSV")}
+              disabled={download.phase !== "idle"}
+              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-grants-csv"
             >
               Grants (CSV)
-            </a>
-            <a
-              href={api.iamLeaversExportUrl("xlsx", "identities", selectorFilter)}
-              className="rounded border px-2 py-1 hover:bg-gray-50"
+            </button>
+            <button
+              type="button"
+              onClick={() => download.start(api.iamLeaversExportUrl("xlsx", "identities", selectorFilter), "iam-disabled-access.xlsx", "Disabled-access workbook")}
+              disabled={download.phase !== "idle"}
+              className="rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
               data-testid="leavers-export-xlsx"
             >
               Workbook (XLSX)
-            </a>
+            </button>
           </span>
         </div>
 

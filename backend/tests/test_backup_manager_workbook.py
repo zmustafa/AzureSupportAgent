@@ -98,7 +98,8 @@ async def test_complete_workbook_contains_every_review_area_and_real_hyperlinks(
     summary = _summary_values(workbook)
     assert summary["Connection"] == "Synthetic connection"
     assert summary["Snapshot notice"].startswith("This workbook reflects the last completed analysis")
-    assert summary["Live ledgers read"] == "2026-08-12T00:00:00+00:00"
+    # A real date, not the ISO string: the offset is resolved to UTC and the header says so.
+    assert summary["Live ledgers read (UTC)"] == datetime(2026, 8, 12, 0, 0, 0)
 
     limitations = list(workbook["Coverage & limitations"].iter_rows(values_only=True))
     assert any(row[1] == "demo" for row in limitations[1:])

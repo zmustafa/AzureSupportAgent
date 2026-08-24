@@ -20,9 +20,10 @@ becomes invisible, so each becomes a child sheet with one row per credential, pe
 """
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
-from app.core.xlsx import WorkbookBuilder
+from app.core.xlsx import DATETIME_FMT, WorkbookBuilder, as_datetime, hyperlink
 
 #: Domain statuses that mean "the rows are not trustworthy or not there".
 BLIND_STATUSES = frozenset({"blind", "error", "not_collected", "unlicensed"})
@@ -47,6 +48,73 @@ SECTION_COLOURS: dict[str, str] = {
     "Blast radius": "833C00",          # brown
     "Setup & coverage": "808080",      # grey
 }
+
+
+#: Sign-in breakdowns, one sheet each. Titles are fixed so the workbook's shape does not
+#: change with the data; a dimension the collector did not return simply has no sheet.
+BREAKDOWN_SHEETS: dict[str, str] = {
+    "by_day": "Sign-ins by day",
+    "by_app": "Sign-ins by application",
+    "by_user_top": "Sign-ins by user",
+    "by_client_app": "Sign-ins by client app",
+    "by_country": "Sign-ins by country",
+    "by_ca_result": "Sign-ins by CA result",
+    "by_failure_code": "Sign-ins by failure code",
+}
+
+
+def _label(key: str) -> str:
+    text = str(key).replace("_", " ").strip()
+    return text[:1].upper() + text[1:] if text else "Value"
+
+
+def _explode(items: list[dict[str, Any]]) -> tuple[list[str], list[list[Any]], set[str]]:
+    """Headers, rows and the timestamp headers, from a list of flat records.
+
+    Data-driven on purpose. The alternative — reading fixed key names off a payload whose
+    shape was assumed rather than checked — is what produced several columns that were blank
+    on every row, and a blank column reads as an answer.
+
+    Because the columns are discovered rather than declared, the dates have to be discovered
+    too. Detection is on the VALUES, never the key name: a column qualifies only when every
+    value in it parses as an extended-format ISO timestamp. Guessing from a name like
+    "package" is how a column of text gets mangled into 1900-era dates.
+    """
+    keys: list[str] = []
+    for it in items:
+        for k in it:
+            if k not in keys:
+                keys.append(k)
+    rows = [[it.get(k, "") for k in keys] for it in items]
+
+    dates: set[str] = set()
+    for i, key in enumerate(keys):
+        seen = [r[i] for r in rows if r[i] not in (None, "")]
+        if seen and all(isinstance(v, str) and ("-" in v or ":" in v)
+                        and as_datetime(v) is not None for v in seen):
+            dates.add(_label(key))
+    return [_label(k) for k in keys], rows, dates
+
+
+def _session_controls(policy: dict[str, Any]) -> str:
+    """The session controls a policy actually switches on, as words.
+
+    The nested ``session`` block is a dozen booleans and their parameters; exporting the dict
+    would be an unreadable cell and exporting a single flag would lose which control is on."""
+    s = policy.get("session") or {}
+    on: list[str] = []
+    if s.get("sign_in_frequency"):
+        on.append(f"sign-in frequency {s.get('sign_in_frequency_value', '')} "
+                  f"{s.get('sign_in_frequency_type', '')}".strip())
+    if s.get("persistent_browser"):
+        on.append(f"persistent browser {s.get('persistent_browser_mode', '')}".strip())
+    if s.get("app_enforced_restrictions"):
+        on.append("app-enforced restrictions")
+    if s.get("cloud_app_security"):
+        on.append("cloud app security")
+    if s.get("continuous_access_evaluation"):
+        on.append(f"CAE {s['continuous_access_evaluation']}")
+    return ", ".join(on)
 
 
 def _domain(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
@@ -135,8 +203,10 @@ def to_workbook(
     for label, value in [
         ("Tenant", tenant.get("display_name", "") or snapshot.get("tenant_id", "")),
         ("Tenant id", snapshot.get("tenant_id", "")),
-        ("Snapshot generated", snapshot.get("generated_at", "")),
-        ("Last full collection", snapshot.get("last_full", "")),
+        ("Snapshot generated (UTC)", as_datetime(snapshot.get("generated_at", ""))
+         or snapshot.get("generated_at", "")),
+        ("Last full collection (UTC)", as_datetime(snapshot.get("last_full", ""))
+         or snapshot.get("last_full", "")),
         ("Posture score", score.get("score", "")),
         ("Measured coverage", f"{round((score.get('coverage') or 0) * 100)}% of the weighted checks"),
         ("Findings", len(analysis.get("findings") or [])),
@@ -146,8 +216,12 @@ def to_workbook(
                                    "departments, managers and sign-in times. Handle accordingly."),
         ("How to read a blank sheet", "Check the Index and the 'Coverage & blind spots' sheet "
                                       "first. A sheet marked NOT MEASURED is not a clean result."),
+        ("How to read a date", "Every timestamp in this workbook is UTC and is a real Excel "
+                               "date, so the date filters and sorting work on it directly."),
     ]:
         ws.append([label, value])
+        if isinstance(value, dt.datetime):
+            ws.cell(row=ws.max_row, column=2).number_format = DATETIME_FMT
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 100
 
@@ -169,6 +243,7 @@ def to_workbook(
          "Error", "Notes", "Blockers"],
         domain_rows,
         note="Any domain whose status is not 'ok' limits every sheet derived from it.",
+        dates={"Collected at"},
     )
 
     wb.sheet(
@@ -191,17 +266,23 @@ def to_workbook(
     wb.section("Posture", SECTION_COLOURS["Posture"])
     wb.sheet(
         "Posture score",
-        ["Pillar", "Key", "Score", "Weight", "Coverage"],
+        ["Pillar", "Key", "Score", "Weight", "State", "Why it is not complete"],
+        # `coverage` is not a field a pillar has ever carried, so that column exported blank
+        # for every row. `state` and `reason` are the two the scorer actually computes, and
+        # they are the ones that say whether a low score is a finding or a blind spot.
         [[p.get("label", ""), p.get("key", ""),
           "not measured" if p.get("score") is None else p.get("score"),
-          p.get("weight", ""), p.get("coverage", "")]
+          p.get("weight", ""), p.get("state", ""), p.get("reason", "")]
          for p in (score.get("pillars") or [])],
+        highlight={"Score": "bar"},
     )
     if history:
         wb.sheet(
             "Posture trend",
             ["At", "Score", "Coverage"],
             [[h.get("at", ""), h.get("score", ""), h.get("coverage", "")] for h in history],
+            dates={"At"},
+            highlight={"Score": "bar"},
         )
 
     # Every registered check, whether it fired, and if not, why not. The catalog is what makes
@@ -228,6 +309,7 @@ def to_workbook(
         ["Signal", "Title", "Pillar", "Severity", "Weight", "Findings", "Measured",
          "Why not measured", "Benchmarks", "Why it matters"],
         catalogue,
+        highlight={"Severity": "severity"},
     )
 
     # ---------------------------------------------------------------- findings
@@ -239,8 +321,10 @@ def to_workbook(
          "Portal link", "Fingerprint", "Evidence"],
         [[f.get("severity", ""), f.get("pillar", ""), f.get("signal_id", ""),
           f.get("object_kind", ""), f.get("object_name", "") or f.get("object_id", ""),
-          f.get("title", ""), f.get("detail", ""), f.get("portal_link", ""),
+          f.get("title", ""), f.get("detail", ""),
+          hyperlink("Open in Entra", f.get("portal_link", "")),
           f.get("fingerprint", ""), f.get("evidence", "")] for f in findings],
+        highlight={"Severity": "severity"},
     )
     wb.sheet(
         "Findings - not measured",
@@ -251,13 +335,21 @@ def to_workbook(
     if scanners is not None:
         wb.sheet(
             "Scanners",
-            ["Scanner", "Cadence", "Severity floor", "Signals", "Blocked", "Last run",
-             "New", "Resolved", "Persisting"],
+            ["Scanner", "Cadence", "Severity floor", "Signals", "Can run", "Why it cannot run",
+             "Last run", "New", "Resolved", "Persisting"],
+            # "Blocked" used to read `s['blocked'] or 'no'` against a card that never carried
+            # the key, so every scanner reported as runnable — a fabricated pass on the sheet
+            # that says which checks are switched off.
             [[s.get("name", ""), s.get("cadence", ""), s.get("severity_floor", ""),
-              s.get("signal_count", ""), s.get("blocked", "") or "no", s.get("last_run", ""),
+              s.get("signal_count", ""),
+              "No" if s.get("blocked") else "Yes", s.get("blocked", ""),
+              s.get("last_run", ""),
               (s.get("last_counts") or {}).get("new", ""),
               (s.get("last_counts") or {}).get("resolved", ""),
               (s.get("last_counts") or {}).get("persisting", "")] for s in scanners],
+            dates={"Last run"},
+            note="A blank 'Last run' means this scanner has never run for this tenant, which "
+                 "is not the same as running and finding nothing.",
         )
 
     # ---------------------------------------------------------------- conditional access
@@ -271,14 +363,20 @@ def to_workbook(
         policies = ca.get("policies") or []
         wb.sheet(
             "CA policies",
-            ["Policy", "Id", "State", "Created", "Modified", "Grant controls", "Session controls",
+            ["Policy", "Id", "State", "Created", "Modified", "Grant operator", "Grant controls",
+             "Auth strength", "Session controls",
              "Client app types", "Include apps", "Exclude apps", "Include users", "Exclude users",
              "Include groups", "Exclude groups", "Include roles", "Exclude roles"],
+            # The controls live in nested `grant` and `session` blocks. Reading them as
+            # top-level `grant_controls`/`controls` exported blank for every policy — on the
+            # two columns that say what a Conditional Access policy actually enforces.
             [[
                 p.get("display_name", ""), p.get("id", ""), p.get("state", ""),
                 p.get("created_at", ""), p.get("modified_at", ""),
-                p.get("grant_controls", "") or p.get("controls", ""),
-                p.get("session_controls", ""),
+                (p.get("grant") or {}).get("operator", ""),
+                (p.get("grant") or {}).get("controls", ""),
+                (p.get("grant") or {}).get("auth_strength_name", ""),
+                _session_controls(p),
                 (p.get("conditions") or {}).get("client_app_types", ""),
                 (p.get("conditions") or {}).get("include_apps", ""),
                 (p.get("conditions") or {}).get("exclude_apps", ""),
@@ -290,6 +388,7 @@ def to_workbook(
                 (p.get("conditions") or {}).get("exclude_roles", ""),
             ] for p in policies],
             note=_caveat(snapshot, "ca"),
+            dates={"Created", "Modified"},
         )
         # One row per condition entry, so an exclusion can actually be searched for. A policy's
         # exclusions are where the exception that defeats it lives, and they are unreadable
@@ -332,7 +431,8 @@ def to_workbook(
                  cov_rows,
                  note="A cell is 'covered' only when the whole cohort AND every application in "
                       "the class is reached. 'n/a' means Entra does not offer that control for "
-                      "that target — it is not a gap.")
+                      "that target — it is not a gap.",
+                 highlight={"State": "severity"})
 
         derived = coverage.get("derived") or {}
         shadowed = derived.get("shadowed_classes") or {}
@@ -390,8 +490,10 @@ def to_workbook(
         )
         wb.sheet(
             "CA auth strengths",
-            ["Name", "Id", "Detail"],
-            [[a.get("display_name", ""), a.get("id", ""), a] for a in (ca.get("auth_strengths") or [])],
+            ["Name", "Id", "Policy type", "Requirements satisfied", "Combinations"],
+            [[a.get("display_name", ""), a.get("id", ""), a.get("policy_type", ""),
+              a.get("requirements_satisfied", ""), a.get("combinations", "")]
+             for a in (ca.get("auth_strengths") or [])],
         )
 
     # ---------------------------------------------------------------- privileged access
@@ -410,6 +512,7 @@ def to_workbook(
               r.get("is_built_in", ""), r.get("is_enabled", "")]
              for r in (roles.get("definitions") or [])],
             note=_caveat(snapshot, "roles"),
+            highlight={"Tier": "severity"},
         )
         assign_fields = [
             ("Role", "role_name"), ("Role id", "role_id"), ("Tier", "role_tier"),
@@ -421,13 +524,18 @@ def to_workbook(
         ]
         active = (roles.get("assignments") or []) + (roles.get("group_derived") or [])
         wb.sheet("Role assignments", _heads(assign_fields), _table(active, assign_fields),
-                 note=_caveat(snapshot, "roles"))
-        elig_fields = assign_fields[:10] + [
+                 note=_caveat(snapshot, "roles"), highlight={"Tier": "severity"})
+        # [:9] stops before "Enabled": the collector sets `principal_enabled` on ACTIVE
+        # assignments only, so on an eligibility it is not "disabled", it is not a field.
+        elig_fields = assign_fields[:9] + [
             ("Member type", "member_type"), ("Start", "start"), ("End", "end"),
             ("Permanent", "permanent"), ("Status", "status"),
         ]
         wb.sheet("Role eligibility (PIM)", _heads(elig_fields),
-                 _table(roles.get("eligible") or [], elig_fields))
+                 _table(roles.get("eligible") or [], elig_fields),
+                 dates={"Start", "End"}, highlight={"Tier": "severity"},
+                 note="A blank 'End' on a permanent eligibility is correct — there is no expiry "
+                      "to record. Read it with the 'Permanent' column, not alone.")
 
     pim_blind = _blind_reason(snapshot, "pim")
     if pim_blind:
@@ -450,9 +558,14 @@ def to_workbook(
                  note=_caveat(snapshot, "pim"))
         wb.sheet(
             "PIM group eligibility",
-            ["Group", "Group id", "Principal", "Principal id", "Detail"],
-            [[g.get("group_name", ""), g.get("group_id", ""), g.get("principal_name", ""),
-              g.get("principal_id", ""), g] for g in ((data.get("pim") or {}).get("group_eligibilities") or [])],
+            ["Group", "Group id", "Principal id", "Access", "Member type", "Status",
+             "Assignment id"],
+            # No principal NAME is collected here, and an always-blank "Principal" column
+            # reads as "nobody is eligible".
+            [[g.get("group_name", ""), g.get("group_id", ""), g.get("principal_id", ""),
+              g.get("access_id", ""), g.get("member_type", ""), g.get("status", ""),
+              g.get("id", "")]
+             for g in ((data.get("pim") or {}).get("group_eligibilities") or [])],
         )
 
     act_blind = _blind_reason(snapshot, "activations")
@@ -477,6 +590,7 @@ def to_workbook(
             note="'Detail known' = No means the justification was not returned by Graph, not "
                  "that none was given. History beyond Graph's 30-day window comes from the "
                  "durable ledger.",
+            dates={"Start", "End"}, highlight={"Tier": "severity"},
         )
 
     link = data.get("_azure_link") or {}
@@ -487,21 +601,21 @@ def to_workbook(
                                      "roles cannot be correlated with Azure RBAC."),
         )
     else:
-        principals = link.get("principals") or {}
-        rows_cp: list[list[Any]] = []
-        for pid, p in (principals.items() if isinstance(principals, dict) else []):
-            rows_cp.append([
-                p.get("name", ""), pid, p.get("kind", ""),
-                p.get("entra_roles", ""), p.get("azure_roles", ""),
-                p.get("azure_all_roles", ""), p.get("azure_broad_scopes", ""),
-                p.get("azure_subscriptions", ""), p.get("both_planes", ""),
-            ])
+        from app.entra import crossplane
+
         wb.sheet(
             "Cross-plane power",
-            ["Principal", "Id", "Kind", "Entra roles", "Azure roles (powerful)",
-             "Azure roles (all)", "Broad scopes", "Subscriptions", "Both planes"],
-            rows_cp,
-            note="Join is stale — older than the Entra snapshot." if link.get("stale") else "",
+            ["Principal", "Id", "Kind", "Entra roles", "Entra permissions",
+             "Azure roles (powerful)", "Azure roles (all)", "Broad scopes", "Subscriptions",
+             "Both planes"],
+            [[r["name"], r["principal_id"], r["kind"], r["entra_roles"],
+              r["entra_permissions"], r["azure_roles"], r["azure_all_roles"],
+              r["azure_broad_scopes"], r["azure_subscriptions"], r["both_planes"]]
+             for r in crossplane.rows(data)],
+            note=("Join is stale — older than the Entra snapshot. " if link.get("stale") else "")
+                 + "'Both planes' is the row that matters: Entra power and powerful Azure RBAC "
+                   "on the same principal.",
+            highlight={"Both planes": "severity"},
         )
 
     # ---------------------------------------------------------------- applications
@@ -526,7 +640,7 @@ def to_workbook(
         for row, sp in zip(sp_rows, sps):
             row.append((sp.get("risk") or {}).get("score", ""))
         wb.sheet("Service principals", _heads(sp_fields) + ["Risk score"], sp_rows,
-                 note=_caveat(snapshot, "apps"))
+                 note=_caveat(snapshot, "apps"), highlight={"Risk score": "bar"})
 
         regs = apps.get("applications") or []
         reg_fields = [
@@ -540,7 +654,8 @@ def to_workbook(
         reg_rows = _table(regs, reg_fields)
         for row, app in zip(reg_rows, regs):
             row.append((app.get("risk") or {}).get("score", ""))
-        wb.sheet("App registrations", _heads(reg_fields) + ["Risk score"], reg_rows)
+        wb.sheet("App registrations", _heads(reg_fields) + ["Risk score"], reg_rows,
+                 dates={"Created"}, highlight={"Risk score": "bar"})
 
         # --- child sheets. One row per credential / grant / URL.
         perm_rows: list[list[Any]] = []
@@ -568,6 +683,7 @@ def to_workbook(
             perm_rows,
             note="Consent 'AllPrincipals' is tenant-wide: it applies to every user, not to the "
                  "one who consented.",
+            highlight={"Tier": "severity"},
         )
         wb.sheet(
             "App permissions requested",
@@ -578,6 +694,7 @@ def to_workbook(
              if isinstance(r, dict)],
             note="Requested on the registration. Compare with 'App permissions granted' to see "
                  "what was asked for but never consented.",
+            highlight={"Tier": "severity"},
         )
 
         cred_rows: list[list[Any]] = []
@@ -598,6 +715,8 @@ def to_workbook(
              "Expired", "Days left", "Lifetime days", "Key id"],
             cred_rows,
             note="A negative 'Days left' is an ALREADY EXPIRED credential still on the object.",
+            dates={"Start", "Expires"},
+            highlight={"Days left": "days_left", "Expires": "expiry_date"},
         )
 
         fic_rows: list[list[Any]] = []
@@ -631,7 +750,8 @@ def to_workbook(
                                  "Service principal", u, "",
                                  (risks.get(str(u)) or {}).get("risk", "")])
         wb.sheet("Redirect / reply URLs",
-                 ["Application", "App id", "Held by", "URL", "Type", "Risk"], url_rows)
+                 ["Application", "App id", "Held by", "URL", "Type", "Risk"], url_rows,
+                 highlight={"Risk": "severity"})
 
         wb.sheet(
             "App owners",
@@ -651,18 +771,27 @@ def to_workbook(
               j.get("template", ""), j.get("code", ""), j.get("quarantine", ""),
               j.get("last_execution", "")]
              for sp in sps for j in (sp.get("provisioning_jobs") or []) if isinstance(j, dict)],
+            dates={"Last execution"}, highlight={"Last execution": "stale_date"},
         )
 
         tenant_data = data.get("tenant") or {}
-        wb.sheet(
-            "Consent posture",
-            ["Setting", "Value"],
-            [["Authorization policy", tenant_data.get("authorization_policy", "")],
-             ["Admin consent policy", tenant_data.get("admin_consent_policy", "")],
-             ["Cross-tenant default", tenant_data.get("cross_tenant_default", "")]]
-            + [[f"Permission grant policy: {(p or {}).get('id', '')}", p]
-               for p in (tenant_data.get("permission_grant_policies") or [])],
-        )
+        # One row per setting per property. The whole policy used to be stringified into a
+        # single cell as `k=v; k=v`, which is the one shape a spreadsheet cannot filter.
+        consent_rows: list[list[Any]] = []
+        for label, payload in (
+            [("Authorization policy", tenant_data.get("authorization_policy")),
+             ("Admin consent policy", tenant_data.get("admin_consent_policy")),
+             ("Cross-tenant default", tenant_data.get("cross_tenant_default"))]
+            + [(f"Permission grant policy: {(p or {}).get('id', '')}", p)
+               for p in (tenant_data.get("permission_grant_policies") or [])]
+        ):
+            if isinstance(payload, dict):
+                consent_rows += [[label, k, v] for k, v in payload.items()]
+            elif payload not in (None, ""):
+                consent_rows.append([label, "", payload])
+            else:
+                consent_rows.append([label, "", "NOT MEASURED"])
+        wb.sheet("Consent posture", ["Setting", "Property", "Value"], consent_rows)
 
     # ---------------------------------------------------------------- risk & sign-ins
     wb.section("Risk & sign-ins", SECTION_COLOURS["Risk & sign-ins"])
@@ -676,8 +805,10 @@ def to_workbook(
         wb.sheet(
             "Sign-in summary",
             ["Metric", "Value"],
-            [["Window start", signins.get("window_start", "")],
-             ["Window end", signins.get("window_end", "")],
+            [["Window start (UTC)", as_datetime(signins.get("window_start"))
+              or signins.get("window_start", "")],
+             ["Window end (UTC)", as_datetime(signins.get("window_end"))
+              or signins.get("window_end", "")],
              ["Lookback days", signins.get("lookback_days", "")],
              ["Sampled", "YES — these totals are extrapolated from a sample" if sampled else "No"],
              ["Total sign-ins", signins.get("total", "")],
@@ -690,45 +821,54 @@ def to_workbook(
              ["Legacy auth successful users", signins.get("legacy_success_users", "")]],
             note="Sampled: totals are extrapolated, not counted." if sampled else _caveat(snapshot, "risk"),
         )
-        # Every breakdown in one sheet with a dimension column, rather than six near-empty ones.
-        break_rows: list[list[Any]] = []
-        for dim in ("by_day", "by_app", "by_user_top", "by_client_app", "by_country",
-                    "by_ca_result", "by_failure_code"):
+        # One sheet per dimension. Stacked into a single Dimension/Key/Count/Detail grid they
+        # could not be pivoted or charted, and every figure beyond the count — success, failure,
+        # MFA — was stringified into the Detail cell as `k=v; k=v`, which is the one shape a
+        # spreadsheet cannot work with.
+        any_breakdown = False
+        for dim, title in BREAKDOWN_SHEETS.items():
             bucket = signins.get(dim)
-            if isinstance(bucket, dict):
-                for k, v in bucket.items():
-                    break_rows.append([dim, k, v if not isinstance(v, dict) else "", v if isinstance(v, dict) else ""])
-            elif isinstance(bucket, list):
-                for it in bucket:
-                    if isinstance(it, dict):
-                        break_rows.append([dim, it.get("label", "") or it.get("name", "")
-                                           or it.get("code", "") or it.get("date", ""),
-                                           it.get("count", "") or it.get("total", ""), it])
-        wb.sheet("Sign-in breakdowns", ["Dimension", "Key", "Count", "Detail"], break_rows)
+            if isinstance(bucket, dict) and bucket:
+                wb.sheet(title, ["Key", "Count"], [[k, v] for k, v in bucket.items()])
+                any_breakdown = True
+            elif isinstance(bucket, list) and bucket:
+                heads, rows, dims_dates = _explode([b for b in bucket if isinstance(b, dict)])
+                if heads:
+                    wb.sheet(title, heads, rows, dates=dims_dates)
+                    any_breakdown = True
+        if not any_breakdown:
+            wb.sheet("Sign-in breakdowns", ["Status", "Why"],
+                     [["NOT MEASURED", "The sign-in collector returned no per-dimension "
+                                       "breakdowns for this window."]])
 
         ru_fields = [("Name", "name"), ("UPN", "upn"), ("Id", "id"), ("Risk level", "level"),
                      ("State", "state"), ("Detail", "detail"), ("Last updated", "last_updated")]
-        wb.sheet("Risky users", _heads(ru_fields), _table(risk.get("risky_users") or [], ru_fields))
+        wb.sheet("Risky users", _heads(ru_fields), _table(risk.get("risky_users") or [], ru_fields),
+                 dates={"Last updated"}, highlight={"Risk level": "severity", "State": "severity"})
         wb.sheet(
             "Risk detections",
             ["Detection id", "Type", "Risk level", "State", "User", "User id", "Detected at"],
             [[d.get("id", ""), d.get("type", ""), d.get("level", ""), d.get("state", ""),
               d.get("upn", ""), d.get("user_id", ""), d.get("detected_at", "")]
              for d in (risk.get("risk_detections") or [])],
+            dates={"Detected at"},
+            highlight={"Risk level": "severity", "State": "severity"},
         )
         wb.sheet(
             "Risky service principals",
-            ["Name", "App id", "Risk level", "State", "Detail"],
+            ["Name", "App id", "Object id", "Risk level", "State", "Detail", "Last updated"],
             [[s.get("display_name", "") or s.get("name", ""), s.get("app_id", ""),
-              s.get("level", ""), s.get("state", ""), s]
+              s.get("id", ""), s.get("level", ""), s.get("state", ""), s.get("detail", ""),
+              s.get("last_updated", "")]
              for s in (risk.get("risky_service_principals") or [])],
+            dates={"Last updated"}, highlight={"Risk level": "severity"},
         )
-        wb.sheet(
-            "Sign-in patterns",
-            ["Pattern", "Count", "Description"],
-            [[p.get("name", "") or p.get("pattern_name", ""), p.get("count", ""),
-              p.get("description", "")] for p in (risk.get("patterns") or [])],
-        )
+        # Data-driven columns: the pattern records were read through guessed key names and
+        # exported a row whose label and description were both blank.
+        pattern_heads, pattern_rows, pattern_dates = _explode(
+            [p for p in (risk.get("patterns") or []) if isinstance(p, dict)])
+        wb.sheet("Sign-in patterns", pattern_heads or ["Pattern", "Count", "Description"],
+                 pattern_rows, dates=pattern_dates)
 
     # ---------------------------------------------------------------- people
     wb.section("Directory", SECTION_COLOURS["Directory"])
@@ -744,19 +884,28 @@ def to_workbook(
             ("MFA capable", "mfa_capable"), ("Passwordless capable", "passwordless_capable"),
             ("Methods", "methods"), ("Last sign-in", "last_signin"),
             ("Last non-interactive", "last_noninteractive_signin"),
-            ("Licences", "licence_count"), ("Job title", "job_title"),
+            ("Licenses", "licence_count"), ("Job title", "job_title"),
             ("Department", "department"), ("Company", "company_name"),
-            ("Employee id", "employee_id"), ("Manager id", "manager_id"),
+            ("Employee id", "employee_id"),
             ("Created", "created_at"), ("Admin reported", "is_admin_reported"),
         ]
+        user_dates = {"Last sign-in", "Last non-interactive", "Created"}
         users = people.get("users") or []
         wb.sheet("Users", _heads(user_fields), _table(users, user_fields),
-                 note="Personal data. " + (_caveat(snapshot, "people") or ""))
+                 note="Personal data. " + (_caveat(snapshot, "people") or ""),
+                 dates=user_dates, highlight={"Last sign-in": "stale_date"})
         # The MFA gap as its own sheet: it is the actionable subset and the tab caps it at 500.
+        # The four method columns are dropped rather than carried: on a sheet defined as "has no
+        # registered method" they are blank on every row by construction, and four blank columns
+        # invite the reader to wonder what was not collected.
+        gap_fields = [f for f in user_fields
+                      if f[0] not in {"MFA registered", "MFA capable", "Passwordless capable",
+                                      "Methods"}]
         gap = [u for u in users if u.get("enabled") and not u.get("mfa_registered")]
         wb.sheet(
-            "MFA registration gap", _heads(user_fields), _table(gap, user_fields),
+            "MFA registration gap", _heads(gap_fields), _table(gap, gap_fields),
             note="Enabled users with no registered strong authentication method.",
+            dates=user_dates, highlight={"Last sign-in": "stale_date"},
         )
         group_fields = [
             ("Name", "display_name"), ("Id", "id"), ("Description", "description"),
@@ -766,7 +915,8 @@ def to_workbook(
             ("Role assignable", "is_assignable_to_role"), ("On-prem synced", "on_prem_synced"),
             ("Owners known", "owners_known"), ("Visibility", "visibility"), ("Created", "created_at"),
         ]
-        wb.sheet("Groups", _heads(group_fields), _table(people.get("groups") or [], group_fields))
+        wb.sheet("Groups", _heads(group_fields), _table(people.get("groups") or [], group_fields),
+                 dates={"Created"})
 
     # ---------------------------------------------------------------- governance
     wb.section("Governance", SECTION_COLOURS["Governance"])
@@ -787,30 +937,35 @@ def to_workbook(
             g["domains"], (data.get("tenant") or {}).get("cross_tenant_partners") or {})
         wb.sheet(
             "Guests",
-            ["Guest", "Sign-in address", "Organisation", "Domain class", "Lifecycle",
+            ["Guest", "Sign-in address", "Organization", "Domain class", "Lifecycle",
              "Account", "Invited", "Invited (days)", "Accepted", "Last human sign-in",
              "Human (days)", "Last any activity", "Any (days)", "Sign-in measured",
-             "Sponsors", "Company", "Licences"],
+             "Sponsors", "Company", "Licenses"],
             [[r["display_name"], r["mail"] or r["upn"], r["domain"], r["domain_class"],
               guests_mod.LIFECYCLE_LABEL.get(r["lifecycle"], r["lifecycle"]),
               "Enabled" if r["enabled"] else "Disabled",
               r["invited_at"], r["invited_days_ago"], r["accepted_at"],
-              # "never" and "not measured" are DIFFERENT and must stay different in the
-              # export too — a reviewer sorting this column would otherwise revoke access
-              # that was simply never looked at.
-              (r["last_human_signin"] or "never") if r["signin_known"] else "not measured",
+              # "never" and "not measured" are DIFFERENT and must stay different — a reviewer
+              # sorting this column would otherwise revoke access that was simply never looked
+              # at. They are carried by 'Lifecycle' and 'Sign-in measured' rather than as words
+              # in the date column, which keeps the date column a real date and therefore
+              # sortable and filterable. A blank here is read WITH those two columns.
+              r["last_human_signin"] if r["signin_known"] else "",
               r["last_human_days_ago"],
-              (r["last_any_signin"] or "never") if r["signin_known"] else "not measured",
+              r["last_any_signin"] if r["signin_known"] else "",
               r["last_any_days_ago"],
               "yes" if r["signin_known"] else "no",
               "; ".join(s.get("display_name", "") for s in r["sponsors"]),
               r["company_name"], r["licence_count"]]
              for r in g["guests"]],
-            note=_caveat(snapshot, "people"),
+            note="A blank sign-in date means EITHER never signed in OR never measured — read "
+                 "'Sign-in measured' to tell which. " + (_caveat(snapshot, "people") or ""),
+            dates={"Invited", "Accepted", "Last human sign-in", "Last any activity"},
+            highlight={"Last human sign-in": "stale_date"},
         )
         wb.sheet(
             "Guest partner orgs",
-            ["Organisation", "Domain", "Partner tenant", "Domain class", "Guests",
+            ["Organization", "Domain", "Partner tenant", "Domain class", "Guests",
              "Enabled", "Disabled", "Pending", "Never used", "Dormant", "Active",
              "Not measured", "Oldest invite (days)", "Cross-tenant policy", "Why"],
             [[d.get("partner_name") or d["domain"], d["domain"], d.get("partner_tenant_id", ""),
@@ -818,6 +973,7 @@ def to_workbook(
               d["never_used"], d["dormant"], d["active"], d["not_measured"],
               d["oldest_invite_days"], d.get("governance", ""), d.get("governance_reason", "")]
              for d in g["domains"]],
+            highlight={"Guests": "bar"},
         )
 
     gov_blind = _blind_reason(snapshot, "governance")
@@ -827,11 +983,16 @@ def to_workbook(
     else:
         wb.sheet(
             "Access reviews",
-            ["Review", "Id", "Status", "Created", "Last modified", "Scope"],
+            ["Review", "Id", "Status", "Created", "Last modified", "Scope kind", "Scope target",
+             "Scope query"],
             [[r.get("display_name", ""), r.get("id", ""), r.get("status", ""),
-              r.get("created_at", ""), r.get("last_modified", ""), r.get("scope", "")]
+              r.get("created_at", ""), r.get("last_modified", ""),
+              (r.get("scope") or {}).get("kind", "") if isinstance(r.get("scope"), dict) else "",
+              (r.get("scope") or {}).get("target", "") if isinstance(r.get("scope"), dict) else r.get("scope", ""),
+              (r.get("scope") or {}).get("query", "") if isinstance(r.get("scope"), dict) else ""]
              for r in (gov.get("reviews") or [])],
             note=_caveat(snapshot, "governance"),
+            dates={"Created", "Last modified"},
         )
         wb.sheet(
             "Entitlement packages",
@@ -839,19 +1000,25 @@ def to_workbook(
             [[p.get("display_name", ""), p.get("id", ""), p.get("description", ""),
               p.get("catalog_id", ""), p.get("hidden", ""), p.get("created_at", "")]
              for p in (gov.get("packages") or [])],
+            dates={"Created"},
         )
-        wb.sheet(
-            "Entitlement assignments",
-            ["Package", "Principal", "State", "Detail"],
-            [[a.get("package_id", ""), a.get("principal_id", ""), a.get("state", ""), a]
-             for a in (gov.get("assignments") or [])],
-        )
+        assign_heads, assign_rows, assign_dates = _explode(
+            [a for a in (gov.get("assignments") or []) if isinstance(a, dict)])
+        wb.sheet("Entitlement assignments",
+                 assign_heads or ["Package", "Principal", "State"], assign_rows,
+                 dates=assign_dates)
         workflows = gov.get("workflows") or []
         wb.sheet(
             "Lifecycle workflows",
             ["Workflow", "Category", "Enabled", "Detail"],
             [[w.get("display_name", ""), w.get("category", ""), w.get("enabled", ""), w]
-             for w in workflows],
+             for w in workflows]
+            # A bare header row reads as a clean result. The distinction this workbook exists to
+            # preserve is "nothing configured" versus "we could not look", so it is stated in
+            # the sheet rather than only on the Index, where nobody scrolling tabs will see it.
+            or [["NONE CONFIGURED", "", "",
+                 "No lifecycle workflows exist in this tenant. The governance domain WAS "
+                 "readable, so this is an absence of configuration, not an absence of data."]],
             note="" if workflows else
                  "No lifecycle workflows are configured. The governance domain WAS readable, so "
                  "this is an absence of configuration, not an absence of data.",
@@ -866,14 +1033,17 @@ def to_workbook(
             [[e.get("primitive", ""), e.get("source", ""), e.get("target", ""),
               e.get("confidence", ""), e.get("rule", ""), e.get("reason", "")]
              for e in escalations],
+            highlight={"Confidence": "severity"},
         )
     wb.section("Setup & coverage", SECTION_COLOURS["Setup & coverage"])
     if setup_tiers is not None:
         wb.sheet(
             "Setup checklist",
-            ["Tier", "Label", "Complete", "Granted", "Missing"],
-            [[t.get("tier", ""), t.get("label", ""), t.get("complete", ""),
-              t.get("granted", ""), t.get("missing", "")] for t in setup_tiers],
+            ["Tier", "Name", "Complete", "Granted", "Missing", "What it unlocks"],
+            # `label` is not a key a tier has ever had; the name column exported blank.
+            [[t.get("tier", ""), t.get("name", ""), t.get("complete", ""),
+              t.get("granted", ""), t.get("missing", ""), t.get("unlocks", "")]
+             for t in setup_tiers],
         )
     wb.sheet(
         "Diagnostics",

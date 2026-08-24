@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
+import { useExportDownload } from "../ExportProgress";
 import { FilterRail } from "./IamFilterRail";
 import { type AccessFilter, useIamConnectionId } from "./IamShared";
 
@@ -32,6 +33,7 @@ function PivotCard({ title, items }: { title: string; items: { label: string; co
 export function InsightsTab() {
   const [filter, setFilter] = useState<AccessFilter | null>(null);
   const connectionId = useIamConnectionId();
+  const download = useExportDownload("IAM workbook");
   const q = useQuery({
     queryKey: ["iam", "pivots", filter?.scope_id ?? "", filter?.workload_id ?? "", connectionId ?? ""],
     queryFn: () =>
@@ -54,12 +56,20 @@ export function InsightsTab() {
   };
   return (
     <div className="flex h-full min-h-0">
+      {download.dialog}
       <FilterRail filter={filter} onChange={setFilter} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b bg-white px-4 py-2">
           <span className="text-sm font-medium text-gray-700">Insights</span>
           {filter && <span className="text-xs text-gray-500">· filtered to <b>{filter.label}</b></span>}
-          <a href={api.iamWorkbookUrl(exportFilter)} className="ml-auto rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100">⬇ Excel (all tabs)</a>
+          <button
+            type="button"
+            onClick={() => download.start(api.iamWorkbookUrl(exportFilter), "iam-access-review.xlsx")}
+            disabled={download.phase !== "idle"}
+            className="ml-auto rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+          >
+            ⬇ Excel (all tabs)
+          </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {q.isLoading ? (

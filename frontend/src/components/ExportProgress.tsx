@@ -32,9 +32,38 @@ function fmtSeconds(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+/** The filename the SERVER chose, or "" when it did not choose a usable one.
+ *
+ *  Worth parsing rather than always using the caller's guess: several exports stamp the date
+ *  into the name server-side, and those files are filed as dated review evidence. A caller-side
+ *  constant would quietly strip that.
+ *
+ *  The value is attacker-influenced in principle, so it is treated as untrusted: a path
+ *  separator or traversal segment disqualifies it and we fall back to the caller's name.
+ */
+export function filenameFromDisposition(header: string | null): string {
+  if (!header) return "";
+  // RFC 5987 form wins when present — it is the one that can carry non-ASCII.
+  const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  let name = "";
+  if (extended) {
+    try {
+      name = decodeURIComponent(extended[1].trim());
+    } catch {
+      name = "";
+    }
+  }
+  if (!name && plain) name = plain[1].trim();
+  if (!name) return "";
+  if (name.includes("/") || name.includes("\\") || name.split(/[/\\]/).includes("..")) return "";
+  return name;
+}
+
 export type ExportDownloadState = {
   phase: Phase;
-  start: (url: string, filename: string) => void;
+  /** `label` overrides the hook's, so one instance can serve several buttons on a toolbar. */
+  start: (url: string, filename: string, label?: string) => void;
   cancel: () => void;
   dialog: React.ReactNode;
 };
@@ -47,6 +76,9 @@ export function useExportDownload(label: string): ExportDownloadState {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
   const [expected, setExpected] = useState<number | null>(null);
+  // What the dialog is currently titled. A toolbar's CSV and its 5MB workbook are different
+  // artifacts: sharing one duration estimate between them is worse than showing none.
+  const [active, setActive] = useState(label);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(0);
 
@@ -65,16 +97,20 @@ export function useExportDownload(label: string): ExportDownloadState {
     setPhase("idle");
   }, []);
 
-  const start = useCallback((url: string, filename: string) => {
+  const start = useCallback((url: string, filename: string, callLabel?: string) => {
+    const name = callLabel || label;
     const controller = new AbortController();
     abortRef.current = controller;
     startedRef.current = Date.now();
+    setActive(name);
     setReceived(0);
     setTotal(0);
     setElapsed(0);
     setError("");
-    const remembered = Number(localStorage.getItem(`${DURATION_KEY}.${label}`) || 0);
-    setExpected(remembered > 0 ? remembered : null);
+    const remembered = Number(localStorage.getItem(`${DURATION_KEY}.${name}`) || 0);
+    // A sub-second previous run renders as "took about 0s last time", which reads as a fault
+    // rather than as speed. The fast exports (a CSV of a filtered grid) hit that every time.
+    setExpected(remembered >= 1000 ? remembered : null);
     setPhase("preparing");
 
     void (async () => {
@@ -124,7 +160,7 @@ export function useExportDownload(label: string): ExportDownloadState {
         const href = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = href;
-        a.download = filename;
+        a.download = filenameFromDisposition(res.headers.get("Content-Disposition")) || filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -132,7 +168,7 @@ export function useExportDownload(label: string): ExportDownloadState {
         // cancels the download in some browsers.
         setTimeout(() => URL.revokeObjectURL(href), 10_000);
 
-        localStorage.setItem(`${DURATION_KEY}.${label}`, String(Date.now() - startedRef.current));
+        localStorage.setItem(`${DURATION_KEY}.${name}`, String(Date.now() - startedRef.current));
         setPhase("done");
         setTimeout(() => setPhase((p) => (p === "done" ? "idle" : p)), 2500);
       } catch (e) {
@@ -156,7 +192,7 @@ export function useExportDownload(label: string): ExportDownloadState {
       >
         <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl">
           <h2 id="export-progress-title" className="text-sm font-semibold text-gray-900">
-            {phase === "error" ? `${label} failed` : phase === "done" ? `${label} ready` : `Preparing ${label}`}
+            {phase === "error" ? `${active} failed` : phase === "done" ? `${active} ready` : `Preparing ${active}`}
           </h2>
 
           {phase === "error" ? (
@@ -165,7 +201,7 @@ export function useExportDownload(label: string): ExportDownloadState {
             <>
               {/* aria-live so a screen reader hears the phase change rather than only seeing it. */}
               <p className="mt-2 text-[13px] text-gray-600" aria-live="polite">
-                {phase === "preparing" && "Building the workbook on the server…"}
+                {phase === "preparing" && "Building it on the server…"}
                 {phase === "downloading" &&
                   (pct === null
                     ? `Downloading… ${fmtBytes(received)}`
@@ -188,7 +224,7 @@ export function useExportDownload(label: string): ExportDownloadState {
 
               <p className="mt-2 text-[11px] text-gray-500">
                 <span className="tabular-nums">{fmtSeconds(elapsed)}</span> elapsed
-                {expected
+                {expected && expected >= 1000
                   ? ` · took about ${fmtSeconds(expected)} last time`
                   : " · no previous run to estimate from"}
               </p>

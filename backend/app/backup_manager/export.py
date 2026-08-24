@@ -13,7 +13,7 @@ from typing import Any, Iterable, Sequence
 
 from app.backup_manager import service
 from app.core.azure_portal import resource_url_for_host
-from app.core.xlsx import WorkbookBuilder, cell_safe, hyperlink
+from app.core.xlsx import WorkbookBuilder, as_datetime, cell_safe, hyperlink
 
 INSTANCE_COLUMNS: Sequence[tuple[str, str]] = (
     ("friendly_name", "Item"),
@@ -386,8 +386,9 @@ def to_workbook(
         ("Scope id", scope.get("scope_id", "")),
         ("Subscriptions", scope.get("subscription_count", len(scope.get("subscriptions") or []))),
         ("Connection", connection_label),
-        ("Snapshot generated", snapshot.get("generated_at", "")),
-        ("Workbook generated", generated_now),
+        ("Snapshot generated (UTC)", as_datetime(snapshot.get("generated_at"))
+         or snapshot.get("generated_at", "")),
+        ("Workbook generated (UTC)", as_datetime(generated_now) or generated_now),
         ("Snapshot age (seconds)", snapshot.get("age_seconds", "")),
         ("Snapshot schema", snapshot.get("schema_version", "")),
         ("Demo data", bool(snapshot.get("demo"))),
@@ -418,7 +419,8 @@ def to_workbook(
         ("Actionable managed changes", summary.get("actionable_changes", 0)),
         ("", ""),
         ("Snapshot notice", "This workbook reflects the last completed analysis; it does not trigger or include a newer Azure collection."),
-        ("Live ledgers read", ledger_generated_at or generated_now),
+        ("Live ledgers read (UTC)", as_datetime(ledger_generated_at or generated_now)
+         or (ledger_generated_at or generated_now)),
         ("How to read this file", "Start with Coverage & limitations. A failed or truncated source is not a clean result."),
         ("Data handling", "Contains operational Azure resource identifiers and backup posture. Handle as governance evidence."),
     ]:
@@ -434,6 +436,7 @@ def to_workbook(
         ["Source", "State", "Affected section", "Exported", "Known total", "Detail", "As of"],
         limits,
         note="Read this before interpreting empty sheets or zero counts.",
+        dates={"As of"},
     )
 
     # ---------------------------------------------------------------- protection
@@ -468,6 +471,7 @@ def to_workbook(
          "Recovery point source", "Protection stopped", "Retain data only", "Orphaned", "Subscription"],
         protected_rows,
         note="Orphaned rows intentionally have no source-resource link.",
+        dates={"Last backup", "Latest recovery point"},
     )
 
     rpo_rows = _list(_dict(_dict(snapshot.get("dr")).get("rpo")).get("rows"))
@@ -484,6 +488,7 @@ def to_workbook(
             row.get("latest_recovery_point", ""), row.get("recovery_point_source", ""), row.get("status", ""),
             row.get("subscription_id", ""),
         ] for row in rpo_rows],
+        dates={"Latest recovery point"},
     )
     _paint_status(rpo_ws, 13, {"breached": "FCE8E6", "at_risk": "FFF2CC", "met": "E2F0D9", "unknown": "E7E6E6"})
     wb.sheet(
@@ -497,6 +502,7 @@ def to_workbook(
             row.get("latest_recovery_point", ""), True,
         ] for row in instances if row.get("orphaned")],
         note="Backup data is retained and billed; destructive removal remains portal-only.",
+        dates={"Latest recovery point"},
     )
 
     # ---------------------------------------------------------------- jobs
@@ -517,6 +523,7 @@ def to_workbook(
             _portal(row.get("vault_id"), portal_host, "Open vault"), row.get("subscription_id", ""),
         ] for row in jobs],
         note=f"Resource Graph job history covers approximately {snapshot.get('job_window_days', 0)} day(s).",
+        dates={"Started", "Ended"},
     )
     _paint_status(jobs_ws, 7, {"failed": "FCE8E6", "running": "DDEBF7", "succeeded": "E2F0D9", "unknown": "E7E6E6"})
 
@@ -533,6 +540,7 @@ def to_workbook(
             _bounded_text(row.get("remediation", "")), _join(row.get("entities")),
             _bounded_text(row.get("sample_message", "")),
         ] for row in _list(job_analysis.get("clusters"))],
+        dates={"Latest"},
     )
     wb.sheet(
         "Chronic failures",
@@ -548,6 +556,7 @@ def to_workbook(
             row.get("error_code", ""), _bounded_text(row.get("error_message", "")), row.get("severity", ""),
             row.get("subscription_id", ""),
         ] for row in _list(job_analysis.get("chronic"))],
+        dates={"Latest recovery point"},
     )
     wb.sheet(
         "Job congestion",
@@ -714,6 +723,7 @@ def to_workbook(
             row.get("stale_drill", False), row.get("test_failover_active", False),
             _bounded_text(_join(row.get("issues"))),
         ] for row in _list(dr.get("items"))],
+        dates={"Last test failover"},
     )
     _paint_status(dr_ws, 10, {"red": "FCE8E6", "amber": "FFF2CC", "green": "E2F0D9"})
     wb.sheet(
@@ -727,6 +737,7 @@ def to_workbook(
             row.get("current_scenario_status", ""), row.get("last_test_failover", ""), row.get("last_test_failover_age_days", ""),
             row.get("stale_drill", False),
         ] for row in _list(dr.get("recovery_plans"))],
+        dates={"Last test failover"},
     )
     wb.sheet(
         "Drill register",
@@ -740,6 +751,7 @@ def to_workbook(
             row.get("change_id", ""), row.get("evidence_id", ""), row.get("created_at", ""),
         ] for row in (drills or [])],
         note=f"Current connection-wide drill register read at {ledger_generated_at or generated_now}.",
+        dates={"Due", "Executed", "Created"},
     )
 
     # ---------------------------------------------------------------- cost
@@ -751,7 +763,8 @@ def to_workbook(
     wb.sheet(
         "Cost summary", ["Metric", "Value", "Currency / context"],
         [["Rate source", cost.get("rate_source", ""), _bounded_text(cost.get("rate_error", ""), 500)],
-         ["Region", cost.get("region", ""), ""], ["As of", cost.get("as_of", ""), ""],
+         ["Region", cost.get("region", ""), ""],
+         ["As of", as_datetime(cost.get("as_of")) or cost.get("as_of", ""), ""],
          ["Estimate confidence", cost.get("confidence", ""), ""], ["Estimate only", cost.get("estimate_only", True), ""],
          ["Protected-instance cost", cost.get("protected_instance_cost", 0), cost.get("currency", "")],
          ["Storage cost", cost.get("storage_cost", 0), cost.get("currency", "")],

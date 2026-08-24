@@ -7,11 +7,12 @@ round trip through the import endpoint is byte-identical."""
 from __future__ import annotations
 
 import csv
+import datetime as _dt
 import io
 import json
 from typing import Any
 
-from app.core.xlsx import cell_safe
+from app.core.xlsx import DATETIME_FMT, WorkbookBuilder, as_datetime, cell_safe
 from app.iam import schema
 
 #: Kept as a module-local name because `app/api/assessments.py` imports it from here. The
@@ -39,6 +40,82 @@ def to_json(rows: list[dict[str, Any]], columns: tuple[str, ...] | None = None) 
 
 
 # --------------------------------------------------------------------------- XLSX workbook
+#: One tab color per section, so a twenty-odd sheet workbook groups visually the way the
+#: screens do. Hues are kept far apart rather than pretty: two adjacent shades would imply a
+#: relationship between sections that do not have one. The Index repeats the grouping as text.
+SECTION_COLOURS: dict[str, str] = {
+    "Overview": "44546A",        # slate — front matter and the coverage register
+    "Access": "00B0F0",          # cyan — the grant lenses
+    "Posture": "2E75B6",         # blue
+    "Findings": "C00000",        # red
+    "Right-sizing": "548235",    # green
+    "Shadow access": "ED7D31",   # orange
+    "Escalation": "7030A0",      # purple
+    "Directory": "BF8F00",       # gold
+    "Leavers": "833C00",         # brown
+}
+
+#: Columns whose value is a yes/no fact. The collectors speak four dialects for these —
+#: `true`/`false`, `Yes`/blank, `yes`/`no` and `unknown`/`notApplicable` — so filtering "not
+#: privileged" meant selecting blanks in one column, `false` in another and `no` in a third.
+#: Normalised on the way into the workbook only; the CSV and JSON paths stay byte-faithful
+#: because a round trip through the import endpoint has to reproduce the source exactly.
+_TRI_COLUMNS: frozenset[str] = frozenset({
+    "principalExists", "roleIsPrivileged", "roleHasDataActions", "isInherited",
+    "pimManaged", "isPermanentEligible", "requiresApproval", "requiresMfa",
+    "requiresJustification", "doNotApplyToChildScopes", "imported",
+    "principalAccountEnabled", "principalOnPremSynced", "membershipGroupOnPremSynced",
+    "membershipGroupRoleAssignable", "membershipGroupDynamic",
+})
+
+#: Schema columns holding a timestamp.
+_DATE_COLUMNS: frozenset[str] = frozenset({
+    "assignmentCreatedOn", "assignmentUpdatedOn",
+    "eligibilityStartDateTime", "eligibilityEndDateTime", "activationExpiresOn",
+})
+
+_TRI_TRUE = {"true", "yes"}
+_TRI_FALSE = {"false", "no"}
+
+
+def _tri(value: Any) -> Any:
+    """One vocabulary for every yes/no column: Yes / No / Not measured / n/a / blank.
+
+    ``unknown`` becomes "Not measured" rather than staying a lowercase word that reads like a
+    property of the account. On this data it is the value of `principalAccountEnabled` for most
+    rows, and "we could not check whether this person still works here" is the single most
+    important caveat in the file."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    text = str(value).strip().lower()
+    if text in _TRI_TRUE:
+        return "Yes"
+    if text in _TRI_FALSE:
+        return "No"
+    if text == "unknown":
+        return "Not measured"
+    if text in {"notapplicable", "n/a", "na"}:
+        return "n/a"
+    return value
+
+
+def _scope_label(row: dict[str, Any]) -> str:
+    """A readable scope.
+
+    The collectors set ``scopeDisplayName`` to the ARM id itself for subscription- and
+    management-group-scoped rows, which produced two 60-wide columns of the same
+    ``/subscriptions/…`` string side by side. Falls back to the id, so nothing is ever lost."""
+    name = str(row.get("scopeDisplayName") or "")
+    scope = str(row.get("scope") or "")
+    if name and name != scope:
+        return name
+    parts = [p for p in (row.get("subscriptionName"), row.get("resourceGroup"),
+                         row.get("resourceName")) if p]
+    return " / ".join(str(p) for p in parts) or scope
+
+
 # A friendlier subset/order of the schema columns for the human-readable access lenses. The
 # COMPLETE record is a sheet of its own ("Access — all columns"), so nothing is only available
 # outside the workbook.
@@ -48,6 +125,8 @@ def to_json(rows: list[dict[str, Any]], columns: tuple[str, ...] | None = None) 
 # with nothing to tell them apart — anyone filtering or pivoting that sheet counted a control as
 # a grant. `principalExists` is here for the same reason: 100 rows on that tenant point at
 # principals that no longer exist, and without the column they read as live access.
+# `assignmentCreatedOn` is here because "how long has this person held Owner?" is a review
+# question, and it used to be answerable only by pivoting to the 71-column raw sheet.
 _ACCESS_HEADERS: tuple[str, ...] = (
     "effect",
     "effectivePrincipalName",
@@ -67,6 +146,7 @@ _ACCESS_HEADERS: tuple[str, ...] = (
     "subscriptionId",
     "resourceGroup",
     "assignmentState",
+    "assignmentCreatedOn",
     "principalDisplayName",
     "principalId",
     "condition",
@@ -76,25 +156,22 @@ _ACCESS_HEADERS: tuple[str, ...] = (
     "roleDefinitionId",
 )
 
-
-def _safe_sheet_title(title: str) -> str:
-    """Excel sheet titles: ≤31 chars, none of ``[]:*?/\\``."""
-    for ch in "[]:*?/\\":
-        title = title.replace(ch, " ")
-    return title.strip()[:31] or "Sheet"
+#: Applied to every lens sheet and to the raw-column sheet.
+_ACCESS_HIGHLIGHT = {"effect": "severity", "roleIsPrivileged": "severity"}
 
 
-def _coerce(value: Any) -> Any:
-    if isinstance(value, bool):
-        return "Yes" if value else ""
-    if value is None:
-        return ""
-    if isinstance(value, (int, float, str)):
-        # Apply the same formula-injection neutralization as the CSV path. Excel
-        # interprets `=...` / `+...` / `-...` / `@...` cells as formulas even in
-        # an .xlsx workbook.
-        return _csv_safe(value)
-    return _csv_safe(str(value))
+def _access_row(row: dict[str, Any], headers: tuple[str, ...] | list[str]) -> list[Any]:
+    """One spreadsheet row: the schema record projected, with the yes/no columns normalised."""
+    out: list[Any] = []
+    for h in headers:
+        value = row.get(h, "")
+        if h == "scopeDisplayName":
+            value = _scope_label(row)
+        elif h in _TRI_COLUMNS:
+            value = _tri(value)
+        out.append(value)
+    return out
+
 
 
 def to_workbook(
@@ -127,48 +204,35 @@ def to_workbook(
     ``rows`` is the (optionally filtered) master row set. The optional payloads are passed in
     rather than computed here so this stays a pure formatter.
     """
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.utils import get_column_letter
+    from openpyxl.styles import Font
 
-    wb = Workbook()
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="0F6CBD")
+    wb = WorkbookBuilder()
+    access_dates = {h for h in _ACCESS_HEADERS if h in _DATE_COLUMNS}
 
-    def _sheet(title: str, headers: list[str], data: list[list[Any]]) -> None:
-        ws = wb.create_sheet(_safe_sheet_title(title))
-        ws.append(headers)
-        for c in range(1, len(headers) + 1):
-            cell = ws.cell(row=1, column=c)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(vertical="center")
-        for r in data:
-            ws.append([_coerce(v) for v in r])
-        # Freeze the header + size columns to their content (bounded).
-        ws.freeze_panes = "A2"
-        for ci, h in enumerate(headers, start=1):
-            width = len(str(h))
-            for r in data[:200]:
-                if ci - 1 < len(r):
-                    width = max(width, len(str(_coerce(r[ci - 1]))))
-            ws.column_dimensions[get_column_letter(ci)].width = min(60, max(10, width + 2))
-        if data:
-            ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(data) + 1}"
+    def _sheet(title: str, headers: list[str], data: list[list[Any]], **kw: Any) -> Any:
+        return wb.sheet(title, headers, data, **kw)
 
     def _rows_for(predicate) -> list[list[Any]]:
-        return [[r.get(h, "") for h in _ACCESS_HEADERS] for r in rows if predicate(r)]
+        return [_access_row(r, _ACCESS_HEADERS) for r in rows if predicate(r)]
 
     def _blind_sheet(title: str, reason: str) -> None:
         """A sheet for something that could NOT be measured.
 
         Deliberately not an empty grid. "Shadow Access" with no rows reads as "no shadow access",
         which is the opposite of "the sweep never ran"."""
-        _sheet(title, ["Status", "Why"], [["NOT MEASURED", reason]])
+        wb.blind_sheet(title, reason)
 
     # 1. Summary — KPIs + generation metadata.
+    wb.section("Overview", SECTION_COLOURS["Overview"])
     kpis = overview.get("kpis", {})
-    summary: list[list[Any]] = [["Metric", "Value"]]
+    collectors = overview.get("collectors", []) or []
+    # A collector that never ran cannot produce a zero. `PIM eligible: 0` next to a skipped PIM
+    # collector is the single most misleading cell this workbook can print.
+    blocked = {
+        str(c.get("collector", "")): str(c.get("message", "") or "")
+        for c in collectors if str(c.get("status", "")) not in ("Succeeded", "")
+    }
+    pim_blocked = next((why for name, why in blocked.items() if "pim" in name.lower()), "")
     label_map = [
         ("Total grants", "total_assignments"),
         ("Unique principals", "unique_principals"),
@@ -181,83 +245,147 @@ def to_workbook(
         ("Scopes", "scopes"),
         ("Subscriptions", "subscriptions"),
     ]
-    ws0 = wb.active
-    ws0.title = "Summary"
+    ws0 = wb.first_sheet("Summary")
     ws0.append(["RBAC — Access Review export"])
     ws0.cell(row=1, column=1).font = Font(bold=True, size=14)
-    ws0.append(["Generated", overview.get("generated_at", "")])
+    generated = as_datetime(overview.get("generated_at")) or overview.get("generated_at", "")
+    ws0.append(["Generated (UTC)", generated])
+    if isinstance(generated, _dt.datetime):
+        ws0.cell(row=ws0.max_row, column=2).number_format = DATETIME_FMT
     ws0.append(["Tenant", overview.get("tenant_id", "")])
     ws0.append(["Demo dataset", "Yes" if overview.get("demo") else "No"])
+    if blocked:
+        ws0.append(["COVERAGE", f"{len(blocked)} collector run(s) did not succeed — see "
+                                "'Coverage & blind spots'. Counts below are not complete."])
     ws0.append([])
     ws0.append(["Metric", "Value"])
     hdr_row = ws0.max_row
     for c in range(1, 3):
-        ws0.cell(row=hdr_row, column=c).font = header_font
-        ws0.cell(row=hdr_row, column=c).fill = header_fill
+        ws0.cell(row=hdr_row, column=c).font = wb._header_font
+        ws0.cell(row=hdr_row, column=c).fill = wb._header_fill
     for label, key in label_map:
-        ws0.append([label, kpis.get(key, 0)])
+        value = kpis.get(key, 0)
+        if label == "PIM eligible" and pim_blocked:
+            # NOT a zero. Written as text so nobody can sum or chart it as one.
+            value = f"NOT MEASURED — {pim_blocked}"
+        ws0.append([label, value])
     ws0.column_dimensions["A"].width = 26
-    ws0.column_dimensions["B"].width = 40
+    ws0.column_dimensions["B"].width = 60
 
-    # 2–7. Access lenses.
-    _sheet("Effective Access", list(_ACCESS_HEADERS), _rows_for(lambda r: True))
+    # 2. Coverage & blind spots — deliberately before any sheet a reader might mistake for a
+    # complete answer. Where PIM is unlicensed a large share of collector runs are skipped, and
+    # a workbook that reports the result without saying so misrepresents itself.
+    rollup: dict[tuple[str, str], dict[str, Any]] = {}
+    for c in collectors:
+        key = (str(c.get("collector", "")), str(c.get("status", "")))
+        entry = rollup.setdefault(key, {"scopes": 0, "rows": 0, "message": ""})
+        entry["scopes"] += 1
+        entry["rows"] += int(c.get("rowsAdded", 0) or 0)
+        if not entry["message"] and c.get("message"):
+            entry["message"] = str(c.get("message"))
+    _sheet(
+        "Coverage & blind spots",
+        ["Collector", "Status", "Scopes", "Rows", "Why"],
+        # Anything that did not succeed sorts first: it is the reason to read this sheet.
+        [[name, status, v["scopes"], v["rows"], v["message"]]
+         for (name, status), v in sorted(
+             rollup.items(), key=lambda kv: (kv[0][1] == "Succeeded", kv[0][0]))],
+        note="A skipped or partial collector means the sheets derived from it are incomplete. "
+             "'No findings' and 'we could not look' are opposite facts.",
+        highlight={"Status": "severity"},
+    )
+
+    # 3–8. Access lenses.
+    wb.section("Access", SECTION_COLOURS["Access"])
+    _sheet("Effective Access", list(_ACCESS_HEADERS), _rows_for(lambda r: True),
+           dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
     # The complete record, every schema column. The lenses above are for reading; this is for
     # anyone who needs the field the lens left out.
     _sheet(
         "Access - all columns",
         list(schema.COLUMNS),
-        [[r.get(h, "") for h in schema.COLUMNS] for r in rows],
+        [_access_row(r, schema.COLUMNS) for r in rows],
+        dates={h for h in schema.COLUMNS if h in _DATE_COLUMNS},
+        highlight=_ACCESS_HIGHLIGHT,
+        note="Every schema column. A blank PIM column here means PIM was not readable, not "
+             "that the assignment is unmanaged — check 'Coverage & blind spots'.",
     )
-    _sheet("Privileged", list(_ACCESS_HEADERS), _rows_for(lambda r: bool(r.get("roleIsPrivileged"))))
-    _sheet("Group-Derived", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("accessPath") == schema.PATH_GROUP))
-    _sheet("SP Owners", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("accessPath") == schema.PATH_OWNER))
-    _sheet("Entra Roles", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("surface") == schema.SURFACE_ENTRA))
+    _sheet("Privileged", list(_ACCESS_HEADERS), _rows_for(lambda r: bool(r.get("roleIsPrivileged"))),
+           dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
+    _sheet("Group-Derived", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("accessPath") == schema.PATH_GROUP),
+           dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
+    _sheet("SP Owners", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("accessPath") == schema.PATH_OWNER),
+           dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
+    _sheet("Entra Roles", list(_ACCESS_HEADERS), _rows_for(lambda r: r.get("surface") == schema.SURFACE_ENTRA),
+           dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
     kv_rows = _rows_for(lambda r: r.get("surface") == schema.SURFACE_KEY_VAULT)
     if kv_rows:
-        _sheet("Key Vault", list(_ACCESS_HEADERS), kv_rows)
+        _sheet("Key Vault", list(_ACCESS_HEADERS), kv_rows,
+               dates=access_dates, highlight=_ACCESS_HIGHLIGHT)
 
-    # 8. Scopes freshness.
+    # 9. Scopes freshness.
+    wb.section("Overview", SECTION_COLOURS["Overview"])
     scope_headers = ["displayName", "scopeType", "status", "row_count", "collectors_attention", "generated_at", "demo"]
     _sheet(
         "Scopes",
         ["Scope", "Type", "Status", "Grants", "Attention", "Generated", "Demo"],
         [[s.get(h, "") for h in scope_headers] for s in overview.get("scopes", [])],
+        dates={"Generated"}, highlight={"Status": "severity"},
     )
 
-    # 9. Role definitions (directory reference).
+    # 10. Role definitions (directory reference).
+    wb.section("Directory", SECTION_COLOURS["Directory"])
     rd = directory.get("role_defs", []) or []
     if rd:
-        rd_headers = ["roleName", "roleCategory", "roleIsPrivileged", "roleHasDataActions", "actionsCount", "dataActionsCount", "description"]
-        _sheet("Role Definitions", ["Role", "Category", "Privileged", "Data actions", "Actions", "Data actions #", "Description"],
-               [[r.get(h, "") for h in rd_headers] for r in rd])
+        # `actionsCount`/`dataActionsCount` are keys only the demo fixture writes; the real
+        # index carries the permission LISTS. Reading the counts exported blank on every row.
+        def _count(rdef: dict[str, Any], list_key: str, count_key: str) -> Any:
+            if isinstance(rdef.get(list_key), (list, tuple)):
+                return len(rdef[list_key])
+            return rdef.get(count_key, "")
 
-    # 10. Principal directory (the resolved GUID → name map).
+        _sheet("Role Definitions",
+               ["Role", "Category", "Privileged", "Data actions", "Actions #", "Data actions #",
+                "Description"],
+               [[r.get("roleName", ""), r.get("roleCategory", ""),
+                 _tri(r.get("roleIsPrivileged")), _tri(r.get("roleHasDataActions")),
+                 _count(r, "actions", "actionsCount"),
+                 _count(r, "dataActions", "dataActionsCount"),
+                 r.get("description", "")] for r in rd],
+               highlight={"Privileged": "severity"})
+
+    # 11. Principal directory (the resolved GUID → name map).
     pr = directory.get("principals", []) or []
     if pr:
         pr_headers = ["displayName", "principalType", "userPrincipalName", "appId", "principalId", "source"]
         _sheet("Principals", ["Name", "Type", "UPN", "App ID", "Object ID", "Source"],
                [[p.get(h, "") for h in pr_headers] for p in pr])
 
-    # 11. Insights — every pivot flattened.
+    # 12. Insights — every pivot flattened.
     insight_data: list[list[Any]] = []
     for key, items in pivots.items():
         title = pivot_labels.get(key, key)
         for it in items:
             insight_data.append([title, it.get("label", ""), it.get("count", 0)])
-    _sheet("Insights", ["Pivot", "Label", "Count"], insight_data)
+    _sheet("Insights", ["Pivot", "Label", "Count"], insight_data, highlight={"Count": "bar"})
 
-    # 12. Diagnostics — collector statuses + any errors.
+    # 13. Diagnostics — collector statuses + any errors, one row per scope.
+    wb.section("Overview", SECTION_COLOURS["Overview"])
     diag_headers = ["collector", "scopeLabel", "status", "rowsAdded", "message"]
     _sheet(
         "Diagnostics",
         ["Collector", "Scope", "Status", "Rows", "Message"],
-        [[c.get(h, "") for h in diag_headers] for c in overview.get("collectors", [])],
+        [[c.get(h, "") for h in diag_headers] for c in collectors],
+        note="The per-scope detail behind 'Coverage & blind spots'.",
+        highlight={"Status": "severity"},
     )
+
 
     # ---- 13+. The analysis. Everything below is a judgment the reader cannot reconstruct
     # from a list of role assignments, which is exactly why leaving it out made the workbook a
     # data dump rather than a review.
     if score is not None:
+        wb.section("Posture", SECTION_COLOURS["Posture"])
         pillar_rows: list[list[Any]] = [[
             "OVERALL", score.get("grade", ""), score.get("score", ""),
             f"{round((score.get('coverage') or 0) * 100)}% of the weighted checks could be measured",
@@ -273,9 +401,11 @@ def to_workbook(
                 p.get("findings", 0),
                 f"{p.get('signals_measured', 0)}/{p.get('signals', 0)} checks measured",
             ])
-        _sheet("Posture Score", ["Pillar", "State", "Score", "Notes", "Findings", "Coverage"], pillar_rows)
+        _sheet("Posture Score", ["Pillar", "State", "Score", "Notes", "Findings", "Coverage"],
+               pillar_rows, highlight={"Score": "bar", "State": "severity"})
 
     if findings is not None:
+        wb.section("Findings", SECTION_COLOURS["Findings"])
         items = findings.get("findings") or []
         _sheet(
             "Findings",
@@ -287,6 +417,7 @@ def to_workbook(
                 f.get("detail", ""), f.get("count", 0), f.get("state", ""),
                 f.get("remediation", ""), ", ".join(f.get("frameworks") or []), f.get("id", ""),
             ] for f in items],
+            highlight={"Severity": "severity"},
         )
         # The checks that could NOT run, as their own sheet. Folding them into the findings list
         # would let "we could not look" disappear into "nothing found".
@@ -295,24 +426,32 @@ def to_workbook(
             "Findings - not measured",
             ["Signal", "Title", "Pillar", "Why it could not be checked"],
             [[u.get("signal_id", ""), u.get("title", ""), u.get("pillar", ""), u.get("reason", "")]
-             for u in unmeasured],
+             for u in unmeasured]
+            or [["", "Every registered check ran.", "", "Nothing was withheld."]],
+            note="A check that could not run is not a pass.",
         )
 
     if scanners is not None:
         _sheet(
             "Scanners",
-            ["Scanner", "Cadence", "Severity floor", "Blocked", "Total", "New", "Resolved",
-             "Persisting", "Last run", "Due"],
+            ["Scanner", "Cadence", "Severity floor", "Can run", "Why it cannot run", "Total",
+             "New", "Resolved", "Persisting", "Last run", "Due"],
             [[
                 s.get("name", ""), s.get("cadence", ""), s.get("severity_floor", ""),
-                "; ".join(s.get("blocked") or []) or "no",
+                "No" if s.get("blocked") else "Yes", "; ".join(s.get("blocked") or []),
                 *( [ (s.get("counts") or {}).get(k, "") for k in ("total", "new", "resolved", "persisting") ]
                    if s.get("counts") else ["not measured"] * 4 ),
-                s.get("last_run_at", ""), "yes" if s.get("due") else "no",
+                s.get("last_run_at", ""),
+                _tri(s.get("due")),
             ] for s in scanners],
+            dates={"Last run"},
+            note="A blank 'Last run' means this scanner has never run for this tenant, which is "
+                 "not the same as running and finding nothing.",
+            highlight={"Severity floor": "severity"},
         )
 
     if rightsizing is not None:
+        wb.section("Right-sizing", SECTION_COLOURS["Right-sizing"])
         if not rightsizing.get("measured"):
             _blind_sheet(
                 "Right-sizing",
@@ -322,7 +461,12 @@ def to_workbook(
             _sheet(
                 "Right-sizing",
                 ["Principal", "Type", "Scope", "Current roles", "Granted actions", "Used actions",
-                 "Unused %", "Confidence", "Recommendation", "Note", "Window (days)"],
+                 "Unused %", "Confidence", "Recommendation", "Note", "Window (days)",
+                 "Window clamped"],
+                # `window` is a dict. It used to reach the cell through str(), printing the
+                # Python literal {'days': 60, 'clamped': True}. 'clamped' is load-bearing: it
+                # means the usage evidence is shorter than intended, so a "100% unused" verdict
+                # rests on less than it appears to.
                 [[
                     r.get("principalName", "") or r.get("principalId", ""), r.get("principalType", ""),
                     r.get("scopeName", "") or r.get("scope", ""),
@@ -330,11 +474,14 @@ def to_workbook(
                     r.get("grantedActionCount", 0), r.get("usedActionCount", 0),
                     round((r.get("unusedRatio") or 0) * 100),
                     r.get("confidence", ""), r.get("recommendation", ""), r.get("note", ""),
-                    r.get("window", ""),
+                    (r.get("window") or {}).get("days", "") if isinstance(r.get("window"), dict) else r.get("window", ""),
+                    _tri((r.get("window") or {}).get("clamped")) if isinstance(r.get("window"), dict) else "",
                 ] for r in (rightsizing.get("recommendations") or [])],
+                highlight={"Unused %": "bar", "Confidence": "severity"},
             )
 
     if bypass is not None:
+        wb.section("Shadow access", SECTION_COLOURS["Shadow access"])
         if bypass.get("never_loaded"):
             _blind_sheet(
                 "Shadow Access",
@@ -351,14 +498,16 @@ def to_workbook(
                     b.get("severity", ""), b.get("family", ""), b.get("resourceName", ""),
                     b.get("resourceType", ""), b.get("subscriptionId", ""), b.get("resourceGroup", ""),
                     b.get("bypassKind", ""), b.get("title", ""),
-                    "yes" if b.get("enabled") else "no",
-                    "yes" if b.get("rbacOnlyPossible") else "no",
+                    _tri(b.get("enabled")),
+                    _tri(b.get("rbacOnlyPossible")),
                     b.get("reachableCount", "") if b.get("reachabilityAvailable") else "not determined",
                     b.get("detail", ""), b.get("remediation", ""),
                 ] for b in (bypass.get("rows") or [])],
+                highlight={"Severity": "severity", "Who can reach it": "bar"},
             )
 
     if escalation is not None:
+        wb.section("Escalation", SECTION_COLOURS["Escalation"])
         paths = escalation.get("paths") or []
         _sheet(
             "Escalation Paths",
@@ -374,14 +523,17 @@ def to_workbook(
                 ),
                 ", ".join(dict.fromkeys(str(h.get("primitive", "")) for h in (p.get("hops") or []))),
             ] for p in paths],
+            highlight={"Min confidence": "severity"},
         )
         # What the map could not see travels WITH it. A path list without its blind spots is an
         # invitation to read "no path" as "no path exists".
         limits = escalation.get("limitations") or []
         if limits:
-            _sheet("Escalation - blind spots", ["What this map cannot see"], [[x] for x in limits])
+            _sheet("Escalation - blind spots", ["Limitation", "What this map cannot see"],
+                   [[f"#{i}", x] for i, x in enumerate(limits, start=1)])
 
     if dataplane is not None:
+        wb.section("Shadow access", SECTION_COLOURS["Shadow access"])
         _sheet(
             "Data-plane Coverage",
             ["Service", "Azure RBAC is the whole picture", "Why not", "Other doors"],
@@ -394,6 +546,7 @@ def to_workbook(
         )
 
     if leavers is not None:
+        wb.section("Leavers", SECTION_COLOURS["Leavers"])
         # Disabled accounts that still hold access. A blind sheet when account state was never
         # collected — an empty "Disabled Access" grid is the most reassuring page in the whole
         # workbook and must never be produced by not having looked.
@@ -405,12 +558,14 @@ def to_workbook(
             _sheet(
                 "Disabled Access",
                 [label for _, label in IDENTITY_HEADERS],
-                [[row.get(k, "") for k in keys] for row in flat],
+                [[_tri(row.get(k, "")) if k in _IDENTITY_TRI else row.get(k, "") for k in keys]
+                 for row in flat],
+                dates=_IDENTITY_DATE_LABELS,
+                highlight={"Exposure": "severity"},
             )
 
-    bio = io.BytesIO()
-    wb.save(bio)
-    return bio.getvalue()
+    wb.index_sheet(colour=SECTION_COLOURS["Overview"])
+    return wb.to_bytes()
 
 
 # ------------------------------------------------------- disabled-but-entitled export
@@ -453,6 +608,17 @@ IDENTITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("scopesText", "Scopes"),
     ("principalId", "Object id"),
 )
+
+#: Identity columns holding a timestamp, keyed by the LABEL the sheet shows.
+_IDENTITY_DATE_LABELS: frozenset[str] = frozenset({
+    "Deleted at", "Last sign-in", "Last interactive sign-in", "Last non-interactive sign-in",
+    "Last successful sign-in", "Owned app last sign-in", "Last used (Activity Log)",
+    "Oldest grant", "Newest grant",
+})
+#: Identity fields carrying a yes/no fact, keyed by the SOURCE key.
+_IDENTITY_TRI: frozenset[str] = frozenset({
+    "accountEnabled", "onPremSynced", "softDeleted",
+})
 
 
 def flatten_identities(identities: list[dict[str, Any]], tiers: dict[str, Any]) -> list[dict[str, Any]]:
@@ -514,33 +680,10 @@ def to_disabled_workbook(
     the data are not IN the file, the file misrepresents itself the moment it is downloaded —
     so the denominator, the collection date and everything this report cannot see travel with
     the rows rather than beside them."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.utils import get_column_letter
+    wb = WorkbookBuilder()
 
-    wb = Workbook()
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="0F6CBD")
-
-    def _sheet(title: str, headers: list[str], data: list[list[Any]]) -> None:
-        ws = wb.create_sheet(_safe_sheet_title(title))
-        ws.append(headers)
-        for c in range(1, len(headers) + 1):
-            cell = ws.cell(row=1, column=c)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(vertical="center")
-        for r in data:
-            ws.append([_coerce(v) for v in r])
-        ws.freeze_panes = "A2"
-        for ci, h in enumerate(headers, start=1):
-            width = len(str(h))
-            for r in data[:200]:
-                if ci - 1 < len(r):
-                    width = max(width, len(str(_coerce(r[ci - 1]))))
-            ws.column_dimensions[get_column_letter(ci)].width = min(60, max(10, width + 2))
-        if data:
-            ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(data) + 1}"
+    def _sheet(title: str, headers: list[str], data: list[list[Any]], **kw: Any) -> None:
+        wb.sheet(title, headers, data, **kw)
 
     tiers = report.get("tiers") or {}
     identities = report.get("identities") or []
@@ -550,10 +693,11 @@ def to_disabled_workbook(
     measured = bool(report.get("measured"))
 
     # 1. Summary — the headline, its denominator, and what the tiers actually mean.
+    wb.section("Overview", SECTION_COLOURS["Overview"])
     summary: list[list[Any]] = [
         ["Report", "Disabled accounts that still hold access"],
         ["Tenant", tenant_id],
-        ["Generated (UTC)", report.get("generated_at", "")],
+        ["Generated (UTC)", as_datetime(report.get("generated_at")) or report.get("generated_at", "")],
         ["Account state collected", "yes" if measured else "NO — see Not measured"],
         ["", ""],
     ]
@@ -588,25 +732,33 @@ def to_disabled_workbook(
     _sheet("Summary", ["Field", "Value"], summary)
 
     # 2. Identities.
+    wb.section("Leavers", SECTION_COLOURS["Leavers"])
     flat = flatten_identities(identities, tiers)
     id_keys = [k for k, _ in IDENTITY_HEADERS]
     _sheet(
         "Identities",
         [label for _, label in IDENTITY_HEADERS],
-        [[row.get(k, "") for k in id_keys] for row in flat],
+        [[_tri(row.get(k, "")) if k in _IDENTITY_TRI else row.get(k, "") for k in id_keys]
+         for row in flat],
+        dates=_IDENTITY_DATE_LABELS,
+        highlight={"Exposure": "severity"},
     )
 
     # 3. Grants — the row-level record, in the same friendly column order the main access
     #    workbook uses so the two are comparable, plus the account-state columns.
+    wb.section("Access", SECTION_COLOURS["Access"])
     grant_headers = (*_ACCESS_HEADERS, "principalAccountEnabled", "principalOnPremSynced")
     _sheet(
         "Grants",
         list(grant_headers),
-        [[r.get(h, "") for h in grant_headers] for r in grants],
+        [_access_row(r, grant_headers) for r in grants],
+        dates={h for h in grant_headers if h in _DATE_COLUMNS},
+        highlight=_ACCESS_HIGHLIGHT,
     )
 
     # 4. Via groups — its own sheet because its remediation is the opposite of the others':
     #    remove the member, never the assignment.
+    wb.section("Leavers", SECTION_COLOURS["Leavers"])
     group_rows: list[list[Any]] = []
     for i in identities:
         for g in i.get("groupsGrantingAccess") or []:
@@ -638,7 +790,6 @@ def to_disabled_workbook(
          "App last sign-in", "Privileged grants"],
         owner_rows,
     )
-
     # 6. Resources — one row per (person, scope), keeping the ARM structure. The Identities
     #    sheet joins scopes into one cell, which is unusable the moment somebody holds access
     #    on forty of them; this is the sheet you filter and pivot.
@@ -669,13 +820,9 @@ def to_disabled_workbook(
         limits.append(["Limitation", text])
     if not limits:
         limits.append(["", "Nothing was withheld: every principal holding access was checked."])
+    wb.section("Overview", SECTION_COLOURS["Overview"])
     _sheet("Not measured", ["Scope", "What this report cannot tell you"], limits)
 
-    # openpyxl creates a default sheet; drop it so the workbook opens on Summary.
-    if "Sheet" in wb.sheetnames:
-        del wb["Sheet"]
-
-    bio = io.BytesIO()
-    wb.save(bio)
-    return bio.getvalue()
+    wb.index_sheet(position=2, colour=SECTION_COLOURS["Overview"])
+    return wb.to_bytes()
 

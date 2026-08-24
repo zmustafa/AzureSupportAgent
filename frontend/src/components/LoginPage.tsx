@@ -10,7 +10,13 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const { data: config } = useQuery({ queryKey: ["auth-config"], queryFn: api.authConfig });
+  const { data: config, isPending: configLoading, isError: configFailed, refetch } = useQuery({
+    queryKey: ["auth-config"],
+    queryFn: api.authConfig,
+    // A blip here used to strand the user on the wrong sign-in form, so it is worth retrying.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(4000, 500 * 2 ** attempt),
+  });
 
   // Surface SSO errors passed back via ?error=… on the login redirect.
   const ssoError = (() => {
@@ -45,7 +51,11 @@ export default function LoginPage() {
     window.location.href = `${apiBase}${path}`;
   };
 
-  const localEnabled = config?.local_login_enabled ?? true;
+  // NEVER inferred. `config?.local_login_enabled ?? true` is what put a local username/password
+  // box in front of tenants that had switched local login OFF: when /auth/config failed the
+  // fallback enabled the one credential form that could not work and hid the SSO button, so a
+  // backend blip looked like a misconfigured tenant. Unknown is its own state now.
+  const localEnabled = config?.local_login_enabled === true;
   const providers = config?.providers ?? [];
 
   return (
@@ -60,6 +70,32 @@ export default function LoginPage() {
         {(localError || error || ssoError) && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {localError || error || ssoError}
+          </div>
+        )}
+
+        {configLoading && (
+          <p className="py-6 text-center text-sm text-slate-500">Loading sign-in options…</p>
+        )}
+
+        {configFailed && (
+          <div className="flex flex-col gap-3">
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              Sign-in options could not be loaded, so none are shown. This is a problem reaching
+              the server, not with your account.
+            </div>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {config?.stale && (
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Showing the last known sign-in options — the server could not be fully reached.
           </div>
         )}
 
@@ -118,7 +154,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        {!localEnabled && providers.length === 0 && (
+        {config && !localEnabled && providers.length === 0 && (
           <p className="text-center text-sm text-slate-500">
             No sign-in methods are configured. Contact your administrator.
           </p>

@@ -2,6 +2,7 @@
  *  and the shared directory layer's state.
  */
 import { api, type IamOverview } from "../../api";
+import { useExportDownload } from "../ExportProgress";
 import { KpiTile, RefreshConsole, ScopeTable, StaleBadge, StatusPill, useIamConnectionId, type IamRefreshCtl } from "./IamShared";
 
 export function OverviewTab({
@@ -20,8 +21,10 @@ export function OverviewTab({
   // connection: on a tenant with 5,514 grants the button downloaded a different tenant's 83.
   // A wrong-tenant export is worse than a failed one — it looks like a successful review.
   const connectionId = useIamConnectionId();
+  const download = useExportDownload("IAM workbook");
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4">
+      {download.dialog}
       <div className="mb-3 flex items-center gap-2">
         {/* "Refresh all scopes" moved to the page header, next to the freshness badge, so it is
             reachable from every tab rather than this one. These two stay because they operate on
@@ -51,13 +54,15 @@ export function OverviewTab({
           </button>
         )}
         {data.demo && <span className="rounded bg-violet-100 px-2 py-0.5 text-xs text-violet-700">demo dataset</span>}
-        <a
-          href={api.iamWorkbookUrl({ connection_id: connectionId })}
-          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100"
+        <button
+          type="button"
+          onClick={() => download.start(api.iamWorkbookUrl({ connection_id: connectionId }), "iam-access-review.xlsx")}
+          disabled={download.phase !== "idle"}
+          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
           title="Download a comprehensive multi-sheet Excel workbook of every IAM view"
         >
           ⬇ Export to Excel
-        </a>
+        </button>
         <span className="ml-auto text-xs text-gray-500">
           {data.connection_configured ? "Azure connection configured" : "No Azure connection — use demo data"}
         </span>

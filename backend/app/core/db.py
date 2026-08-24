@@ -1,9 +1,11 @@
 """Async SQLAlchemy engine and session management."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -26,10 +28,59 @@ _connect_args = {"timeout": 30} if _is_sqlite else {}
 # round trip costs ~0 ms idle and **210 ms while one CPU-bound worker thread holds the GIL**, so
 # on SQLite the pre-ping doubles the round trips of every authenticated request precisely while
 # a heavy IAM analysis is running. Kept for Postgres, where it earns its cost.
+#
+# The pool is sized EXPLICITLY. Left at SQLAlchemy's defaults it was 5 + 10 overflow with a 30
+# second wait, which produced both failure modes at once on a small deployment: four background
+# workers exhausted the fifteen slots, every request then queued for thirty seconds before
+# failing, and four replicas together asked the server for sixty connections. SQLite ignores
+# pool sizing (it uses a different pool class), so these only apply to a real server.
+def pool_kwargs(is_sqlite: bool) -> dict[str, object]:
+    """Engine pool arguments for this backend. A pure function so it is testable without
+    building an engine or reloading this module."""
+    if is_sqlite:
+        return {}
+    return {
+        "pool_size": settings.db_pool_size,
+        "max_overflow": settings.db_max_overflow,
+        "pool_timeout": settings.db_pool_timeout,
+        "pool_recycle": settings.db_pool_recycle_s,
+    }
+
+
 engine = create_async_engine(
-    _db_url, echo=False, pool_pre_ping=not _is_sqlite, connect_args=_connect_args
+    _db_url, echo=False, pool_pre_ping=not _is_sqlite, connect_args=_connect_args,
+    **pool_kwargs(_is_sqlite),
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+#: Admission control for background loops. Created lazily because a semaphore binds to the
+#: running loop, and this module is imported long before one exists.
+_background_gate: asyncio.Semaphore | None = None
+
+
+def background_slots() -> asyncio.Semaphore:
+    global _background_gate
+    if _background_gate is None:
+        _background_gate = asyncio.Semaphore(max(1, settings.db_background_slots))
+    return _background_gate
+
+
+@asynccontextmanager
+async def background_session() -> AsyncGenerator[AsyncSession, None]:
+    """A database session for a background loop, behind an admission gate.
+
+    The gate is the point: background work and HTTP requests share one pool, and the workers
+    are in a loop while a person is not. Without a cap the loops win every race and the login
+    page is what fails."""
+    async with background_slots():
+        async with SessionLocal() as session:
+            yield session
+
+
+def reset_background_gate() -> None:
+    """Drop the semaphore so the next caller rebinds it. For tests and for a fresh loop."""
+    global _background_gate
+    _background_gate = None
 
 if _is_sqlite:
     @event.listens_for(engine.sync_engine, "connect")
@@ -159,16 +210,29 @@ _RUNTIME_INDEXES: list[tuple[str, str, str]] = [
 ]
 
 
+#: Arbitrary but STABLE key for the schema advisory lock. Every replica must pick the same
+#: number or the lock serialises nothing.
+_SCHEMA_LOCK_KEY = 8_274_119_004_512_337
+
+
 async def ensure_schema() -> None:
     """Create any missing tables and add late-added columns (idempotent).
 
     Works on both SQLite (local dev) and PostgreSQL (deployed): ``create_all`` makes any
     fully-missing tables with the complete current schema, then the late-added columns are
-    patched onto pre-existing tables (e.g. ones an older Alembic migration created)."""
+    patched onto pre-existing tables (e.g. ones an older Alembic migration created).
+
+    On PostgreSQL the whole thing runs under an advisory lock. Every replica executes this at
+    boot, and the statements below take ``AccessExclusiveLock``; two replicas starting together
+    deadlocked on it, the loser raised inside the lifespan, and the container exited and was
+    restarted into the same race. The lock makes one replica migrate while the others wait."""
     # Import models so they register on Base.metadata before create_all.
     import app.models  # noqa: F401
 
     async with engine.begin() as conn:
+        if not _is_sqlite:
+            # Session-scoped and re-entrant per connection; released when the block exits.
+            await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _SCHEMA_LOCK_KEY})
         await conn.run_sync(Base.metadata.create_all)
         if _is_sqlite:
             for table, columns in _RUNTIME_COLUMNS.items():

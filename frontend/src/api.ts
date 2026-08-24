@@ -80,6 +80,8 @@ export interface Me {
 export interface AuthConfig {
   local_login_enabled: boolean;
   providers: { id: string; type: string; label: string }[];
+  /** True when the provider list is the last known one, served because the store was unreadable. */
+  stale?: boolean;
 }
 
 export interface ActiveLlm {

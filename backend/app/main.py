@@ -137,10 +137,37 @@ async def _http_exception_handler(_request: Request, exc: HTTPException) -> JSON
 _warm_task = None
 
 
+async def _ensure_schema_resilient(attempts: int = 4) -> None:
+    """`ensure_schema` with backoff, and a last resort that does not kill the container."""
+    import asyncio
+
+    log = logging.getLogger("app.main")
+    for attempt in range(1, attempts + 1):
+        try:
+            await ensure_schema()
+            return
+        except Exception:  # noqa: BLE001
+            if attempt == attempts:
+                # Boot anyway. A replica that cannot migrate can still serve reads against a
+                # schema another replica just finished, and an exiting container serves nothing
+                # at all while it restart-loops.
+                log.error("Schema sync failed after %d attempts; continuing without it",
+                          attempts, exc_info=True)
+                return
+            delay = min(8.0, 0.5 * 2 ** (attempt - 1))
+            log.warning("Schema sync attempt %d/%d failed; retrying in %.1fs",
+                        attempt, attempts, delay, exc_info=True)
+            await asyncio.sleep(delay)
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    # Keep the local SQLite schema in sync (creates tables + late-added columns).
-    await ensure_schema()
+    # Keep the schema in sync (creates tables + late-added columns). Retried rather than
+    # allowed to kill the process: this is DDL every replica runs at boot, and losing a race
+    # with another replica used to raise straight out of the lifespan — "Application startup
+    # failed. Exiting." — which the platform answered by restarting into the same race. The
+    # loser of a deadlock has usually had its work done for it by the winner.
+    await _ensure_schema_resilient()
     # Bootstrap auth: seed system roles + the initial admin/admin account.
     from app.auth.service import seed_admin
     from app.core.db import SessionLocal

@@ -4,6 +4,7 @@ These power the login page. RBAC management lives in app.api.users (admin-only).
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -33,6 +34,7 @@ from app.models.auth import IdentityProvider, Session, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
+logger = logging.getLogger("app.api.auth")
 
 _OIDC_STATE_COOKIE = "azsupagent_oidc_state"
 _SAML_REQ_COOKIE = "azsupagent_saml_req"
@@ -81,24 +83,43 @@ def _client_ip(request: Request) -> str | None:
 
 
 # --------------------------------------------------------------------------- config
+#: Last successfully read provider list, so a database blip cannot blank the login page.
+#: Deliberately module-level and tiny: the alternative is a login screen that offers only the
+#: credential box a tenant has switched OFF, which is worse than a slightly stale button.
+_provider_cache: list[dict[str, Any]] | None = None
+
+
 @router.get("/config")
 async def auth_config(db: AsyncSession = Depends(get_db)):
-    """Non-sensitive info for the login page: local-login on/off + enabled SSO buttons."""
+    """Non-sensitive info for the login page: local-login on/off + enabled SSO buttons.
+
+    Never fails the whole response because of the database. `local_login_enabled` comes from
+    settings and always resolves; only the provider list needs a query, and when that query
+    cannot run the last known list is served with `stale=true` rather than an empty one. An
+    empty provider list on a tenant with local login disabled means nobody can sign in."""
+    global _provider_cache
+
     cfg = load_auth_settings()
-    providers = (
-        await db.execute(select(IdentityProvider).where(IdentityProvider.enabled.is_(True)))
-    ).scalars().all()
-    return {
-        "local_login_enabled": bool(cfg["local_login_enabled"]),
-        "providers": [
-            {
-                "id": p.id,
-                "type": p.type,
-                "label": p.button_label or p.name,
-            }
-            for p in providers
-        ],
-    }
+    local_enabled = bool(cfg["local_login_enabled"])
+    try:
+        rows = (
+            await db.execute(select(IdentityProvider).where(IdentityProvider.enabled.is_(True)))
+        ).scalars().all()
+        _provider_cache = [
+            {"id": p.id, "type": p.type, "label": p.button_label or p.name} for p in rows
+        ]
+        return {"local_login_enabled": local_enabled, "providers": _provider_cache, "stale": False}
+    except Exception:  # noqa: BLE001 - the login page must render even when the DB is down
+        logger.warning("auth/config could not read identity providers", exc_info=True)
+        if _provider_cache is not None:
+            return {"local_login_enabled": local_enabled, "providers": _provider_cache,
+                    "stale": True}
+        # Nothing cached and nothing readable. Say so explicitly: the client must be able to
+        # tell "no providers configured" from "we could not find out".
+        raise HTTPException(
+            status_code=503,
+            detail="Sign-in options are temporarily unavailable. Please retry shortly.",
+        ) from None
 
 
 # ---------------------------------------------------------------------------- me

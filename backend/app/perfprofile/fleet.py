@@ -379,9 +379,13 @@ class FleetWorker:
             self._wake.set()
 
     async def _loop(self, _index: int) -> None:
+        from app.core.loop_backoff import Backoff, is_pool_exhausted
+
+        backoff = Backoff()
         while True:
             try:
                 item_id = await self._claim_next()
+                backoff.reset()
                 if item_id:
                     await self._delay_start()
                     await self._run_item(item_id)
@@ -394,9 +398,16 @@ class FleetWorker:
                     pass
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - one transient DB error must not kill Fleet
-                log.exception("Performance Fleet worker loop failed; retrying")
-                await asyncio.sleep(1.0)
+            except Exception as exc:  # noqa: BLE001 - one transient DB error must not kill Fleet
+                starved = is_pool_exhausted(exc)
+                waited = backoff.delay(starved=starved)
+                log.warning(
+                    "Performance Fleet worker loop failed (%s); retrying in %.1fs",
+                    "no database connection available" if starved else type(exc).__name__,
+                    waited,
+                    exc_info=not starved,
+                )
+                await asyncio.sleep(waited)
 
     async def _delay_start(self) -> None:
         from app.core.app_settings import load_settings
@@ -414,11 +425,11 @@ class FleetWorker:
             self._last_start = time.monotonic()
 
     async def _claim_next(self) -> str | None:
-        from app.core.db import SessionLocal
+        from app.core.db import background_session
 
         assert self._claim_lock is not None
         async with self._claim_lock:
-            async with SessionLocal() as db:
+            async with background_session() as db:
                 item = (
                     await db.execute(
                         select(PerfProfileFleetItem)

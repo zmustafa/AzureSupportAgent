@@ -84,7 +84,7 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
           trend: dict[str, Any] | None = None) -> bytes:
     from openpyxl.styles import Font
 
-    from app.core.xlsx import WorkbookBuilder, coerce
+    from app.core.xlsx import WorkbookBuilder, as_datetime, coerce
 
     wb = WorkbookBuilder()
     summary = snapshot.get("summary") or {}
@@ -113,7 +113,8 @@ def build(snapshot: dict[str, Any], *, reference_doc: dict[str, Any] | None = No
     for label, value in [
         *unread_rows,
         ("Scope", f"{scope.get('scope_kind', '')}: {scope.get('scope_id', '')}"),
-        ("Generated at", snapshot.get("generated_at", "")),
+        ("Generated at (UTC)", as_datetime(snapshot.get("generated_at"))
+         or snapshot.get("generated_at", "")),
         ("Demo data", bool(snapshot.get("demo"))),
         ("Objectives agreed", bool(snapshot.get("targets_acknowledged"))),
         ("Objectives version", (reference_doc or {}).get("version", "")),
@@ -499,6 +500,7 @@ def _provenance_sheet(wb: Any, snapshot: dict[str, Any]) -> None:
          for name, p in (snapshot.get("provenance") or {}).items()],
         note="A section that could not be read says so here. 'No findings' and 'could not "
              "look' are opposite facts.",
+        dates={"Collected at"},
     )
 
 
@@ -554,6 +556,7 @@ def _trend_sheet(wb: Any, trend: dict[str, Any] | None) -> None:
         note=(trend.get("caveat") or
               "One row per analysis. Gaps are real: no row means no analysis was run, and "
               "nothing is interpolated across them."),
+        dates={"Analyzed at"},
     )
 
 

@@ -279,11 +279,6 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
             )}
           </>
         )}
-        <a href={api.entraWorkbookUrl(connectionId || "")}
-           className="ml-auto rounded border border-green-300 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
-           title="Every sheet including the guest inventory and partner rollup">
-          ⬇ Export to Excel
-        </a>
       </div>
 
       {view === "people" ? (

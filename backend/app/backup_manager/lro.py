@@ -83,12 +83,12 @@ class OperationPoller:
 
     async def tick(self) -> int:
         """Advance every due ``applying`` change once. Returns how many rows were polled."""
-        from app.core.db import SessionLocal
+        from app.core.db import background_session
         from app.models import BackupManagerChange
 
         self.ticks += 1
         now = service.now()
-        async with SessionLocal() as db:
+        async with background_session() as db:
             rows = list(
                 (
                     await db.execute(
