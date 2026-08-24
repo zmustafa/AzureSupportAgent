@@ -385,3 +385,26 @@ async def test_an_activated_pim_role_is_still_reported_as_held(monkeypatch):
     assert len(active_ga) == 1
     assert active_ga[0]["activated"] is True
     assert active_ga[0]["end"], "an activation must keep its expiry"
+
+
+@pytest.mark.asyncio
+async def test_every_directory_role_is_graded_for_the_reader(monkeypatch):
+    """The grid colours roles by tier, so every role it renders needs one — a missing entry
+    would silently paint a tenant-takeover role as ordinary."""
+    data = await _access(monkeypatch)
+    tiers = data["directory_role_tiers"]
+    assert set(tiers) == set(data["directory_roles"])
+    assert tiers["global administrator"] == "tier0"
+    assert tiers["sharepoint administrator"] == "tier1"
+    assert tiers["global reader"] == "tier2"
+
+
+@pytest.mark.asyncio
+async def test_the_grade_comes_from_the_shared_classifier(monkeypatch):
+    """Not a second list of role names in the dossier. If the collector's tiers move, this
+    moves with them; two independent definitions of "tenant takeover" would drift."""
+    from app.entra.collectors import roles as roles_mod
+
+    data = await _access(monkeypatch)
+    for name, tier in data["directory_role_tiers"].items():
+        assert tier == roles_mod.tier_of(name)

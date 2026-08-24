@@ -65,8 +65,45 @@ const GOV_META: Record<string, { label: string; cls: string }> = {
   unknown: { label: "Unknown", cls: "text-gray-400" },
 };
 
-function days(n: number | null | undefined): string {
-  return n == null ? "—" : n === 0 ? "today" : `${n}d`;
+/** Add months to a date, clamping the day so 31 Jan + 1 month is 28/29 Feb, not 3 March. */
+function addMonths(d: Date, months: number): Date {
+  const m = d.getUTCMonth() + months;
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(d.getUTCFullYear(), m, Math.min(d.getUTCDate(), lastDay),
+                           d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()));
+}
+
+/** Compact age, at most two units: "today", "5d", "2mo 26d", "1y 4mo".
+ *
+ *  `iso` makes the months a real CALENDAR count. Without it they are approximated at 30
+ *  days, which drifts badly at the top of the range — a year reads as "12mo 5d". `mo`
+ *  rather than `m` because `m` already means minutes elsewhere in the app.
+ */
+function age(n: number | null | undefined, iso?: string): string {
+  if (n == null) return "—";
+  if (n <= 0) return "today";
+  if (n < 31) return `${n}d`;
+
+  let months: number;
+  let rest: number;
+  const from = iso ? new Date(iso) : null;
+  if (from && !Number.isNaN(from.getTime())) {
+    const now = new Date();
+    months = (now.getUTCFullYear() - from.getUTCFullYear()) * 12
+      + (now.getUTCMonth() - from.getUTCMonth());
+    if (addMonths(from, months) > now) months -= 1;
+    rest = Math.max(0, Math.floor((now.getTime() - addMonths(from, months).getTime()) / 86_400_000));
+  } else {
+    months = Math.floor(n / 30);
+    rest = n - months * 30;
+  }
+
+  if (months >= 12) {
+    const years = Math.floor(months / 12);
+    const rem = months % 12;
+    return rem ? `${years}y ${rem}mo` : `${years}y`;
+  }
+  return rest ? `${months}mo ${rest}d` : `${months}mo`;
 }
 
 function Tile({ label, value, tone, title }: {
@@ -341,27 +378,27 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
                       <span className={`rounded px-1.5 py-0.5 ${m.cls}`} title={m.why}>{m.label}</span>
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-gray-700" title={r.invited_at}>
-                      {days(r.invited_days_ago)}
+                      {age(r.invited_days_ago, r.invited_at)}
                     </td>
                     {/* Interactive only, and only when it demonstrably succeeded. A refused
                         attempt shows as refused: "never" would erase that anyone tried. */}
                     <td className="px-2 py-1.5 tabular-nums text-gray-700"
                         title={r.signin_known ? (r.last_human_signin || "no successful interactive sign-in") : "not measured"}>
                       {!r.signin_known ? "—"
-                        : r.last_human_signin ? days(r.last_human_days_ago)
+                        : r.last_human_signin ? age(r.last_human_days_ago, r.last_human_signin)
                         : r.last_refused_signin
                           ? <span className="text-amber-700"
                                   title={`Last attempt refused — ${r.last_refused_signin}`}>
-                              refused {days(r.last_refused_days_ago)}
+                              refused {age(r.last_refused_days_ago, r.last_refused_signin)}
                             </span>
                           : "never"}
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-gray-500"
                         title="Last sign-in that actually succeeded, including non-interactive token refresh — live, but not necessarily a person.">
                       {!r.signin_known ? "—"
-                        : r.last_any_signin ? days(r.last_any_days_ago)
+                        : r.last_any_signin ? age(r.last_any_days_ago, r.last_any_signin)
                         : r.last_refused_signin
-                          ? <span className="text-amber-700">refused {days(r.last_refused_days_ago)}</span>
+                          ? <span className="text-amber-700">refused {age(r.last_refused_days_ago, r.last_refused_signin)}</span>
                           : "never"}
                     </td>
                     <td className="px-2 py-1.5">
@@ -426,7 +463,7 @@ export function EntraGuestsView({ connectionId }: { connectionId?: string | null
                     </td>
                     <td className="px-2 py-1.5 tabular-nums text-amber-700">{r.pending || ""}</td>
                     <td className="px-2 py-1.5 tabular-nums text-rose-700">{r.dormant || ""}</td>
-                    <td className="px-2 py-1.5 tabular-nums text-gray-700">{days(r.oldest_invite_days)}</td>
+                    <td className="px-2 py-1.5 tabular-nums text-gray-700">{age(r.oldest_invite_days)}</td>
                     <td className={`px-2 py-1.5 ${g.cls}`} title={r.governance_reason || ""}>{g.label}</td>
                   </tr>
                 );

@@ -168,6 +168,24 @@ const ATTRIBUTION_STYLE: Record<string, { label: string; cls: string; title: str
   },
 };
 
+/** Presentation only. The tier itself is graded server-side, by the same function the
+ *  collector and the scoring use — a second list of role names here would be a second
+ *  definition of "tenant takeover", and they would drift apart. */
+const ROLE_TIER_META: Record<string, { cls: string; mark: string; title: string }> = {
+  tier0: {
+    cls: "border-rose-300 bg-rose-50 text-rose-800", mark: "⚠ ",
+    title: "Tier 0 — a holder can take over the tenant.",
+  },
+  tier1: {
+    cls: "border-amber-300 bg-amber-50 text-amber-900", mark: "",
+    title: "Tier 1 — broad administrative power, or a documented path to tier 0.",
+  },
+  tier2: {
+    cls: "border-sky-200 bg-sky-50 text-sky-800", mark: "",
+    title: "Tier 2 — scoped or read-oriented administration.",
+  },
+};
+
 function AttributionChip({ value }: { value: string }) {
   const s = ATTRIBUTION_STYLE[value];
   if (!s) return null;
@@ -378,29 +396,53 @@ function SearchPane({ connectionId, onPick }: { connectionId: string; onPick: (i
 function ActivityPanel({
   principalId, capabilities, connectionId,
 }: { principalId: string; capabilities: string[]; connectionId: string }) {
-  const [days, setDays] = useState("3");
+  const [days, setDays] = useState("1");
   const [justification, setJustification] = useState("");
   const [includeAzure, setIncludeAzure] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.entraInvestigateActivity>> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [denied, setDenied] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
 
   const cheap = ["signins", "signins_noninteractive", "audit", "risk"].filter((t) => capabilities.includes(t));
   const canAzure = capabilities.includes("azure_activity");
 
+  const abortRef = useRef<AbortController | null>(null);
+
   async function run(withAzure: boolean) {
-    setBusy(true); setErr("");
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true); setErr(""); setCancelled(false);
     try {
       const types = [...cheap, ...(withAzure && canAzure ? ["azure_activity"] : [])];
       setResult(await api.entraInvestigateActivity(
-        principalId, { types, days: Number(days), justification }, connectionId || null));
+        principalId, { types, days: Number(days), justification }, connectionId || null,
+        ctrl.signal));
     } catch (e) {
+      if ((e as Error)?.name === "AbortError") { setCancelled(true); return; }
       const msg = formatError(e);
       setErr(msg);
       if (/403|permission/i.test(msg)) setDenied(true);
-    } finally { setBusy(false); }
+    } finally {
+      // Only the newest read owns the busy flag; an aborted one must not clear its successor's.
+      if (abortRef.current === ctrl) { abortRef.current = null; setBusy(false); }
+    }
   }
+
+  // Read on arrival, ONCE per principal. Keyed on the id rather than on mount so that changing
+  // the window or re-rendering does not re-fire it: this POST is an audited act against a named
+  // person, and it must not repeat itself just because the component drew again. The Azure
+  // Activity Log stays excluded — it is per-subscription and slow, and never implicit.
+  const autoReadFor = useRef("");
+  useEffect(() => {
+    if (!principalId || !cheap.length || denied) return;
+    if (autoReadFor.current === principalId) return;
+    autoReadFor.current = principalId;
+    void run(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [principalId, cheap.length, denied]);
 
   if (!cheap.length && !canAzure) return null;
 
@@ -421,11 +463,29 @@ function ActivityPanel({
         <button
           onClick={() => void run(includeAzure)}
           disabled={busy}
+          aria-busy={busy}
           data-testid="investigate-run-activity"
-          className="rounded bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+          // Dimmed less than a normally-disabled control: this one is working, not unavailable.
+          className="inline-flex items-center gap-1.5 rounded bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-70"
         >
+          {busy && (
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none"
+            />
+          )}
           {busy ? "Reading…" : "Read activity"}
         </button>
+        {busy && (
+          <button
+            onClick={() => abortRef.current?.abort()}
+            data-testid="investigate-cancel-activity"
+            title="Stops waiting for the result. The request already reached the server, so the read is recorded and may still finish there."
+            className="rounded border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+        )}
         <label className="flex items-center gap-1 text-[11px] text-gray-600" title="Per-subscription and slow — never read unless you ask.">
           <input type="checkbox" checked={includeAzure} disabled={!canAzure}
                  onChange={(e) => setIncludeAzure(e.target.checked)} />
@@ -436,6 +496,13 @@ function ActivityPanel({
         Reading a named identity's sign-in and audit history is behavioral data. Who asked, about
         whom, and why is recorded in the audit log.
       </p>
+
+      {cancelled && !busy && (
+        <div className="mb-2 rounded border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600">
+          Read cancelled. Only the wait was stopped — the request had already reached the server,
+          so it is recorded in the audit log either way.
+        </div>
+      )}
 
       {denied && (
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
@@ -750,19 +817,28 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                             // as a standing one told the reader this account permanently has
                             // Global Administrator when in fact it has to activate for it.
                             const eligibleOnly = (d.directory_roles_eligible_only ?? []).includes(r);
+                            const meta = ROLE_TIER_META[(d.directory_role_tiers ?? {})[r] ?? "tier2"]
+                              ?? ROLE_TIER_META.tier2;
                             return (
                               <span
                                 key={r}
-                                title={eligibleOnly
-                                  ? "PIM-eligible: must be activated, not held right now"
-                                  : "Held now"}
-                                className={`rounded border px-1.5 py-0.5 text-xs ${
-                                  eligibleOnly ? "border-amber-300 bg-amber-50 text-amber-800" : "bg-gray-50"}`}
+                                title={`${meta.title} ${eligibleOnly
+                                  ? "PIM-eligible: must be activated, not held right now."
+                                  : "Held now."}`}
+                                className={`rounded border px-1.5 py-0.5 text-xs ${meta.cls} ${
+                                  eligibleOnly ? "border-dashed" : ""}`}
                               >
-                                {r}{eligibleOnly ? " · eligible" : ""}
+                                {meta.mark}{r}{eligibleOnly ? " · eligible" : ""}
                               </span>
                             );
                           })}
+                        </div>
+                        {/* Colour alone cannot carry a risk claim — the tiers are named. */}
+                        <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-gray-500">
+                          <span><span className="text-rose-700">■</span> tier 0 · tenant takeover</span>
+                          <span><span className="text-amber-700">■</span> tier 1 · broad admin</span>
+                          <span><span className="text-sky-700">■</span> tier 2 · scoped</span>
+                          <span>dashed · eligible, not held</span>
                         </div>
                       </div>
                     )}
@@ -779,8 +855,14 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                             // name — not showing it sent the reader to another tool.
                             const via = String(r.sourceGroupName || r.membershipGroupName || "");
                             const path = String(r.accessPath ?? "");
+                            const priv = Boolean(r.roleIsPrivileged);
                             return [
-                              String(r.roleName ?? ""),
+                              priv
+                                ? <span className="font-medium text-rose-700"
+                                        title="Privileged — grants write, role-assignment or credential access.">
+                                    ⚠ {String(r.roleName ?? "")}
+                                  </span>
+                                : String(r.roleName ?? ""),
                               String(r.subscriptionName || r.scope || ""),
                               via ? `${path} · ${via}` : path,
                               r.eligible ? "eligible" : "standing",

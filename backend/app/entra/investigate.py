@@ -433,7 +433,7 @@ async def build_dossier(
     Returns ``(envelope, sections)``. Makes no Graph or ARM call — behavioral history is
     a separate, permissioned, explicitly-requested endpoint."""
     from app.entra import activations_ledger, model
-    from app.entra.collectors.roles import effective_role_names
+    from app.entra.collectors.roles import effective_role_names, tier_of
     from app.iam import diff as iam_diff
     from app.iam import store as iam_store
 
@@ -506,6 +506,13 @@ async def build_dossier(
             # role right now. These two split it without changing that contract.
             "directory_roles_active": sorted(active_role_names),
             "directory_roles_eligible_only": sorted(eligible_role_names - active_role_names),
+            # Graded here, by the same function the collector and the scoring use. A second
+            # list of role names in the UI would be a second definition of "tenant takeover",
+            # and the two would drift the first time Microsoft adds a role.
+            "directory_role_tiers": {
+                name: tier_of(name)
+                for name in effective_role_names(roles_data, subject_id)
+            },
             "directory_assignments": directory_assignments,
             "azure": (link.get("principals") or {}).get(subject_id),
             "azure_assignments": azure_matches[:500],

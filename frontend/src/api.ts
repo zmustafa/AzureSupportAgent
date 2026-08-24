@@ -6383,10 +6383,11 @@ export const api = {
     principalId: string,
     body: { types: string[]; days: number; justification?: string },
     connectionId?: string | null,
+    signal?: AbortSignal,
   ) =>
     http<InvestigateActivity>(
       `/entra/investigate/${encodeURIComponent(principalId)}/activity${entraQs(connectionId)}`,
-      { method: "POST", body: JSON.stringify(body) }),
+      { method: "POST", body: JSON.stringify(body), signal }),
   entraInvestigateMembers: (
     principalId: string,
     body: { expand: string[]; direction?: "down" | "up"; transitive?: boolean },
@@ -10880,6 +10881,8 @@ export type InvestigateAccess = {
   directory_roles: string[];
   directory_roles_active?: string[];
   directory_roles_eligible_only?: string[];
+  /** role name -> tier0 | tier1 | tier2, graded server-side. */
+  directory_role_tiers?: Record<string, string>;
   directory_assignments: Record<string, unknown>[];
   azure: Record<string, unknown> | null;
   azure_assignments: Record<string, unknown>[];
