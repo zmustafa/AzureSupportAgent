@@ -41,7 +41,9 @@ const KIND_GLYPH: Record<InvestigateKind, string> = {
  *  `memberships` is its mirror — the groups the subject belongs to — and leads `offboarding`,
  *  where the groups someone must be removed from are the whole job. */
 const LENSES = {
-  overview: { label: "Overview", order: ["activity", "access", "memberships", "members", "findings", "timeline", "activations"] },
+  // Overview leads with access: what a principal CAN reach is the durable fact, and it reads
+  // even when the activity read is still running or was never permitted.
+  overview: { label: "Overview", order: ["access", "activity", "memberships", "members", "findings", "timeline", "activations"] },
   offboarding: { label: "Offboarding", order: ["access", "memberships", "members", "activations", "timeline", "findings", "activity"] },
   recertification: { label: "Recertification", order: ["members", "memberships", "access", "activations", "findings", "timeline", "activity"] },
   workload: { label: "Workload identity", order: ["access", "memberships", "findings", "activity", "timeline", "activations"] },
@@ -92,7 +94,9 @@ function Prov({ p }: { p: InvestigateProvenance }) {
       {p.source}
       {p.collected_at ? ` · collected ${p.collected_at.slice(0, 16).replace("T", " ")}` : ""}
       {p.truncated ? " · truncated" : ""}
-      {p.reason ? ` — ${p.reason}` : ""}
+      {/* An unreadable section already states the reason in its own panel; repeating it here
+          printed the same sentence twice. */}
+      {p.reason && !p.unreadable ? ` — ${p.reason}` : ""}
     </div>
   );
 }
@@ -110,9 +114,26 @@ function Section({
   children?: React.ReactNode; empty?: string; footer?: React.ReactNode;
 }) {
   const unreadable = prov?.unreadable;
+  // A readable-but-empty section still has to SAY it is empty, but it does not need a whole
+  // card to do it: the provenance moves to the tooltip and the row collapses to one line.
+  // Unreadable keeps its full treatment — that one is a finding, not an absence.
+  if (!unreadable && count === 0) {
+    return (
+      <section data-testid={`investigate-section-${id}`}
+               className="scroll-mt-24 rounded-xl border bg-white px-4 py-2"
+               title={prov ? `${prov.source}${prov.collected_at ? ` \u00b7 collected ${prov.collected_at.slice(0, 16).replace("T", " ")}` : ""}` : undefined}>
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+          <span className="rounded bg-gray-100 px-1.5 text-[11px] tabular-nums text-gray-600">0</span>
+          <span className="text-xs text-gray-500">{empty ?? "Nothing recorded."}</span>
+        </div>
+        {footer}
+      </section>
+    );
+  }
   return (
     <section data-testid={`investigate-section-${id}`}
-             className="scroll-mt-14 rounded-xl border bg-white p-4">
+             className="scroll-mt-24 rounded-xl border bg-white p-4">
       <div className="mb-2 flex items-baseline gap-2">
         <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
         {count !== undefined && !unreadable && (
@@ -123,8 +144,6 @@ function Section({
         <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
           This could not be read, so nothing is claimed about it. {prov?.reason}
         </div>
-      ) : count === 0 ? (
-        <div className="text-xs text-gray-500">{empty ?? "Nothing recorded."}</div>
       ) : (
         children
       )}
@@ -448,7 +467,7 @@ function ActivityPanel({
 
   return (
     <section data-testid="investigate-section-activity"
-             className="scroll-mt-14 rounded-xl border bg-white p-4">
+             className="scroll-mt-24 rounded-xl border bg-white p-4">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold text-gray-900">Activity</h3>
         <Segmented value={days} onChange={setDays} options={WINDOWS} label="Window" />
@@ -513,7 +532,9 @@ function ActivityPanel({
       {err && !denied && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{err}</div>}
 
       {result && (
-        <div className="space-y-3">
+        // These sections are already inside Activity's card, so their own card chrome is a
+        // second border and a second padding box around the same content.
+        <div className="space-y-3 [&>section]:border-0 [&>section]:p-0">
           {result.notes?.length > 0 && (
             <ul className="list-disc space-y-0.5 rounded bg-gray-50 p-2 pl-6 text-[11px] text-gray-600">
               {result.notes.map((n, i) => <li key={i}>{n}</li>)}
@@ -626,6 +647,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
   const caps = dossier?.capabilities ?? [];
   const [lens, setLens] = useState<Lens | "">("");
   const [notesOpen, setNotesOpen] = useState(false);
+  const [idsOpen, setIdsOpen] = useState(false);
   const activeLens: Lens = (lens || (principal ? defaultLens(principal.kind) : "overview")) as Lens;
 
   const sectionOrder = useMemo(() => LENSES[activeLens].order, [activeLens]);
@@ -644,7 +666,10 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
 
   const jumpTargets = useMemo(() => sectionOrder.filter(isRendered), [sectionOrder, isRendered]);
 
-  const recent = useRecent(connectionId, 8);
+  // Three, not eight: once a principal is open these chips are a way BACK, not a way to
+  // choose, and the strip was costing a row of the viewport above the data. The full list
+  // still lives on the search pane.
+  const recent = useRecent(connectionId, 3);
   // The dossier request is what WRITES the audit row this strip reads, so the strip has to be
   // re-read after it lands — otherwise the person you are looking at never joins the list.
   useEffect(() => {
@@ -699,12 +724,18 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
 
       {dossier && principal && (
         <>
-          <CoverageBanner meta={dossier.meta} />
-
-          <header data-testid="investigate-header" className="rounded-xl border bg-white p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xl">{KIND_GLYPH[principal.kind]}</span>
-              <h2 className="text-base font-semibold text-gray-900">{principal.display_name}</h2>
+          {/* Identity, coverage and the lens controls share ONE sticky bar. Separately they
+              cost 185px above the first card — over half the viewport before any data — and
+              the identity scrolled away exactly when the reader needed it. The identifiers
+              are reference data (you copy them, you do not read them), so they fold. */}
+          <div
+            ref={lensBarRef}
+            data-testid="investigate-header"
+            className="sticky top-0 z-10 -mx-4 border-b bg-gray-50/95 px-4 py-1.5 backdrop-blur"
+          >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span>{KIND_GLYPH[principal.kind]}</span>
+              <h2 className="text-sm font-semibold text-gray-900">{principal.display_name}</h2>
               <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">
                 {KIND_LABEL[principal.kind]}
               </span>
@@ -713,29 +744,64 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
                   ⚠ disabled
                 </span>
               )}
-              <div className="ml-auto flex gap-2">
+              <CoverageBanner meta={dossier.meta} compact />
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={() => setIdsOpen((v) => !v)}
+                  aria-expanded={idsOpen}
+                  data-testid="investigate-ids-toggle"
+                  className="rounded border px-2 py-0.5 text-[11px] text-gray-600 hover:bg-white"
+                >
+                  {idsOpen ? "▾" : "▸"} ids
+                </button>
                 <a
                   href={api.entraInvestigateExportUrl(principal.id, connectionId || null)}
                   data-testid="investigate-export"
-                  className="rounded border px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                  className="rounded border bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-50"
                 >
                   ⬇ Export
                 </a>
               </div>
             </div>
-            <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 sm:grid-cols-4">
-              {principal.upn && <div><dt className="text-gray-400">UPN</dt><dd className="truncate">{principal.upn}</dd></div>}
-              {principal.app_id && <div><dt className="text-gray-400">App id</dt><dd className="truncate font-mono">{principal.app_id}</dd></div>}
-              <div><dt className="text-gray-400">Object id</dt><dd className="truncate font-mono">{principal.id}</dd></div>
-              <div><dt className="text-gray-400">Tenant</dt><dd className="truncate font-mono">{dossier.meta.tenant_id}</dd></div>
-              {String(principal.sub_kind?.assigned_to_resource || "") && (
-                <div className="col-span-2 sm:col-span-4">
-                  <dt className="text-gray-400">Owned by resource</dt>
-                  <dd className="truncate font-mono">{String(principal.sub_kind.assigned_to_resource)}</dd>
-                </div>
-              )}
-            </dl>
-          </header>
+
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Segmented
+                value={activeLens}
+                onChange={pickLens}
+                options={(Object.keys(LENSES) as Lens[]).map((id) => ({ value: id, label: LENSES[id].label }))}
+                label="Lens"
+              />
+              <nav aria-label="Jump to section" className="flex flex-wrap items-center gap-1">
+                {jumpTargets.map((name) => (
+                  <button
+                    key={name}
+                    data-testid={`investigate-jump-${name}`}
+                    onClick={() => document
+                      .querySelector(`[data-testid="investigate-section-${name}"]`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    className="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white hover:text-brand"
+                  >
+                    {SECTION_LABEL[name] ?? name}
+                  </button>
+                ))}
+              </nav>
+            </div>
+
+            {idsOpen && (
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5 text-[11px] text-gray-600 sm:grid-cols-4">
+                {principal.upn && <div><dt className="text-gray-400">UPN</dt><dd className="truncate">{principal.upn}</dd></div>}
+                {principal.app_id && <div><dt className="text-gray-400">App id</dt><dd className="truncate font-mono">{principal.app_id}</dd></div>}
+                <div><dt className="text-gray-400">Object id</dt><dd className="truncate font-mono">{principal.id}</dd></div>
+                <div><dt className="text-gray-400">Tenant</dt><dd className="truncate font-mono">{dossier.meta.tenant_id}</dd></div>
+                {String(principal.sub_kind?.assigned_to_resource || "") && (
+                  <div className="col-span-2 sm:col-span-4">
+                    <dt className="text-gray-400">Owned by resource</dt>
+                    <dd className="truncate font-mono">{String(principal.sub_kind.assigned_to_resource)}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+          </div>
 
           <Banners p={principal} />
 
@@ -763,36 +829,13 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
             </div>
           )}
 
-          {/* Sticky, because the sections below run to three viewport-heights. A control that
-              scrolls away strands the reader: they scroll down to read, then cannot get back to
-              switch lens without scrolling all the way up. The jump links are the same fix for
-              the sections themselves. */}
-          <div
-            ref={lensBarRef}
-            className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-gray-50/95 px-4 py-2 backdrop-blur"
-          >
-            <Segmented
-              value={activeLens}
-              onChange={pickLens}
-              options={(Object.keys(LENSES) as Lens[]).map((id) => ({ value: id, label: LENSES[id].label }))}
-              label="Lens"
-            />
-            <nav aria-label="Jump to section" className="flex flex-wrap items-center gap-1">
-              {jumpTargets.map((name) => (
-                <button
-                  key={name}
-                  data-testid={`investigate-jump-${name}`}
-                  onClick={() => document
-                    .querySelector(`[data-testid="investigate-section-${name}"]`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                  className="rounded px-1.5 py-0.5 text-[11px] text-gray-500 hover:bg-white hover:text-brand"
-                >
-                  {SECTION_LABEL[name] ?? name}
-                </button>
-              ))}
-            </nav>
-          </div>
+          {/* Two columns once there is room for them: the column is ~1220px inside a 1500px
+              window and the cards are narrow, so a single stack made the page three viewports
+              tall for no reason.
 
+              Multi-column rather than a 2-col grid: grid rows are as tall as their tallest card,
+              so a short card next to a tall one left the rest of that row empty. */}
+          <div className="xl:columns-2 xl:gap-3 [&>*]:mb-3 [&>*]:break-inside-avoid">
           {sectionOrder.map((name) => {
             if (name === "activity") {
               return (
@@ -1040,6 +1083,7 @@ export function EntraInvestigateView({ connectionId }: { connectionId: string })
               </Section>
             );
           })}
+          </div>
         </>
       )}
     </div>

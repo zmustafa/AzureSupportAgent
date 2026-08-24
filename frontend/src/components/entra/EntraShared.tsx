@@ -338,7 +338,7 @@ export function FreshnessBadge({
  * The coverage banner. Names the exact missing permission or license rather than leaving a
  * screen mysteriously empty.
  */
-export function CoverageBanner({ meta, onOpenSetup }: { meta?: EntraMeta; onOpenSetup?: () => void }) {
+export function CoverageBanner({ meta, onOpenSetup, compact }: { meta?: EntraMeta; onOpenSetup?: () => void; compact?: boolean }) {
   // Collapsed by default. This banner appears on every screen, and expanded it consumed a
   // third of the viewport above the content the operator actually came for — which trains
   // people to scroll past it, defeating the point of showing coverage at all.
@@ -377,7 +377,11 @@ export function CoverageBanner({ meta, onOpenSetup }: { meta?: EntraMeta; onOpen
     : "border-gray-200 bg-gray-50 text-gray-700";
 
   return (
-    <div className={`mx-4 mt-3 rounded-lg border px-3 py-2 text-[13px] ${tone}`}>
+    // `compact` drops the full-width band so this can sit inline in a header row. Same
+    // content and same expand behaviour — it only stops claiming a band of its own.
+    <div className={compact
+      ? `min-w-0 max-w-full rounded border px-2 py-0.5 text-[11px] ${tone}`
+      : `mx-4 mt-3 rounded-lg border px-3 py-2 text-[13px] ${tone}`}>
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 text-left"
