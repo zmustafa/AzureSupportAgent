@@ -20,7 +20,7 @@ beartype==0.22.9
 boto3==1.43.24
 botocore==1.43.24
 cachetools==7.1.7
-caio==0.9.25
+caio==0.12.2
 certifi==2026.5.20
 cffi==2.1.1
 charset-normalizer==3.4.9
