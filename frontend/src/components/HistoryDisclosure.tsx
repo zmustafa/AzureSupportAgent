@@ -13,6 +13,8 @@ export function HistoryDisclosure({
   headerClassName = "",
   bodyClassName = "",
   testId,
+  label = "history",
+  defaultExpanded = true,
 }: {
   storageKey: string;
   title: ReactNode;
@@ -24,8 +26,12 @@ export function HistoryDisclosure({
   headerClassName?: string;
   bodyClassName?: string;
   testId?: string;
+  /** Names the thing being collapsed in the tooltip. Defaults to "history" for the run-history
+   *  panels this started life as. */
+  label?: string;
+  defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = usePersistedState(`${storageKey}.expanded.v1`, true);
+  const [expanded, setExpanded] = usePersistedState(`${storageKey}.expanded.v1`, defaultExpanded);
   const bodyId = useId();
 
   return (
@@ -36,7 +42,7 @@ export function HistoryDisclosure({
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
           aria-controls={bodyId}
-          title={expanded ? "Collapse history" : "Expand history"}
+          title={expanded ? `Collapse ${label}` : `Expand ${label}`}
           className="flex min-w-0 items-center gap-2 text-left"
         >
           <ChevronRightIcon className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${expanded ? "rotate-90" : ""}`} />

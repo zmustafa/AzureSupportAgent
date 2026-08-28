@@ -17139,6 +17139,19 @@ export function resiliencyScopeQuery(
 
 export type ResiliencyEvidence = { kind: string; detail: string; source: string };
 
+/**
+ * A condition under which the verdict stops being true.
+ *
+ * Deliberately not an evidence item: evidence explains why the answer is what it is, a
+ * caveat explains when it is worthless. Only accidental deletion carries these.
+ */
+export type ResiliencyCaveat = {
+  kind: "blast_radius" | "narrow_window" | "not_self_service" | "mitigation";
+  severity: "critical" | "warning" | "info";
+  detail: string;
+  doc_url: string;
+};
+
 export type ResiliencyProvenance = {
   source: string; collected_at: string; unreadable: boolean; reason: string; truncated?: boolean;
 };
@@ -17154,6 +17167,8 @@ export type ResiliencyVerdict = {
   rto_assumptions: string[];
   basis: ResiliencyEvidence[];
   confidence: ResiliencyConfidence;
+  /** Radii this answer does not cover. Deletion only; never merged into `basis`. */
+  caveats?: ResiliencyCaveat[];
   /** False means the scenario cannot happen to this resource type. Render as absent. */
   applicable: boolean;
   target?: { rpo_minutes?: number; rto_class?: ResiliencyRtoClass } | null;
@@ -17178,6 +17193,8 @@ export type ResiliencyResource = {
   };
   dr: { replicated: boolean; rpo_seconds: number | null; replication_health: string;
         last_test_failover_age_days: number | null };
+  /** Management locks covering this resource, including inherited ones. Prevention, not recovery. */
+  locks?: { level: string; scope_kind: string; name: string }[];
   advisor: Record<string, unknown>[];
   findings: Record<string, unknown>[];
   size_gb: number | null;

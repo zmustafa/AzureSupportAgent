@@ -111,15 +111,31 @@ Read the Provenance sheet, or Appendix C in the PDF, before drawing conclusions 
 
 Open **Workloads**. Each card gives the workload's worst class per scenario and names the **weakest link** — the single component that set the number. Every component is treated as required, so the roll-up is the pessimistic answer; a genuinely redundant pair recovers faster than shown.
 
+## How to find what a parent deletion would destroy
+
+The deletion column answers "can this resource be recovered". It does **not**, on its own, answer "what if someone deletes the thing that contains it" — and for several Azure services those are different answers.
+
+1. Open the **Accidental deletion** column and look for cells carrying a `!`.
+2. Open the drawer and read the **Does not cover** note. It names the radius the recovery path stops at.
+3. Act on the ones that say *unrecoverable*:
+   * **Azure SQL** — configure long-term retention. It is the only backup that survives deleting the logical server.
+   * **PostgreSQL / MySQL flexible server** — five days is the whole window, and recovery is a management API call with no portal path. Enrolling the server in a Backup vault removes that cliff, because vaulted backups are held outside the subscription.
+   * **Storage accounts** — soft delete does not protect the account. Either apply a lock or use vaulted blob backup, which does survive account deletion.
+
+A resource already protected by a Backup vault shows a softer note naming the tier, because vaulted and operational backups differ on exactly this question and the tier is not visible from Resource Graph.
+
+In the workbook the same information is the **Recovery limit** and **What it does not cover** columns of the Recovery matrix sheet, so you can filter the whole estate by severity.
+
 ## How to ask the agent
 
 With `resiliency.read` you can ask in chat:
 
 * *"What is the recovery posture for the payments workload?"*
 * *"What has no recovery path for accidental deletion?"*
+* *"Which databases would be lost if someone deleted their server?"*
 * *"What misses its recovery objectives?"*
 
-Answers carry the configuration that produced them. Quote the basis, not just the number.
+Answers carry the configuration that produced them. Quote the basis, not just the number. For deletion the agent also returns `does_not_cover`, which is the radius the answer stops at.
 
 ## How to add it to a mission
 

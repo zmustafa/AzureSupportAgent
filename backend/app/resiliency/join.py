@@ -68,6 +68,25 @@ def _eligible_types() -> set[str]:
     return set(ELIGIBLE_TYPES)
 
 
+def _locks_for(
+    resource_id: str, locks: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Locks covering this resource, including inherited ones.
+
+    Prefix, not equality: a lock on the resource group covers every resource in it, and one on
+    the subscription covers everything. The boundary matters — ``/rg-prod`` must not match
+    ``/rg-production`` — so a non-exact match has to land on a path separator."""
+    if not locks or not resource_id:
+        return []
+    rid = resource_id.lower().rstrip("/")
+    out: list[dict[str, Any]] = []
+    for lock in locks:
+        scope = str(lock.get("scope") or "").lower().rstrip("/")
+        if scope and (rid == scope or rid.startswith(scope + "/")):
+            out.append(lock)
+    return out
+
+
 def build_rows(
     config: list[dict[str, Any]],
     *,
@@ -75,6 +94,7 @@ def build_rows(
     asr: list[dict[str, Any]] | None = None,
     advisor: list[dict[str, Any]] | None = None,
     findings: list[dict[str, Any]] | None = None,
+    locks: list[dict[str, Any]] | None = None,
     backup_known: bool = True,
     backup_reason: str = "",
 ) -> list[dict[str, Any]]:
@@ -106,6 +126,7 @@ def build_rows(
         rtype = str(item.get("type") or "").lower()
         item_backup = backup_index.get(rid)
         item_asr = asr_index.get(rid)
+        item_locks = _locks_for(rid, locks)
 
         if not backup_known:
             state, reason = PROTECTION_UNKNOWN, (
@@ -129,7 +150,8 @@ def build_rows(
                 # A type we cannot map, whose native backup we also could not read.
                 config_for_derive["native_backup"] = {"kind": "unknown"}
 
-        verdicts = derive.verdicts_for(config_for_derive, backup=item_backup, asr=item_asr)
+        verdicts = derive.verdicts_for(
+            config_for_derive, backup=item_backup, asr=item_asr, locks=item_locks)
 
         rows.append({
             "id": rid,
@@ -154,6 +176,11 @@ def build_rows(
                 "vault_redundancy": (item_backup or {}).get("vault_redundancy", ""),
                 "native_backup": item.get("native_backup") or {"kind": "unknown"},
             },
+            "locks": [
+                {"level": lk.get("level", ""), "scope_kind": lk.get("scope_kind", ""),
+                 "name": lk.get("name", "")}
+                for lk in item_locks
+            ],
             "dr": {
                 "replicated": bool(item_asr),
                 "rpo_seconds": (item_asr or {}).get("rpo_seconds"),

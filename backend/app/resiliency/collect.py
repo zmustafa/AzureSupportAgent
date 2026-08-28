@@ -44,6 +44,10 @@ def _as_json(value: Any) -> Any:
 _BASE = (
     "Resources\n"
     "| where type in~ ({types})\n"
+    # `master` is the Azure SQL system database. It is created with the server, cannot be
+    # deleted or restored on its own, and carries no customer data — so a recovery verdict
+    # against it is noise that inflates every count on the page.
+    "| where not(type =~ 'microsoft.sql/servers/databases' and name =~ 'master')\n"
     "| extend p = parse_json(tostring(properties))\n"
     "| extend s = parse_json(tostring(sku))\n"
     "| project id = tolower(id), name, type = tolower(type), location,\n"
@@ -130,12 +134,16 @@ def _storage_replication(sku_name: str) -> str:
     return "LRS"
 
 
-def shape(row: dict[str, Any]) -> dict[str, Any]:
+def shape(row: dict[str, Any], blob_services: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """One Resource Graph row into the resiliency configuration shape.
 
     Per-type, because "is this zone redundant" is a different property on every service and
     there is no generic answer. An unrecognized type yields ``zone_redundant: None`` — the
     honest value, distinct from ``False``.
+
+    ``blob_services`` carries the per-account ``blobServices/default`` bodies that Resource
+    Graph cannot supply (see :func:`collect_blob_services`). Absent means "not read", which is
+    deliberately not the same as "nothing configured".
     """
     rtype = str(row.get("type") or "").lower()
     props = _as_json(row.get("props")) or {}
@@ -154,13 +162,25 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
     if rtype == "microsoft.storage/storageaccounts":
         replication = _storage_replication(sku_name)
         zone_redundant = replication in {"ZRS", "GZRS", "RA-GZRS"}
-        policy = props.get("restorePolicy") or {}
-        if isinstance(policy, dict) and policy.get("enabled"):
-            native = {"kind": "storage_pitr", "interval_minutes": 5,
-                      "retention_days": policy.get("days"),
-                      "geo_redundant": replication in {"GRS", "RA-GRS", "GZRS", "RA-GZRS"}}
+        # restorePolicy, deleteRetentionPolicy and containerDeleteRetentionPolicy live on the
+        # blobServices/default CHILD, which Resource Graph does not index at all — verified
+        # against a live tenant. Reading them off the account silently reported every storage
+        # account as having no point-in-time copy.
+        geo = replication in {"GRS", "RA-GRS", "GZRS", "RA-GZRS"}
+        blob = (blob_services or {}).get(service.canonical_id(str(row.get("id") or "")))
+        if blob is None:
+            native = {"kind": "unknown"}
+            soft_delete = None
         else:
-            native = {"kind": "none"}
+            restore = blob.get("restorePolicy") or {}
+            if isinstance(restore, dict) and restore.get("enabled"):
+                native = {"kind": "storage_pitr", "interval_minutes": 5,
+                          "retention_days": restore.get("days"), "geo_redundant": geo}
+            else:
+                native = {"kind": "none"}
+            blob_delete = blob.get("deleteRetentionPolicy") or {}
+            container_delete = blob.get("containerDeleteRetentionPolicy") or {}
+            soft_delete = bool(blob_delete.get("enabled")) or bool(container_delete.get("enabled"))
 
     elif rtype == "microsoft.sql/servers/databases":
         zone_redundant = bool(props.get("zoneRedundant"))
@@ -212,7 +232,10 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
         ha = props.get("highAvailability") or {}
         zone_redundant = str((ha or {}).get("mode") or "").lower() == "zoneredundant"
         backup = props.get("backup") or {}
-        native = {"kind": "pg_backup", "interval_minutes": 10,
+        # Its own kind, not PostgreSQL's: the log-backup cadence is 5 minutes rather than 10,
+        # and the deleted-server how-to is a different page. Sharing one kind meant a change to
+        # either silently moved the other.
+        native = {"kind": "mysql_backup", "interval_minutes": 5,
                   "retention_days": backup.get("backupRetentionDays"),
                   "geo_redundant": str(backup.get("geoRedundantBackup") or "").lower() == "enabled"}
 
@@ -306,7 +329,14 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
         vaulted = bool((protection.get("backup") or {}).get("backupPolicyId"))
         if (protection.get("replication") or {}).get("remoteVolumeResourceId"):
             replication = "cross-region"
-        native = {"kind": "anf_snapshot"} if (snapshots or vaulted) else {"kind": "none"}
+        # Snapshots live ON the volume and die with it; only a vaulted backup is independent
+        # storage. Collapsing both into one kind lost exactly the distinction deletion needs.
+        if vaulted:
+            native = {"kind": "anf_backup"}
+        elif snapshots:
+            native = {"kind": "anf_snapshot"}
+        else:
+            native = {"kind": "none"}
         threshold = props.get("usageThreshold")
         if threshold:
             size_gb = int(int(threshold) // (1024 ** 3))
@@ -392,6 +422,138 @@ def shape(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- ARM supplements
+# Two facts this module needs are NOT in Resource Graph. Verified against a live tenant, not
+# assumed: `microsoft.storage/storageaccounts/blobservices` returns zero rows tenant-wide, and
+# `microsoft.authorization/locks` is absent from both `Resources` and `authorizationresources`
+# even though the table itself works. Both therefore come from ARM, and both are fail-soft:
+# an unreadable source degrades that slice to `unknown`, never to "nothing configured".
+_BLOB_SERVICE_API = "2023-05-01"
+_LOCKS_API = "2016-09-01"
+
+#: Storage accounts are a small slice of a typical estate, but not a bounded one. Cap the
+#: fan-out so a storage-heavy tenant cannot turn one sweep into thousands of serial calls.
+MAX_BLOB_SERVICE_CALLS = 400
+_BLOB_SERVICE_CONCURRENCY = 12
+
+
+async def collect_blob_services(
+    connection: dict[str, Any], storage_ids: list[str],
+) -> tuple[dict[str, dict[str, Any]], str]:
+    """``blobServices/default`` per storage account, from ARM.
+
+    Returns ``(by_canonical_id, error)``. An account missing from the map was NOT read, which
+    :func:`shape` renders as ``unknown`` rather than as absent protection — the distinction the
+    original bug erased."""
+    import asyncio
+
+    ids = [service.canonical_id(i) for i in storage_ids if i]
+    ids = [i for i in ids if i]
+    if not ids:
+        return {}, ""
+    truncated = ""
+    if len(ids) > MAX_BLOB_SERVICE_CALLS:
+        truncated = (f"Only the first {MAX_BLOB_SERVICE_CALLS} of {len(ids)} storage accounts "
+                     "were read for blob-service settings.")
+        ids = ids[:MAX_BLOB_SERVICE_CALLS]
+
+    try:
+        token = await service.token_for(connection)
+    except Exception as exc:  # noqa: BLE001 - a token failure degrades the slice, never the sweep
+        return {}, service.safe_error(str(exc))
+
+    out: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    sem = asyncio.Semaphore(_BLOB_SERVICE_CONCURRENCY)
+
+    async def one(rid: str) -> None:
+        async with sem:
+            try:
+                body, status, error = await service.arm_get_with(
+                    token, f"{rid}/blobServices/default", _BLOB_SERVICE_API)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(service.safe_error(str(exc)))
+                return
+            if error or not isinstance(body, dict):
+                # 404 is a real answer for accounts with no blob service (e.g. FileStorage):
+                # nothing to restore there, which is not the same as unreadable.
+                if status == 404:
+                    out[rid] = {}
+                else:
+                    errors.append(error or f"HTTP {status}")
+                return
+            props = body.get("properties")
+            out[rid] = props if isinstance(props, dict) else {}
+
+    await asyncio.gather(*(one(rid) for rid in ids))
+    reason = truncated
+    if errors:
+        head = errors[0]
+        reason = (f"{reason} " if reason else "") + (
+            f"{len(errors)} storage account(s) could not be read: {head}")
+    return out, reason
+
+
+def _lock_scope_kind(scope: str) -> str:
+    parts = [p for p in scope.strip("/").split("/") if p]
+    if len(parts) <= 2:
+        return "subscription"
+    if len(parts) <= 4:
+        return "resource_group"
+    return "resource"
+
+
+async def collect_locks(
+    connection: dict[str, Any], subscriptions: list[str],
+) -> tuple[list[dict[str, Any]], str]:
+    """Every management lock in scope, from ARM — one call per subscription, not per resource.
+
+    Returns ``(locks, error)`` where each lock carries the lowercased ARM scope it applies to.
+    Locks INHERIT, so callers must prefix-match rather than compare for equality."""
+    import asyncio
+
+    subs = [str(s).strip() for s in (subscriptions or []) if str(s).strip()]
+    if not subs:
+        return [], ""
+    try:
+        token = await service.token_for(connection)
+    except Exception as exc:  # noqa: BLE001
+        return [], service.safe_error(str(exc))
+
+    out: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    async def one(sub: str) -> None:
+        try:
+            body, status, error = await service.arm_get_with(
+                token, f"/subscriptions/{sub}/providers/Microsoft.Authorization/locks", _LOCKS_API)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(service.safe_error(str(exc)))
+            return
+        if error or not isinstance(body, dict):
+            errors.append(error or f"HTTP {status}")
+            return
+        for item in body.get("value") or []:
+            if not isinstance(item, dict):
+                continue
+            raw_id = str(item.get("id") or "")
+            marker = "/providers/microsoft.authorization/locks/"
+            lowered = raw_id.lower()
+            if marker not in lowered:
+                continue
+            scope = lowered.split(marker, 1)[0].rstrip("/")
+            out.append({
+                "scope": scope,
+                "scope_kind": _lock_scope_kind(scope),
+                "level": str((item.get("properties") or {}).get("level") or ""),
+                "name": str(item.get("name") or ""),
+                "notes": str((item.get("properties") or {}).get("notes") or ""),
+            })
+
+    await asyncio.gather(*(one(sub) for sub in subs))
+    return out, ("; ".join(errors[:3]) if errors else "")
+
+
 # --------------------------------------------------------------------------- membership
 def _is_or_under(resource_id: str, parent: str) -> bool:
     return resource_id == parent or resource_id.startswith(parent.rstrip("/") + "/")
@@ -449,13 +611,23 @@ async def collect(
         members = expand_members(rows, member_ids)
         rows = [r for r in rows
                 if any(_is_or_under(str(r.get("id") or "").lower(), m) for m in members)]
-    shaped = [shape(r) for r in rows]
+
+    # Storage blob settings are an ARM-only supplement; fetched AFTER member filtering so a
+    # workload scope does not pay for accounts it excluded.
+    storage_ids = [str(r.get("id") or "") for r in rows
+                   if str(r.get("type") or "").lower() == "microsoft.storage/storageaccounts"]
+    blob_services, blob_error = await collect_blob_services(connection, storage_ids)
+    if blob_error:
+        log.info("resiliency: blob-service settings degraded: %s", blob_error)
+
+    shaped = [shape(r, blob_services) for r in rows]
     shaped = [r for r in shaped if r["id"]]
     return shaped, {
         "error": error,
         "partial": bool(metadata.get("partial")),
         "source_total": metadata.get("source_total"),
         "count": len(shaped),
+        "blob_service_error": blob_error,
     }
 
 

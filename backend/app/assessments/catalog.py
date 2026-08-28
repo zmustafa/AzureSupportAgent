@@ -1689,32 +1689,29 @@ def _cis_no_private_endpoint(rec: str, profile: str, target_type: str, label: st
 def _cis_lock(
     rec: str, profile: str, level: str, types: list[str], label: str, summary: str,
 ) -> dict[str, Any]:
-    """A CIS v5 'resource locks' control: flag in-scope resources of the given ``types`` that
-    are NOT protected by a management lock of ``level`` ('CanNotDelete' or 'ReadOnly') at
-    their own scope OR an inherited (resource-group / subscription) scope. Lock inheritance is
-    resolved by matching any lock whose scope is a prefix of the resource id (joined within the
-    subscription, then prefix-filtered, so an RG/subscription lock correctly covers children)."""
-    type_list = ", ".join(f"'{t}'" for t in types)
-    return _cis(
+    """A CIS v5 'resource locks' control.
+
+    MANUAL, not a graph query, and the reason matters. Resource Graph does not index
+    ``microsoft.authorization/locks`` — verified against a live tenant, where a storage
+    account carrying a real ``CanNotDelete`` lock returned nothing from either ``Resources``
+    or ``authorizationresources`` while the same lock was plainly visible over ARM.
+
+    This control used to leftouter-join against that non-existent table. The join matched
+    nothing, ``_anyCov`` was false for every row, and it reported EVERY in-scope resource as
+    unlocked — including the locked one. A confident wrong answer on a governance control is
+    worse than no answer, so it asks for an attestation instead.
+
+    To automate it, read locks from ARM
+    (``GET /subscriptions/{id}/providers/Microsoft.Authorization/locks``, one call per
+    subscription) as :func:`app.resiliency.collect.collect_locks` does, then prefix-match the
+    scope to resolve inheritance."""
+    return _cis_manual(
         rec, profile, label,
-        summary,
-        types,
-        f"| where type in~ ({type_list}) "
-        "| extend _rid = tolower(id) "
-        "| join kind=leftouter (resources "
-        "| where type =~ 'microsoft.authorization/locks' "
-        f"| where tostring(properties.level) =~ '{level}' "
-        "| extend _lscope = tolower(tostring(split(id, '/providers/Microsoft.Authorization/locks/')[0])) "
-        "| project subscriptionId, _lscope) on subscriptionId "
-        "| extend _covered = iff(isempty(_lscope), false, _rid startswith _lscope) "
-        "| summarize _anyCov = max(_covered) by id, name, type, resourceGroup, subscriptionId "
-        "| where _anyCov != true "
-        "| project id, name, type, resourceGroup, subscriptionId",
+        f"{summary} Azure Resource Graph does not index management locks, so this cannot be "
+        "verified automatically. Confirm on the resource's Locks blade, or with "
+        "'az lock list --resource-group <rg>'.",
         f"Apply a '{level}' management lock to the resource (or its resource group / subscription).",
-        remediation_command=(
-            f"az lock create --name <lockName> --lock-type {level} "
-            "--resource-name <name> --resource-group <rg> --resource-type <type>"
-        ),
+        resource_types=types,
         learn_more=["https://learn.microsoft.com/azure/azure-resource-manager/management/lock-resources"],
     )
 
@@ -2034,38 +2031,46 @@ _CIS_V5: list[dict[str, Any]] = [
             "--resource-group <rg> --channel-encryption AES-256-GCM"
         ),
     ),
-    _cis(
+    # CIS 9.2.1-9.2.3 are MANUAL, not graph controls. Resource Graph does not index
+    # `microsoft.storage/storageaccounts/blobservices` — verified against a live tenant, where
+    # a storage account with blob soft delete explicitly DISABLED returned zero rows from the
+    # exact query below while ARM reported it plainly. As graph controls these could never
+    # fail, so they reported a silent PASS on every estate: the most dangerous possible
+    # outcome for a data-protection control. To automate them, read
+    # `{accountId}/blobServices/default` from ARM as
+    # `app.resiliency.collect.collect_blob_services` does.
+    _cis_manual(
         "9.2.1", "L1",
         "Blob storage without blob soft delete enabled",
         "CIS 9.2.1: soft delete for blobs should be enabled so deleted blobs can be recovered "
-        "within the retention period.",
-        ["microsoft.storage/storageaccounts"],
-        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
-        "| where tobool(properties.deleteRetentionPolicy.enabled) != true "
-        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "within the retention period. Azure Resource Graph does not index blob service "
+        "properties, so this cannot be verified automatically. Confirm under Data protection "
+        "on the storage account, or with 'az storage account blob-service-properties show'.",
         "Enable soft delete for blobs with a sufficient retention period.",
+        resource_types=["microsoft.storage/storageaccounts"],
+        learn_more=["https://learn.microsoft.com/azure/storage/blobs/soft-delete-blob-overview"],
     ),
-    _cis(
+    _cis_manual(
         "9.2.2", "L1",
         "Blob storage without container soft delete enabled",
         "CIS 9.2.2: soft delete for containers should be enabled so deleted containers can be "
-        "recovered within the retention period.",
-        ["microsoft.storage/storageaccounts"],
-        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
-        "| where tobool(properties.containerDeleteRetentionPolicy.enabled) != true "
-        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "recovered within the retention period. Azure Resource Graph does not index blob "
+        "service properties, so this cannot be verified automatically. Confirm under Data "
+        "protection on the storage account.",
         "Enable soft delete for containers with a sufficient retention period.",
+        resource_types=["microsoft.storage/storageaccounts"],
+        learn_more=["https://learn.microsoft.com/azure/storage/blobs/soft-delete-container-overview"],
     ),
-    _cis(
+    _cis_manual(
         "9.2.3", "L2",
         "Blob storage without versioning enabled",
-        "CIS 9.2.3: blob versioning should be enabled to automatically retain previous versions "
-        "of objects for recovery from modification or deletion.",
-        ["microsoft.storage/storageaccounts"],
-        "| where type =~ 'microsoft.storage/storageaccounts/blobservices' "
-        "| where tobool(properties.isVersioningEnabled) != true "
-        "| project id, name = split(id, '/')[8], type, resourceGroup, subscriptionId",
+        "CIS 9.2.3: blob versioning should be enabled to automatically retain previous "
+        "versions of objects for recovery from modification or deletion. Azure Resource Graph "
+        "does not index blob service properties, so this cannot be verified automatically. "
+        "Confirm under Data protection on the storage account.",
         "Enable blob versioning on the storage account.",
+        resource_types=["microsoft.storage/storageaccounts"],
+        learn_more=["https://learn.microsoft.com/azure/storage/blobs/versioning-overview"],
     ),
     _cis(
         "9.3.5", "L2",

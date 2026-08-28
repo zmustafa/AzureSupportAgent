@@ -43,7 +43,7 @@ The same resource has **different** answers for each. So this module reports rec
 | Zone loss | one availability zone | zone redundancy |
 | Region loss | a whole Azure region | geo-replication, a paired region, Site Recovery |
 | **Data corruption** | a bad deployment, a bad migration, ransomware | **point-in-time recovery only** |
-| **Accidental deletion** | a resource or its data is deleted | **backup, soft delete or a resource lock only** |
+| **Accidental deletion** | a resource or its data is deleted | **backup or soft delete; a lock prevents but does not recover** |
 
 ### Redundancy is not a control for the last two
 
@@ -52,6 +52,24 @@ This is the single most important thing on the screen.
 Zone-redundant storage, geo-redundant storage and multi-region writes **replicate the damage**, usually within seconds. A corrupted blob is corrupted in all three zones. A deleted row is deleted in every replica.
 
 So a resource can be flawlessly redundant — green on every redundancy check, green in every other tool — and have **no recovery path at all** from a bad deployment. Recovery Readiness is the view that says so.
+
+### Deletion has a blast radius
+
+The second most important thing on the screen, and it applies to accidental deletion only.
+
+A backup only helps if it **outlives the thing that was deleted**. Corruption leaves the resource standing, so any point-in-time copy will do. Deletion does not, and how far the damage reaches decides whether the recovery path still exists:
+
+| What was deleted | Azure SQL database | PostgreSQL / MySQL flexible server | Storage account |
+|---|---|---|---|
+| Rows or a table | Point-in-time restore | Point-in-time restore | Blob soft delete |
+| The container / database | Restore the deleted database | Point-in-time restore | Container soft delete |
+| **The parent server / the account** | **Unrecoverable without long-term retention** | **Five days, management API only** | **14 days, best effort** |
+
+The bottom row assumes the resource's own built-in backup is all you have. **A Backup vault changes it**, because vaulted backups are stored outside the resource: vaulted blob backup survives deletion of the storage account (restoring to a *different* account), and a vaulted PostgreSQL or MySQL backup is held outside the subscription entirely, so it outlives the server. Where that applies, the note says so rather than claiming the data is gone.
+
+Where a recovery path stops covering the damage, the drawer shows a **Does not cover** note under the evidence, and the deletion cell carries a small `!`. The cell keeps its colour: the answer has not changed, only the radius it covers.
+
+Locks appear here too, as a **Mitigation**. A lock is prevention, not recovery — it blocks the Azure Resource Manager delete but creates no recovery point, does not stop data being deleted through the data plane, does not survive subscription cancellation, and can be removed by any Owner or User Access Administrator. It never turns a cell green.
 
 ## Reading the heatmap
 

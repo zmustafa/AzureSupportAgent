@@ -16,6 +16,7 @@ nobody can absorb a surprise. So six rules are enforced in code rather than left
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any
 
 from app.resiliency import model, reference
@@ -121,12 +122,15 @@ def apply_bands(
             out[scenario] = v
             continue
         band, assumptions, confidence = result
-        out[scenario] = model.Verdict(
-            scenario=v.scenario, rpo_minutes=v.rpo_minutes, rpo_state=v.rpo_state,
-            rto_class=v.rto_class, basis=v.basis,
+        # `replace` rather than a field-by-field rebuild: this dropped `caveats` silently the
+        # moment the field was added, and any future field would go the same way. A banded
+        # verdict differs from its input in three named ways and nothing else.
+        out[scenario] = replace(
+            v,
             # A band is only as good as the weaker of the verdict and the estimate.
             confidence=model.weakest_confidence([v.confidence, confidence]),
-            applicable=v.applicable, rto_band_minutes=band, rto_assumptions=assumptions,
+            rto_band_minutes=band,
+            rto_assumptions=assumptions,
         )
     return out
 

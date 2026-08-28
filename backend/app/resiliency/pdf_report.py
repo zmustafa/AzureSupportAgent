@@ -874,6 +874,10 @@ def _matrix_appendix(m: dict[str, Any], anchor: str = "appendix-matrix") -> str:
             if not verdict.get("applicable", True):
                 continue
             why = _joined(e.get("detail", "") for e in verdict.get("basis") or [])
+            # Folded into the same code table as the basis, prefixed so the legend keeps them
+            # apart. A caveat repeats across dozens of rows exactly as a reason does.
+            caveats = verdict.get("caveats") or []
+            limit = _joined(f"Does not cover: {c.get('detail', '')}" for c in caveats)
             rows.append(
                 f"<tr><td>{_resource(m, row.get('name', ''), row.get('id'), width=24)}</td>"
                 f"<td>{esc(_short_type(row.get('type')))}</td>"
@@ -882,6 +886,7 @@ def _matrix_appendix(m: dict[str, Any], anchor: str = "appendix-matrix") -> str:
                 f"<td>{_rto_cell(str(verdict.get('rto_class', '')))}</td>"
                 f"<td>{esc(verdict.get('confidence', ''))}</td>"
                 f"<td>{esc(codes.code(why))}</td>"
+                f"<td>{esc(codes.code(limit) if limit else '')}</td>"
                 f"</tr>")
     total = len(rows)
     shown = rows[:MAX_MATRIX]
@@ -893,12 +898,13 @@ def _matrix_appendix(m: dict[str, Any], anchor: str = "appendix-matrix") -> str:
     return f"""
     <div class="pagebreak"></div><a name="{anchor}"></a>
     <h1>Appendix A &mdash; Recovery matrix</h1>
-    <p class="muted">One row per resource per applicable scenario. &ldquo;Why&rdquo; is a
-    code into the reason legend that follows the table.</p>
+    <p class="muted">One row per resource per applicable scenario. &ldquo;Why&rdquo; and
+    &ldquo;Limit&rdquo; are codes into the legend that follows the table. A limit names a
+    deletion this recovery path does not survive.</p>
     {omitted}
     <table class="grid compact" cellpadding="0" cellspacing="0">
       <thead><tr><th>Resource</th><th>Type</th><th>Scenario</th><th>RPO</th><th>RTO</th>
-          <th>Conf.</th><th>Why</th></tr></thead>
+          <th>Conf.</th><th>Why</th><th>Limit</th></tr></thead>
       {''.join(shown)}
     </table>
     {legend}

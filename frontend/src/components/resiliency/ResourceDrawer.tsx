@@ -25,6 +25,48 @@ const STATE_STYLE: Record<string, string> = {
   not_applicable: "text-gray-400",
 };
 
+/* Caveats are rendered apart from the basis, and never in the same list. The basis explains
+   why the answer is what it is; a caveat explains when the answer stops being true. Merged,
+   a warning reads as though it justifies the green cell — the exact inversion this module
+   exists to prevent. */
+const CAVEAT_STYLE: Record<string, string> = {
+  critical: "border-rose-300 bg-rose-50 text-rose-800",
+  warning: "border-amber-300 bg-amber-50 text-amber-800",
+  info: "border-sky-200 bg-sky-50 text-sky-800",
+};
+
+function Caveats({ verdict }: { verdict: ResiliencyVerdict }) {
+  const caveats = verdict.caveats ?? [];
+  if (!caveats.length) return null;
+  return (
+    <div className="mt-1.5 space-y-1">
+      {caveats.map((c, i) => (
+        <div
+          key={i}
+          data-testid="verdict-caveat"
+          data-severity={c.severity}
+          className={`rounded border px-1.5 py-1 text-[10px] leading-snug ${CAVEAT_STYLE[c.severity] ?? CAVEAT_STYLE.info}`}
+        >
+          <span className="font-semibold uppercase tracking-wide">
+            {c.kind === "mitigation" ? "Mitigation" : "Does not cover"}
+          </span>
+          <span className="ml-1">{c.detail}</span>
+          {c.doc_url && (
+            <a
+              href={c.doc_url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="ml-1 underline"
+            >
+              docs
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Row({ verdict, label, classLabel }: {
   verdict: ResiliencyVerdict; label: string; classLabel: string;
 }) {
@@ -61,6 +103,7 @@ function Row({ verdict, label, classLabel }: {
             </ul>
           </details>
         )}
+        <Caveats verdict={verdict} />
       </td>
       <td className="py-1.5 text-[11px] text-gray-500">{verdict.confidence}</td>
     </tr>

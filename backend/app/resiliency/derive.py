@@ -106,6 +106,9 @@ def _pitr(native: dict[str, Any]) -> tuple[int | None, str, str] | None:
     if kind == "pg_backup":
         return (int(interval) if interval else 10), CONFIDENCE_MEDIUM, (
             "PostgreSQL point-in-time restore")
+    if kind == "mysql_backup":
+        return (int(interval) if interval else 5), CONFIDENCE_MEDIUM, (
+            "MySQL point-in-time restore (transaction log backup every 5 min)")
     if kind == "storage_pitr":
         return (int(interval) if interval else 5), CONFIDENCE_HIGH, (
             "Storage point-in-time restore")
@@ -117,7 +120,10 @@ def _pitr(native: dict[str, Any]) -> tuple[int | None, str, str] | None:
         return 1, CONFIDENCE_MEDIUM, "Redis append-only file persistence"
     if kind == "anf_snapshot":
         return None, CONFIDENCE_MEDIUM, (
-            "Azure NetApp Files snapshot or backup policy; the interval is set on the policy")
+            "Azure NetApp Files snapshot policy; the interval is set on the policy")
+    if kind == "anf_backup":
+        return None, CONFIDENCE_MEDIUM, (
+            "Azure NetApp Files backup policy; the interval is set on the policy")
     return None
 
 
@@ -266,11 +272,25 @@ def _logical_verdict(
         candidates.append((minutes, confidence,
                            Evidence(model.EV_NATIVE_BACKUP, detail, "Resource Graph")))
 
+    kind = str((config.get("native_backup") or {}).get("kind") or "unknown")
+
     if candidates:
         # The best recovery point wins — the reader recovers from whichever is freshest.
         minutes, confidence, evidence = min(
             candidates, key=lambda c: (c[0] is None, c[0] if c[0] is not None else 0))
         rto = model.RTO_HOURS if (minutes is not None and minutes <= 60) else model.RTO_DAY_PLUS
+        # A Cosmos periodic restore is a SUPPORT REQUEST, not an operation the reader can run.
+        # The four-hour backup interval says nothing about how long that takes, and the
+        # `minutes <= 60` rule above would otherwise call a ticket an hours-class recovery.
+        if kind == "cosmos_periodic":
+            rto = model.RTO_DAY_PLUS
+            confidence = CONFIDENCE_LOW
+        # A five-day ReviveDropped deadline reached through an off-portal API is not the
+        # routine restore that "hours" describes. Keep the class, lower the claim — unless a
+        # vault backup exists, which is held outside the server and outlives it.
+        if (scenario == model.SCENARIO_ACCIDENTAL_DELETE
+                and kind in ("pg_backup", "mysql_backup") and not backup):
+            confidence = CONFIDENCE_LOW
         basis = [evidence]
         if scenario == model.SCENARIO_ACCIDENTAL_DELETE and backup and backup.get("soft_delete"):
             basis.append(Evidence(model.EV_SOFT_DELETE,
@@ -286,7 +306,6 @@ def _logical_verdict(
             basis=(Evidence(model.EV_SOFT_DELETE,
                             "Soft delete is enabled on the service.", "Resource Graph"),))
 
-    kind = str((config.get("native_backup") or {}).get("kind") or "unknown")
     if kind == "unknown" and backup is None:
         # We could not map this type to any protection source. Not a claim of either extreme.
         return model.verdict(scenario)
@@ -306,6 +325,7 @@ def verdicts_for(
     *,
     backup: dict[str, Any] | None = None,
     asr: dict[str, Any] | None = None,
+    locks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Verdict]:
     """Every scenario for one resource."""
     rtype = str(config.get("type") or "")
@@ -318,7 +338,16 @@ def verdicts_for(
         if model.redundancy_helps(scenario):
             out[scenario] = _infra_verdict(scenario, config, backup, asr)
         else:
-            out[scenario] = _logical_verdict(scenario, config, backup)
+            verdict_out = _logical_verdict(scenario, config, backup)
+            if scenario == model.SCENARIO_ACCIDENTAL_DELETE:
+                # Attached on EVERY deletion branch, including "no recovery path at all" — that
+                # is exactly where knowing a lock is the available control earns its keep.
+                verdict_out = model.with_caveats(
+                    verdict_out,
+                    model.deletion_caveats(rtype, config, vaulted=bool(backup))
+                    + model.lock_caveat(locks),
+                )
+            out[scenario] = verdict_out
     return out
 
 

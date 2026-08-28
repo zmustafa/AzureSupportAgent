@@ -22,6 +22,8 @@ import { ScopePicker } from "./ScopePicker";
 import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import { TimeRangePicker } from "./changeexplorer/TimeRangePicker";
 import { RunHistoryShell } from "./RunHistoryShell";
+import { HistoryDisclosure } from "./HistoryDisclosure";
+import { ChevronRightIcon } from "./chat/icons";
 import { PdfGeneratingOverlay } from "./PdfGeneratingOverlay";
 import { PerformanceFleet } from "./performance/PerformanceFleet";
 import { RunCleanup } from "./cleanup/RunCleanup";
@@ -192,6 +194,60 @@ const STATE_CELL: Record<string, string> = {
   no_data: "bg-gray-50 text-gray-400 border-gray-200",
 };
 
+/**
+ * The verdict banner and the analyst narrative, collapsible as one block.
+ *
+ * The headline is the disclosure's own title rather than part of the body, so collapsing
+ * reclaims the ~170px of detail without ever hiding WHICH resource is the constraint — the
+ * one line on this screen a reader cannot afford to lose.
+ */
+function ProfileSummary({ data }: { data: PerfProfile }) {
+  const top = data.top_bottleneck;
+  const undetermined = data.status === "partial" || data.scorecard.workload_score == null;
+
+  const tone = top
+    ? { box: "border-red-200 bg-red-50", title: "text-red-800", body: "text-red-700" }
+    : undetermined
+      ? { box: "border-gray-200 bg-gray-50", title: "text-gray-700", body: "text-gray-600" }
+      : { box: "border-green-200 bg-green-50", title: "text-green-800", body: "text-green-700" };
+
+  const headline = top
+    ? `⚠ Binding bottleneck: ${top.resource_name} · ${top.metric_name}`
+    : undetermined
+      ? "No binding bottleneck can be confirmed from the successfully returned metric data."
+      : "✓ No bottlenecks — all profiled metrics are within their AMBA thresholds.";
+
+  // Built rather than interpolated so an absent ratio drops the whole clause instead of
+  // rendering an empty "(% of threshold)".
+  const qualifier = [
+    typeof top?.pct_of_threshold === "number" ? `${top.pct_of_threshold}% of threshold` : "",
+    top?.trend_pct ? `trending ${top.trend_pct > 0 ? "+" : ""}${top.trend_pct}%` : "",
+  ].filter(Boolean).join(", ");
+
+  return (
+    <HistoryDisclosure
+      storageKey="azsup.performance.summary"
+      label="the summary"
+      testId="perf-summary"
+      className={`mb-4 rounded-lg border px-4 py-2.5 ${tone.box}`}
+      bodyClassName="mt-1"
+      title={<span className={`text-sm font-semibold ${tone.title}`}>{headline}</span>}
+    >
+      {top && (
+        <div className={`text-xs ${tone.body}`}>
+          {top.observed}{top.unit} vs threshold {top.threshold}{top.unit}
+          {qualifier && ` (${qualifier})`} — {top.state}
+        </div>
+      )}
+      {data.narrative && (
+        <div className="mt-2 rounded-md border bg-white px-3 py-2 text-sm text-gray-700">
+          <Markdown>{data.narrative}</Markdown>
+        </div>
+      )}
+    </HistoryDisclosure>
+  );
+}
+
 function fmtTime(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -285,6 +341,14 @@ function metricPctLabel(cell: { higher_is_worse: boolean; pct_of_threshold: numb
   return `${cell.pct_of_threshold}%`;
 }
 
+/** A percentage that may legitimately be absent — the collector returns null whenever the
+ *  ratio is undefined (a zero observation, or a threshold of zero). The PDF has rendered this
+ *  as an em dash since it shipped; the screen interpolated it raw and printed "null%",
+ *  "None%" or a bare "(%)". Same data, two different answers. */
+function pctText(pct: number | null | undefined): string {
+  return typeof pct === "number" ? `${pct}%` : "—";
+}
+
 // Circular performance-score gauge (mirrors the Telemetry Coverage donut). Shows the
 // 0-100 score with a green/amber/red ring; a null score renders a muted placeholder.
 function ScoreDonut({ score }: { score: number | null | undefined }) {
@@ -356,7 +420,12 @@ export function PerformancePanel() {
   // Which sub-tab of the analysis is shown: the metric heatmap or the full resource list.
   // PU2 — persisted so the chosen sub-tab survives navigation/reload.
   const [perfTab, setPerfTab] = usePersistedState<"analysis" | "all">("azsup.performance.tab", "analysis");
-  const [heatmapExpanded, setHeatmapExpanded] = usePersistedState("azsup.performance.heatmapExpanded", true);
+  // The header block lives OUTSIDE the scroll container, so its ~245px cannot be scrolled
+  // away — collapsing it is the only way to give that space to the matrix.
+  const [overviewOpen, setOverviewOpen] = usePersistedState("azsup.performance.overviewOpen", true);
+  // Focus mode hides every non-matrix block at once. Deliberately NOT persisted as the default
+  // for new users: arriving on a screen with the verdict already hidden explains nothing.
+  const [focusMatrix, setFocusMatrix] = usePersistedState("azsup.performance.focusMatrix", false);
   // Top-level view: the single-scope Profiler vs the all-workloads Fleet overview.
   const [mainView, setMainView] = usePersistedState<"profiler" | "fleet" | "cleanup">("azsup.performance.view", "profiler");
   // Never LAND on the destructive-adjacent Cleanup tab: if it was the persisted view from a
@@ -368,6 +437,10 @@ export function PerformancePanel() {
   }, []);
   // The run currently shown below the grid (selected from history, or just-completed).
   const [data, setData] = useState<PerfProfile | null>(null);
+  // The exit control lives in the heatmap toolbar, which only exists once a run is loaded.
+  // Honouring a persisted focus preference with no run would hide the history too, leaving an
+  // empty screen and no way back.
+  const focused = focusMatrix && !!data;
 
   // --- Heatmap filters (client-side, applied to the loaded run's resources) -------------
   const [hmPosture, setHmPosture] = useState<"all" | "problems" | "atrisk" | "healthy">("all");
@@ -772,7 +845,7 @@ export function PerformancePanel() {
   function investigate(b: PerfBottleneck) {
     const prompt =
       `War Room: investigate the performance bottleneck on "${b.resource_name}" (${b.resource_type}). ` +
-      `${b.metric_name} = ${b.observed}${b.unit} vs AMBA threshold ${b.threshold}${b.unit} (${b.pct_of_threshold}% of threshold, ${b.state}). ` +
+      `${b.metric_name} = ${b.observed}${b.unit} vs AMBA threshold ${b.threshold}${b.unit} (${pctText(b.pct_of_threshold)} of threshold, ${b.state}). ` +
       `Confirm current load, identify the cause, and recommend scale/tuning before peak load breaches it.`;
     try {
       sessionStorage.setItem("azsup.warRoomHandoff", JSON.stringify({ workloadId: effWorkloadId, prompt }));
@@ -816,16 +889,38 @@ export function PerformancePanel() {
       ) : (
       <>
       {/* Header + controls */}
-      <div className="border-b bg-white px-5 py-3">
+      <div className="border-b bg-white px-5 py-3" data-testid="perf-header">
         <div className="flex flex-wrap items-center gap-4">
-          <ScoreDonut score={data?.scorecard?.workload_score ?? runs[0]?.workload_score ?? null} />
+          {overviewOpen && !focused && (
+            <ScoreDonut score={data?.scorecard?.workload_score ?? runs[0]?.workload_score ?? null} />
+          )}
           <div className="min-w-0 max-w-md">
-            <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">🔥 Performance Profiler</h1>
-            <p className="text-xs text-gray-500">
-              Reads live Azure Monitor metrics for every resource in a workload and lays them out in a single matrix — so you can see the whole workload's performance holistically and spot the binding bottleneck against its AMBA thresholds. Pick a window and click Run. Read-only.
-            </p>
+            <h1 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+              {focused ? (
+                /* No chevron in focus mode: the overview is already hidden, so a control that
+                   visibly does nothing when clicked is worse than no control. */
+                <span>🔥 Performance Profiler</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setOverviewOpen(!overviewOpen)}
+                  aria-expanded={overviewOpen}
+                  data-testid="perf-overview-toggle"
+                  title={overviewOpen ? "Collapse the overview" : "Expand the overview"}
+                  className="flex items-center gap-2 text-left"
+                >
+                  <ChevronRightIcon className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${overviewOpen ? "rotate-90" : ""}`} />
+                  🔥 Performance Profiler
+                </button>
+              )}
+            </h1>
+            {overviewOpen && !focused && (
+              <p className="text-xs text-gray-500">
+                Reads live Azure Monitor metrics for every resource in a workload and lays them out in a single matrix — so you can see the whole workload's performance holistically and spot the binding bottleneck against its AMBA thresholds. Pick a window and click Run. Read-only.
+              </p>
+            )}
           </div>
-          {enabled && (
+          {enabled && overviewOpen && !focused && (
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Score trend</span>
               <TrendChart points={trendQ.data?.points ?? []} current={trendQ.data?.current} previous={trendQ.data?.previous} delta={trendQ.data?.delta} loading={trendQ.isLoading} unit="" deltaLabel="vs last run" />
@@ -864,8 +959,8 @@ export function PerformancePanel() {
             </button>
           </div>
         </div>
-        {data?.scorecard && (
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {overviewOpen && !focused && data?.scorecard && (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5" data-testid="perf-kpis">
             <Stat label="Performance score" value={data.scorecard.workload_score == null ? "—" : `${data.scorecard.workload_score}`} tone={scoreTone(data.scorecard.workload_score)} />
             <Stat label="Resources profiled" value={`${data.scorecard.resources_profiled}`} />
             <Stat label="Breaching" value={`${data.scorecard.breaching}`} tone={data.scorecard.breaching ? "text-red-600" : undefined} />
@@ -884,6 +979,7 @@ export function PerformancePanel() {
         )}
 
         {/* Run history (shared shell) */}
+        {!focused && (
         <RunHistoryShell<PerfRunSummary>
           title="Profile history"
           countText={`${runs.length} run(s) for this scope`}
@@ -928,7 +1024,7 @@ export function PerformancePanel() {
             { header: "Window", className: "text-gray-500", render: (r) => windowCell(r) },
             { header: "Score", render: (r) => <span className={`font-semibold ${r.workload_score != null ? scoreTone(r.workload_score) : ""}`}>{r.workload_score ?? "—"}</span> },
             { header: "Breach / Approach / Healthy", render: (r) => <><span className="text-red-600">{r.breaching}</span> / <span className="text-amber-600">{r.approaching}</span> / <span className="text-green-600">{r.healthy}</span></> },
-            { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name} (${r.top_bottleneck.pct_of_threshold}%)` : "—") },
+            { header: "Top bottleneck", className: "text-gray-600", render: (r) => (r.top_bottleneck ? `${r.top_bottleneck.resource_name} · ${r.top_bottleneck.metric_name} (${pctText(r.top_bottleneck.pct_of_threshold)})` : "—") },
             {
               header: "Actions", align: "right", render: (r) => (
                 <>
@@ -955,6 +1051,7 @@ export function PerformancePanel() {
             },
           ]}
         />
+        )}
         {runningHere && !data ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed bg-white p-10 text-center">
             <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none">
@@ -978,10 +1075,12 @@ export function PerformancePanel() {
           )
         ) : (
           <>
+            {!focused && (
             <div className="mb-2 flex items-center gap-2 text-[11px] text-gray-400">
               Showing run from {fmtTime(data.run_at || data.generated_at)} · {data.demo ? "demo data · " : data.connection_configured ? "" : "no Azure connection · "}window {data.window}
               {data.error ? ` · ${data.error}` : ""}
             </div>
+            )}
             {data.status === "failed" && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                 <div className="font-semibold">⚠ Profile collection failed</div>
@@ -996,34 +1095,11 @@ export function PerformancePanel() {
                 </div>
               </div>
             )}
-            {/* Bottleneck banner */}
-            {data.top_bottleneck ? (
-              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-                <div className="text-sm font-semibold text-red-800">
-                  ⚠ Binding bottleneck: {data.top_bottleneck.resource_name} · {data.top_bottleneck.metric_name}
-                </div>
-                <div className="mt-0.5 text-xs text-red-700">
-                  {data.top_bottleneck.observed}{data.top_bottleneck.unit} vs threshold {data.top_bottleneck.threshold}{data.top_bottleneck.unit}
-                  {" "}({data.top_bottleneck.pct_of_threshold}% of threshold{data.top_bottleneck.trend_pct ? `, trending ${data.top_bottleneck.trend_pct > 0 ? "+" : ""}${data.top_bottleneck.trend_pct}%` : ""}) — {data.top_bottleneck.state}
-                </div>
-              </div>
-            ) : data.status === "partial" || data.scorecard.workload_score == null ? (
-              <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                No binding bottleneck can be confirmed from the successfully returned metric data.
-              </div>
-            ) : (
-              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-                ✓ No bottlenecks — all profiled metrics are within their AMBA thresholds.
-              </div>
-            )}
-
-            {data.narrative && (
-              <div className="mb-4 rounded-lg border bg-white px-3 py-2 text-sm text-gray-700">
-                <Markdown>
-                  {data.narrative}
-                </Markdown>
-              </div>
-            )}
+            {/* Verdict + narrative, collapsible. The failed/partial banners above stay
+                uncollapsible on purpose — and stay visible in focus mode too: a completeness
+                warning that can be folded away and forgotten is how missing metrics start
+                reading as healthy. */}
+            {!focused && <ProfileSummary data={data} />}
 
             {/* Sub-tabs: the metric heatmap vs the full in-scope resource list */}
             <div className="mb-3 flex items-center gap-1 border-b">
@@ -1046,27 +1122,26 @@ export function PerformancePanel() {
                   )}
                 </button>
               ))}
-              {perfTab === "analysis" && (
-                <button
-                  type="button"
-                  onClick={() => setHeatmapExpanded(!heatmapExpanded)}
-                  aria-expanded={heatmapExpanded}
-                  aria-label={heatmapExpanded ? "Collapse heatmap" : "Expand heatmap"}
-                  title={heatmapExpanded ? "Collapse heatmap" : "Expand heatmap"}
-                  className="ml-auto mb-1 flex h-6 w-6 items-center justify-center rounded text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                >
-                  {heatmapExpanded ? "▾" : "▸"}
-                </button>
-              )}
             </div>
 
             {perfTab === "all" ? (
               <AllResourcesTab resources={data.all_resources ?? []} />
-            ) : !heatmapExpanded ? null : (
+            ) : (
             <>
-            {(data.bottlenecks ?? []).length > 0 && (
-              <div className="mb-6">
-                <h2 className="mb-2 text-sm font-semibold text-gray-900">Ranked bottlenecks</h2>
+            {(data.bottlenecks ?? []).length > 0 && !focused && (
+              <HistoryDisclosure
+                storageKey="azsup.performance.bottlenecks"
+                label="ranked bottlenecks"
+                testId="perf-bottlenecks"
+                className="mb-6"
+                headerClassName="mb-2"
+                title={<h2 className="text-sm font-semibold text-gray-900">Ranked bottlenecks</h2>}
+                count={
+                  <span className="rounded bg-gray-100 px-1.5 text-[10px] text-gray-600">
+                    {data.bottlenecks.length}
+                  </span>
+                }
+              >
                 <div className="space-y-1.5">
                   {data.bottlenecks.slice(0, 12).map((b, i) => (
                     <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm">
@@ -1074,7 +1149,7 @@ export function PerformancePanel() {
                       <span className="font-medium text-gray-800">{b.resource_name}</span>
                       <PortalLink resourceId={b.resource_id} />
                       <span className="text-gray-500">{b.metric_name}</span>
-                      <span className={STATE_TEXT[b.state]}>{b.observed}{b.unit} / {b.threshold}{b.unit} ({b.pct_of_threshold}%)</span>
+                      <span className={STATE_TEXT[b.state]}>{b.observed}{b.unit} / {b.threshold}{b.unit} ({pctText(b.pct_of_threshold)})</span>
                       {b.trend_pct ? <span className="text-[11px] text-gray-400">trend {b.trend_pct > 0 ? "+" : ""}{b.trend_pct}%</span> : null}
                       <div className="ml-auto flex gap-1.5">
                         <button onClick={() => investigate(b)} className="rounded border px-2 py-0.5 text-[11px] hover:bg-gray-50">🔎 War Room</button>
@@ -1094,18 +1169,38 @@ export function PerformancePanel() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </HistoryDisclosure>
             )}
 
             {/* Sticky bounded panel: toolbar (always visible) + internally-scrolling table.
                 Because they live in one flex column, the sticky table header always pins
-                directly below the toolbar regardless of browser zoom (no magic offset). */}
-            <div className="sticky top-0 z-30 flex max-h-[82vh] min-h-[420px] flex-col">
+                directly below the toolbar regardless of browser zoom (no magic offset).
+
+                The height MUST stay within the scroll container. `max-h-[82vh]` was measured
+                against the viewport, not the scrollport, so on a 900px screen the panel wanted
+                738px inside a 561px scroller — taller than what it sticks to, which silently
+                disables sticky entirely. It then scrolled 1:1 with the page and the matrix
+                never reached the top. `max-h-full` binds it to the scroller instead, and the
+                old `min-h-[420px]` floor is gone for the same reason: on a short viewport it
+                would re-create the overflow. */}
+            <div className="sticky top-0 z-30 flex max-h-full flex-col" data-testid="perf-heatmap-panel">
             <div className="shrink-0 border-b bg-white pb-2 pt-1">
             <div className="mb-2 flex items-center gap-2">
               <h2 className="text-sm font-semibold text-gray-900">Heatmap — resources × AMBA metrics</h2>
               <span className="text-[11px] text-gray-400">cell = % of its AMBA threshold</span>
               <div className="ml-auto flex items-center gap-1.5">
+                {/* Lives in the panel toolbar because that is the one strip guaranteed to stay
+                    on screen when everything else is hidden — the way back out must not be
+                    inside what got hidden. */}
+                <button
+                  onClick={() => setFocusMatrix(!focused)}
+                  aria-pressed={focused}
+                  data-testid="perf-focus-toggle"
+                  title={focused ? "Show the score, history and analysis again" : "Hide everything except the matrix"}
+                  className={`rounded-md border px-3 py-1.5 text-xs text-white ${focused ? "border-green-800 bg-green-800 hover:bg-green-900" : "border-green-600 bg-green-600 hover:bg-green-700"}`}
+                >
+                  {focused ? "↙ Exit focus" : "⛶ Focus"}
+                </button>
                 <button onClick={registerFindings} disabled={busy === "findings" || (data.bottlenecks ?? []).length === 0} className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">🛡️ Register findings</button>
                 <button onClick={() => void downloadPdf()} disabled={busy === "pdf"} title="Download a branded PDF performance report for this run" className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">{busy === "pdf" ? "…" : "📄 PDF"}</button>
                 <button onClick={() => void saveEvidence()} disabled={busy === "evidence"} title="Capture this profile run as an immutable Evidence Locker snapshot" className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-50">{busy === "evidence" ? "Saving…" : "🗄 Evidence"}</button>

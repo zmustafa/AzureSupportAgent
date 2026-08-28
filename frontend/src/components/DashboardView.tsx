@@ -951,7 +951,7 @@ export function DashboardPanel() {
               <Link to="/performance" className="mt-2 flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5 text-[12px] text-gray-600 hover:border-brand/40">
                 <span>⚡</span>
                 <span className="min-w-0 flex-1 truncate">Top bottleneck: <span className="font-medium text-gray-800">{topBottleneck.resource_name}</span> · {topBottleneck.metric_name}</span>
-                <span className="shrink-0 font-semibold text-amber-600">{topBottleneck.pct_of_threshold}%</span>
+                <span className="shrink-0 font-semibold text-amber-600">{typeof topBottleneck.pct_of_threshold === "number" ? `${topBottleneck.pct_of_threshold}%` : "—"}</span>
               </Link>
             )}
           </div>

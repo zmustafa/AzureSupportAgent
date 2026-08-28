@@ -297,16 +297,23 @@ def _matrix_sheet(wb: Any, rows: list[dict[str, Any]], host: str = "") -> None:
                 coerce(_class_label(target.get("rto_class", ""))),
                 coerce("; ".join(e.get("detail", "") for e in verdict.get("basis", []))),
                 coerce("; ".join(verdict.get("rto_assumptions") or [])),
+                # A repeated COLUMN, not a sheet note: a limit on what the answer covers must
+                # travel with every row a reader might filter down to.
+                coerce(model.worst_caveat_severity(
+                    tuple(model.Caveat(**c) for c in verdict.get("caveats") or []))),
+                coerce(" | ".join(c.get("detail", "") for c in verdict.get("caveats") or [])),
             ])
     wb.sheet(
         "Recovery matrix",
         ["Resource", "Resource ID", "Open in Azure", "Type", "Subscription",
          "Resource group", "Region",
          "Tier", "Scenario", "RPO", "RTO class", "RTO band", "Confidence",
-         "Against objective", "Target RPO", "Target RTO", "Why", "Assumptions"],
+         "Against objective", "Target RPO", "Target RTO", "Why", "Assumptions",
+         "Recovery limit", "What it does not cover"],
         out,
         note="One row per resource per applicable scenario. An RTO band is an estimate with "
-             "its assumptions stated; it has not been verified by a drill.",
+             "its assumptions stated; it has not been verified by a drill. 'What it does not "
+             "cover' names the deletions this recovery path does not survive.",
     )
 
 

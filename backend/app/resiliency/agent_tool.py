@@ -20,7 +20,10 @@ HOW_TO_READ = (
     "slow, not a degree of slow. `unknown` means a source could not be read and is NOT a "
     "claim that the resource is unprotected. Redundancy (zones, GRS, multi-region) does "
     "nothing for data_corruption or accidental_delete because it replicates the damage. "
-    "Always quote the `basis` when stating a number."
+    "Always quote the `basis` when stating a number. "
+    "`does_not_cover` lists deletions the recovery path does NOT survive — for example an "
+    "Azure SQL database is restorable on its own but dies with its logical server. Never "
+    "report a deletion answer without it."
 )
 
 # Only the two that answer the questions people actually ask are on by default; the combined
@@ -64,6 +67,10 @@ def _slim(row: dict[str, Any]) -> dict[str, Any]:
                 "rpo_minutes": v["rpo_minutes"], "rpo_state": v["rpo_state"],
                 "rto_class": v["rto_class"], "confidence": v["confidence"],
                 "basis": [e["detail"] for e in v.get("basis", [])],
+                **({"does_not_cover": [
+                    {"severity": c["severity"], "detail": c["detail"]}
+                    for c in v.get("caveats") or []
+                ]} if v.get("caveats") else {}),
             }
             for scenario, v in row["verdicts"].items() if v.get("applicable")
         },

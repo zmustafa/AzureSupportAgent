@@ -146,10 +146,26 @@ async def analyze(
         "Azure Advisor", collected_at=generated_at,
         unreadable=bool(advisor_error), reason=advisor_error)
 
+    # --- management locks ----------------------------------------------------------
+    # ARM, not Resource Graph: locks are absent from both `Resources` and
+    # `authorizationresources`, verified against a live tenant. One call per subscription.
+    locks: list[dict[str, Any]] = []
+    lock_error = ""
+    if demo:
+        from app import demo_catalog
+
+        locks = getattr(demo_catalog, "resiliency_locks_for", lambda _w: [])(workload_id)
+    elif connection:
+        await _say(progress, "info", "Reading management locks…")
+        locks, lock_error = await collect.collect_locks(connection, subscriptions or [])
+    provenance["locks"] = _provenance(
+        "Azure Resource Manager", collected_at=generated_at,
+        unreadable=bool(lock_error), reason=lock_error)
+
     # --- derive --------------------------------------------------------------------
     await _say(progress, "info", "Deriving recovery verdicts…")
     rows = join.build_rows(
-        config, backup=instances, asr=replication, advisor=advisor_rows,
+        config, backup=instances, asr=replication, advisor=advisor_rows, locks=locks,
         backup_known=backup_known, backup_reason=backup_reason,
     )
 
@@ -163,6 +179,9 @@ async def analyze(
                 rto_class=v["rto_class"],
                 basis=tuple(model.Evidence(**e) for e in v.get("basis", [])),
                 confidence=v["confidence"], applicable=v["applicable"],
+                # Rebuilt explicitly: this round-trip through dicts drops anything not named
+                # here, and a silently discarded caveat is indistinguishable from no caveat.
+                caveats=tuple(model.Caveat(**c) for c in v.get("caveats", [])),
             )
             for scenario, v in row["verdicts"].items()
         }

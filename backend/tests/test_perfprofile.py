@@ -232,3 +232,27 @@ def test_profiler_uses_workloads_own_connection(monkeypatch):
     assert connection == {"id": "default-conn"}
 
 
+
+
+def test_fallback_narrative_never_prints_none_for_an_absent_ratio():
+    """`pct_of_threshold` is legitimately None when the observation or threshold is zero.
+
+    Interpolating it put the literal string "None%" into the analyst summary on screen, in
+    the agent tool payload and in the war-room prompt. The PDF had always rendered an em dash
+    for the same value, so the report and the screen disagreed about the same run."""
+    from app.perfprofile.narrative import _fallback
+
+    snap = {
+        "scorecard": {"workload_score": 74, "resources_profiled": 7, "breaching": 4,
+                      "approaching": 0},
+        "top_bottleneck": {"resource_name": "apricersouthcent", "metric_name": "sessions_count",
+                           "observed": 0.0, "unit": "count", "threshold": 0.5,
+                           "pct_of_threshold": None, "state": "breaching"},
+    }
+    text = _fallback(snap)
+    assert "None" not in text, text
+    assert "0.5count threshold" in text
+
+    # A real ratio is still spelled out.
+    snap["top_bottleneck"]["pct_of_threshold"] = 112.4
+    assert "112.4% of its 0.5count threshold" in _fallback(snap)

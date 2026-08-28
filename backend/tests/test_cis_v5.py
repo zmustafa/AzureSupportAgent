@@ -82,7 +82,12 @@ def test_cis_automation_majority_is_graph():
     assert len(graph) > len(manual)
     # Counting the Microsoft Graph + ARM REST rails, the vast majority are now automated.
     assert len(automated) >= 70
-    assert len(manual) <= 12
+    # 11 genuinely data-plane / Entra controls, plus 6 that were WRONGLY automated: three
+    # blob-service controls (9.2.1-9.2.3) and three lock controls (9.3.9, 9.3.10, 6.2) queried
+    # resource types Resource Graph does not index, so they could only ever return a silent
+    # pass or a blanket fail. Verified against a live tenant. Keep this bound tight so manual
+    # creep is still caught — raise it only with the same kind of evidence.
+    assert len(manual) <= 17
     # The private-endpoint controls were automated (not manual).
     for cid in ("cis_8_3_8", "cis_9_3_2_1", "cis_2_1_11"):
         assert catalog._BY_ID[cid].get("kind", "graph") == "graph", cid
@@ -346,8 +351,10 @@ def test_arm_rest_diag_exists_not_applicable_without_subs(monkeypatch):
 
 # ----------------------------------------------------------------- v6 ARG additions (resource locks, low SKU, NSP, NSG flow logs)
 def test_v6_new_arg_checks_present_and_graph():
-    # The 6 verified v6 controls added as automated Resource Graph checks.
-    new = ["cis_6_1_1_5", "cis_6_1_5", "cis_6_2", "cis_7_16", "cis_9_3_9", "cis_9_3_10"]
+    # The v6 controls that ARE genuinely automatable from Resource Graph. The three lock
+    # controls used to be in this list; they moved to manual because ARG does not index
+    # locks — see test_v6_lock_checks_are_manual_because_arg_cannot_see_locks.
+    new = ["cis_6_1_1_5", "cis_6_1_5", "cis_7_16"]
     for cid in new:
         chk = catalog._BY_ID[cid]
         assert chk["pillar"] == "security", cid
@@ -357,15 +364,33 @@ def test_v6_new_arg_checks_present_and_graph():
         assert chk["frameworks"]["cis"] == [f"CIS Azure {cid.replace('cis_', '').replace('_', '.')}"], cid
 
 
-def test_v6_lock_checks_are_inheritance_aware():
-    # The lock checks must leftouter-join locks and prefix-match the resource id so an
-    # RG/subscription-scoped lock covers its children (no false positives).
-    for cid, level in (("cis_9_3_9", "CanNotDelete"), ("cis_9_3_10", "ReadOnly"), ("cis_6_2", "CanNotDelete")):
-        kql = catalog._BY_ID[cid]["kql"]
-        assert "microsoft.authorization/locks" in kql, cid
-        assert f"=~ '{level}'" in kql, cid
-        assert "startswith" in kql, cid          # prefix (inheritance) match
-        assert "leftouter" in kql, cid
+def test_v6_lock_checks_are_manual_because_arg_cannot_see_locks():
+    """Locks are NOT in Resource Graph, so these cannot be graph controls.
+
+    Verified against a live tenant: a storage account carrying a real CanNotDelete lock
+    returned nothing from `Resources` or `authorizationresources`, while ARM showed the lock
+    plainly. As graph controls the leftouter join matched nothing, `_anyCov` was false for
+    every row, and every in-scope resource — including the locked one — was reported as
+    unlocked. They now ask for an attestation instead of asserting a false failure."""
+    for cid in ("cis_9_3_9", "cis_9_3_10", "cis_6_2"):
+        chk = catalog._BY_ID[cid]
+        assert chk["kind"] == "manual", cid
+        assert not chk.get("kql"), f"{cid} must not query a table ARG does not index"
+        assert "does not index" in chk["description"], cid
+
+
+def test_no_control_queries_a_resource_type_arg_does_not_index():
+    """A control that can never return a row is worse than a missing one.
+
+    Both of these were proven absent from Resource Graph against a live tenant while being
+    plainly visible over ARM. `blobservices` gave three CIS controls a silent PASS on every
+    estate; `locks` gave three more a false FAIL on every resource."""
+    unindexed = ("microsoft.storage/storageaccounts/blobservices",
+                 "microsoft.authorization/locks")
+    for cid, chk in catalog._BY_ID.items():
+        kql = (chk.get("kql") or "").lower()
+        for needle in unindexed:
+            assert needle not in kql, f"{cid} queries {needle}, which ARG does not index"
 
 
 def test_v6_nsp_is_existence_check():

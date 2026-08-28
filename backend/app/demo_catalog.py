@@ -519,3 +519,34 @@ def resiliency_asr_for(scope_id: str) -> list[dict[str, Any]]:
             out.append({"source_id": rid.lower(), "friendly_name": name, **asr})
     return out
 
+
+#: Demo resources carrying a management lock. Deliberately sparse: a lock is a mitigation the
+#: reader should notice, and locking the whole estate would make it invisible again. One
+#: resource-scoped lock and one inherited resource-group lock, so both wordings get exercised.
+_LOCKED_NAMES: dict[str, str] = {
+    "contoso-pms-vm": "CanNotDelete",       # no recovery path AND locked: prevention only
+    "zava-web-sql": "ReadOnly",
+}
+
+
+def resiliency_locks_for(scope_id: str) -> list[dict[str, Any]]:
+    """Management locks for the demo estate, in the shape ``collect.collect_locks`` returns.
+
+    Locks come from ARM rather than Resource Graph in production; the demo mirrors the output
+    shape, not the transport, so the join and the caveat wording are exercised identically."""
+    out: list[dict[str, Any]] = []
+    for res in resources_for(scope_id):
+        level = _LOCKED_NAMES.get(res["name"])
+        if not level:
+            continue
+        rid = res["id"].lower()
+        # One of the two is expressed at resource-group scope so inheritance is exercised.
+        if level == "ReadOnly":
+            scope = rid.rsplit("/providers/", 1)[0]
+            kind = "resource_group"
+        else:
+            scope, kind = rid, "resource"
+        out.append({"scope": scope, "scope_kind": kind, "level": level,
+                    "name": f"demo-{level.lower()}-lock", "notes": "Demo estate"})
+    return out
+

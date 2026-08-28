@@ -20,9 +20,15 @@ def _fallback(snapshot: dict[str, Any]) -> str:
         f"{sc.get('approaching', 0)} approaching their AMBA thresholds."
     ]
     if top:
+        # The ratio is legitimately None when the observation or the threshold is zero.
+        # Interpolating it printed the literal "None%" into the analyst summary.
+        pct = top.get("pct_of_threshold")
+        ratio = (f" ({pct}% of its {top['threshold']}{top['unit']} threshold)"
+                 if isinstance(pct, (int, float))
+                 else f" (against a {top['threshold']}{top['unit']} threshold)")
         parts.append(
-            f"Top bottleneck: {top['resource_name']} {top['metric_name']} at {top['observed']}{top['unit']} "
-            f"({top['pct_of_threshold']}% of its {top['threshold']}{top['unit']} threshold)"
+            f"Top bottleneck: {top['resource_name']} {top['metric_name']} at {top['observed']}{top['unit']}"
+            + ratio
             + (f", trending {top['trend_pct']:+}% over the window." if top.get("trend_pct") else ".")
         )
     return " ".join(parts)

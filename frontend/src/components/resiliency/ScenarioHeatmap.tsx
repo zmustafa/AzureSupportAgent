@@ -127,17 +127,34 @@ export function HeatCell({
 }) {
   const state = cellState(verdict);
   const meta = CELL[state];
+  // A critical caveat does NOT change the colour. The verdict has not changed — recolouring
+  // would read as a downgrade of the answer rather than a limit on what the answer covers.
+  const critical = (verdict?.caveats ?? []).some((c) => c.severity === "critical");
   return (
     <button
       type="button"
       onClick={onClick}
       data-testid="resiliency-cell"
       data-state={state}
-      title={cellTitle(verdict, scenarioLabel, classLabel)}
-      aria-label={`${scenarioLabel}: ${meta.label}`}
-      className={`h-7 w-full rounded text-center text-sm hover:bg-gray-100 ${meta.cls}`}
+      data-caveat={critical ? "critical" : undefined}
+      title={
+        critical
+          ? `${cellTitle(verdict, scenarioLabel, classLabel)}\n\nDoes not cover: ${
+              verdict?.caveats?.find((c) => c.severity === "critical")?.detail ?? ""}`
+          : cellTitle(verdict, scenarioLabel, classLabel)
+      }
+      aria-label={`${scenarioLabel}: ${meta.label}${critical ? ", with a recovery limit" : ""}`}
+      className={`relative h-7 w-full rounded text-center text-sm hover:bg-gray-100 ${meta.cls}`}
     >
       <span aria-hidden="true">{meta.glyph}</span>
+      {critical && (
+        <span
+          aria-hidden="true"
+          className="absolute right-0.5 top-0 text-[9px] font-bold leading-none text-rose-600"
+        >
+          !
+        </span>
+      )}
     </button>
   );
 }
