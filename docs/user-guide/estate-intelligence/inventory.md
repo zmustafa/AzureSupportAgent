@@ -6,14 +6,14 @@ grand_parent: User guide
 nav_order: 1
 description: Search and export Azure resources, understand distribution and cost, identify optimization candidates, and capture inventory snapshots.
 permalink: /user-guide/estate-intelligence/inventory/
-feature_ids: [PROACTIVE_NAV:inventory, ROUTE:inventory, INVENTORY_NAV:changes, INVENTORY_NAV:cost, INVENTORY_NAV:grid, INVENTORY_NAV:location, INVENTORY_NAV:optimization, INVENTORY_NAV:overview]
+feature_ids: [PROACTIVE_NAV:inventory, ROUTE:inventory, INVENTORY_NAV:changes, INVENTORY_NAV:cost, INVENTORY_NAV:grid, INVENTORY_NAV:location, INVENTORY_NAV:optimization, INVENTORY_NAV:overview, PERMISSION:cost.read]
 ---
 
 # Inventory
 
 **App routes:** `/inventory` and `/inventory/:tab`
 
-**Product permission:** `inventory.read` (administrators also pass the permission guard).
+**Product permissions:** `inventory.read` opens Inventory; `cost.read` authorizes actual-cost queries in chat. Administrators also pass the permission guards.
 
 ## Purpose
 
