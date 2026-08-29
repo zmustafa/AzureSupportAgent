@@ -16092,9 +16092,9 @@ export interface DeepInvestigationSummary {
 export interface StreamHandlers {
   onToken: (text: string) => void;
   onStatus?: (data: { phase: string; message: string }) => void;
-  onToolStart?: (data: { tool_name: string; arguments: unknown; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean }) => void;
-  onToolResult?: (data: { tool_name: string; duration_ms: number; summary?: string; is_error?: boolean; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean }) => void;
-  onApprovalRequired?: (data: { tool_name: string; arguments: unknown }) => void;
+  onToolStart?: (data: { tool_call_id?: string; tool_name: string; arguments: unknown; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean }) => void;
+  onToolResult?: (data: { tool_call_id?: string; tool_name: string; duration_ms: number; summary?: string; is_error?: boolean; agent?: string; agent_name?: string; agent_icon?: string; node_id?: string; discovery?: boolean; artifacts?: Array<{ artifact_id: string; label: string; filename: string; url: string; kind: string }> }) => void;
+  onApprovalRequired?: (data: { tool_call_id?: string; tool_name: string; arguments: unknown }) => void;
   onPhase?: (data: { phase: string; label: string; summary: string | null }) => void;
   onHypothesis?: (data: HypothesisNode) => void;
   onHypothesisStatus?: (data: { id: string; status: string; evidence: string; agent?: string }) => void;

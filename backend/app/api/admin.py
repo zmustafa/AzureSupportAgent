@@ -129,6 +129,7 @@ class AppSettingsUpdate(BaseModel):
     # score, so it is opt-in rather than a silent change to a number people track.
     assessments_include_recovery: bool | None = None
     resiliency_tools_enabled: bool | None = None
+    cost_tools_enabled: bool | None = None
     architecture_category_colors: dict[str, str] | None = None
     # Policy exemption guardrails (enforced on create/extend).
     policy_exemption_require_justification: bool | None = None
@@ -1314,8 +1315,10 @@ async def list_mcp_tools(_: Principal = Depends(require_settings_read)):
         )
         enriched.append({
             **entry.public(),
-            "active": tool.name not in disabled,
+            "active": tool.name not in disabled and tool.available,
             "disabled": tool.name in disabled,
+            "runtime_available": tool.available,
+            "unavailable_reason": tool.unavailable_reason,
         })
     return {
         "disabled": sorted(disabled),
@@ -1415,6 +1418,8 @@ async def tool_routing_diagnostics(
         register_entra_identity_tools,
     )
     from app.iam.agent_tool import register_iam_tools
+    from app.advisor.agent_tool import register_advisor_tools
+    from app.cost.agent_tool import register_cost_tools
     from app.mcp.client import build_entra_mcp_client
     from app.ownership.agent_tool import register_ownership_tools
 
@@ -1450,7 +1455,7 @@ async def tool_routing_diagnostics(
         str(v) for v in (app_settings.get("azure_mcp_disabled_tools") or [])
     }
     for tool in azure_discovered:
-        if tool.name in disabled_azure:
+        if tool.name in disabled_azure or not tool.available:
             continue
         entry = make_entry(
             ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
@@ -1498,6 +1503,23 @@ async def tool_routing_diagnostics(
         principal=principal,
         connection=connection,
     )
+    register_cost_tools(
+        toolset,
+        tenant_id=tenant_id,
+        principal=principal,
+        connection=connection,
+    )
+    register_advisor_tools(
+        toolset,
+        tenant_id=tenant_id,
+        connection=connection,
+    )
+    from app.agent.inventory_tool import register_inventory_tool
+
+    register_inventory_tool(toolset, mcp_client=azure_client)
+    from app.agent.public_exposure_tool import register_public_exposure_tool
+
+    register_public_exposure_tool(toolset, connection=connection)
     for spec in toolset.specs():
         entries.append(make_entry(
             ToolSpec(

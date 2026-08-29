@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -599,6 +600,9 @@ async def purge_chat(
     chat = await _get_owned_chat(db, principal, chat_id)
     await db.delete(chat)
     await db.commit()
+    from app.agent.file_artifacts import delete_chat as delete_chat_artifacts
+
+    await asyncio.to_thread(delete_chat_artifacts, chat_id)
     return {"ok": True}
 
 
@@ -628,7 +632,35 @@ async def empty_trash(
         )
     )
     await db.commit()
+    from app.agent.file_artifacts import delete_chat as delete_chat_artifacts
+
+    await asyncio.gather(
+        *(asyncio.to_thread(delete_chat_artifacts, chat.id) for chat in chats)
+    )
     return {"ok": True, "deleted": len(chats)}
+
+
+@router.get("/{chat_id}/artifacts/{artifact_id}")
+async def download_chat_artifact(
+    chat_id: str,
+    artifact_id: str,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a generated tool artifact after verifying ownership of its chat."""
+    await _get_owned_chat(db, principal, chat_id)
+    from app.agent.file_artifacts import resolve
+
+    try:
+        path, metadata = await asyncio.to_thread(resolve, chat_id, artifact_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found.") from exc
+    return FileResponse(
+        path,
+        media_type=metadata["content_type"],
+        filename=metadata["filename"],
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 class ChatPatch(BaseModel):
@@ -1564,6 +1596,36 @@ async def _start_message_turn(
             connection=turn_connection,
         )
 
+    if turn_connector_toolset is not None:
+        from app.cost.agent_tool import register_cost_tools
+
+        if payload.subscription_id:
+            tool_scope = f"sub:{payload.subscription_id}"
+        elif payload.management_group_id:
+            tool_scope = f"mg:{payload.management_group_id}"
+        elif payload.scope_all or workload:
+            tool_scope = ""
+        else:
+            default_subscription = str((turn_connection or {}).get("default_subscription") or "")
+            tool_scope = f"sub:{default_subscription}" if default_subscription else ""
+        register_cost_tools(
+            turn_connector_toolset,
+            tenant_id=_turn_tenant_id,
+            principal=principal,
+            connection=turn_connection,
+            scope=tool_scope,
+            workload=workload,
+        )
+        from app.advisor.agent_tool import register_advisor_tools
+
+        register_advisor_tools(
+            turn_connector_toolset,
+            tenant_id=_turn_tenant_id,
+            connection=turn_connection,
+            scope=tool_scope,
+            workload=workload,
+        )
+
     # EntraID (Microsoft Graph) tools: a custom agent opts in via allow_all_entra; the
     # default assistant gets them when the admin has enabled the global toggle.
     if turn_agent is not None:
@@ -1624,6 +1686,7 @@ async def _start_message_turn(
                 azure_enabled=turn_azure_enabled,
                 azure_tools=(turn_agent or {}).get("azure_tools") or [],
                 azure_bundles=(turn_agent or {}).get("azure_bundles") or [],
+                chat_id=chat_id,
             )
         else:
             runner = Orchestrator(
@@ -1641,6 +1704,30 @@ async def _start_message_turn(
                 azure_bundles=(turn_agent or {}).get("azure_bundles") or [],
                 entra_tools=(turn_agent or {}).get("entra_tools") or [],
                 entra_bundles=(turn_agent or {}).get("entra_bundles") or [],
+                chat_id=chat_id,
+            )
+        if turn_connector_toolset is not None:
+            from app.agent.inventory_tool import register_inventory_tool
+            from app.advisor.agent_tool import subscription_ids_from_workload
+
+            inventory_subscriptions = (
+                [payload.subscription_id]
+                if payload.subscription_id
+                else subscription_ids_from_workload(workload)
+            )
+
+            register_inventory_tool(
+                turn_connector_toolset,
+                mcp_client=runner._mcp,
+                scope_hint=scope_hint or "",
+                allowed_subscription_ids=inventory_subscriptions or None,
+            )
+            from app.agent.public_exposure_tool import register_public_exposure_tool
+
+            register_public_exposure_tool(
+                turn_connector_toolset,
+                connection=turn_connection,
+                allowed_subscription_ids=inventory_subscriptions or None,
             )
         orchestrator = runner
         async with SessionLocal() as task_db:
@@ -1725,6 +1812,7 @@ async def _start_message_turn(
                         activity.append(
                             {
                                 "kind": "tool",
+                                "tool_call_id": ev.data.get("tool_call_id"),
                                 "name": ev.data["tool_name"],
                                 "args": ev.data.get("arguments", {}),
                                 "status": "awaiting_approval"
@@ -1763,10 +1851,21 @@ async def _start_message_turn(
                     if ev.type == "tool_result":
                         is_tool_error = bool(ev.data.get("is_error"))
                         for step in reversed(activity):
-                            if step.get("kind") == "tool" and step.get("status") == "running":
+                            same_call = (
+                                ev.data.get("tool_call_id")
+                                and step.get("tool_call_id") == ev.data.get("tool_call_id")
+                            )
+                            legacy_match = (
+                                not ev.data.get("tool_call_id")
+                                and step.get("name") == ev.data.get("tool_name")
+                                and step.get("status") == "running"
+                            )
+                            if step.get("kind") == "tool" and (same_call or legacy_match):
                                 step["status"] = "error" if is_tool_error else "done"
                                 step["summary"] = ev.data.get("summary")
                                 step["duration"] = ev.data.get("duration_ms")
+                                if ev.data.get("artifacts"):
+                                    step["artifacts"] = ev.data["artifacts"]
                                 break
                         task_db.add(
                             AuditLog(

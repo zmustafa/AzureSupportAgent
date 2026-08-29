@@ -360,7 +360,9 @@ docker compose up --build
 ```
 
 Open **http://localhost:5173**. The backend runs DB migrations on startup; the first Azure
-MCP call fetches `@azure/mcp` via `npx` (a few seconds), then caches it.
+MCP call starts the server bundled in the image and caches its tool catalog. The image also
+includes Azure Quick Review for compliance scans; native development hides that tool when its
+optional `azqr` executable is not installed.
 
 **Health check:** [`/healthz`](http://localhost:8000/healthz) · MCP tools (admin):
 `/api/admin/mcp/tools`

@@ -54,6 +54,8 @@ ENV APP_RELEASE=$APP_RELEASE
 # bundled packages are what image CVE scans report. Pinning makes that surface a deliberate,
 # reviewable choice; bump it on purpose after checking the scan.
 ARG NPM_VERSION=12.0.2
+ARG AZQR_VERSION=4.0.1
+ARG AZQR_LINUX_AMD64_SHA256=6313ca399cfa5616134735b8835c38141e205b8bab357065096f5efba9b267bd
 # The Azure MCP server is INSTALLED AT BUILD TIME instead of being fetched by `npx` on every
 # cold start. Fetching it at runtime meant the container reached out to the public npm
 # registry from production — a supply-chain and availability dependency on a third party,
@@ -76,6 +78,13 @@ RUN apt-get update \
     && /opt/az/bin/python3 -m pip install --no-cache-dir "cryptography>=48.0.1" \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm install -g "@azure/mcp@${AZURE_MCP_VERSION}" \
+    && curl -fsSLo /tmp/azqr.zip \
+        "https://github.com/Azure/azqr/releases/download/v.${AZQR_VERSION}/azqr-linux-amd64.zip" \
+    && echo "${AZQR_LINUX_AMD64_SHA256}  /tmp/azqr.zip" | sha256sum -c - \
+    && python -m zipfile -e /tmp/azqr.zip /tmp/azqr-extract \
+    && install -m 0755 /tmp/azqr-extract/bin/linux_amd64/azqr /usr/local/bin/azqr \
+    && azqr --version \
+    && rm -rf /tmp/azqr.zip /tmp/azqr-extract \
     && npm cache clean --force \
     # npm is a BUILD-TIME tool here, not a runtime one: the only runtime consumer was
     # `npx @azure/mcp`, which the pre-install above replaced with a real binary. Removing it

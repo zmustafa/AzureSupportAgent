@@ -202,6 +202,7 @@ class Orchestrator:
         azure_bundles: list[str] | None = None,
         entra_tools: list[str] | None = None,
         entra_bundles: list[str] | None = None,
+        chat_id: str = "",
     ) -> None:
         self._settings = settings
         # Per-chat provider/model override (falls back to globally-active config).
@@ -212,7 +213,9 @@ class Orchestrator:
         self._provider_name = str(_active.get("provider") or provider or "openai")
         self._model_name = str(_active.get("model") or model or "")
         # Optional Azure connection (tenant identity) bound to this turn's MCP session.
-        self._mcp = build_mcp_client(settings, connection=connection)
+        self._mcp = build_mcp_client(
+            settings, connection=connection, artifact_chat_id=chat_id,
+        )
         self._azure_enabled = bool(azure_enabled)
         self._azure_tools = frozenset(str(v) for v in (azure_tools or []) if str(v))
         self._azure_bundles = frozenset(str(v) for v in (azure_bundles or []) if str(v))
@@ -276,7 +279,7 @@ class Orchestrator:
                 }
                 discovered = await self._mcp.list_tools()
                 for tool in discovered:
-                    if tool.name in disabled_azure:
+                    if tool.name in disabled_azure or not tool.available:
                         continue
                     entry = make_entry(
                         ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
@@ -654,6 +657,7 @@ class Orchestrator:
                     yield AgentEvent(
                         type="tool_start",
                         data={
+                            "tool_call_id": call.id,
                             "tool_name": call.name,
                             "arguments": call.arguments,
                             "discovery": bool((call.arguments or {}).get("learn")),
@@ -818,6 +822,7 @@ class Orchestrator:
                 yield AgentEvent(
                     type="tool_result",
                     data={
+                        "tool_call_id": call.id,
                         "tool_name": call.name,
                         "result": result,
                         "summary": (
@@ -828,6 +833,7 @@ class Orchestrator:
                         "duration_ms": duration_ms,
                         "is_error": _errored,
                         "discovery": is_learn,
+                        "artifacts": result.get("artifacts") or [],
                     },
                 )
                 # Feed the tool result back to the model. Discovery ("learn") outputs

@@ -5,6 +5,7 @@ import { useNavigate, useParams, useLocation, Link } from "react-router-dom";
 import { Markdown } from "./LazyMarkdown";
 import {
   api,
+  API_BASE,
   streamMessage,
   reconnectStream,
   isTurnActive,
@@ -331,10 +332,19 @@ const STARTER_CATEGORIES: PromptCategory[] = [
   },
 ];
 
+type ToolArtifact = {
+  artifact_id: string;
+  label: string;
+  filename: string;
+  url: string;
+  kind: string;
+};
+
 type Step =
   | { kind: "reasoning"; text: string }
   | {
       kind: "tool";
+      toolCallId?: string;
       name: string;
       args: unknown;
       status: "running" | "done" | "error";
@@ -343,6 +353,7 @@ type Step =
       // Internal two-phase "learn" discovery call (fetches a service's command list).
       // Rendered muted and excluded from the step count so it doesn't clutter the trace.
       discovery?: boolean;
+      artifacts?: ToolArtifact[];
     };
 
 // A single line in the live progress feed shown while the agent works.
@@ -351,6 +362,7 @@ type LogLine = {
   text: string;
   ts: number;
   pending?: boolean;
+  error?: boolean;
   detail?: string;
   // Transient "thinking" placeholder (Brainstorming…/Formulating…/etc.). Only the
   // newest one is kept while working, and all are removed once the turn finishes.
@@ -362,7 +374,12 @@ type LogLine = {
   // the feed reads e.g. "🌐 Networking · monitor · Found 2 workspaces".
   agentIcon?: string;
   agentName?: string;
+  artifacts?: ToolArtifact[];
 };
+
+function artifactHref(url: string): string {
+  return url.startsWith("/api/") ? `${API_BASE}${url.slice(4)}` : url;
+}
 
 // Lets fenced code blocks (rendered deep in markdown) know whether the host "Run"
 // button is enabled, which CLI binaries are allowed, and which chat to run against.
@@ -481,6 +498,10 @@ function argsPreview(args: unknown): string | undefined {
   return s.length > 600 ? s.slice(0, 600) + "…" : s;
 }
 
+function toolDisplayName(name: string): string {
+  return name === "extension_azqr" ? "Azure Quick Review" : name;
+}
+
 function loadActivities(): Record<string, Step[]> {
   try {
     return JSON.parse(localStorage.getItem(ACTIVITIES_KEY) || "{}");
@@ -537,6 +558,17 @@ type LiveStream = {
   // Allows the Stop button to cancel the in-flight fetch for this chat.
   abort?: AbortController;
 };
+
+type QueuedUserMessage = {
+  id: string;
+  chatId: string;
+  content: string;
+  images: string[];
+  thinking: "normal" | "deep";
+  queuedAt: number;
+};
+
+const MAX_QUEUED_MESSAGES_PER_CHAT = 20;
 
 export default function ChatView() {
   const qc = useQueryClient();
@@ -887,6 +919,12 @@ export default function ChatView() {
   // entry here even when the user navigates away, so returning to the chat shows
   // the live progress again. A tick state forces re-render on mutation.
   const streamsRef = useRef<Map<string, LiveStream>>(new Map());
+  // Queues are per chat, like streams and drafts. They intentionally remain in memory:
+  // image attachments can exceed browser storage quotas and must not be persisted as base64.
+  const queuedMessagesRef = useRef<Map<string, QueuedUserMessage[]>>(new Map());
+  const [queuedMessagesVersion, setQueuedMessagesVersion] = useState(0);
+  const queueProcessingRef = useRef<Set<string>>(new Set());
+  const queueBlockedRef = useRef<Set<string>>(new Set());
   // The set of chat ids with an in-flight turn, kept in REAL state (not just the ref)
   // so the sidebar re-renders — and its "Working…" spinners update — whenever ANY
   // chat starts or finishes, regardless of which chat is currently being viewed.
@@ -902,6 +940,20 @@ export default function ChatView() {
       return next;
     });
   };
+
+  function queueFor(chatId: string): QueuedUserMessage[] {
+    return queuedMessagesRef.current.get(chatId) ?? [];
+  }
+
+  function replaceQueue(chatId: string, messages: QueuedUserMessage[]) {
+    if (messages.length) queuedMessagesRef.current.set(chatId, messages);
+    else queuedMessagesRef.current.delete(chatId);
+    setQueuedMessagesVersion((version) => version + 1);
+  }
+
+  function cancelQueuedMessage(chatId: string, messageId: string) {
+    replaceQueue(chatId, queueFor(chatId).filter((message) => message.id !== messageId));
+  }
   const [, setTick] = useState(0);
   const rerender = () => setTick((t) => t + 1);
   // Coalesce high-frequency repaints (one per streamed token) into at most one per
@@ -1004,6 +1056,9 @@ export default function ChatView() {
   // Live stream entry for the chat currently being viewed (if any).
   const live = activeId ? streamsRef.current.get(activeId) : undefined;
   const streaming = !!live?.streaming;
+  // The version state is read so ref-only queue mutations re-render this view.
+  void queuedMessagesVersion;
+  const queuedMessages = activeId ? queueFor(activeId) : [];
   const streamText = live?.streamText ?? "";
   const errorDetail = live?.error ?? "";
   const displayError = formatChatProviderError(errorDetail);
@@ -1085,7 +1140,7 @@ export default function ChatView() {
     if (streamsRef.current.get(id)?.streaming) {
       rerender();
     } else {
-      void reconnectIfActive(id);
+      void reconnectIfActive(id).then(() => processNextQueued(id));
       void loadSuggestions(id);
     }
     return true;
@@ -1257,9 +1312,36 @@ export default function ChatView() {
     // composer's Send button / Enter) sends the draft and therefore clears it.
     const usingDraft = text === undefined;
     const content = (text ?? input).trim();
-    // Block only if THIS chat is already streaming; other chats may stream too.
     if (!content && attachments.length === 0) return;
-    if (activeId && streamsRef.current.get(activeId)?.streaming) return;
+
+    // A running turn owns the server's one slot for this chat. Capture the next user
+    // message instead of dropping it; it will advance after the turn finishes.
+    if (activeId && streamsRef.current.get(activeId)?.streaming) {
+      const existing = queueFor(activeId);
+      if (existing.length >= MAX_QUEUED_MESSAGES_PER_CHAT) return;
+      const images = usingDraft ? [...attachments] : [];
+      const effectiveContent = content || "Please analyze the attached image(s).";
+      replaceQueue(activeId, [
+        ...existing,
+        {
+          id: crypto.randomUUID(),
+          chatId: activeId,
+          content: effectiveContent,
+          images,
+          thinking: thinkingLevel,
+          queuedAt: Date.now(),
+        },
+      ]);
+      if (usingDraft) {
+        setInputSynced("");
+        setAttachments([]);
+        draftsRef.current.delete(activeId);
+      }
+      atBottomRef.current = true;
+      setShowNewMessages(false);
+      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
+      return;
+    }
 
     // Sending pins the view to the bottom so the user follows their own message.
     atBottomRef.current = true;
@@ -1601,6 +1683,49 @@ export default function ChatView() {
     );
   }
 
+  async function processNextQueued(chatId: string) {
+    if (viewRef.current !== chatId) return;
+    if (queueBlockedRef.current.has(chatId) || queueProcessingRef.current.has(chatId)) return;
+    if (streamsRef.current.get(chatId)?.streaming) return;
+    const next = queueFor(chatId)[0];
+    if (!next) return;
+    if (await isTurnActive(chatId)) return;
+
+    queueProcessingRef.current.add(chatId);
+    replaceQueue(chatId, queueFor(chatId).filter((message) => message.id !== next.id));
+    pendingImagesRef.current = [...next.images];
+    try {
+      if (next.thinking === "deep" && next.images.length === 0) {
+        setPendingDeepAuth({ chatId, content: next.content, hasImages: false });
+        setDeepAgentOptions(null);
+        setDeepAgentSel(new Set());
+        setAllHandsActive(false);
+        setDeepMemorySel("");
+        void (async () => {
+          try {
+            const res = await api.deepSuggestAgents(chatId, next.content);
+            if (viewRef.current !== chatId) return;
+            setDeepAgentOptions(res.agents);
+            setDeepAgentSel(new Set(res.agents.filter((agent) => agent.recommended).map((agent) => agent.id)));
+          } catch {
+            if (viewRef.current === chatId) setDeepAgentOptions([]);
+          }
+        })();
+        return;
+      }
+      await clarifyAndSend(
+        chatId,
+        next.content,
+        next.images.length > 0,
+        next.thinking,
+      );
+    } catch {
+      replaceQueue(chatId, [next, ...queueFor(chatId)]);
+    } finally {
+      queueProcessingRef.current.delete(chatId);
+    }
+  }
+
   // Wire a LiveStream's handlers to an SSE source (initial POST or reconnect) and
   // handle post-completion reload. Shared by runSend and reconnect-on-open.
   async function consumeStream(
@@ -1675,6 +1800,7 @@ export default function ChatView() {
           writingLogged = false;
           localSteps.push({
             kind: "tool",
+            toolCallId: d.tool_call_id,
             name: d.tool_name,
             args: d.arguments,
             status: "running",
@@ -1685,7 +1811,7 @@ export default function ChatView() {
           if (!d.discovery) {
             log({
               kind: "tool",
-              text: d.tool_name,
+              text: toolDisplayName(d.tool_name),
               pending: true,
               detail: argsPreview(d.arguments),
               agentIcon: d.agent_icon,
@@ -1708,12 +1834,15 @@ export default function ChatView() {
           const isErr = !!d.is_error;
           for (let i = localSteps.length - 1; i >= 0; i--) {
             const s = localSteps[i];
-            if (s.kind === "tool" && s.status === "running") {
+            const sameCall = d.tool_call_id && s.kind === "tool" && s.toolCallId === d.tool_call_id;
+            const legacyMatch = !d.tool_call_id && s.kind === "tool" && s.name === d.tool_name && s.status === "running";
+            if (s.kind === "tool" && (sameCall || legacyMatch)) {
               localSteps[i] = {
                 ...s,
                 status: isErr ? "error" : "done",
                 summary: d.summary,
                 duration: d.duration_ms,
+                artifacts: d.artifacts,
               };
               break;
             }
@@ -1725,10 +1854,12 @@ export default function ChatView() {
           } else {
             log({
               kind: "result",
-              text: isErr ? `⚠ ${d.tool_name} failed — ${d.summary || "error"}` : (d.summary || "Done"),
+              text: isErr ? `⚠ ${toolDisplayName(d.tool_name)} failed — ${d.summary || "error"}` : (d.summary || "Done"),
+              error: isErr,
               detail: formatDuration(d.duration_ms),
               agentIcon: d.agent_icon,
               agentName: d.agent_name,
+              artifacts: d.artifacts,
             });
           }
           // War room: tally the agent's completed tool call.
@@ -1859,6 +1990,7 @@ export default function ChatView() {
     setMessages(refreshed);
     rerender();
     void loadSuggestions(streamChatId);
+    window.setTimeout(() => void processNextQueued(streamChatId), 0);
   }
 
   // Stop the in-flight response for the active chat. The turn runs in a background
@@ -1866,21 +1998,26 @@ export default function ChatView() {
   // to cancel it — aborting only the local fetch would leave it running and the UI
   // would just reconnect to it. The backend persists partial output at checkpoints, so
   // the answer-so-far is kept and the user can continue by sending another message.
-  function stopStreaming() {
+  async function stopStreaming() {
     if (!activeId) return;
     const chatId = activeId;
-    // Ask the server to cancel the background turn first, then drop the local stream.
-    void api.stopTurn(chatId).catch(() => {});
+    queueBlockedRef.current.add(chatId);
+    const stopped = api.stopTurn(chatId).catch(() => ({ stopped: false }));
     streamsRef.current.get(chatId)?.abort?.abort();
     streamsRef.current.delete(chatId);
     markStreaming(chatId, false);
     // Refresh the transcript so the persisted partial answer shows, and clear the
     // server-active spinner state quickly.
     qc.invalidateQueries({ queryKey: ["activeTurns"] });
-    void api.listMessages(chatId).then((msgs) => {
+    await stopped;
+    try {
+      const msgs = await api.listMessages(chatId);
       if (viewRef.current === chatId) setMessages(msgs);
+    } finally {
+      queueBlockedRef.current.delete(chatId);
       rerender();
-    });
+      window.setTimeout(() => void processNextQueued(chatId), 0);
+    }
     rerender();
   }
 
@@ -1930,6 +2067,8 @@ export default function ChatView() {
       /* ignore */
     }
     streamsRef.current.delete(id);
+    queuedMessagesRef.current.delete(id);
+    setQueuedMessagesVersion((version) => version + 1);
     if (activeId === id) startNewChat();
     qc.invalidateQueries({ queryKey: ["chats"] });
     qc.invalidateQueries({ queryKey: ["trashChats"] });
@@ -4012,6 +4151,44 @@ export default function ChatView() {
               }}
             />
             <div className="rounded-3xl border border-gray-300 bg-white px-4 py-3 shadow-sm transition focus-within:border-gray-400 focus-within:shadow-md">
+              {queuedMessages.length > 0 && activeId && (
+                <div
+                  className="mb-3 rounded-xl border border-blue-200 bg-blue-50/70 p-2.5"
+                  data-testid="chat-message-queue"
+                  aria-live="polite"
+                >
+                  <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-blue-900">
+                    <span>Queued messages</span>
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5">{queuedMessages.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {queuedMessages.map((message, index) => (
+                      <div
+                        key={message.id}
+                        className="flex items-center gap-2 rounded-lg border border-blue-100 bg-white px-2.5 py-1.5 text-xs"
+                        data-testid="queued-message"
+                      >
+                        <span className="shrink-0 font-medium text-blue-700">#{index + 1}</span>
+                        <span className="min-w-0 flex-1 truncate text-gray-700" title={message.content}>
+                          {message.content}
+                        </span>
+                        {message.images.length > 0 && (
+                          <span className="shrink-0 text-gray-400">{message.images.length} image{message.images.length === 1 ? "" : "s"}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => cancelQueuedMessage(activeId, message.id)}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-600"
+                          title="Cancel queued message"
+                          aria-label={`Cancel queued message ${index + 1}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {attachments.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">
                   {attachments.map((src, i) => (
@@ -4130,13 +4307,26 @@ export default function ChatView() {
                     }}
                   />
                   {streaming ? (
-                    <button
-                      onClick={stopStreaming}
-                      title="Stop generating"
-                      className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-black"
-                    >
-                      <span className="h-3 w-3 rounded-[2px] bg-white" />
-                    </button>
+                    <>
+                      <button
+                        onClick={() => void stopStreaming()}
+                        title="Stop generating"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-black"
+                      >
+                        <span className="h-3 w-3 rounded-[2px] bg-white" />
+                      </button>
+                      <button
+                        onClick={() => void send()}
+                        disabled={!input.trim() && attachments.length === 0}
+                        title="Queue message"
+                        aria-label="Queue message"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white transition hover:bg-blue-700 disabled:bg-gray-300"
+                      >
+                        <svg className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M10 16V5M5.5 9.5L10 5l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => void send()}
@@ -5421,6 +5611,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
   const errorSteps = steps.filter(
     (s): s is Extract<Step, { kind: "tool" }> => s.kind === "tool" && s.status === "error",
   );
+  const artifacts = steps.flatMap((s) => s.kind === "tool" ? (s.artifacts ?? []) : []);
   const header = live
     ? "Working…"
     : `Thinking Process · ${toolCount} Step${toolCount === 1 ? "" : "s"}`;
@@ -5434,14 +5625,28 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
           <div className="flex items-center gap-1.5 font-semibold">
             <span aria-hidden>⚠️</span>
             {errorSteps.length === 1
-              ? `Tool failed: ${errorSteps[0].name}`
+              ? `Tool failed: ${toolDisplayName(errorSteps[0].name)}`
               : `${errorSteps.length} tools failed`}
           </div>
           {errorSteps.map((s, i) => (
             <div key={i} className="mt-1 break-words text-[11px] leading-snug text-red-700">
-              <span className="font-mono font-medium">{s.name}</span>
+              <span className="font-mono font-medium">{toolDisplayName(s.name)}</span>
               {s.summary ? ` — ${s.summary.replace(/^Error:\s*/i, "")}` : ""}
             </div>
+          ))}
+        </div>
+      )}
+      {artifacts.length > 0 && (
+        <div className="m-2 flex flex-wrap gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-2">
+          {artifacts.map((artifact) => (
+            <a
+              key={artifact.artifact_id}
+              href={artifactHref(artifact.url)}
+              download={artifact.filename}
+              className="rounded-md border border-blue-200 bg-white px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+            >
+              ↓ {artifact.label}
+            </a>
           ))}
         </div>
       )}
@@ -5486,7 +5691,7 @@ const ActivityPane = memo(function ActivityPane({ steps, live }: { steps: Step[]
                   ) : (
                     <span className="text-green-600">✓</span>
                   )}
-                  <span className="font-mono font-medium text-gray-800">{s.name}</span>
+                  <span className="font-mono font-medium text-gray-800">{toolDisplayName(s.name)}</span>
                   {s.status === "error" && (
                     <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">failed</span>
                   )}
@@ -5963,6 +6168,7 @@ function ProgressLines({
     // errored) — show a neutral marker instead of an eternal spinner.
     if (l.pending && live) return <Spinner />;
     if (l.pending) return <span className="text-gray-300">◦</span>;
+    if (l.error) return <span className="text-red-600">✗</span>;
     // Discovery ("learn") plumbing lines get a muted magnifier so they read as
     // background activity rather than a real diagnostic result.
     if (l.discovery) return <span className="text-gray-300">🔍</span>;
@@ -6023,6 +6229,8 @@ function ProgressLines({
                     ? "text-[11px] text-gray-400"
                     : l.kind === "tool"
                       ? "font-mono text-gray-800"
+                        : l.error
+                          ? "text-red-700"
                       : l.pending
                         ? "text-gray-700"
                         : "text-gray-600"
@@ -6033,6 +6241,20 @@ function ProgressLines({
               {l.detail && (
                 <span className="ml-1.5 break-all text-[11px] text-gray-400">
                   <TypedText text={l.detail} live={animates(i)} />
+                </span>
+              )}
+              {l.artifacts && l.artifacts.length > 0 && (
+                <span className="ml-2 inline-flex flex-wrap gap-1.5 align-middle">
+                  {l.artifacts.map((artifact) => (
+                    <a
+                      key={artifact.artifact_id}
+                      href={artifactHref(artifact.url)}
+                      download={artifact.filename}
+                      className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      ↓ {artifact.kind.toUpperCase()}
+                    </a>
+                  ))}
                 </span>
               )}
             </div>

@@ -25,6 +25,10 @@ _ENTRA_IDENTITY_TOOLS = frozenset({
     "ca_policies_for_app", "identity_findings",
 })
 _RECOVERY_TOOLS = frozenset({"recovery_posture", "recovery_gaps", "recovery_breaches"})
+_COST_TOOLS = frozenset({"azure_cost_query"})
+_ADVISOR_TOOLS = frozenset({"azure_advisor_recommendations"})
+_INVENTORY_TOOLS = frozenset({"azure_resource_inventory"})
+_PUBLIC_EXPOSURE_TOOLS = frozenset({"azure_public_exposure_inventory"})
 _BUILTIN_TOOLS = frozenset({
     "net_web_fetch", "net_http_request", "net_dns_lookup", "net_port_check",
     "net_ping", "net_traceroute", "azure_metrics",
@@ -125,8 +129,19 @@ _AZURE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("azure.data", ("sql", "postgres", "mysql", "cosmos", "redis", "database")),
     ("azure.monitoring", ("monitor", "metric", "log", "health", "resourcehealth", "advisor")),
     ("azure.identity", ("role", "authorization", "keyvault", "managedidentity")),
-    ("azure.governance", ("policy", "resourcegraph", "subscription", "managementgroup", "cost")),
+    # Broad words such as "subscription", "governance", and "compliance" classify almost every
+    # namespace; known guidance/scan tools are mapped explicitly below instead.
+    ("azure.governance", ("policy", "resourcegraph", "managementgroup")),
+    ("azure.pricing", ("pricing", "retail_price", "sku_price")),
 )
+
+_AZURE_EXPLICIT_BUNDLES: dict[str, tuple[str, ...]] = {
+    "arm": ("azure.inventory", "azure.governance"),
+    "advisor": ("azure.advisor", "azure.governance"),
+    "azurebackup": ("azure.backup",),
+    "extension_azqr": ("azure.governance",),
+    "wellarchitectedframework": ("azure.governance",),
+}
 
 
 def _matches(text: str, candidates: tuple[str, ...]) -> bool:
@@ -161,6 +176,7 @@ def infer_metadata(
         for bundle, terms in _AZURE_RULES:
             if _matches(normalized_name, terms) or _matches(lowered, terms):
                 bundles.append(bundle)
+        bundles.extend(_AZURE_EXPLICIT_BUNDLES.get(normalized_name, ()))
         bundles.append("azure.reads" if kind == "read" else "azure.writes")
     elif name in _BUILTIN_TOOLS:
         source = "builtin"
@@ -182,6 +198,22 @@ def infer_metadata(
         source = "resiliency"
         domain = "reliability"
         bundles.extend(("azure.backup", "recovery"))
+    elif name in _COST_TOOLS:
+        source = "cost"
+        domain = "cost"
+        bundles.append("azure.cost")
+    elif name in _ADVISOR_TOOLS:
+        source = "advisor"
+        domain = "governance"
+        bundles.append("azure.advisor")
+    elif name in _INVENTORY_TOOLS:
+        source = "inventory"
+        domain = "azure"
+        bundles.extend(("azure.inventory", "azure.networking"))
+    elif name in _PUBLIC_EXPOSURE_TOOLS:
+        source = "inventory"
+        domain = "azure"
+        bundles.extend(("azure.inventory", "azure.networking", "azure.public_exposure"))
     elif name in _VM_TOOLS:
         source = "sandbox"
         domain = "networking"

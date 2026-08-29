@@ -59,6 +59,21 @@ class _FakeSession:
             self.active -= 1
 
 
+class _ValidatingSession(_FakeSession):
+    def __init__(self, valid: bool) -> None:
+        super().__init__(delay=0)
+        self.valid = valid
+
+    async def call_tool(self, name: str, arguments: dict) -> _FakeResult:
+        self.calls.append(str(arguments.get("command") or name))
+        if arguments.get("command") == "validate_query":
+            return _FakeResult([
+                '{"isValid":' + ("true" if self.valid else "false")
+                + ',"syntaxErrors":"bad syntax"}',
+            ])
+        return _FakeResult(["executed"])
+
+
 def _session_patch(sessions: list[_FakeSession], entries: list[int]):
     """Build a fake MCPClient._session that hands out `sessions[i]` on the i-th enter
     and records every enter in `entries` (so we can count spawns)."""
@@ -74,6 +89,39 @@ def _session_patch(sessions: list[_FakeSession], entries: list[int]):
 
 def _new_client() -> MCPClient:
     return MCPClient(command="dummy", args=[], read_only=True)
+
+
+@pytest.mark.asyncio
+async def test_resource_graph_execution_is_always_validated(monkeypatch):
+    session = _ValidatingSession(valid=True)
+    entries: list[int] = []
+    monkeypatch.setattr(MCPClient, "_session", _session_patch([session], entries))
+    client = _new_client()
+    try:
+        result = await client.call_tool(
+            "arm", {"command": "execute_query", "parameters": {"query": "Resources"}},
+        )
+        assert result["isError"] is False
+        assert session.calls == ["validate_query", "execute_query"]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_resource_graph_query_is_never_executed(monkeypatch):
+    session = _ValidatingSession(valid=False)
+    entries: list[int] = []
+    monkeypatch.setattr(MCPClient, "_session", _session_patch([session], entries))
+    client = _new_client()
+    try:
+        result = await client.call_tool(
+            "arm", {"command": "execute_query", "parameters": {"query": "bad"}},
+        )
+        assert result["isError"] is True
+        assert "bad syntax" in result["content"][0]
+        assert session.calls == ["validate_query"]
+    finally:
+        await client.aclose()
 
 
 # --------------------------------------------------------------------------- pooling
@@ -229,6 +277,7 @@ async def test_deep_tool_loop_runs_parallel_but_emits_in_order(monkeypatch):
     tool_results = [e for e in events if e.type == "tool_result"]
     # Order preserved and each result mapped to the right tool.
     assert [e.data["tool_name"] for e in tool_results] == ["t0", "t1", "t2", "t3"]
+    assert [e.data["tool_call_id"] for e in tool_results] == ["c0", "c1", "c2", "c3"]
     for e in tool_results:
         assert e.data["result"]["content"] == [f"r:{e.data['tool_name']}"]
     # The four calls genuinely ran concurrently.
@@ -305,6 +354,8 @@ async def test_orchestrator_parallel_reads_but_writes_stay_gated(monkeypatch):
     # Both reads executed, in parallel, and their results emitted in order.
     assert set(executed) == {"arm", "monitor"}
     assert [e.data["tool_name"] for e in tool_results] == ["arm", "monitor"]
+    assert [e.data["tool_call_id"] for e in tool_results] == ["r0", "r1"]
+    assert approvals[0].data["tool_call_id"] == "w0"
     assert max_active > 1
 
     orch.close()

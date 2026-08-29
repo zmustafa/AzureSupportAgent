@@ -49,6 +49,7 @@ PERMISSION_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Estate insight", [
         ("inventory.read", "View the resource inventory"),
+        ("cost.read", "Query actual Azure costs through Cost Management"),
         ("graph.read", "View the knowledge graph"),
         ("changeexplorer.read", "View the Azure Workload Change Explorer"),
         ("reservations.read", "View reservation expiry tracking"),

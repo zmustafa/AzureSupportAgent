@@ -392,6 +392,8 @@ DEFAULTS: dict[str, Any] = {
         "recovery_gaps": True,
         "recovery_breaches": False,
     },
+    # Expose authoritative Cost Management spend to permitted chat users.
+    "cost_tools_enabled": True,
     # Whether Recovery Readiness contributes controls to the Assessments Reliability pillar.
     # OFF for existing tenants: enabling it changes scores that people track as a trend, so
     # it is a change to announce rather than to ship silently.

@@ -24,6 +24,8 @@ deploy/     Infrastructure-as-Code for one-click Azure deploys (where present)
 - **Node.js 20+**
 - **Docker** (optional — for building/running the container image)
 - **Azure CLI** (`az`) — only needed to exercise live Azure features
+- **Azure Quick Review** (`winget install Microsoft.Azure.QuickReview`) — optional for native
+  development; the chat tool is withheld when absent, and the container image includes it
 
 ## Local Setup
 

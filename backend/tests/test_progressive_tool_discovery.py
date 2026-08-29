@@ -17,6 +17,7 @@ from app.agent.provider_capabilities import (
 )
 from app.agent.skills import get_skill, list_skills
 from app.agent.tool_catalog import ToolCatalog, ToolNameCollisionError, make_entry
+from app.agent.tool_protocol import compact_learn_result
 from app.agent.tool_results import ToolArtifactStore, prepare_tool_result
 from app.agent.tool_router import internal_tool_specs, route_initial
 from app.connectors.base import ConnectorTool, ConnectorToolset
@@ -89,6 +90,185 @@ def test_conditional_access_does_not_activate_unrelated_azure_access_bundle():
     assert "get_conditional_access_policies" in surface.active_names
     assert "who_can_access" not in surface.active_names
     assert "why_does_principal_have_access" not in surface.active_names
+
+
+def test_historical_spend_selects_actual_cost_not_retail_pricing():
+    entries = [
+        make_entry(
+            _spec(
+                "azure_cost_query",
+                "Query authoritative actual historical spend from Azure Cost Management",
+                "connector",
+            ),
+            source_hint="connector",
+        ),
+        make_entry(
+            _spec("pricing", "Get Azure retail pricing for SKUs", "azure_mcp"),
+            source_hint="azure_mcp",
+        ),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial(
+        "Tell me the cost of all resources in the last seven days",
+        ToolCatalog(entries),
+    )
+    assert "azure_cost_query" in surface.active_names
+    assert surface.catalog.get("azure_cost_query").bundles == ("azure.cost",)
+    assert "pricing" not in surface.active_names
+
+
+def test_guidance_tools_keep_governance_without_the_cost_keyword():
+    """Removing 'cost' from the governance terms must not strip guidance tools of a domain."""
+    waf = make_entry(
+        _spec(
+            "wellarchitectedframework",
+            "Guidance for the Well-Architected pillars including cost optimization",
+            "azure_mcp",
+            kind="write",
+        ),
+        source_hint="azure_mcp",
+        kind="write",
+    )
+    assert "azure.governance" in waf.bundles
+
+
+def test_retail_price_request_selects_pricing_not_actual_spend():
+    entries = [
+        make_entry(
+            _spec(
+                "azure_cost_query",
+                "Query authoritative actual historical spend from Azure Cost Management",
+                "connector",
+            ),
+            source_hint="connector",
+        ),
+        make_entry(
+            _spec("pricing", "Get Azure retail pricing for SKUs", "azure_mcp"),
+            source_hint="azure_mcp",
+        ),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial(
+        "What is the retail price of a Standard_D4s_v5 VM in eastus?",
+        ToolCatalog(entries),
+    )
+    assert "pricing" in surface.active_names
+    assert "azure_cost_query" not in surface.active_names
+
+
+def test_mcp_command_field_survives_learn_result_compaction():
+    commands = [
+        {
+            "command": "advisor_recommendation_list",
+            "description": "List recommendations",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "subscription": {"type": "string"},
+                    "top": {"type": "integer"},
+                    "group-by": {"type": "string", "enum": ["category", "impact"]},
+                },
+                "required": ["subscription"],
+            },
+        },
+        {
+            "command": "advisor_recommendation_summary",
+            "description": "Summarize recommendations",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+    ]
+    result = compact_learn_result({
+        "isError": False,
+        "content": ["Available commands:\n" + json.dumps(commands)],
+    })
+    compact = json.loads(result["content"][0].split("\n", 1)[1])
+    assert [item["name"] for item in compact] == [
+        "advisor_recommendation_list",
+        "advisor_recommendation_summary",
+    ]
+    assert compact[0]["params"] == ["subscription*", "top", "group-by"]
+    assert compact[0]["choices"] == {"group-by": ["category", "impact"]}
+
+
+def test_discovery_normalizes_model_aliases_and_malformed_bundles():
+    entries = [
+        make_entry(_spec("arm", "Azure Resource Graph inventory", "azure_mcp"), source_hint="azure_mcp"),
+        make_entry(_spec("advisor", "Azure Advisor recommendations", "azure_mcp"), source_hint="azure_mcp"),
+        make_entry(_spec("azurebackup", "Azure Backup protected items", "azure_mcp"), source_hint="azure_mcp"),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial("hi", ToolCatalog(entries))
+
+    assert [d.name for d in surface.search(
+        "cross-resource public endpoint inventory",
+        source="azure",
+        domain="networking resource graph",
+        bundles=True,
+    )] == ["arm"]
+    assert surface.load_bundle(["azure-resource-inventory"], query="inventory") == ["arm"]
+    assert surface.load_bundle(["azure-backup"], query="backup") == ["azurebackup"]
+    assert surface.load_bundle(["advisor"], query="recommendations") == ["advisor"]
+
+
+def test_public_endpoint_inventory_prefers_arm_without_cost_or_azd_noise():
+    entries = [
+        make_entry(_spec("arm", "Azure Resource Graph cross-resource inventory", "azure_mcp"), source_hint="azure_mcp"),
+        make_entry(_spec("azd", "Azure Developer CLI deployments", "azure_mcp", kind="write"), source_hint="azure_mcp", kind="write"),
+        make_entry(_spec("azure_cost_query", "Actual Azure Cost Management spend", "connector"), source_hint="connector"),
+        make_entry(
+            _spec("azure_resource_inventory", "Validated natural-language Azure inventory", "connector"),
+            source_hint="connector",
+        ),
+        make_entry(
+            _spec("azure_public_exposure_inventory", "Complete public endpoint exposure inventory", "connector"),
+            source_hint="connector",
+        ),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial(
+        "Inventory all internet-facing Azure resources, public IPs and public network access",
+        ToolCatalog(entries),
+    )
+    assert "azure_public_exposure_inventory" in surface.active_names
+    assert "azure_resource_inventory" not in surface.active_names
+    assert "arm" not in surface.active_names
+    assert "azd" not in surface.active_names
+    assert "azure_cost_query" not in surface.active_names
+
+
+def test_explicit_resource_graph_request_keeps_raw_arm_available():
+    entries = [
+        make_entry(_spec("arm", "Azure Resource Graph query execution", "azure_mcp"), source_hint="azure_mcp"),
+        make_entry(
+            _spec("azure_resource_inventory", "Validated natural-language inventory", "connector"),
+            source_hint="connector",
+        ),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial("Run this Resource Graph KQL query", ToolCatalog(entries))
+    assert "arm" in surface.active_names
+
+
+def test_plural_advisor_prompt_prefers_cross_subscription_helper():
+    entries = [
+        make_entry(_spec("advisor", "Azure Advisor recommendations", "azure_mcp"), source_hint="azure_mcp"),
+        make_entry(
+            _spec(
+                "azure_advisor_recommendations",
+                "Open Advisor recommendations across every subscription in scope",
+                "connector",
+            ),
+            source_hint="connector",
+        ),
+    ]
+    entries.extend(make_entry(spec, source_hint="internal") for spec in internal_tool_specs())
+    surface = route_initial(
+        "What are some open recommendations in my subscriptions?",
+        ToolCatalog(entries),
+    )
+    assert "azure_advisor_recommendations" in surface.active_names
+    assert "advisor" not in surface.active_names
+    assert surface.catalog.get("azure_advisor_recommendations").bundles == ("azure.advisor",)
 
 
 def test_read_route_excludes_entra_writes_but_mutation_route_includes_them():

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, replace
-from typing import Iterable
+from typing import Any, Iterable
 
 from app.agent.provider import ToolSpec
 from app.agent.tool_catalog import ToolCatalog, ToolEntry
@@ -12,11 +12,13 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "get",
     "access", "add", "apply", "assign", "change", "create", "delete", "deploy",
+    "complete",
     "disable", "enabled", "enable", "in", "is", "it", "list", "modify", "my", "name",
     "names", "of", "on", "only", "or", "policies", "policy", "read", "remove", "report",
     "reset", "revoke", "rotate", "set", "show", "start", "state", "states", "stop",
-    "tenant", "that", "the", "this", "to", "trigger", "update",
-    "what", "which", "with",
+    "tenant", "subscription", "subscriptions", "selected", "guidance", "review", "endpoint",
+    "that", "the", "this", "to", "trigger", "update",
+    "what", "which", "with", "all", "azure", "resource", "resources", "service", "services",
 })
 _GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|good\s+(morning|afternoon|evening)|thanks|thank\s+you)[.!?\s]*$",
@@ -45,7 +47,11 @@ _BUNDLE_ALIASES: dict[str, tuple[str, ...]] = {
     "azure.compute": ("vm", "virtual machine", "compute", "aks", "container", "app service"),
     "azure.networking": (
         "network", "dns", "firewall", "nsg", "route", "vnet", "subnet", "connectivity",
-        "private endpoint", "load balancer", "application gateway",
+        "private endpoint", "public endpoint", "internet facing", "public ip", "public dns",
+        "public network access", "load balancer", "application gateway",
+    ),
+    "azure.public_exposure": (
+        "public endpoint", "internet facing", "public exposure", "public network access",
     ),
     "azure.storage": ("storage", "blob", "file share", "managed disk"),
     "azure.data": ("sql", "database", "postgres", "mysql", "cosmos", "redis"),
@@ -56,14 +62,100 @@ _BUNDLE_ALIASES: dict[str, tuple[str, ...]] = {
         "rbac", "effective access", "who can access", "role assignment", "managed identity",
         "key vault",
     ),
-    "azure.governance": ("policy", "resource graph", "subscription", "management group", "cost"),
+    "azure.governance": ("policy", "resource graph", "management group", "governance"),
+    "azure.inventory": ("resource graph", "resource inventory", "cross resource", "inventory"),
+    "azure.backup": (
+        "backup", "recovery services vault", "backup vault", "protected item", "backup coverage",
+    ),
+    "azure.advisor": (
+        "advisor", "recommendation", "recommendations", "open recommendations", "high impact",
+    ),
+    "azure.cost": (
+        "actual cost", "actual spend", "cost management", "cost by", "cost of", "cost for",
+        "spend", "charged", "billing", "last 7 days", "last seven days",
+    ),
+    "azure.pricing": ("retail price", "list price", "pricing", "sku price", "cost estimate", "estimated cost"),
     "ownership": ("owner", "ownership", "unowned", "accountable"),
     "access_review": ("who can", "effective access", "privileged access", "revoke", "escalation"),
-    "diagnostics.network": ("ping", "traceroute", "port", "http", "endpoint", "resolve"),
+    "diagnostics.network": (
+        "ping", "traceroute", "port check", "http request", "probe endpoint", "resolve dns",
+    ),
     "diagnostics.sandbox": ("sandbox", "inside vnet", "ssh", "run command"),
     "performance": ("performance", "bottleneck", "saturation", "throughput", "latency"),
     "connectors": ("email", "teams", "slack", "jira", "servicenow", "ticket", "notify"),
 }
+
+_SOURCE_ALIASES = {
+    "azure": "azure_mcp",
+    "azure-mcp": "azure_mcp",
+    "entra": "entra_mcp",
+    "graph": "entra_mcp",
+}
+
+_BUNDLE_NAME_ALIASES = {
+    "networking": "azure.networking",
+    "storage": "azure.storage",
+    "compute": "azure.compute",
+    "data": "azure.data",
+    "monitoring": "azure.monitoring",
+    "governance": "azure.governance",
+    "backup": "azure.backup",
+    "advisor": "azure.advisor",
+    "inventory": "azure.inventory",
+    "resource.graph": "azure.inventory",
+    "resource.inventory": "azure.inventory",
+    "public.exposure": "azure.public_exposure",
+    "azure.public.endpoint": "azure.public_exposure",
+    "azure.resource.graph": "azure.inventory",
+    "azure.resource.inventory": "azure.inventory",
+}
+
+
+def normalize_source(value: Any) -> str:
+    source = str(value or "").strip().lower().replace(" ", "_")
+    return _SOURCE_ALIASES.get(source, source)
+
+
+def normalize_bundles(value: Any) -> set[str]:
+    """Accept model-produced bundle aliases without allowing malformed types to raise."""
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        values = value
+    else:
+        values = []
+    normalized: set[str] = set()
+    for item in values:
+        token = str(item or "").strip().lower().replace("_", ".").replace("-", ".")
+        if not token:
+            continue
+        normalized.add(_BUNDLE_NAME_ALIASES.get(token, token))
+    return normalized
+
+
+def bundles_from_domain(value: Any) -> set[str]:
+    text = str(value or "").strip().lower().replace("-", " ").replace("_", " ")
+    if not text:
+        return set()
+    found: set[str] = set()
+    phrases = {
+        "resource graph": "azure.inventory",
+        "resource inventory": "azure.inventory",
+        "networking": "azure.networking",
+        "network": "azure.networking",
+        "storage": "azure.storage",
+        "backup": "azure.backup",
+        "advisor": "azure.advisor",
+        "compute": "azure.compute",
+        "monitoring": "azure.monitoring",
+        "governance": "azure.governance",
+        "identity": "azure.identity",
+        "cost": "azure.cost",
+    }
+    for phrase, bundle in phrases.items():
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text):
+            found.add(bundle)
+    return found
 
 
 @dataclass(frozen=True)
@@ -117,12 +209,16 @@ class RoutedToolSurface:
         *,
         source: str = "",
         domain: str = "",
-        bundles: Iterable[str] = (),
+        bundles: Any = (),
         limit: int | None = None,
         include_active: bool = False,
         allow_writes: bool | None = None,
     ) -> list[RouteDecision]:
-        wanted_bundles = {str(v) for v in bundles if str(v)}
+        wanted_bundles = normalize_bundles(bundles)
+        domain_bundles = bundles_from_domain(domain)
+        wanted_bundles.update(domain_bundles)
+        source = normalize_source(source)
+        domain = "" if domain_bundles else str(domain or "").strip().lower()
         active = set(self.active_names)
         writes_ok = allows_writes(query, wanted_bundles) if allow_writes is None else allow_writes
         ranked = rank_entries(query, self.catalog.entries(), preferred_bundles=wanted_bundles)
@@ -155,8 +251,8 @@ class RoutedToolSurface:
             limit=self.search_page_size,
         )
 
-    def load_bundle(self, bundles: Iterable[str], *, query: str = "") -> list[str]:
-        wanted = {str(v) for v in bundles if str(v)}
+    def load_bundle(self, bundles: Any, *, query: str = "") -> list[str]:
+        wanted = normalize_bundles(bundles)
         self.loaded_bundles.update(wanted)
         decisions = rank_entries(query, self.catalog.entries(), preferred_bundles=wanted)
         names = [
@@ -317,6 +413,29 @@ def route_initial(
         ):
             continue
         surface.add([decision.name], reason=decision.reason)
+    asks_for_raw_query = bool(re.search(r"\b(kql|resource\s+graph|arm\s+query)\b", query or "", re.I))
+    if (
+        "azure_public_exposure_inventory" in surface.active_names
+    ):
+        for redundant in ("azure_resource_inventory", "arm"):
+            if redundant in surface.active_names and redundant not in explicit:
+                surface.active_names.remove(redundant)
+                surface.reasons.pop(redundant, None)
+    if (
+        "azure_advisor_recommendations" in surface.active_names
+        and "advisor" in surface.active_names
+        and "advisor" not in explicit
+    ):
+        surface.active_names.remove("advisor")
+        surface.reasons.pop("advisor", None)
+    if (
+        "azure_resource_inventory" in surface.active_names
+        and "arm" in surface.active_names
+        and "arm" not in explicit
+        and not asks_for_raw_query
+    ):
+        surface.active_names.remove("arm")
+        surface.reasons.pop("arm", None)
     return surface
 
 
@@ -333,9 +452,19 @@ def internal_tool_specs() -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Capability to find."},
-                    "source": {"type": "string", "description": "Optional exact source filter."},
-                    "domain": {"type": "string", "description": "Optional exact domain filter."},
-                    "bundles": {"type": "array", "items": {"type": "string"}},
+                    "source": {
+                        "type": "string",
+                        "description": "Optional source: azure_mcp, entra_mcp, builtin, cost, iam, or ownership. 'azure' and 'entra' are accepted aliases.",
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Optional capability area such as networking, storage, backup, advisor, inventory, identity, or cost.",
+                    },
+                    "bundles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional canonical bundles such as azure.networking, azure.inventory, azure.backup, or azure.advisor.",
+                    },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 12},
                     "load": {"type": "boolean", "description": "Load matches for the next round (default true)."},
                 },
@@ -356,7 +485,11 @@ def internal_tool_specs() -> list[ToolSpec]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "bundles": {"type": "array", "items": {"type": "string"}},
+                    "bundles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Canonical dotted bundles; common hyphenated and short aliases are normalized.",
+                    },
                     "query": {"type": "string", "description": "Optional ranking hint."},
                 },
                 "required": ["bundles"],

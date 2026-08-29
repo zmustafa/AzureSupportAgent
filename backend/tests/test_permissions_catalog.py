@@ -57,6 +57,7 @@ def test_new_feature_permissions_are_present():
     # A representative spread of the capabilities added when the product grew.
     for key in (
         "inventory.read",
+        "cost.read",
         "graph.read",
         "radar.manage",
         "iam.read",

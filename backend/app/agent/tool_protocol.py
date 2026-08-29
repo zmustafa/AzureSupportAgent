@@ -52,15 +52,26 @@ def compact_learn_result(result: dict[str, Any]) -> dict[str, Any]:
         for c in arr:
             if not isinstance(c, dict):
                 continue
+            command = c.get("command") or c.get("name")
+            if not command:
+                continue
             schema = c.get("inputSchema") or {}
             props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
             required = set(schema.get("required") or []) if isinstance(schema, dict) else set()
             params = [f"{n}*" if n in required else n for n in props.keys()]
+            choices = {
+                name: values
+                for name, definition in props.items()
+                if isinstance(definition, dict)
+                and isinstance((values := definition.get("enum")), list)
+                and 0 < len(values) <= 20
+            }
             compact.append(
                 {
-                    "name": c.get("name"),
+                    "name": command,
                     "desc": (c.get("description") or "").splitlines()[0][:120],
                     "params": params,
+                    **({"choices": choices} if choices else {}),
                 }
             )
         preamble = text[:start].strip()

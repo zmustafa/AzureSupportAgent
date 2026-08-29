@@ -101,6 +101,7 @@ class DeepInvestigator:
         azure_enabled: bool = True,
         azure_tools: list[str] | None = None,
         azure_bundles: list[str] | None = None,
+        chat_id: str = "",
     ) -> None:
         self._settings = settings
         self._provider = build_provider_for(provider, model)
@@ -118,7 +119,9 @@ class DeepInvestigator:
         # Optional architecture "memory" (intended design, security model, known gaps,
         # diagnostic hints) injected into every phase's system prompt as expert context.
         self._architecture_memory = (architecture_memory or "").strip()
-        self._mcp = build_mcp_client(settings, connection=connection)
+        self._mcp = build_mcp_client(
+            settings, connection=connection, artifact_chat_id=chat_id,
+        )
         self._azure_enabled = bool(azure_enabled)
         self._azure_tools = frozenset(str(v) for v in (azure_tools or []) if str(v))
         self._azure_bundles = frozenset(str(v) for v in (azure_bundles or []) if str(v))
@@ -161,7 +164,7 @@ class DeepInvestigator:
         }
         entries = []
         for tool in tools:
-            if tool.name in disabled_azure:
+            if tool.name in disabled_azure or not tool.available:
                 continue
             entry = make_entry(
                 ToolSpec(tool.name, tool.description, tool.parameters, kind=tool.kind),
@@ -446,6 +449,7 @@ class DeepInvestigator:
                 yield AgentEvent(
                     type="tool_start",
                     data={
+                        "tool_call_id": call.id,
                         "tool_name": call.name,
                         "arguments": call.arguments,
                         "discovery": bool((call.arguments or {}).get("learn")),
@@ -487,11 +491,14 @@ class DeepInvestigator:
                 yield AgentEvent(
                     type="tool_result",
                     data={
+                        "tool_call_id": call.id,
                         "tool_name": call.name,
                         "result": res,
                         "summary": summary,
                         "duration_ms": duration_ms,
+                        "is_error": _errored,
                         "discovery": is_learn,
+                        "artifacts": res.get("artifacts") or [],
                         **(tag or {}),
                     },
                 )
