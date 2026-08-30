@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
-from sqlalchemy import event, select, update
+from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent.turn_runner import TurnRegistry
@@ -12,6 +16,42 @@ from app.core.durable_jobs import DurableJobStore, utcnow
 from app.core.genjob import JobRegistry
 from app.core.db import Base
 from app.models import DurableJob, DurableJobEvent, DurableJobSlot
+
+
+def test_migration_adopts_runtime_created_durable_tables(tmp_path: Path) -> None:
+    """Upgrade succeeds when create_all reached the tables before Alembic did."""
+    database = tmp_path / "runtime-before-alembic.db"
+    sync_url = f"sqlite:///{database.as_posix()}"
+    sync_engine = create_engine(sync_url)
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+
+    backend = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    environment["DATABASE_URL"] = f"sqlite+aiosqlite:///{database.as_posix()}"
+    for arguments in (("stamp", "0011_background_work_leases"), ("upgrade", "head")):
+        completed = subprocess.run(  # noqa: S603 - fixed interpreter/module/test arguments
+            [sys.executable, "-m", "alembic", *arguments],
+            cwd=backend,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    sync_engine = create_engine(sync_url)
+    with sync_engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0012_durable_job_registries"
+        )
+    assert {
+        "durable_jobs",
+        "durable_job_slots",
+        "durable_job_events",
+    } <= set(inspect(sync_engine).get_table_names())
+    sync_engine.dispose()
 
 
 @pytest.fixture

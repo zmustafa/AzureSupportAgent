@@ -43,20 +43,28 @@ async def run_migrations_online() -> None:
     engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
     async with engine.connect() as connection:
         # Every Container App replica runs this entrypoint. PostgreSQL DDL and Alembic's version
-        # row are not safe to race, so a session advisory lock serializes the complete migration
-        # transaction across replicas. SQLite is local/single-process and needs no shared lock.
+        # row are not safe to race. Use a SEPARATE autocommit connection for the session lock:
+        # acquiring it on the migration connection starts an implicit transaction, and a failed
+        # migration then makes the unlock itself fail with InFailedSQLTransactionError, masking
+        # the real DDL error. SQLite is local/single-process and needs no shared lock.
         is_postgres = connection.dialect.name == "postgresql"
         if is_postgres:
-            await connection.execute(
-                text("SELECT pg_advisory_lock(:key)"), {"key": _SCHEMA_LOCK_KEY}
-            )
-        try:
-            await connection.run_sync(do_run_migrations)
-        finally:
-            if is_postgres:
-                await connection.execute(
-                    text("SELECT pg_advisory_unlock(:key)"), {"key": _SCHEMA_LOCK_KEY}
+            async with engine.connect() as lock_connection:
+                lock_connection = await lock_connection.execution_options(
+                    isolation_level="AUTOCOMMIT"
                 )
+                await lock_connection.execute(
+                    text("SELECT pg_advisory_lock(:key)"), {"key": _SCHEMA_LOCK_KEY}
+                )
+                try:
+                    await connection.run_sync(do_run_migrations)
+                finally:
+                    await lock_connection.execute(
+                        text("SELECT pg_advisory_unlock(:key)"),
+                        {"key": _SCHEMA_LOCK_KEY},
+                    )
+        else:
+            await connection.run_sync(do_run_migrations)
     await engine.dispose()
 
 
