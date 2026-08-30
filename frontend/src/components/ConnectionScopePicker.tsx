@@ -74,7 +74,7 @@ export function ConnectionScopePicker({
     const only = conns[0];
     if (!only) return null;
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs text-gray-500" title={only.tenant_id}>
+      <span data-testid="connection-scope-picker" className="inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs text-gray-500" title={only.tenant_id}>
         <span>🏢</span>
         <span className="max-w-[160px] truncate">{only.display_name}</span>
       </span>
@@ -86,7 +86,12 @@ export function ConnectionScopePicker({
   // Locked (e.g. connection follows the selected workload) — show a quiet static label.
   if (disabled) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs text-gray-400" title={disabledTitle || active?.tenant_id}>
+      <span
+        data-testid="connection-scope-picker"
+        className="inline-flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs text-gray-400"
+        title={disabledTitle || active?.tenant_id}
+        aria-label={`${active?.display_name ?? "Azure connection"}. ${disabledTitle || "Connection selection is unavailable."}`}
+      >
         <span>🏢</span>
         <span className="max-w-[160px] truncate">{active?.display_name ?? "—"}</span>
       </span>
@@ -94,10 +99,12 @@ export function ConnectionScopePicker({
   }
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} data-testid="connection-scope-picker" className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
         title="Azure tenant / connection to scope this page"
+        aria-expanded={open}
+        aria-haspopup="listbox"
         className="flex items-center gap-1.5 rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
       >
         <span>🏢</span>

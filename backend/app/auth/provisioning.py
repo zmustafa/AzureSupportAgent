@@ -15,9 +15,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _role_id_by_name(db: AsyncSession, name: str) -> str | None:
+async def _role_id_by_name(db: AsyncSession, name: str, tenant_id: str) -> str | None:
     return (
-        await db.execute(select(Role.id).where(Role.name == name))
+        await db.execute(
+            select(Role.id).where(
+                Role.name == name,
+                (Role.is_system.is_(True) & (Role.tenant_id == "default"))
+                | (Role.tenant_id == tenant_id),
+            )
+        )
     ).scalars().first()
 
 
@@ -55,7 +61,12 @@ async def provision_sso_user(
     ).scalars().first()
     if user is None and email:
         candidate = (
-            await db.execute(select(User).where(User.email == email))
+            await db.execute(
+                select(User).where(
+                    User.email == email,
+                    User.tenant_id == idp.tenant_id,
+                )
+            )
         ).scalars().first()
         if candidate is not None:
             is_local_or_password = (
@@ -66,6 +77,14 @@ async def provision_sso_user(
             if is_local_or_password or not email_verified:
                 return None
             user = candidate
+        elif (
+            await db.execute(select(User.id).where(User.email == email))
+        ).scalars().first() is not None:
+            # Local login has no workspace selector, so email/username intentionally
+            # remain globally unique. The same verified address in another workspace
+            # must be denied rather than linked across the tenant boundary or allowed
+            # to fail later as an opaque uniqueness error.
+            return None
 
     auto = bool(idp.config_json.get("auto_provision", cfg.get("sso_auto_provision", True)))
     if user is None:
@@ -87,7 +106,7 @@ async def provision_sso_user(
             auth_source=idp.type,
             external_idp=idp.id,
             external_id=external_id,
-            tenant_id="default",
+            tenant_id=idp.tenant_id,
         )
         db.add(user)
         await db.flush()
@@ -116,7 +135,7 @@ async def provision_sso_user(
 
     role_ids: list[str] = []
     for rn in dict.fromkeys(matched_role_names):
-        rid = await _role_id_by_name(db, rn)
+        rid = await _role_id_by_name(db, rn, idp.tenant_id)
         if rid:
             role_ids.append(rid)
 
@@ -130,7 +149,9 @@ async def provision_sso_user(
             .scalars()
             .all()
         )
-        await set_user_roles(db, user.id, list(dict.fromkeys(existing + role_ids)))
+        await set_user_roles(
+            db, user.id, list(dict.fromkeys(existing + role_ids)), commit=False,
+        )
 
     user.last_login_at = _now()
     await db.commit()

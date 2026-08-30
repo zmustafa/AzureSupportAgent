@@ -511,7 +511,7 @@ async def simulate_notification_path(connection: dict[str, Any], event: dict[str
 def _strip_comments(value: str) -> str:
     """Replace `// ...` and `/* ... */` comments with a single space.
 
-    Deliberately NOT a regex. The previous `//[^\n]*|/\*.*?\*/` (re.S) is polynomial:
+    Deliberately NOT a regex. The previous `//[^\n]*|/[*].*?[*]/` (re.S) is polynomial:
     a lazy `.*?` with no closing `*/` rescans to end-of-string from every `/*`, so a
     query full of unterminated openers costs ~2000ms at 60k characters
     (CodeQL ``py/polynomial-redos``).

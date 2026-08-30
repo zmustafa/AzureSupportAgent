@@ -27,10 +27,12 @@ Dashboard: `/dashboard` (also `/`). Chat: `/chat`, `/chat?deep=1`, or an existin
 ## How to triage from the Dashboard
 
 1. Open `/dashboard` and complete visible **Setup guide** items.
-2. Select the **primary workload** used by scope-aware trend cards.
-3. Review workload, architecture, assessment, coverage, posture, risk, recent-investigation, insight, reservation, retirement, identity, and RBAC summaries visible to your role.
-4. Treat each card as a cached navigation cue; open its owning feature before deciding.
-5. Prioritize severity and deadline, then start Chat or open the source feature.
+2. Select the **primary workload** used by Mission readiness and scope-aware trend cards.
+3. Read **Mission readiness**, then verify the context, freshness, and source-coverage summary. Treat **Unknown**, **Not assessed**, and unavailable sources as missing evidence rather than a clean result.
+4. Review the actionable KPIs and workload, architecture, assessment, coverage, posture, risk, recent-run, reservation, retirement, identity, and IAM summaries visible to your role.
+5. Use **Recently visited** to reopen prior work. Pin destinations that must remain prominent, remove obsolete entries, or clear unpinned history. The same permitted destinations appear under **Recently visited** in the command palette.
+6. Treat each card as a cached navigation cue; open its owning feature before deciding.
+7. Prioritize severity and deadline, then start Chat or open the source feature.
 
 **Expected result:** A short, workload-scoped list of signals requiring review.
 

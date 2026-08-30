@@ -379,6 +379,11 @@ async def estate_insights(summary: dict[str, Any], facets: dict[str, Any]) -> di
     return {"headline": "", "insights": _local_insights(summary, facets), "source": "local"}
 
 
+def local_estate_insights(summary: dict[str, Any], facets: dict[str, Any]) -> dict[str, Any]:
+    """Return the deterministic roll-up without contacting an AI provider."""
+    return {"headline": "", "insights": _local_insights(summary, facets), "source": "local"}
+
+
 def _local_insights(summary: dict[str, Any], facets: dict[str, Any]) -> list[dict[str, Any]]:
     """Deterministic fallback insights computed straight from the roll-up."""
     out: list[dict[str, Any]] = []

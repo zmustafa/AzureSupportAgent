@@ -25,8 +25,6 @@ from app.radar.builtin_seed import (
     classify_text,
     model_lifecycle_index,
 )
-from app.radar.reference import load_reference
-
 log = logging.getLogger("app.radar.collector")
 
 
@@ -61,16 +59,19 @@ def _parse_date(value: Any) -> date | None:
                 return datetime.fromtimestamp(n, tz=timezone.utc).date()
         except (ValueError, OverflowError, OSError):
             return None
-    # Tolerate full ISO timestamps and bare dates.
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s[: len(fmt) + (6 if "%H" in fmt else 0)].split(".")[0], fmt).date()
-        except ValueError:
-            continue
+    # Parse full ISO timestamps first so an explicit offset is converted to UTC before
+    # selecting the calendar date. Stripping the offset first moved near-midnight
+    # deadlines by one day and could put them in the wrong severity band.
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.date()
     except (ValueError, TypeError):
-        return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
 
 
 def _iso_date(value: Any) -> str:
@@ -103,6 +104,46 @@ def severity_for_days(days: int | None) -> str:
 def _synth_tracking_id(*parts: str) -> str:
     raw = "|".join(p for p in parts if p)
     return "radar-" + hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
+def _impact_scope(value: Any) -> list[dict[str, Any]]:
+    """Normalize Service Health's service/region impact without calling it a resource list.
+
+    The Resource Health event contract exposes affected services, regions and subscriptions,
+    but not the concrete ARM resource IDs shown by some Azure portal experiences.  Keeping
+    that distinction prevents a missing resource-level list from becoming a false zero.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for service in value:
+        if not isinstance(service, dict):
+            continue
+        regions: set[str] = set()
+        subscriptions: set[str] = set()
+        for region in service.get("impactedRegions") or service.get("ImpactedRegions") or []:
+            if not isinstance(region, dict):
+                continue
+            name = str(region.get("impactedRegion") or region.get("ImpactedRegion") or "").strip()
+            if name:
+                regions.add(name)
+            for subscription in region.get("impactedSubscriptions") or region.get("ImpactedSubscriptions") or []:
+                subscription_value = str(subscription).strip()
+                if subscription_value:
+                    subscriptions.add(subscription_value)
+        name = str(service.get("impactedService") or service.get("ImpactedService") or "").strip()
+        if name or regions or subscriptions:
+            out.append({
+                "service": name,
+                "regions": sorted(regions),
+                "subscriptions": sorted(subscriptions),
+            })
+    return out
 
 
 # --------------------------------------------------------------------- owner mapping
@@ -263,6 +304,8 @@ def merge_events(
                 "recommended_replacement": cls["recommended_replacement"],
                 "migration_url": cls["migration_url"],
                 "rule_id": cls["rule_id"],
+                "impact_scope": [],
+                "impact_count_known": False,
                 "_impacted": {},
             }
             by_tid[tid] = existing
@@ -278,6 +321,12 @@ def merge_events(
             existing["migration_url"] = cls["migration_url"]
         if not existing["summary"] and ev.get("summary"):
             existing["summary"] = ev["summary"]
+        existing["impact_count_known"] = bool(
+            existing["impact_count_known"] or ev.get("impact_count_known") or impacted
+        )
+        for scope in ev.get("impact_scope") or []:
+            if scope not in existing["impact_scope"]:
+                existing["impact_scope"].append(scope)
         for r in impacted:
             rid = str(r.get("id", "")).lower()
             if rid:
@@ -288,7 +337,9 @@ def merge_events(
         impacted = resolve_owners(list(ev.pop("_impacted").values()), wl_index, tenant_id=tenant_id, own_ctx=own_ctx)
         owners = [r["owner"] for r in impacted if r["owner"]]
         dominant = max(set(owners), key=owners.count) if owners else ""
-        unowned = any(r["unowned"] for r in impacted) or (not impacted)
+        # No resource-level list means ownership is unknown, not "unowned".  Only
+        # resolved resources can support an ownership conclusion.
+        unowned = any(r["unowned"] for r in impacted)
         d = days_until(ev["retirement_date"], today=today)
         ev.update(
             {
@@ -375,6 +426,12 @@ def compute_radar(
     def _count(pred) -> int:
         return sum(1 for e in events if pred(e))
 
+    unique_impacted_ids = {
+        str(resource.get("id", "")).rstrip("/").lower()
+        for event in events
+        for resource in event.get("impacted_resources") or []
+        if str(resource.get("id", "")).strip()
+    }
     counts = {
         "total": len(events),
         "retirement": _count(lambda e: e["change_type"] == RETIREMENT),
@@ -383,7 +440,9 @@ def compute_radar(
         "amber": _count(lambda e: e["severity"] == "amber"),
         "grey": _count(lambda e: e["severity"] == "grey"),
         "unowned": _count(lambda e: e["unowned"]),
-        "impacted_total": sum(e["impacted_count"] for e in events),
+        # Estate KPI: a resource affected by two notices is still one resource.
+        "impacted_total": len(unique_impacted_ids),
+        "impact_counts_complete": all(e.get("impact_count_known", False) for e in events),
         "models": len(model_items),
         "models_at_risk": sum(1 for m in model_items if m["severity"] in ("red", "amber")),
     }
@@ -412,7 +471,7 @@ async def _query_service_health(subs: list[str], connection: dict[str, Any] | No
         "| project trackingId = tostring(p.TrackingId), title = tostring(p.Title), "
         "summary = tostring(p.Summary), impactStartTime = tostring(p.ImpactStartTime), "
         "eventType = tostring(p.EventType), eventSubType = tostring(p.EventSubType), "
-        "link = tostring(p.ExternalIncidentId)"
+        "link = tostring(p.ExternalIncidentId), impact = tostring(p.Impact)"
     )
     res = await run_kql_collect(kql, connection, max_rows=10_000)
     if not res.ok:
@@ -428,6 +487,10 @@ async def _query_service_health(subs: list[str], connection: dict[str, Any] | No
                 "retirement_date": r.get("impactStartTime", ""),
                 "change_type": BREAKING_CHANGE if str(r.get("eventSubType", "")).lower() != "retirement" else RETIREMENT,
                 "impacted_resources": [],
+                # ARG/Resource Health provides service/region/subscription impact here,
+                # not concrete ARM resource IDs. Do not report that missing list as zero.
+                "impact_scope": _impact_scope(r.get("impact")),
+                "impact_count_known": False,
             }
         )
     return out
@@ -477,6 +540,7 @@ async def _query_advisor(predicate: str, connection: dict[str, Any] | None) -> l
                 "recommended_replacement": r.get("solution", ""),
                 "migration_url": r.get("link", ""),
                 "impacted_resources": [],
+                "impact_count_known": True,
             }
             grouped[tid] = ev
         rid = str(r.get("impactedId", ""))

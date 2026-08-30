@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatCreate(BaseModel):
@@ -16,6 +16,8 @@ class ChatCreate(BaseModel):
 
 
 class ChatOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     title: str
     provider: str | None = None
@@ -28,11 +30,10 @@ class ChatOut(BaseModel):
     pinned: bool = False
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class MessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     role: str
     content: str
@@ -43,9 +44,6 @@ class MessageOut(BaseModel):
     duration_ms: int | None = None
     investigation: dict | None = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
     @staticmethod
     def from_model(m) -> "MessageOut":
@@ -109,6 +107,8 @@ class ApprovalDecision(BaseModel):
 
 
 class ApprovalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     tool_call_id: str
     requested_by: str
@@ -116,11 +116,10 @@ class ApprovalOut(BaseModel):
     reason: str | None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class ToolCallOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     tool_name: str
     kind: str
@@ -128,6 +127,3 @@ class ToolCallOut(BaseModel):
     arguments_json: dict
     subscription_id: str | None
     created_at: datetime
-
-    class Config:
-        from_attributes = True

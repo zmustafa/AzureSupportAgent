@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -174,6 +174,7 @@ async def list_investigations(
             .join(Chat, Chat.id == Message.chat_id)
             .where(
                 Chat.tenant_id == principal.tenant_id,
+                Chat.user_id == principal.subject,
                 Message.investigation_json.is_not(None),
             )
             .order_by(Message.created_at.desc())
@@ -199,6 +200,29 @@ async def list_investigations(
     return {"investigations": out}
 
 
+@router.get("/investigations/stats")
+async def investigation_stats(
+    since_days: int = 7,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exact owner-scoped investigation count for dashboard time windows."""
+    since_days = max(1, min(since_days, 365))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    count = await db.scalar(
+        select(func.count(Message.id))
+        .join(Chat, Chat.id == Message.chat_id)
+        .where(
+            Chat.tenant_id == principal.tenant_id,
+            Chat.user_id == principal.subject,
+            Chat.archived.is_(False),
+            Message.investigation_json.is_not(None),
+            Message.created_at >= cutoff,
+        )
+    )
+    return {"count": int(count or 0), "since_days": since_days}
+
+
 class SaveRcaIn(BaseModel):
     # Optional explicit target. When omitted, the architecture is resolved from the chat's
     # linked workload (used when exactly one architecture with a Memory is linked).
@@ -209,7 +233,7 @@ class SaveRcaIn(BaseModel):
 async def save_investigation_rca(
     message_id: str,
     payload: SaveRcaIn,
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(require_permission("architectures.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Persist a deep investigation's root-cause analysis into the linked architecture's
@@ -222,7 +246,11 @@ async def save_investigation_rca(
         await db.execute(
             select(Message, Chat)
             .join(Chat, Chat.id == Message.chat_id)
-            .where(Message.id == message_id, Chat.tenant_id == principal.tenant_id)
+            .where(
+                Message.id == message_id,
+                Chat.tenant_id == principal.tenant_id,
+                Chat.user_id == principal.subject,
+            )
         )
     ).first()
     if row is None:

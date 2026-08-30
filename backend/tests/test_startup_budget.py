@@ -37,7 +37,7 @@ MAX_IMPORT_MS = 8000
 MAX_MODULES = 1700
 #: Route count is a contract. It changes only when someone adds or removes an endpoint, and
 #: then this number is updated deliberately in the same commit.
-EXPECTED_ROUTES = 1148
+EXPECTED_ROUTES = 1154
 
 _PROBE = """
 import json, sys, time

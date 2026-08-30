@@ -119,6 +119,22 @@ class PasswordReset(BaseModel):
     must_change_password: bool = True
 
 
+async def _tenant_user_or_404(
+    db: AsyncSession, principal: Principal, user_id: str,
+) -> User:
+    user = (
+        await db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return user
+
+
 async def _user_out(db: AsyncSession, u: User) -> dict[str, Any]:
     perms, role_names = await effective(db, u)
     return {
@@ -140,12 +156,83 @@ async def _user_out(db: AsyncSession, u: User) -> dict[str, Any]:
     }
 
 
+async def _users_out(db: AsyncSession, users: list[User]) -> list[dict[str, Any]]:
+    """Serialize a user page with a fixed number of access-control queries.
+
+    The former loop called `_user_out` for every row, which performed direct-role, group,
+    group-role, role, role-id and group-id reads per user. A test-populated local workspace took
+    3.8 seconds to list users and the cost grew linearly with directory size.
+    """
+    if not users:
+        return []
+    user_ids = [user.id for user in users]
+    tenant_id = users[0].tenant_id
+    direct_rows = (
+        await db.execute(select(UserRole).where(UserRole.user_id.in_(user_ids)))
+    ).scalars().all()
+    membership_rows = (
+        await db.execute(select(UserGroup).where(UserGroup.user_id.in_(user_ids)))
+    ).scalars().all()
+    groups = (
+        await db.execute(select(Group).where(Group.tenant_id == tenant_id))
+    ).scalars().all()
+    roles = (
+        await db.execute(
+            select(Role).where(
+                (Role.is_system.is_(True) & (Role.tenant_id == "default"))
+                | (Role.tenant_id == tenant_id)
+            )
+        )
+    ).scalars().all()
+
+    direct_by_user: dict[str, list[str]] = {user_id: [] for user_id in user_ids}
+    groups_by_user: dict[str, list[str]] = {user_id: [] for user_id in user_ids}
+    for row in direct_rows:
+        direct_by_user[row.user_id].append(row.role_id)
+    for row in membership_rows:
+        groups_by_user[row.user_id].append(row.group_id)
+    group_roles = {group.id: group.role_ids_json or [] for group in groups}
+    role_by_id = {role.id: role for role in roles}
+
+    result: list[dict[str, Any]] = []
+    for user in users:
+        effective_role_ids = set(direct_by_user[user.id])
+        for group_id in groups_by_user[user.id]:
+            effective_role_ids.update(group_roles.get(group_id, []))
+        effective_roles = [role_by_id[role_id] for role_id in effective_role_ids if role_id in role_by_id]
+        permissions = sorted({permission for role in effective_roles for permission in (role.permissions_json or [])})
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "display_name": user.display_name,
+            "status": user.status,
+            "auth_source": user.auth_source,
+            "must_change_password": user.must_change_password,
+            "tenant_id": user.tenant_id,
+            "role_ids": direct_by_user[user.id],
+            "group_ids": groups_by_user[user.id],
+            "role_names": sorted(role.name for role in effective_roles),
+            "permissions": permissions,
+            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+            "locked": bool(user.locked_until and (user.locked_until.replace(tzinfo=user.locked_until.tzinfo or timezone.utc) > _now())),
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        })
+    return result
+
+
 @router.get("/users")
 async def list_users(
-    _: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)
+    principal: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)
 ):
-    users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
-    return [await _user_out(db, u) for u in users]
+    users = (
+        await db.execute(
+            select(User)
+            .where(User.tenant_id == principal.tenant_id)
+            .order_by(User.created_at)
+        )
+    ).scalars().all()
+    return await _users_out(db, list(users))
 
 
 @router.post("/users")
@@ -163,6 +250,8 @@ async def create_user(
     ).scalars().first()
     if exists:
         raise HTTPException(status_code=409, detail="A user with that username or email already exists.")
+    await _validate_role_ids(db, principal, body.role_ids)
+    await _validate_group_ids(db, principal, body.group_ids)
     cfg = load_auth_settings()
     if body.password and len(body.password) < int(cfg["password_min_length"]):
         raise HTTPException(
@@ -182,9 +271,9 @@ async def create_user(
     db.add(user)
     await db.flush()
     if body.role_ids:
-        await set_user_roles(db, user.id, body.role_ids)
+        await set_user_roles(db, user.id, body.role_ids, commit=False)
     if body.group_ids:
-        await set_user_groups(db, user.id, body.group_ids)
+        await set_user_groups(db, user.id, body.group_ids, commit=False)
     await db.commit()
     await _audit(db, principal, "access.user_created", user.id, {"username": uname})
     return await _user_out(db, user)
@@ -197,9 +286,14 @@ async def update_user(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
+    user = await _tenant_user_or_404(db, principal, user_id)
+    # Validate the lockout invariant before changing or committing any other field. A rejected
+    # role change must not still persist an email/status edit from the same request.
+    if body.role_ids is not None:
+        await _validate_role_ids(db, principal, body.role_ids)
+        await _ensure_not_last_admin(db, principal, user, body.role_ids)
+    if body.group_ids is not None:
+        await _validate_group_ids(db, principal, body.group_ids)
     if body.email is not None:
         user.email = body.email.strip().lower()
     if body.display_name is not None:
@@ -212,16 +306,14 @@ async def update_user(
             raise HTTPException(status_code=400, detail="You cannot disable your own account.")
         user.status = body.status
         if body.status == "disabled":
-            await revoke_all_for_user(db, user.id)
+            await revoke_all_for_user(db, user.id, commit=False)
     user.locked_until = None
     user.updated_at = _now()
-    await db.commit()
     if body.role_ids is not None:
-        # Guard: keep at least one admin in the system.
-        await _ensure_not_last_admin(db, user, body.role_ids)
-        await set_user_roles(db, user.id, body.role_ids)
+        await set_user_roles(db, user.id, body.role_ids, commit=False)
     if body.group_ids is not None:
-        await set_user_groups(db, user.id, body.group_ids)
+        await set_user_groups(db, user.id, body.group_ids, commit=False)
+    await db.commit()
     await _audit(db, principal, "access.user_updated", user.id, {})
     return await _user_out(db, user)
 
@@ -233,9 +325,7 @@ async def reset_password(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
+    user = await _tenant_user_or_404(db, principal, user_id)
     cfg = load_auth_settings()
     if len(body.new_password) < int(cfg["password_min_length"]):
         raise HTTPException(
@@ -247,8 +337,8 @@ async def reset_password(
     user.auth_source = "local"
     user.locked_until = None
     user.failed_attempts = 0
+    await revoke_all_for_user(db, user.id, commit=False)
     await db.commit()
-    await revoke_all_for_user(db, user.id)
     await _audit(db, principal, "access.password_reset", user.id, {})
     return {"ok": True}
 
@@ -259,6 +349,7 @@ async def revoke_sessions(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
+    await _tenant_user_or_404(db, principal, user_id)
     n = await revoke_all_for_user(db, user_id)
     await _audit(db, principal, "access.sessions_revoked", user_id, {"count": n})
     return {"ok": True, "revoked": n}
@@ -270,25 +361,31 @@ async def delete_user(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
+    user = await _tenant_user_or_404(db, principal, user_id)
     if user.id == principal.subject:
         raise HTTPException(status_code=400, detail="You cannot delete your own account.")
-    await _ensure_not_last_admin(db, user, [])
+    await _ensure_not_last_admin(db, principal, user, [])
     await db.execute(delete(UserRole).where(UserRole.user_id == user_id))
     await db.execute(delete(UserGroup).where(UserGroup.user_id == user_id))
-    await revoke_all_for_user(db, user_id)
+    await revoke_all_for_user(db, user_id, commit=False)
     await db.delete(user)
     await db.commit()
     await _audit(db, principal, "access.user_deleted", user_id, {"username": user.username})
     return {"ok": True}
 
 
-async def _ensure_not_last_admin(db: AsyncSession, user: User, new_role_ids: list[str]) -> None:
-    """Block changes that would remove the final admin from the system."""
+async def _ensure_not_last_admin(
+    db: AsyncSession, principal: Principal, user: User, new_role_ids: list[str],
+) -> None:
+    """Block changes that would remove the final direct admin from this tenant."""
     admin_role = (
-        await db.execute(select(Role).where(Role.name == "admin"))
+        await db.execute(
+            select(Role).where(
+                Role.name == "admin",
+                Role.is_system.is_(True),
+                Role.tenant_id == "default",
+            )
+        )
     ).scalars().first()
     if admin_role is None:
         return
@@ -299,8 +396,12 @@ async def _ensure_not_last_admin(db: AsyncSession, user: User, new_role_ids: lis
     if user_is_admin and not will_be_admin:
         others = (
             await db.execute(
-                select(UserRole.user_id).where(
-                    UserRole.role_id == admin_role.id, UserRole.user_id != user.id
+                select(UserRole.user_id)
+                .join(User, User.id == UserRole.user_id)
+                .where(
+                    UserRole.role_id == admin_role.id,
+                    UserRole.user_id != user.id,
+                    User.tenant_id == principal.tenant_id,
                 )
             )
         ).scalars().all()
@@ -337,9 +438,66 @@ def _role_out(r: Role) -> dict[str, Any]:
     }
 
 
+def _visible_roles(tenant_id: str):
+    return (
+        (Role.is_system.is_(True) & (Role.tenant_id == "default"))
+        | (Role.tenant_id == tenant_id)
+    )
+
+
+async def _validate_role_ids(
+    db: AsyncSession, principal: Principal, role_ids: list[str],
+) -> None:
+    requested = set(role_ids)
+    if not requested:
+        return
+    visible = set(
+        (
+            await db.execute(
+                select(Role.id).where(
+                    Role.id.in_(requested),
+                    _visible_roles(principal.tenant_id),
+                )
+            )
+        ).scalars().all()
+    )
+    if visible != requested:
+        raise HTTPException(
+            status_code=400,
+            detail="One or more roles are not available in this workspace.",
+        )
+
+
+async def _validate_group_ids(
+    db: AsyncSession, principal: Principal, group_ids: list[str],
+) -> None:
+    requested = set(group_ids)
+    if not requested:
+        return
+    visible = set(
+        (
+            await db.execute(
+                select(Group.id).where(
+                    Group.id.in_(requested),
+                    Group.tenant_id == principal.tenant_id,
+                )
+            )
+        ).scalars().all()
+    )
+    if visible != requested:
+        raise HTTPException(
+            status_code=400,
+            detail="One or more groups are not available in this workspace.",
+        )
+
+
 @router.get("/roles")
-async def list_roles(_: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
-    roles = (await db.execute(select(Role).order_by(Role.name))).scalars().all()
+async def list_roles(principal: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
+    roles = (
+        await db.execute(
+            select(Role).where(_visible_roles(principal.tenant_id)).order_by(Role.name)
+        )
+    ).scalars().all()
     return [_role_out(r) for r in roles]
 
 
@@ -352,11 +510,24 @@ async def create_role(
     name = body.name.strip()
     if name in SYSTEM_ROLE_NAMES:
         raise HTTPException(status_code=409, detail="That name is reserved for a system role.")
-    exists = (await db.execute(select(Role).where(Role.name == name))).scalars().first()
+    exists = (
+        await db.execute(
+            select(Role).where(
+                Role.name == name,
+                Role.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalars().first()
     if exists:
         raise HTTPException(status_code=409, detail="A role with that name already exists.")
     perms = [p for p in body.permissions if p in PERMISSIONS]
-    role = Role(name=name, description=body.description, is_system=False, permissions_json=perms)
+    role = Role(
+        tenant_id=principal.tenant_id,
+        name=name,
+        description=body.description,
+        is_system=False,
+        permissions_json=perms,
+    )
     db.add(role)
     await db.commit()
     await _audit(db, principal, "access.role_created", role.id, {"name": name})
@@ -370,12 +541,30 @@ async def update_role(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    role = await db.get(Role, role_id)
+    role = (
+        await db.execute(
+            select(Role).where(Role.id == role_id, _visible_roles(principal.tenant_id))
+        )
+    ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found.")
     if role.is_system:
         raise HTTPException(status_code=400, detail="System roles cannot be modified.")
-    role.name = body.name.strip()
+    name = body.name.strip()
+    if name in SYSTEM_ROLE_NAMES:
+        raise HTTPException(status_code=409, detail="That name is reserved for a system role.")
+    duplicate = (
+        await db.execute(
+            select(Role.id).where(
+                Role.tenant_id == principal.tenant_id,
+                Role.name == name,
+                Role.id != role.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A role with that name already exists.")
+    role.name = name
     role.description = body.description
     role.permissions_json = [p for p in body.permissions if p in PERMISSIONS]
     await db.commit()
@@ -389,14 +578,20 @@ async def delete_role(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    role = await db.get(Role, role_id)
+    role = (
+        await db.execute(
+            select(Role).where(Role.id == role_id, _visible_roles(principal.tenant_id))
+        )
+    ).scalar_one_or_none()
     if role is None:
         raise HTTPException(status_code=404, detail="Role not found.")
     if role.is_system:
         raise HTTPException(status_code=400, detail="System roles cannot be deleted.")
     await db.execute(delete(UserRole).where(UserRole.role_id == role_id))
     # Remove from any group role assignments.
-    groups = (await db.execute(select(Group))).scalars().all()
+    groups = (
+        await db.execute(select(Group).where(Group.tenant_id == principal.tenant_id))
+    ).scalars().all()
     for g in groups:
         if role_id in (g.role_ids_json or []):
             g.role_ids_json = [x for x in g.role_ids_json if x != role_id]
@@ -423,13 +618,26 @@ def _group_out(g: Group) -> dict[str, Any]:
 
 
 @router.get("/groups")
-async def list_groups(_: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
-    groups = (await db.execute(select(Group).order_by(Group.name))).scalars().all()
+async def list_groups(principal: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
+    groups = (
+        await db.execute(
+            select(Group)
+            .where(Group.tenant_id == principal.tenant_id)
+            .order_by(Group.name)
+        )
+    ).scalars().all()
     out = []
     for g in groups:
         member_count = len(
             (
-                await db.execute(select(UserGroup.user_id).where(UserGroup.group_id == g.id))
+                await db.execute(
+                    select(UserGroup.user_id)
+                    .join(User, User.id == UserGroup.user_id)
+                    .where(
+                        UserGroup.group_id == g.id,
+                        User.tenant_id == principal.tenant_id,
+                    )
+                )
             ).scalars().all()
         )
         out.append({**_group_out(g), "member_count": member_count})
@@ -443,10 +651,23 @@ async def create_group(
     db: AsyncSession = Depends(get_db),
 ):
     name = body.name.strip()
-    exists = (await db.execute(select(Group).where(Group.name == name))).scalars().first()
+    await _validate_role_ids(db, principal, body.role_ids)
+    exists = (
+        await db.execute(
+            select(Group).where(
+                Group.name == name,
+                Group.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalars().first()
     if exists:
         raise HTTPException(status_code=409, detail="A group with that name already exists.")
-    group = Group(name=name, description=body.description, role_ids_json=list(body.role_ids))
+    group = Group(
+        tenant_id=principal.tenant_id,
+        name=name,
+        description=body.description,
+        role_ids_json=list(body.role_ids),
+    )
     db.add(group)
     await db.commit()
     await _audit(db, principal, "access.group_created", group.id, {"name": name})
@@ -460,10 +681,30 @@ async def update_group(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    group = await db.get(Group, group_id)
+    group = (
+        await db.execute(
+            select(Group).where(
+                Group.id == group_id,
+                Group.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found.")
-    group.name = body.name.strip()
+    await _validate_role_ids(db, principal, body.role_ids)
+    name = body.name.strip()
+    duplicate = (
+        await db.execute(
+            select(Group.id).where(
+                Group.tenant_id == principal.tenant_id,
+                Group.name == name,
+                Group.id != group.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A group with that name already exists.")
+    group.name = name
     group.description = body.description
     group.role_ids_json = list(body.role_ids)
     await db.commit()
@@ -477,7 +718,14 @@ async def delete_group(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    group = await db.get(Group, group_id)
+    group = (
+        await db.execute(
+            select(Group).where(
+                Group.id == group_id,
+                Group.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found.")
     await db.execute(delete(UserGroup).where(UserGroup.group_id == group_id))
@@ -529,9 +777,13 @@ def _merge_idp_config(existing: dict[str, Any], incoming: dict[str, Any]) -> dic
 
 
 @router.get("/identity-providers")
-async def list_idps(_: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
+async def list_idps(principal: Principal = Depends(_guard), db: AsyncSession = Depends(get_db)):
     providers = (
-        await db.execute(select(IdentityProvider).order_by(IdentityProvider.created_at))
+        await db.execute(
+            select(IdentityProvider)
+            .where(IdentityProvider.tenant_id == principal.tenant_id)
+            .order_by(IdentityProvider.created_at)
+        )
     ).scalars().all()
     return [_idp_out(p) for p in providers]
 
@@ -545,6 +797,7 @@ async def create_idp(
     if body.type not in ("oidc", "saml"):
         raise HTTPException(status_code=400, detail="type must be 'oidc' or 'saml'.")
     p = IdentityProvider(
+        tenant_id=principal.tenant_id,
         name=body.name.strip(),
         type=body.type,
         enabled=body.enabled,
@@ -564,7 +817,14 @@ async def update_idp(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    p = await db.get(IdentityProvider, idp_id)
+    p = (
+        await db.execute(
+            select(IdentityProvider).where(
+                IdentityProvider.id == idp_id,
+                IdentityProvider.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
     if p is None:
         raise HTTPException(status_code=404, detail="Identity provider not found.")
     p.name = body.name.strip()
@@ -581,7 +841,7 @@ async def update_idp(
 async def test_idp(
     body: IdPBody,
     idp_id: str | None = None,
-    _: Principal = Depends(_guard),
+    principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
     """Best-effort validation of an OIDC/SAML provider config WITHOUT saving. For OIDC it
@@ -593,7 +853,14 @@ async def test_idp(
     cfg = {k: v for k, v in (body.config or {}).items() if not str(k).endswith("_set")}
     # For an existing provider, fill blank secrets/cert from the stored (decrypted) config.
     if idp_id:
-        p = await db.get(IdentityProvider, idp_id)
+        p = (
+            await db.execute(
+                select(IdentityProvider).where(
+                    IdentityProvider.id == idp_id,
+                    IdentityProvider.tenant_id == principal.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
         if p is not None:
             stored = dict(p.config_json or {})
             if not cfg.get("client_secret") and stored.get("client_secret"):
@@ -626,7 +893,14 @@ async def delete_idp(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    p = await db.get(IdentityProvider, idp_id)
+    p = (
+        await db.execute(
+            select(IdentityProvider).where(
+                IdentityProvider.id == idp_id,
+                IdentityProvider.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
     if p is None:
         raise HTTPException(status_code=404, detail="Identity provider not found.")
     await db.delete(p)
@@ -639,12 +913,18 @@ async def delete_idp(
 @router.get("/sessions")
 async def list_sessions(
     include_expired: bool = False,
-    _: Principal = Depends(_guard),
+    principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (
         await db.execute(
-            select(Session).where(Session.revoked.is_(False)).order_by(Session.last_seen_at.desc())
+            select(Session)
+            .join(User, User.id == Session.user_id)
+            .where(
+                Session.revoked.is_(False),
+                User.tenant_id == principal.tenant_id,
+            )
+            .order_by(Session.last_seen_at.desc())
         )
     ).scalars().all()
     user_ids = {s.user_id for s in rows}
@@ -687,7 +967,16 @@ async def revoke_one_session(
     principal: Principal = Depends(_guard),
     db: AsyncSession = Depends(get_db),
 ):
-    s = await db.get(Session, session_id)
+    s = (
+        await db.execute(
+            select(Session)
+            .join(User, User.id == Session.user_id)
+            .where(
+                Session.id == session_id,
+                User.tenant_id == principal.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail="Session not found.")
     s.revoked = True
@@ -707,7 +996,14 @@ async def revoke_expired_sessions(
     periodic purge removes them. This gives admins one-click cleanup of the backlog.
     """
     rows = (
-        await db.execute(select(Session).where(Session.revoked.is_(False)))
+        await db.execute(
+            select(Session)
+            .join(User, User.id == Session.user_id)
+            .where(
+                Session.revoked.is_(False),
+                User.tenant_id == principal.tenant_id,
+            )
+        )
     ).scalars().all()
     cfg = load_auth_settings()
     now = _now()

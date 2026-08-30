@@ -5,6 +5,7 @@ from datetime import date
 
 from app.radar.builtin_seed import BREAKING_CHANGE, RETIREMENT, classify_text
 from app.radar.collector import (
+    _impact_scope,
     build_model_items,
     compute_radar,
     days_until,
@@ -25,6 +26,12 @@ def test_days_until_and_severity():
     assert severity_for_days(45) == "amber"
     assert severity_for_days(200) == "grey"
     assert severity_for_days(None) == "grey"
+
+
+def test_days_until_normalizes_offset_timestamps_to_utc_date():
+    today = date(2026, 1, 1)
+    assert days_until("2026-01-01T23:30:00-02:00", today=today) == 1
+    assert days_until("2026-01-02T00:30:00+02:00", today=today) == 0
 
 
 def test_classify_text():
@@ -48,6 +55,32 @@ def test_merge_dedup_by_tracking_id():
     assert ev["change_type"] == BREAKING_CHANGE
     assert ev["impacted_count"] == 2
     assert set(ev["sources"]) == {"advisor", "service_health"}
+
+
+def test_missing_service_health_resource_list_is_unknown_not_zero_or_unowned():
+    event = merge_events([{
+        "source": "service_health",
+        "tracking_id": "SH1",
+        "title": "Storage retirement",
+        "impact_scope": [{"service": "Storage", "regions": ["East US"], "subscriptions": ["s1"]}],
+        "impact_count_known": False,
+        "impacted_resources": [],
+    }])[0]
+    assert event["impacted_count"] == 0
+    assert event["impact_count_known"] is False
+    assert event["unowned"] is False
+    assert event["impact_scope"][0]["service"] == "Storage"
+
+
+def test_service_health_impact_scope_normalizes_nested_contract():
+    scope = _impact_scope([{
+        "impactedService": "Storage",
+        "impactedRegions": [{
+            "impactedRegion": "East US",
+            "impactedSubscriptions": ["s2", "s1", "s1"],
+        }],
+    }])
+    assert scope == [{"service": "Storage", "regions": ["East US"], "subscriptions": ["s1", "s2"]}]
 
 
 def test_owner_resolution_flags_unowned():
@@ -82,6 +115,19 @@ def test_compute_radar_counts():
     assert c["unowned"] >= 1  # demo has at least one unowned item
     assert c["models"] == 3
     assert snap["rail"]  # nearest deadlines present
+
+
+def test_impacted_total_counts_unique_resolved_resources():
+    events = merge_events([
+        {"source": "advisor", "tracking_id": "A", "title": "A", "impact_count_known": True,
+         "impacted_resources": [{"id": "/subscriptions/s/resourceGroups/rg/providers/x/items/one"}]},
+        {"source": "advisor", "tracking_id": "B", "title": "B", "impact_count_known": True,
+         "impacted_resources": [
+             {"id": "/SUBSCRIPTIONS/S/RESOURCEGROUPS/RG/PROVIDERS/X/ITEMS/ONE/"},
+             {"id": "/subscriptions/s/resourceGroups/rg/providers/x/items/two"},
+         ]},
+    ])
+    assert compute_radar(events, [])["counts"]["impacted_total"] == 2
 
 
 def test_digest_selects_new_and_approaching():

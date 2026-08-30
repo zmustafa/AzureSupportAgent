@@ -54,7 +54,7 @@ Statuses are `new`, `acknowledged`, `migration_planned`, `done`, and `waived`. A
 
 ### Interpret
 
-Countdown and red/amber/grey indicators prioritize time, but source quality and resource matching still matter. **Unowned** means no mapped owner was available. **Models at risk** comes from the model-lifecycle reference rather than a direct Azure resource retirement match.
+Countdown and red/amber/grey indicators prioritize time, but source quality and resource matching still matter. **Resolved resources** is a distinct count of concrete ARM resource IDs, so one resource affected by multiple notices is counted once. Advisor normally supplies those IDs. Service Health can supply affected service, region, and subscription scope without supplying a resource-level list; those events show **Not provided** instead of a false zero and are not classified as **Unowned**. **Unowned** means at least one resolved resource has no mapped owner. **Models at risk** comes from the model-lifecycle reference rather than a direct Azure resource retirement match.
 
 ## Exports, history, scheduling, and integrations
 
@@ -76,7 +76,8 @@ Refresh is explicit to avoid unnecessary Azure calls. Treat public-feed items as
 | Page is visible but a change returns forbidden | `radar.read` permits inspection only. Switch to an assigned role containing `radar.manage` before refresh, state, runbook, finding, ticket, demo, or reference actions. |
 | No events and never loaded | Confirm the connection and scope, then select **Refresh**. |
 | Snapshot is stale | Compare cache age with configured TTL and refresh. |
-| Event has no impacted resources | Refresh inventory and verify workload scope/resource matching. |
+| Event shows **Not provided** for impacted resources | Service Health did not provide concrete ARM resource IDs. Use its displayed service/region/subscription scope and validate the event's **Impacted resources** tab in Azure; do not interpret this as zero. |
+| Advisor event has no impacted resources | Refresh inventory and verify workload scope/resource matching. |
 | Runbook generation fails | Verify an enabled AI provider, then retry with a narrower event context. |
 | Ticket action is unavailable | Configure and enable Jira or ServiceNow and verify connector health. |
 

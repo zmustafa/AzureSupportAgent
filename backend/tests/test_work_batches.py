@@ -73,7 +73,10 @@ def test_batch_idempotency_and_thirty_items_survive_server_owned_queue(monkeypat
                         return current
                     await asyncio.sleep(0.01)
 
-            return await asyncio.wait_for(complete(), timeout=5)
+            # SQLite commits contend with the other xdist workers in the full suite;
+            # five seconds made this deterministic queue check fail intermittently
+            # despite every item completing. The production worker remains bounded.
+            return await asyncio.wait_for(complete(), timeout=15)
         finally:
             await work_batches.worker.stop()
             await engine.dispose()

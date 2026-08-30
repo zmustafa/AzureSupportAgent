@@ -252,7 +252,9 @@ export function MonitoringCoveragePanel() {
 
   // Background refresh (per-scope) — survives scope switches + navigation. "Refreshing…"
   // shows ONLY for the scope actually refreshing; other scopes show "↻ Refresh now".
-  const refreshKey = `amba:${scopeKey}`;
+  const refreshKey = scopeKind === "workload"
+    ? `amba:workload:${effectiveWorkloadId}`
+    : `amba:subscription:${subId}:${connId}`;
   const refreshVersion = useBackgroundRefresh();
   const refreshing = isRefreshing(refreshKey);
 
@@ -539,7 +541,12 @@ export function MonitoringCoveragePanel() {
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {/* Azure tenant + scope switcher */}
-            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
+            <ConnectionScopePicker
+              value={connId}
+              onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }}
+              disabled={scopeKind === "workload"}
+              disabledTitle="The selected workload controls its Azure connection."
+            />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}

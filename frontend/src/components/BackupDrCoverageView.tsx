@@ -217,7 +217,9 @@ export function BackupDrCoveragePanel() {
   const enabled = scopeReady && loadedScope === scopeKey;
 
   // Background refresh (per-scope) — survives scope switches + navigation.
-  const refreshKey = `backupdr:${scopeKey}`;
+  const refreshKey = scopeKind === "workload"
+    ? `backupdr:workload:${effectiveWorkloadId}`
+    : `backupdr:subscription:${subId}:${connId}`;
   const refreshVersion = useBackgroundRefresh();
   const refreshing = isRefreshing(refreshKey);
 
@@ -471,7 +473,12 @@ export function BackupDrCoveragePanel() {
             </div>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
+            <ConnectionScopePicker
+              value={connId}
+              onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }}
+              disabled={scopeKind === "workload"}
+              disabledTitle="The selected workload controls its Azure connection."
+            />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}

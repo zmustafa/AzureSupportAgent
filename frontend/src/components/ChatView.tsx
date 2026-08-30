@@ -51,7 +51,8 @@ import {
   type EntraTab,
 } from "./navConfig";
 import { useAuth } from "./AuthContext";
-import { formatDuration, formatTimestamp } from "../utils/format";
+import { useRecentItem } from "./RecentItems";
+import { formatDuration, formatError, formatTimestamp } from "../utils/format";
 import { canAccess, filterPermissionedGroups } from "../utils/accessControl";
 import {
   automationWritePermission,
@@ -750,30 +751,58 @@ export default function ChatView() {
   // Images captured at send time, read by runSend (survives the clarify detour).
   const pendingImagesRef = useRef<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsError, setSuggestionsError] = useState("");
+  const suggestionsAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => suggestionsAbortRef.current?.abort(), []);
   // Inline rename state for the sidebar.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   // Sidebar chat search query.
   const [chatSearch, setChatSearch] = useState("");
-  // Sidebar: collapse to an icon-only rail (persisted).
-  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
+  // Sidebar: collapse to an icon-only rail. The explicit desktop preference is
+  // persisted separately from the responsive state so resizing an open desktop
+  // session cannot leave a 256 px rail consuming most of a phone viewport.
+  const [railCollapsedPreference, setRailCollapsedPreference] = useState<boolean>(() => {
     try {
-      return window.matchMedia("(max-width: 767px)").matches
-        || localStorage.getItem("azsup.railCollapsed.v1") === "1";
+      return localStorage.getItem("azsup.railCollapsed.v1") === "1";
     } catch {
       return false;
     }
   });
+  const [narrowViewport, setNarrowViewport] = useState<boolean>(() => {
+    try {
+      return window.matchMedia("(max-width: 767px)").matches;
+    } catch {
+      return false;
+    }
+  });
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
-    const collapseForNarrowViewport = (event: MediaQueryListEvent | MediaQueryList) => {
-      if (event.matches) setRailCollapsed(true);
+    const updateNarrowViewport = () => {
+      setNarrowViewport(media.matches);
+      if (!media.matches) setMobileRailOpen(false);
     };
-    collapseForNarrowViewport(media);
-    media.addEventListener("change", collapseForNarrowViewport);
-    return () => media.removeEventListener("change", collapseForNarrowViewport);
+    updateNarrowViewport();
+    media.addEventListener("change", updateNarrowViewport);
+    // Chromium normally emits the MediaQueryList event on resize. The window
+    // listener is a harmless fallback for embedded browsers and E2E viewports.
+    window.addEventListener("resize", updateNarrowViewport);
+    return () => {
+      media.removeEventListener("change", updateNarrowViewport);
+      window.removeEventListener("resize", updateNarrowViewport);
+    };
   }, []);
+  useEffect(() => {
+    if (narrowViewport) setMobileRailOpen(false);
+  }, [location.pathname, narrowViewport]);
+  const railCollapsed = narrowViewport ? !mobileRailOpen : railCollapsedPreference;
   function toggleRail() {
-    setRailCollapsed((v) => {
+    if (narrowViewport) {
+      setMobileRailOpen((open) => !open);
+      return;
+    }
+    setRailCollapsedPreference((v) => {
       const next = !v;
       try {
         localStorage.setItem("azsup.railCollapsed.v1", next ? "1" : "0");
@@ -1116,7 +1145,10 @@ export default function ChatView() {
       setInputSynced(draftsRef.current.get(id) ?? "");
     }
     setActive(id);
+    suggestionsAbortRef.current?.abort();
     setSuggestions([]);
+    setSuggestionsLoading(false);
+    setSuggestionsError("");
     setPendingClarify(null);
     setPendingPropose(null);
     setPendingDeepAuth(null);
@@ -1141,7 +1173,6 @@ export default function ChatView() {
       rerender();
     } else {
       void reconnectIfActive(id).then(() => processNextQueued(id));
-      void loadSuggestions(id);
     }
     return true;
   }
@@ -1200,8 +1231,11 @@ export default function ChatView() {
       setInputSynced(draftsRef.current.get("") ?? "");
     }
     setActive(null);
+    suggestionsAbortRef.current?.abort();
     setMessages([]);
     setSuggestions([]);
+    setSuggestionsLoading(false);
+    setSuggestionsError("");
     setPendingClarify(null);
     setPendingPropose(null);
     setPendingDeepAuth(null);
@@ -1229,12 +1263,25 @@ export default function ChatView() {
   }, [routeChatId]);
 
   async function loadSuggestions(id: string) {
+    suggestionsAbortRef.current?.abort();
+    const controller = new AbortController();
+    suggestionsAbortRef.current = controller;
+    setSuggestionsLoading(true);
+    setSuggestionsError("");
     try {
-      const res = await api.suggestions(id);
+      const res = await api.suggestions(id, controller.signal);
       if (viewRef.current !== id) return;
       setSuggestions(res.suggestions ?? []);
-    } catch {
-      if (viewRef.current === id) setSuggestions([]);
+    } catch (error) {
+      if ((error as Error)?.name !== "AbortError" && viewRef.current === id) {
+        setSuggestions([]);
+        setSuggestionsError(formatError(error));
+      }
+    } finally {
+      if (suggestionsAbortRef.current === controller) {
+        suggestionsAbortRef.current = null;
+        setSuggestionsLoading(false);
+      }
     }
   }
 
@@ -1656,7 +1703,10 @@ export default function ChatView() {
     // Move this chat to the top of Recents now (on send/retry), not after the reply.
     bumpChatToTop(streamChatId);
     setInputSynced("");
+    suggestionsAbortRef.current?.abort();
     setSuggestions([]);
+    setSuggestionsLoading(false);
+    setSuggestionsError("");
     rerender();
 
     await consumeStream(streamChatId, stream, controller, (handlers, signal) =>
@@ -1989,7 +2039,6 @@ export default function ChatView() {
     }
     setMessages(refreshed);
     rerender();
-    void loadSuggestions(streamChatId);
     window.setTimeout(() => void processNextQueued(streamChatId), 0);
   }
 
@@ -2318,6 +2367,19 @@ export default function ChatView() {
   // fallback provider with the chat's model (that produces a mismatched pair like
   // "GitHub Copilot · <an OpenRouter model>" and can get persisted via "Try again").
   const activeChat = chats.find((c) => c.id === activeId);
+  useRecentItem(
+    location.pathname.startsWith("/c/") && activeChat
+      ? {
+          kind: "chat",
+          item_key: activeChat.id,
+          title: activeChat.title || "Chat",
+          subtitle: activeChat.workload_id ? "Workload-scoped chat" : "Chat",
+          route: `/c/${activeChat.id}`,
+          connection_id: activeChat.connection_id,
+          workload_id: activeChat.workload_id,
+        }
+      : null,
+  );
   const chatHasModel = !!(activeChat?.provider && activeChat?.model);
   const pickerProvider = chatHasModel ? activeChat?.provider : activeLlm?.provider;
   const pickerModel = chatHasModel ? activeChat?.model : activeLlm?.model;
@@ -2513,8 +2575,11 @@ export default function ChatView() {
     // doesn't immediately reset the picker back to "Default").
     syncedChatRef.current = null;
     setActive(null);
+    suggestionsAbortRef.current?.abort();
     setMessages([]);
     setSuggestions([]);
+    setSuggestionsLoading(false);
+    setSuggestionsError("");
     setSelectedAgentId(agentId);
     navigate("/chat", { replace: true });
     setTimeout(() => composerRef.current?.focus(), 0);
@@ -2670,9 +2735,17 @@ export default function ChatView() {
   return (
     <ExecContext.Provider value={execConfig}>
     <div className="relative flex h-full">
+      {narrowViewport && mobileRailOpen && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setMobileRailOpen(false)}
+          className="absolute inset-0 z-30 bg-gray-900/25"
+        />
+      )}
       {/* Sidebar */}
       <aside
-        className={`relative z-40 flex shrink-0 flex-col overflow-visible border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
+        className={`${narrowViewport && mobileRailOpen ? "absolute inset-y-0 left-0 shadow-xl" : "relative"} z-40 flex shrink-0 flex-col overflow-visible border-r border-gray-200 bg-gray-50 transition-[width] duration-200 ${
           railCollapsed ? "w-14" : "w-64"
         }`}
       >
@@ -4108,6 +4181,21 @@ export default function ChatView() {
             )}
 
             {/* Follow-up suggestions after an answer */}
+            {!streaming && !pendingClarify && activeId && suggestions.length === 0 && displayMessages.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                <button
+                  onClick={() => void loadSuggestions(activeId)}
+                  disabled={suggestionsLoading}
+                  className="rounded-full border border-brand/30 bg-white px-3 py-1.5 text-brand transition hover:bg-brand/5 disabled:opacity-60"
+                >
+                  {suggestionsLoading ? "Generating follow-ups…" : "✨ Suggest follow-ups"}
+                </button>
+                {suggestionsLoading && (
+                  <button onClick={() => suggestionsAbortRef.current?.abort()} className="text-gray-500 hover:text-gray-800">Cancel</button>
+                )}
+                {suggestionsError && <span className="text-red-600" role="alert">Could not generate suggestions: {suggestionsError}</span>}
+              </div>
+            )}
             {!streaming && !pendingClarify && suggestions.length > 0 && displayMessages.length > 0 && (
               <div className="flex flex-wrap gap-2 pt-1">
                 {suggestions.map((s) => (

@@ -11,6 +11,40 @@ _PRINCIPAL = Principal(
 )
 
 
+async def test_workspace_list_does_not_discover_azure_by_default(monkeypatch):
+    monkeypatch.setattr(telemetry, "_settings", lambda: (60, ["/approved/workspace"], 200))
+
+    async def unexpected_discovery(_connection):
+        raise AssertionError("opening the editor must not query Azure")
+
+    monkeypatch.setattr(telemetry, "list_workspaces", unexpected_discovery)
+
+    result = await telemetry.workspaces(discover=False, connection_id="", _=_PRINCIPAL)
+
+    assert result == {
+        "workspaces": [], "approved": ["/approved/workspace"], "discovered": False,
+    }
+
+
+async def test_workspace_discovery_requires_explicit_request(monkeypatch):
+    monkeypatch.setattr(telemetry, "_settings", lambda: (60, [], 200))
+    connection = {"id": "connection-test", "disabled": False}
+    monkeypatch.setattr("app.core.azure_connections.get_connection", lambda _id: connection)
+
+    async def discover(selected):
+        assert selected is connection
+        return [{"id": "/workspace/one", "name": "one", "resourceGroup": "rg"}]
+
+    monkeypatch.setattr(telemetry, "list_workspaces", discover)
+
+    result = await telemetry.workspaces(
+        discover=True, connection_id="connection-test", _=_PRINCIPAL,
+    )
+
+    assert result["discovered"] is True
+    assert result["workspaces"][0]["name"] == "one"
+
+
 def _generated_at(*, seconds_ago: int = 0) -> str:
     return (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat()
 

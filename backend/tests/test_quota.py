@@ -6,7 +6,15 @@ seed, and an end-to-end ``run_scan`` with mocked Azure responses exercising part
 failure, provider-not-registered, throttling capture, and aggregation."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.api import quota as quota_api
+from app.core.db import Base
+from app.core.security import Principal
+from app.models import QuotaScanRun
 
 from app.quota.base import CollectorContext, IQuotaCollector, ThrottleTracker
 from app.quota.collectors._usage import build_usage_results
@@ -280,6 +288,46 @@ def test_demo_seed_shape():
     assert any(r["current_usage"] == 0 and (r["limit"] or 0) > 0 for r in fam)
     # The container quota category is represented.
     assert any(r["quota_category"] == "containers" for r in snap["results"])
+
+
+def test_explicit_unknown_quota_connection_does_not_fall_back(monkeypatch):
+    default = {"id": "default-connection"}
+    monkeypatch.setattr(quota_api, "get_connection", lambda _connection_id: None)
+    monkeypatch.setattr(quota_api, "get_default_connection", lambda: default)
+
+    assert quota_api._requested_connection("unknown-connection") is None
+    assert quota_api._requested_connection("") is default
+
+
+@pytest.mark.asyncio
+async def test_quota_run_history_is_newest_first() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with session_maker() as db:
+            now = datetime.now(timezone.utc)
+            db.add_all([
+                QuotaScanRun(
+                    tenant_id="tenant-a", subscription_id="sub-a", started_at=now - timedelta(days=1),
+                    diff_json={"new_at_risk": ["old"], "recovered": []},
+                ),
+                QuotaScanRun(
+                    tenant_id="tenant-a", subscription_id="sub-a", started_at=now,
+                    diff_json={"new_at_risk": ["new"], "recovered": []},
+                ),
+            ])
+            await db.commit()
+            principal = Principal(
+                subject="admin-a", email="admin-a@example.invalid", tenant_id="tenant-a", role="admin",
+            )
+
+            result = await quota_api.runs("sub-a", 30, principal, db)
+
+            assert [row["diff"]["new_at_risk"][0] for row in result["runs"]] == ["new", "old"]
+    finally:
+        await engine.dispose()
 
 
 # ----------------------------------------------------------------------- throttling

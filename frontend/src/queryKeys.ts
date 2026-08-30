@@ -34,6 +34,10 @@ function backupManagerScope(params: BackupManagerScopeParams) {
 
 export const queryKeys = {
   azureConnections: ["azureConnections"] as const,
+  dashboard: {
+    recentItems: ["dashboard", "recent-items"] as const,
+    missionReadiness: (workloadId: string) => ["dashboard", "mission-readiness", workloadId] as const,
+  },
   backupManager: {
     root: ["backup-manager"] as const,
     capabilities: (p: BackupManagerScopeParams) => ["backup-manager-capabilities", backupManagerScope(p)] as const,

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.iam import diff as diff_mod, effective, usage
+from app.iam import diff as diff_mod, usage
 from app.iam.signals import Finding, SignalContext, SignalSpec
 
 #: A principal holding a privileged role that only ever read is the clearest CIEM finding there
@@ -41,11 +41,15 @@ def _overprivileged(ctx: SignalContext) -> list[Finding]:
             # A low-confidence "unused" is not a finding, it is a prompt to collect more data.
             continue
         proposal = rec.get("recommendation")
+        # Right-sizing intentionally emits one recommendation per current role. A principal can
+        # hold Owner and Contributor at the same scope, so principal+scope alone is not unique:
+        # it made the two findings share a fingerprint, human state, and React key.
+        role_identity = ",".join(sorted(str(role) for role in rec["currentRoles"]))
         out.append(Finding(
             signal_id="lp.overprivileged",
             title="Far more access granted than exercised",
             severity="warning", pillar="lp", object_kind="principal",
-            subject=f"{rec['principalId']}|{rec['scope']}",
+            subject=f"{rec['principalId']}|{rec['scope']}|{role_identity}",
             subject_label=rec.get("principalName") or rec["principalId"],
             detail=(
                 # Both numbers, always. "99.8% over-privileged" alone is a figure designed to be

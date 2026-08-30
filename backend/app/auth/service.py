@@ -32,11 +32,22 @@ def _aware(dt: datetime | None) -> datetime | None:
 # --------------------------------------------------------------------------- roles
 async def seed_system_roles(db: AsyncSession) -> dict[str, Role]:
     """Ensure the built-in roles exist (and keep their permission sets in sync)."""
-    existing = {r.name: r for r in (await db.execute(select(Role))).scalars().all()}
+    all_roles = list((await db.execute(select(Role))).scalars().all())
+    existing = {
+        role.name: role
+        for role in all_roles
+        if role.is_system and role.tenant_id == "default"
+    }
     for name, desc, perms in SYSTEM_ROLES:
         r = existing.get(name)
         if r is None:
-            r = Role(name=name, description=desc, is_system=True, permissions_json=list(perms))
+            r = Role(
+                name=name,
+                tenant_id="default",
+                description=desc,
+                is_system=True,
+                permissions_json=list(perms),
+            )
             db.add(r)
             existing[name] = r
         else:
@@ -44,7 +55,9 @@ async def seed_system_roles(db: AsyncSession) -> dict[str, Role]:
             r.is_system = True
             r.permissions_json = list(perms)
             r.description = desc
-    migrate_legacy_permissions(existing.values())
+    # Custom roles also need renamed permission keys healed, but they must never be
+    # candidates for promotion into a globally visible system role.
+    migrate_legacy_permissions(all_roles)
     await db.flush()
     return existing
 
@@ -126,13 +139,26 @@ async def effective(db: AsyncSession, user: User) -> tuple[set[str], list[str]]:
     role_ids: set[str] = set(direct)
     if group_ids:
         groups = (
-            await db.execute(select(Group).where(Group.id.in_(group_ids)))
+            await db.execute(
+                select(Group).where(
+                    Group.id.in_(group_ids),
+                    Group.tenant_id == user.tenant_id,
+                )
+            )
         ).scalars().all()
         for g in groups:
             role_ids.update(g.role_ids_json or [])
     if not role_ids:
         return set(), []
-    roles = (await db.execute(select(Role).where(Role.id.in_(role_ids)))).scalars().all()
+    roles = (
+        await db.execute(
+            select(Role).where(
+                Role.id.in_(role_ids),
+                (Role.is_system.is_(True) & (Role.tenant_id == "default"))
+                | (Role.tenant_id == user.tenant_id),
+            )
+        )
+    ).scalars().all()
     perms: set[str] = set()
     names: list[str] = []
     for r in roles:
@@ -168,7 +194,13 @@ async def effective_scoped(
     want = (active_role or "").strip()
     if want and want in names:
         role = (
-            await db.execute(select(Role).where(Role.name == want))
+            await db.execute(
+                select(Role).where(
+                    Role.name == want,
+                    (Role.is_system.is_(True) & (Role.tenant_id == "default"))
+                    | (Role.tenant_id == user.tenant_id),
+                )
+            )
         ).scalars().first()
         return set(role.permissions_json or []) if role else set(), names, want
 
@@ -306,13 +338,16 @@ async def revoke_session(db: AsyncSession, sid: str) -> None:
         await db.commit()
 
 
-async def revoke_all_for_user(db: AsyncSession, user_id: str) -> int:
+async def revoke_all_for_user(
+    db: AsyncSession, user_id: str, *, commit: bool = True,
+) -> int:
     rows = (
         await db.execute(select(Session).where(Session.user_id == user_id, Session.revoked.is_(False)))
     ).scalars().all()
     for s in rows:
         s.revoked = True
-    await db.commit()
+    if commit:
+        await db.commit()
     return len(rows)
 
 
@@ -354,18 +389,24 @@ async def find_user_by_login(db: AsyncSession, login: str) -> User | None:
     ).scalars().first()
 
 
-async def set_user_roles(db: AsyncSession, user_id: str, role_ids: list[str]) -> None:
+async def set_user_roles(
+    db: AsyncSession, user_id: str, role_ids: list[str], *, commit: bool = True,
+) -> None:
     await db.execute(delete(UserRole).where(UserRole.user_id == user_id))
     for rid in dict.fromkeys(role_ids):
         db.add(UserRole(user_id=user_id, role_id=rid))
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
-async def set_user_groups(db: AsyncSession, user_id: str, group_ids: list[str]) -> None:
+async def set_user_groups(
+    db: AsyncSession, user_id: str, group_ids: list[str], *, commit: bool = True,
+) -> None:
     await db.execute(delete(UserGroup).where(UserGroup.user_id == user_id))
     for gid in dict.fromkeys(group_ids):
         db.add(UserGroup(user_id=user_id, group_id=gid))
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def user_role_ids(db: AsyncSession, user_id: str) -> list[str]:

@@ -34,7 +34,7 @@ feature_ids: [PROACTIVE_NAV:radar, ROUTE:radar]
 2. Check generated time, cache age, and `never loaded` state.
 3. Select **Refresh** when the decision requires live Service Health and Advisor signals.
 4. Filter retirement/breaking-change type, lifecycle status, text, or **Unowned only**.
-5. Open an event and confirm source, service/feature, deadline, severity, impacted resources, and mapped owner.
+5. Open an event and confirm source, service/feature, deadline, severity, impacted resources, and mapped owner. **Resolved resources** counts distinct ARM IDs. **Not provided** means Service Health supplied only service/region/subscription scope, not a resource-level list; it does not mean zero resources.
 6. Validate the announcement and affected resource inventory in Azure.
 
 **Expected result:** A prioritized list of lifecycle events mapped to known resources and owners.
@@ -81,7 +81,8 @@ Snapshots are cached and age visibly. Source feeds can be delayed, resource matc
 | --- | --- |
 | View opens but Refresh or another change returns forbidden | `radar.read` is view-only; switch to an assigned role containing `radar.manage`. |
 | No events and never loaded | Verify scope/connection and select **Refresh**. |
-| No impacted resources | Refresh inventory and check workload/resource matching. |
+| Impacted resources says **Not provided** | Validate the displayed Service Health scope and open the event's **Impacted resources** tab in Azure; the API did not provide concrete ARM IDs, so Radar intentionally does not claim zero. |
+| Advisor event has no impacted resources | Refresh inventory and check workload/resource matching. |
 | Owner is missing | Update ownership mapping, then refresh/reopen the event. |
 | Runbook generation fails | Verify AI provider and retry with a narrower, sanitized event. |
 | Ticket action fails | Verify connector health and destination configuration. |

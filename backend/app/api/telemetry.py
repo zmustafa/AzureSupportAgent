@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -481,17 +481,30 @@ async def locate_in_architecture(
 
 
 @router.get("/workspaces")
-async def workspaces(_: Principal = Depends(require_admin)) -> dict[str, Any]:
-    """Log Analytics workspaces in the tenant + the current approved list (for Admin)."""
-    from app.core.azure_connections import get_default_connection
+async def workspaces(
+    discover: bool = Query(default=False),
+    connection_id: str = Query(default=""),
+    _: Principal = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return the approved list, optionally discovering workspaces on explicit request.
+
+    Loading the reference editor must stay local and fast. Resource Graph discovery can take
+    several seconds, so the UI opts into it with ``discover=true`` and may cancel the request.
+    """
+    from app.core.azure_connections import get_connection, get_default_connection
 
     _ttl, approved, _cap = _settings()
+    if not discover:
+        return {"workspaces": [], "approved": approved, "discovered": False}
+    connection = get_connection(connection_id) if connection_id else get_default_connection()
+    if connection_id and (connection is None or connection.get("disabled")):
+        raise HTTPException(status_code=404, detail="Azure connection not found.")
     try:
-        ws = await list_workspaces(get_default_connection())
+        ws = await list_workspaces(connection)
     except Exception as exc:  # noqa: BLE001
         log.info("workspace list failed: %s", exc)
-        ws = []
-    return {"workspaces": ws, "approved": approved}
+        raise HTTPException(status_code=502, detail="Log Analytics workspace discovery failed.") from exc
+    return {"workspaces": ws, "approved": approved, "discovered": True}
 
 
 # ----------------------------------------------------------------------- reference set

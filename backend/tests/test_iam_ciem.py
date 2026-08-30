@@ -970,6 +970,35 @@ def test_overprivileged_publishes_both_numbers_in_its_detail():
     assert out[0].evidence["grantedActionCount"] > 0
 
 
+def test_overprivileged_role_findings_have_distinct_stable_identities():
+    """Owner and Contributor on one scope are separate recommendations and cannot share the
+    fingerprint used for UI keys and persisted human state."""
+    base = {
+        "principalId": "alice",
+        "principalName": "Alice",
+        "scope": "/subscriptions/example",
+        "usedActionCount": 0,
+        "grantedActionCount": 10,
+        "unusedRatio": 1.0,
+        "window": {"days": 90},
+        "confidence": usage.HIGH,
+        "confidenceWhy": "No activity was recorded.",
+        "recommendation": None,
+    }
+    rightsizing = {
+        "recommendations": [
+            {**base, "currentRoles": ["Owner"]},
+            {**base, "currentRoles": ["Contributor"]},
+        ]
+    }
+    out = _spec("lp.overprivileged").evaluate(
+        _ctx(usage_payload=_usage([]), rightsizing=rightsizing)
+    )
+
+    assert len(out) == 2
+    assert len({finding.fingerprint for finding in out}) == 2
+
+
 def test_a_low_confidence_finding_is_not_raised_at_all():
     """A low-confidence 'unused' is a prompt to collect more data, not a finding somebody should
     act on."""

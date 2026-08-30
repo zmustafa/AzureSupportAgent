@@ -1853,6 +1853,33 @@ function OverviewMode({ inv, connectionId }: {
 }) {
   const s = inv.summary;
   const insQ = useQuery({ queryKey: ["invInsights", connectionId], queryFn: () => api.inventoryInsights(connectionId || null), retry: false, staleTime: 5 * 60 * 1000 });
+  const [aiInsights, setAiInsights] = useState<Awaited<ReturnType<typeof api.inventoryInsights>> | null>(null);
+  const [aiError, setAiError] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const aiController = useRef<AbortController | null>(null);
+  const generateInsights = async () => {
+    aiController.current?.abort();
+    const controller = new AbortController();
+    aiController.current = controller;
+    setAiError("");
+    setAiGenerating(true);
+    try {
+      setAiInsights(await api.inventoryInsights(connectionId || null, true, controller.signal));
+    } catch (error) {
+      if (!controller.signal.aborted) setAiError(formatError(error));
+    } finally {
+      if (aiController.current === controller) aiController.current = null;
+      setAiGenerating(false);
+    }
+  };
+  useEffect(() => () => aiController.current?.abort(), []);
+  useEffect(() => {
+    aiController.current?.abort();
+    setAiInsights(null);
+    setAiError("");
+    setAiGenerating(false);
+  }, [connectionId]);
+  const insights = aiInsights ?? insQ.data;
   const sevTone: Record<string, string> = { critical: "border-red-200 bg-red-50", warning: "border-amber-200 bg-amber-50", info: "border-gray-200 bg-gray-50" };
 
   return (
@@ -1860,12 +1887,20 @@ function OverviewMode({ inv, connectionId }: {
       <div className="mx-auto max-w-6xl 2xl:max-w-screen-2xl space-y-4">
         {/* AI insights */}
         <div className="rounded-xl border bg-gradient-to-br from-brand/5 to-violet-50 p-4 shadow-sm">
-          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insQ.data?.source === "local" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">✨ Estate insights{insights?.source === "local" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-normal text-gray-500">heuristic</span>}</h3>
+            {aiGenerating ? (
+              <button type="button" onClick={() => aiController.current?.abort()} className="rounded border px-2 py-1 text-[11px] text-gray-600">Cancel AI</button>
+            ) : (
+              <button type="button" onClick={() => void generateInsights()} className="rounded border px-2 py-1 text-[11px] text-brand">Generate AI insights</button>
+            )}
+          </div>
           {insQ.isLoading ? <Skeleton rows={3} className="max-w-xl" /> : (
             <>
-              {insQ.data?.headline && <p className="mb-2 text-[13px] text-gray-700">{insQ.data.headline}</p>}
+              {aiError && <div role="alert" className="mb-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">{aiError}</div>}
+              {insights?.headline && <p className="mb-2 text-[13px] text-gray-700">{insights.headline}</p>}
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {(insQ.data?.insights ?? []).map((ins, i) => (
+                {(insights?.insights ?? []).map((ins, i) => (
                   <div key={i} className={`rounded-lg border p-2.5 ${sevTone[ins.severity] || sevTone.info}`}>
                     <div className="text-[12px] font-semibold text-gray-800">{ins.title}</div>
                     <div className="mt-0.5 text-[11px] text-gray-600">{ins.detail}</div>

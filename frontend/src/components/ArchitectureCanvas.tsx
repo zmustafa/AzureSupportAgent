@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   ReactFlow,
@@ -2374,8 +2375,10 @@ function fromMermaid(text: string): { nodes: ArchNode[]; edges: ArchEdge[] } | n
 }
 
 export function ArchitectureCanvas({ arch, onSaved }: { arch: Architecture; onSaved: (a: Architecture) => void }) {
-  const [catalog, setCatalog] = useState<ArchitectureCatalog>();
-  useEffect(() => { api.architectureCatalog().then(setCatalog).catch(() => undefined); }, []);
+  const { data: catalog } = useQuery({
+    queryKey: ["architectureCatalog"],
+    queryFn: api.architectureCatalog,
+  });
   return (
     <ReactFlowProvider>
       <CanvasInner arch={arch} catalog={catalog} onSaved={onSaved} />
@@ -2412,8 +2415,10 @@ function PreviewInner({ arch, catalog }: { arch: Architecture; catalog: Architec
 
 /** A non-editable rendering of an architecture (used to preview a past revision). */
 export function ArchitecturePreview({ arch }: { arch: Architecture }) {
-  const [catalog, setCatalog] = useState<ArchitectureCatalog>();
-  useEffect(() => { api.architectureCatalog().then(setCatalog).catch(() => undefined); }, []);
+  const { data: catalog } = useQuery({
+    queryKey: ["architectureCatalog"],
+    queryFn: api.architectureCatalog,
+  });
   return (
     <ReactFlowProvider>
       <PreviewInner arch={arch} catalog={catalog} />

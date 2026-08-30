@@ -46,8 +46,8 @@ def signing_material():
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-        .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=1))
+        .not_valid_before(_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=1))
+        .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1))
         .sign(key, hashes.SHA256())
     )
     key_pem = key.private_bytes(
@@ -70,7 +70,7 @@ def _assertion_xml(
     recipient: str | None = None,
     in_response_to: str | None = None,
 ) -> str:
-    now = _dt.datetime.utcnow()
+    now = _dt.datetime.now(_dt.UTC)
     nb = (now - _dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     na = (now + _dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     scd_attrs = [f'NotOnOrAfter="{na}"']
@@ -194,8 +194,8 @@ def test_saml_wrong_cert_rejected(signing_material):
     c2 = (
         x509.CertificateBuilder().subject_name(n2).issuer_name(n2)
         .public_key(k2.public_key()).serial_number(x509.random_serial_number())
-        .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-        .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=1))
+        .not_valid_before(_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=1))
+        .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=1))
         .sign(k2, hashes.SHA256())
     )
     other_cert = c2.public_bytes(serialization.Encoding.PEM).decode()
@@ -326,6 +326,96 @@ def test_sso_links_existing_sso_account_by_email(tmp_path):
                 display_name="Dave", groups=[], email_verified=False,
             )
             assert blocked is None
+        await engine.dispose()
+
+    _run(run())
+
+
+def test_sso_provisions_user_in_provider_tenant(tmp_path):
+    from app.auth.provisioning import provision_sso_user
+    from app.models.auth import IdentityProvider, Role
+
+    async def run():
+        engine, Session = await _auth_engine(tmp_path)
+        async with Session() as db:
+            db.add(Role(
+                name="noaccess",
+                tenant_id="default",
+                is_system=True,
+                permissions_json=[],
+            ))
+            db.add(IdentityProvider(
+                id="tenant-idp",
+                tenant_id="tenant-a",
+                name="Tenant A",
+                type="oidc",
+                enabled=True,
+                config_json={},
+            ))
+            await db.commit()
+            idp = await db.get(IdentityProvider, "tenant-idp")
+
+            provisioned = await provision_sso_user(
+                db,
+                idp,
+                external_id="tenant-a-subject",
+                email="tenant-a-user@example.invalid",
+                display_name="Tenant A User",
+                groups=[],
+            )
+
+            assert provisioned is not None
+            assert provisioned.tenant_id == "tenant-a"
+        await engine.dispose()
+
+    _run(run())
+
+
+def test_sso_email_fallback_never_links_across_tenants(tmp_path):
+    from app.auth.provisioning import provision_sso_user
+    from app.models.auth import IdentityProvider, Role, User
+
+    async def run():
+        engine, Session = await _auth_engine(tmp_path)
+        async with Session() as db:
+            db.add(Role(
+                name="user",
+                tenant_id="default",
+                is_system=True,
+                permissions_json=["chat.use"],
+            ))
+            foreign = User(
+                username="shared-email",
+                email="shared@example.invalid",
+                auth_source="oidc",
+                external_idp="tenant-b-idp",
+                external_id="tenant-b-subject",
+                tenant_id="tenant-b",
+            )
+            provider = IdentityProvider(
+                id="tenant-a-idp",
+                tenant_id="tenant-a",
+                name="Tenant A",
+                type="oidc",
+                enabled=True,
+                config_json={},
+            )
+            db.add_all([foreign, provider])
+            await db.commit()
+
+            provisioned = await provision_sso_user(
+                db,
+                provider,
+                external_id="tenant-a-subject",
+                email="shared@example.invalid",
+                display_name="Tenant A User",
+                groups=[],
+            )
+
+            assert provisioned is None
+            await db.refresh(foreign)
+            assert foreign.external_idp == "tenant-b-idp"
+            assert foreign.external_id == "tenant-b-subject"
         await engine.dispose()
 
     _run(run())

@@ -49,7 +49,7 @@ To refresh the vendored catalog to a newer AMBA release, run `python scripts/imp
 
 ### Telemetry
 
-Curate recommended diagnostic log/metric categories and destination expectations per resource type. Approved Log Analytics workspaces and the telemetry reference are maintained with `coverage.manage`. **Telemetry Change Requests** governs proposed additions/removals before they affect coverage.
+Curate recommended diagnostic log/metric categories and destination expectations per resource type. Approved Log Analytics workspaces and the telemetry reference are maintained with `coverage.manage`. Opening the editor or approved-workspace dialog reads only local configuration; choose an Azure connection and select **Load workspaces** when live Resource Graph discovery is needed. Discovery is explicit, cancellable, cached for five minutes, and shows its freshness or error state. **Telemetry Change Requests** governs proposed additions/removals before they affect coverage.
 
 ### Backup/DR
 

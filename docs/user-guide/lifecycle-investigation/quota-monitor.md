@@ -25,6 +25,7 @@ Quota Monitor uses modular collectors for compute, network, storage, App Service
 - Select an Azure connection and subscription readable by the relevant quota, usage, Resource Graph, and Monitor APIs.
 - Register required resource providers for the categories being scanned.
 - Obtain `quota.run` for a fresh scan; read permission alone can view saved results.
+- For an offline walkthrough, enable **Demo data**. The deterministic demo uses no Azure connection or API call.
 
 ## Tabs and actions
 
@@ -38,7 +39,7 @@ Quota Monitor uses modular collectors for compute, network, storage, App Service
 
 ### Workflow
 
-1. Choose a subscription.
+1. Choose a subscription, or enable **Demo data** for the synthetic offline path.
 2. Review saved risk distribution, generated time, and provider registration states.
 3. Select bounded regions and categories, then start **Scan**.
 4. Follow streamed collector progress; partial failures should be interpreted separately.

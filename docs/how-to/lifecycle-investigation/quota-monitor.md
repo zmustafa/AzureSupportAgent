@@ -25,7 +25,7 @@ feature_ids: [PROACTIVE_NAV:quota, ROUTE:quota]
 
 ## How to run a bounded quota scan
 
-1. Open `/quota`, select the connection and subscription, and inspect saved result age.
+1. Open `/quota`, select the connection and subscription, and inspect saved result age. For a safe offline walkthrough, enable **Demo data** instead; it never calls Azure.
 
 2. Choose only required regions and collector categories.
 3. Select **Scan** and follow streamed region/provider/collector progress.

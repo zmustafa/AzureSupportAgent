@@ -5,6 +5,7 @@ import { useAuth } from "./components/AuthContext";
 import LoginPage, { ForcePasswordChange } from "./components/LoginPage";
 import { HelpMenu } from "./components/HelpMenu";
 import { CommandPalette } from "./components/CommandPalette";
+import { RecentItemTracker } from "./components/RecentItems";
 import { WelcomeModal } from "./components/WelcomeModal";
 import { ContextDocumentationHelp } from "./components/ContextDocumentationHelp";
 import { APP_VERSION, APP_VERSION_DISPLAY } from "./version";
@@ -150,6 +151,7 @@ export default function App() {
       </header>
 
       <CommandPalette />
+      <RecentItemTracker />
       <WelcomeModal />
 
       <div className="min-h-0 flex-1">

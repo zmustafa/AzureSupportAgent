@@ -114,7 +114,6 @@ _REVIEWED_CALL_SITES = {
     "inventory.py": 1,
     "ownership.py": 4,
     "policy.py": 1,
-    "quota.py": 6,
     "reservations.py": 2,
     "tagintel.py": 2,
     "workloads.py": 16,

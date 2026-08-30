@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type TelemetryCategory, type TelemetryReference } from "../api";
 import { formatError } from "../utils/format";
+import { usePersistedState } from "../utils/persistedState";
+import { ConnectionScopePicker } from "./ConnectionScopePicker";
 import {
   KNOWN_ARM_TYPES,
   TELEMETRY_GROUP_COLOR,
@@ -31,7 +33,6 @@ export function TelemetryReferenceEditor() {
   const qc = useQueryClient();
   const refQ = useQuery({ queryKey: ["telemetry-reference"], queryFn: api.telemetryReference });
   const revsQ = useQuery({ queryKey: ["telemetry-reference-revisions"], queryFn: api.telemetryReferenceRevisions });
-  const wsQ = useQuery({ queryKey: ["telemetry-workspaces"], queryFn: api.telemetryWorkspaces });
   const workloadsQ = useQuery({ queryKey: ["workloads"], queryFn: api.workloads });
 
   const [draft, setDraft] = useState<RefTypes>({});
@@ -48,6 +49,25 @@ export function TelemetryReferenceEditor() {
   const [addTypeOpen, setAddTypeOpen] = useState(false);
   const [wsOpen, setWsOpen] = useState(false);
   const [approvedDraft, setApprovedDraft] = useState("");
+  const [approvedDraftDirty, setApprovedDraftDirty] = useState(false);
+  const [workspaceConnectionId, setWorkspaceConnectionId] = usePersistedState(
+    "azsup.telemetry.reference.connectionId", "",
+  );
+  const approvedWsQ = useQuery({
+    queryKey: ["telemetry-workspaces", "approved"],
+    queryFn: ({ signal }) => api.telemetryWorkspaces({}, signal),
+    enabled: wsOpen,
+    staleTime: 60_000,
+  });
+  const discoveredWsQ = useQuery({
+    queryKey: ["telemetry-workspaces", "discovered", workspaceConnectionId],
+    queryFn: ({ signal }) => api.telemetryWorkspaces(
+      { discover: true, connection_id: workspaceConnectionId }, signal,
+    ),
+    enabled: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
 
   const ref = refQ.data;
 
@@ -61,6 +81,12 @@ export function TelemetryReferenceEditor() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref]);
+
+  useEffect(() => {
+    if (wsOpen && approvedWsQ.data && !approvedDraftDirty) {
+      setApprovedDraft(approvedWsQ.data.approved.join("\n"));
+    }
+  }, [approvedDraftDirty, approvedWsQ.data, wsOpen]);
 
   const usageByType = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -199,14 +225,27 @@ export function TelemetryReferenceEditor() {
       setMsg({ text: "Applied raw JSON to the draft — review and Save.", ok: true });
     } catch { setMsg({ text: "Invalid JSON.", ok: false }); }
   }
-  function openWs() { setApprovedDraft((wsQ.data?.approved ?? []).join("\n")); setWsOpen(true); }
+  function openWs() {
+    setApprovedDraft((approvedWsQ.data?.approved ?? []).join("\n"));
+    setApprovedDraftDirty(false);
+    setWsOpen(true);
+  }
+  function closeWs() {
+    void qc.cancelQueries({ queryKey: ["telemetry-workspaces", "discovered"] });
+    setWsOpen(false);
+  }
+  function changeWorkspaceConnection(connectionId: string) {
+    void qc.cancelQueries({ queryKey: ["telemetry-workspaces", "discovered"] });
+    setWorkspaceConnectionId(connectionId);
+  }
   async function saveWs() {
     const list = approvedDraft.split("\n").map((s) => s.trim()).filter(Boolean);
     setBusy(true);
     try {
       await api.setTelemetryApprovedWorkspaces(list);
-      await qc.invalidateQueries({ queryKey: ["telemetry-workspaces"] });
-      setWsOpen(false);
+      await qc.invalidateQueries({ queryKey: ["telemetry-workspaces", "approved"] });
+      setApprovedDraftDirty(false);
+      closeWs();
       setMsg({ text: "Saved approved workspaces.", ok: true });
     } catch (e) { setMsg({ text: formatError(e), ok: false }); } finally { setBusy(false); }
   }
@@ -333,16 +372,37 @@ export function TelemetryReferenceEditor() {
       {addTypeOpen && <AddTypeModal existing={draft} onClose={() => setAddTypeOpen(false)} onAdd={addType} />}
 
       {wsOpen && (
-        <Modal title="Approved Log Analytics Workspaces" onClose={() => setWsOpen(false)}>
+        <Modal title="Approved Log Analytics Workspaces" onClose={closeWs}>
           <p className="mb-2 text-xs text-gray-500">Diagnostic settings shipping to a workspace not on this list are flagged as destination <b>drift</b>. One workspace resource id per line; empty = drift detection off.</p>
-          <textarea value={approvedDraft} onChange={(e) => setApprovedDraft(e.target.value)} spellCheck={false} className="h-40 w-full rounded border p-2 font-mono text-[11px]" placeholder="/subscriptions/.../workspaces/prod-law" />
-          {(wsQ.data?.workspaces ?? []).length > 0 && (
-            <details className="mt-2 text-xs"><summary className="cursor-pointer text-gray-500">Discovered workspaces ({wsQ.data?.workspaces.length})</summary>
-              <div className="mt-1 space-y-1">{(wsQ.data?.workspaces ?? []).map((w) => <div key={w.id} className="truncate text-[10px] text-gray-500" title={w.id}>{w.name} — {w.resourceGroup}</div>)}</div>
+          <textarea value={approvedDraft} onChange={(e) => { setApprovedDraft(e.target.value); setApprovedDraftDirty(true); }} spellCheck={false} className="h-40 w-full rounded border p-2 font-mono text-[11px]" placeholder="/subscriptions/.../workspaces/prod-law" />
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded border bg-gray-50 p-2">
+            <ConnectionScopePicker value={workspaceConnectionId} onChange={changeWorkspaceConnection} align="left" />
+            <button
+              onClick={() => void discoveredWsQ.refetch()}
+              disabled={discoveredWsQ.isFetching}
+              className="rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
+            >
+              {discoveredWsQ.isFetching ? "Loading workspaces…" : discoveredWsQ.data ? "Refresh workspaces" : "Load workspaces"}
+            </button>
+            {discoveredWsQ.isFetching && (
+              <button onClick={() => void qc.cancelQueries({ queryKey: ["telemetry-workspaces", "discovered"] })} className="text-xs text-gray-500 hover:text-gray-800">Cancel</button>
+            )}
+            {discoveredWsQ.dataUpdatedAt > 0 && !discoveredWsQ.isFetching && (
+              <span className="text-[10px] text-gray-400">Loaded {new Date(discoveredWsQ.dataUpdatedAt).toLocaleTimeString()}</span>
+            )}
+          </div>
+          {approvedWsQ.isError && <div className="mt-2 text-xs text-red-600">Could not load the approved list: {formatError(approvedWsQ.error)}</div>}
+          {discoveredWsQ.isError && <div className="mt-2 text-xs text-red-600">{formatError(discoveredWsQ.error)}</div>}
+          {(discoveredWsQ.data?.workspaces ?? []).length > 0 && (
+            <details className="mt-2 text-xs" open><summary className="cursor-pointer text-gray-500">Discovered workspaces ({discoveredWsQ.data?.workspaces.length})</summary>
+              <div className="mt-1 space-y-1">{(discoveredWsQ.data?.workspaces ?? []).map((w) => <div key={w.id} className="truncate text-[10px] text-gray-500" title={w.id}>{w.name} — {w.resourceGroup}</div>)}</div>
             </details>
           )}
+          {discoveredWsQ.data && discoveredWsQ.data.workspaces.length === 0 && (
+            <div className="mt-2 text-xs text-gray-500">No Log Analytics workspaces were found for this connection.</div>
+          )}
           <div className="mt-2 flex justify-end gap-2">
-            <button onClick={() => setWsOpen(false)} className="rounded-md border px-3 py-1.5 text-sm">Cancel</button>
+            <button onClick={closeWs} className="rounded-md border px-3 py-1.5 text-sm">Cancel</button>
             <button onClick={() => void saveWs()} disabled={busy} className="rounded-md bg-brand px-3 py-1.5 text-sm text-white disabled:opacity-50">Save</button>
           </div>
         </Modal>

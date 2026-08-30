@@ -1855,6 +1855,8 @@ export type RadarEvent = {
   recommended_replacement: string;
   migration_url: string;
   rule_id: string;
+  impact_scope?: Array<{ service: string; regions: string[]; subscriptions: string[] }>;
+  impact_count_known?: boolean;
   impacted_resources: RadarImpactedResource[];
   impacted_count: number;
   owner: string;
@@ -1922,6 +1924,7 @@ export type RadarSnapshot = {
     grey: number;
     unowned: number;
     impacted_total: number;
+    impact_counts_complete?: boolean;
     models: number;
     models_at_risk: number;
   };
@@ -1986,6 +1989,26 @@ export type MissionState = {
 };
 
 export type MissionSystemDef = { key: string; label: string; icon: string; informational: boolean };
+
+export type RecentItem = {
+  id: string;
+  kind: string;
+  item_key: string;
+  title: string;
+  subtitle: string;
+  route: string;
+  permission: string;
+  connection_id?: string | null;
+  workload_id?: string | null;
+  pinned: boolean;
+  visit_count: number;
+  last_visited_at: string;
+};
+
+export type RecentItemTouch = Pick<
+  RecentItem,
+  "kind" | "item_key" | "title" | "subtitle" | "route" | "connection_id" | "workload_id"
+>;
 
 export type RadarClassificationRule = {
   id: string;
@@ -4869,6 +4892,8 @@ export const api = {
   // Recent deep investigations across the caller's chats (history + confidence).
   deepInvestigations: (limit = 30) =>
     http<{ investigations: DeepInvestigationSummary[] }>(`/chats/investigations?limit=${limit}`),
+  investigationStats: (sinceDays = 7) =>
+    http<{ count: number; since_days: number }>(`/chats/investigations/stats?since_days=${sinceDays}`),
   // Save an investigation's root-cause analysis into the linked architecture's Memory
   // ("Case Law"). Pass architectureId to disambiguate when several are linked.
   saveInvestigationRca: (messageId: string, architectureId?: string) =>
@@ -4908,6 +4933,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(connectionId ? { connection_id: connectionId } : {}),
     }),
+  recentItems: (limit = 8) =>
+    http<{ items: RecentItem[] }>(`/dashboard/recent-items?limit=${Math.max(1, Math.min(20, limit))}`),
+  touchRecentItem: (body: RecentItemTouch) =>
+    http<{ item: RecentItem }>("/dashboard/recent-items", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  pinRecentItem: (id: string, pinned: boolean) =>
+    http<{ ok: boolean; pinned: boolean }>(`/dashboard/recent-items/${encodeURIComponent(id)}/pin`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    }),
+  removeRecentItem: (id: string) =>
+    http<{ ok: boolean }>(`/dashboard/recent-items/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  clearRecentItems: (includePinned = false) =>
+    http<{ ok: boolean; deleted: number }>(`/dashboard/recent-items?include_pinned=${includePinned}`, { method: "DELETE" }),
   deepReviewFleet: (workloadIds: string[]) =>
     http<{
       launched: number;
@@ -4950,8 +4991,8 @@ export const api = {
     http<{ ok: boolean; deleted: number }>(`/chats/${id}/messages/from/${messageId}`, {
       method: "DELETE",
     }),
-  suggestions: (id: string) =>
-    http<{ suggestions: string[] }>(`/chats/${id}/suggestions`),
+  suggestions: (id: string, signal?: AbortSignal) =>
+    http<{ suggestions: string[] }>(`/chats/${id}/suggestions`, { signal }),
   clarify: (id: string, content: string) =>
     http<{
       needs_subscription: boolean;
@@ -7589,7 +7630,17 @@ export const api = {
     }),
   resetTelemetryReference: () =>
     http<{ ok: boolean; reference: TelemetryReference }>("/telemetry/reference/reset", { method: "POST", body: "{}" }),
-  telemetryWorkspaces: () => http<{ workspaces: TelemetryWorkspace[]; approved: string[] }>("/telemetry/workspaces"),
+  telemetryWorkspaces: (
+    params: { discover?: boolean; connection_id?: string } = {}, signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams();
+    if (params.discover) query.set("discover", "true");
+    if (params.connection_id) query.set("connection_id", params.connection_id);
+    const suffix = query.size ? `?${query}` : "";
+    return http<{ workspaces: TelemetryWorkspace[]; approved: string[]; discovered: boolean }>(
+      `/telemetry/workspaces${suffix}`, { signal },
+    );
+  },
   setTelemetryApprovedWorkspaces: (workspaces: string[]) =>
     http<{ ok: boolean; approved: string[] }>("/telemetry/approved-workspaces", {
       method: "PUT",
@@ -8213,8 +8264,12 @@ export const api = {
   }, signal?: AbortSignal) => http<InventoryNlResult>("/inventory/nl-search", { method: "POST", body: JSON.stringify(body), signal }),
   inventoryExplain: (resource: InventoryResource) =>
     http<{ explanation: string }>("/inventory/explain", { method: "POST", body: JSON.stringify({ resource }) }),
-  inventoryInsights: (connectionId?: string | null) =>
-    http<InventoryInsights>("/inventory/insights" + (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "")),
+  inventoryInsights: (connectionId?: string | null, generateAi = false, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (connectionId) q.set("connection_id", connectionId);
+    if (generateAi) q.set("generate_ai", "1");
+    return http<InventoryInsights>(`/inventory/insights${q.size ? `?${q.toString()}` : ""}`, { signal });
+  },
   inventorySnapshots: (connectionId?: string | null) =>
     http<{ snapshots: InventorySnapshot[] }>("/inventory/snapshots" + (connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : "")),
   inventoryTakeSnapshot: (connectionId?: string | null) =>

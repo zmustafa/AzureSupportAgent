@@ -203,16 +203,26 @@ async def post_explain(req: ExplainReq, _: Principal = Depends(require_admin)):
 
 # ============================================================ AI estate insights (Theme 5)
 @router.get("/insights")
-async def get_insights(connection_id: str | None = None, scope: str = "", principal: Principal = Depends(require_admin)):
-    """AI-generated, actionable insights over the whole inventory roll-up (concentration,
-    tag governance, cleanup, unassigned). Degrades to deterministic insights if AI is down."""
+async def get_insights(
+    connection_id: str | None = None,
+    scope: str = "",
+    generate_ai: int = 0,
+    principal: Principal = Depends(require_admin),
+):
+    """Actionable insights over the cached inventory roll-up.
+
+    A page visit is deterministic and cache-only. AI generation is opt-in because it may incur
+    provider cost and latency; even that path refuses to launch an implicit Azure scan.
+    """
     hit = cache.get(principal.tenant_id, connection_id or "", scope=scope)
-    if hit:
-        payload = hit["payload"]
-    else:
-        payload = await service.collect(_conn(connection_id), scope=scope)
-        cache.set_(principal.tenant_id, connection_id or "", payload, scope=scope)
-    return await ai.estate_insights(payload.get("summary", {}), payload.get("facets", {}))
+    if not hit:
+        return {"headline": "", "insights": [], "source": "local", "never_loaded": True}
+    payload = hit["payload"]
+    summary = payload.get("summary", {})
+    facets = payload.get("facets", {})
+    if generate_ai:
+        return await ai.estate_insights(summary, facets)
+    return ai.local_estate_insights(summary, facets)
 
 
 # ============================================================ snapshots + drift (Theme 3)

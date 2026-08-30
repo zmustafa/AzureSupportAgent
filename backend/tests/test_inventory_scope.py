@@ -6,6 +6,8 @@ import re
 
 import pytest
 
+from app.api import inventory as inventory_api
+from app.core.security import Principal
 from app.inventory import cache, cost, service
 
 
@@ -54,6 +56,67 @@ def test_cache_scope_does_not_leak_into_tenant(_isolated_cache):
     cache.set_("t1", "c1", {"resources": ["only-sub"]}, scope="sub:s1")
     # The whole-tenant scope must remain a miss — a scoped collect never satisfies it.
     assert cache.get("t1", "c1", scope="") is None
+
+
+def _principal() -> Principal:
+    return Principal(
+        subject="inventory-reader",
+        email="inventory-reader@example.invalid",
+        tenant_id="t1",
+        role="admin",
+    )
+
+
+async def test_inventory_insights_cache_miss_does_not_scan_or_call_ai(monkeypatch):
+    monkeypatch.setattr(inventory_api.cache, "get", lambda *_args, **_kwargs: None)
+
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("page-load insights must not call Azure or AI")
+
+    monkeypatch.setattr(inventory_api.service, "collect", forbidden)
+    monkeypatch.setattr(inventory_api.ai, "estate_insights", forbidden)
+
+    result = await inventory_api.get_insights("c1", principal=_principal())
+
+    assert result == {
+        "headline": "",
+        "insights": [],
+        "source": "local",
+        "never_loaded": True,
+    }
+
+
+async def test_inventory_insights_ai_requires_explicit_flag(monkeypatch):
+    payload = {
+        "summary": {"total_resources": 2, "tag_coverage_pct": 25},
+        "facets": {"locations": []},
+    }
+    monkeypatch.setattr(
+        inventory_api.cache,
+        "get",
+        lambda *_args, **_kwargs: {"payload": payload},
+    )
+    calls = 0
+
+    async def generated(summary, facets):
+        nonlocal calls
+        calls += 1
+        assert summary is payload["summary"]
+        assert facets is payload["facets"]
+        return {"headline": "Generated", "insights": [], "source": "ai"}
+
+    monkeypatch.setattr(inventory_api.ai, "estate_insights", generated)
+
+    local = await inventory_api.get_insights("c1", principal=_principal())
+    generated_result = await inventory_api.get_insights(
+        "c1",
+        generate_ai=1,
+        principal=_principal(),
+    )
+
+    assert local["source"] == "local"
+    assert generated_result["source"] == "ai"
+    assert calls == 1
 
 
 # --------------------------------------------------------------------------- scope resolution

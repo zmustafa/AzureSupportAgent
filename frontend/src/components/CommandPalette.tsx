@@ -4,6 +4,7 @@ import { useAuth } from "./AuthContext";
 import { DESTINATIONS, type Destination } from "../help/content";
 import { canAccess } from "../utils/accessControl";
 import { routeRequirement } from "./routeAccess";
+import { recentItemIcon, useRecentItems } from "./RecentItems";
 
 /**
  * Command Palette — press Ctrl/⌘+K anywhere to fuzzily jump to any page or action. The single
@@ -18,6 +19,7 @@ export function CommandPalette() {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const recentQ = useRecentItems(8);
 
   // Global hotkey: Ctrl/⌘+K toggles; "/" opens when nothing is focused.
   useEffect(() => {
@@ -43,7 +45,19 @@ export function CommandPalette() {
   }, [open]);
 
   const items = useMemo(() => {
-    const all = DESTINATIONS.filter((d) => canAccess(user, routeRequirement(d.path)));
+    const recent: Destination[] = (recentQ.data?.items ?? []).map((item) => ({
+      label: item.title,
+      path: item.route,
+      group: "Recently visited",
+      icon: recentItemIcon(item.kind),
+      keywords: `${item.subtitle} ${item.kind.replace(/_/g, " ")}`,
+    }));
+    const recentPaths = new Set(recent.map((item) => item.path));
+    const all = [
+      ...recent,
+      ...DESTINATIONS.filter((destination) =>
+        !recentPaths.has(destination.path) && canAccess(user, routeRequirement(destination.path))),
+    ];
     const q = query.trim().toLowerCase();
     if (!q) return all;
     const tokens = q.split(/\s+/);
@@ -51,7 +65,7 @@ export function CommandPalette() {
       const hay = `${d.label} ${d.group} ${d.keywords ?? ""}`.toLowerCase();
       return tokens.every((t) => hay.includes(t));
     });
-  }, [query, user]);
+  }, [query, recentQ.data?.items, user]);
 
   // Group while preserving order.
   const grouped = useMemo(() => {

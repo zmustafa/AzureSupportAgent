@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Markdown as LazyMarkdown } from "./LazyMarkdown";
@@ -863,8 +863,8 @@ function FindingsTable({
               const isOpen = expanded.has(f.check_id);
               const st = states[f.check_id];
               return (
-                <>
-                  <tr key={f.check_id} onClick={() => toggle(f.check_id)} className="cursor-pointer border-b last:border-0 hover:bg-gray-50">
+                <Fragment key={f.check_id}>
+                  <tr onClick={() => toggle(f.check_id)} className="cursor-pointer border-b last:border-0 hover:bg-gray-50">
                     <td className="py-2 pl-3 text-gray-400">{isOpen ? "▾" : "▸"}</td>
                     <td className="py-2" onClick={(e) => e.stopPropagation()}>
                       {eligible(f) ? (
@@ -999,7 +999,7 @@ function FindingsTable({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
             {rows.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-gray-400">No matching controls.</td></tr>}

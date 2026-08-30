@@ -9,6 +9,7 @@ Loading first purges, so it's idempotent and always produces a fresh demo datase
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -37,6 +38,30 @@ def _resiliency_store():
     from app.resiliency import snapshot as store
 
     return store
+
+
+def _purge_demo_architectures(tenant_id: str) -> int:
+    from app.architectures import registry as arch_reg
+
+    removed = 0
+    for architecture in arch_reg.list_architectures(tenant_id, include_deleted=True):
+        if str(architecture.get("name", "")).upper().startswith("DEMO"):
+            if arch_reg.purge_architecture(architecture["id"]):
+                removed += 1
+    return removed
+
+
+async def _purge_demo_chats(tenant_id: str, db: AsyncSession) -> int:
+    result = await db.execute(select(Chat).where(
+        Chat.tenant_id == tenant_id,
+        Chat.workload_id == DEMO_WORKLOAD_ID,
+    ))
+    chats = list(result.scalars().all())
+    for chat in chats:
+        await db.delete(chat)
+    if chats:
+        await db.commit()
+    return len(chats)
 
 
 def _purge_features(tenant_id: str) -> dict[str, Any]:
@@ -143,27 +168,11 @@ async def _purge_all(tenant_id: str, db: AsyncSession) -> dict[str, Any]:
             log.info("demo purge %s failed: %s", name, exc)
 
     # Demo architectures (name-prefixed DEMO) — global demo content, hard delete.
-    def _purge_architectures() -> int:
-        from app.architectures import registry as arch_reg
-        n = 0
-        for a in arch_reg.list_architectures(None, include_deleted=True):
-            if str(a.get("name", "")).upper().startswith("DEMO"):
-                if arch_reg.purge_architecture(a["id"]):
-                    n += 1
-        return n
-    step("architectures", _purge_architectures)
+    step("architectures", lambda: _purge_demo_architectures(tenant_id))
 
     # Demo chats (scoped to the demo workload).
-    async def _purge_chats() -> int:
-        res = await db.execute(select(Chat).where(Chat.workload_id == DEMO_WORKLOAD_ID))
-        chats = list(res.scalars().all())
-        for c in chats:
-            await db.delete(c)
-        if chats:
-            await db.commit()
-        return len(chats)
     try:
-        removed["chats"] = await _purge_chats()
+        removed["chats"] = await _purge_demo_chats(tenant_id, db)
     except Exception as exc:  # noqa: BLE001
         errors["chats"] = str(exc)[:200]
         log.info("demo purge chats failed: %s", exc)
@@ -208,9 +217,8 @@ def _seed_recovery(tenant_id: str, workload_id: str) -> None:
         None, tenant_id=tenant_id, scope_kind="workload", scope_id=workload_id,
         subscriptions=[], workload_id=workload_id)
     try:
-        # `_seed_all` is synchronous but is called straight from an async endpoint, so a
-        # loop is already running here and asyncio.run() would refuse. Tests call it with
-        # no loop at all, hence both paths.
+        # Normal endpoint execution runs `_seed_all` on a worker thread. Keep the running-loop
+        # path for direct async callers and tests, where asyncio.run() would otherwise refuse.
         asyncio.get_running_loop()
     except RuntimeError:
         snap = asyncio.run(coro)
@@ -325,7 +333,7 @@ def _status(tenant_id: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- endpoints
 @router.get("/status")
 async def demo_status(principal: Principal = Depends(require_admin)) -> dict[str, Any]:
-    return _status(principal.tenant_id or "default")
+    return await asyncio.to_thread(_status, principal.tenant_id or "default")
 
 
 @router.post("/seed")
@@ -336,8 +344,15 @@ async def demo_seed(
     """Load a fresh demo dataset (clears existing per-feature demo data first, then seeds).
     Does not delete demo architectures — those are removed only via the Remove button."""
     tenant_id = principal.tenant_id or "default"
-    _purge_features(tenant_id)  # fresh slate for the regenerable feature data
-    result = _seed_all(tenant_id)
+
+    def refresh_demo() -> dict[str, Any]:
+        # Cache/registry seeding is synchronous and includes the real Recovery Readiness
+        # pipeline. Keep purge + seed ordered on one worker without stalling every request
+        # on FastAPI's event loop.
+        _purge_features(tenant_id)  # fresh slate for the regenerable feature data
+        return _seed_all(tenant_id)
+
+    result = await asyncio.to_thread(refresh_demo)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -348,7 +363,8 @@ async def demo_seed(
         )
     )
     await db.commit()
-    return {"ok": True, **result, "status": _status(tenant_id)}
+    status = await asyncio.to_thread(_status, tenant_id)
+    return {"ok": True, **result, "status": status}
 
 
 @router.post("/purge")

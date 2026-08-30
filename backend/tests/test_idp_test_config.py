@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as _dt
 
-import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -22,8 +21,8 @@ def _self_signed_cert(*, days_valid: int = 1) -> str:
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-        .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=days_valid))
+        .not_valid_before(_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=1))
+        .not_valid_after(_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=days_valid))
         .sign(key, hashes.SHA256())
     )
     return cert.public_bytes(serialization.Encoding.PEM).decode()

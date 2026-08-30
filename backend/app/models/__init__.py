@@ -62,6 +62,44 @@ class Chat(Base):
     )
 
 
+class RecentItem(Base):
+    """A user's bounded, cross-device navigation history.
+
+    This is deliberately separate from ``AuditLog``: viewing a page is personalization,
+    not a security event.  The API accepts only typed, allowlisted internal routes and
+    re-applies the current permission set on every read, so a role downgrade cannot turn
+    an old recent entry into an authorization bypass.
+    """
+
+    __tablename__ = "recent_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(48))
+    item_key: Mapped[str] = mapped_column(String(256))
+    title: Mapped[str] = mapped_column(String(256))
+    subtitle: Mapped[str] = mapped_column(String(256), default="")
+    route: Mapped[str] = mapped_column(String(1024))
+    connection_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    workload_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    visit_count: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_visited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_id", "kind", "item_key",
+            name="uq_recent_item_user_kind_key",
+        ),
+        Index(
+            "ix_recent_items_user_visited",
+            "tenant_id", "user_id", "last_visited_at",
+        ),
+    )
+
+
 class Message(Base):
     __tablename__ = "messages"
 

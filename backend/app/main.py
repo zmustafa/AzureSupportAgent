@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +33,7 @@ from app.api import (
     connections,
     connectors,
     coverage_reports,
+    dashboard,
     dnsdebug,
     entra,
     evidence,
@@ -93,12 +95,24 @@ import os  # noqa: E402
 # the running container (the env var must be set on the active revision).
 _OPENAPI_PUBLIC = os.getenv("OPENAPI_PUBLIC", "").lower() in ("1", "true", "yes")
 _DOCS_ENABLED = (settings.environment == "local") or _OPENAPI_PUBLIC
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
 app = FastAPI(
     title="Azure Support Agent",
     version="0.1.0",
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
     openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+    lifespan=_lifespan,
 )
 logging.getLogger("app.main").info(
     "Startup: environment=%s, openapi_docs_enabled=%s", settings.environment, _DOCS_ENABLED
@@ -160,7 +174,6 @@ async def _ensure_schema_resilient(attempts: int = 4) -> None:
             await asyncio.sleep(delay)
 
 
-@app.on_event("startup")
 async def _startup() -> None:
     # Keep the schema in sync (creates tables + late-added columns). Retried rather than
     # allowed to kill the process: this is DDL every replica runs at boot, and losing a race
@@ -353,7 +366,6 @@ async def _startup() -> None:
     _warm_task = asyncio.create_task(warm_tool_catalog())
 
 
-@app.on_event("shutdown")
 async def _shutdown() -> None:
     import asyncio
     import contextlib
@@ -713,6 +725,7 @@ for _sub in (
     telemetry.router,
     backupdr.router,
     coverage_reports.router,
+    dashboard.router,
     netcheck.router,
     dnsdebug.router,
     evidence.router,

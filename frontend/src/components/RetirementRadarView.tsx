@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import DOMPurify from "dompurify";
 import { api, type RadarEvent, type RadarModelItem, type RadarSnapshot } from "../api";
 import { formatError } from "../utils/format";
 import { usePersistedState, useWorkloadDeepLink } from "../utils/persistedState";
@@ -44,6 +45,44 @@ function agoText(seconds: number | null): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function impactCountKnown(event: RadarEvent): boolean {
+  // Old cached snapshots predate this flag. Advisor rows and any concrete IDs are
+  // still exact; Service Health-only zeroes are unknown rather than real zeroes.
+  return event.impact_count_known
+    ?? (event.impacted_resources.length > 0 || event.sources.includes("advisor"));
+}
+
+function impactCountLabel(event: RadarEvent): string {
+  return impactCountKnown(event) ? String(event.impacted_count) : "Not provided";
+}
+
+function impactRailLabel(event: RadarEvent | undefined, fallbackCount: number): string {
+  if (!event) return `${fallbackCount} impacted`;
+  return impactCountKnown(event) ? `${event.impacted_count} impacted` : "Resource list unavailable";
+}
+
+function AdvisoryMessage({ value }: { value: string }) {
+  const safeHtml = useMemo(() => {
+    const sanitized = DOMPurify.sanitize(value, {
+      ALLOWED_TAGS: ["p", "strong", "em", "a", "br", "ul", "ol", "li"],
+      ALLOWED_ATTR: ["href", "target", "rel"],
+    });
+    // Azure advisories frequently open portal/help links in a new tab without a rel
+    // attribute. Add the reverse-tabnabbing protection after sanitization.
+    const document = new DOMParser().parseFromString(String(sanitized), "text/html");
+    for (const link of document.querySelectorAll("a[target='_blank']")) {
+      link.setAttribute("rel", "noopener noreferrer");
+    }
+    return document.body.innerHTML;
+  }, [value]);
+  return (
+    <div
+      className="space-y-2 leading-6 text-gray-700 [&_a]:font-medium [&_a]:text-blue-600 [&_a]:underline [&_a]:underline-offset-2 [&_li]:ml-5 [&_li]:list-disc"
+      dangerouslySetInnerHTML={{ __html: safeHtml }}
+    />
+  );
 }
 
 function Stat({ label, value, tone, active, onClick }: { label: string; value: string; tone?: string; active?: boolean; onClick?: () => void }) {
@@ -100,13 +139,22 @@ export function RetirementRadarPanel() {
   const data: RadarSnapshot | undefined = radarQ.data;
   const events = data?.events ?? [];
   const models = data?.model_items ?? [];
+  const resolvedResourceCount = useMemo(() => new Set(
+    events.flatMap((event) => event.impacted_resources)
+      .map((resource) => resource.id.trim().replace(/\/$/, "").toLowerCase())
+      .filter(Boolean),
+  ).size, [events]);
+  const unownedCount = useMemo(
+    () => events.filter((event) => impactCountKnown(event) && event.unowned).length,
+    [events],
+  );
 
   const filtered = useMemo(() => {
     const q = dQuery.trim().toLowerCase();
     return events.filter((e) => {
       if (typeFilter !== "all" && e.change_type !== typeFilter) return false;
       if (statusFilter !== "all" && (e.status || "new") !== statusFilter) return false;
-      if (onlyUnowned && !e.unowned) return false;
+      if (onlyUnowned && (!impactCountKnown(e) || !e.unowned)) return false;
       if (q && !`${e.title} ${e.service} ${e.tracking_id} ${e.recommended_replacement}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -152,7 +200,7 @@ export function RetirementRadarPanel() {
     try {
       await api.updateRadarState({ tracking_id: ev.tracking_id, ...patch });
       const fresh = await api.radarOverview(params);
-      qc.setQueryData(["radar", scopeKind, effectiveWorkloadId, subId], fresh);
+      qc.setQueryData(["radar", scopeKind, effectiveWorkloadId, subId, connId], fresh);
       if (drawer && drawer.tracking_id === ev.tracking_id) {
         setDrawer(fresh.events.find((x) => x.tracking_id === ev.tracking_id) ?? null);
       }
@@ -255,7 +303,12 @@ export function RetirementRadarPanel() {
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <ConnectionScopePicker value={connId} onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }} />
+            <ConnectionScopePicker
+              value={connId}
+              onChange={(id) => { setConnId(id); if (scopeKind === "subscription") { setSubId(""); setSubName(""); } }}
+              disabled={scopeKind === "workload"}
+              disabledTitle="The selected workload controls its Azure connection."
+            />
             <ScopePicker
               scopeKind={scopeKind}
               onScopeKindChange={setScopeKind}
@@ -383,7 +436,9 @@ export function RetirementRadarPanel() {
                     >
                       <div className={`text-lg font-semibold ${SEV_TEXT[c.severity]}`}>{daysLabel(c.days_until)}</div>
                       <div className="truncate text-[12px] font-medium text-gray-800" title={c.title}>{c.title}</div>
-                      <div className="text-[11px] text-gray-500">{c.impacted_count} impacted</div>
+                      <div className="text-[11px] text-gray-500">
+                        {impactRailLabel(events.find((event) => event.id === c.id), c.impacted_count)}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -396,8 +451,8 @@ export function RetirementRadarPanel() {
               <Stat label="Retirements" value={String(data.counts.retirement)} active={typeFilter === "retirement"} onClick={() => setTypeFilter(typeFilter === "retirement" ? "all" : "retirement")} />
               <Stat label="Breaking changes" value={String(data.counts.breaking_change)} active={typeFilter === "breaking_change"} onClick={() => setTypeFilter(typeFilter === "breaking_change" ? "all" : "breaking_change")} />
               <Stat label="< 30 days" value={String(data.counts.red)} tone="text-red-600" />
-              <Stat label="Unowned" value={String(data.counts.unowned)} tone={data.counts.unowned ? "text-amber-600" : undefined} active={onlyUnowned} onClick={() => setOnlyUnowned(!onlyUnowned)} />
-              <Stat label="Impacted resources" value={String(data.counts.impacted_total)} />
+              <Stat label="Unowned" value={String(unownedCount)} tone={unownedCount ? "text-amber-600" : undefined} active={onlyUnowned} onClick={() => setOnlyUnowned(!onlyUnowned)} />
+              <Stat label="Resolved resources" value={String(resolvedResourceCount)} />
             </div>
 
             {/* Toolbar */}
@@ -468,9 +523,9 @@ export function RetirementRadarPanel() {
                       <div><span className={`rounded px-1.5 py-0.5 text-[11px] ${e.change_type === "breaking_change" ? "bg-purple-100 text-purple-700" : "bg-sky-100 text-sky-700"}`}>{e.change_type === "breaking_change" ? "Breaking" : "Retirement"}</span></div>
                       <div className="text-gray-600">{e.retirement_date || "TBD"}</div>
                       <div className={`font-medium ${SEV_TEXT[e.severity]}`}>{daysLabel(e.days_until)}</div>
-                      <div className="text-gray-600">{e.impacted_count}</div>
+                      <div className="text-gray-600">{impactCountLabel(e)}</div>
                       <div className="truncate text-gray-600" title={e.recommended_replacement}>{e.recommended_replacement || "—"}</div>
-                      <div className="truncate">{e.unowned ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span> : <span className="text-gray-700">{e.owner}</span>}</div>
+                      <div className="truncate">{!impactCountKnown(e) ? <span className="text-gray-400">Not resolved</span> : e.unowned ? <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span> : <span className="text-gray-700">{e.owner || "—"}</span>}</div>
                       <div className="text-gray-600">{STATUS_LABEL[e.status || "new"]}</div>
                     </div>
                   )}
@@ -511,13 +566,15 @@ export function RetirementRadarPanel() {
                         </td>
                         <td className="px-3 py-2 text-gray-600">{e.retirement_date || "TBD"}</td>
                         <td className={`px-3 py-2 font-medium ${SEV_TEXT[e.severity]}`}>{daysLabel(e.days_until)}</td>
-                        <td className="px-3 py-2 text-gray-600">{e.impacted_count}</td>
+                        <td className="px-3 py-2 text-gray-600">{impactCountLabel(e)}</td>
                         <td className="px-3 py-2 max-w-[220px] truncate text-gray-600" title={e.recommended_replacement}>{e.recommended_replacement || "—"}</td>
                         <td className="px-3 py-2">
-                          {e.unowned ? (
+                          {!impactCountKnown(e) ? (
+                            <span className="text-gray-400">Not resolved</span>
+                          ) : e.unowned ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-700">Unowned</span>
                           ) : (
-                            <span className="text-gray-700">{e.owner}</span>
+                            <span className="text-gray-700">{e.owner || "—"}</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-gray-600">{STATUS_LABEL[e.status || "new"]}</td>
@@ -593,7 +650,7 @@ export function RetirementRadarPanel() {
                 <div className="rounded border px-2 py-1.5"><div className="text-[11px] text-gray-500">Type</div><div>{drawer.change_type === "breaking_change" ? "Breaking change" : "Retirement"}</div></div>
                 <div className="rounded border px-2 py-1.5"><div className="text-[11px] text-gray-500">Planned date</div><div>{drawer.retirement_date || "TBD"} ({daysLabel(drawer.days_until)})</div></div>
               </div>
-              {drawer.summary && <p className="text-gray-700">{drawer.summary}</p>}
+              {drawer.summary && <AdvisoryMessage value={drawer.summary} />}
               {drawer.recommended_replacement && (
                 <div><div className="text-[11px] font-medium uppercase text-gray-500">Recommended replacement</div><div className="text-gray-700">{drawer.recommended_replacement}</div></div>
               )}
@@ -624,7 +681,19 @@ export function RetirementRadarPanel() {
 
               {/* Impacted resources */}
               <div>
-                <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">Impacted resources ({drawer.impacted_count})</div>
+                <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">Impacted resources ({impactCountLabel(drawer)})</div>
+                {(drawer.impact_scope?.length ?? 0) > 0 && (
+                  <div className="mb-2 rounded border border-sky-100 bg-sky-50 px-2.5 py-2 text-xs text-sky-900">
+                    <div className="mb-1 font-medium">Scope reported by Azure Service Health</div>
+                    {drawer.impact_scope!.map((scope, index) => (
+                      <div key={`${scope.service}:${index}`}>
+                        {scope.service || "Azure service"}
+                        {scope.regions.length ? ` · ${scope.regions.join(", ")}` : ""}
+                        {scope.subscriptions.length ? ` · ${scope.subscriptions.length} subscription${scope.subscriptions.length === 1 ? "" : "s"}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="max-h-48 overflow-auto rounded border">
                   <table className="w-full text-[12px]">
                     <tbody>
@@ -640,7 +709,11 @@ export function RetirementRadarPanel() {
                         </tr>
                       ))}
                       {drawer.impacted_resources.length === 0 && (
-                        <tr><td className="px-2 py-2 text-center text-gray-400">No impacted resources resolved.</td></tr>
+                        <tr><td className="px-2 py-3 text-center text-gray-500">
+                          {impactCountKnown(drawer)
+                            ? "No impacted resources reported."
+                            : "Resource-level IDs are not provided by this Service Health event; this is not a zero count."}
+                        </td></tr>
                       )}
                     </tbody>
                   </table>

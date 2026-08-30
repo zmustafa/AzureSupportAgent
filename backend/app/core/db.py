@@ -166,6 +166,15 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         "language": "VARCHAR(16)",
         "default_role": "VARCHAR(64)",
     },
+    "roles": {
+        "tenant_id": "VARCHAR(128) DEFAULT 'default' NOT NULL",
+    },
+    "groups": {
+        "tenant_id": "VARCHAR(128) DEFAULT 'default' NOT NULL",
+    },
+    "identity_providers": {
+        "tenant_id": "VARCHAR(128) DEFAULT 'default' NOT NULL",
+    },
     "sessions": {
         "active_role": "VARCHAR(64)",
     },
@@ -207,6 +216,9 @@ _RUNTIME_INDEXES: list[tuple[str, str, str]] = [
     ("ix_notifdeliv_tenant_channel", "notification_deliveries", "tenant_id, channel"),
     # "Every case about this identity" is the second question an investigator asks.
     ("ix_cases_principal_id", "cases", "principal_id"),
+    ("ix_roles_tenant_id", "roles", "tenant_id"),
+    ("ix_groups_tenant_id", "groups", "tenant_id"),
+    ("ix_identity_providers_tenant_id", "identity_providers", "tenant_id"),
 ]
 
 

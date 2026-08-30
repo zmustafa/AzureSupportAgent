@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app.core.azure_connections import get_connection, get_default_connection
 from app.core.db import get_db
 from app.core.xlsx import cell_safe
 from app.core.security import Principal, require_permission
@@ -46,6 +47,11 @@ def _ttl() -> int:
 
 def _scope_id(subscription_id: str, *, demo_mode: bool) -> str:
     return demo.DEMO_SCOPE_ID if demo_mode else f"sub:{subscription_id or 'none'}"
+
+
+def _requested_connection(connection_id: str | None) -> dict[str, Any] | None:
+    """Resolve an explicit connection exactly; only an omitted id may use the default."""
+    return get_connection(connection_id) if connection_id else get_default_connection()
 
 
 def _csv_list(value: str | None) -> list[str]:
@@ -91,9 +97,8 @@ async def subscriptions(
     """Subscriptions visible to the connection's identity (for the scope picker)."""
     from app.azure.arm import list_subscriptions
     from app.azure.credentials import get_arm_token
-    from app.core.azure_connections import resolve_connection
 
-    conn = resolve_connection(connection_id)
+    conn = _requested_connection(connection_id)
     if conn is None:
         return {"subscriptions": [], "error": "No Azure connection configured."}
     token, terr = await get_arm_token(conn)
@@ -111,10 +116,9 @@ async def regions(
 ) -> dict[str, Any]:
     """Regions the subscription reports (so the operator can scan all or a subset)."""
     from app.azure.credentials import get_arm_token
-    from app.core.azure_connections import resolve_connection
     from app.quota import providers as prov
 
-    conn = resolve_connection(connection_id)
+    conn = _requested_connection(connection_id)
     if conn is None:
         return {"regions": [], "error": "No Azure connection configured."}
     token, terr = await get_arm_token(conn)
@@ -132,10 +136,9 @@ async def providers_status(
 ) -> dict[str, Any]:
     """Resource-provider registration status for the required providers."""
     from app.azure.credentials import get_arm_token
-    from app.core.azure_connections import resolve_connection
     from app.quota import providers as prov
 
-    conn = resolve_connection(connection_id)
+    conn = _requested_connection(connection_id)
     if conn is None:
         return {"providers": [], "error": "No Azure connection configured."}
     token, terr = await get_arm_token(conn)
@@ -166,10 +169,9 @@ async def overview(
     snap = cache.read_snapshot(tenant_id, scope_id)
     if snap:
         return _decorate(snap, scope_id=scope_id)
-    from app.core.azure_connections import resolve_connection
     from app.quota.scan import empty_snapshot
 
-    conn = resolve_connection(connection_id)
+    conn = _requested_connection(connection_id)
     empty = empty_snapshot(connection_configured=conn is not None, never_loaded=True)
     empty["subscription_id"] = subscription_id
     return _decorate(empty, scope_id=scope_id)
@@ -208,10 +210,9 @@ async def scan(
     async with lock:
         from app.azure.arm import list_subscriptions
         from app.azure.credentials import get_arm_token
-        from app.core.azure_connections import resolve_connection
         from app.quota.scan import empty_snapshot, run_scan
 
-        conn = resolve_connection(connection_id)
+        conn = _requested_connection(connection_id)
         if conn is None:
             return _decorate(empty_snapshot(connection_configured=False), scope_id=scope_id)
 
@@ -279,10 +280,9 @@ async def scan_stream(
         async with lock:
             from app.azure.arm import list_subscriptions
             from app.azure.credentials import get_arm_token
-            from app.core.azure_connections import resolve_connection
             from app.quota.scan import scan_events
 
-            conn = resolve_connection(connection_id)
+            conn = _requested_connection(connection_id)
             if conn is None:
                 yield {"event": "error", "data": json.dumps({"message": "No Azure connection configured."})}
                 return
@@ -415,7 +415,7 @@ async def runs(
         stmt = stmt.where(QuotaScanRun.subscription_id == subscription_id)
     stmt = stmt.order_by(QuotaScanRun.started_at.desc()).limit(limit)
     rows = list(await db.scalars(stmt))
-    return {"runs": [_run_to_dict(r) for r in reversed(rows)]}
+    return {"runs": [_run_to_dict(r) for r in rows]}
 
 
 def _run_to_dict(r: QuotaScanRun) -> dict[str, Any]:
