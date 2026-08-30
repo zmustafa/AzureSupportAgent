@@ -236,7 +236,7 @@ async def run_task(
                 error = ev.data.get("message")
     except Exception as exc:  # noqa: BLE001
         error = format_error(exc)
-        logger.warning("Scheduled task %s failed: %s", task_id, error)
+        logger.warning("Scheduled task execution failed")
     finally:
         orchestrator.close()
 
@@ -285,7 +285,7 @@ async def run_task(
             )
             if error:
                 # Keep running on schedule but surface failure.
-                logger.info("Task %s run failed; next run at %s", task_id, task.next_run_at)
+                logger.info("Scheduled task failed; its next run remains scheduled")
         db.add(
             Usage(
                 tenant_id=task.tenant_id if task else "",
@@ -325,9 +325,9 @@ async def run_task(
                 notify_ids, f"Scheduled task: {task_name}", summary[:3000], bool(error)
             )
             delivered = sum(1 for r in results if r.get("ok"))
-            logger.info("Task %s notified %d/%d connectors", task_id, delivered, len(results))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Task %s notify dispatch failed: %s", task_id, exc)
+            logger.info("Scheduled task notified %d/%d connectors", delivered, len(results))
+        except Exception:  # noqa: BLE001
+            logger.warning("Scheduled task notification dispatch failed")
 
     # Publish to the notification engine so rule-based routing + the in-app center see
     # every task outcome (independent of the task's own notify_connector_ids).
@@ -345,8 +345,8 @@ async def run_task(
             links={"thread_id": chat_id, "task_id": task_id},
             fingerprint=f"task:{task_id}:{'failed' if error else 'ok'}",
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Task %s event publish failed: %s", task_id, exc)
+    except Exception:  # noqa: BLE001
+        logger.warning("Scheduled task event publication failed")
     return run_id
 
 
@@ -446,8 +446,8 @@ async def run_target_task(
             await deliver_task_result(
                 notify_ids, f"Scheduled {target_type}: {task_name}", summary[:3000], bool(error)
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Task %s notify dispatch failed: %s", task_id, exc)
+        except Exception:  # noqa: BLE001
+            logger.warning("Scheduled target notification dispatch failed")
 
     try:
         from app.notifications.engine import publish
@@ -463,7 +463,7 @@ async def run_target_task(
             links={"task_id": task_id, **(result.result_ref or {})},
             fingerprint=f"task:{task_id}:{'failed' if error else 'ok'}",
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Task %s event publish failed: %s", task_id, exc)
+    except Exception:  # noqa: BLE001
+        logger.warning("Scheduled target event publication failed")
     return run_id
 

@@ -230,7 +230,10 @@ class JobRegistry:
                 )
                 raise
             except Exception as exc:  # noqa: BLE001 - isolate the job
-                log.exception("%s job failed (key=%s)", self.name, key)
+                # Feature names and keys can contain request-derived values. The durable row
+                # below retains the bounded error for authorized readers; process logs remain
+                # static to prevent log-record injection.
+                log.error("Background generation job failed")
                 await self._store.finalize(
                     job_id=job["id"],
                     lease_token=lease_token,

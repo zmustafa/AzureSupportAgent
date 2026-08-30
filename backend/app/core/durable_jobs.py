@@ -940,7 +940,9 @@ class DurableJobExecutor:
                         )
                     )
             except Exception as exc:  # noqa: BLE001 - isolate detached feature work
-                log.exception("%s durable job failed (key=%s)", self.feature, key)
+                # The feature/key and exception may originate in request or connector data.
+                # Store bounded detail on the access-controlled job; emit a static process log.
+                log.error("Durable background job failed")
                 await self.store.finalize(
                     job_id=context.job_id,
                     lease_token=context.lease_token,

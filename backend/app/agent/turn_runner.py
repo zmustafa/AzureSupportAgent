@@ -415,7 +415,10 @@ class TurnRegistry:
             except Exception as exc:
                 status = "error"
                 error = str(exc)[:1500]
-                log.exception("Chat turn failed outside its worker (chat=%s)", chat_id)
+                # The chat id is request-derived and an exception can echo model/tool input.
+                # Persist the bounded detail in the tenant-scoped durable job, but keep the
+                # process log static so forged newlines cannot create synthetic log records.
+                log.error("Chat turn failed outside its worker")
             finally:
                 if run._watchdog_task is not None:  # noqa: SLF001 - paired lifecycle
                     run._watchdog_task.cancel()  # noqa: SLF001
