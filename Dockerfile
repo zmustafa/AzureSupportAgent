@@ -26,7 +26,38 @@ ARG APP_RELEASE=
 ENV VITE_APP_RELEASE=$APP_RELEASE
 RUN npm run build
 
-# ---- Stage 2: backend + bundled SPA ------------------------------------------------
+# ---- Stage 2: rebuild Azure Quick Review with a patched Go toolchain ----------------
+# azqr v4.0.1's official archive was built with Go 1.26.0. Its embedded standard library
+# has multiple fixed CVEs (including CVE-2026-56862). The source itself remains pinned to
+# the signed release commit; only the compiler is raised to the first release containing
+# every listed fix. This avoids waiting for another azqr release while preserving behavior.
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS azqr
+ARG AZQR_VERSION=4.0.1
+ARG AZQR_SOURCE_COMMIT=ffda262cbccc33bf4f472c07f81758839b165b1a
+ARG AZQR_SOURCE_SHA256=afef4ba8c09945668145d0a035da87922ec26ba1461077d2c1bf418a12e8321f
+ARG AZQR_APRL_COMMIT=60eaddda76541f6adbc1c5ffa686829807e55e29
+ARG AZQR_APRL_SHA256=9f5125e2992649057328c0fb8e7430d5eac0db574d07316b4876236a66a10deb
+# The release source pins x/crypto v0.54.0, which contains CVE-2026-56854.
+# Override only that module to its first fixed release before compiling.
+ARG GO_X_CRYPTO_VERSION=v0.55.0
+WORKDIR /src
+RUN curl -fsSLo /tmp/azqr.tar.gz \
+        "https://github.com/Azure/azqr/archive/${AZQR_SOURCE_COMMIT}.tar.gz" \
+    && echo "${AZQR_SOURCE_SHA256}  /tmp/azqr.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/azqr.tar.gz --strip-components=1 \
+    && curl -fsSLo /tmp/aprl.tar.gz \
+        "https://github.com/Azure/Azure-Proactive-Resiliency-Library-v2/archive/${AZQR_APRL_COMMIT}.tar.gz" \
+    && echo "${AZQR_APRL_SHA256}  /tmp/aprl.tar.gz" | sha256sum -c - \
+    && mkdir -p internal/graph/aprl \
+    && tar -xzf /tmp/aprl.tar.gz -C internal/graph/aprl --strip-components=1 \
+    && go get "golang.org/x/crypto@${GO_X_CRYPTO_VERSION}" \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+        -ldflags "-s -w -X github.com/Azure/azqr/cmd/azqr/commands.version=${AZQR_VERSION}" \
+        -o /usr/local/bin/azqr ./cmd/azqr/main.go \
+    && /usr/local/bin/azqr --version \
+    && rm /tmp/azqr.tar.gz /tmp/aprl.tar.gz
+
+# ---- Stage 3: backend + bundled SPA ------------------------------------------------
 FROM python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 
 ENV PYTHONUNBUFFERED=1 \
@@ -54,8 +85,6 @@ ENV APP_RELEASE=$APP_RELEASE
 # bundled packages are what image CVE scans report. Pinning makes that surface a deliberate,
 # reviewable choice; bump it on purpose after checking the scan.
 ARG NPM_VERSION=12.0.2
-ARG AZQR_VERSION=4.0.1
-ARG AZQR_LINUX_AMD64_SHA256=6313ca399cfa5616134735b8835c38141e205b8bab357065096f5efba9b267bd
 # The Azure MCP server is INSTALLED AT BUILD TIME instead of being fetched by `npx` on every
 # cold start. Fetching it at runtime meant the container reached out to the public npm
 # registry from production — a supply-chain and availability dependency on a third party,
@@ -75,16 +104,10 @@ RUN apt-get update \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
-    && /opt/az/bin/python3 -m pip install --no-cache-dir "cryptography>=48.0.1" \
+    && /opt/az/bin/python3 -m pip install --no-cache-dir \
+        "cryptography>=48.0.1" "setuptools>=83.0.0" \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm install -g "@azure/mcp@${AZURE_MCP_VERSION}" \
-    && curl -fsSLo /tmp/azqr.zip \
-        "https://github.com/Azure/azqr/releases/download/v.${AZQR_VERSION}/azqr-linux-amd64.zip" \
-    && echo "${AZQR_LINUX_AMD64_SHA256}  /tmp/azqr.zip" | sha256sum -c - \
-    && python -m zipfile -e /tmp/azqr.zip /tmp/azqr-extract \
-    && install -m 0755 /tmp/azqr-extract/bin/linux_amd64/azqr /usr/local/bin/azqr \
-    && azqr --version \
-    && rm -rf /tmp/azqr.zip /tmp/azqr-extract \
     && npm cache clean --force \
     # npm is a BUILD-TIME tool here, not a runtime one: the only runtime consumer was
     # `npx @azure/mcp`, which the pre-install above replaced with a real binary. Removing it
@@ -104,6 +127,9 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=azqr /usr/local/bin/azqr /usr/local/bin/azqr
+RUN azqr --version
+
 # Run the pre-installed server binary directly. `npx -y @azure/mcp@latest` (the application
 # default, which stays correct for local development) would resolve and possibly download the
 # package on every cold start; `azmcp` is the bin the package installs and is already on PATH.
@@ -116,7 +142,13 @@ ENV MCP_COMMAND=azmcp \
 # container) and silently yield zero resources. Bake it into a FIXED extension dir that
 # every config dir resolves via AZURE_EXTENSION_DIR.
 ENV AZURE_EXTENSION_DIR=/opt/az-extensions
-RUN az extension add --name resource-graph --only-show-errors
+RUN az extension add --name resource-graph --only-show-errors \
+    # pip is required to install the extension, but neither az nor the installed
+    # extension needs it at runtime. Its vendored msgpack/setuptools copies carry
+    # fixable CVEs that cannot be upgraded independently, so remove the build tool.
+    && rm -rf /opt/az/lib/python*/site-packages/pip \
+        /opt/az/lib/python*/site-packages/pip-*.dist-info \
+        /opt/az/bin/pip /opt/az/bin/pip3
 
 WORKDIR /app
 
@@ -128,7 +160,12 @@ COPY backend/ ./
 # import (argon2, lxml, signxml, PyJWT, …) is present.
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt \
-    && pip install --no-deps .
+    && pip install --no-deps . \
+    # Runtime application processes never install packages. Removing pip also
+    # removes its private vulnerable vendor tree and reduces post-exploit tooling.
+    && rm -rf /usr/local/lib/python*/site-packages/pip \
+        /usr/local/lib/python*/site-packages/pip-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
 
 # Bundled SPA goes into the package's static dir, which main.py serves.
 COPY --from=frontend /web/dist ./app/static
@@ -139,7 +176,10 @@ COPY third_party/ /app/third_party/
 RUN python -m venv /opt/eidmcp \
     && /opt/eidmcp/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/eidmcp/bin/pip install --no-cache-dir \
-        "cryptography>=48.0.1" azure-core azure-identity "mcp[cli]>=1.28.1,<2" msgraph-core msgraph-sdk fastmcp python-dotenv
+        "cryptography>=48.0.1" azure-core azure-identity "mcp[cli]>=1.28.1,<2" msgraph-core msgraph-sdk fastmcp python-dotenv \
+    && rm -rf /opt/eidmcp/lib/python*/site-packages/pip \
+        /opt/eidmcp/lib/python*/site-packages/pip-*.dist-info \
+        /opt/eidmcp/bin/pip /opt/eidmcp/bin/pip3 /opt/eidmcp/bin/pip3.*
 
 EXPOSE 8000
 

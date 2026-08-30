@@ -103,7 +103,7 @@ def severity_for_days(days: int | None) -> str:
 
 def _synth_tracking_id(*parts: str) -> str:
     raw = "|".join(p for p in parts if p)
-    return "radar-" + hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+    return "radar-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def _impact_scope(value: Any) -> list[dict[str, Any]]:
