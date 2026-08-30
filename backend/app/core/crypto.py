@@ -36,6 +36,18 @@ _KDF_SALT = b"aznetagent.secrets.fernet.v1"
 _KDF_ITERATIONS = 480_000
 
 
+def _read_shared_key(attempts: int = 100) -> bytes:
+    """Read a valid key, tolerating the brief create-before-write SMB window."""
+    for _ in range(attempts):
+        try:
+            existing = _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
+            Fernet(existing)
+            return existing
+        except (OSError, ValueError):
+            time.sleep(0.05)
+    raise RuntimeError("The shared encryption key exists but is not readable")
+
+
 def _derive_fernet_key(passphrase: str) -> bytes:
     """Derive a urlsafe-b64 32-byte Fernet key from an arbitrary passphrase via PBKDF2."""
     kdf = PBKDF2HMAC(
@@ -57,7 +69,7 @@ def _load_or_create_key() -> bytes:
         except (ValueError, TypeError):
             return _derive_fernet_key(env_key)
     if _KEY_PATH.exists():
-        return _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
+        return _read_shared_key()
     # Generate and persist a new key (dev). Exclusive creation matters on a shared Azure
     # Files mount: two replicas starting against an empty share must never each encrypt data
     # with a different key and then race to overwrite secret.key.
@@ -72,14 +84,7 @@ def _load_or_create_key() -> bytes:
     except FileExistsError:
         # Another replica won the exclusive create. Its write follows immediately, but the
         # directory entry can be visible just before the payload on a remote SMB mount.
-        for _ in range(100):
-            try:
-                existing = _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
-                Fernet(existing)
-                return existing
-            except (OSError, ValueError):
-                time.sleep(0.05)
-        raise RuntimeError("The shared encryption key was created but is not readable")
+        return _read_shared_key()
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(key.decode("utf-8"))
         handle.flush()
