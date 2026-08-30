@@ -10,8 +10,6 @@ powers the demo seed. ``collect_coverage`` resolves the scope and gathers those 
 Azure Resource Graph (+ gated ``az`` fallback for deeper job/ASR data)."""
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any

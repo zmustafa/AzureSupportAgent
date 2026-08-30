@@ -11,10 +11,10 @@ Supported providers (both OpenAI-compatible):
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.core.config import get_settings
 
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / ".data" / "llm_config.json"
@@ -248,30 +248,48 @@ def _has_real_credential(name: str, prov: dict[str, Any]) -> bool:
     return bool((prov.get("api_key") or "").strip())
 
 
+def _merge_config(data: Any) -> dict[str, Any]:
+    # Merge over defaults so new providers/fields appear for old files.
+    base = _default_config()
+    if not isinstance(data, dict):
+        return base
+    base["active_provider"] = data.get("active_provider", base["active_provider"])
+    providers = data.get("providers", {})
+    if not isinstance(providers, dict):
+        return base
+    for name, prov in providers.items():
+        if not isinstance(prov, dict):
+            continue
+        merged = base["providers"].setdefault(name, {})
+        merged.update(prov)
+        # Migrate configs written before providers carried a `disabled` flag:
+        # keep a provider that already has a real credential enabled so existing
+        # setups aren't hidden by the new "disabled until set up" default.
+        if "disabled" not in prov:
+            merged["disabled"] = not _has_real_credential(name, merged)
+    return base
+
+
 def load_config() -> dict[str, Any]:
-    if _CONFIG_PATH.exists():
-        try:
-            data = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-            # Merge over defaults so new providers/fields appear for old files.
-            base = _default_config()
-            base["active_provider"] = data.get("active_provider", base["active_provider"])
-            for name, prov in data.get("providers", {}).items():
-                merged = base["providers"].setdefault(name, {})
-                merged.update(prov)
-                # Migrate configs written before providers carried a `disabled` flag:
-                # keep a provider that already has a real credential enabled so existing
-                # setups aren't hidden by the new "disabled until set up" default.
-                if "disabled" not in prov:
-                    merged["disabled"] = not _has_real_credential(name, merged)
-            return base
-        except (json.JSONDecodeError, OSError):
-            pass
-    return _default_config()
+    return _merge_config(jsonstore.read_json(_CONFIG_PATH, {}))
 
 
 def save_config(cfg: dict[str, Any]) -> None:
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    jsonstore.write_json(_CONFIG_PATH, cfg)
+
+
+def mutate_config(mutator) -> dict[str, Any]:  # noqa: ANN001
+    """Apply a short in-memory config mutation under the shared JSON transaction lock."""
+    result: dict[str, Any] = {}
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        cfg = _merge_config(stored)
+        mutator(cfg)
+        result.update(cfg)
+        return cfg
+
+    jsonstore.mutate_json(_CONFIG_PATH, {}, _mutate)
+    return result
 
 
 def set_provider_enabled(name: str, enabled: bool) -> None:
@@ -280,10 +298,11 @@ def set_provider_enabled(name: str, enabled: bool) -> None:
     A disabled provider is hidden from the chat model picker. Providers default to
     disabled until set up; this is called when a provider is configured (e.g. an OAuth
     sign-in completes) or torn down (sign-out)."""
-    cfg = load_config()
-    prov = cfg.setdefault("providers", {}).setdefault(name, {})
-    prov["disabled"] = not enabled
-    save_config(cfg)
+    def _mutate(cfg: dict[str, Any]) -> None:
+        prov = cfg.setdefault("providers", {}).setdefault(name, {})
+        prov["disabled"] = not enabled
+
+    mutate_config(_mutate)
 
 
 def get_active(

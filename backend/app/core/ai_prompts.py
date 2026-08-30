@@ -9,10 +9,11 @@ JSON under backend/.data, mirroring app_settings — read on each use, no restar
 """
 from __future__ import annotations
 
-import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "ai_prompts.json"
 
@@ -448,19 +449,10 @@ def _registry() -> dict[str, dict[str, Any]]:
 
 
 def _read() -> dict[str, str]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return {k: v for k, v in data.items() if isinstance(v, str)}
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, {})
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if isinstance(v, str)}
     return {}
-
-
-def _write(overrides: dict[str, str]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
 
 
 def get_guidance(prompt_id: str) -> str:
@@ -533,23 +525,25 @@ def list_prompts() -> list[dict[str, Any]]:
 def save_prompts(values: dict[str, str]) -> None:
     """Persist overrides. An empty/blank/default value clears the override (back to default)."""
     reg = _registry()
-    overrides = _read()
-    for pid, text in values.items():
-        if pid not in reg:
-            continue
-        if not isinstance(text, str) or not text.strip() or text == reg[pid]["default"]:
-            overrides.pop(pid, None)
-        else:
-            overrides[pid] = text
-    _write(overrides)
+
+    def _mutate(overrides: dict[str, str]) -> None:
+        for pid, text in values.items():
+            if pid not in reg:
+                continue
+            if not isinstance(text, str) or not text.strip() or text == reg[pid]["default"]:
+                overrides.pop(pid, None)
+            else:
+                overrides[pid] = text
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
 
 
 def reset_prompt(prompt_id: str) -> bool:
     """Drop the override for one prompt (restore the shipped default)."""
     if prompt_id not in _registry():
         return False
-    overrides = _read()
-    if prompt_id in overrides:
-        del overrides[prompt_id]
-        _write(overrides)
+    def _mutate(overrides: dict[str, str]) -> None:
+        overrides.pop(prompt_id, None)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return True

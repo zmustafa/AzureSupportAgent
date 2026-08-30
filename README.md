@@ -317,23 +317,26 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 ## 🚀 Deploy to Azure (one-click)
 
 > **Status: tested.** Provisions a managed PostgreSQL database, Azure Files state storage,
-> and the Container App running the public image — in **your** subscription, in one
+> and the Container App running an immutable public image digest — in **your** subscription, in one
 > deployment. No CLI, no manual wiring.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
 What it creates:
 
-1. **Azure Container App** running the public Docker Hub image
+1. **Azure Container App** running a digest-pinned public Docker Hub image
 2. **Azure Database for PostgreSQL — Flexible Server** (managed), auto-linked via `DATABASE_URL` (`?ssl=require`)
 3. **Azure Files** share mounted at `/app/.data` (registries, caches, encryption key)
 4. **Container Apps environment** + external HTTPS ingress on port 8000
+5. **Log Analytics**, data-service diagnostics, managed identity, and HTTP health probes
 
-> 💰 **Estimated cost: ~$25–35 / month** for the default infra at typical low/idle usage
-> (West US 3, pay-as-you-go) — mostly the Container App (1 vCPU / 2 GiB) and a Burstable
-> `B1ms` PostgreSQL server.
+> 💰 The default remains cost-conscious: one always-running replica (scaling to at most two),
+> 1 vCPU / 2 GiB, Burstable `B1ms` PostgreSQL, LRS storage, and no database HA, geo-backup,
+> zone redundancy, locks, or paid alert rules. Use the supplied production preset to opt into
+> resilient settings after checking regional SKU support and current Azure pricing.
 
-You supply only an **admin password** (you're forced to change it on first login). Then
+You supply separate **admin and PostgreSQL passwords** (the admin is forced to change theirs
+on first login) and explicitly choose the database networking acknowledgement. Then
 connect your Azure tenant and an LLM from **Settings** — the AI does the rest (workload
 discovery, architectures, coverage scans, assessments, retirement radar, performance
 profiling). Defaults to **West US 3** (validated for Container Apps + PostgreSQL B1ms).

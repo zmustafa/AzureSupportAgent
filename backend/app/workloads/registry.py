@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "workloads.json"
 
 NODE_KINDS = ("mg", "subscription", "resource_group", "resource")
@@ -63,16 +65,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    from app.core import jsonstore
-
     data = jsonstore.read_json(_PATH, {"workloads": {}})
     return data if isinstance(data, dict) else {"workloads": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    from app.core import jsonstore
-
-    jsonstore.write_json(_PATH, data)
 
 
 def list_workloads(include_deleted: bool = False) -> list[dict[str, Any]]:
@@ -106,9 +100,7 @@ def get_workload(workload_id: str, include_deleted: bool = False) -> dict[str, A
     return None
 
 
-def upsert_workload(wl: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    workloads = data.setdefault("workloads", {})
+def _upsert_in(workloads: dict[str, Any], wl: dict[str, Any]) -> dict[str, Any]:
     wid = wl.get("id") or str(uuid.uuid4())
     existing = workloads.get(wid, {})
     merged = dict(existing)
@@ -123,23 +115,37 @@ def upsert_workload(wl: dict[str, Any]) -> dict[str, Any]:
     merged["updated_at"] = _now()
     merged.pop("id", None)
     workloads[wid] = merged
-    _write(data)
-    result = get_workload(wid)
-    assert result is not None
+    result = json.loads(json.dumps(DEFAULTS))
+    result.update(merged)
+    result["id"] = wid
+    return result
+
+
+def upsert_workload(wl: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        result.update(_upsert_in(data.setdefault("workloads", {}), wl))
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
     return result
 
 
 def delete_workload(workload_id: str) -> bool:
     """Soft-delete: move the workload to the Trash (set ``deleted_at``). It's hidden
     everywhere but restorable until purged. Returns False if not found / already trashed."""
-    data = _read()
-    wl = data.get("workloads", {}).get(workload_id)
-    if wl is None or wl.get("deleted_at"):
-        return False
-    wl["deleted_at"] = _now()
-    wl["updated_at"] = _now()
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        workload = data.get("workloads", {}).get(workload_id)
+        if workload is not None and not workload.get("deleted_at"):
+            workload["deleted_at"] = _now()
+            workload["updated_at"] = _now()
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
+    return deleted
 
 
 def delete_workloads(workload_ids: list[str]) -> dict[str, Any]:
@@ -150,25 +156,30 @@ def delete_workloads(workload_ids: list[str]) -> dict[str, Any]:
     failure. This modifies only local workload definitions; Azure resources are never touched.
     """
     ids = list(dict.fromkeys(wid.strip() for wid in workload_ids if wid and wid.strip()))
-    data = _read()
-    workloads = data.get("workloads", {})
     deleted_ids: list[str] = []
     already_trashed = 0
     not_found = 0
     stamp = _now()
-    for wid in ids:
-        wl = workloads.get(wid)
-        if wl is None:
-            not_found += 1
-            continue
-        if wl.get("deleted_at"):
-            already_trashed += 1
-            continue
-        wl["deleted_at"] = stamp
-        wl["updated_at"] = stamp
-        deleted_ids.append(wid)
-    if deleted_ids:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> Any:
+        nonlocal already_trashed, not_found
+        workloads = data.get("workloads", {})
+        for wid in ids:
+            workload = workloads.get(wid)
+            if workload is None:
+                not_found += 1
+                continue
+            if workload.get("deleted_at"):
+                already_trashed += 1
+                continue
+            workload["deleted_at"] = stamp
+            workload["updated_at"] = stamp
+            deleted_ids.append(wid)
+        if not deleted_ids:
+            return jsonstore.NO_CHANGE
+        return None
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
     return {
         "requested": len(ids),
         "deleted": len(deleted_ids),
@@ -180,36 +191,48 @@ def delete_workloads(workload_ids: list[str]) -> dict[str, Any]:
 
 def restore_workload(workload_id: str) -> dict[str, Any] | None:
     """Restore a trashed workload back into the active list."""
-    data = _read()
-    wl = data.get("workloads", {}).get(workload_id)
-    if wl is None or not wl.get("deleted_at"):
-        return None
-    wl["deleted_at"] = ""
-    wl["updated_at"] = _now()
-    _write(data)
-    return get_workload(workload_id)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        workload = data.get("workloads", {}).get(workload_id)
+        if workload is None or not workload.get("deleted_at"):
+            return
+        workload["deleted_at"] = ""
+        workload["updated_at"] = _now()
+        result.update(json.loads(json.dumps(DEFAULTS)))
+        result.update(workload)
+        result["id"] = workload_id
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
+    return result or None
 
 
 def purge_workload(workload_id: str) -> bool:
     """Permanently delete a single trashed workload (hard delete)."""
-    data = _read()
-    wl = data.get("workloads", {}).get(workload_id)
-    if wl is None or not wl.get("deleted_at"):
-        return False
-    del data["workloads"][workload_id]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        workload = data.get("workloads", {}).get(workload_id)
+        if workload is not None and workload.get("deleted_at"):
+            del data["workloads"][workload_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
+    return deleted
 
 
 def empty_trash() -> int:
     """Permanently delete every trashed workload. Returns the count removed."""
-    data = _read()
-    workloads = data.get("workloads", {})
-    trashed = [wid for wid, wl in workloads.items() if wl.get("deleted_at")]
-    for wid in trashed:
-        del workloads[wid]
-    if trashed:
-        _write(data)
+    trashed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        workloads = data.get("workloads", {})
+        trashed.extend(wid for wid, workload in workloads.items() if workload.get("deleted_at"))
+        for wid in trashed:
+            del workloads[wid]
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
     return len(trashed)
 
 
@@ -217,20 +240,24 @@ def assign_group(workload_ids: list[str], group_id: str) -> int:
     """Set (or clear, when ``group_id`` is "") the Workload Group association for a set of
     workloads. Returns the number actually changed. Trashed workloads are skipped, and a
     workload already carrying the target group is left untouched (no spurious ``updated_at``)."""
-    data = _read()
-    workloads = data.get("workloads", {})
     changed = 0
-    for wid in workload_ids:
-        wl = workloads.get(wid)
-        if wl is None or wl.get("deleted_at"):
-            continue
-        if wl.get("group_id", "") == group_id:
-            continue
-        wl["group_id"] = group_id
-        wl["updated_at"] = _now()
-        changed += 1
-    if changed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal changed
+        workloads = data.get("workloads", {})
+        for wid in workload_ids:
+            workload = workloads.get(wid)
+            if (
+                workload is None
+                or workload.get("deleted_at")
+                or workload.get("group_id", "") == group_id
+            ):
+                continue
+            workload["group_id"] = group_id
+            workload["updated_at"] = _now()
+            changed += 1
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
     return changed
 
 
@@ -239,19 +266,23 @@ def clear_group(group_id: str) -> int:
     deleted). Includes trashed workloads so no stale reference survives. Returns the count."""
     if not group_id:
         return 0
-    data = _read()
     changed = 0
-    for wl in data.get("workloads", {}).values():
-        if wl.get("group_id") == group_id:
-            wl["group_id"] = ""
-            wl["updated_at"] = _now()
-            changed += 1
-    if changed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal changed
+        for workload in data.get("workloads", {}).values():
+            if workload.get("group_id") == group_id:
+                workload["group_id"] = ""
+                workload["updated_at"] = _now()
+                changed += 1
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
     return changed
 
 
-def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, Any] | None:
+def _merge_workloads_in(
+    data: dict[str, Any], workload_ids: list[str], new_name: str = ""
+) -> dict[str, Any] | None:
     """Merge two or more active workloads into a single NEW workload.
 
     Combines their node membership (deduped by ARM id), tags and evidence; the highest
@@ -260,7 +291,6 @@ def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, An
     operation stays reversible. Returns the new workload, or ``None`` when fewer than two
     valid (active) sources are found. The result is a normal workload, so Refresh, Mission
     Control, assessments and architecture generation can all be run against it again."""
-    data = _read()
     workloads = data.get("workloads", {})
     sources: list[dict[str, Any]] = []
     for wid in workload_ids:
@@ -335,12 +365,25 @@ def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, An
         "evidence": evidence,
         "created_by": base.get("created_by", ""),
     }
-    # upsert_workload does its own read/write, so create the merged workload first, then
-    # soft-delete the sources via delete_workload (each manages its own persistence).
-    saved = upsert_workload(new_wl)
+    saved = _upsert_in(workloads, new_wl)
+    stamp = _now()
     for src in sources:
-        delete_workload(src["id"])
+        workloads[src["id"]]["deleted_at"] = stamp
+        workloads[src["id"]]["updated_at"] = stamp
     return saved
+
+
+def merge_workloads(workload_ids: list[str], new_name: str = "") -> dict[str, Any] | None:
+    """Merge active workloads and trash their sources in one coordinated transaction."""
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        merged = _merge_workloads_in(data, workload_ids, new_name)
+        if merged is not None:
+            result.update(merged)
+
+    jsonstore.mutate_json(_PATH, {"workloads": {}}, _mutate)
+    return result or None
 
 
 # --------------------------------------------------------------------------- overlaps

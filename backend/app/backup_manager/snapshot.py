@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backup_manager import service
+from app.core import jsonstore
 
 log = logging.getLogger("app.backup_manager.snapshot")
 
@@ -65,24 +66,8 @@ def _key(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> 
 
 
 def _read() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {}
-    try:
-        value = json.loads(_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        log.warning("backup_manager: unreadable snapshot store, starting empty: %s", exc)
-        return {}
+    value = jsonstore.read_json(_PATH, {})
     return value if isinstance(value, dict) else {}
-
-
-def _write(value: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(value), encoding="utf-8")
-        tmp.replace(_PATH)
-    except OSError as exc:  # a snapshot we cannot persist is still usable in this request
-        log.warning("backup_manager: could not persist snapshot: %s", exc)
 
 
 def empty_snapshot(scope_kind: str, scope_id: str, reason: str = "") -> dict[str, Any]:
@@ -189,22 +174,38 @@ def write_snapshot(
     snapshot["schema_version"] = SNAPSHOT_SCHEMA_VERSION
     snapshot["report_exists"] = True
     bound(snapshot)
-    data = _read()
-    data[_key(tenant_id, connection_id, scope_kind, scope_id)] = snapshot
-    if len(data) > MAX_SCOPES:
-        for stale in sorted(data, key=lambda k: str(data[k].get("generated_at") or ""))[:-MAX_SCOPES]:
-            data.pop(stale, None)
-    _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        data[_key(tenant_id, connection_id, scope_kind, scope_id)] = snapshot
+        if len(data) > MAX_SCOPES:
+            stale_keys = sorted(
+                data, key=lambda stored_key: str(data[stored_key].get("generated_at") or "")
+            )[:-MAX_SCOPES]
+            for stale in stale_keys:
+                data.pop(stale, None)
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:  # a snapshot we cannot persist is still usable in this request
+        log.warning("backup_manager: could not persist snapshot: %s", exc)
     return snapshot
 
 
 def delete_snapshot(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> bool:
-    data = _read()
-    if _key(tenant_id, connection_id, scope_kind, scope_id) not in data:
-        return False
-    del data[_key(tenant_id, connection_id, scope_kind, scope_id)]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        key = _key(tenant_id, connection_id, scope_kind, scope_id)
+        if key in data:
+            del data[key]
+            deleted = True
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("backup_manager: could not persist snapshot: %s", exc)
+    return deleted
 
 
 def list_scopes(tenant_id: str) -> list[dict[str, Any]]:
@@ -250,20 +251,25 @@ def list_scopes(tenant_id: str) -> list[dict[str, Any]]:
 
 def delete_keys(keys: list[str]) -> dict[str, int]:
     """Purge stored snapshots by their exact store key. Returns count + bytes freed."""
-    data = _read()
     removed = 0
     freed = 0
-    for stored_key in keys:
-        value = data.pop(stored_key, None)
-        if value is None:
-            continue
-        removed += 1
-        try:
-            freed += len(json.dumps(value, default=str))
-        except (TypeError, ValueError):
-            pass
-    if removed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal removed, freed
+        for stored_key in keys:
+            value = data.pop(stored_key, None)
+            if value is None:
+                continue
+            removed += 1
+            try:
+                freed += len(json.dumps(value, default=str))
+            except (TypeError, ValueError):
+                pass
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("backup_manager: could not persist snapshot: %s", exc)
     return {"count": removed, "freed_bytes": freed}
 
 

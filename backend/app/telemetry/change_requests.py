@@ -7,11 +7,12 @@ the human sign-off; the artifact is exported to the customer's own pipeline. Per
 ``backend/.data/telemetry_change_requests.json``."""
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "telemetry_change_requests.json"
 
@@ -23,19 +24,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"requests": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"requests": {}})
+    return data if isinstance(data, dict) else {"requests": {}}
 
 
 def create_request(
@@ -49,7 +39,6 @@ def create_request(
     iac_text: str,
     requested_by: str,
 ) -> dict[str, Any]:
-    data = _read()
     rid = str(uuid.uuid4())
     req = {
         "id": rid,
@@ -68,8 +57,10 @@ def create_request(
         "decided_at": "",
         "reason": "",
     }
-    data.setdefault("requests", {})[rid] = req
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault("requests", {})[rid] = req
+
+    jsonstore.mutate_json(_PATH, {"requests": {}}, _mutate)
     return req
 
 
@@ -94,24 +85,32 @@ def decide_request(
 ) -> dict[str, Any] | None:
     if decision not in ("approved", "rejected", "applied"):
         return None
-    data = _read()
-    r = data.get("requests", {}).get(request_id)
-    if not r or r.get("tenant_id") != tenant_id:
-        return None
-    r["status"] = decision
-    r["decided_by"] = actor
-    r["decided_at"] = _now()
-    if reason:
-        r["reason"] = reason[:1000]
-    _write(data)
-    return r
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        request = data.get("requests", {}).get(request_id)
+        if not request or request.get("tenant_id") != tenant_id:
+            return
+        request["status"] = decision
+        request["decided_by"] = actor
+        request["decided_at"] = _now()
+        if reason:
+            request["reason"] = reason[:1000]
+        result.update(request)
+
+    jsonstore.mutate_json(_PATH, {"requests": {}}, _mutate)
+    return result or None
 
 
 def delete_request(tenant_id: str, request_id: str) -> bool:
-    data = _read()
-    r = data.get("requests", {}).get(request_id)
-    if not r or r.get("tenant_id") != tenant_id:
-        return False
-    del data["requests"][request_id]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        request = data.get("requests", {}).get(request_id)
+        if request and request.get("tenant_id") == tenant_id:
+            del data["requests"][request_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"requests": {}}, _mutate)
+    return deleted

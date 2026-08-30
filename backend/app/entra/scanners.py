@@ -225,25 +225,27 @@ def read_ledger(tenant_id: str) -> dict[str, Any]:
 def update_ledger(tenant_id: str, findings: list[dict[str, Any]], *, now: str = "") -> dict[str, Any]:
     """Record first-seen, last-seen and resolution. Returns the updated ledger."""
     now = now or model.now_iso()
-    ledger = read_ledger(tenant_id)
     live = {f["fingerprint"] for f in findings}
-    for f in findings:
-        entry = ledger.setdefault(f["fingerprint"], {"first_seen": now, "signal_id": f["signal_id"]})
-        entry["last_seen"] = now
-        entry["signal_id"] = f["signal_id"]
-        entry["severity"] = f.get("severity", "")
-        entry.pop("resolved_at", None)
-    for fp, entry in ledger.items():
-        if fp not in live and not entry.get("resolved_at"):
-            # Resolution is COMPUTED, never clicked. A fingerprint that stopped appearing is
-            # resolved, and that is the only reason the inbox can be trusted.
-            entry["resolved_at"] = now
-    # Bound the file: resolved entries older than the retention window are dropped.
-    if len(ledger) > 20_000:
-        keep = {fp: e for fp, e in ledger.items() if not e.get("resolved_at")}
-        ledger = keep
-    cache.write_state(tenant_id, _LEDGER_KEY, ledger)
-    return ledger
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        ledger = stored if isinstance(stored, dict) else {}
+        for finding in findings:
+            entry = ledger.setdefault(
+                finding["fingerprint"],
+                {"first_seen": now, "signal_id": finding["signal_id"]},
+            )
+            entry["last_seen"] = now
+            entry["signal_id"] = finding["signal_id"]
+            entry["severity"] = finding.get("severity", "")
+            entry.pop("resolved_at", None)
+        for fingerprint, entry in ledger.items():
+            if fingerprint not in live and not entry.get("resolved_at"):
+                entry["resolved_at"] = now
+        if len(ledger) > 20_000:
+            return {fp: entry for fp, entry in ledger.items() if not entry.get("resolved_at")}
+        return ledger
+
+    return cache.mutate_state(tenant_id, _LEDGER_KEY, {}, _mutate)
 
 
 def age_days(entry: dict[str, Any], ctx: sig.SignalContext) -> int | None:
@@ -261,35 +263,38 @@ def run(scanner: ScannerSpec, tenant_id: str, analysis: dict[str, Any],
     blocked = unavailable_reason(scanner, domain_meta)
     current = [] if blocked else select(scanner, analysis.get("findings") or [])
 
-    runs = read_runs(tenant_id)
-    previous_ids = set((runs.get(scanner.id) or {}).get("fingerprints") or [])
     current_ids = {f["fingerprint"] for f in current}
     by_fp = {f["fingerprint"]: f for f in current}
+    result: dict[str, Any] = {}
 
-    new = [by_fp[fp] for fp in sorted(current_ids - previous_ids)]
-    resolved = sorted(previous_ids - current_ids)
-    persisting = sorted(current_ids & previous_ids)
+    def _mutate(stored: Any) -> dict[str, Any]:
+        runs = stored if isinstance(stored, dict) else {}
+        previous_ids = set((runs.get(scanner.id) or {}).get("fingerprints") or [])
+        new = [by_fp[fp] for fp in sorted(current_ids - previous_ids)]
+        resolved = sorted(previous_ids - current_ids)
+        persisting = sorted(current_ids & previous_ids)
+        result.update({
+            "scanner_id": scanner.id,
+            "name": scanner.name,
+            "at": now,
+            "blocked": blocked,
+            "counts": {"total": len(current), "new": len(new), "resolved": len(resolved),
+                       "persisting": len(persisting)},
+            "by_severity": model.count_by_severity(current),
+            "new": new,
+            "resolved_fingerprints": resolved,
+            "immediate": [f for f in new if f.get("signal_id") in ALWAYS_IMMEDIATE],
+            "first_run": scanner.id not in runs,
+        })
+        if not blocked:
+            runs[scanner.id] = {
+                "at": now,
+                "fingerprints": sorted(current_ids),
+                "counts": result["counts"],
+            }
+        return runs
 
-    result = {
-        "scanner_id": scanner.id,
-        "name": scanner.name,
-        "at": now,
-        "blocked": blocked,
-        "counts": {"total": len(current), "new": len(new), "resolved": len(resolved),
-                   "persisting": len(persisting)},
-        "by_severity": model.count_by_severity(current),
-        # `counts.total` and `by_severity` describe everything the scanner reports; the
-        # findings themselves are served by GET /scanners/{id}/findings instead. Shipping
-        # them here too added 1.3 MB to a run-all response that nothing read.
-        "new": new,
-        "resolved_fingerprints": resolved,
-        "immediate": [f for f in new if f.get("signal_id") in ALWAYS_IMMEDIATE],
-        "first_run": scanner.id not in runs,
-    }
-    if not blocked:
-        runs[scanner.id] = {"at": now, "fingerprints": sorted(current_ids),
-                            "counts": result["counts"]}
-        write_runs(tenant_id, runs)
+    cache.mutate_state(tenant_id, _STATE_KEY, {}, _mutate)
     return result
 
 

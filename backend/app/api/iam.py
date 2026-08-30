@@ -446,8 +446,8 @@ async def refresh(
     refreshing one subscription leaves every other scope served from cache."""
     connection, tenant_id, cid = _target(principal, connection_id)
     scope_key = _job_scope_key(body)
-    already = job.is_running(job.job_key(tenant_id, scope_key))
-    started = job.start_job(
+    already = await job.is_running(job.job_key(tenant_id, scope_key))
+    started = await job.start_job(
         tenant_id=tenant_id,
         connection=connection,
         scope=scope_key,
@@ -480,7 +480,8 @@ async def job_status(
     """Current background-refresh job for a scope (reconnect on page visit)."""
     _conn, tenant_id, _cid = _target(principal, connection_id)
     scope_key = _scope_key_for(mode, scope)
-    return {"job": job.public_job(job.get_job(job.job_key(tenant_id, scope_key)))}
+    current = await job.get_job(job.job_key(tenant_id, scope_key))
+    return {"job": job.public_job(current)}
 
 
 @router.get("/refresh/stream")
@@ -495,8 +496,8 @@ async def refresh_stream(
     connection, tenant_id, cid = _target(principal, connection_id)
     scope_key = _scope_key_for(mode, scope)
     key = job.job_key(tenant_id, scope_key)
-    if not job.is_running(key):
-        job.start_job(
+    if not await job.is_running(key):
+        await job.start_job(
             tenant_id=tenant_id,
             connection=connection,
             scope=scope_key,

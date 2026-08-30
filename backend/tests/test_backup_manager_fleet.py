@@ -144,7 +144,10 @@ async def test_batched_job_status_is_keyed_without_the_tenant_prefix(monkeypatch
     job = {"id": "j1", "key": f"{TENANT}|{CONNECTION_ID}|workload|wl-1", "status": "running",
            "started_at": "2026-07-25T10:00:00+00:00", "finished_at": None, "progress": [],
            "result": None, "error": ""}
-    monkeypatch.setattr(api._refresh_jobs, "jobs_with_prefix", lambda prefix: [job] if prefix == f"{TENANT}|" else [])
+    async def jobs_with_prefix(prefix: str, *, tenant_id: str = "default") -> list[dict]:
+        return [job] if tenant_id == TENANT and prefix == f"{TENANT}|" else []
+
+    monkeypatch.setattr(api._refresh_jobs, "jobs_with_prefix", jobs_with_prefix)
 
     result = await api.refresh_jobs(principal=_principal())
 

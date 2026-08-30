@@ -5,9 +5,10 @@ from the dashboard without a restart. Read on each request where relevant.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "auth_settings.json"
 
@@ -68,26 +69,29 @@ def load_auth_settings() -> dict[str, Any]:
         # of them silently rewrite the auth policy for every subsequent request.
         return dict(_cache[1])
     data = dict(DEFAULTS)
-    if _PATH.exists():
-        try:
-            saved = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(saved, dict):
-                data.update({k: saved[k] for k in DEFAULTS if k in saved})
-        except (json.JSONDecodeError, OSError):
-            pass
+    saved = jsonstore.read_json(_PATH, {})
+    if isinstance(saved, dict):
+        data.update({k: saved[k] for k in DEFAULTS if k in saved})
     _cache = (stamp, dict(data))
     return data
 
 
 def save_auth_settings(patch: dict[str, Any]) -> dict[str, Any]:
     global _cache
-    data = load_auth_settings()
-    for k, v in patch.items():
-        if k in DEFAULTS:
-            data[k] = v
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    result: dict[str, Any] = {}
+
+    def _mutate(saved: Any) -> dict[str, Any]:
+        data = dict(DEFAULTS)
+        if isinstance(saved, dict):
+            data.update({k: saved[k] for k in DEFAULTS if k in saved})
+        for k, v in patch.items():
+            if k in DEFAULTS:
+                data[k] = v
+        result.update(data)
+        return data
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     # Explicit, not left to the stamp: two saves inside one filesystem mtime tick that happen to
     # produce the same file size would otherwise serve the first one's settings forever.
     _cache = None
-    return data
+    return result

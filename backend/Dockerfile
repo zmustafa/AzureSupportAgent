@@ -40,4 +40,6 @@ ENV HOME=/home/azsup \
     NPM_CONFIG_CACHE=/home/azsup/.npm
 USER azsup
 
+# Alembic serializes PostgreSQL migrations across replicas. Keep one uvicorn worker because
+# background work is process-owned; horizontal capacity comes from Container Apps replicas.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

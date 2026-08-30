@@ -15,10 +15,11 @@ asks for fresh data.
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _CACHE_PATH = Path(__file__).resolve().parents[2] / ".data" / "inventory_cache.json"
 _mem_cache: dict[str, Any] | None = None
@@ -26,26 +27,9 @@ _mem_cache: dict[str, Any] | None = None
 
 def _load() -> dict[str, Any]:
     global _mem_cache
-    if _mem_cache is None:
-        if _CACHE_PATH.exists():
-            try:
-                loaded = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-                _mem_cache = loaded if isinstance(loaded, dict) else {}
-            except (json.JSONDecodeError, OSError):
-                _mem_cache = {}
-        else:
-            _mem_cache = {}
+    loaded = jsonstore.read_json(_CACHE_PATH, {})
+    _mem_cache = loaded if isinstance(loaded, dict) else {}
     return _mem_cache
-
-
-def _persist() -> None:
-    if _mem_cache is None:
-        return
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(_mem_cache), encoding="utf-8")
-    except OSError:
-        pass
 
 
 def _norm_scope(scope: str) -> str:
@@ -76,8 +60,15 @@ def set_(tenant_id: str, connection_id: str, payload: dict[str, Any], scope: str
     """Store a payload, return the fetched_at ISO timestamp."""
     from datetime import datetime, timezone
 
-    cache = _load()
     fetched_at = datetime.now(timezone.utc).isoformat()
-    cache[_key(tenant_id, connection_id, scope)] = {"payload": payload, "ts": time.time(), "fetched_at": fetched_at}
-    _persist()
+    entry = {"payload": payload, "ts": time.time(), "fetched_at": fetched_at}
+    global _mem_cache
+
+    def _mutate(cache: dict[str, Any]) -> None:
+        cache[_key(tenant_id, connection_id, scope)] = entry
+
+    try:
+        _mem_cache = jsonstore.mutate_json(_CACHE_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return fetched_at

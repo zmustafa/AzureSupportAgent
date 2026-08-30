@@ -30,10 +30,6 @@ def _read() -> dict[str, Any]:
     return data if isinstance(data, dict) else {"revisions": {}}
 
 
-def _write(data: dict[str, Any]) -> None:
-    jsonstore.write_json(_PATH, data)
-
-
 def signature(doc: dict[str, Any]) -> str:
     """A stable content fingerprint (excludes timestamps that always change)."""
     return json.dumps(
@@ -66,11 +62,7 @@ def _meta(rev: dict[str, Any]) -> dict[str, Any]:
 def snapshot(fmea_id: str, doc: dict[str, Any], *, reason: str, actor: str) -> dict[str, Any] | None:
     if not fmea_id:
         return None
-    data = _read()
-    revs = data.setdefault("revisions", {}).setdefault(fmea_id, [])
     sig = signature(doc)
-    if revs and revs[-1].get("sig") == sig:
-        return None
     rev = {
         "id": str(uuid.uuid4()),
         "created_at": _now(),
@@ -79,11 +71,20 @@ def snapshot(fmea_id: str, doc: dict[str, Any], *, reason: str, actor: str) -> d
         "sig": sig,
         **{k: doc.get(k) for k in _CONTENT_KEYS},
     }
-    revs.append(rev)
-    if len(revs) > _MAX_PER_DOC:
-        del revs[: len(revs) - _MAX_PER_DOC]
-    _write(data)
-    return _meta(rev)
+    added = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal added
+        revs = data.setdefault("revisions", {}).setdefault(fmea_id, [])
+        if revs and revs[-1].get("sig") == sig:
+            return
+        revs.append(rev)
+        if len(revs) > _MAX_PER_DOC:
+            del revs[: len(revs) - _MAX_PER_DOC]
+        added = True
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)
+    return _meta(rev) if added else None
 
 
 def list_revisions(fmea_id: str) -> list[dict[str, Any]]:
@@ -99,7 +100,7 @@ def get_revision(fmea_id: str, revision_id: str) -> dict[str, Any] | None:
 
 
 def delete_for(fmea_id: str) -> None:
-    data = _read()
-    if fmea_id in data.get("revisions", {}):
-        del data["revisions"][fmea_id]
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.get("revisions", {}).pop(fmea_id, None)
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)

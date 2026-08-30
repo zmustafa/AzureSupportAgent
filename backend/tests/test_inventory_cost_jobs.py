@@ -43,8 +43,12 @@ async def test_cost_collection_emits_detailed_subscription_progress(tmp_path, mo
     assert events[-1]["cached"] is True
 
 
-async def test_cost_job_continues_without_a_mounted_client_and_reattaches(monkeypatch):
-    manager = cost_jobs.CostJobManager()
+async def test_cost_job_continues_without_a_mounted_client_and_reattaches(
+    monkeypatch, durable_job_sessions
+):
+    manager = cost_jobs.CostJobManager(
+        session_factory=durable_job_sessions, owner_id="cost-test", poll_seconds=0.01
+    )
     collection_started = asyncio.Event()
     release = asyncio.Event()
 
@@ -104,7 +108,7 @@ async def test_cost_job_continues_without_a_mounted_client_and_reattaches(monkey
         }
 
     monkeypatch.setattr(cost_jobs.cost, "get_cost", fake_get_cost)
-    first = manager.start(
+    first = await manager.start(
         tenant_id="tenant",
         connection_id="connection",
         scope="",
@@ -116,13 +120,13 @@ async def test_cost_job_continues_without_a_mounted_client_and_reattaches(monkey
 
     # Simulate leaving the route: there is no subscriber, stream, request, or component owner.
     # The server task remains active and a later status call reattaches to the same job.
-    reattached = manager.latest("tenant", "connection", "")
+    reattached = await manager.latest("tenant", "connection", "")
     assert reattached is not None
     assert reattached["id"] == first["id"]
     assert reattached["status"] == "running"
     assert reattached["active_subscriptions"][0]["subscription_id"] == "sub-1"
 
-    duplicate = manager.start(
+    duplicate = await manager.start(
         tenant_id="tenant",
         connection_id="connection",
         scope="",
@@ -133,10 +137,9 @@ async def test_cost_job_continues_without_a_mounted_client_and_reattaches(monkey
     assert duplicate["id"] == first["id"]
 
     release.set()
-    task = manager._jobs[first["id"]].task
-    assert task is not None
+    task = next(iter(manager._executor.tasks.values()))
     await task
-    terminal = manager.latest("tenant", "connection", "")
+    terminal = await manager.latest("tenant", "connection", "")
     assert terminal is not None
     assert terminal["status"] == "succeeded"
     assert terminal["subscriptions_done"] == 1
@@ -144,8 +147,12 @@ async def test_cost_job_continues_without_a_mounted_client_and_reattaches(monkey
     assert terminal["result"]["total"] == 4.2
 
 
-async def test_cost_job_surfaces_partial_subscription_failures(monkeypatch):
-    manager = cost_jobs.CostJobManager()
+async def test_cost_job_surfaces_partial_subscription_failures(
+    monkeypatch, durable_job_sessions
+):
+    manager = cost_jobs.CostJobManager(
+        session_factory=durable_job_sessions, owner_id="cost-test", poll_seconds=0.01
+    )
 
     async def fake_get_cost(*_args, progress, **_kwargs):
         await progress(
@@ -180,7 +187,7 @@ async def test_cost_job_surfaces_partial_subscription_failures(monkeypatch):
         }
 
     monkeypatch.setattr(cost_jobs.cost, "get_cost", fake_get_cost)
-    public = manager.start(
+    public = await manager.start(
         tenant_id="tenant",
         connection_id="connection",
         scope="",
@@ -188,10 +195,10 @@ async def test_cost_job_surfaces_partial_subscription_failures(monkeypatch):
         connection=None,
         subscriptions=["sub-1", "sub-2"],
     )
-    task = manager._jobs[public["id"]].task
-    assert task is not None
+    assert public["id"]
+    task = next(iter(manager._executor.tasks.values()))
     await task
-    terminal = manager.latest("tenant", "connection", "")
+    terminal = await manager.latest("tenant", "connection", "")
     assert terminal is not None
     assert terminal["status"] == "partial"
     assert terminal["subscriptions_failed"] == 1

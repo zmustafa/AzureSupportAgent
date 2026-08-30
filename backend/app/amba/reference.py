@@ -9,7 +9,6 @@ versions, or reset back to the built-in seed — all without a redeploy.
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +24,7 @@ from app.amba.builtin_seed import (
     TIERS,
     builtin_reference,
 )
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "amba_reference.json"
 _REV_PATH = Path(__file__).resolve().parents[2] / ".data" / "amba_reference_revisions.json"
@@ -39,35 +39,15 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any] | None:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("types"), dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, None)
+    if isinstance(data, dict) and isinstance(data.get("types"), dict):
+        return data
     return None
 
 
-def _write(doc: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-
-
 def _read_revs() -> dict[str, Any]:
-    if _REV_PATH.exists():
-        try:
-            data = json.loads(_REV_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"revisions": []}
-
-
-def _write_revs(data: dict[str, Any]) -> None:
-    _REV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _REV_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_REV_PATH, {"revisions": []})
+    return data if isinstance(data, dict) else {"revisions": []}
 
 
 def load_reference() -> dict[str, Any]:
@@ -81,49 +61,46 @@ def load_reference() -> dict[str, Any]:
     admin can diff or restore it from the Reference Set screen.
     """
     doc = _read()
-    if doc is None:
-        doc = builtin_reference()
-        _write(doc)
+    if doc is not None and int(doc.get("builtin_seed_version", 0) or 0) >= BUILTIN_SEED_VERSION:
         return doc
 
-    if int(doc.get("builtin_seed_version", 0) or 0) < _SCHEMA_RESET_VERSION:
-        _snapshot(
-            doc,
-            reason=(
-                f"Auto-archived before upgrading to built-in seed v{BUILTIN_SEED_VERSION} "
-                f"(AMBA {builtin_reference().get('amba_release', '')})"
-            ),
-            actor="system",
-        )
-        fresh = builtin_reference()
-        fresh["version"] = int(doc.get("version", 0)) + 1
-        fresh["updated_at"] = _now()
-        fresh["updated_by"] = "system"
-        _write(fresh)
-        return fresh
+    def _mutate(stored: Any) -> dict[str, Any]:
+        if not isinstance(stored, dict) or not isinstance(stored.get("types"), dict):
+            return builtin_reference()
+        version = int(stored.get("builtin_seed_version", 0) or 0)
+        if version < _SCHEMA_RESET_VERSION:
+            _snapshot(
+                stored,
+                reason=(
+                    f"Auto-archived before upgrading to built-in seed v{BUILTIN_SEED_VERSION} "
+                    f"(AMBA {builtin_reference().get('amba_release', '')})"
+                ),
+                actor="system",
+            )
+            fresh = builtin_reference()
+            fresh["version"] = int(stored.get("version", 0)) + 1
+            fresh["updated_at"] = _now()
+            fresh["updated_by"] = "system"
+            return fresh
+        if version < BUILTIN_SEED_VERSION:
+            builtin = builtin_reference()
+            types = stored.setdefault("types", {})
+            for arm_type, spec in builtin.get("types", {}).items():
+                if arm_type not in types:
+                    types[arm_type] = copy.deepcopy(spec)
+                    continue
+                existing = types[arm_type].setdefault("alerts", [])
+                have = {alert.get("key") for alert in existing}
+                for alert in spec.get("alerts", []) or []:
+                    if alert.get("key") not in have:
+                        existing.append(copy.deepcopy(alert))
+            stored["builtin_seed_version"] = BUILTIN_SEED_VERSION
+            stored["amba_release"] = builtin.get(
+                "amba_release", stored.get("amba_release", "")
+            )
+        return stored
 
-    # Additive upgrade within the same schema generation: merge in any NEW built-in types and
-    # any NEW alert keys. Purely additive — it never overwrites or removes an admin's edits.
-    if int(doc.get("builtin_seed_version", 0) or 0) < BUILTIN_SEED_VERSION:
-        builtin = builtin_reference()
-        types = doc.setdefault("types", {})
-        changed = False
-        for arm_type, spec in builtin.get("types", {}).items():
-            if arm_type not in types:
-                types[arm_type] = copy.deepcopy(spec)
-                changed = True
-                continue
-            existing = types[arm_type].setdefault("alerts", [])
-            have = {a.get("key") for a in existing}
-            for alert in spec.get("alerts", []) or []:
-                if alert.get("key") not in have:
-                    existing.append(copy.deepcopy(alert))
-                    changed = True
-        doc["builtin_seed_version"] = BUILTIN_SEED_VERSION
-        doc["amba_release"] = builtin.get("amba_release", doc.get("amba_release", ""))
-        if changed:
-            _write(doc)
-    return doc
+    return jsonstore.mutate_json(_PATH, None, _mutate)
 
 
 # Crossing this built-in seed version rebuilds the reference from scratch because the alert
@@ -299,39 +276,46 @@ def _meta(rev: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot(doc: dict[str, Any], *, reason: str, actor: str) -> None:
-    data = _read_revs()
-    revs = data.setdefault("revisions", [])
-    revs.append(
-        {
-            "id": str(uuid.uuid4()),
-            "version": doc.get("version", 0),
-            "created_at": _now(),
-            "by": actor or "",
-            "reason": reason or "Edited",
-            "types": copy.deepcopy(doc.get("types", {})),
-            "builtin_seed_version": doc.get("builtin_seed_version", BUILTIN_SEED_VERSION),
-        }
-    )
-    if len(revs) > _MAX_REVISIONS:
-        del revs[: len(revs) - _MAX_REVISIONS]
-    _write_revs(data)
+    revision = {
+        "id": str(uuid.uuid4()),
+        "version": doc.get("version", 0),
+        "created_at": _now(),
+        "by": actor or "",
+        "reason": reason or "Edited",
+        "types": copy.deepcopy(doc.get("types", {})),
+        "builtin_seed_version": doc.get("builtin_seed_version", BUILTIN_SEED_VERSION),
+    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        revs = data.setdefault("revisions", [])
+        revs.append(revision)
+        if len(revs) > _MAX_REVISIONS:
+            del revs[: len(revs) - _MAX_REVISIONS]
+
+    jsonstore.mutate_json(_REV_PATH, {"revisions": []}, _mutate)
 
 
 def save_reference(types: Any, *, actor: str, reason: str = "Edited") -> dict[str, Any]:
     """Replace the reference's type→alerts map, bump the version, snapshot the result."""
-    current = load_reference()
     new_types = _sanitize_types(types)
-    doc = {
-        "version": int(current.get("version", 0)) + 1,
-        "updated_at": _now(),
-        "updated_by": actor or "",
-        "builtin_seed_version": BUILTIN_SEED_VERSION,
-        "amba_release": current.get("amba_release", ""),
-        "amba_source": current.get("amba_source", ""),
-        "amba_imported_at": current.get("amba_imported_at", ""),
-        "types": new_types,
-    }
-    _write(doc)
+    doc: dict[str, Any] = {}
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        current = stored if isinstance(stored, dict) else builtin_reference()
+        value = {
+            "version": int(current.get("version", 0)) + 1,
+            "updated_at": _now(),
+            "updated_by": actor or "",
+            "builtin_seed_version": BUILTIN_SEED_VERSION,
+            "amba_release": current.get("amba_release", ""),
+            "amba_source": current.get("amba_source", ""),
+            "amba_imported_at": current.get("amba_imported_at", ""),
+            "types": new_types,
+        }
+        doc.update(value)
+        return value
+
+    jsonstore.mutate_json(_PATH, None, _mutate)
     _snapshot(doc, reason=reason, actor=actor)
     return doc
 

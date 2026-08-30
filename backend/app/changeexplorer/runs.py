@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "changeexplorer_runs.json"
 _MAX_PER_WORKLOAD = 30
 
@@ -19,19 +21,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -43,24 +34,26 @@ def _summary(run: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_run(tenant_id: str, workload_id: str, run: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    runs = bucket.setdefault(workload_id or "default", [])
     run_id = str(run.get("runId") or "")
-    replaced = False
-    if run_id:
-        for index, existing in enumerate(runs):
-            if existing.get("runId") == run_id:
-                runs[index] = run
-                replaced = True
-                break
-    if not replaced:
-        runs.insert(0, run)
-    active = [i for i, r in enumerate(runs) if not r.get("deleted_at")]
-    if len(active) > _MAX_PER_WORKLOAD:
-        for i in sorted(active[_MAX_PER_WORKLOAD:], reverse=True):
-            del runs[i]
-    _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        runs = bucket.setdefault(workload_id or "default", [])
+        replaced = False
+        if run_id:
+            for index, existing in enumerate(runs):
+                if existing.get("runId") == run_id:
+                    runs[index] = run
+                    replaced = True
+                    break
+        if not replaced:
+            runs.insert(0, run)
+        active = [i for i, stored in enumerate(runs) if not stored.get("deleted_at")]
+        if len(active) > _MAX_PER_WORKLOAD:
+            for i in sorted(active[_MAX_PER_WORKLOAD:], reverse=True):
+                del runs[i]
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     return run
 
 
@@ -113,29 +106,37 @@ def update_run(tenant_id: str, run: dict[str, Any]) -> bool:
     rid = run.get("runId", "")
     if not rid:
         return False
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    for runs in bucket.values():
-        for i, r in enumerate(runs):
-            if r.get("runId") == rid:
-                if r.get("deleted_at") and "deleted_at" not in run:
-                    run["deleted_at"] = r["deleted_at"]
-                runs[i] = run
-                _write(data)
-                return True
-    return False
+    updated = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal updated
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for index, existing in enumerate(runs):
+                if existing.get("runId") == rid:
+                    if existing.get("deleted_at") and "deleted_at" not in run:
+                        run["deleted_at"] = existing["deleted_at"]
+                    runs[index] = run
+                    updated = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return updated
 
 
 def set_case(tenant_id: str, run_id: str, case: dict[str, Any]) -> dict[str, Any] | None:
     """Persist the investigator 'case file' for a run (D1): pinned change ids + per-change notes +
     a free-text case summary. ``case`` = {pinned: [changeId], notes: {changeId: text},
     caseSummary: str}. Returns the saved case, or None if the run wasn't found."""
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("runId") == run_id:
-                existing = r.get("caseFile") or {}
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("runId") != run_id:
+                    continue
+                existing = run.get("caseFile") or {}
                 merged = {
                     "pinned": list(case.get("pinned", existing.get("pinned", []))),
                     "notes": {**(existing.get("notes") or {}), **(case.get("notes") or {})},
@@ -144,46 +145,63 @@ def set_case(tenant_id: str, run_id: str, case: dict[str, Any]) -> dict[str, Any
                 }
                 # Drop empty notes so they don't accumulate.
                 merged["notes"] = {k: v for k, v in merged["notes"].items() if (v or "").strip()}
-                r["caseFile"] = merged
-                _write(data)
-                return merged
-    return None
+                run["caseFile"] = merged
+                result.update(merged)
+                return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return result or None
 
 
 def soft_delete(tenant_id: str, run_id: str) -> bool:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("runId") == run_id and not r.get("deleted_at"):
-                r["deleted_at"] = _now()
-                _write(data)
-                return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("runId") == run_id and not run.get("deleted_at"):
+                    run["deleted_at"] = _now()
+                    deleted = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return deleted
 
 
 def restore(tenant_id: str, run_id: str) -> bool:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("runId") == run_id and r.get("deleted_at"):
-                r["deleted_at"] = ""
-                _write(data)
-                return True
-    return False
+    restored = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal restored
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("runId") == run_id and run.get("deleted_at"):
+                    run["deleted_at"] = ""
+                    restored = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return restored
 
 
 def purge(tenant_id: str, run_id: str) -> bool:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    for key, runs in bucket.items():
-        for i, r in enumerate(runs):
-            if r.get("runId") == run_id:
-                del runs[i]
-                _write(data)
-                return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for index, run in enumerate(runs):
+                if run.get("runId") == run_id:
+                    del runs[index]
+                    deleted = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return deleted
 
 
 # --------------------------------------------------------------------------- cleanup
@@ -237,51 +255,57 @@ def cleanup_stats(tenant_id: str) -> dict[str, Any]:
 
 def trash_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     count = 0
     freed = 0
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("runId") in idset and not r.get("deleted_at"):
-                r["deleted_at"] = _now()
-                count += 1
-                freed += _run_size(r)
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count, freed
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("runId") in idset and not run.get("deleted_at"):
+                    run["deleted_at"] = _now()
+                    count += 1
+                    freed += _run_size(run)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     return {"count": count, "freed_bytes": freed}
 
 
 def restore_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     count = 0
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("runId") in idset and r.get("deleted_at"):
-                r["deleted_at"] = ""
-                count += 1
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count
+        bucket = data.get(tenant_id or "default", {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("runId") in idset and run.get("deleted_at"):
+                    run["deleted_at"] = ""
+                    count += 1
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     return {"count": count}
 
 
 def purge_runs(tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     count = 0
     freed = 0
-    for k in list(bucket.keys()):
-        keep: list[dict[str, Any]] = []
-        for r in bucket[k]:
-            if r.get("runId") in idset:
-                count += 1
-                freed += _run_size(r)
-            else:
-                keep.append(r)
-        bucket[k] = keep
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count, freed
+        bucket = data.get(tenant_id or "default", {})
+        for key in list(bucket):
+            keep: list[dict[str, Any]] = []
+            for run in bucket[key]:
+                if run.get("runId") in idset:
+                    count += 1
+                    freed += _run_size(run)
+                else:
+                    keep.append(run)
+            bucket[key] = keep
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     return {"count": count, "freed_bytes": freed}

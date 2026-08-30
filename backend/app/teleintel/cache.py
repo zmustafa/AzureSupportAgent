@@ -6,10 +6,11 @@ component)``, with a per-key lock. Mirrors the other coverage-detector caches.""
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "teleintel_cache.json"
 
@@ -26,19 +27,8 @@ def get_lock(tenant_id: str, scope_id: str, component_id: str) -> asyncio.Lock:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(scope_id: str, component_id: str, kind: str) -> str:
@@ -52,25 +42,29 @@ def read_snapshot(tenant_id: str, scope_id: str, component_id: str, kind: str) -
 
 
 def write_snapshot(tenant_id: str, scope_id: str, component_id: str, kind: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    bucket[_key(scope_id, component_id, kind)] = snapshot
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault(tenant_id or "default", {})[
+            _key(scope_id, component_id, kind)
+        ] = snapshot
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return snapshot
 
 
 def delete_scope(tenant_id: str, scope_id: str) -> int:
     """Remove every cached snapshot (all components/kinds) for a scope. Returns the count
     deleted. Used to purge demo data."""
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    prefix = f"{scope_id}|"
-    keys = [k for k in list(bucket) if k.startswith(prefix)]
-    for k in keys:
-        del bucket[k]
-    if keys:
-        _write(data)
-    return len(keys)
+    removed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.get(tenant_id or "default", {})
+        prefix = f"{scope_id}|"
+        removed.extend(key for key in list(bucket) if key.startswith(prefix))
+        for key in removed:
+            del bucket[key]
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return len(removed)
 
 
 def age_seconds(snapshot: dict[str, Any]) -> float | None:

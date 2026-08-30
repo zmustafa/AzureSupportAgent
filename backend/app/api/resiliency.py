@@ -6,8 +6,8 @@ un-analyzed scope returns the empty shell with ``report_exists: false`` rather t
 """
 from __future__ import annotations
 
-import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +15,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.durable_jobs import (
+    DurableJobContext,
+    DurableJobExecutor,
+    JobOutcome,
+    as_utc,
+    utcnow,
+)
 from app.core.security import Principal, require_permission
 from app.iam import cpu as iam_cpu
 from app.models import AuditLog
@@ -29,11 +36,7 @@ router = APIRouter(prefix="/resiliency", tags=["resiliency"])
 require_read = require_permission("resiliency.read")
 require_admin = require_permission("resiliency.admin")
 
-_jobs: dict[str, dict[str, Any]] = {}
-# asyncio keeps only a WEAK reference to a task. Without a strong one here the analysis can
-# be collected mid-run, leaving the job "running" forever and the Analyze button disabled
-# for that scope until the process restarts.
-_tasks: set[asyncio.Task[None]] = set()
+_job_executor = DurableJobExecutor("resiliency.analyze", event_limit=50)
 
 #: The response NEVER carries the exception's own text. A source that failed for a reason the
 #: operator can act on — an expired credential, an unreadable table — is caught inside the
@@ -43,6 +46,47 @@ ANALYSIS_FAILED = (
     "The analysis failed before it produced a snapshot. The reason is in the server log. "
     "Re-run it, and if it keeps failing narrow the scope to identify the resource involved."
 )
+
+
+def _public_analysis_job(durable: dict[str, Any]) -> dict[str, Any]:
+    messages = [
+        dict(event.get("data") or {})
+        for event in durable.get("events") or []
+        if event.get("event") == "progress"
+    ]
+    return {
+        "key": durable["key"],
+        "status": durable["status"],
+        "started_at": durable["started_at"],
+        "finished_at": durable.get("finished_at"),
+        "messages": messages,
+        "error": durable.get("error") or "",
+    }
+
+
+async def _load_analysis_job(tenant_id: str, key: str) -> dict[str, Any] | None:
+    durable = await _job_executor.store.load_current(
+        tenant_id=tenant_id, feature=_job_executor.feature, key=key
+    )
+    if durable is None:
+        return None
+    if durable["status"] == "running" and durable.get("lease_expires_at"):
+        expires = as_utc(datetime.fromisoformat(durable["lease_expires_at"]))
+        if expires is not None and expires <= utcnow():
+            # Analysis has no checkpoint. A status read must not silently duplicate Azure
+            # collection or overwrite a snapshot produced by a stale owner.
+            await _job_executor.store.interrupt_expired(
+                tenant_id=tenant_id,
+                feature=_job_executor.feature,
+                key=key,
+                error="Recovery Readiness analysis was interrupted before completion.",
+            )
+            durable = await _job_executor.store.load_current(
+                tenant_id=tenant_id, feature=_job_executor.feature, key=key
+            )
+            if durable is None:
+                return None
+    return _public_analysis_job(durable)
 
 
 def _export_payload(principal: Principal, scope: "ScopeParams") -> tuple[dict, dict, dict]:
@@ -187,20 +231,17 @@ async def analyze_start(
     cid = str(connection.get("id") or "")
     key = f"{principal.tenant_id}|{cid}|{scope_kind}|{scope_id}"
 
-    running = _jobs.get(key)
+    running = await _load_analysis_job(principal.tenant_id, key)
     if running and running.get("status") == "running":
         return {"job": running}
 
-    job = {"key": key, "status": "running", "started_at": service.now_iso(),
-           "messages": [], "error": ""}
-    _jobs[key] = job
+    async def _run(context: DurableJobContext) -> JobOutcome:
+        async def _progress(level: str, message: str) -> None:
+            await context.emit(
+                "progress",
+                {"level": level, "message": message, "at": service.now_iso()},
+            )
 
-    async def _progress(level: str, message: str) -> None:
-        job["messages"].append({"level": level, "message": message,
-                                "at": service.now_iso()})
-        del job["messages"][:-50]
-
-    async def _run() -> None:
         lock = snapshot_store.get_lock(principal.tenant_id, cid, scope_kind, scope_id)
         async with lock:
             try:
@@ -209,21 +250,31 @@ async def analyze_start(
                     connection, tenant_id=principal.tenant_id, scope_kind=scope_kind,
                     scope_id=scope_id, subscriptions=subs,
                     workload_id=scope.workload_id or "", progress=_progress)
+                await context.checkpoint()
                 snapshot_store.write(principal.tenant_id, cid, scope_kind, scope_id, snap)
                 # Counts only, appended per analysis. A trend cannot be reconstructed later
                 # because the snapshot it would come from has already been overwritten.
                 history_store.record(principal.tenant_id, cid, scope_kind, scope_id, snap)
-                job["status"] = "done"
+                return JobOutcome(result={"snapshot_written": True})
             except Exception:  # noqa: BLE001 - recorded for the operator, not swallowed
                 log.exception("resiliency: analysis failed")
-                job["status"] = "error"
-                job["error"] = ANALYSIS_FAILED
-            finally:
-                job["finished_at"] = service.now_iso()
+                return JobOutcome(status="error", error=ANALYSIS_FAILED)
 
-    task = asyncio.create_task(_run())
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+    claim = await _job_executor.start(
+        tenant_id=principal.tenant_id,
+        key=key,
+        metadata={
+            "connection_id": cid,
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "workload_id": scope.workload_id or "",
+        },
+        runner=_run,
+    )
+    durable = await _job_executor.store.load_current(
+        tenant_id=principal.tenant_id, feature=_job_executor.feature, key=key
+    )
+    job = _public_analysis_job(durable or claim.job)
 
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,
@@ -241,7 +292,7 @@ async def analyze_job(
                                   scope.management_group_id)
     connection = _connection(scope.connection_id, scope.workload_id) or {}
     key = f"{principal.tenant_id}|{connection.get('id') or ''}|{scope_kind}|{scope_id}"
-    return {"job": _jobs.get(key)}
+    return {"job": await _load_analysis_job(principal.tenant_id, key)}
 
 
 # --------------------------------------------------------------------------- reads

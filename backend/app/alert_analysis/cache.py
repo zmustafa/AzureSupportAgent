@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "alert_analysis_cache.json"
 _locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
@@ -21,20 +22,12 @@ def get_lock(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str)
 
 
 def _read() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {}
-    try:
-        value = json.loads(_PATH.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    value = jsonstore.read_json(_PATH, {})
+    return value if isinstance(value, dict) else {}
 
 
 def _write(value: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(value, indent=2), encoding="utf-8")
-    tmp.replace(_PATH)
+    jsonstore.write_json(_PATH, value)
 
 
 def _key(connection_id: str, scope_kind: str, scope_id: str) -> str:
@@ -53,21 +46,28 @@ def write_snapshot(
     scope_id: str,
     snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    data = _read()
-    data.setdefault(tenant_id or "default", {})[_key(connection_id, scope_kind, scope_id)] = snapshot
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault(tenant_id or "default", {})[
+            _key(connection_id, scope_kind, scope_id)
+        ] = snapshot
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return snapshot
 
 
 def delete_snapshot(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> bool:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     key = _key(connection_id, scope_kind, scope_id)
-    if key not in bucket:
-        return False
-    del bucket[key]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        if key in bucket:
+            del bucket[key]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def age_seconds(snapshot: dict[str, Any]) -> float | None:

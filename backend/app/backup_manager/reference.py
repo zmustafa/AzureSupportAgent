@@ -14,7 +14,6 @@ Only structurally valid entries survive a write; unknown keys are dropped rather
 from __future__ import annotations
 
 import copy
-import json
 import re
 import uuid
 from datetime import datetime, timezone
@@ -22,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backup_manager.builtin_seed import SEED_VERSION, seed_reference
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_reference.json"
 _REV_PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_reference_revisions.json"
@@ -41,35 +41,15 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any] | None:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("failure_kb"), list):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, None)
+    if isinstance(data, dict) and isinstance(data.get("failure_kb"), list):
+        return data
     return None
 
 
-def _write(doc: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-
-
 def _read_revs() -> dict[str, Any]:
-    if _REV_PATH.exists():
-        try:
-            data = json.loads(_REV_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"revisions": []}
-
-
-def _write_revs(data: dict[str, Any]) -> None:
-    _REV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _REV_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_REV_PATH, {"revisions": []})
+    return data if isinstance(data, dict) else {"revisions": []}
 
 
 def _base_document() -> dict[str, Any]:
@@ -84,8 +64,12 @@ def load_reference() -> dict[str, Any]:
     """Current reference document, seeding the built-in baseline on first use."""
     doc = _read()
     if doc is None:
-        doc = _base_document()
-        _write(doc)
+        def _seed(stored: Any) -> dict[str, Any]:
+            if isinstance(stored, dict) and isinstance(stored.get("failure_kb"), list):
+                return stored
+            return _base_document()
+
+        doc = jsonstore.mutate_json(_PATH, None, _seed)
     return doc
 
 
@@ -259,19 +243,22 @@ def _meta(rev: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot(doc: dict[str, Any], *, reason: str, actor: str) -> None:
-    data = _read_revs()
-    revs = data.setdefault("revisions", [])
-    revs.append({
+    revision = {
         "id": str(uuid.uuid4()),
         "version": doc.get("version", 0),
         "created_at": _now(),
         "by": actor or "",
         "reason": reason or "Edited",
         "document": copy.deepcopy({k: v for k, v in doc.items() if k not in ("version", "updated_at", "updated_by")}),
-    })
-    if len(revs) > _MAX_REVISIONS:
-        del revs[: len(revs) - _MAX_REVISIONS]
-    _write_revs(data)
+    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        revs = data.setdefault("revisions", [])
+        revs.append(revision)
+        if len(revs) > _MAX_REVISIONS:
+            del revs[: len(revs) - _MAX_REVISIONS]
+
+    jsonstore.mutate_json(_REV_PATH, {"revisions": []}, _mutate)
 
 
 def list_revisions() -> list[dict[str, Any]]:
@@ -281,13 +268,24 @@ def list_revisions() -> list[dict[str, Any]]:
 
 def save_reference(payload: Any, *, actor: str, reason: str = "") -> dict[str, Any]:
     """Persist a sanitized reference, snapshotting the outgoing version first."""
-    current = load_reference()
-    _snapshot(current, reason=reason or "Edited", actor=actor)
-    doc = sanitize(payload)
-    doc["version"] = int(current.get("version", 0)) + 1
-    doc["updated_at"] = _now()
-    doc["updated_by"] = actor or ""
-    _write(doc)
+    sanitized = sanitize(payload)
+    doc: dict[str, Any] = {}
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        current = (
+            stored
+            if isinstance(stored, dict) and isinstance(stored.get("failure_kb"), list)
+            else _base_document()
+        )
+        _snapshot(current, reason=reason or "Edited", actor=actor)
+        value = dict(sanitized)
+        value["version"] = int(current.get("version", 0)) + 1
+        value["updated_at"] = _now()
+        value["updated_by"] = actor or ""
+        doc.update(value)
+        return value
+
+    jsonstore.mutate_json(_PATH, None, _mutate)
     return doc
 
 

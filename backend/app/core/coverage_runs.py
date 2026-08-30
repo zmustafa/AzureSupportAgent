@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "coverage_runs.json"
 _MAX_PER_SCOPE = 30
 
@@ -29,19 +31,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _bucket_key(feature: str, tenant_id: str) -> str:
@@ -79,9 +70,6 @@ def save_run(
     """Persist a snapshot as a new run for ``feature``; returns the stored run (with id +
     run_at). ``headline``/``counts``/``resource_count`` are the compact grid fields the
     dashboard supplies (since each feature's snapshot shape differs)."""
-    data = _read()
-    bucket = data.setdefault(_bucket_key(feature, tenant_id), {})
-    runs = bucket.setdefault(_scope_key(scope_kind, scope_id), [])
     run = dict(snapshot)
     run["id"] = uuid.uuid4().hex[:16]
     run["run_at"] = _now()
@@ -89,14 +77,18 @@ def save_run(
     run["_headline"] = headline
     run["_counts"] = counts or {}
     run["_resource_count"] = resource_count
-    runs.insert(0, run)
-    # Cap ACTIVE (non-trashed) runs only; evict the oldest active ones beyond the cap.
-    # Trashed runs are preserved until restored or purged.
-    active_positions = [i for i, r in enumerate(runs) if not r.get("deleted_at")]
-    if len(active_positions) > _MAX_PER_SCOPE:
-        for i in sorted(active_positions[_MAX_PER_SCOPE:], reverse=True):
-            del runs[i]
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(_bucket_key(feature, tenant_id), {})
+        runs = bucket.setdefault(_scope_key(scope_kind, scope_id), [])
+        runs.insert(0, run)
+        # Cap ACTIVE (non-trashed) runs only; evict the oldest active ones beyond the cap.
+        # Trashed runs are preserved until restored or purged.
+        active_positions = [i for i, stored in enumerate(runs) if not stored.get("deleted_at")]
+        if len(active_positions) > _MAX_PER_SCOPE:
+            for i in sorted(active_positions[_MAX_PER_SCOPE:], reverse=True):
+                del runs[i]
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return run
 
 
@@ -132,72 +124,91 @@ def get_run(feature: str, tenant_id: str, run_id: str, *, include_deleted: bool 
 def delete_run(feature: str, tenant_id: str, run_id: str) -> bool:
     """Soft-delete: move a run to the Trash (set ``deleted_at``). Returns False if not found
     or already trashed."""
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("id") == run_id:
-                if r.get("deleted_at"):
-                    return False
-                r["deleted_at"] = _now()
-                _write(data)
-                return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("id") == run_id and not run.get("deleted_at"):
+                    run["deleted_at"] = _now()
+                    deleted = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def restore_run(feature: str, tenant_id: str, run_id: str) -> bool:
     """Restore a trashed run back into active history. Returns False if not found or not
     currently trashed."""
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("id") == run_id:
-                if not r.get("deleted_at"):
-                    return False
-                r["deleted_at"] = ""
-                _write(data)
-                return True
-    return False
+    restored = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal restored
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("id") == run_id and run.get("deleted_at"):
+                    run["deleted_at"] = ""
+                    restored = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return restored
 
 
 def purge_run(feature: str, tenant_id: str, run_id: str) -> bool:
     """Permanently delete a single run (hard delete), regardless of trash state."""
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
-    for runs in bucket.values():
-        for i, r in enumerate(runs):
-            if r.get("id") == run_id:
-                del runs[i]
-                _write(data)
-                return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for runs in bucket.values():
+            for i, run in enumerate(runs):
+                if run.get("id") == run_id:
+                    del runs[i]
+                    deleted = True
+                    return
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def empty_trash(feature: str, tenant_id: str, scope_kind: str, scope_id: str) -> int:
     """Permanently delete every trashed run for a scope. Returns the count removed."""
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
-    k = _scope_key(scope_kind, scope_id)
-    runs = bucket.get(k) or []
-    keep = [r for r in runs if not r.get("deleted_at")]
-    removed = len(runs) - len(keep)
-    if removed:
-        bucket[k] = keep
-        _write(data)
+    removed = 0
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal removed
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        key = _scope_key(scope_kind, scope_id)
+        runs = bucket.get(key) or []
+        keep = [run for run in runs if not run.get("deleted_at")]
+        removed = len(runs) - len(keep)
+        if removed:
+            bucket[key] = keep
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return removed
 
 
 def delete_scope(feature: str, tenant_id: str, scope_kind: str, scope_id: str) -> bool:
     """Hard-delete an entire scope's run history (used by demo-data purge)."""
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
-    k = _scope_key(scope_kind, scope_id)
-    if k in bucket:
-        del bucket[k]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        key = _scope_key(scope_kind, scope_id)
+        if key in bucket:
+            del bucket[key]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 # --------------------------------------------------------------------------- cleanup
@@ -241,51 +252,57 @@ def cleanup_stats(feature: str, tenant_id: str) -> dict[str, Any]:
 
 def trash_runs(feature: str, tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
     count = 0
     freed = 0
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("id") in idset and not r.get("deleted_at"):
-                r["deleted_at"] = _now()
-                count += 1
-                freed += _run_size(r)
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count, freed
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("id") in idset and not run.get("deleted_at"):
+                    run["deleted_at"] = _now()
+                    count += 1
+                    freed += _run_size(run)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return {"count": count, "freed_bytes": freed}
 
 
 def restore_runs(feature: str, tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
     count = 0
-    for runs in bucket.values():
-        for r in runs:
-            if r.get("id") in idset and r.get("deleted_at"):
-                r["deleted_at"] = ""
-                count += 1
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for runs in bucket.values():
+            for run in runs:
+                if run.get("id") in idset and run.get("deleted_at"):
+                    run["deleted_at"] = ""
+                    count += 1
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return {"count": count}
 
 
 def purge_runs(feature: str, tenant_id: str, ids: list[str]) -> dict[str, int]:
     idset = {i for i in ids if i}
-    data = _read()
-    bucket = data.get(_bucket_key(feature, tenant_id), {})
     count = 0
     freed = 0
-    for k in list(bucket.keys()):
-        keep: list[dict[str, Any]] = []
-        for r in bucket[k]:
-            if r.get("id") in idset:
-                count += 1
-                freed += _run_size(r)
-            else:
-                keep.append(r)
-        bucket[k] = keep
-    if count:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal count, freed
+        bucket = data.get(_bucket_key(feature, tenant_id), {})
+        for key in list(bucket):
+            keep: list[dict[str, Any]] = []
+            for run in bucket[key]:
+                if run.get("id") in idset:
+                    count += 1
+                    freed += _run_size(run)
+                else:
+                    keep.append(run)
+            bucket[key] = keep
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return {"count": count, "freed_bytes": freed}

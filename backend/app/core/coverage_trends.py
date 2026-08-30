@@ -13,10 +13,11 @@ heavy history. One JSON file holds every feature's series, keyed by
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "coverage_trends.json"
 
@@ -36,19 +37,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(feature: str, scope_kind: str, scope_id: str) -> str:
@@ -89,26 +79,27 @@ def record(
     ``_DEDUP_WINDOW_S`` of the previous point (rapid re-refresh) into that point. Returns the
     stored point. ``pct`` is clamped to 0-100; ``None`` is allowed (e.g. nothing in scope)."""
     point = {"at": at or _now(), "pct": _coerce_pct(pct), "extra": extra or {}, "demo": bool(demo)}
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    series = bucket.setdefault(_key(feature, scope_kind, scope_id), [])
-    last = series[-1] if series else None
-    last_age = _age_s(last.get("at", "")) if last is not None else None
-    if (
-        last is not None
-        and last.get("pct") == point["pct"]
-        and last_age is not None
-        and last_age < _DEDUP_WINDOW_S
-    ):
-        # Same value, just re-scanned moments ago → refresh the existing point in place.
-        last["at"] = point["at"]
-        last["extra"] = point["extra"]
-        last["demo"] = point["demo"]
-    else:
-        series.append(point)
-        if len(series) > _MAX_POINTS:
-            del series[: len(series) - _MAX_POINTS]
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        values = bucket.setdefault(_key(feature, scope_kind, scope_id), [])
+        last = values[-1] if values else None
+        last_age = _age_s(last.get("at", "")) if last is not None else None
+        if (
+            last is not None
+            and last.get("pct") == point["pct"]
+            and last_age is not None
+            and last_age < _DEDUP_WINDOW_S
+        ):
+            # Same value, just re-scanned moments ago → refresh the existing point in place.
+            last["at"] = point["at"]
+            last["extra"] = point["extra"]
+            last["demo"] = point["demo"]
+        else:
+            values.append(point)
+            if len(values) > _MAX_POINTS:
+                del values[: len(values) - _MAX_POINTS]
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return point
 
 
@@ -138,14 +129,18 @@ def trend(feature: str, tenant_id: str, scope_kind: str, scope_id: str) -> dict[
 
 def delete_scope(feature: str, tenant_id: str, scope_kind: str, scope_id: str) -> bool:
     """Drop a scope's whole series (used to purge demo data). True if one existed."""
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    k = _key(feature, scope_kind, scope_id)
-    if k in bucket:
-        del bucket[k]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        key = _key(feature, scope_kind, scope_id)
+        if key in bucket:
+            del bucket[key]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def seed_demo_series(
@@ -163,18 +158,14 @@ def seed_demo_series(
     """Backfill a believable *rising* history ending at ``current_pct`` so the trend chart
     shows movement immediately on a demo scope (i.e. "gaps got fixed over the last 2 weeks").
     No-op (returns the existing series) if a series already exists. Marks points ``demo``."""
-    existing = series(feature, tenant_id, scope_kind, scope_id)
-    if existing:
-        return existing
     end = _coerce_pct(current_pct)
     if end is None:
         return []
     start = max(0, end - max(0, climb))
     now = datetime.now(timezone.utc)
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
     out: list[dict[str, Any]] = []
     n = max(2, points)
+    generated: list[dict[str, Any]] = []
     for i in range(n):
         frac = i / (n - 1)
         # Ease-out so most of the improvement happens earlier, then plateaus near current.
@@ -183,7 +174,19 @@ def seed_demo_series(
         # fresh "Refresh now" appends today's point and the timeline visibly grows.
         days_ago = 1 + (span_days - 1) * (1 - frac)
         at = (now - timedelta(days=round(days_ago))).isoformat()
-        out.append({"at": at, "pct": val, "extra": extra or {} if i == n - 1 else {}, "demo": True})
-    bucket[_key(feature, scope_kind, scope_id)] = out
-    _write(data)
+        generated.append(
+            {"at": at, "pct": val, "extra": extra or {} if i == n - 1 else {}, "demo": True}
+        )
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        key = _key(feature, scope_kind, scope_id)
+        existing = bucket.get(key)
+        if isinstance(existing, list) and existing:
+            out.extend(existing)
+            return
+        bucket[key] = generated
+        out.extend(generated)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return out

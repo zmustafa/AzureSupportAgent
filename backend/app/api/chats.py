@@ -141,7 +141,7 @@ async def active_turns(
     """
     from app.agent.turn_runner import registry
 
-    active = registry.active_chat_ids()
+    active = await registry.active_chat_ids(tenant_id=principal.tenant_id)
     if not active:
         return {"active": []}
     rows = (
@@ -1276,8 +1276,8 @@ async def _start_message_turn(
 
     # Don't start a second turn while one is already running for this chat; just
     # attach to the in-flight one (defensive — the UI also guards against this).
-    if registry.is_active(chat_id):
-        run = registry.get(chat_id)
+    if await registry.is_active(chat_id, tenant_id=principal.tenant_id):
+        run = await registry.get(chat_id, tenant_id=principal.tenant_id)
         assert run is not None
         return run
 
@@ -2024,7 +2024,9 @@ async def _start_message_turn(
     else:
         turn_worker = worker
 
-    run = registry.start(chat_id, assistant_id, turn_worker)
+    run = await registry.start(
+        chat_id, assistant_id, turn_worker, tenant_id=principal.tenant_id
+    )
     return run
 
 
@@ -2134,8 +2136,7 @@ async def run_deep_review_workload(
             db,
             worker_gate=_deep_review_fleet_gate,
         )
-        if run.task is not None:
-            await run.task
+        await run.wait()
         assistant = (
             await db.execute(
                 select(Message)
@@ -2233,7 +2234,7 @@ async def turn_active(
     from app.agent.turn_runner import registry
 
     await _get_owned_chat(db, principal, chat_id)
-    return {"active": registry.is_active(chat_id)}
+    return {"active": await registry.is_active(chat_id, tenant_id=principal.tenant_id)}
 
 
 @router.post("/{chat_id}/stop")
@@ -2251,7 +2252,7 @@ async def stop_turn(
     from app.agent.turn_runner import registry
 
     await _get_owned_chat(db, principal, chat_id)
-    stopped = registry.cancel(chat_id)
+    stopped = await registry.cancel(chat_id, tenant_id=principal.tenant_id)
     return {"stopped": stopped}
 
 
@@ -2268,7 +2269,7 @@ async def reconnect_stream(
     from app.agent.turn_runner import registry
 
     await _get_owned_chat(db, principal, chat_id)
-    run = registry.get(chat_id)
+    run = await registry.get(chat_id, tenant_id=principal.tenant_id)
     if run is None:
         async def _empty():
             if False:  # pragma: no cover - generator with no yields

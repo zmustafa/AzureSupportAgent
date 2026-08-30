@@ -1,49 +1,368 @@
-"""Background job manager for the (slow) Application Registrations refresh.
+"""Durable background manager for the slow Application Registrations refresh.
 
-A live Entra enumeration can take 10–30 minutes on a large tenant, so the refresh runs as a
-detached background ``asyncio`` task that keeps going even if the browser navigates away or
-the SSE stream disconnects. The job records a granular progress log; SSE subscribers replay
-the log so far and then tail new lines until the job finishes. When it completes the snapshot
-is written to the permanent server cache.
-
-One job per (tenant, connection) key — starting a refresh while one is already running just
-returns the in-flight job.
+Execution ownership, status, and bounded replay events live in SQL. The existing page
+checkpoint remains the source for exact enumeration resume; connection dictionaries are kept
+only in the owner task and are never written to durable job metadata.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import uuid
-from datetime import datetime, timezone
 from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.durable_jobs import DurableJobContext, DurableJobExecutor, JobOutcome
 
 log = logging.getLogger("app.identity.appregs_job")
 
-# Active execution is in-memory; page checkpoints and completed results are durable.
-_jobs: dict[str, dict[str, Any]] = {}
-_conds: dict[str, asyncio.Condition] = {}
-_tasks: dict[str, asyncio.Task] = {}  # hold task refs so they aren't garbage-collected
+_FEATURE = "identity.appregs"
+_EVENT_LIMIT = 1000
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _tenant_from_key(key: str) -> str:
+    return key.split("|", 1)[0] or "default"
 
 
-def _cond(key: str) -> asyncio.Condition:
-    c = _conds.get(key)
-    if c is None:
-        c = asyncio.Condition()
-        _conds[key] = c
-    return c
+class AppRegistrationsJobManager:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        owner_id: str | None = None,
+        lease_seconds: float = 60.0,
+        poll_seconds: float = 0.25,
+    ) -> None:
+        self._executor = DurableJobExecutor(
+            _FEATURE,
+            session_factory=session_factory,
+            owner_id=owner_id,
+            lease_seconds=lease_seconds,
+            poll_seconds=poll_seconds,
+            event_limit=_EVENT_LIMIT,
+        )
+
+    @staticmethod
+    def _from_durable(durable: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(durable.get("metadata") or {})
+        progress: list[dict[str, Any]] = []
+        for event in durable.get("events") or []:
+            if event.get("event") != "progress":
+                continue
+            row = dict(event.get("data") or {})
+            row.setdefault("seq", event.get("seq"))
+            row.setdefault("ts", event.get("created_at"))
+            progress.append(row)
+        status = durable["status"]
+        if status == "running" and durable.get("cancel_requested"):
+            status = "cancelling"
+        return {
+            "id": durable["id"],
+            "key": durable["key"],
+            "status": status,
+            "started_at": durable["started_at"],
+            "finished_at": durable.get("finished_at"),
+            "progress": progress,
+            "result": durable.get("result"),
+            "error": durable.get("error") or "",
+            "mode": metadata.get("mode", "capped"),
+            "configured_limit": int(metadata.get("configured_limit") or 500),
+            "page_size": int(metadata.get("page_size") or 250),
+            "current": int(metadata.get("current") or 0),
+            "total": metadata.get("total"),
+            "percent": metadata.get("percent"),
+            "page": int(metadata.get("page") or 0),
+            "retries": int(metadata.get("retries") or 0),
+            "throttles": int(metadata.get("throttles") or 0),
+            "resumed": bool(metadata.get("resumed", False)),
+            "resume_available": bool(metadata.get("resume_available", False)),
+            "cancel_requested": bool(durable.get("cancel_requested")),
+            "connection_id": str(metadata.get("connection_id") or ""),
+            "tenant_id": str(metadata.get("tenant_id") or _tenant_from_key(durable["key"])),
+        }
+
+    async def get_job(self, key: str) -> dict[str, Any] | None:
+        durable = await self._executor.store.load_current(
+            tenant_id=_tenant_from_key(key), feature=_FEATURE, key=key
+        )
+        return self._from_durable(durable) if durable else None
+
+    async def is_running(self, key: str) -> bool:
+        job = await self.get_job(key)
+        return bool(job and job["status"] in {"running", "cancelling"})
+
+    async def start_job(
+        self,
+        *,
+        key: str,
+        tenant_id: str,
+        connection: dict[str, Any] | None,
+        connection_id: str,
+        limit: int = 500,
+        mode: str = "capped",
+        page_size: int = 250,
+    ) -> dict[str, Any]:
+        from app.identity import appregs, appregs_cache
+
+        requested_mode = "full" if mode == "full" else "capped"
+        saved_checkpoint = appregs_cache.get_checkpoint(tenant_id, connection_id)
+        checkpoint_reset_reason = ""
+        if (
+            saved_checkpoint
+            and saved_checkpoint.get("schema") == appregs.APPREGS_CHECKPOINT_SCHEMA
+            and saved_checkpoint.get("mode") == requested_mode
+        ):
+            limit = max(
+                50,
+                min(
+                    5000,
+                    int(
+                        saved_checkpoint.get("configured_limit")
+                        or (
+                            saved_checkpoint.get("target_limit")
+                            if requested_mode == "capped"
+                            else limit
+                        )
+                        or limit
+                    ),
+                ),
+            )
+            page_size = max(50, min(999, int(saved_checkpoint.get("page_size") or page_size)))
+        elif saved_checkpoint:
+            if saved_checkpoint.get("schema") != appregs.APPREGS_CHECKPOINT_SCHEMA:
+                checkpoint_reset_reason = (
+                    "A saved refresh checkpoint uses an older data schema; restarting from page 1."
+                )
+            else:
+                checkpoint_reset_reason = (
+                    f"A saved {saved_checkpoint.get('mode', 'previous')} refresh checkpoint cannot be "
+                    f"used for {requested_mode} mode; restarting from page 1."
+                )
+
+        metadata = {
+            "tenant_id": tenant_id,
+            "connection_id": connection_id,
+            "mode": requested_mode,
+            "configured_limit": limit,
+            "page_size": page_size,
+            "current": 0,
+            "total": None,
+            "percent": None,
+            "page": 0,
+            "retries": 0,
+            "throttles": 0,
+            "resumed": False,
+            "resume_available": bool(saved_checkpoint),
+        }
+
+        async def _run(context: DurableJobContext) -> JobOutcome:
+            checkpoint = appregs_cache.get_checkpoint(tenant_id, connection_id)
+            expected_target = (
+                appregs.APPREGS_FULL_SAFETY_LIMIT if requested_mode == "full" else limit
+            )
+            if checkpoint and (
+                checkpoint.get("schema") != appregs.APPREGS_CHECKPOINT_SCHEMA
+                or checkpoint.get("mode") != requested_mode
+                or int(checkpoint.get("target_limit") or 0) != expected_target
+                or int(checkpoint.get("page_size") or 0) != page_size
+            ):
+                appregs_cache.delete_checkpoint(tenant_id, connection_id)
+                checkpoint = None
+            resumed = bool(checkpoint)
+            context.metadata["resumed"] = resumed
+
+            async def _progress(
+                level: str, message: str, progress_metadata: dict[str, Any] | None = None
+            ) -> None:
+                patch = {
+                    field: value
+                    for field, value in (progress_metadata or {}).items()
+                    if field in {
+                        "current", "total", "percent", "page", "retries", "throttles",
+                        "resumed", "phase", "status", "delay_seconds", "retry",
+                    }
+                }
+                row = {"level": level, "message": message, **patch}
+                await context.emit("progress", row, metadata=patch, include_seq=True)
+
+            async def _checkpoint(state: dict[str, Any]) -> None:
+                appregs_cache.set_checkpoint(
+                    tenant_id,
+                    connection_id,
+                    {
+                        **state,
+                        "job_id": context.job_id,
+                        "started_at": context.started_at,
+                    },
+                )
+                context.metadata["resume_available"] = True
+
+            await _progress("info", "Starting Application Registrations refresh…")
+            if checkpoint_reset_reason:
+                await _progress("warn", checkpoint_reset_reason, {"phase": "restart"})
+            try:
+                snap = await appregs.collect_app_registrations(
+                    connection,
+                    tenant_id=tenant_id,
+                    limit=limit,
+                    full=requested_mode == "full",
+                    page_size=page_size,
+                    checkpoint=checkpoint,
+                    on_checkpoint=_checkpoint,
+                    progress=_progress,
+                    should_cancel=lambda: context.cancel_requested,
+                )
+                if snap.get("source") == "unavailable":
+                    raise RuntimeError("provider_unavailable")
+                fetched_at = appregs_cache.set_(tenant_id, connection_id, snap)
+                appregs_cache.delete_checkpoint(tenant_id, connection_id)
+                context.metadata["resume_available"] = False
+                result = {
+                    **snap,
+                    "cached": True,
+                    "never_loaded": False,
+                    "fetched_at": fetched_at,
+                    "age_seconds": 0,
+                    "configured_limit": limit,
+                    "max_configurable_limit": 5000,
+                    "full_safety_limit": appregs.APPREGS_FULL_SAFETY_LIMIT,
+                    "page_size": page_size,
+                }
+                await _progress(
+                    "ok",
+                    f"Cached snapshot — {snap.get('summary', {}).get('total', 0)} app registration(s).",
+                )
+                return JobOutcome(result=result)
+            except asyncio.CancelledError:
+                available = appregs_cache.get_checkpoint(tenant_id, connection_id) is not None
+                context.metadata["resume_available"] = available
+                await asyncio.shield(
+                    _progress(
+                        "warn",
+                        "Refresh cancelled. Completed pages were checkpointed; the previous snapshot is unchanged.",
+                    )
+                )
+                return JobOutcome(status="cancelled", error="Refresh cancelled.")
+            except Exception:  # noqa: BLE001 - never expose provider or credential details
+                log.warning("app-registrations refresh job failed", exc_info=True)
+                available = appregs_cache.get_checkpoint(tenant_id, connection_id) is not None
+                context.metadata["resume_available"] = available
+                message = "Refresh failed. The previous completed snapshot was preserved."
+                await _progress("error", message)
+                return JobOutcome(status="error", error=message)
+
+        claim = await self._executor.start(
+            tenant_id=tenant_id, key=key, metadata=metadata, runner=_run
+        )
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id, feature=_FEATURE, key=key
+        )
+        return self._from_durable(durable or claim.job)
+
+    async def cancel_job(self, key: str) -> bool:
+        return await self._executor.cancel(tenant_id=_tenant_from_key(key), key=key)
+
+    @staticmethod
+    def _cached_result(job: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(job.get("result"), dict):
+            return job["result"]
+        from app.identity import appregs, appregs_cache
+
+        cached = appregs_cache.get(job["tenant_id"], job["connection_id"])
+        if not cached:
+            return {}
+        return {
+            **(cached.get("payload") or {}),
+            "cached": True,
+            "never_loaded": False,
+            "fetched_at": cached.get("fetched_at", ""),
+            "age_seconds": cached.get("age_seconds", 0),
+            "configured_limit": job["configured_limit"],
+            "max_configurable_limit": 5000,
+            "full_safety_limit": appregs.APPREGS_FULL_SAFETY_LIMIT,
+            "page_size": job["page_size"],
+        }
+
+    async def stream(self, key: str):
+        job = await self.get_job(key)
+        if job is None:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": "No refresh job for this scope."}),
+            }
+            return
+        yield {
+            "event": "start",
+            "data": json.dumps(
+                {
+                    "id": job["id"],
+                    "status": job["status"],
+                    "started_at": job["started_at"],
+                    "mode": job["mode"],
+                    "configured_limit": job["configured_limit"],
+                    "current": job["current"],
+                    "total": job["total"],
+                    "page": job["page"],
+                    "resumed": job["resumed"],
+                }
+            ),
+        }
+        sent_seq = -1
+        last_ping = asyncio.get_running_loop().time()
+        while True:
+            durable = await self._executor.store.load_current(
+                tenant_id=_tenant_from_key(key), feature=_FEATURE, key=key,
+                include_events=False,
+            )
+            if durable is None:
+                return
+            for event in await self._executor.store.events_after(durable["id"], sent_seq):
+                sent_seq = max(sent_seq, int(event["seq"]))
+                if event["event"] != "progress":
+                    continue
+                row = dict(event["data"])
+                row.setdefault("seq", event["seq"])
+                row.setdefault("ts", event["created_at"])
+                yield {"event": "progress", "data": json.dumps(row)}
+            if durable["status"] != "running":
+                job = self._from_durable(
+                    await self._executor.store.load_current(
+                        tenant_id=_tenant_from_key(key), feature=_FEATURE, key=key
+                    )
+                    or durable
+                )
+                break
+            await asyncio.sleep(self._executor.store.poll_seconds)
+            now = asyncio.get_running_loop().time()
+            if now - last_ping >= 20:
+                yield {"event": "ping", "data": "{}"}
+                last_ping = now
+        if job["status"] == "done":
+            yield {"event": "done", "data": json.dumps(self._cached_result(job))}
+        elif job["status"] == "cancelled":
+            yield {
+                "event": "cancelled",
+                "data": json.dumps(
+                    {"message": job["error"], "resume_available": job["resume_available"]}
+                ),
+            }
+        else:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": job["error"] or "Refresh failed."}),
+            }
 
 
-def get_job(key: str) -> dict[str, Any] | None:
-    """Return the current job for a key (running or last-finished), or None."""
-    return _jobs.get(key)
+manager = AppRegistrationsJobManager()
+_tasks = manager._executor.tasks  # local handles only; durable SQL is authoritative
+
+
+async def get_job(key: str) -> dict[str, Any] | None:
+    return await manager.get_job(key)
 
 
 def public_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
-    """A client-safe view of a job (omits the heavy result snapshot)."""
     if not job:
         return None
     return {
@@ -68,196 +387,20 @@ def public_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def is_running(key: str) -> bool:
-    job = _jobs.get(key)
-    return bool(job and job["status"] in ("running", "cancelling"))
+async def is_running(key: str) -> bool:
+    return await manager.is_running(key)
 
 
-async def _append(key: str, level: str, message: str, metadata: dict[str, Any] | None = None) -> None:
-    job = _jobs[key]
-    seq = len(job["progress"])
-    meta = metadata or {}
-    entry = {"seq": seq, "ts": _now(), "level": level, "message": message, **meta}
-    job["progress"].append(entry)
-    for field in ("current", "total", "percent", "page", "retries", "throttles", "resumed"):
-        if field in meta:
-            job[field] = meta[field]
-    cond = _cond(key)
-    async with cond:
-        cond.notify_all()
+async def start_job(**kwargs: Any) -> dict[str, Any]:
+    return await manager.start_job(**kwargs)
 
 
-async def _finish(key: str, *, status: str, result: dict[str, Any] | None, error: str) -> None:
-    job = _jobs[key]
-    job["status"] = status
-    job["finished_at"] = _now()
-    job["result"] = result
-    job["error"] = error
-    cond = _cond(key)
-    async with cond:
-        cond.notify_all()
-
-
-def start_job(
-    *,
-    key: str,
-    tenant_id: str,
-    connection: dict[str, Any] | None,
-    connection_id: str,
-    limit: int = 500,
-    mode: str = "capped",
-    page_size: int = 250,
-) -> dict[str, Any]:
-    """Start a background refresh for ``key`` if one isn't already running. Returns the job."""
-    from app.identity import appregs, appregs_cache
-
-    existing = _jobs.get(key)
-    if existing and existing["status"] in ("running", "cancelling"):
-        return existing
-
-    requested_mode = "full" if mode == "full" else "capped"
-    saved_checkpoint = appregs_cache.get_checkpoint(tenant_id, connection_id)
-    checkpoint_reset_reason = ""
-    if (
-        saved_checkpoint
-        and saved_checkpoint.get("schema") == appregs.APPREGS_CHECKPOINT_SCHEMA
-        and saved_checkpoint.get("mode") == requested_mode
-    ):
-        # Resume the job exactly as it began even if an admin changed the normal cap while
-        # the process was down. A continuation belongs to its original query boundary.
-        limit = max(50, min(5000, int(
-            saved_checkpoint.get("configured_limit")
-            or (saved_checkpoint.get("target_limit") if requested_mode == "capped" else limit)
-            or limit
-        )))
-        page_size = max(50, min(999, int(saved_checkpoint.get("page_size") or page_size)))
-    elif saved_checkpoint:
-        if saved_checkpoint.get("schema") != appregs.APPREGS_CHECKPOINT_SCHEMA:
-            checkpoint_reset_reason = (
-                "A saved refresh checkpoint uses an older data schema; restarting from page 1."
-            )
-        else:
-            checkpoint_reset_reason = (
-                f"A saved {saved_checkpoint.get('mode', 'previous')} refresh checkpoint cannot be "
-                f"used for {requested_mode} mode; restarting from page 1."
-            )
-
-    job: dict[str, Any] = {
-        "id": uuid.uuid4().hex[:16],
-        "key": key,
-        "status": "running",
-        "started_at": _now(),
-        "finished_at": None,
-        "progress": [],
-        "result": None,
-        "error": "",
-        "mode": requested_mode,
-        "configured_limit": limit,
-        "page_size": page_size,
-        "current": 0,
-        "total": None,
-        "percent": None,
-        "page": 0,
-        "retries": 0,
-        "throttles": 0,
-        "resumed": False,
-        "resume_available": False,
-        "cancel_requested": False,
-    }
-    _jobs[key] = job
-
-    async def _run() -> None:
-        from app.identity import appregs, appregs_cache
-
-        checkpoint = appregs_cache.get_checkpoint(tenant_id, connection_id)
-        expected_target = appregs.APPREGS_FULL_SAFETY_LIMIT if job["mode"] == "full" else limit
-        if checkpoint and (
-            checkpoint.get("schema") != appregs.APPREGS_CHECKPOINT_SCHEMA
-            or checkpoint.get("mode") != job["mode"]
-            or int(checkpoint.get("target_limit") or 0) != expected_target
-            or int(checkpoint.get("page_size") or 0) != page_size
-        ):
-            appregs_cache.delete_checkpoint(tenant_id, connection_id)
-            checkpoint = None
-        job["resumed"] = bool(checkpoint)
-
-        async def _progress(level: str, message: str, metadata: dict[str, Any] | None = None) -> None:
-            await _append(key, level, message, metadata)
-
-        async def _checkpoint(state: dict[str, Any]) -> None:
-            appregs_cache.set_checkpoint(
-                tenant_id,
-                connection_id,
-                {**state, "job_id": job["id"], "started_at": job["started_at"]},
-            )
-            job["resume_available"] = True
-
-        await _append(key, "info", "Starting Application Registrations refresh…")
-        if checkpoint_reset_reason:
-            await _append(key, "warn", checkpoint_reset_reason, {"phase": "restart"})
-        try:
-            snap = await appregs.collect_app_registrations(
-                connection,
-                tenant_id=tenant_id,
-                limit=limit,
-                full=job["mode"] == "full",
-                page_size=page_size,
-                checkpoint=checkpoint,
-                on_checkpoint=_checkpoint,
-                progress=_progress,
-                should_cancel=lambda: bool(job.get("cancel_requested")),
-            )
-            if snap.get("source") == "unavailable":
-                raise RuntimeError("provider_unavailable")
-            fetched_at = appregs_cache.set_(tenant_id, connection_id, snap)
-            appregs_cache.delete_checkpoint(tenant_id, connection_id)
-            job["resume_available"] = False
-            # Shape the done payload like the GET response so the client can use it directly.
-            result = {
-                **snap,
-                "cached": True,
-                "never_loaded": False,
-                "fetched_at": fetched_at,
-                "age_seconds": 0,
-                "configured_limit": limit,
-                "max_configurable_limit": 5000,
-                "full_safety_limit": appregs.APPREGS_FULL_SAFETY_LIMIT,
-                "page_size": page_size,
-            }
-            await _append(key, "ok", f"Cached snapshot — {snap.get('summary', {}).get('total', 0)} app registration(s).")
-            await _finish(key, status="done", result=result, error="")
-        except asyncio.CancelledError:
-            job["resume_available"] = appregs_cache.get_checkpoint(tenant_id, connection_id) is not None
-            await _append(key, "warn", "Refresh cancelled. Completed pages were checkpointed; the previous snapshot is unchanged.")
-            await _finish(key, status="cancelled", result=None, error="Refresh cancelled.")
-        except Exception as exc:  # noqa: BLE001 - record bounded status, never provider details
-            log.warning("app-registrations refresh job failed: %s", type(exc).__name__)
-            job["resume_available"] = appregs_cache.get_checkpoint(tenant_id, connection_id) is not None
-            message = "Refresh failed. The previous completed snapshot was preserved."
-            await _append(key, "error", message)
-            await _finish(key, status="error", result=None, error=message)
-
-    task = asyncio.create_task(_run())
-    _tasks[key] = task
-    task.add_done_callback(lambda _t: _tasks.pop(key, None))
-    return job
-
-
-def cancel_job(key: str) -> bool:
-    """Request cancellation of an active job. Its last completed page remains resumable."""
-    job = _jobs.get(key)
-    if not job or job.get("status") not in ("running", "cancelling"):
-        return False
-    job["cancel_requested"] = True
-    job["status"] = "cancelling"
-    task = _tasks.get(key)
-    if task and not task.done():
-        task.cancel()
-    return True
+async def cancel_job(key: str) -> bool:
+    return await manager.cancel_job(key)
 
 
 def recoverable_job(tenant_id: str, connection_id: str) -> dict[str, Any] | None:
-    """Public paused-job shape reconstructed from a durable process-restart checkpoint."""
+    """Public paused-job shape reconstructed from the existing page checkpoint."""
     from app.identity import appregs, appregs_cache
 
     checkpoint = appregs_cache.get_checkpoint(tenant_id, connection_id)
@@ -277,9 +420,8 @@ def recoverable_job(tenant_id: str, connection_id: str) -> dict[str, Any] | None
         "progress": [],
         "error": "",
         "mode": checkpoint.get("mode") or "capped",
-        "configured_limit": checkpoint.get("configured_limit") or (
-            checkpoint.get("target_limit") if checkpoint.get("mode") == "capped" else 500
-        ),
+        "configured_limit": checkpoint.get("configured_limit")
+        or (checkpoint.get("target_limit") if checkpoint.get("mode") == "capped" else 500),
         "page_size": checkpoint.get("page_size") or 250,
         "current": current,
         "total": total,
@@ -293,52 +435,5 @@ def recoverable_job(tenant_id: str, connection_id: str) -> dict[str, Any] | None
 
 
 async def stream(key: str):
-    """Async generator of SSE-ready dicts for a job: replays the progress log so far, then
-    tails new lines until the job finishes (done/error). Safe to (re)attach at any time; the
-    underlying job keeps running regardless of subscribers."""
-    import json
-
-    job = _jobs.get(key)
-    if job is None:
-        yield {"event": "error", "data": json.dumps({"message": "No refresh job for this scope."})}
-        return
-
-    yield {"event": "start", "data": json.dumps({
-        "id": job["id"], "status": job["status"], "started_at": job["started_at"],
-        "mode": job.get("mode", "capped"), "configured_limit": job.get("configured_limit", 500),
-        "current": job.get("current", 0), "total": job.get("total"),
-        "page": job.get("page", 0), "resumed": bool(job.get("resumed", False)),
-    })}
-
-    sent = 0
-    cond = _cond(key)
-    while True:
-        # Drain any progress lines we haven't sent yet.
-        progress = job["progress"]
-        while sent < len(progress):
-            yield {"event": "progress", "data": json.dumps(progress[sent])}
-            sent += 1
-
-        if job["status"] not in ("running", "cancelling"):
-            break
-
-        # Wait for the next notification (new progress or completion).
-        async with cond:
-            try:
-                await asyncio.wait_for(cond.wait(), timeout=20)
-            except asyncio.TimeoutError:
-                # Heartbeat keeps the SSE connection alive during long quiet stretches.
-                yield {"event": "ping", "data": "{}"}
-
-    # Flush any final lines appended alongside completion.
-    progress = job["progress"]
-    while sent < len(progress):
-        yield {"event": "progress", "data": json.dumps(progress[sent])}
-        sent += 1
-
-    if job["status"] == "done":
-        yield {"event": "done", "data": json.dumps(job["result"] or {})}
-    elif job["status"] == "cancelled":
-        yield {"event": "cancelled", "data": json.dumps({"message": job["error"], "resume_available": job.get("resume_available", False)})}
-    else:
-        yield {"event": "error", "data": json.dumps({"message": job["error"] or "Refresh failed."})}
+    async for frame in manager.stream(key):
+        yield frame

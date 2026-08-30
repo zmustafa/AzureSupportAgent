@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -132,6 +132,14 @@ class Session(Base):
     # principal's effective permissions are DOWNSCOPED to just this role for the session. Empty
     # = the union of all assigned roles (normal behavior). Never grants a role the user lacks.
     active_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Cleanup uses an OR across these three predicates, so separate indexes let the database
+    # use a bitmap/index-union plan instead of forcing one composite's leading column.
+    __table_args__ = (
+        Index("ix_sessions_revoked", "revoked"),
+        Index("ix_sessions_expires", "expires_at"),
+        Index("ix_sessions_last_seen", "last_seen_at"),
+    )
 
 
 class IdentityProvider(Base):

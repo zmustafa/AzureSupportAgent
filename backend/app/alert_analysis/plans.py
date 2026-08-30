@@ -1,11 +1,12 @@
 """Approval-gated, non-executing Alerts Manager remediation-plan registry."""
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "alert_analysis_plans.json"
 
@@ -15,20 +16,12 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {"plans": {}}
-    try:
-        data = json.loads(_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {"plans": {}}
-    except (OSError, json.JSONDecodeError):
-        return {"plans": {}}
+    data = jsonstore.read_json(_PATH, {"plans": {}})
+    return data if isinstance(data, dict) else {"plans": {}}
 
 
 def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(_PATH)
+    jsonstore.write_json(_PATH, data)
 
 
 def create_plan(
@@ -61,9 +54,11 @@ def create_plan(
         "actions": actions[:500],
         "safety": "Preview only. This application has no endpoint that executes this plan.",
     }
-    data = _read()
-    data.setdefault("plans", {})[plan_id] = plan
-    _write(data)
+    jsonstore.mutate_json(
+        _PATH,
+        {"plans": {}},
+        lambda data: data.setdefault("plans", {}).__setitem__(plan_id, plan),
+    )
     return plan
 
 
@@ -81,23 +76,32 @@ def get_plan(tenant_id: str, plan_id: str) -> dict[str, Any] | None:
 def decide_plan(tenant_id: str, plan_id: str, decision: str, actor: str, reason: str = "") -> dict[str, Any] | None:
     if decision not in {"approved", "rejected"}:
         return None
-    data = _read()
-    plan = data.get("plans", {}).get(plan_id)
-    if not plan or plan.get("tenant_id") != tenant_id or plan.get("status") != "pending":
-        return None
-    plan["status"] = decision
-    plan["decided_by"] = actor
-    plan["decided_at"] = _now()
-    plan["reason"] = reason[:1000]
-    _write(data)
-    return plan
+    decided: dict[str, Any] | None = None
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal decided
+        plan = data.get("plans", {}).get(plan_id)
+        if not plan or plan.get("tenant_id") != tenant_id or plan.get("status") != "pending":
+            return
+        plan["status"] = decision
+        plan["decided_by"] = actor
+        plan["decided_at"] = _now()
+        plan["reason"] = reason[:1000]
+        decided = dict(plan)
+
+    jsonstore.mutate_json(_PATH, {"plans": {}}, _mutate)
+    return decided
 
 
 def delete_plan(tenant_id: str, plan_id: str) -> bool:
-    data = _read()
-    plan = data.get("plans", {}).get(plan_id)
-    if not plan or plan.get("tenant_id") != tenant_id:
-        return False
-    del data["plans"][plan_id]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        plan = data.get("plans", {}).get(plan_id)
+        if plan and plan.get("tenant_id") == tenant_id:
+            del data["plans"][plan_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"plans": {}}, _mutate)
+    return deleted

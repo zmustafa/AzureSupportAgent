@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 log = logging.getLogger("app.iam.cache")
 
 _DATA = Path(__file__).resolve().parents[2] / ".data"
@@ -116,14 +118,8 @@ def _scope_hash(scope: str) -> str:
 # --------------------------------------------------------------------------- index I/O
 def _read_index() -> dict[str, Any]:
     _migrate_legacy_paths()
-    if _INDEX.exists():
-        try:
-            data = json.loads(_INDEX.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    data = jsonstore.read_json(_INDEX, {})
+    return data if isinstance(data, dict) else {}
 
 
 # Monotonic write counter — bumped when the SOURCE data changes (scope rows, the directory
@@ -176,11 +172,18 @@ def cache_fingerprint() -> tuple[str, int]:
     return (str(_INDEX), _write_seq)
 
 
-def _write_index(data: dict[str, Any], *, bump: bool = True) -> None:
-    _INDEX.parent.mkdir(parents=True, exist_ok=True)
-    _INDEX.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _mutate_index(mutator: Callable[[dict[str, Any]], Any], *, bump: bool = True) -> Any:
+    _migrate_legacy_paths()
+    result: Any = None
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal result
+        result = mutator(data)
+
+    jsonstore.mutate_json(_INDEX, {}, _mutate)
     if bump:
         _bump()
+    return result
 
 
 # Every index mutation is READ-MODIFY-WRITE over one shared JSON file:
@@ -226,9 +229,8 @@ def _blob_path(tenant_id: str, scope: str) -> Path:
 
 def _write_blob(tenant_id: str, scope: str, payload: dict[str, Any], *, bump: bool = True) -> None:
     path = _blob_path(tenant_id, scope)
-    path.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    path.write_bytes(gzip.compress(raw))
+    jsonstore.write_bytes(path, gzip.compress(raw))
     if bump:
         _bump()
 
@@ -277,6 +279,25 @@ def read_state(tenant_id: str, name: str) -> dict[str, Any]:
     return _read_blob(tenant_id, state_key(name))
 
 
+def mutate_state(
+    tenant_id: str,
+    name: str,
+    mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> dict[str, Any]:
+    """Mutate one gzip state sidecar under the jsonstore-coordinated index lock."""
+    result: dict[str, Any] = {}
+
+    def _mutate(_index: dict[str, Any]) -> None:
+        current = read_state(tenant_id, name)
+        replacement = mutator(current)
+        persisted = current if replacement is None else replacement
+        _write_blob(tenant_id, state_key(name), persisted, bump=False)
+        result.update(json.loads(json.dumps(persisted)))
+
+    _mutate_index(_mutate, bump=False)
+    return result
+
+
 def delete_state(tenant_id: str, name: str) -> None:
     _delete_blob(tenant_id, state_key(name))
 
@@ -319,10 +340,11 @@ def write_scope(
     entry["row_count"] = len(rows)
     entry["rows_ref"] = _scope_hash(scope)
     _write_blob(tenant_id, scope, {"rows": rows})
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket["scopes"][scope] = entry
-    _write_index(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)["scopes"][scope] = entry
+
+    _mutate_index(_mutate)
     return entry
 
 
@@ -342,17 +364,20 @@ def mark_scope_verified(tenant_id: str, scope: str, *, reason: str = "") -> dict
     then mean "we ran recently", which is not what a reader takes it to mean, and a scope whose
     collection genuinely failed days ago would be indistinguishable from one collected seconds
     ago. ``verified_at`` is a separate, additive fact: the data is old *and known to be current*."""
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    entry = bucket["scopes"].get(scope)
-    if not isinstance(entry, dict):
-        return None
-    entry["verified_at"] = _now_iso()
-    entry["verified_unchanged"] = True
-    if reason:
-        entry["verified_reason"] = reason
-    _write_index(data)
-    return entry
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        entry = _tenant_bucket(data, tenant_id)["scopes"].get(scope)
+        if not isinstance(entry, dict):
+            return
+        entry["verified_at"] = _now_iso()
+        entry["verified_unchanged"] = True
+        if reason:
+            entry["verified_reason"] = reason
+        result.update(entry)
+
+    _mutate_index(_mutate)
+    return result or None
 
 
 def purge_phantom_scopes(tenant_id: str) -> list[str]:
@@ -397,10 +422,10 @@ def all_scope_rows(tenant_id: str) -> list[dict[str, Any]]:
 
 @_index_guarded
 def delete_scope(tenant_id: str, scope: str) -> bool:
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    existed = bucket["scopes"].pop(scope, None) is not None
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> bool:
+        return _tenant_bucket(data, tenant_id)["scopes"].pop(scope, None) is not None
+
+    existed = bool(_mutate_index(_mutate))
     _delete_blob(tenant_id, scope)
     return existed
 
@@ -452,10 +477,10 @@ def write_directory(
             "principal_state": principal_state or {},
         },
     )
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket[DIRECTORY_KEY] = entry
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)[DIRECTORY_KEY] = entry
+
+    _mutate_index(_mutate)
     return entry
 
 
@@ -500,10 +525,11 @@ def write_bypass(
     entry["finding_count"] = len(rows)
     entry["rows_ref"] = BYPASS_KEY
     _write_blob(tenant_id, BYPASS_KEY, {"resources": resources, "rows": rows, "summary": summary})
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket[BYPASS_KEY] = entry
-    _write_index(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)[BYPASS_KEY] = entry
+
+    _mutate_index(_mutate)
     return entry
 
 
@@ -548,15 +574,16 @@ def write_drift(tenant_id: str, payload: dict[str, Any]) -> None:
     Only the most recent one is kept. The per-run history lives in `IamScanRun.diff_json`; this
     slice exists purely so the synchronous signal context can see it."""
     _write_blob(tenant_id, DRIFT_KEY, payload, bump=False)
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket[DRIFT_KEY] = {
-        "generated_at": _now_iso(),
-        "change_count": len(payload.get("changes", []) or []),
-        "available": bool(payload.get("available")),
-    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)[DRIFT_KEY] = {
+            "generated_at": _now_iso(),
+            "change_count": len(payload.get("changes", []) or []),
+            "available": bool(payload.get("available")),
+        }
+
     # Derived from two runs of rows; it does not change the rows themselves.
-    _write_index(data, bump=False)
+    _mutate_index(_mutate, bump=False)
 
 
 def read_drift(tenant_id: str) -> dict[str, Any]:
@@ -595,10 +622,11 @@ def write_usage(tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         "source": payload.get("source", ""),
     }
     _write_blob(tenant_id, USAGE_KEY, payload)
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket[USAGE_KEY] = entry
-    _write_index(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)[USAGE_KEY] = entry
+
+    _mutate_index(_mutate)
     return entry
 
 
@@ -658,22 +686,23 @@ def write_escalation(
         "duration_seconds": float(duration_seconds),
         "graph": graph,
     }, bump=False)
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    # Meta only — the graph itself is megabytes and has no business in the index, which is read
-    # on nearly every request.
-    bucket[ESCALATION_KEY] = {
-        "cache_version": int(cache_version),
-        "min_confidence": min_confidence,
-        "generated_at": _now_iso(),
-        "duration_seconds": float(duration_seconds),
-        "nodes": len(graph.get("nodes") or []),
-        "edges": len(graph.get("edges") or []),
-        "paths": len(graph.get("paths") or []),
-    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        # Meta only — the graph itself is megabytes and has no business in the index, which is
+        # read on nearly every request.
+        _tenant_bucket(data, tenant_id)[ESCALATION_KEY] = {
+            "cache_version": int(cache_version),
+            "min_confidence": min_confidence,
+            "generated_at": _now_iso(),
+            "duration_seconds": float(duration_seconds),
+            "nodes": len(graph.get("nodes") or []),
+            "edges": len(graph.get("edges") or []),
+            "paths": len(graph.get("paths") or []),
+        }
+
     # Writing the graph must not change the version the graph is stamped with, or it
     # invalidates itself and the build is re-paid on every request forever.
-    _write_index(data, bump=False)
+    _mutate_index(_mutate, bump=False)
 
 
 def read_escalation(tenant_id: str) -> dict[str, Any]:
@@ -708,17 +737,18 @@ def write_rightsizing(
     _write_blob(tenant_id, RIGHTSIZING_KEY, payload, bump=False)
     if cache_version is None:
         return
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    bucket[RIGHTSIZING_KEY] = {
-        "cache_version": int(cache_version),
-        "generated_at": _now_iso(),
-        "duration_seconds": float(duration_seconds or 0.0),
-        "measured": bool(payload.get("measured")),
-        "recommendations": len(payload.get("recommendations") or []),
-        "assessed": int(payload.get("assessed") or 0),
-    }
-    _write_index(data, bump=False)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _tenant_bucket(data, tenant_id)[RIGHTSIZING_KEY] = {
+            "cache_version": int(cache_version),
+            "generated_at": _now_iso(),
+            "duration_seconds": float(duration_seconds or 0.0),
+            "measured": bool(payload.get("measured")),
+            "recommendations": len(payload.get("recommendations") or []),
+            "assessed": int(payload.get("assessed") or 0),
+        }
+
+    _mutate_index(_mutate, bump=False)
 
 
 def read_rightsizing_meta(tenant_id: str) -> dict[str, Any]:
@@ -744,20 +774,21 @@ def has_any(tenant_id: str) -> bool:
 @_index_guarded
 def delete_tenant(tenant_id: str) -> int:
     """Drop every cached scope + the directory for a tenant (demo purge). Returns scopes removed."""
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    n = len(bucket["scopes"])
-    for scope in list(bucket["scopes"].keys()):
-        _delete_blob(tenant_id, scope)
-    _delete_blob(tenant_id, DIRECTORY_KEY)
-    # State documents are not in the scope index, so they do not fall out with it. Leaving the
-    # scanner baseline behind would make a re-added tenant's first scan report every finding as
-    # "resolved" and then "new" against a run that no longer has any data behind it.
-    for name in (SCANNER_STATE, FINDINGS_LEDGER):
-        delete_state(tenant_id, name)
-    data[tenant_id or "default"] = {"scopes": {}, DIRECTORY_KEY: {}}
-    _write_index(data)
-    return n
+    def _mutate(data: dict[str, Any]) -> int:
+        bucket = _tenant_bucket(data, tenant_id)
+        count = len(bucket["scopes"])
+        for scope in list(bucket["scopes"]):
+            _delete_blob(tenant_id, scope)
+        _delete_blob(tenant_id, DIRECTORY_KEY)
+        # State documents are not in the scope index, so they do not fall out with it. Leaving
+        # the scanner baseline behind would make a re-added tenant's first scan report every
+        # finding as "resolved" and then "new" against a run with no data behind it.
+        for name in (SCANNER_STATE, FINDINGS_LEDGER):
+            delete_state(tenant_id, name)
+        data[tenant_id or "default"] = {"scopes": {}, DIRECTORY_KEY: {}}
+        return count
+
+    return int(_mutate_index(_mutate))
 
 
 @_index_guarded
@@ -767,19 +798,20 @@ def purge_demo(tenant_id: str) -> int:
 
     This is the surgical counterpart to :func:`delete_tenant`: a "Remove demo data" action must
     never wipe a real access scan that happens to share the tenant cache with the demo dataset."""
-    data = _read_index()
-    bucket = _tenant_bucket(data, tenant_id)
-    removed = 0
-    for scope, meta in list(bucket["scopes"].items()):
-        if isinstance(meta, dict) and meta.get("demo"):
-            _delete_blob(tenant_id, scope)
-            del bucket["scopes"][scope]
-            removed += 1
-    if (bucket.get(DIRECTORY_KEY) or {}).get("demo"):
-        _delete_blob(tenant_id, DIRECTORY_KEY)
-        bucket[DIRECTORY_KEY] = {}
-    _write_index(data)
-    return removed
+    def _mutate(data: dict[str, Any]) -> int:
+        bucket = _tenant_bucket(data, tenant_id)
+        removed = 0
+        for scope, meta in list(bucket["scopes"].items()):
+            if isinstance(meta, dict) and meta.get("demo"):
+                _delete_blob(tenant_id, scope)
+                del bucket["scopes"][scope]
+                removed += 1
+        if (bucket.get(DIRECTORY_KEY) or {}).get("demo"):
+            _delete_blob(tenant_id, DIRECTORY_KEY)
+            bucket[DIRECTORY_KEY] = {}
+        return removed
+
+    return int(_mutate_index(_mutate))
 
 
 def is_demo(tenant_id: str) -> bool:

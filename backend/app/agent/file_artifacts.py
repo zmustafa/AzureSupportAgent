@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _ROOT = Path(__file__).resolve().parents[2] / ".data" / "chat_artifacts"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9-]{1,80}$")
 _MAX_JSON_BYTES = 25 * 1024 * 1024
@@ -59,8 +61,11 @@ def _store(chat_id: str, source: Path, kind: str) -> dict[str, str]:
         ),
         "created_at": str(time.time()),
     }
-    (directory / f"{artifact_id}.meta.json").write_text(
-        json.dumps(metadata, separators=(",", ":")), encoding="utf-8",
+    jsonstore.write_json(
+        directory / f"{artifact_id}.meta.json",
+        metadata,
+        indent=None,
+        separators=(",", ":"),
     )
     return {
         **metadata,
@@ -75,8 +80,10 @@ def resolve(chat_id: str, artifact_id: str) -> tuple[Path, dict[str, str]]:
     directory = _ROOT / chat_id
     metadata_path = directory / f"{artifact_id}.meta.json"
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        metadata = jsonstore.read_json(metadata_path, None)
+        if not isinstance(metadata, dict):
+            raise FileNotFoundError("Artifact was not found.")
+    except OSError as exc:
         raise FileNotFoundError("Artifact was not found.") from exc
     if metadata.get("artifact_id") != artifact_id:
         raise FileNotFoundError("Artifact was not found.")

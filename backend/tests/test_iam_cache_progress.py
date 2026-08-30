@@ -13,7 +13,7 @@ escalation graph takes **40 seconds** to build:
 """
 from __future__ import annotations
 
-import time
+import asyncio
 
 import pytest
 
@@ -379,19 +379,40 @@ def anyio_backend():
 
 
 @pytest.mark.anyio
-async def test_every_progress_line_carries_the_clock(isolated_cache):
+async def test_every_progress_line_carries_the_clock(
+    isolated_cache, durable_job_sessions, monkeypatch
+):
     """A progress log without elapsed time reads identically at five seconds and five minutes,
     which is when people reload the page and fire off a second refresh."""
     from app.iam import job
 
+    async def refresh_scope(_tenant, _connection, _scope, *, display_name, progress):
+        del display_name
+        await progress("info", "Collecting…")
+
+    async def no_warm(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(job.orchestrator, "refresh_scope", refresh_scope)
+    monkeypatch.setattr(job, "_warm_derived", no_warm)
+    manager = job.IamJobManager(
+        session_factory=durable_job_sessions, owner_id="timing", poll_seconds=0.01
+    )
     key = job.job_key(TENANT, "/subscriptions/s1")
-    job._jobs[key] = {
-        "id": "x", "key": key, "tenant_id": TENANT, "scope": "/subscriptions/s1",
-        "mode": "scope", "status": "running", "started_at": "", "started_monotonic": time.monotonic(),
-        "finished_at": None, "finished_monotonic": None, "progress": [], "error": "",
-    }
-    await job._append(key, "info", "Collecting…")
-    entry = job._jobs[key]["progress"][0]
+    await manager.start_job(
+        tenant_id=TENANT,
+        connection=None,
+        scope="/subscriptions/s1",
+        mode="scope",
+        record_run=False,
+    )
+    for _ in range(100):
+        current = await manager.get_job(key)
+        if current and current["progress"]:
+            break
+        await asyncio.sleep(0.01)
+    assert current is not None
+    entry = current["progress"][0]
     assert "elapsed_seconds" in entry and "eta_label" in entry and entry["eta_basis"]
 
 
@@ -436,41 +457,74 @@ async def test_a_failed_warm_up_does_not_fail_the_refresh(isolated_cache, monkey
 
 
 @pytest.mark.anyio
-async def test_the_done_event_reports_elapsed_and_no_estimate(isolated_cache):
+async def test_the_done_event_reports_elapsed_and_no_estimate(
+    isolated_cache, durable_job_sessions, monkeypatch
+):
     """Once a job has finished there is nothing remaining, and "0s left" on a completed run is
     at best noise and at worst reads as though something is still pending."""
     import json as _json
 
     from app.iam import job
 
+    async def refresh_scope(*_args, **_kwargs):
+        return None
+
+    async def no_warm(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(job.orchestrator, "refresh_scope", refresh_scope)
+    monkeypatch.setattr(job, "_warm_derived", no_warm)
+    manager = job.IamJobManager(
+        session_factory=durable_job_sessions, owner_id="done", poll_seconds=0.01
+    )
     key = job.job_key(TENANT, "s")
-    job._jobs[key] = {
-        "id": "x", "key": key, "tenant_id": TENANT, "scope": "s", "mode": "scope",
-        "status": "done", "started_at": "", "started_monotonic": time.monotonic() - 7,
-        "finished_at": "", "finished_monotonic": time.monotonic(), "progress": [], "error": "",
-    }
-    events = [e async for e in job.stream(key)]
+    await manager.start_job(
+        tenant_id=TENANT, connection=None, scope="s", mode="scope", record_run=False
+    )
+    await manager._executor.store.wait_for_terminal(  # noqa: SLF001
+        (await manager.get_job(key))["id"]
+    )
+    events = [e async for e in manager.stream(key)]
     done = _json.loads(next(e["data"] for e in events if e["event"] == "done"))
     assert done["eta_seconds"] is None
     assert done["eta_label"] == "—"
-    assert done["elapsed_seconds"] >= 6
+    assert done["elapsed_seconds"] >= 0
     assert "completed in" in done["eta_basis"]
 
 
 @pytest.mark.anyio
-async def test_only_a_successful_run_teaches_the_estimator(isolated_cache):
+async def test_only_a_successful_run_teaches_the_estimator(
+    isolated_cache, durable_job_sessions, monkeypatch
+):
     """A refresh that died after four seconds would otherwise teach the estimator that this
     tenant takes four seconds."""
     from app.iam import job
 
-    key = job.job_key(TENANT, "s")
+    outcomes = iter([RuntimeError("failed"), None])
+
+    async def refresh_all(*_args, **_kwargs):
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+
+    async def no_warm(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(job.orchestrator, "refresh_all", refresh_all)
+    monkeypatch.setattr(job, "_warm_derived", no_warm)
+    manager = job.IamJobManager(
+        session_factory=durable_job_sessions, owner_id="estimator", poll_seconds=0.01
+    )
     for status in ("error", "done"):
-        job._jobs[key] = {
-            "id": "x", "key": key, "tenant_id": TENANT, "scope": "s", "mode": "all",
-            "status": "running", "started_at": "", "started_monotonic": time.monotonic() - 12,
-            "finished_at": None, "finished_monotonic": None, "progress": [], "error": "",
-        }
-        await job._finish(key, status=status)
+        started = await manager.start_job(
+            tenant_id=TENANT,
+            connection=None,
+            scope="s",
+            mode="all",
+            record_run=False,
+        )
+        terminal = await manager._executor.store.wait_for_terminal(started["id"])  # noqa: SLF001
+        assert terminal is not None and terminal["status"] == status
     samples = cache.read_state(TENANT, progress.STATE_KEY).get("all") or []
     assert len(samples) == 1, "the failed run must not be a sample"
 

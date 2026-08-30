@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "workbooks.json"
 
 # Allowed runtimes for a workbook body.
@@ -63,19 +65,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"workbooks": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"workbooks": {}})
+    return data if isinstance(data, dict) else {"workbooks": {}}
 
 
 def _merge(stored: dict[str, Any]) -> dict[str, Any]:
@@ -109,48 +100,60 @@ def get_workbook(workbook_id: str) -> dict[str, Any] | None:
 
 
 def upsert_workbook(wb: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    workbooks = data.setdefault("workbooks", {})
     wid = wb.get("id") or str(uuid.uuid4())
-    existing = workbooks.get(wid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in wb and wb[key] is not None:
-            merged[key] = wb[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    workbooks[wid] = merged
-    _write(data)
-    result = get_workbook(wid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        workbooks = data.setdefault("workbooks", {})
+        existing = workbooks.get(wid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in wb and wb[key] is not None:
+                merged[key] = wb[key]
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        workbooks[wid] = merged
+        result.update(_merge(merged))
+        result["id"] = wid
+
+    jsonstore.mutate_json(_PATH, {"workbooks": {}}, _mutate)
     return result
 
 
 def delete_workbook(workbook_id: str) -> bool:
-    data = _read()
-    if workbook_id in data.get("workbooks", {}):
-        del data["workbooks"][workbook_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if workbook_id in data.get("workbooks", {}):
+            del data["workbooks"][workbook_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"workbooks": {}}, _mutate)
+    return deleted
 
 
 def seed_if_empty() -> int:
     """Seed curated starter workbooks on first run. Returns number seeded."""
-    data = _read()
-    if data.get("workbooks"):
-        return 0
     from app.workbooks.starters import STARTER_WORKBOOKS
 
-    workbooks = data.setdefault("workbooks", {})
-    for wb in STARTER_WORKBOOKS:
-        wid = str(uuid.uuid4())
-        merged = dict(wb)
-        merged["created_at"] = _now()
-        merged["updated_at"] = _now()
-        merged["created_by"] = "system"
-        merged["starter"] = True
-        workbooks[wid] = merged
-    _write(data)
-    return len(STARTER_WORKBOOKS)
+    seeded = 0
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal seeded
+        if data.get("workbooks"):
+            return
+        workbooks = data.setdefault("workbooks", {})
+        for wb in STARTER_WORKBOOKS:
+            wid = str(uuid.uuid4())
+            merged = dict(wb)
+            merged["created_at"] = _now()
+            merged["updated_at"] = _now()
+            merged["created_by"] = "system"
+            merged["starter"] = True
+            workbooks[wid] = merged
+        seeded = len(STARTER_WORKBOOKS)
+
+    jsonstore.mutate_json(_PATH, {"workbooks": {}}, _mutate)
+    return seeded

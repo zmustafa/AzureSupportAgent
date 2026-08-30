@@ -191,7 +191,7 @@ async def create_generation_jobs_endpoint(
         wl = get_workload(wid)
         if wl is None:
             continue
-        job = manager.create(
+        job = await manager.create(
             tenant_id=principal.tenant_id,
             workload_id=wid,
             workload_name=wl.get("name", "workload"),
@@ -208,14 +208,14 @@ async def create_generation_jobs_endpoint(
 async def list_generation_jobs_endpoint(principal: Principal = Depends(get_principal)):
     from app.architectures.jobs import manager
 
-    return {"jobs": manager.list(principal.tenant_id)}
+    return {"jobs": await manager.list(principal.tenant_id)}
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_generation_job_endpoint(job_id: str, principal: Principal = Depends(_write)):
     from app.architectures.jobs import manager
 
-    if not manager.cancel(job_id, principal.tenant_id):
+    if not await manager.cancel(job_id, principal.tenant_id):
         raise HTTPException(status_code=404, detail="Job not found or already finished.")
     return {"ok": True}
 
@@ -224,7 +224,7 @@ async def cancel_generation_job_endpoint(job_id: str, principal: Principal = Dep
 async def dismiss_generation_job_endpoint(job_id: str, principal: Principal = Depends(_write)):
     from app.architectures.jobs import manager
 
-    if not manager.dismiss(job_id, principal.tenant_id):
+    if not await manager.dismiss(job_id, principal.tenant_id):
         raise HTTPException(status_code=404, detail="Job not found or still running.")
     return {"ok": True}
 
@@ -1523,8 +1523,8 @@ async def generate_know_me_stream_endpoint(
             extra_context=extra_context, target_km_id=None,
         )
 
-    _knowme_jobs.start(key, _runner)
-    return EventSourceResponse(_knowme_jobs.stream(key))
+    await _knowme_jobs.start(key, _runner, tenant_id=principal.tenant_id)
+    return EventSourceResponse(_knowme_jobs.stream(key, tenant_id=principal.tenant_id))
 
 
 @router.post("/know-me/{km_id}/generate/stream")
@@ -1547,8 +1547,8 @@ async def regenerate_know_me_stream_endpoint(
             extra_context=extra_context, target_km_id=km_id,
         )
 
-    _knowme_jobs.start(key, _runner)
-    return EventSourceResponse(_knowme_jobs.stream(key))
+    await _knowme_jobs.start(key, _runner, tenant_id=principal.tenant_id)
+    return EventSourceResponse(_knowme_jobs.stream(key, tenant_id=principal.tenant_id))
 
 
 @router.get("/know-me/{km_id}/generate/job")
@@ -1556,7 +1556,8 @@ async def know_me_generate_job_endpoint(km_id: str, principal: Principal = Depen
     """KP5/KU4 — current generation-job status for a Know-Me doc (for reconnect on page visit).
     Returns ``{job: null}`` when nothing is running/recent so the client can resume tailing a
     generation that started before it navigated here."""
-    return {"job": _knowme_jobs.public_job(_knowme_jobs.get_job(f"km:{km_id}"))}
+    job = await _knowme_jobs.get_job(f"km:{km_id}", tenant_id=principal.tenant_id)
+    return {"job": _knowme_jobs.public_job(job)}
 
 
 def _finalize_know_me_todos(
@@ -1882,8 +1883,8 @@ async def know_me_from_workload_stream_endpoint(
             principal=principal,
         )
 
-    _knowme_jobs.start(key, _runner)
-    return EventSourceResponse(_knowme_jobs.stream(key))
+    await _knowme_jobs.start(key, _runner, tenant_id=tenant_id)
+    return EventSourceResponse(_knowme_jobs.stream(key, tenant_id=tenant_id))
 
 
 @router.get("/know-me/from-workload/active")
@@ -1893,7 +1894,7 @@ async def know_me_from_workload_active_endpoint(principal: Principal = Depends(g
     include the built document id under ``result`` so the tray can offer an Open link."""
     prefix = _wlkm_key(principal.tenant_id, "")
     jobs: list[dict[str, Any]] = []
-    for job in _knowme_jobs.jobs_with_prefix(prefix):
+    for job in await _knowme_jobs.jobs_with_prefix(prefix, tenant_id=principal.tenant_id):
         pub = _knowme_jobs.public_job(job)
         if pub is None:
             continue

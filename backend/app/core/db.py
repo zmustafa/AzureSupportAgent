@@ -141,6 +141,11 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         "notify_connector_ids": "JSON",
         "target_type": "VARCHAR(16) DEFAULT 'agent'",
         "target_config": "JSON",
+        "lease_owner": "VARCHAR(128)",
+        "lease_token": "VARCHAR(36)",
+        "lease_expires_at": "DATETIME",
+        "lease_heartbeat_at": "DATETIME",
+        "lease_occurrence_at": "DATETIME",
     },
     "task_runs": {
         "task_name": "VARCHAR(256)",
@@ -183,6 +188,18 @@ _RUNTIME_COLUMNS: dict[str, dict[str, str]] = {
         # (the live in-memory log is evicted after the run finishes / on a restart).
         "log_json": "JSON",
     },
+    "work_batch_items": {
+        "lease_owner": "VARCHAR(128)",
+        "lease_token": "VARCHAR(36)",
+        "lease_expires_at": "DATETIME",
+        "lease_heartbeat_at": "DATETIME",
+    },
+    "perf_profile_fleet_items": {
+        "lease_owner": "VARCHAR(128)",
+        "lease_token": "VARCHAR(36)",
+        "lease_expires_at": "DATETIME",
+        "lease_heartbeat_at": "DATETIME",
+    },
     # A case opened from an identity investigation is ABOUT a principal. Existing installs
     # already have a `cases` table, so these have to be patched on here as well as in the
     # migration — `create_all` never adds a column to a table that already exists.
@@ -204,21 +221,40 @@ _RUNTIME_INDEXES: list[tuple[str, str, str]] = [
     ("ix_messages_chat_created", "messages", "chat_id, created_at"),
     ("ix_audit_tenant_created", "audit_log", "tenant_id, created_at"),
     ("ix_usage_tenant_created", "usage", "tenant_id, created_at"),
+    ("ix_tool_calls_tenant_created", "tool_calls", "tenant_id, created_at"),
+    ("ix_tool_calls_tenant_status_created", "tool_calls", "tenant_id, status, created_at"),
+    ("ix_approvals_tenant_decision_created", "approvals", "tenant_id, decision, created_at"),
+    ("ix_usage_tenant_provider_model", "usage", "tenant_id, provider, model"),
+    ("ix_usage_tenant_model_created", "usage", "tenant_id, model, created_at"),
     ("ix_taskruns_task_started", "task_runs", "task_id, started_at"),
     ("ix_taskruns_tenant_started", "task_runs", "tenant_id, started_at"),
     ("ix_workbookruns_wb_started", "workbook_runs", "workbook_id, started_at"),
     ("ix_playbookruns_pb_started", "playbook_runs", "playbook_id, started_at"),
     ("ix_missionruns_wl_started", "mission_runs", "workload_id, started_at"),
     ("ix_assessmentruns_wl", "assessment_runs", "workload_id, tenant_id"),
+    ("ix_assessment_runs_tenant_deleted_started", "assessment_runs", "tenant_id, deleted_at, started_at"),
+    ("ix_assessment_runs_tenant_workload_deleted_started", "assessment_runs", "tenant_id, workload_id, deleted_at, started_at"),
     # Notifications: the unread-count poll filters deliveries by (tenant, channel) and the
     # notification list joins+filters by (tenant, read). These back both hot paths.
     ("ix_notif_tenant_read", "notifications", "tenant_id, read"),
-    ("ix_notifdeliv_tenant_channel", "notification_deliveries", "tenant_id, channel"),
+    ("ix_notifications_tenant_created", "notifications", "tenant_id, created_at"),
+    ("ix_notification_deliveries_tenant_channel_notification", "notification_deliveries", "tenant_id, channel, notification_id"),
     # "Every case about this identity" is the second question an investigator asks.
     ("ix_cases_principal_id", "cases", "principal_id"),
+    ("ix_cases_tenant_deleted_status_updated", "cases", "tenant_id, deleted_at, status, updated_at"),
+    ("ix_case_events_tenant_case_created", "case_events", "tenant_id, case_id, created_at"),
+    ("ix_sessions_revoked", "sessions", "revoked"),
+    ("ix_sessions_expires", "sessions", "expires_at"),
+    ("ix_sessions_last_seen", "sessions", "last_seen_at"),
+    ("ix_rbac_scan_runs_tenant_started", "rbac_scan_runs", "tenant_id, started_at"),
+    ("ix_quota_scan_runs_tenant_started", "quota_scan_runs", "tenant_id, started_at"),
     ("ix_roles_tenant_id", "roles", "tenant_id"),
     ("ix_groups_tenant_id", "groups", "tenant_id"),
     ("ix_identity_providers_tenant_id", "identity_providers", "tenant_id"),
+    ("ix_work_batch_items_claim", "work_batch_items", "status, lease_expires_at, available_at"),
+    ("ix_perf_fleet_items_claim", "perf_profile_fleet_items", "status, lease_expires_at, batch_id"),
+    ("ix_scheduled_tasks_due_claim", "scheduled_tasks", "status, next_run_at, lease_expires_at"),
+    ("ix_scheduled_tasks_occurrence_claim", "scheduled_tasks", "status, lease_occurrence_at, lease_expires_at"),
 ]
 
 

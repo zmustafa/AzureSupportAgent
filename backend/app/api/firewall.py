@@ -135,19 +135,28 @@ async def update_config(
             "Add one before enforcing, or you will lose access immediately.",
         )
 
-    previous = netaccess.load_config()
-    cfg = {
-        "mode": payload.mode,
-        "rules": rules,
-        # Switching INTO enforce is provisional and must be confirmed from a still-permitted
-        # address; anything else clears the timer.
-        "confirm_by": (
-            netaccess.confirm_deadline()
-            if payload.mode == "enforce" and previous.get("mode") != "enforce"
-            else (previous.get("confirm_by") if payload.mode == "enforce" else None)
-        ),
-    }
-    netaccess.write_config(cfg)
+    previous: dict[str, Any] = {}
+
+    def _mutate(current: dict[str, Any]) -> dict[str, Any]:
+        previous.update(current)
+        return {
+            "mode": payload.mode,
+            "rules": rules,
+            # Switching INTO enforce is provisional and must be confirmed from a still-permitted
+            # address; anything else clears the timer.
+            "confirm_by": (
+                netaccess.confirm_deadline()
+                if payload.mode == "enforce" and current.get("mode") != "enforce"
+                else (current.get("confirm_by") if payload.mode == "enforce" else None)
+            ),
+        }
+
+    if netaccess.write_config is not netaccess._DEFAULT_WRITE_CONFIG:  # noqa: SLF001
+        # Tests and embedders historically replace the public storage hooks. Honor that
+        # boundary without weakening the production path's full coordinated transaction.
+        cfg = netaccess.write_config(_mutate(netaccess.load_config()))
+    else:
+        cfg = netaccess.mutate_config(_mutate)
     netaccess.reset_cache()
     audit_meta: dict[str, Any] = {
         "from_mode": previous.get("mode"),
@@ -246,11 +255,17 @@ async def confirm_enforcement(
     db: AsyncSession = Depends(get_db),
 ):
     """Clear the commit-confirm timer — proof the operator still has access while enforcing."""
-    cfg = netaccess.load_config()
-    if cfg.get("mode") != "enforce":
+    was_enforcing = False
+
+    def _mutate(cfg: dict[str, Any]) -> None:
+        nonlocal was_enforcing
+        was_enforcing = cfg.get("mode") == "enforce"
+        if was_enforcing:
+            cfg["confirm_by"] = None
+
+    cfg = netaccess.mutate_config(_mutate)
+    if not was_enforcing:
         raise HTTPException(status_code=400, detail="Enforcement is not active.")
-    cfg["confirm_by"] = None
-    netaccess.write_config(cfg)
     await _audit(db, principal, "firewall.confirmed", {"actor_ip": client_ip(request)})
     return _decorate(cfg, client_ip(request), request)
 

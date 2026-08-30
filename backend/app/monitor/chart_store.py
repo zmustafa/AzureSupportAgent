@@ -11,11 +11,12 @@ with a simple oldest-first eviction so the file can't grow without limit.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "chart_artifacts.json"
 
@@ -29,19 +30,10 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("artifacts"), dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, {"artifacts": {}})
+    if isinstance(data, dict) and isinstance(data.get("artifacts"), dict):
+        return data
     return {"artifacts": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
 
 
 def _prune(artifacts: dict[str, Any]) -> dict[str, Any]:
@@ -60,16 +52,21 @@ def save_chart(spec: dict[str, Any], result: dict[str, Any]) -> str:
     normalized ``{columns, rows, meta}`` table that drives the rendering.
     """
     chart_id = uuid.uuid4().hex
-    data = _read()
-    artifacts = data.get("artifacts") or {}
-    artifacts[chart_id] = {
+    artifact = {
         "id": chart_id,
         "created_at": _now(),
         "spec": spec or {},
         "result": result or {},
     }
-    data["artifacts"] = _prune(artifacts)
-    _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        artifacts = data.get("artifacts") or {}
+        artifacts[chart_id] = artifact
+        data["artifacts"] = _prune(artifacts)
+
+    jsonstore.mutate_json(
+        _PATH, {"artifacts": {}}, _mutate, indent=None, separators=(",", ":")
+    )
     return chart_id
 
 

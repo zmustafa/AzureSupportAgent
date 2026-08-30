@@ -55,10 +55,6 @@ def _read() -> dict[str, Any]:
     return data
 
 
-def _write(data: dict[str, Any]) -> None:
-    jsonstore.write_json(_PATH, data)
-
-
 def _clean_row(raw: dict[str, Any] | None) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     row: dict[str, Any] = {"id": str(raw.get("id") or uuid.uuid4())}
@@ -123,8 +119,6 @@ def create_fmea(
     actor: str = "",
 ) -> dict[str, Any]:
     """Create a NEW (draft) FMEA document for an architecture and return it."""
-    data = _read()
-    store = data.setdefault("fmea", {})
     fid = str(uuid.uuid4())
     rec: dict[str, Any] = {
         "id": fid,
@@ -145,8 +139,10 @@ def create_fmea(
         "created_by": actor,
         "updated_by": actor,
     }
-    store[fid] = rec
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault("fmea", {})[fid] = rec
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
     return dict(rec)
 
 
@@ -170,98 +166,118 @@ def update_fmea(
 ) -> dict[str, Any] | None:
     """Update an existing FMEA by id (read-modify-write) + auto-snapshot a revision.
     Returns the saved record, or None if it doesn't exist (and ``create_if_missing`` is off)."""
-    data = _read()
-    store = data.setdefault("fmea", {})
-    existing = store.get(fmea_id)
-    if existing is None:
-        if not create_if_missing:
-            return None
-        existing = {}
-    merged: dict[str, Any] = dict(existing)
-    merged["id"] = fmea_id
-    if architecture_id or "architecture_id" not in merged:
-        merged["architecture_id"] = architecture_id or merged.get("architecture_id", "")
-    if workload_id or "workload_id" not in merged:
-        merged["workload_id"] = workload_id or merged.get("workload_id", "")
-    if workload_name or "workload_name" not in merged:
-        merged["workload_name"] = workload_name or merged.get("workload_name", "")
-    if connection_id or "connection_id" not in merged:
-        merged["connection_id"] = connection_id or merged.get("connection_id", "")
-    if tenant_id or "tenant_id" not in merged:
-        merged["tenant_id"] = tenant_id or merged.get("tenant_id", "")
-    if title is not None:
-        merged["title"] = title
-    elif "title" not in merged:
-        merged["title"] = ""
-    if scope_note is not None:
-        merged["scope_note"] = scope_note
-    elif "scope_note" not in merged:
-        merged["scope_note"] = ""
-    if tables is not None:
-        merged["tables"] = _clean_tables(tables)
-    elif "tables" not in merged:
-        merged["tables"] = []
-    if status is not None and status in _STATUSES:
-        merged["status"] = status
-    elif "status" not in merged:
-        merged["status"] = "draft"
-    if source is not None:
-        merged["source"] = source
-    elif "source" not in merged:
-        merged["source"] = "edited"
-    if ai is not None:
-        merged["ai"] = ai
-    elif "ai" not in merged:
-        merged["ai"] = {}
-    merged.setdefault("deleted_at", "")
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    if actor:
-        merged["updated_by"] = actor
-        if not existing:
-            merged.setdefault("created_by", actor)
-    compute.recompute_doc(merged)
-    store[fmea_id] = merged
-    _write(data)
+    merged: dict[str, Any] = {}
+    existed = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal existed
+        store = data.setdefault("fmea", {})
+        current = store.get(fmea_id)
+        if current is None and not create_if_missing:
+            return
+        existing = current or {}
+        existed = bool(existing)
+        value: dict[str, Any] = dict(existing)
+        value["id"] = fmea_id
+        for key, incoming in (
+            ("architecture_id", architecture_id),
+            ("workload_id", workload_id),
+            ("workload_name", workload_name),
+            ("connection_id", connection_id),
+            ("tenant_id", tenant_id),
+        ):
+            if incoming or key not in value:
+                value[key] = incoming or value.get(key, "")
+        if title is not None:
+            value["title"] = title
+        elif "title" not in value:
+            value["title"] = ""
+        if scope_note is not None:
+            value["scope_note"] = scope_note
+        elif "scope_note" not in value:
+            value["scope_note"] = ""
+        if tables is not None:
+            value["tables"] = _clean_tables(tables)
+        elif "tables" not in value:
+            value["tables"] = []
+        if status is not None and status in _STATUSES:
+            value["status"] = status
+        elif "status" not in value:
+            value["status"] = "draft"
+        if source is not None:
+            value["source"] = source
+        elif "source" not in value:
+            value["source"] = "edited"
+        if ai is not None:
+            value["ai"] = ai
+        elif "ai" not in value:
+            value["ai"] = {}
+        value.setdefault("deleted_at", "")
+        value["created_at"] = existing.get("created_at") or _now()
+        value["updated_at"] = _now()
+        if actor:
+            value["updated_by"] = actor
+            if not existing:
+                value.setdefault("created_by", actor)
+        compute.recompute_doc(value)
+        store[fmea_id] = value
+        merged.update(value)
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
+    if not merged:
+        return None
     from app.fmea import revisions
 
-    snap_reason = ("Created" if reason == "Edited" else reason) if not existing else reason
+    snap_reason = ("Created" if reason == "Edited" else reason) if not existed else reason
     revisions.snapshot(fmea_id, merged, reason=snap_reason, actor=actor)
     return dict(merged)
 
 
 def soft_delete(fmea_id: str, actor: str = "") -> bool:
-    data = _read()
-    rec = data.get("fmea", {}).get(fmea_id)
-    if not rec or rec.get("deleted_at"):
-        return False
-    rec["deleted_at"] = _now()
-    rec["updated_at"] = _now()
-    if actor:
-        rec["deleted_by"] = actor
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("fmea", {}).get(fmea_id)
+        if rec and not rec.get("deleted_at"):
+            rec["deleted_at"] = _now()
+            rec["updated_at"] = _now()
+            if actor:
+                rec["deleted_by"] = actor
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
+    return deleted
 
 
 def restore(fmea_id: str) -> dict[str, Any] | None:
-    data = _read()
-    rec = data.get("fmea", {}).get(fmea_id)
-    if not rec or not rec.get("deleted_at"):
-        return None
-    rec["deleted_at"] = ""
-    rec["updated_at"] = _now()
-    _write(data)
-    return compute.recompute_doc(dict(rec))
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = data.get("fmea", {}).get(fmea_id)
+        if rec and rec.get("deleted_at"):
+            rec["deleted_at"] = ""
+            rec["updated_at"] = _now()
+            result.update(compute.recompute_doc(dict(rec)))
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
+    return result or None
 
 
 def purge(fmea_id: str) -> bool:
     """Permanently delete an FMEA + its revisions."""
-    data = _read()
-    store = data.get("fmea", {})
-    if fmea_id not in store:
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        store = data.get("fmea", {})
+        if fmea_id in store:
+            del store[fmea_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
+    if not deleted:
         return False
-    del store[fmea_id]
-    _write(data)
     from app.fmea import revisions
 
     revisions.delete_for(fmea_id)
@@ -304,14 +320,20 @@ def prune_orphans(valid_architecture_ids: set[str]) -> int:
     Prune-guard: callers must pass the REAL architecture set. (The endpoint that calls this
     skips the prune entirely when that set is empty, so a test run can't wipe live data.)
     """
-    data = _read()
-    store = data.get("fmea", {})
-    orphans = [fid for fid, rec in store.items() if (rec or {}).get("architecture_id") not in valid_architecture_ids]
+    orphans: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        store = data.get("fmea", {})
+        orphans.extend(
+            fid for fid, rec in store.items()
+            if (rec or {}).get("architecture_id") not in valid_architecture_ids
+        )
+        for fid in orphans:
+            del store[fid]
+
+    jsonstore.mutate_json(_PATH, {"fmea": {}}, _mutate)
     if not orphans:
         return 0
-    for fid in orphans:
-        del store[fid]
-    _write(data)
     from app.fmea import revisions
 
     for fid in orphans:

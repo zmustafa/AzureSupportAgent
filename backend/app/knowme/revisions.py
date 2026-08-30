@@ -30,10 +30,6 @@ def _read() -> dict[str, Any]:
     return data if isinstance(data, dict) else {"revisions": {}}
 
 
-def _write(data: dict[str, Any]) -> None:
-    jsonstore.write_json(_PATH, data)
-
-
 def signature(km_doc: dict[str, Any]) -> str:
     """A stable content fingerprint (excludes timestamps that always change)."""
     return json.dumps(
@@ -67,11 +63,7 @@ def _meta(rev: dict[str, Any]) -> dict[str, Any]:
 def snapshot(architecture_id: str, km_doc: dict[str, Any], *, reason: str, actor: str) -> dict[str, Any] | None:
     if not architecture_id:
         return None
-    data = _read()
-    revs = data.setdefault("revisions", {}).setdefault(architecture_id, [])
     sig = signature(km_doc)
-    if revs and revs[-1].get("sig") == sig:
-        return None
     rev = {
         "id": str(uuid.uuid4()),
         "created_at": _now(),
@@ -80,11 +72,20 @@ def snapshot(architecture_id: str, km_doc: dict[str, Any], *, reason: str, actor
         "sig": sig,
         **{k: km_doc.get(k) for k in _CONTENT_KEYS},
     }
-    revs.append(rev)
-    if len(revs) > _MAX_PER_DOC:
-        del revs[: len(revs) - _MAX_PER_DOC]
-    _write(data)
-    return _meta(rev)
+    added = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal added
+        revs = data.setdefault("revisions", {}).setdefault(architecture_id, [])
+        if revs and revs[-1].get("sig") == sig:
+            return
+        revs.append(rev)
+        if len(revs) > _MAX_PER_DOC:
+            del revs[: len(revs) - _MAX_PER_DOC]
+        added = True
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)
+    return _meta(rev) if added else None
 
 
 def list_revisions(architecture_id: str) -> list[dict[str, Any]]:
@@ -100,22 +101,20 @@ def get_revision(architecture_id: str, revision_id: str) -> dict[str, Any] | Non
 
 
 def delete_for(architecture_id: str) -> None:
-    data = _read()
-    if architecture_id in data.get("revisions", {}):
-        del data["revisions"][architecture_id]
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.get("revisions", {}).pop(architecture_id, None)
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)
 
 
 def remap_keys(remap: dict[str, str]) -> None:
     """Re-key the revision store from old keys to new (used by the registry migration)."""
     if not remap:
         return
-    data = _read()
-    revs = data.get("revisions", {})
-    changed = False
-    for old, new in remap.items():
-        if old in revs and old != new:
-            revs[new] = revs.pop(old)
-            changed = True
-    if changed:
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        revs = data.get("revisions", {})
+        for old, new in remap.items():
+            if old in revs and old != new:
+                revs[new] = revs.pop(old)
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)

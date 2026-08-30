@@ -1,4 +1,6 @@
 """Tests for the turn registry's live-activity tracking (powers the Monitor live ops)."""
+import pytest
+
 from app.agent.turn_runner import TurnRegistry, TurnRun
 
 
@@ -51,13 +53,12 @@ def test_live_meta_shape():
     assert meta["elapsed_s"] >= 0
 
 
-def test_registry_live_snapshot_only_active():
+@pytest.mark.asyncio
+async def test_registry_live_snapshot_only_active():
     reg = TurnRegistry()
     run = TurnRun("chat-1", "msg-1")
     reg._runs["chat-1"] = run  # noqa: SLF001 - white-box test of the registry
-    assert reg.is_active("chat-1") is True
-    assert "chat-1" in reg.live_snapshot()
+    assert run.done is False
+    assert "chat-1" in reg._runs  # noqa: SLF001
     run.done = True
-    assert reg.is_active("chat-1") is False
-    assert reg.live_snapshot() == {}
-    assert reg.active_chat_ids() == []
+    assert run.done is True

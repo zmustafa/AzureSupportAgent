@@ -22,7 +22,6 @@ once or twice a day, so the module's short-lived in-memory inventory cache is th
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import time
@@ -31,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backup_manager import service
+from app.core import jsonstore
 
 log = logging.getLogger("app.backup_manager.costmgmt")
 
@@ -277,23 +277,8 @@ async def backup_actuals(
 
 # --------------------------------------------------------------------------- cache
 def _read_cache() -> dict[str, Any]:
-    if _CACHE_PATH.exists():
-        try:
-            data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write_cache(data: dict[str, Any]) -> None:
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        # Raw per-row detail is large and not needed once aggregated; keep the cache lean.
-        _CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError as exc:  # noqa: BLE001
-        log.debug("backup_manager: could not persist cost cache: %s", exc)
+    data = jsonstore.read_json(_CACHE_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 async def cached_actuals(
@@ -327,12 +312,22 @@ async def cached_actuals(
     )
     if result.get("available"):
         lean = {k: v for k, v in result.items() if k != "rows"}
-        cache[key] = {"cached_at": time.time(), "result": lean}
-        # Bound the cache so a large multi-scope estate cannot grow it without limit.
-        if len(cache) > 64:
-            for stale_key in sorted(cache, key=lambda k: cache[k].get("cached_at", 0))[:-64]:
-                cache.pop(stale_key, None)
-        _write_cache(cache)
+        cached_at = time.time()
+
+        def _mutate(stored: dict[str, Any]) -> None:
+            stored[key] = {"cached_at": cached_at, "result": lean}
+            # Bound the cache so a large multi-scope estate cannot grow it without limit.
+            if len(stored) > 64:
+                stale_keys = sorted(
+                    stored, key=lambda stored_key: stored[stored_key].get("cached_at", 0)
+                )[:-64]
+                for stale_key in stale_keys:
+                    stored.pop(stale_key, None)
+
+        try:
+            jsonstore.mutate_json(_CACHE_PATH, {}, _mutate)
+        except OSError as exc:  # noqa: BLE001
+            log.debug("backup_manager: could not persist cost cache: %s", exc)
     result["cache_age_seconds"] = 0
     return result
 

@@ -15,11 +15,11 @@ validation on write, unknown keys dropped rather than trusted.
 from __future__ import annotations
 
 import copy
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.resiliency import model
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "resiliency_reference.json"
@@ -128,27 +128,19 @@ def seed_document() -> dict[str, Any]:
 
 
 def _read() -> dict[str, Any] | None:
-    if not _PATH.exists():
-        return None
-    try:
-        data = json.loads(_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    data = jsonstore.read_json(_PATH, None)
     return data if isinstance(data, dict) and isinstance(data.get("tiers"), list) else None
-
-
-def _write(doc: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    tmp.replace(_PATH)
 
 
 def load() -> dict[str, Any]:
     doc = _read()
     if doc is None:
-        doc = seed_document()
-        _write(doc)
+        def _seed(stored: Any) -> dict[str, Any]:
+            if isinstance(stored, dict) and isinstance(stored.get("tiers"), list):
+                return stored
+            return seed_document()
+
+        doc = jsonstore.mutate_json(_PATH, None, _seed)
     return doc
 
 
@@ -231,30 +223,39 @@ def sanitize(incoming: dict[str, Any], current: dict[str, Any]) -> tuple[dict[st
 
 
 def save(incoming: dict[str, Any], *, actor: str = "") -> tuple[dict[str, Any], list[str]]:
-    current = load()
-    doc, rejected = sanitize(incoming, current)
-    doc["version"] = int(current.get("version", 1)) + 1
-    doc["updated_at"] = _now()
-    doc["updated_by"] = actor or "unknown"
-    if incoming.get("targets_acknowledged"):
-        doc["targets_acknowledged_by"] = actor or "unknown"
-    _append_revision(current)
-    _write(doc)
+    doc: dict[str, Any] = {}
+    rejected: list[str] = []
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        current = (
+            stored
+            if isinstance(stored, dict) and isinstance(stored.get("tiers"), list)
+            else seed_document()
+        )
+        value, invalid = sanitize(incoming, current)
+        value["version"] = int(current.get("version", 1)) + 1
+        value["updated_at"] = _now()
+        value["updated_by"] = actor or "unknown"
+        if incoming.get("targets_acknowledged"):
+            value["targets_acknowledged_by"] = actor or "unknown"
+        _append_revision(current)
+        doc.update(value)
+        rejected.extend(invalid)
+        return value
+
+    jsonstore.mutate_json(_PATH, None, _mutate)
     return doc, rejected
 
 
 def _append_revision(previous: dict[str, Any]) -> None:
+    def _mutate(data: Any) -> dict[str, Any]:
+        revisions = data.get("revisions") if isinstance(data, dict) else None
+        revisions = revisions if isinstance(revisions, list) else []
+        revisions.append(previous)
+        return {"revisions": revisions[-_MAX_REVISIONS:]}
+
     try:
-        data = json.loads(_REV_PATH.read_text(encoding="utf-8")) if _REV_PATH.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        data = {}
-    revisions = data.get("revisions") if isinstance(data, dict) else None
-    revisions = revisions if isinstance(revisions, list) else []
-    revisions.append(previous)
-    revisions = revisions[-_MAX_REVISIONS:]
-    try:
-        _REV_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _REV_PATH.write_text(json.dumps({"revisions": revisions}), encoding="utf-8")
+        jsonstore.mutate_json(_REV_PATH, {}, _mutate, indent=None)
     except OSError:
         pass
 

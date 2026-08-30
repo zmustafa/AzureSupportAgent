@@ -10,12 +10,12 @@ used by perfprofile.runs.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.tagintel.analysis import classify_key, norm_key
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_drift.json"
@@ -27,22 +27,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PATH.write_text(json.dumps(data), encoding="utf-8")
-    except OSError:
-        pass
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, connection_id: str, scope: str) -> str:
@@ -52,8 +38,6 @@ def _key(tenant_id: str, connection_id: str, scope: str) -> str:
 def save_snapshot(tenant_id: str, connection_id: str, scope: str, resources: list[dict[str, Any]],
                   *, coverage_pct: float = 0.0, actor: str = "") -> dict[str, Any]:
     """Persist a compact tag snapshot; returns its summary (id, taken_at, counts)."""
-    data = _read()
-    bucket = data.setdefault(_key(tenant_id, connection_id, scope), [])
     tag_map = {r.get("id", ""): (r.get("tags") or {}) for r in resources if r.get("id")}
     name_map = {r.get("id", ""): (r.get("name", "") or "") for r in resources if r.get("id")}
     distinct_keys = {k for tags in tag_map.values() for k in tags}
@@ -67,9 +51,15 @@ def save_snapshot(tenant_id: str, connection_id: str, scope: str, resources: lis
         "tags": tag_map,
         "names": name_map,
     }
-    bucket.insert(0, snap)
-    del bucket[_MAX_SNAPSHOTS:]
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(_key(tenant_id, connection_id, scope), [])
+        bucket.insert(0, snap)
+        del bucket[_MAX_SNAPSHOTS:]
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return _summary(snap)
 
 

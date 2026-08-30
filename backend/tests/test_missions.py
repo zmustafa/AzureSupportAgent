@@ -319,7 +319,7 @@ def _patch_env(monkeypatch, tmp_path, fakes):
 
 def _drive(keys, *, force=True, trigger="manual"):
     async def go():
-        pub = orch.manager.create(
+        pub = await orch.manager.create(
             tenant_id="t1", workload_id="w1", workload_name="WL", connection_id="c1",
             actor="tester", force=force, trigger=trigger, system_keys=keys,
         )
@@ -501,7 +501,9 @@ def test_central_queue_limits_global_and_per_connection(tmp_path, monkeypatch):
         lane_running[lane] = lane_running.get(lane, 0) + 1
         max_running = max(max_running, running)
         max_lane[lane] = max(max_lane.get(lane, 0), lane_running[lane])
-        await asyncio.sleep(0.04)
+        # Durable SQLite claims are serialized in this unit test; keep the fake system alive
+        # long enough for the independent c2 lane to finish claiming and overlap c1.
+        await asyncio.sleep(0.25)
         lane_running[lane] -= 1
         running -= 1
         return sysreg.SystemResult(status="done", headline="ok")
@@ -521,14 +523,18 @@ def test_central_queue_limits_global_and_per_connection(tmp_path, monkeypatch):
     monkeypatch.setattr(orch, "_MISSION_START_STAGGER_S", 0)
 
     async def launch():
-        missions = []
-        for index, connection_id in enumerate(("c1", "c1", "c1", "c2", "c2")):
-            public = orch.manager.create(
+        connections = ("c1", "c1", "c1", "c2", "c2")
+        public_rows = await asyncio.gather(*(
+            orch.manager.create(
                 tenant_id="queue-tenant", workload_id=f"w{index}", workload_name=f"W{index}",
                 connection_id=connection_id, actor="tester", force=True, trigger="fleet",
                 system_keys=["azure"],
             )
-            missions.append(orch.manager.get_live(public["id"], "queue-tenant"))
+            for index, connection_id in enumerate(connections)
+        ))
+        missions = [
+            orch.manager.get_live(public["id"], "queue-tenant") for public in public_rows
+        ]
         await asyncio.gather(*(mission.task for mission in missions if mission and mission.task))
         return [mission.public() for mission in missions if mission]
 
@@ -562,12 +568,12 @@ def test_central_queue_cancel_waiting_mission_never_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(orch, "_MISSION_START_STAGGER_S", 0)
 
     async def launch_and_cancel():
-        first = orch.manager.create(tenant_id="cancel-queue", workload_id="first", workload_name="First", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
-        second = orch.manager.create(tenant_id="cancel-queue", workload_id="second", workload_name="Second", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
+        first = await orch.manager.create(tenant_id="cancel-queue", workload_id="first", workload_name="First", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
+        second = await orch.manager.create(tenant_id="cancel-queue", workload_id="second", workload_name="Second", connection_id="c1", actor="tester", force=True, trigger="fleet", system_keys=["azure"])
         await asyncio.sleep(0.03)
         second_live = orch.manager.get_live(second["id"], "cancel-queue")
         assert second_live is not None and second_live.status == "queued" and second_live.queue_position == 1
-        assert orch.manager.cancel(second["id"], "cancel-queue") is True
+        assert await orch.manager.cancel(second["id"], "cancel-queue") is True
         await second_live.task
         gate.set()
         first_live = orch.manager.get_live(first["id"], "cancel-queue")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -57,14 +58,32 @@ def _load_or_create_key() -> bytes:
             return _derive_fernet_key(env_key)
     if _KEY_PATH.exists():
         return _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
-    # Generate and persist a new key (dev).
+    # Generate and persist a new key (dev). Exclusive creation matters on a shared Azure
+    # Files mount: two replicas starting against an empty share must never each encrypt data
+    # with a different key and then race to overwrite secret.key.
     key = Fernet.generate_key()
     _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _KEY_PATH.write_text(key.decode("utf-8"), encoding="utf-8")
     try:
-        os.chmod(_KEY_PATH, 0o600)
-    except OSError:  # pragma: no cover - non-POSIX
-        pass
+        descriptor = os.open(
+            _KEY_PATH,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError:
+        # Another replica won the exclusive create. Its write follows immediately, but the
+        # directory entry can be visible just before the payload on a remote SMB mount.
+        for _ in range(100):
+            try:
+                existing = _KEY_PATH.read_text(encoding="utf-8").strip().encode("utf-8")
+                Fernet(existing)
+                return existing
+            except (OSError, ValueError):
+                time.sleep(0.05)
+        raise RuntimeError("The shared encryption key was created but is not readable")
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(key.decode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
     return key
 
 

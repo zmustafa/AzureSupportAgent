@@ -7,10 +7,11 @@ deploys/restarts — keyed by ``(tenant, scope_kind, scope_id)``. A per-key
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "amba_coverage_cache.json"
 
@@ -27,19 +28,8 @@ def get_lock(tenant_id: str, scope_kind: str, scope_id: str) -> asyncio.Lock:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(scope_kind: str, scope_id: str) -> str:
@@ -53,23 +43,30 @@ def read_snapshot(tenant_id: str, scope_kind: str, scope_id: str) -> dict[str, A
 
 
 def write_snapshot(tenant_id: str, scope_kind: str, scope_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    bucket[_key(scope_kind, scope_id)] = snapshot
-    _write(data)
+    jsonstore.mutate_json(
+        _PATH,
+        {},
+        lambda data: data.setdefault(tenant_id or "default", {}).__setitem__(
+            _key(scope_kind, scope_id), snapshot
+        ),
+    )
     return snapshot
 
 
 def delete_snapshot(tenant_id: str, scope_kind: str, scope_id: str) -> bool:
     """Remove a single cached snapshot (used to purge demo data). True if one was deleted."""
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     k = _key(scope_kind, scope_id)
-    if k in bucket:
-        del bucket[k]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        if k in bucket:
+            del bucket[k]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def purge_errored() -> int:
@@ -81,19 +78,21 @@ def purge_errored() -> int:
     "0% covered" for weeks. Failures are no longer written, but this clears the ones already
     on disk. Idempotent, so it is safe to run on every startup.
     """
-    data = _read()
     removed = 0
-    for bucket in data.values():
-        if not isinstance(bucket, dict):
-            continue
-        for key in [
-            k for k, v in bucket.items()
-            if isinstance(v, dict) and str(v.get("error") or "").strip()
-        ]:
-            del bucket[key]
-            removed += 1
-    if removed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal removed
+        for bucket in data.values():
+            if not isinstance(bucket, dict):
+                continue
+            for key in [
+                stored_key for stored_key, value in bucket.items()
+                if isinstance(value, dict) and str(value.get("error") or "").strip()
+            ]:
+                del bucket[key]
+                removed += 1
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return removed
 
 

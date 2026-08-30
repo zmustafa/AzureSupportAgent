@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "sandbox_vms.json"
@@ -71,19 +72,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"vms": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"vms": {}})
+    return data if isinstance(data, dict) else {"vms": {}}
 
 
 def _merge_defaults(vm: dict[str, Any]) -> dict[str, Any]:
@@ -128,55 +118,62 @@ def resolve_for_workload(workload_id: str) -> list[dict[str, Any]]:
 def upsert_vm(vm: dict[str, Any]) -> dict[str, Any]:
     """Create or update a sandbox VM. Secrets encrypted before write; an empty secret
     field on update means 'keep the existing value'."""
-    data = _read()
-    vms = data.setdefault("vms", {})
     vid = vm.get("id") or str(uuid.uuid4())
-    existing = vms.get(vid, {})
+    stored_result: dict[str, Any] = {}
 
-    merged = _merge_defaults(existing)
-    for key in _DEFAULTS:
-        if key in vm and vm[key] is not None:
-            merged[key] = vm[key]
+    def _mutate(data: dict[str, Any]) -> None:
+        vms = data.setdefault("vms", {})
+        existing = vms.get(vid, {})
+        merged = _merge_defaults(existing)
+        for key in _DEFAULTS:
+            if key in vm and vm[key] is not None:
+                merged[key] = vm[key]
+        # Encrypt secrets; blank on update keeps the stored (encrypted) value.
+        for field in _SECRET_FIELDS:
+            incoming = vm.get(field)
+            if incoming:
+                merged[field] = encrypt(incoming)
+            else:
+                merged[field] = existing.get(field, "")
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        vms[vid] = merged
+        stored_result.update(merged)
 
-    # Encrypt secrets; blank on update keeps the stored (encrypted) value.
-    for f in _SECRET_FIELDS:
-        incoming = vm.get(f)
-        if incoming:
-            merged[f] = encrypt(incoming)
-        else:
-            merged[f] = existing.get(f, "")
-
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    vms[vid] = merged
-
-    _write(data)
-    result = get_vm(vid)
-    assert result is not None
+    jsonstore.mutate_json(_PATH, {"vms": {}}, _mutate)
+    result = _merge_defaults(stored_result)
+    result["id"] = vid
+    for field in _SECRET_FIELDS:
+        result[field] = decrypt(result.get(field, ""))
     return result
 
 
 def delete_vm(vm_id: str) -> bool:
-    data = _read()
-    vms = data.get("vms", {})
-    if vm_id in vms:
-        del vms[vm_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        vms = data.get("vms", {})
+        if vm_id in vms:
+            del vms[vm_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"vms": {}}, _mutate)
+    return deleted
 
 
 def update_status(vm_id: str, status: str, detail: str = "", *, tested: bool = True) -> None:
-    data = _read()
-    vms = data.get("vms", {})
-    if vm_id not in vms:
-        return
-    vms[vm_id]["status"] = status
-    vms[vm_id]["status_detail"] = detail
-    if tested:
-        vms[vm_id]["last_tested"] = _now()
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        vms = data.get("vms", {})
+        if vm_id not in vms:
+            return
+        vms[vm_id]["status"] = status
+        vms[vm_id]["status_detail"] = detail
+        if tested:
+            vms[vm_id]["last_tested"] = _now()
+
+    jsonstore.mutate_json(_PATH, {"vms": {}}, _mutate)
 
 
 def update_environment(
@@ -185,24 +182,25 @@ def update_environment(
     can_sudo: bool | None = None, sudo_mode: str | None = None,
 ) -> None:
     """Persist detected OS/toolkit + (optionally) pin the host-key fingerprint."""
-    data = _read()
-    vms = data.get("vms", {})
-    if vm_id not in vms:
-        return
-    if os_info:
-        vms[vm_id]["os_info"] = os_info
-    if capabilities is not None:
-        vms[vm_id]["capabilities"] = capabilities
-    if host_key_fingerprint is not None:
-        vms[vm_id]["host_key_fingerprint"] = host_key_fingerprint
-    if pkg_manager is not None:
-        vms[vm_id]["pkg_manager"] = pkg_manager
-    if can_sudo is not None:
-        vms[vm_id]["can_sudo"] = bool(can_sudo)
-    if sudo_mode is not None:
-        vms[vm_id]["sudo_mode"] = sudo_mode
-    vms[vm_id]["updated_at"] = _now()
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        vms = data.get("vms", {})
+        if vm_id not in vms:
+            return
+        if os_info:
+            vms[vm_id]["os_info"] = os_info
+        if capabilities is not None:
+            vms[vm_id]["capabilities"] = capabilities
+        if host_key_fingerprint is not None:
+            vms[vm_id]["host_key_fingerprint"] = host_key_fingerprint
+        if pkg_manager is not None:
+            vms[vm_id]["pkg_manager"] = pkg_manager
+        if can_sudo is not None:
+            vms[vm_id]["can_sudo"] = bool(can_sudo)
+        if sudo_mode is not None:
+            vms[vm_id]["sudo_mode"] = sudo_mode
+        vms[vm_id]["updated_at"] = _now()
+
+    jsonstore.mutate_json(_PATH, {"vms": {}}, _mutate)
 
 
 def _mask(value: str) -> str:

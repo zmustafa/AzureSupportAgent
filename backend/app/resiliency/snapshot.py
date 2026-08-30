@@ -12,10 +12,11 @@ that are a day old.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 log = logging.getLogger("app.resiliency.snapshot")
 
@@ -49,24 +50,8 @@ def get_lock(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str)
 
 
 def _read_all() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {}
-    try:
-        value = json.loads(_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        log.warning("resiliency: unreadable snapshot store, starting empty: %s", exc)
-        return {}
+    value = jsonstore.read_json(_PATH, {})
     return value if isinstance(value, dict) else {}
-
-
-def _write_all(value: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(value), encoding="utf-8")
-        tmp.replace(_PATH)
-    except OSError as exc:
-        log.warning("resiliency: could not persist snapshot: %s", exc)
 
 
 def empty(scope_kind: str = "", scope_id: str = "", reason: str = "") -> dict[str, Any]:
@@ -127,26 +112,41 @@ def read(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> 
 
 def write(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str,
           snapshot: dict[str, Any]) -> None:
-    store = _read_all()
-    store[_key(tenant_id, connection_id, scope_kind, scope_id)] = bound(snapshot)
-    if len(store) > MAX_SCOPES:
-        ordered = sorted(store.items(), key=lambda kv: str(kv[1].get("generated_at") or ""))
-        for key, _ in ordered[: len(store) - MAX_SCOPES]:
-            store.pop(key, None)
-    _write_all(store)
+    bounded = bound(snapshot)
+
+    def _mutate(store: dict[str, Any]) -> None:
+        store[_key(tenant_id, connection_id, scope_kind, scope_id)] = bounded
+        if len(store) > MAX_SCOPES:
+            ordered = sorted(
+                store.items(), key=lambda pair: str(pair[1].get("generated_at") or "")
+            )
+            for key, _ in ordered[: len(store) - MAX_SCOPES]:
+                store.pop(key, None)
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("resiliency: could not persist snapshot: %s", exc)
 
 
 def clear(tenant_id: str = "", connection_id: str = "", scope_kind: str = "",
           scope_id: str = "") -> int:
     """Drop one scope, or everything when no scope is given."""
-    store = _read_all()
-    if not scope_id and not scope_kind:
-        count = len(store)
-        _write_all({})
-        return count
-    key = _key(tenant_id, connection_id, scope_kind, scope_id)
-    removed = 1 if store.pop(key, None) is not None else 0
-    _write_all(store)
+    removed = 0
+
+    def _mutate(store: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal removed
+        if not scope_id and not scope_kind:
+            removed = len(store)
+            return {}
+        key = _key(tenant_id, connection_id, scope_kind, scope_id)
+        removed = 1 if store.pop(key, None) is not None else 0
+        return None
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("resiliency: could not persist snapshot: %s", exc)
     return removed
 
 

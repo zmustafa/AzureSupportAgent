@@ -758,7 +758,7 @@ async def refresh_start(
             resolved_scope=resolved_scope,
         )
 
-    return _job_response(_refresh_jobs.start(key, runner))
+    return _job_response(await _refresh_jobs.start(key, runner, tenant_id=tenant))
 
 
 @router.get("/refresh/job")
@@ -775,7 +775,7 @@ async def refresh_job(
         return {"job": None, "progress": [], "result": None}
     connection = _connection(connection_id, workload_id)
     key = _job_key(_tenant(principal), str(connection.get("id") or ""), scope_kind, scope_id)
-    return _job_response(_refresh_jobs.get_job(key))
+    return _job_response(await _refresh_jobs.get_job(key, tenant_id=_tenant(principal)))
 
 
 @router.get("/refresh/jobs")
@@ -787,7 +787,7 @@ async def refresh_jobs(principal: Principal = Depends(_read)) -> dict[str, Any]:
     tenant = _tenant(principal)
     prefix = f"{tenant}|"
     jobs: dict[str, Any] = {}
-    for job in _refresh_jobs.jobs_with_prefix(prefix):
+    for job in await _refresh_jobs.jobs_with_prefix(prefix, tenant_id=tenant):
         public = _refresh_jobs.public_job(job)
         if not public:
             continue

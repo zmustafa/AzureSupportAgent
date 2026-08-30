@@ -34,8 +34,8 @@ from app.core.llm_config import (
     OPENAI_FALLBACK_MODELS,
     OPENROUTER_FALLBACK_MODELS,
     load_config,
+    mutate_config,
     public_config,
-    save_config,
     set_provider_enabled,
 )
 from app.core.security import Principal, require_permission
@@ -277,43 +277,46 @@ async def update_llm_config(
     An empty/omitted api_key leaves the existing key untouched (so the masked key
     in the UI doesn't overwrite the real secret).
     """
-    cfg = load_config()
-    if payload.active_provider:
-        if payload.active_provider not in cfg.get("providers", {}):
-            raise HTTPException(status_code=400, detail="Unknown provider")
-        cfg["active_provider"] = payload.active_provider
-    if payload.providers:
-        for name, upd in payload.providers.items():
-            prov = cfg.setdefault("providers", {}).setdefault(name, {})
-            if upd.model is not None:
-                prov["model"] = upd.model
-            if upd.base_url is not None:
-                prov["base_url"] = upd.base_url
-            if upd.api_version is not None:
-                prov["api_version"] = upd.api_version
-            if upd.free_only is not None:
-                prov["free_only"] = upd.free_only
-            if upd.disabled is not None:
-                prov["disabled"] = upd.disabled
-            if upd.hidden_models is not None:
-                # De-duplicate + sort so the file stays stable on disk.
-                prov["hidden_models"] = sorted({m.strip() for m in upd.hidden_models if isinstance(m, str) and m.strip()})
-            # Only replace the key when a non-empty new value is provided.
-            if upd.api_key:
-                prov["api_key"] = upd.api_key
-            # Setting up a provider auto-enables it: a fresh install ships every
-            # provider disabled, and saving a credential (an API key, or a base URL for
-            # a local provider) is what "sets it up". An explicit disabled flag in the
-            # same request always wins.
-            if upd.disabled is None:
-                credential_added = bool(upd.api_key) or (
-                    name in LOCAL_PROVIDERS
-                    and upd.base_url is not None
-                    and upd.base_url.strip() != ""
-                )
-                if credential_added:
-                    prov["disabled"] = False
-    save_config(cfg)
+    def _mutate(cfg: dict[str, Any]) -> None:
+        if payload.active_provider:
+            if payload.active_provider not in cfg.get("providers", {}):
+                raise HTTPException(status_code=400, detail="Unknown provider")
+            cfg["active_provider"] = payload.active_provider
+        if payload.providers:
+            for name, upd in payload.providers.items():
+                prov = cfg.setdefault("providers", {}).setdefault(name, {})
+                if upd.model is not None:
+                    prov["model"] = upd.model
+                if upd.base_url is not None:
+                    prov["base_url"] = upd.base_url
+                if upd.api_version is not None:
+                    prov["api_version"] = upd.api_version
+                if upd.free_only is not None:
+                    prov["free_only"] = upd.free_only
+                if upd.disabled is not None:
+                    prov["disabled"] = upd.disabled
+                if upd.hidden_models is not None:
+                    # De-duplicate + sort so the file stays stable on disk.
+                    prov["hidden_models"] = sorted(
+                        {m.strip() for m in upd.hidden_models if isinstance(m, str) and m.strip()}
+                    )
+                # Only replace the key when a non-empty new value is provided.
+                if upd.api_key:
+                    prov["api_key"] = upd.api_key
+                # Setting up a provider auto-enables it: a fresh install ships every
+                # provider disabled, and saving a credential (an API key, or a base URL for
+                # a local provider) is what "sets it up". An explicit disabled flag in the
+                # same request always wins.
+                if upd.disabled is None:
+                    credential_added = bool(upd.api_key) or (
+                        name in LOCAL_PROVIDERS
+                        and upd.base_url is not None
+                        and upd.base_url.strip() != ""
+                    )
+                    if credential_added:
+                        prov["disabled"] = False
+
+    cfg = mutate_config(_mutate)
     db.add(
         AuditLog(
             tenant_id=principal.tenant_id,
@@ -2538,7 +2541,7 @@ async def build_monitor_overview(
     try:
         from app.agent.turn_runner import registry as _turn_registry
 
-        snapshot = _turn_registry.live_snapshot()
+        snapshot = await _turn_registry.live_snapshot(tenant_id=tid)
         if snapshot:
             owned = (
                 await db.execute(

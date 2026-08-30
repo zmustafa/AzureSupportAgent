@@ -8,10 +8,11 @@ snapshot is expensive to build (Graph round-trips + drift analysis), so it's cac
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "pim_cache.json"
 
@@ -30,19 +31,8 @@ def get_lock(tenant_id: str) -> asyncio.Lock:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def read_snapshot(tenant_id: str) -> dict[str, Any] | None:
@@ -53,18 +43,19 @@ def read_snapshot(tenant_id: str) -> dict[str, Any] | None:
 
 def write_snapshot(tenant_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
     """Persist the PIM snapshot for a tenant and return it."""
-    data = _read()
-    data[tenant_id or "default"] = snapshot
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data[tenant_id or "default"] = snapshot
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return snapshot
 
 
 def delete_snapshot(tenant_id: str) -> None:
     """Remove a tenant's PIM snapshot (used by demo teardown)."""
-    data = _read()
-    if (tenant_id or "default") in data:
-        del data[tenant_id or "default"]
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.pop(tenant_id or "default", None)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
 
 
 def age_seconds(snapshot: dict[str, Any]) -> float | None:

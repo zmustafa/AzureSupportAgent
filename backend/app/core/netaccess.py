@@ -200,8 +200,12 @@ def load_config() -> dict[str, Any]:
     if not isinstance(stored, dict):
         seeded = _seed_from_env()
         if seeded is not None:
-            jsonstore.write_json(_PATH, seeded)
-            return seeded
+            def _seed(current: Any) -> Any:
+                return current if isinstance(current, dict) else seeded
+
+            stored = jsonstore.mutate_json(_PATH, None, _seed)
+            if isinstance(stored, dict):
+                return stored
         return dict(DEFAULTS)
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in stored.items() if k in DEFAULTS})
@@ -215,6 +219,21 @@ def load_config() -> dict[str, Any]:
 def write_config(cfg: dict[str, Any]) -> dict[str, Any]:
     jsonstore.write_json(_PATH, cfg)
     return cfg
+
+
+_DEFAULT_WRITE_CONFIG = write_config
+
+
+def mutate_config(mutator) -> dict[str, Any]:  # noqa: ANN001
+    """Apply one short read-modify-write transaction to the network access policy."""
+    def _mutate(stored: Any) -> dict[str, Any]:
+        cfg = dict(DEFAULTS)
+        if isinstance(stored, dict):
+            cfg.update({k: v for k, v in stored.items() if k in DEFAULTS})
+        replacement = mutator(cfg)
+        return cfg if replacement is None else replacement
+
+    return jsonstore.mutate_json(_PATH, {}, _mutate)
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -334,12 +353,15 @@ def confirm_deadline() -> str:
 
 def revert_if_expired() -> dict[str, Any] | None:
     """Persist the auto-revert when the confirm window has lapsed. Returns the new config."""
-    cfg = load_config()
-    if cfg.get("mode") != "enforce":
-        return None
-    confirm_by = cfg.get("confirm_by")
-    if not confirm_by or not _expired(confirm_by):
-        return None
-    cfg["mode"] = "monitor"
-    cfg["confirm_by"] = None
-    return write_config(cfg)
+    reverted = False
+
+    def _mutate(cfg: dict[str, Any]) -> None:
+        nonlocal reverted
+        confirm_by = cfg.get("confirm_by")
+        if cfg.get("mode") == "enforce" and confirm_by and _expired(confirm_by):
+            cfg["mode"] = "monitor"
+            cfg["confirm_by"] = None
+            reverted = True
+
+    cfg = mutate_config(_mutate)
+    return cfg if reverted else None

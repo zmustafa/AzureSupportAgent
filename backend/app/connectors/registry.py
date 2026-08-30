@@ -6,7 +6,6 @@ encrypted via app.core.crypto, public views masked. Each saved connector has a `
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +31,7 @@ from app.connectors import (
 )
 from app.connectors import crowdstrike_ngsiem, sumologic
 from app.connectors.base import ConnectorToolset, ConnectorType
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "connectors.json"
@@ -64,14 +64,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return _migrate(data)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"connectors": {}}
+    data = jsonstore.read_json(_PATH, {"connectors": {}})
+    return _migrate(data) if isinstance(data, dict) else {"connectors": {}}
 
 
 def _migrate(data: dict[str, Any]) -> dict[str, Any]:
@@ -83,13 +77,13 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
             conn["type"] = "email"
             changed = True
     if changed:
-        _write(data)
+        def _mutate(current: dict[str, Any]) -> None:
+            for conn in current.get("connectors", {}).values():
+                if conn.get("type") == "outlook" and conn.get("mode") == "smtp":
+                    conn["type"] = "email"
+
+        data = jsonstore.mutate_json(_PATH, {"connectors": {}}, _mutate)
     return data
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _secret_keys(type_id: str, mode: str) -> set[str]:
@@ -129,52 +123,61 @@ def enabled_connectors() -> list[dict[str, Any]]:
 
 def upsert_connector(conn: dict[str, Any]) -> dict[str, Any]:
     """Create/update a connector. Secrets encrypted; blank secret keeps prior value."""
-    data = _read()
-    connectors = data.setdefault("connectors", {})
     cid = conn.get("id") or str(uuid.uuid4())
-    existing = connectors.get(cid, {})
-    type_id = conn.get("type") or existing.get("type", "")
-    mode = conn.get("mode") or existing.get("mode", "")
+    stored_result: dict[str, Any] = {}
 
-    merged: dict[str, Any] = dict(existing)
-    # Apply known top-level fields.
-    for key in ("name", "type", "mode", "disabled", "config"):
-        if key in conn and conn[key] is not None:
-            merged[key] = conn[key]
-    # Flatten the per-mode config fields onto the record, encrypting secrets.
-    secret_keys = _secret_keys(type_id, mode)
-    incoming_cfg = conn.get("config") or {}
-    ct = CONNECTOR_TYPES.get(type_id)
-    field_keys = {f.key for f in (ct.modes.get(mode, []) if ct else [])}
-    for key in field_keys:
-        if key not in incoming_cfg:
-            continue
-        val = incoming_cfg[key]
-        if key in secret_keys:
-            merged[key] = encrypt(val) if val else existing.get(key, "")
-        else:
-            merged[key] = val
-    merged.pop("config", None)
+    def _mutate(data: dict[str, Any]) -> None:
+        connectors = data.setdefault("connectors", {})
+        existing = connectors.get(cid, {})
+        type_id = conn.get("type") or existing.get("type", "")
+        mode = conn.get("mode") or existing.get("mode", "")
+        merged: dict[str, Any] = dict(existing)
+        # Apply known top-level fields.
+        for key in ("name", "type", "mode", "disabled", "config"):
+            if key in conn and conn[key] is not None:
+                merged[key] = conn[key]
+        # Flatten the per-mode config fields onto the record, encrypting secrets.
+        secret_keys = _secret_keys(type_id, mode)
+        incoming_cfg = conn.get("config") or {}
+        ct = CONNECTOR_TYPES.get(type_id)
+        field_keys = {f.key for f in (ct.modes.get(mode, []) if ct else [])}
+        for key in field_keys:
+            if key not in incoming_cfg:
+                continue
+            val = incoming_cfg[key]
+            if key in secret_keys:
+                merged[key] = encrypt(val) if val else existing.get(key, "")
+            else:
+                merged[key] = val
+        merged.pop("config", None)
+        merged["type"] = type_id
+        merged["mode"] = mode
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        connectors[cid] = merged
+        stored_result.update(merged)
 
-    merged["type"] = type_id
-    merged["mode"] = mode
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    connectors[cid] = merged
-    _write(data)
-    result = get_connector(cid)
-    assert result is not None
+    jsonstore.mutate_json(_PATH, {"connectors": {}}, _mutate)
+    result = dict(stored_result)
+    result["id"] = cid
+    for key in _secret_keys(result.get("type", ""), result.get("mode", "")):
+        if key in result:
+            result[key] = decrypt(result.get(key, ""))
     return result
 
 
 def delete_connector(connector_id: str) -> bool:
-    data = _read()
-    if connector_id in data.get("connectors", {}):
-        del data["connectors"][connector_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if connector_id in data.get("connectors", {}):
+            del data["connectors"][connector_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"connectors": {}}, _mutate)
+    return deleted
 
 
 def public_connector(conn: dict[str, Any]) -> dict[str, Any]:
@@ -210,11 +213,12 @@ def public_connectors() -> list[dict[str, Any]]:
 
 
 def update_status(connector_id: str, status: str, detail: str = "") -> None:
-    data = _read()
-    if connector_id in data.get("connectors", {}):
-        data["connectors"][connector_id]["status"] = status
-        data["connectors"][connector_id]["status_detail"] = detail
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        if connector_id in data.get("connectors", {}):
+            data["connectors"][connector_id]["status"] = status
+            data["connectors"][connector_id]["status_detail"] = detail
+
+    jsonstore.mutate_json(_PATH, {"connectors": {}}, _mutate)
 
 
 def connector_types_public() -> list[dict[str, Any]]:

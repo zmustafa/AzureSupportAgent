@@ -20,11 +20,11 @@ Two rules the trend must not break:
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.resiliency import model
 
 log = logging.getLogger("app.resiliency.history")
@@ -50,24 +50,8 @@ def _key(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str) -> 
 
 
 def _read_all() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {}
-    try:
-        value = json.loads(_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        log.warning("resiliency: unreadable history store, starting empty: %s", exc)
-        return {}
+    value = jsonstore.read_json(_PATH, {})
     return value if isinstance(value, dict) else {}
-
-
-def _write_all(value: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(value), encoding="utf-8")
-        tmp.replace(_PATH)
-    except OSError as exc:
-        log.warning("resiliency: could not persist history: %s", exc)
 
 
 def point_from(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -108,22 +92,29 @@ def record(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str,
     if not point["generated_at"]:
         return
 
-    store = _read_all()
     key = _key(tenant_id, connection_id, scope_kind, scope_id)
-    points = [p for p in (store.get(key) or {}).get("points", []) if isinstance(p, dict)]
-    # Re-analyzing the same scope twice in a minute is one measurement, not a trend.
-    points = [p for p in points if p.get("generated_at") != point["generated_at"]]
-    points.append(point)
-    points.sort(key=lambda p: str(p.get("generated_at") or ""))
-    store[key] = {"schema_version": SCHEMA_VERSION, "points": points[-MAX_POINTS:]}
 
-    if len(store) > MAX_SCOPES:
-        ordered = sorted(
-            store.items(),
-            key=lambda kv: str(((kv[1].get("points") or [{}])[-1]).get("generated_at") or ""))
-        for stale, _ in ordered[: len(store) - MAX_SCOPES]:
-            store.pop(stale, None)
-    _write_all(store)
+    def _mutate(store: dict[str, Any]) -> None:
+        points = [p for p in (store.get(key) or {}).get("points", []) if isinstance(p, dict)]
+        # Re-analyzing the same scope twice in a minute is one measurement, not a trend.
+        points = [p for p in points if p.get("generated_at") != point["generated_at"]]
+        points.append(point)
+        points.sort(key=lambda p: str(p.get("generated_at") or ""))
+        store[key] = {"schema_version": SCHEMA_VERSION, "points": points[-MAX_POINTS:]}
+        if len(store) > MAX_SCOPES:
+            ordered = sorted(
+                store.items(),
+                key=lambda pair: str(
+                    ((pair[1].get("points") or [{}])[-1]).get("generated_at") or ""
+                ),
+            )
+            for stale, _ in ordered[: len(store) - MAX_SCOPES]:
+                store.pop(stale, None)
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("resiliency: could not persist history: %s", exc)
 
 
 def read(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str
@@ -171,14 +162,21 @@ def trend(tenant_id: str, connection_id: str, scope_kind: str, scope_id: str
 
 def clear(tenant_id: str = "", connection_id: str = "", scope_kind: str = "",
           scope_id: str = "") -> int:
-    store = _read_all()
-    if not scope_id and not scope_kind:
-        count = len(store)
-        _write_all({})
-        return count
-    key = _key(tenant_id, connection_id, scope_kind, scope_id)
-    removed = 1 if store.pop(key, None) else 0
-    _write_all(store)
+    removed = 0
+
+    def _mutate(store: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal removed
+        if not scope_id and not scope_kind:
+            removed = len(store)
+            return {}
+        key = _key(tenant_id, connection_id, scope_kind, scope_id)
+        removed = 1 if store.pop(key, None) else 0
+        return None
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError as exc:
+        log.warning("resiliency: could not persist history: %s", exc)
     return removed
 
 

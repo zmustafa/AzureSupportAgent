@@ -181,6 +181,11 @@ async def _startup() -> None:
     # failed. Exiting." — which the platform answered by restarting into the same race. The
     # loser of a deadlock has usually had its work done for it by the winner.
     await _ensure_schema_resilient()
+    # Expired terminal generic jobs and chat replay events are removed from their shared SQL
+    # tables even when the replica that executed them no longer exists.
+    from app.core.durable_jobs import janitor as durable_job_janitor
+
+    durable_job_janitor.start()
     # Bootstrap auth: seed system roles + the initial admin/admin account.
     from app.auth.service import seed_admin
     from app.core.db import SessionLocal
@@ -405,6 +410,9 @@ async def _shutdown() -> None:
     from app.backup_manager.lro import poller as backup_lro_poller
 
     await backup_lro_poller.stop()
+    from app.core.durable_jobs import janitor as durable_job_janitor
+
+    await durable_job_janitor.stop()
 
 app.add_middleware(
     CORSMiddleware,
@@ -763,12 +771,60 @@ for _sub in (
 # Health/readiness probes stay at the root (no auth, no /api) for Container Apps.
 @app.get("/healthz")
 async def healthz():
+    """Process liveness only: no database, network, or downstream dependency checks."""
     return {"status": "ok"}
+
+
+_last_readiness_failure_log = 0.0
+
+
+async def _database_ready(timeout_s: float = 2.0) -> bool:
+    """Run one bounded checkout/query without exposing connection or exception details."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.core.db import SessionLocal
+
+    try:
+        async with asyncio.timeout(timeout_s):
+            async with SessionLocal() as db:
+                await db.execute(text("SELECT 1"))
+        return True
+    except Exception:  # noqa: BLE001 - readiness converts every failure to a boolean
+        return False
 
 
 @app.get("/readyz")
 async def readyz():
-    return {"status": "ready"}
+    """Fast readiness: bounded database access plus recoverable recent loop health."""
+    import time
+
+    from app.core import loopwatch
+
+    db_ok = await _database_ready()
+    loop_ok = loopwatch.recent_max_lag_s(window_s=30.0) < 1.0
+    ready = db_ok and loop_ok
+    if ready:
+        return {"status": "ready", "checks": {"database": True, "event_loop": True}}
+
+    # The platform probes every few seconds. Rate-limit a stable, secret-free marker that can
+    # drive a Log Analytics alert without flooding logs during a database outage.
+    global _last_readiness_failure_log
+    now = time.monotonic()
+    if now - _last_readiness_failure_log >= 60.0:
+        logging.getLogger("app.main").warning(
+            "readiness probe failed (database_ok=%s event_loop_ok=%s)", db_ok, loop_ok
+        )
+        _last_readiness_failure_log = now
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "not_ready",
+            "checks": {"database": db_ok, "event_loop": loop_ok},
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/version")

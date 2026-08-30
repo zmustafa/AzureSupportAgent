@@ -9,11 +9,12 @@ backend/.data/architecture_activity.json, consistent with the other JSON registr
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "architecture_activity.json"
 
@@ -40,19 +41,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"activity": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"activity": {}})
+    return data if isinstance(data, dict) else {"activity": {}}
 
 
 def log(
@@ -66,8 +56,6 @@ def log(
     """Append one management event to an architecture's activity log."""
     if not architecture_id:
         return None
-    data = _read()
-    events = data.setdefault("activity", {}).setdefault(architecture_id, [])
     entry = {
         "id": str(uuid.uuid4()),
         "at": _now(),
@@ -76,10 +64,14 @@ def log(
         "detail": detail,
         "meta": meta or {},
     }
-    events.append(entry)
-    if len(events) > _MAX_PER_ARCH:
-        del events[: len(events) - _MAX_PER_ARCH]
-    _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        events = data.setdefault("activity", {}).setdefault(architecture_id, [])
+        events.append(entry)
+        if len(events) > _MAX_PER_ARCH:
+            del events[: len(events) - _MAX_PER_ARCH]
+
+    jsonstore.mutate_json(_PATH, {"activity": {}}, _mutate)
     return entry
 
 
@@ -92,7 +84,7 @@ def list_activity(architecture_id: str) -> list[dict[str, Any]]:
 
 def delete_for(architecture_id: str) -> None:
     """Drop the activity log for an architecture (called when it is deleted)."""
-    data = _read()
-    if architecture_id in data.get("activity", {}):
-        del data["activity"][architecture_id]
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.get("activity", {}).pop(architecture_id, None)
+
+    jsonstore.mutate_json(_PATH, {"activity": {}}, _mutate)

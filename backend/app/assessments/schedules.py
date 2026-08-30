@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "assessment_schedules.json"
 
 DEFAULTS: dict[str, Any] = {
@@ -47,19 +49,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"schedules": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"schedules": {}})
+    return data if isinstance(data, dict) else {"schedules": {}}
 
 
 def _merge(sid: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -96,54 +87,61 @@ def _cron_dict(s: dict[str, Any]) -> dict[str, Any]:
 def upsert_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
     from app.automations.schedule import compute_next_run
 
-    data = _read()
-    schedules = data.setdefault("schedules", {})
     sid = schedule.get("id") or str(uuid.uuid4())
-    existing = schedules.get(sid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in schedule and schedule[key] is not None:
-            merged[key] = schedule[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    # Recompute next run from the cadence (when enabled).
-    if merged.get("enabled"):
-        nxt = compute_next_run(_cron_dict(merged))
-        merged["next_run_at"] = nxt.isoformat() if nxt else None
-    else:
-        merged["next_run_at"] = None
-    merged.pop("id", None)
-    schedules[sid] = merged
-    _write(data)
-    result = get_schedule(sid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        schedules = data.setdefault("schedules", {})
+        existing = schedules.get(sid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in schedule and schedule[key] is not None:
+                merged[key] = schedule[key]
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        # Recompute next run from the cadence (when enabled).
+        if merged.get("enabled"):
+            nxt = compute_next_run(_cron_dict(merged))
+            merged["next_run_at"] = nxt.isoformat() if nxt else None
+        else:
+            merged["next_run_at"] = None
+        merged.pop("id", None)
+        schedules[sid] = merged
+        result.update(_merge(sid, merged))
+
+    jsonstore.mutate_json(_PATH, {"schedules": {}}, _mutate)
     return result
 
 
 def delete_schedule(schedule_id: str) -> bool:
-    data = _read()
-    if schedule_id in data.get("schedules", {}):
-        del data["schedules"][schedule_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if schedule_id in data.get("schedules", {}):
+            del data["schedules"][schedule_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"schedules": {}}, _mutate)
+    return deleted
 
 
 def mark_ran(schedule_id: str, *, run_id: str, score: int | None) -> None:
     """Record a completed run and roll the next_run_at forward."""
     from app.automations.schedule import compute_next_run
 
-    data = _read()
-    s = data.get("schedules", {}).get(schedule_id)
-    if s is None:
-        return
-    s["last_run_at"] = _now()
-    s["last_run_id"] = run_id
-    s["last_score"] = score
-    if s.get("enabled"):
-        nxt = compute_next_run(_cron_dict(_merge(schedule_id, s)))
-        s["next_run_at"] = nxt.isoformat() if nxt else None
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        s = data.get("schedules", {}).get(schedule_id)
+        if s is None:
+            return
+        s["last_run_at"] = _now()
+        s["last_run_id"] = run_id
+        s["last_score"] = score
+        if s.get("enabled"):
+            nxt = compute_next_run(_cron_dict(_merge(schedule_id, s)))
+            s["next_run_at"] = nxt.isoformat() if nxt else None
+
+    jsonstore.mutate_json(_PATH, {"schedules": {}}, _mutate)
 
 
 def due_schedules(now: datetime | None = None) -> list[dict[str, Any]]:

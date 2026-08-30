@@ -2,11 +2,12 @@
 ``backend/.data/dnsdebug_runs.json``. Mirrors app.netcheck.store."""
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "dnsdebug_runs.json"
 _MAX_PER_KEY = 20
@@ -17,19 +18,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"runs": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"runs": {}})
+    return data if isinstance(data, dict) else {"runs": {}}
 
 
 def run_key(architecture_id: str, source: str, fqdn: str) -> str:
@@ -43,33 +33,42 @@ def latest_for_key(tenant_id: str, key: str) -> dict[str, Any] | None:
 
 
 def save_run(tenant_id: str, run: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    runs = data.setdefault("runs", {})
     rid = run.get("id") or str(uuid.uuid4())
     run["id"] = rid
     run["tenant_id"] = tenant_id
     run.setdefault("created_at", _now())
-    runs[rid] = run
-    key = run.get("key", "")
-    same = [r for r in runs.values() if r.get("tenant_id") == tenant_id and r.get("key") == key]
-    same.sort(key=lambda r: r.get("created_at", ""), reverse=True)
-    for old in same[_MAX_PER_KEY:]:
-        runs.pop(old["id"], None)
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        runs = data.setdefault("runs", {})
+        runs[rid] = run
+        key = run.get("key", "")
+        same = [
+            stored for stored in runs.values()
+            if stored.get("tenant_id") == tenant_id and stored.get("key") == key
+        ]
+        same.sort(key=lambda stored: stored.get("created_at", ""), reverse=True)
+        for old in same[_MAX_PER_KEY:]:
+            runs.pop(old["id"], None)
+
+    jsonstore.mutate_json(_PATH, {"runs": {}}, _mutate)
     return run
 
 
 def delete_by_architecture(tenant_id: str, architecture_id: str) -> int:
     """Remove all runs for an architecture id (used to purge demo data). Returns count."""
-    data = _read()
-    runs = data.get("runs", {})
-    rids = [rid for rid, r in runs.items()
-            if r.get("tenant_id") == tenant_id and r.get("architecture_id") == architecture_id]
-    for rid in rids:
-        runs.pop(rid, None)
-    if rids:
-        _write(data)
-    return len(rids)
+    removed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        runs = data.get("runs", {})
+        removed.extend(
+            rid for rid, run in runs.items()
+            if run.get("tenant_id") == tenant_id
+            and run.get("architecture_id") == architecture_id
+        )
+        for rid in removed:
+            runs.pop(rid, None)
+
+    jsonstore.mutate_json(_PATH, {"runs": {}}, _mutate)
+    return len(removed)
 
 
 def get_run(tenant_id: str, run_id: str) -> dict[str, Any] | None:

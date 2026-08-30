@@ -1,6 +1,7 @@
 """Pytest bootstrap: make the `app` package importable when tests run from any CWD."""
 import os
 import sys
+import asyncio
 
 import pytest
 
@@ -102,6 +103,80 @@ def _ensure_test_schema():
         finally:
             engine.dispose()
     yield
+
+
+@pytest.fixture
+async def durable_job_registry_factory(tmp_path):
+    """Create JobRegistry instances on a per-test WAL database.
+
+    Durable registry tests must not share the application's SQLite file across xdist workers;
+    unlike the former in-memory implementation, progress and leases are real writes.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.db import Base
+    from app.core.genjob import JobRegistry
+
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'route-durable-jobs.db'}",
+        connect_args={"timeout": 30},
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _connection_record):  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    registries = []
+
+    def create(name: str) -> JobRegistry:
+        registry = JobRegistry(name, session_factory=sessions, poll_seconds=0.01)
+        registries.append(registry)
+        return registry
+
+    yield create
+    tasks = [task for registry in registries for task in registry._tasks.values()]  # noqa: SLF001
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def durable_job_sessions(tmp_path):
+    """Per-test WAL database for feature adapters backed by DurableJobExecutor."""
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.db import Base
+
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'feature-durable-jobs.db'}",
+        connect_args={"timeout": 30},
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _connection_record):  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    yield sessions
+    await engine.dispose()
 
 
 @pytest.fixture(autouse=True)

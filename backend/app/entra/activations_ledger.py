@@ -73,43 +73,47 @@ def append(tenant_id: str, sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """Record sessions. Returns a summary of what changed."""
     if not tenant_id:
         return {"added": 0, "updated": 0, "total": 0, "trimmed": 0}
-    state = _load(tenant_id)
-    store: dict[str, Any] = state["sessions"]
     now = cache.now_iso()
     added = updated = 0
-
-    for fresh in sessions:
-        sid = str(fresh.get("id") or "")
-        if not sid:
-            continue
-        known = store.get(sid)
-        if known is None:
-            row = dict(fresh)
-            row["first_seen"] = now
-            row["last_seen"] = now
-            store[sid] = row
-            added += 1
-        else:
-            row, changed = _merge(known, fresh)
-            if changed:
-                store[sid] = row
-                updated += 1
-
     trimmed = 0
-    if len(store) > MAX_SESSIONS:
-        # Oldest activation first — the ledger exists for history, but unbounded growth is
-        # its own failure mode, and which end gets dropped has to be a deliberate choice.
-        ordered = sorted(store.items(), key=lambda kv: kv[1].get("start") or "")
-        for sid, _row in ordered[: len(store) - MAX_SESSIONS]:
-            del store[sid]
-            trimmed += 1
-        state["trimmed"] = int(state.get("trimmed") or 0) + trimmed
+    total = 0
 
-    if not state.get("first_seen"):
-        state["first_seen"] = now
-    state["last_write"] = now
-    cache.write_state(tenant_id, STATE_NAME, state)
-    return {"added": added, "updated": updated, "total": len(store), "trimmed": trimmed}
+    def _mutate(stored: Any) -> dict[str, Any]:
+        nonlocal added, updated, trimmed, total
+        state = stored if isinstance(stored, dict) else {}
+        store = state.setdefault("sessions", {})
+        state.setdefault("first_seen", "")
+        state.setdefault("trimmed", 0)
+        for fresh in sessions:
+            sid = str(fresh.get("id") or "")
+            if not sid:
+                continue
+            known = store.get(sid)
+            if known is None:
+                row = dict(fresh)
+                row["first_seen"] = now
+                row["last_seen"] = now
+                store[sid] = row
+                added += 1
+            else:
+                row, changed = _merge(known, fresh)
+                if changed:
+                    store[sid] = row
+                    updated += 1
+        if len(store) > MAX_SESSIONS:
+            ordered = sorted(store.items(), key=lambda pair: pair[1].get("start") or "")
+            for sid, _row in ordered[: len(store) - MAX_SESSIONS]:
+                del store[sid]
+                trimmed += 1
+            state["trimmed"] = int(state.get("trimmed") or 0) + trimmed
+        if not state.get("first_seen"):
+            state["first_seen"] = now
+        state["last_write"] = now
+        total = len(store)
+        return state
+
+    cache.mutate_state(tenant_id, STATE_NAME, {}, _mutate)
+    return {"added": added, "updated": updated, "total": total, "trimmed": trimmed}
 
 
 def read(tenant_id: str) -> list[dict[str, Any]]:

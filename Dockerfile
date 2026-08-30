@@ -204,6 +204,8 @@ ENV HOME=/home/azsup \
     NPM_CONFIG_CACHE=/home/azsup/.npm
 USER azsup
 
-# Run DB migrations then start the API + SPA. All AI-provider sign-in flows are headless
-# (OAuth device flow + paste-the-code), so no virtual display / browser is needed.
+# Run DB migrations (serialized by a PostgreSQL advisory lock) then start exactly ONE uvicorn
+# worker. Background work is process-owned and coordinated across replicas by database leases;
+# extra workers inside a replica would create hidden schedulers and duplicate connection pools.
+# All AI-provider sign-in flows are headless, so no virtual display / browser is needed.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

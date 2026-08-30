@@ -143,10 +143,10 @@ async def test_demo_scope_is_composed_on_read_without_an_analysis() -> None:
 
 # --------------------------------------------------------------------------- refresh job
 @pytest.mark.asyncio
-async def test_refresh_is_idempotent_per_scope(monkeypatch) -> None:
+async def test_refresh_is_idempotent_per_scope(monkeypatch, durable_job_registry_factory) -> None:
     """A double click, or two operators on one scope, must not launch two Azure sweeps."""
     monkeypatch.setattr(api, "_connection", lambda *a, **k: {"id": CONNECTION_ID})
-    monkeypatch.setattr(api, "_refresh_jobs", type(api._refresh_jobs)("test-refresh"))
+    monkeypatch.setattr(api, "_refresh_jobs", durable_job_registry_factory("test-refresh"))
     started = 0
     release = asyncio.Event()
 
@@ -169,14 +169,19 @@ async def test_refresh_is_idempotent_per_scope(monkeypatch) -> None:
     assert first["job"]["id"] == second["job"]["id"]
     assert first["job"]["status"] == "running"
     release.set()
-    await asyncio.sleep(0)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if started:
+            break
     assert started == 1
 
 
 @pytest.mark.asyncio
-async def test_refresh_job_replays_progress_and_hands_back_the_result(monkeypatch) -> None:
+async def test_refresh_job_replays_progress_and_hands_back_the_result(
+    monkeypatch, durable_job_registry_factory
+) -> None:
     monkeypatch.setattr(api, "_connection", lambda *a, **k: {"id": CONNECTION_ID})
-    monkeypatch.setattr(api, "_refresh_jobs", type(api._refresh_jobs)("test-replay"))
+    monkeypatch.setattr(api, "_refresh_jobs", durable_job_registry_factory("test-replay"))
 
     async def build(*_a: Any, progress: Any = None, **_k: Any) -> dict[str, Any]:
         await progress("query", "Received 3 vault row(s).")

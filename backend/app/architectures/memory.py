@@ -12,11 +12,12 @@ No secrets, so no encryption — consistent with the architectures registry.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "architecture_memory.json"
 
@@ -103,19 +104,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"memories": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"memories": {}})
+    return data if isinstance(data, dict) else {"memories": {}}
 
 
 def default_sections() -> list[dict[str, str]]:
@@ -186,23 +176,19 @@ def _clean_sections(sections: list[dict[str, Any]] | None) -> list[dict[str, str
     return cleaned
 
 
-def upsert_memory(
+def _merge_memory_record(
+    existing: dict[str, Any],
     architecture_id: str,
     *,
-    workload_id: str = "",
-    title: str = "",
-    sections: list[dict[str, Any]] | None = None,
-    enabled_for_investigations: bool | None = None,
-    source: str | None = None,
-    ai: dict[str, Any] | None = None,
-    tenant_id: str = "",
-    actor: str = "",
-    reason: str = "Edited",
+    workload_id: str,
+    title: str,
+    sections: list[dict[str, Any]] | None,
+    enabled_for_investigations: bool | None,
+    source: str | None,
+    ai: dict[str, Any] | None,
+    tenant_id: str,
+    actor: str,
 ) -> dict[str, Any]:
-    """Create or update an architecture's memory (read-modify-write)."""
-    data = _read()
-    memories = data.setdefault("memories", {})
-    existing = memories.get(architecture_id, {})
     merged: dict[str, Any] = dict(existing)
     merged["id"] = existing.get("id") or str(uuid.uuid4())
     merged["architecture_id"] = architecture_id
@@ -234,13 +220,52 @@ def upsert_memory(
         merged["updated_by"] = actor
         if not existing:
             merged.setdefault("created_by", actor)
-    memories[architecture_id] = merged
-    _write(data)
+    return merged
+
+
+def upsert_memory(
+    architecture_id: str,
+    *,
+    workload_id: str = "",
+    title: str = "",
+    sections: list[dict[str, Any]] | None = None,
+    enabled_for_investigations: bool | None = None,
+    source: str | None = None,
+    ai: dict[str, Any] | None = None,
+    tenant_id: str = "",
+    actor: str = "",
+    reason: str = "Edited",
+) -> dict[str, Any]:
+    """Create or update an architecture's memory (read-modify-write)."""
+    merged: dict[str, Any] = {}
+    was_existing = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal was_existing
+        memories = data.setdefault("memories", {})
+        existing = memories.get(architecture_id, {})
+        was_existing = bool(existing)
+        value = _merge_memory_record(
+            existing,
+            architecture_id,
+            workload_id=workload_id,
+            title=title,
+            sections=sections,
+            enabled_for_investigations=enabled_for_investigations,
+            source=source,
+            ai=ai,
+            tenant_id=tenant_id,
+            actor=actor,
+        )
+        memories[architecture_id] = value
+        merged.update(value)
+
+    jsonstore.mutate_json(_PATH, {"memories": {}}, _mutate)
     # Auto-snapshot a revision (deduped by content signature) so history is captured.
     # First write is labeled "Created" unless the caller gave a specific reason.
     from app.architectures import memory_revisions
 
-    snap_reason = ("Created" if reason == "Edited" else reason) if not existing else reason
+    snap_reason = ("Created" if reason == "Edited" else reason) if not was_existing else reason
     memory_revisions.snapshot(architecture_id, merged, reason=snap_reason, actor=actor)
     return dict(merged)
 
@@ -311,38 +336,66 @@ def append_known_issue(
     entry = (entry_markdown or "").strip()
     if not architecture_id or not entry:
         return None, False
-    memory = get_memory(architecture_id)
-    sections = [dict(s) for s in (memory.get("sections", []) or [])] if memory else []
-    ki = next((s for s in sections if s.get("key") == "known_issues"), None)
-    if ki is None:
-        ki = {"key": "known_issues", "label": section_label("known_issues"), "content": ""}
-        sections.append(ki)
-    existing = str(ki.get("content") or "")
-    if dedupe_token and dedupe_token in existing:
-        return memory, False
-    ki["content"] = (existing.strip() + "\n\n" + entry).strip() if existing.strip() else entry
-    saved = upsert_memory(
-        architecture_id,
-        workload_id=workload_id or (memory or {}).get("workload_id", ""),
-        title=title or (memory or {}).get("title", ""),
-        sections=sections,
-        tenant_id=tenant_id or (memory or {}).get("tenant_id", ""),
-        actor=actor,
-        reason=reason,
-    )
-    return saved, True
+    saved: dict[str, Any] = {}
+    appended = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal appended
+        memories = data.setdefault("memories", {})
+        memory = memories.get(architecture_id, {})
+        sections = [dict(s) for s in (memory.get("sections", []) or [])]
+        ki = next((s for s in sections if s.get("key") == "known_issues"), None)
+        if ki is None:
+            ki = {"key": "known_issues", "label": section_label("known_issues"), "content": ""}
+            sections.append(ki)
+        existing_content = str(ki.get("content") or "")
+        if dedupe_token and dedupe_token in existing_content:
+            saved.update(memory)
+            return
+        ki["content"] = (
+            (existing_content.strip() + "\n\n" + entry).strip()
+            if existing_content.strip()
+            else entry
+        )
+        merged = _merge_memory_record(
+            memory,
+            architecture_id,
+            workload_id=workload_id or memory.get("workload_id", ""),
+            title=title or memory.get("title", ""),
+            sections=sections,
+            enabled_for_investigations=None,
+            source=None,
+            ai=None,
+            tenant_id=tenant_id or memory.get("tenant_id", ""),
+            actor=actor,
+        )
+        memories[architecture_id] = merged
+        saved.update(merged)
+        appended = True
+
+    jsonstore.mutate_json(_PATH, {"memories": {}}, _mutate)
+    if appended:
+        from app.architectures import memory_revisions
+
+        memory_revisions.snapshot(architecture_id, saved, reason=reason, actor=actor)
+    return (saved or None), appended
 
 
 def delete_memory(architecture_id: str) -> bool:
-    data = _read()
-    if architecture_id in data.get("memories", {}):
-        del data["memories"][architecture_id]
-        _write(data)
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if architecture_id in data.get("memories", {}):
+            del data["memories"][architecture_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"memories": {}}, _mutate)
+    if deleted:
         from app.architectures import memory_revisions
 
         memory_revisions.delete_for(architecture_id)
-        return True
-    return False
+    return deleted
 
 
 def prune_orphans(valid_architecture_ids: set[str]) -> int:
@@ -351,14 +404,17 @@ def prune_orphans(valid_architecture_ids: set[str]) -> int:
     trashed architectures so a restorable (trashed) architecture keeps its memory.
 
     Returns the number of orphan memories removed. Idempotent; safe to call on startup."""
-    data = _read()
-    memories = data.get("memories", {})
-    orphans = [aid for aid in list(memories.keys()) if aid not in valid_architecture_ids]
+    orphans: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        memories = data.get("memories", {})
+        orphans.extend(aid for aid in list(memories) if aid not in valid_architecture_ids)
+        for aid in orphans:
+            del memories[aid]
+
+    jsonstore.mutate_json(_PATH, {"memories": {}}, _mutate)
     if not orphans:
         return 0
-    for aid in orphans:
-        del memories[aid]
-    _write(data)
     from app.architectures import memory_revisions
 
     for aid in orphans:

@@ -1,70 +1,209 @@
-"""In-memory job registry for background Insight Pack runs.
-
-An on-demand run (or re-run) is executed as a background asyncio task so the HTTP request
-returns immediately and the UI can poll for *detailed progress* while the four-stage loop
-(gather → reason → gate → deliver) executes server-side. Jobs are process-local and best
-kept short-lived; the durable result is the persisted digest in ``runs`` — a job only tracks
-progress and the final run payload for the polling UI.
-"""
+"""Durable polling jobs for on-demand Insight Pack runs."""
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
-from typing import Any
+from datetime import datetime
+from typing import Any, Awaitable, Callable
 
-# Keep the registry bounded so a long-lived process doesn't leak completed jobs.
-_MAX_JOBS = 200
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.durable_jobs import DurableJobContext, DurableJobExecutor, JobOutcome, as_utc, utcnow
+
+_FEATURE = "insights.pack"
 _MAX_STEPS = 40
-_JOBS: dict[str, dict[str, Any]] = {}
+_INTERRUPTED = "Insight Pack execution was interrupted before completion."
+
+ProgressCallback = Callable[..., None]
+Run = Callable[[ProgressCallback], Awaitable[dict[str, Any]]]
 
 
-def _now() -> float:
-    return time.time()
+class InsightsJobManager:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        owner_id: str | None = None,
+        lease_seconds: float = 60.0,
+        poll_seconds: float = 0.25,
+    ) -> None:
+        self._executor = DurableJobExecutor(
+            _FEATURE,
+            session_factory=session_factory,
+            owner_id=owner_id,
+            lease_seconds=lease_seconds,
+            poll_seconds=poll_seconds,
+            event_limit=_MAX_STEPS,
+        )
+
+    @staticmethod
+    def _from_durable(durable: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(durable.get("metadata") or {})
+        steps = [
+            dict(event.get("data") or {})
+            for event in durable.get("events") or []
+            if event.get("event") == "step"
+        ]
+        latest = steps[-1] if steps else {}
+        status = {
+            "running": "running",
+            "done": "succeeded",
+            "error": "failed",
+            "cancelled": "failed",
+        }[durable["status"]]
+        return {
+            "id": durable["key"],
+            "tenant_id": durable["tenant_id"],
+            "pack_name": metadata.get("pack_name", ""),
+            "scope_label": metadata.get("scope_label", ""),
+            "status": status,
+            "stage": "done" if status == "succeeded" else ("error" if status == "failed" else latest.get("stage", "queued")),
+            "label": "Digest ready" if status == "succeeded" else ("Run failed" if status == "failed" else latest.get("label", "Queued…")),
+            "pct": 100 if status == "succeeded" else int(latest.get("pct") or 0),
+            "steps": steps,
+            "run": durable.get("result"),
+            "error": durable.get("error") or None,
+            "started_at": durable["started_at"],
+            "updated_at": (steps[-1].get("ts") if steps else durable["started_at"]),
+            "finished_at": durable.get("finished_at"),
+        }
+
+    async def start(
+        self,
+        tenant_id: str,
+        runner: Run,
+        *,
+        pack_name: str = "",
+        scope_label: str = "",
+    ) -> dict[str, Any]:
+        key = uuid.uuid4().hex
+
+        async def _run(context: DurableJobContext) -> JobOutcome:
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=100)
+
+            def progress(
+                *,
+                stage: str,
+                label: str,
+                detail: str = "",
+                pct: int | None = None,
+                state: str = "done",
+            ) -> None:
+                event = {
+                    "ts": time.time(),
+                    "stage": stage,
+                    "label": label,
+                    "detail": detail,
+                    "state": state,
+                    "pct": max(0, min(100, int(pct))) if pct is not None else 0,
+                }
+                if queue.full():
+                    try:
+                        queue.get_nowait()
+                        queue.task_done()
+                    except asyncio.QueueEmpty:
+                        pass
+                queue.put_nowait(event)
+
+            async def write_progress() -> None:
+                while True:
+                    event = await queue.get()
+                    try:
+                        if event is None:
+                            return
+                        await context.emit("step", event)
+                    finally:
+                        queue.task_done()
+
+            writer = asyncio.create_task(write_progress())
+            try:
+                digest = await runner(progress)
+                await queue.join()
+                queue.put_nowait(None)
+                await writer
+                done = {
+                    "ts": time.time(),
+                    "stage": "done",
+                    "label": "Digest ready",
+                    "detail": "",
+                    "state": "done",
+                    "pct": 100,
+                }
+                await context.emit("step", done)
+                return JobOutcome(result=digest)
+            except Exception as exc:  # noqa: BLE001 - expose bounded polling failure
+                if not writer.done():
+                    writer.cancel()
+                await asyncio.gather(writer, return_exceptions=True)
+                message = str(exc)[:500]
+                await context.emit(
+                    "step",
+                    {
+                        "ts": time.time(),
+                        "stage": "error",
+                        "label": "Run failed",
+                        "detail": message[:300],
+                        "state": "error",
+                        "pct": 0,
+                    },
+                )
+                return JobOutcome(status="error", error=message)
+
+        claim = await self._executor.start(
+            tenant_id=tenant_id,
+            key=key,
+            metadata={"pack_name": pack_name, "scope_label": scope_label},
+            runner=_run,
+        )
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id, feature=_FEATURE, key=key
+        )
+        return self._from_durable(durable or claim.job)
+
+    async def get(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id, feature=_FEATURE, key=job_id
+        )
+        if durable is None:
+            return None
+        if durable["status"] == "running" and durable.get("lease_expires_at"):
+            expires = as_utc(datetime.fromisoformat(durable["lease_expires_at"]))
+            if expires is not None and expires <= utcnow():
+                await self._executor.store.interrupt_expired(
+                    tenant_id=tenant_id,
+                    feature=_FEATURE,
+                    key=job_id,
+                    error=_INTERRUPTED,
+                )
+                durable = await self._executor.store.load_current(
+                    tenant_id=tenant_id, feature=_FEATURE, key=job_id
+                )
+                if durable is None:
+                    return None
+        return self._from_durable(durable)
 
 
-def _prune() -> None:
-    if len(_JOBS) <= _MAX_JOBS:
-        return
-    # Drop the oldest finished jobs first, then oldest overall.
-    ordered = sorted(_JOBS.values(), key=lambda j: j.get("updated_at", 0.0))
-    for job in ordered:
-        if len(_JOBS) <= _MAX_JOBS:
-            break
-        _JOBS.pop(job["id"], None)
+manager = InsightsJobManager()
 
 
-def create(tenant_id: str, *, pack_name: str = "", scope_label: str = "") -> dict[str, Any]:
-    """Create a queued job and return it."""
-    job = {
-        "id": uuid.uuid4().hex,
-        "tenant_id": tenant_id,
-        "pack_name": pack_name,
-        "scope_label": scope_label,
-        "status": "queued",  # queued | running | succeeded | failed
-        "stage": "queued",
-        "label": "Queued…",
-        "pct": 0,
-        "steps": [],  # [{ts, stage, label, detail, state}]
-        "run": None,
-        "error": None,
-        "started_at": _now(),
-        "updated_at": _now(),
-        "finished_at": None,
-    }
-    _JOBS[job["id"]] = job
-    _prune()
-    return job
+async def start(
+    tenant_id: str,
+    runner: Run,
+    *,
+    pack_name: str = "",
+    scope_label: str = "",
+) -> dict[str, Any]:
+    return await manager.start(
+        tenant_id, runner, pack_name=pack_name, scope_label=scope_label
+    )
 
 
-def get(tenant_id: str, job_id: str) -> dict[str, Any] | None:
-    job = _JOBS.get(job_id)
-    if job is None or job.get("tenant_id") != tenant_id:
-        return None
-    return job
+async def get(tenant_id: str, job_id: str) -> dict[str, Any] | None:
+    return await manager.get(tenant_id, job_id)
 
 
 def snapshot(job: dict[str, Any]) -> dict[str, Any]:
-    """A JSON-serializable view of the job for the polling API."""
     return {
         "id": job["id"],
         "status": job["status"],
@@ -77,37 +216,3 @@ def snapshot(job: dict[str, Any]) -> dict[str, Any]:
         "pack_name": job.get("pack_name", ""),
         "scope_label": job.get("scope_label", ""),
     }
-
-
-def progress(job: dict[str, Any], *, stage: str, label: str, detail: str = "",
-             pct: int | None = None, state: str = "done") -> None:
-    """Record a progress milestone on the job."""
-    if pct is not None:
-        job["pct"] = max(0, min(100, int(pct)))
-    job["stage"] = stage
-    job["label"] = label
-    job["status"] = "running"
-    job["updated_at"] = _now()
-    steps = job["steps"]
-    steps.append({"ts": _now(), "stage": stage, "label": label, "detail": detail, "state": state})
-    if len(steps) > _MAX_STEPS:
-        del steps[0 : len(steps) - _MAX_STEPS]
-
-
-def finish(job: dict[str, Any], run: dict[str, Any]) -> None:
-    job["run"] = run
-    job["status"] = "succeeded"
-    job["stage"] = "done"
-    job["label"] = "Digest ready"
-    job["pct"] = 100
-    job["updated_at"] = job["finished_at"] = _now()
-    job["steps"].append({"ts": _now(), "stage": "done", "label": "Digest ready", "detail": "", "state": "done"})
-
-
-def fail(job: dict[str, Any], error: str) -> None:
-    job["error"] = str(error)[:500]
-    job["status"] = "failed"
-    job["stage"] = "error"
-    job["label"] = "Run failed"
-    job["updated_at"] = job["finished_at"] = _now()
-    job["steps"].append({"ts": _now(), "stage": "error", "label": "Run failed", "detail": str(error)[:300], "state": "error"})

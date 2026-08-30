@@ -49,11 +49,11 @@ The Azure MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Write-cap
 
 1. **Choose persistence.** Use PostgreSQL for a shared production database, or place SQLite's `.data` directory on Azure Files. Never rely on an ephemeral container filesystem.
 2. **Choose the identity.** Prefer a Container App managed identity. If using a service principal, store its secret or certificate as a Container App secret.
-3. **Build and tag the image.** Build from the repository root so the frontend and backend are included. Prefer an immutable release tag over relying only on `latest`.
+3. **Build and tag the image.** Build from the repository root so the frontend and backend are included. Record and deploy the registry manifest digest, not a mutable tag.
 4. **Create the Container Apps environment and application.** Expose port 8000 through HTTPS ingress.
 5. **Set production configuration.** Important settings include the database URL, secure-cookie behavior, bootstrap administrator values, public URL, connection identity, and optional model configuration.
 6. **Attach persistent storage** before allowing production traffic when SQLite is selected.
-7. **Verify health.** Check `/healthz` for liveness and `/readyz` for readiness, then load the SPA through the public URL.
+7. **Verify health.** Check `/healthz` for process-only liveness and `/readyz` for a bounded database plus recent event-loop readiness check, then load the SPA through the public URL.
 8. **Grant Reader** to the application identity at the intended Azure scope.
 9. Complete [First-run setup]({{ site.baseurl }}/getting-started/first-run/).
 
@@ -70,67 +70,55 @@ The Azure MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Write-cap
 
 Keep every secret in a Container App secret or an approved secret store. Never bake one into the image or a template parameter file.
 
-## Deploy from scratch
+## Deploy the supplied template
+
+The production preset keeps secrets out of source control by reading them from the process environment. It enables more expensive resilience controls deliberately; inspect and adjust it before deployment.
 
 ```pwsh
-$RG   = "rg-azsupagent"
-$LOC  = "southcentralus"
-$ACR  = "azsupagent$((Get-Random -Maximum 99999))"   # globally unique
-$APP  = "azsupagent"
+$env:AZSUP_ADMIN_PASSWORD = '<strong-temporary-bootstrap-password>'
+$env:AZSUP_POSTGRES_PASSWORD = '<strong-database-password>'
+$env:AZSUP_ALERT_EMAIL = '<optional-operations-email>'
 
-az account set --subscription "<subscription-id>"
-
-# 1) Registry (Basic SKU) + cloud build of the single image
-az acr create -n $ACR -g $RG --sku Basic --admin-enabled true -l $LOC
-az acr build  -r $ACR -t "${APP}:latest" -f Dockerfile .
-
-# 2) Container Apps environment (Consumption)
-az containerapp env create -n "$APP-env" -g $RG -l $LOC
-
-# 3) The app: external ingress on 8000, scale-to-zero, admin password as a secret
-$server = "$ACR.azurecr.io"
-$pw     = az acr credential show -n $ACR --query "passwords[0].value" -o tsv
-az containerapp create -n $APP -g $RG `
-  --environment "$APP-env" `
-  --image "$server/${APP}:latest" `
-  --registry-server $server --registry-username $ACR --registry-password $pw `
-  --target-port 8000 --ingress external `
-  --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1.0Gi `
-  --secrets "admin-password=<your-password>" `
-  --env-vars SEED_ADMIN_USERNAME=admin "SEED_ADMIN_PASSWORD=secretref:admin-password" `
-             "DATABASE_URL=sqlite+aiosqlite:///./.data/app.db" COOKIE_SECURE=true
+az deployment group create -g <resource-group> `
+  --template-file deploy/main.bicep `
+  --parameters deploy/production.bicepparam
 ```
 
-## Redeploy a new build
+Use the default template instead for the lower-cost 1-2 replica/Burstable/LRS profile. Supply an immutable image as `registry/repository@sha256:digest` when overriding `containerImage`.
 
-```pwsh
-az acr build -r $ACR -t "${APP}:latest" -f Dockerfile .
-# 'latest' is reused, so force a fresh revision:
-az containerapp update -n $APP -g $RG `
-  --image "$ACR.azurecr.io/${APP}:latest" --revision-suffix "r$(Get-Random -Maximum 9999)"
-```
+### Production knobs
 
-Prefer a versioned tag or digest over reusing `latest`. See [upgrades and uninstall]({{ site.baseurl }}/getting-started/upgrades-uninstall/).
+- PostgreSQL: tier/SKU, 32-32,767 GiB storage, autogrow, 7-35 day retention, geo-backup, HA mode/zones, and custom maintenance window.
+- Container Apps: environment zone redundancy, CPU/memory, minimum/maximum replicas, HTTP concurrency, and startup/liveness/readiness probes.
+- Storage: redundancy, Azure Files quota, and share soft-delete retention.
+- Operations: shared tags, Log Analytics retention, data-service diagnostics, optional metric/log alerts and email receiver, and optional `CanNotDelete` locks.
+- Secrets and supply chain: immutable image digest, system-assigned runtime identity, optional existing user-assigned identity for ACR/Key Vault, and optional Key Vault URIs for database/admin/encryption secrets.
+
+`appMaxReplicas` must be at least `appMinReplicas`. PostgreSQL HA requires a supported General Purpose or Memory Optimized SKU. A private ACR configuration requires an existing user-assigned identity with AcrPull before the initial deployment. Scheduled-query alerts should be enabled on a later deployment, after the Container Apps log tables have received data; platform metric alerts can be enabled initially.
+
+When publishing a new image, resolve its manifest digest, pass that digest as `containerImage`, and retain the old digest as the rollback handle. See [upgrades and uninstall]({{ site.baseurl }}/getting-started/upgrades-uninstall/).
 
 ## Cost and scaling
 
 - Lowest-cost posture: Basic ACR plus a Consumption Container App with `--min-replicas 0` (no compute charge while idle) at 0.5 vCPU / 1 GiB. The first request after idle pays a cold start, but the Azure MCP package and Resource Graph extension are already in the image and are not fetched at runtime.
-- Use a **single replica** while depending on SQLite or in-container state. Set `--min-replicas 1` to avoid cold starts, at higher cost.
+- Use a **single replica** with SQLite. PostgreSQL plus the current shared leases/state supports multiple replicas; the template defaults to 1-2 for bounded cost and the production preset uses 2-4 for replica resilience.
 
 ## Production guardrails
 
 - Set `COOKIE_SECURE=true` behind HTTPS.
 - Keep the bootstrap password in a platform secret and change it at first sign-in.
 - Protect database credentials and the application's secrets-encryption key.
-- Use one replica when depending on SQLite or in-memory coordination. A shared database alone does not make every in-memory workflow horizontally scalable.
+- Keep one uvicorn worker per replica. Database leases coordinate process-owned schedulers and durable jobs across replicas; extra workers inside one replica only create hidden pools and schedulers.
 - Keep Azure MCP read-only unless a reviewed workflow requires writes; product write paths remain permission- and approval-gated.
 - Keep the root image's `AZURE_EXTENSION_DIR=/opt/az-extensions` setting. The image bakes the `resource-graph` Azure CLI extension there so temporary service-principal sessions do not install it dynamically.
 - Restrict ingress and outbound traffic deliberately if private networking is required.
+- The Azure Files mount uses the Container Apps account-key contract; managed identity does not replace that key. Private mode disables storage public access and uses a private endpoint.
+- Defender for Cloud plans are subscription-level and can add cost. Review them separately; the resource-group template intentionally does not change subscription security plans.
 
 ## Validate the result
 
 - The Container App revision is healthy and serving the expected immutable image.
-- `/healthz` and `/readyz` succeed.
+- `/healthz` succeeds without touching dependencies; `/readyz` succeeds only when the bounded database probe and recent event-loop criterion are healthy.
 - Refreshing a client-side route such as `/workloads` returns the SPA, not a 404.
 - Database data survives a revision restart.
 - The managed identity or service principal can list only the intended Azure scopes.

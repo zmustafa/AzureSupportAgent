@@ -286,8 +286,6 @@ async def run_async_endpoint(payload: RunRequest, principal: Principal = Depends
 
     The run executes as a detached asyncio task so it continues even if the caller navigates
     away; the durable result is still the persisted digest in the run history."""
-    import asyncio
-
     from app.insights import jobs
     from app.insights.runner import run_pack
     from app.insights import sources as sources_mod
@@ -298,21 +296,23 @@ async def run_async_endpoint(payload: RunRequest, principal: Principal = Depends
 
     tenant_id = principal.tenant_id
     scope_label = sources_mod.scope_label(sources_mod.resolve_scope_names(dict(payload.scope)))
-    job = jobs.create(tenant_id, pack_name=str(pack.get("name", "")), scope_label=scope_label)
+    async def _worker(progress) -> dict[str, Any]:
+        return await run_pack(
+            pack,
+            payload.scope,
+            tenant_id=tenant_id,
+            overrides=payload.overrides,
+            trigger="manual",
+            notify=payload.notify,
+            progress=progress,
+        )
 
-    async def _worker() -> None:
-        try:
-            digest = await run_pack(
-                pack, payload.scope, tenant_id=tenant_id,
-                overrides=payload.overrides, trigger="manual", notify=payload.notify,
-                progress=lambda **ev: jobs.progress(job, **ev),
-            )
-            jobs.finish(job, digest)
-        except Exception as exc:  # noqa: BLE001 — surface failure to the poller, never crash the loop
-            log.exception("Background insight run failed")
-            jobs.fail(job, str(exc))
-
-    asyncio.create_task(_worker())
+    job = await jobs.start(
+        tenant_id,
+        _worker,
+        pack_name=str(pack.get("name", "")),
+        scope_label=scope_label,
+    )
     return {"job_id": job["id"]}
 
 
@@ -321,7 +321,7 @@ async def run_job_endpoint(job_id: str, principal: Principal = Depends(_read)) -
     """Poll a background run job for progress and (when finished) the resulting digest."""
     from app.insights import jobs
 
-    job = jobs.get(principal.tenant_id, job_id)
+    job = await jobs.get(principal.tenant_id, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Run job not found.")
     return {"job": jobs.snapshot(job)}

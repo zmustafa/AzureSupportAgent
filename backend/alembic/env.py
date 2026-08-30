@@ -5,10 +5,11 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
-from app.core.db import Base
+from app.core.db import Base, _SCHEMA_LOCK_KEY
 
 # Import models so they register on Base.metadata.
 import app.models  # noqa: F401
@@ -41,7 +42,21 @@ def do_run_migrations(connection) -> None:
 async def run_migrations_online() -> None:
     engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
     async with engine.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+        # Every Container App replica runs this entrypoint. PostgreSQL DDL and Alembic's version
+        # row are not safe to race, so a session advisory lock serializes the complete migration
+        # transaction across replicas. SQLite is local/single-process and needs no shared lock.
+        is_postgres = connection.dialect.name == "postgresql"
+        if is_postgres:
+            await connection.execute(
+                text("SELECT pg_advisory_lock(:key)"), {"key": _SCHEMA_LOCK_KEY}
+            )
+        try:
+            await connection.run_sync(do_run_migrations)
+        finally:
+            if is_postgres:
+                await connection.execute(
+                    text("SELECT pg_advisory_unlock(:key)"), {"key": _SCHEMA_LOCK_KEY}
+                )
     await engine.dispose()
 
 

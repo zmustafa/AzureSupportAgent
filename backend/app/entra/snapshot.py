@@ -351,6 +351,20 @@ def write_state(tenant_id: str, state: dict[str, Any]) -> None:
     invalidate(tenant_id)
 
 
+def mutate_state(tenant_id: str, mutator) -> dict[str, Any]:  # noqa: ANN001
+    def _mutate(stored: Any) -> dict[str, Any]:
+        state = stored if isinstance(stored, dict) else {}
+        state.setdefault("suppressed", [])
+        state.setdefault("breakglass", {})
+        state.setdefault("findings", {})
+        replacement = mutator(state)
+        return state if replacement is None else replacement
+
+    state = cache.mutate_state(tenant_id, "findings_state", {}, _mutate)
+    invalidate(tenant_id)
+    return state
+
+
 # -------------------------------------------------------------------------- refresh
 async def refresh(
     tenant_id: str,

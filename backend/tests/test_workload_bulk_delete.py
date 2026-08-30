@@ -44,15 +44,15 @@ def test_bulk_soft_delete_deduplicates_and_writes_once(store, monkeypatch):
     already = _workload("already")
     assert registry.delete_workload(already["id"])
 
-    writes = 0
-    real_write = registry._write
+    mutations = 0
+    real_mutate = registry.jsonstore.mutate_json
 
-    def counting_write(data):
-        nonlocal writes
-        writes += 1
-        real_write(data)
+    def counting_mutate(*args, **kwargs):
+        nonlocal mutations
+        mutations += 1
+        return real_mutate(*args, **kwargs)
 
-    monkeypatch.setattr(registry, "_write", counting_write)
+    monkeypatch.setattr(registry.jsonstore, "mutate_json", counting_mutate)
     result = registry.delete_workloads(
         [first["id"], first["id"], second["id"], already["id"], "missing"]
     )
@@ -64,7 +64,7 @@ def test_bulk_soft_delete_deduplicates_and_writes_once(store, monkeypatch):
         "not_found": 1,
         "deleted_ids": [first["id"], second["id"]],
     }
-    assert writes == 1
+    assert mutations == 1
     assert registry.list_workloads() == []
     assert len(registry.list_trashed_workloads()) == 3
 
@@ -76,7 +76,11 @@ def test_bulk_soft_delete_deduplicates_and_writes_once(store, monkeypatch):
 def test_bulk_soft_delete_with_no_valid_active_ids_does_not_write(store, monkeypatch):
     already = _workload("already")
     registry.delete_workload(already["id"])
-    monkeypatch.setattr(registry, "_write", lambda _data: pytest.fail("unexpected write"))
+    monkeypatch.setattr(
+        registry.jsonstore,
+        "_atomic_write",
+        lambda *_args, **_kwargs: pytest.fail("unexpected write"),
+    )
     result = registry.delete_workloads([already["id"], "missing", "missing"])
     assert result["requested"] == 2
     assert result["deleted"] == 0

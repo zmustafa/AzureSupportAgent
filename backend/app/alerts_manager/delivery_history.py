@@ -13,8 +13,6 @@ _MAX_ROWS = 1000
 
 
 def record(tenant_id: str, action_group_id: str, result: dict[str, Any], *, actor: str) -> dict[str, Any]:
-    data = jsonstore.read_json(_PATH, {"rows": []})
-    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
     details = []
     for item in result.get("actionDetails") or []:
         if not isinstance(item, dict):
@@ -31,9 +29,12 @@ def record(tenant_id: str, action_group_id: str, result: dict[str, Any], *, acto
         "tested_at": datetime.now(timezone.utc).isoformat(), "tested_by": actor,
         "state": str(result.get("state") or "Unknown"), "details": details,
     }
-    rows.append(row)
-    data["rows"] = rows[-_MAX_ROWS:]
-    jsonstore.write_json(_PATH, data)
+    def _mutate(data: dict[str, Any]) -> None:
+        rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+        rows.append(row)
+        data["rows"] = rows[-_MAX_ROWS:]
+
+    jsonstore.mutate_json(_PATH, {"rows": []}, _mutate)
     return row
 
 

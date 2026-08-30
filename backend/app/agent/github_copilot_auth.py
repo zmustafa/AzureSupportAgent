@@ -18,7 +18,6 @@ CLI use, so it works in a fully headless container (Azure Container Apps).
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -27,6 +26,7 @@ from typing import Any
 
 import httpx
 
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / ".data"
@@ -65,16 +65,13 @@ _TOKEN_TTL_SECONDS = 20 * 60
 # Token cache
 # ---------------------------------------------------------------------------
 def _read_cache() -> dict[str, Any] | None:
-    if not _TOKEN_FILE.exists():
+    data = jsonstore.read_json(_TOKEN_FILE, None)
+    if not isinstance(data, dict):
         return None
-    try:
-        data = json.loads(_TOKEN_FILE.read_text(encoding="utf-8"))
-        for f in _SECRET_FIELDS:
-            if isinstance(data, dict) and data.get(f):
-                data[f] = decrypt(data[f])
-        return data
-    except (json.JSONDecodeError, OSError):
-        return None
+    for f in _SECRET_FIELDS:
+        if data.get(f):
+            data[f] = decrypt(data[f])
+    return data
 
 
 def _write_cache(
@@ -91,27 +88,31 @@ def _write_cache(
         exp_iso = datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat()
     else:
         exp_iso = (now + timedelta(seconds=_TOKEN_TTL_SECONDS)).isoformat()
-    existing = _read_cache() or {}
-    data: dict[str, Any] = {
-        "access_token": token,
-        "api_base_url": api_base_url or DEFAULT_API_BASE_URL,
-        "captured_at": now.isoformat(),
-        "expires_at": exp_iso,
-        # Header scheme the Copilot API expects: device-flow editor tokens use "Bearer";
-        # legacy browser-sniffed web tokens use "GitHub-Bearer".
-        "auth_scheme": auth_scheme or existing.get("auth_scheme") or "GitHub-Bearer",
-    }
-    # Preserve the long-lived OAuth token (gho_…) so refresh can re-mint the short-lived
-    # Copilot bearer with NO browser. Keep any previously stored one if not overriding.
-    tok = oauth_token if oauth_token is not None else existing.get("oauth_token")
-    if tok:
-        data["oauth_token"] = tok
-    out = dict(data)
-    for f in _SECRET_FIELDS:
-        if out.get(f):
-            out[f] = encrypt(out[f])
-    _TOKEN_FILE.write_text(json.dumps(out, indent=2), encoding="utf-8")
-    return data
+    result: dict[str, Any] = {}
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        existing = dict(stored) if isinstance(stored, dict) else {}
+        for field in _SECRET_FIELDS:
+            if existing.get(field):
+                existing[field] = decrypt(existing[field])
+        data: dict[str, Any] = {
+            "access_token": token,
+            "api_base_url": api_base_url or DEFAULT_API_BASE_URL,
+            "captured_at": now.isoformat(),
+            "expires_at": exp_iso,
+            "auth_scheme": auth_scheme or existing.get("auth_scheme") or "GitHub-Bearer",
+        }
+        saved_oauth = oauth_token if oauth_token is not None else existing.get("oauth_token")
+        if saved_oauth:
+            data["oauth_token"] = saved_oauth
+        result.update(data)
+        for field in _SECRET_FIELDS:
+            if data.get(field):
+                data[field] = encrypt(data[field])
+        return data
+
+    jsonstore.mutate_json(_TOKEN_FILE, {}, _mutate)
+    return result
 
 
 def auth_scheme() -> str:
@@ -166,7 +167,7 @@ def sign_out() -> None:
     """Forget the token and any pending device flow (next use needs a fresh sign-in)."""
     for f in (_TOKEN_FILE, _DEVICE_FILE):
         try:
-            f.unlink(missing_ok=True)
+            jsonstore.delete_json(f)
         except OSError:
             pass
 
@@ -196,16 +197,15 @@ async def start_device_flow() -> dict[str, Any]:
     if not device_code:
         raise RuntimeError(f"GitHub did not return a device code: {body}")
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _DEVICE_FILE.write_text(
-        json.dumps(
-            {
-                "device_code": device_code,
-                "interval": int(body.get("interval", 5)),
-                "started_at": time.time(),
-                "expires_in": int(body.get("expires_in", 900)),
-            }
-        ),
-        encoding="utf-8",
+    jsonstore.write_json(
+        _DEVICE_FILE,
+        {
+            "device_code": device_code,
+            "interval": int(body.get("interval", 5)),
+            "started_at": time.time(),
+            "expires_in": int(body.get("expires_in", 900)),
+        },
+        indent=None,
     )
     return {
         "user_code": body.get("user_code", ""),
@@ -249,9 +249,8 @@ async def poll_device_flow() -> dict[str, Any]:
     """
     if not _DEVICE_FILE.exists():
         return {"status": "error", "detail": "No sign-in in progress. Start again."}
-    try:
-        pending = json.loads(_DEVICE_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    pending = jsonstore.read_json(_DEVICE_FILE, None)
+    if not isinstance(pending, dict):
         return {"status": "error", "detail": "Sign-in state was lost. Start again."}
 
     async with httpx.AsyncClient(timeout=20) as client:
@@ -269,7 +268,7 @@ async def poll_device_flow() -> dict[str, Any]:
     if err in ("authorization_pending", "slow_down"):
         return {"status": "pending"}
     if err in ("expired_token", "access_denied") or (err and not body.get("access_token")):
-        _DEVICE_FILE.unlink(missing_ok=True)
+        jsonstore.delete_json(_DEVICE_FILE)
         detail = {
             "expired_token": "The code expired before you authorized. Start again.",
             "access_denied": "Sign-in was cancelled.",
@@ -282,7 +281,7 @@ async def poll_device_flow() -> dict[str, Any]:
 
     bearer, api_base, expires_at = await _mint_copilot_token(oauth_token)
     _write_cache(bearer, api_base, expires_at=expires_at, oauth_token=oauth_token, auth_scheme="Bearer")
-    _DEVICE_FILE.unlink(missing_ok=True)
+    jsonstore.delete_json(_DEVICE_FILE)
     return {"status": "authorized", **status()}
 
 

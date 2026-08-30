@@ -29,7 +29,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
 from app.core.security import Principal, require_permission
-from app.entra import DOMAINS, blastradius, ca_engine, ca_simulator, cache, demo as demo_mod, job, model, permissions_probe
+from app.entra import DOMAINS, blastradius, ca_simulator, cache, demo as demo_mod, job, model, permissions_probe
 from app.entra import investigate
 from app.entra import guests as guests_mod
 from app.entra import investigate_activity as inv_activity
@@ -120,12 +120,13 @@ async def status(
 ) -> dict[str, Any]:
     """Snapshot freshness, per-domain state, licenses and granted permissions."""
     snapshot, tenant_id, cid = _snapshot(principal, connection_id)
-    running = job.is_running(job.job_key(tenant_id))
+    running = await job.is_running(job.job_key(tenant_id))
+    current_job = await job.get_job(job.job_key(tenant_id))
     return _envelope(
         snapshot, cid,
         domains=[{**meta, "name": name} for name, meta in (snapshot.get("domains") or {}).items()],
         collectable=list(DOMAINS),
-        job=job.public_job(job.get_job(job.job_key(tenant_id))),
+        job=job.public_job(current_job),
         refreshing=running,
     )
 
@@ -147,7 +148,9 @@ async def refresh(
     if connection is None:
         raise HTTPException(status_code=400, detail="No Azure connection is configured.")
     wanted = [d for d in (body.domains if body else []) if d in DOMAINS] or None
-    running = job.start_job(tenant_id=tenant_id, connection=connection, domains=wanted, connection_id=cid)
+    running = await job.start_job(
+        tenant_id=tenant_id, connection=connection, domains=wanted, connection_id=cid
+    )
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,
         action="entra.refresh", target=tenant_id,
@@ -586,17 +589,18 @@ async def set_finding_state(
     if body.state == "suppressed" and not body.reason.strip():
         raise HTTPException(status_code=400, detail="A suppression requires a reason.")
 
-    state = snapshot_mod.read_state(tenant_id)
-    per = state.setdefault("findings", {})
-    entry = per.setdefault(fingerprint, {"first_seen": model.now_iso()})
-    entry.update({"state": body.state, "reason": body.reason, "assignee": body.assignee,
-                  "note": body.note, "updated_at": model.now_iso()})
-    suppressed = set(state.get("suppressed") or [])
-    suppressed.discard(fingerprint)
-    if body.state == "suppressed":
-        suppressed.add(fingerprint)
-    state["suppressed"] = sorted(suppressed)
-    snapshot_mod.write_state(tenant_id, state)
+    def _mutate(state: dict[str, Any]) -> None:
+        per = state.setdefault("findings", {})
+        entry = per.setdefault(fingerprint, {"first_seen": model.now_iso()})
+        entry.update({"state": body.state, "reason": body.reason, "assignee": body.assignee,
+                      "note": body.note, "updated_at": model.now_iso()})
+        suppressed = set(state.get("suppressed") or [])
+        suppressed.discard(fingerprint)
+        if body.state == "suppressed":
+            suppressed.add(fingerprint)
+        state["suppressed"] = sorted(suppressed)
+
+    snapshot_mod.mutate_state(tenant_id, _mutate)
 
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,
@@ -849,12 +853,13 @@ async def ca_breakglass_confirm(
     then excluding it from findings would be dangerous, so the decision is always the
     operator's and it persists in ``findings_state``."""
     _conn, tenant_id, cid = _target(principal, connection_id)
-    state = snapshot_mod.read_state(tenant_id)
-    state.setdefault("breakglass", {})[body.user_id] = {
-        "confirmed": bool(body.confirmed), "note": body.note,
-        "by": principal.subject, "at": model.now_iso(),
-    }
-    snapshot_mod.write_state(tenant_id, state)
+    def _mutate(state: dict[str, Any]) -> None:
+        state.setdefault("breakglass", {})[body.user_id] = {
+            "confirmed": bool(body.confirmed), "note": body.note,
+            "by": principal.subject, "at": model.now_iso(),
+        }
+
+    snapshot_mod.mutate_state(tenant_id, _mutate)
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,
         action="entra.breakglass_confirm", target=body.user_id,
@@ -2174,11 +2179,8 @@ async def ca_simulate(
 def _save_simulation(tenant_id: str, body: SimulateBody, result: dict[str, Any], actor: str) -> str:
     import uuid as _uuid
 
-    saved = cache.read_state(tenant_id, "simulations", [])
-    if not isinstance(saved, list):
-        saved = []
     sim_id = _uuid.uuid4().hex[:12]
-    saved.append({
+    simulation = {
         "id": sim_id,
         "label": body.label or ", ".join(result.get("changes") or []) or "Simulation",
         "at": model.now_iso(),
@@ -2186,8 +2188,14 @@ def _save_simulation(tenant_id: str, body: SimulateBody, result: dict[str, Any],
         "input": {"changes": body.changes, "contexts": body.contexts, "cohorts": body.cohorts,
                   "sample_size": body.sample_size},
         "result": result,
-    })
-    cache.write_state(tenant_id, "simulations", saved[-50:])
+    }
+
+    def _mutate(stored: Any) -> list[dict[str, Any]]:
+        saved = stored if isinstance(stored, list) else []
+        saved.append(simulation)
+        return saved[-50:]
+
+    cache.mutate_state(tenant_id, "simulations", [], _mutate)
     return sim_id
 
 
@@ -2255,9 +2263,22 @@ async def ca_simulation_rerun(
             status_code=409,
             detail=f"This simulation no longer applies to the current snapshot: {exc}",
         ) from exc
-    found["result"] = result
-    found["at"] = model.now_iso()
-    cache.write_state(tenant_id, "simulations", rows)
+    updated = False
+
+    def _mutate(stored: Any) -> list[dict[str, Any]]:
+        nonlocal updated
+        simulations = stored if isinstance(stored, list) else []
+        for simulation in simulations:
+            if simulation.get("id") == simulation_id:
+                simulation["result"] = result
+                simulation["at"] = model.now_iso()
+                updated = True
+                break
+        return simulations
+
+    cache.mutate_state(tenant_id, "simulations", [], _mutate)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Simulation not found.")
     return _envelope(snapshot, cid, result=result, simulation_id=simulation_id)
 
 
@@ -3159,24 +3180,24 @@ async def inbox_bulk(
 
     from datetime import datetime, timedelta, timezone
 
-    state = snapshot_mod.read_state(tenant_id)
-    per = state.setdefault("findings", {})
-    suppressed = set(state.get("suppressed") or [])
     until = ""
     if body.state == "snoozed":
         until = (datetime.now(timezone.utc) + timedelta(days=body.snooze_days)).isoformat()
 
-    for fingerprint in body.fingerprints[:2000]:
-        entry = per.setdefault(fingerprint, {"first_seen": model.now_iso()})
-        entry.update({"state": body.state, "reason": body.reason, "assignee": body.assignee,
-                      "note": body.note, "snoozed_until": until,
-                      "updated_at": model.now_iso()})
-        suppressed.discard(fingerprint)
-        if body.state == "suppressed":
-            suppressed.add(fingerprint)
-    state["suppressed"] = sorted(suppressed)
-    snapshot_mod.write_state(tenant_id, state)
-    snapshot_mod.invalidate(tenant_id)
+    def _mutate(state: dict[str, Any]) -> None:
+        per = state.setdefault("findings", {})
+        suppressed = set(state.get("suppressed") or [])
+        for fingerprint in body.fingerprints[:2000]:
+            entry = per.setdefault(fingerprint, {"first_seen": model.now_iso()})
+            entry.update({"state": body.state, "reason": body.reason, "assignee": body.assignee,
+                          "note": body.note, "snoozed_until": until,
+                          "updated_at": model.now_iso()})
+            suppressed.discard(fingerprint)
+            if body.state == "suppressed":
+                suppressed.add(fingerprint)
+        state["suppressed"] = sorted(suppressed)
+
+    snapshot_mod.mutate_state(tenant_id, _mutate)
 
     db.add(AuditLog(
         tenant_id=principal.tenant_id, actor_id=principal.subject,

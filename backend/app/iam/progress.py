@@ -40,11 +40,12 @@ def record(tenant_id: str, kind: str, seconds: float) -> None:
     """Remember how long a completed run of ``kind`` took."""
     if seconds <= 0:
         return
-    data = _read(tenant_id)
-    samples = data.setdefault(kind, [])
-    samples.append(round(float(seconds), 2))
-    del samples[:-MAX_SAMPLES]
-    cache.write_state(tenant_id, STATE_KEY, data)
+    def _mutate(data: dict[str, Any]) -> None:
+        samples = data.setdefault(kind, [])
+        samples.append(round(float(seconds), 2))
+        del samples[:-MAX_SAMPLES]
+
+    cache.mutate_state(tenant_id, STATE_KEY, _mutate)
 
 
 def estimate(tenant_id: str, kind: str) -> tuple[float | None, str]:

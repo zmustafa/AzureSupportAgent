@@ -5,12 +5,13 @@ file stays lean even for large tenants.
 """
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "inventory_snapshots.json"
 _MAX_SNAPSHOTS = 60
@@ -27,19 +28,8 @@ def _norm_scope(scope: str) -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _fingerprints(resources: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
@@ -68,7 +58,6 @@ def save_snapshot(
     tenant_id: str, connection_id: str, payload: dict[str, Any], actor: str = "", scope: str = ""
 ) -> dict[str, Any]:
     """Persist a compact snapshot from a full inventory payload. Returns the summary."""
-    data = _read()
     sid = uuid.uuid4().hex[:12]
     resources = payload.get("resources") or []
     summary = payload.get("summary") or {}
@@ -85,12 +74,16 @@ def save_snapshot(
         "tag_coverage_pct": summary.get("tag_coverage_pct", 0),
         "fingerprints": _fingerprints(resources),
     }
-    data[sid] = rec
-    recs = sorted(data.values(), key=lambda s: s.get("created_at", ""), reverse=True)
-    if len(recs) > _MAX_SNAPSHOTS:
-        for old in recs[_MAX_SNAPSHOTS:]:
-            data.pop(old["id"], None)
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data[sid] = rec
+        records = sorted(
+            data.values(), key=lambda stored: stored.get("created_at", ""), reverse=True
+        )
+        if len(records) > _MAX_SNAPSHOTS:
+            for old in records[_MAX_SNAPSHOTS:]:
+                data.pop(old["id"], None)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     return _summary_dict(rec)
 
 
@@ -117,13 +110,17 @@ def get_snapshot(tenant_id: str, snapshot_id: str) -> dict[str, Any] | None:
 
 
 def delete_snapshot(tenant_id: str, snapshot_id: str) -> bool:
-    data = _read()
-    rec = data.get(snapshot_id)
-    if rec and (rec.get("tenant_id") or "") in ("", tenant_id):
-        data.pop(snapshot_id, None)
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get(snapshot_id)
+        if rec and (rec.get("tenant_id") or "") in ("", tenant_id):
+            data.pop(snapshot_id, None)
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    return deleted
 
 
 def latest_snapshot(tenant_id: str, connection_id: str | None = None, scope: str = "") -> dict[str, Any] | None:

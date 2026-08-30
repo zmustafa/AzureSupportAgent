@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.44.1.10279",
-      "templateHash": "8358295039279176778"
+      "version": "0.46.1.21595",
+      "templateHash": "16611251585315871603"
     }
   },
   "parameters": {
@@ -27,9 +27,37 @@
     },
     "containerImage": {
       "type": "string",
-      "defaultValue": "docker.io/zmustafa/azure-support-agent:latest",
+      "defaultValue": "docker.io/zmustafa/azure-support-agent@sha256:3c9bbbdad372b7b7bbecb3b778da4974d4067c983419586021207d5978758331",
       "metadata": {
-        "description": "Container image to deploy. Defaults to the public Docker Hub image, :latest tag, so the one-click button always provisions the newest published release. Switch to GHCR after the GitHub package is made public."
+        "description": "Immutable container image reference. The default is a published linux/amd64 manifest digest; override only with another reviewed tag or, preferably, registry/repository@sha256:digest reference."
+      }
+    },
+    "containerRegistryServer": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Azure Container Registry login server, for example contoso.azurecr.io. Leave empty for public images. When set, containerRegistryIdentityResourceId must name an existing user-assigned identity with AcrPull on that registry."
+      }
+    },
+    "containerRegistryIdentityResourceId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional existing user-assigned identity resource ID used for private ACR pulls and Key Vault references. Grant AcrPull and/or Key Vault Secrets User before deployment. The app also always receives its own system-assigned runtime identity."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Shared tags merged onto all taggable resources. Supplied values override the built-in Application, Environment, and ManagedBy tags."
+      }
+    },
+    "deploymentEnvironment": {
+      "type": "string",
+      "defaultValue": "Production",
+      "metadata": {
+        "description": "Value for the built-in Environment resource tag."
       }
     },
     "adminUsername": {
@@ -72,18 +100,141 @@
         "description": "PostgreSQL database name used by the app."
       }
     },
+    "postgresSkuTier": {
+      "type": "string",
+      "defaultValue": "Burstable",
+      "allowedValues": [
+        "Burstable",
+        "GeneralPurpose",
+        "MemoryOptimized"
+      ],
+      "metadata": {
+        "description": "PostgreSQL compute tier. Burstable keeps one-click cost low; use GeneralPurpose or MemoryOptimized before enabling high availability."
+      }
+    },
     "postgresSkuName": {
       "type": "string",
       "defaultValue": "Standard_B1ms",
       "metadata": {
-        "description": "PostgreSQL Flexible Server SKU. B1ms is the lowest-cost managed option for this template."
+        "description": "PostgreSQL Flexible Server SKU name. It must belong to postgresSkuTier and be offered in the selected region. B1ms is the balanced low-cost default; the production preset uses a General Purpose SKU."
+      }
+    },
+    "postgresStorageSizeGB": {
+      "type": "int",
+      "defaultValue": 32,
+      "minValue": 32,
+      "maxValue": 32767,
+      "metadata": {
+        "description": "PostgreSQL Premium SSD storage size in GiB. Storage can grow but cannot be reduced after deployment."
+      }
+    },
+    "postgresStorageAutoGrow": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Disabled",
+        "Enabled"
+      ],
+      "metadata": {
+        "description": "Enable PostgreSQL storage autogrow. This prevents disk-full outages but has no configurable cost ceiling, so the one-click default is Disabled and the production preset opts in."
+      }
+    },
+    "postgresBackupRetentionDays": {
+      "type": "int",
+      "defaultValue": 14,
+      "minValue": 7,
+      "maxValue": 35,
+      "metadata": {
+        "description": "PostgreSQL point-in-time backup retention in days (7-35). Fourteen days balances recoverability and retained-backup cost."
+      }
+    },
+    "postgresGeoRedundantBackup": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Disabled",
+        "Enabled"
+      ],
+      "metadata": {
+        "description": "Enable geo-redundant PostgreSQL backups. This is a create-time, region-dependent, higher-cost choice and is disabled by default."
+      }
+    },
+    "postgresHighAvailabilityMode": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Disabled",
+        "SameZone",
+        "ZoneRedundant"
+      ],
+      "metadata": {
+        "description": "PostgreSQL high-availability mode. SameZone and ZoneRedundant require a supported General Purpose or Memory Optimized SKU and approximately double compute cost."
+      }
+    },
+    "postgresAvailabilityZone": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional primary PostgreSQL availability zone. Leave empty for Azure placement; availability varies by region."
+      }
+    },
+    "postgresStandbyAvailabilityZone": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional PostgreSQL standby availability zone used only with high availability. Leave empty for Azure placement."
+      }
+    },
+    "postgresCustomMaintenanceWindow": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Disabled",
+        "Enabled"
+      ],
+      "metadata": {
+        "description": "Use a custom PostgreSQL maintenance window. Disabled uses the Azure-managed schedule; Enabled uses the day/hour/minute parameters below."
+      }
+    },
+    "postgresMaintenanceDayOfWeek": {
+      "type": "int",
+      "defaultValue": 0,
+      "minValue": 0,
+      "maxValue": 6,
+      "metadata": {
+        "description": "Custom maintenance day, where 0 is Sunday and 6 is Saturday. Used only when postgresCustomMaintenanceWindow is Enabled."
+      }
+    },
+    "postgresMaintenanceStartHour": {
+      "type": "int",
+      "defaultValue": 2,
+      "minValue": 0,
+      "maxValue": 23,
+      "metadata": {
+        "description": "Custom maintenance start hour in the server region local time. Used only when postgresCustomMaintenanceWindow is Enabled."
+      }
+    },
+    "postgresMaintenanceStartMinute": {
+      "type": "int",
+      "defaultValue": 0,
+      "allowedValues": [
+        0
+      ],
+      "metadata": {
+        "description": "Custom maintenance start minute. PostgreSQL Flexible Server currently supports the top of the hour."
       }
     },
     "containerCpu": {
       "type": "string",
       "defaultValue": "1.0",
+      "allowedValues": [
+        "0.5",
+        "1.0",
+        "2.0",
+        "4.0"
+      ],
       "metadata": {
-        "description": "Container CPU cores."
+        "description": "Container CPU cores. Keep this paired with a supported memory value."
       }
     },
     "containerMemory": {
@@ -92,10 +243,170 @@
       "allowedValues": [
         "1Gi",
         "2Gi",
-        "4Gi"
+        "4Gi",
+        "8Gi"
       ],
       "metadata": {
         "description": "Container memory allocation. Chromium and Azure CLI need headroom, so 2Gi is the default."
+      }
+    },
+    "appMinReplicas": {
+      "type": "int",
+      "defaultValue": 1,
+      "minValue": 1,
+      "maxValue": 10,
+      "metadata": {
+        "description": "Minimum always-running Container App replicas. One controls idle cost; the production preset uses two for replica-level resilience."
+      }
+    },
+    "appMaxReplicas": {
+      "type": "int",
+      "defaultValue": 2,
+      "minValue": 1,
+      "maxValue": 10,
+      "metadata": {
+        "description": "Maximum Container App replicas. The balanced default allows one additional replica while limiting database connections and cost."
+      }
+    },
+    "appHttpConcurrency": {
+      "type": "int",
+      "defaultValue": 20,
+      "minValue": 1,
+      "maxValue": 1000,
+      "metadata": {
+        "description": "Concurrent HTTP requests per replica before the Container Apps HTTP scaler adds capacity."
+      }
+    },
+    "containerEnvironmentZoneRedundant": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Make the Container Apps environment zone redundant. Disabled preserves regional compatibility and cost; enable only in a supported availability-zone region."
+      }
+    },
+    "storageRedundancy": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_GRS",
+        "Standard_RAGRS",
+        "Standard_ZRS",
+        "Standard_GZRS",
+        "Standard_RAGZRS"
+      ],
+      "metadata": {
+        "description": "Storage account redundancy for Azure Files. Standard_LRS is the low-cost default; production commonly chooses Standard_ZRS after confirming regional support."
+      }
+    },
+    "fileShareQuotaGB": {
+      "type": "int",
+      "defaultValue": 32,
+      "minValue": 1,
+      "maxValue": 102400,
+      "metadata": {
+        "description": "Azure Files share quota in GiB."
+      }
+    },
+    "fileShareSoftDeleteRetentionDays": {
+      "type": "int",
+      "defaultValue": 14,
+      "minValue": 1,
+      "maxValue": 365,
+      "metadata": {
+        "description": "Deleted Azure Files shares are recoverable for this many days (1-365)."
+      }
+    },
+    "secretsEncryptionKey": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional direct Fernet key for stored application secrets. Prefer secretsEncryptionKeySecretUri; leave both empty to retain the existing generated key on Azure Files."
+      }
+    },
+    "databaseUrlSecretUri": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Key Vault secret URI containing DATABASE_URL. The selected managed identity needs Key Vault Secrets User; leave empty to use the template-created PostgreSQL password secret."
+      }
+    },
+    "adminPasswordSecretUri": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Key Vault secret URI containing the bootstrap admin password. The selected managed identity needs Key Vault Secrets User; leave empty to use adminPassword."
+      }
+    },
+    "secretsEncryptionKeySecretUri": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Key Vault secret URI containing SECRETS_ENCRYPTION_KEY. The selected managed identity needs Key Vault Secrets User."
+      }
+    },
+    "logRetentionDays": {
+      "type": "int",
+      "defaultValue": 30,
+      "minValue": 30,
+      "maxValue": 730,
+      "metadata": {
+        "description": "Log Analytics and diagnostic data retention in days (30-730)."
+      }
+    },
+    "enableDiagnosticSettings": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy PostgreSQL and Azure Files diagnostic settings to Log Analytics. Container App console/system logs are already connected through the managed environment and are not duplicated."
+      }
+    },
+    "enableAlerts": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy the action group and supported platform metric alerts. Disabled by default to avoid notification and alert-rule costs in one-click/dev deployments."
+      }
+    },
+    "enableLogAlerts": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy scheduled-query alerts for event-loop stalls, database-pool exhaustion, probe failures, and platform restart logs. Enable on a later deployment after Container Apps log tables have received data."
+      }
+    },
+    "alertEmailReceiver": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional email receiver for the generated action group. Leave empty to create an action group without an email receiver and attach receivers later."
+      }
+    },
+    "postgresConnectionsAlertThreshold": {
+      "type": "int",
+      "defaultValue": 80,
+      "minValue": 1,
+      "metadata": {
+        "description": "PostgreSQL active-connection count that raises an alert. Set below the server max_connections value with room for maintenance and administration."
+      }
+    },
+    "appResponseTimeAlertThresholdMs": {
+      "type": "int",
+      "defaultValue": 3000,
+      "minValue": 1,
+      "metadata": {
+        "description": "Container App average response-time alert threshold in milliseconds."
+      }
+    },
+    "resourceLock": {
+      "type": "string",
+      "defaultValue": "None",
+      "allowedValues": [
+        "None",
+        "CanNotDelete"
+      ],
+      "metadata": {
+        "description": "Optional deletion locks on PostgreSQL, storage, and the Container App. CanNotDelete protects data while still allowing updates; None keeps teardown one-click."
       }
     },
     "privateNetworking": {
@@ -195,13 +506,16 @@
         "count": "[length(parameters('allowedClientIpRanges'))]",
         "input": {
           "name": "[parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].name]",
-          "description": "[if(contains(parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')], 'description'), parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].description, '')]",
+          "description": "[coalesce(tryGet(parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')], 'description'), '')]",
           "ipAddressRange": "[parameters('allowedClientIpRanges')[copyIndex('ipSecurityRestrictions')].ipAddressRange]",
           "action": "[parameters('ipRestrictionMode')]"
         }
       }
     ],
     "isPrivate": "[equals(parameters('privateNetworking'), 'Yes')]",
+    "hasUserAssignedIdentity": "[not(empty(parameters('containerRegistryIdentityResourceId')))]",
+    "keyVaultIdentity": "[if(variables('hasUserAssignedIdentity'), parameters('containerRegistryIdentityResourceId'), 'system')]",
+    "resourceTags": "[union(createObject('Application', parameters('appName'), 'Environment', parameters('deploymentEnvironment'), 'ManagedBy', 'Bicep'), parameters('tags'))]",
     "allowPublicDatabaseAccess": "[and(not(variables('isPrivate')), equals(parameters('acknowledgePublicDatabaseAccess'), 'Yes'))]",
     "normalizedAppName": "[toLower(parameters('appName'))]",
     "unique": "[uniqueString(resourceGroup().id, variables('normalizedAppName'))]",
@@ -214,6 +528,10 @@
     "fileShareName": "appdata",
     "managedEnvStorageName": "appdata",
     "postgresServerName": "[format('{0}-pg-{1}', variables('namePrefix'), variables('unique'))]",
+    "adminPasswordSecret": "[if(empty(parameters('adminPasswordSecretUri')), createObject('name', 'admin-password', 'value', parameters('adminPassword')), createObject('name', 'admin-password', 'keyVaultUrl', parameters('adminPasswordSecretUri'), 'identity', variables('keyVaultIdentity')))]",
+    "hasSecretsEncryptionKey": "[or(not(empty(parameters('secretsEncryptionKeySecretUri'))), not(empty(parameters('secretsEncryptionKey'))))]",
+    "secretsEncryptionKeySecret": "[if(not(empty(parameters('secretsEncryptionKeySecretUri'))), createObject('name', 'secrets-encryption-key', 'keyVaultUrl', parameters('secretsEncryptionKeySecretUri'), 'identity', variables('keyVaultIdentity')), createObject('name', 'secrets-encryption-key', 'value', parameters('secretsEncryptionKey')))]",
+    "registryCredentials": "[if(empty(parameters('containerRegistryServer')), createArray(), createArray(createObject('server', parameters('containerRegistryServer'), 'identity', parameters('containerRegistryIdentityResourceId'))))]",
     "vnetName": "[format('{0}-vnet-{1}', variables('namePrefix'), variables('unique'))]",
     "infraSubnetName": "snet-infra",
     "peSubnetName": "snet-pe",
@@ -222,7 +540,169 @@
     "filePrivateDnsZoneName": "[format('privatelink.file.{0}', environment().suffixes.storage)]",
     "storageFilePeName": "[format('{0}-file-pe', variables('storageAccountName'))]",
     "postgresPrivateDnsZoneName": "privatelink.postgres.database.azure.com",
-    "postgresPeName": "[format('{0}-pe', variables('postgresServerName'))]"
+    "postgresPeName": "[format('{0}-pe', variables('postgresServerName'))]",
+    "platformMetricAlerts": [
+      {
+        "name": "PostgreSQL CPU high",
+        "description": "PostgreSQL average CPU exceeded 80 percent for five minutes.",
+        "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "metricNamespace": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "metricName": "cpu_percent",
+        "operator": "GreaterThan",
+        "threshold": 80,
+        "timeAggregation": "Average",
+        "dimensions": [],
+        "severity": 2
+      },
+      {
+        "name": "PostgreSQL memory high",
+        "description": "PostgreSQL average memory exceeded 85 percent for five minutes.",
+        "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "metricNamespace": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "metricName": "memory_percent",
+        "operator": "GreaterThan",
+        "threshold": 85,
+        "timeAggregation": "Average",
+        "dimensions": [],
+        "severity": 2
+      },
+      {
+        "name": "PostgreSQL connections high",
+        "description": "PostgreSQL active connections exceeded the configured threshold.",
+        "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "metricNamespace": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "metricName": "active_connections",
+        "operator": "GreaterThan",
+        "threshold": "[parameters('postgresConnectionsAlertThreshold')]",
+        "timeAggregation": "Maximum",
+        "dimensions": [],
+        "severity": 2
+      },
+      {
+        "name": "PostgreSQL storage high",
+        "description": "PostgreSQL average storage use exceeded 80 percent for five minutes.",
+        "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "metricNamespace": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "metricName": "storage_percent",
+        "operator": "GreaterThan",
+        "threshold": 80,
+        "timeAggregation": "Average",
+        "dimensions": [],
+        "severity": 1
+      },
+      {
+        "name": "PostgreSQL failed connections",
+        "description": "PostgreSQL reported more than five failed connections in five minutes.",
+        "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+        "metricNamespace": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "metricName": "connections_failed",
+        "operator": "GreaterThan",
+        "threshold": 5,
+        "timeAggregation": "Total",
+        "dimensions": [],
+        "severity": 1
+      },
+      {
+        "name": "Container App HTTP 5xx",
+        "description": "The Container App returned one or more server-error responses in five minutes.",
+        "scope": "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+        "metricNamespace": "Microsoft.App/containerapps",
+        "metricName": "Requests",
+        "operator": "GreaterThan",
+        "threshold": 0,
+        "timeAggregation": "Total",
+        "dimensions": [
+          {
+            "name": "statusCodeCategory",
+            "operator": "Include",
+            "values": [
+              "5xx"
+            ]
+          }
+        ],
+        "severity": 1
+      },
+      {
+        "name": "Container App replica restarts",
+        "description": "A replica cumulative restart counter exceeded three; investigate revision health.",
+        "scope": "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+        "metricNamespace": "Microsoft.App/containerapps",
+        "metricName": "RestartCount",
+        "operator": "GreaterThan",
+        "threshold": 3,
+        "timeAggregation": "Maximum",
+        "dimensions": [],
+        "severity": 1
+      },
+      {
+        "name": "Container App replicas below minimum",
+        "description": "Available replicas fell below the configured minimum.",
+        "scope": "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+        "metricNamespace": "Microsoft.App/containerapps",
+        "metricName": "Replicas",
+        "operator": "LessThan",
+        "threshold": "[parameters('appMinReplicas')]",
+        "timeAggregation": "Maximum",
+        "dimensions": [],
+        "severity": 1
+      },
+      {
+        "name": "Container App response time high",
+        "description": "Average ingress response time exceeded the configured threshold for five minutes.",
+        "scope": "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+        "metricNamespace": "Microsoft.App/containerapps",
+        "metricName": "ResponseTime",
+        "operator": "GreaterThan",
+        "threshold": "[parameters('appResponseTimeAlertThresholdMs')]",
+        "timeAggregation": "Average",
+        "dimensions": [],
+        "severity": 2
+      },
+      {
+        "name": "Azure Files availability low",
+        "description": "Azure Files average availability fell below 99 percent for five minutes.",
+        "scope": "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]",
+        "metricNamespace": "Microsoft.Storage/storageAccounts/fileServices",
+        "metricName": "Availability",
+        "operator": "LessThan",
+        "threshold": 99,
+        "timeAggregation": "Average",
+        "dimensions": [],
+        "severity": 1
+      },
+      {
+        "name": "Azure Files capacity high",
+        "description": "Azure Files capacity exceeded 80 percent of the configured share quota.",
+        "scope": "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]",
+        "metricNamespace": "Microsoft.Storage/storageAccounts/fileServices",
+        "metricName": "FileCapacity",
+        "operator": "GreaterThan",
+        "threshold": "[div(mul(mul(parameters('fileShareQuotaGB'), 1073741824), 80), 100)]",
+        "timeAggregation": "Average",
+        "dimensions": [
+          {
+            "name": "FileShare",
+            "operator": "Include",
+            "values": [
+              "[variables('fileShareName')]"
+            ]
+          }
+        ],
+        "severity": 2
+      }
+    ],
+    "logAlertDefinitions": [
+      {
+        "name": "Application readiness and loop health",
+        "description": "Application logs reported an event-loop stall, database-pool exhaustion, or readiness failure.",
+        "query": "[format('ContainerAppConsoleLogs | where ContainerAppName == ''{0}'' | where Log has_any (''event loop blocked for'', ''QueuePool limit'', ''readiness probe failed'')', variables('containerAppName'))]"
+      },
+      {
+        "name": "Container App platform restart",
+        "description": "Container Apps system logs reported a restart event for this application.",
+        "query": "[format('ContainerAppSystemLogs | where ContainerAppName == ''{0}'' | where Reason has ''Restart'' or Log has ''restart''', variables('containerAppName'))]"
+      }
+    ]
   },
   "resources": [
     {
@@ -230,11 +710,12 @@
       "apiVersion": "2023-09-01",
       "name": "[variables('workspaceName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "properties": {
         "sku": {
           "name": "PerGB2018"
         },
-        "retentionInDays": 30,
+        "retentionInDays": "[parameters('logRetentionDays')]",
         "features": {
           "enableLogAccessUsingOnlyResourcePermissions": true
         }
@@ -246,6 +727,7 @@
       "apiVersion": "2023-11-01",
       "name": "[variables('vnetName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "properties": {
         "addressSpace": {
           "addressPrefixes": [
@@ -282,7 +764,9 @@
       "apiVersion": "2024-03-01",
       "name": "[variables('environmentName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "properties": {
+        "zoneRedundant": "[parameters('containerEnvironmentZoneRedundant')]",
         "appLogsConfiguration": {
           "destination": "log-analytics",
           "logAnalyticsConfiguration": {
@@ -302,8 +786,9 @@
       "apiVersion": "2023-05-01",
       "name": "[variables('storageAccountName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "sku": {
-        "name": "Standard_LRS"
+        "name": "[parameters('storageRedundancy')]"
       },
       "kind": "StorageV2",
       "properties": {
@@ -319,6 +804,12 @@
       "type": "Microsoft.Storage/storageAccounts/fileServices",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "properties": {
+        "shareDeleteRetentionPolicy": {
+          "enabled": true,
+          "days": "[parameters('fileShareSoftDeleteRetentionDays')]"
+        }
+      },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
       ]
@@ -328,7 +819,7 @@
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('fileShareName'))]",
       "properties": {
-        "shareQuota": 20,
+        "shareQuota": "[parameters('fileShareQuotaGB')]",
         "enabledProtocols": "SMB"
       },
       "dependsOn": [
@@ -358,7 +849,8 @@
       "type": "Microsoft.Network/privateDnsZones",
       "apiVersion": "2020-06-01",
       "name": "[variables('filePrivateDnsZoneName')]",
-      "location": "global"
+      "location": "global",
+      "tags": "[variables('resourceTags')]"
     },
     {
       "condition": "[variables('isPrivate')]",
@@ -383,6 +875,7 @@
       "apiVersion": "2023-11-01",
       "name": "[variables('storageFilePeName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "properties": {
         "subnet": {
           "id": "[variables('peSubnetId')]"
@@ -429,28 +922,12 @@
       "apiVersion": "2024-08-01",
       "name": "[variables('postgresServerName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "sku": {
         "name": "[parameters('postgresSkuName')]",
-        "tier": "Burstable"
+        "tier": "[parameters('postgresSkuTier')]"
       },
-      "properties": {
-        "version": "16",
-        "administratorLogin": "[parameters('postgresAdminLogin')]",
-        "administratorLoginPassword": "[parameters('postgresAdminPassword')]",
-        "storage": {
-          "storageSizeGB": 32
-        },
-        "backup": {
-          "backupRetentionDays": 7,
-          "geoRedundantBackup": "Disabled"
-        },
-        "highAvailability": {
-          "mode": "Disabled"
-        },
-        "network": {
-          "publicNetworkAccess": "[if(variables('isPrivate'), 'Disabled', 'Enabled')]"
-        }
-      }
+      "properties": "[union(createObject('version', '16', 'administratorLogin', parameters('postgresAdminLogin'), 'administratorLoginPassword', parameters('postgresAdminPassword'), 'storage', createObject('storageSizeGB', parameters('postgresStorageSizeGB'), 'autoGrow', parameters('postgresStorageAutoGrow')), 'backup', createObject('backupRetentionDays', parameters('postgresBackupRetentionDays'), 'geoRedundantBackup', parameters('postgresGeoRedundantBackup')), 'highAvailability', union(createObject('mode', parameters('postgresHighAvailabilityMode')), if(empty(parameters('postgresStandbyAvailabilityZone')), createObject(), createObject('standbyAvailabilityZone', parameters('postgresStandbyAvailabilityZone')))), 'maintenanceWindow', union(createObject('customWindow', parameters('postgresCustomMaintenanceWindow')), if(equals(parameters('postgresCustomMaintenanceWindow'), 'Enabled'), createObject('dayOfWeek', parameters('postgresMaintenanceDayOfWeek'), 'startHour', parameters('postgresMaintenanceStartHour'), 'startMinute', parameters('postgresMaintenanceStartMinute')), createObject())), 'network', createObject('publicNetworkAccess', if(variables('isPrivate'), 'Disabled', 'Enabled'))), if(empty(parameters('postgresAvailabilityZone')), createObject(), createObject('availabilityZone', parameters('postgresAvailabilityZone'))))]"
     },
     {
       "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
@@ -482,7 +959,8 @@
       "type": "Microsoft.Network/privateDnsZones",
       "apiVersion": "2020-06-01",
       "name": "[variables('postgresPrivateDnsZoneName')]",
-      "location": "global"
+      "location": "global",
+      "tags": "[variables('resourceTags')]"
     },
     {
       "condition": "[variables('isPrivate')]",
@@ -507,6 +985,7 @@
       "apiVersion": "2023-11-01",
       "name": "[variables('postgresPeName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
       "properties": {
         "subnet": {
           "id": "[variables('peSubnetId')]"
@@ -553,89 +1032,67 @@
       "apiVersion": "2024-03-01",
       "name": "[variables('containerAppName')]",
       "location": "[parameters('location')]",
+      "tags": "[variables('resourceTags')]",
+      "identity": "[if(variables('hasUserAssignedIdentity'), createObject('type', 'SystemAssigned,UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('containerRegistryIdentityResourceId')), createObject())), createObject('type', 'SystemAssigned'))]",
       "properties": {
         "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('environmentName'))]",
         "configuration": {
           "activeRevisionsMode": "Single",
+          "registries": "[variables('registryCredentials')]",
           "ingress": "[union(createObject('external', equals(parameters('ingressVisibility'), 'External'), 'targetPort', 8000, 'transport', 'auto', 'allowInsecure', false(), 'traffic', createArray(createObject('latestRevision', true(), 'weight', 100))), if(empty(parameters('allowedClientIpRanges')), createObject(), createObject('ipSecurityRestrictions', variables('ipSecurityRestrictions'))))]",
-          "secrets": [
-            {
-              "name": "database-url",
-              "value": "[format('postgresql+asyncpg://{0}:{1}@{2}:5432/{3}?ssl=require', uriComponent(parameters('postgresAdminLogin')), uriComponent(parameters('postgresAdminPassword')), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName')), '2024-08-01').fullyQualifiedDomainName, parameters('postgresDatabaseName'))]"
-            },
-            {
-              "name": "admin-password",
-              "value": "[parameters('adminPassword')]"
-            }
-          ]
+          "secrets": "[concat(createArray(if(empty(parameters('databaseUrlSecretUri')), createObject('name', 'database-url', 'value', format('postgresql+asyncpg://{0}:{1}@{2}:5432/{3}?ssl=require', uriComponent(parameters('postgresAdminLogin')), uriComponent(parameters('postgresAdminPassword')), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName')), '2024-08-01').fullyQualifiedDomainName, parameters('postgresDatabaseName'))), createObject('name', 'database-url', 'keyVaultUrl', parameters('databaseUrlSecretUri'), 'identity', variables('keyVaultIdentity'))), variables('adminPasswordSecret')), if(variables('hasSecretsEncryptionKey'), createArray(variables('secretsEncryptionKeySecret')), createArray()))]"
         },
         "template": {
           "containers": [
             {
               "name": "azsupagent",
               "image": "[parameters('containerImage')]",
-              "env": [
-                {
-                  "name": "SEED_ADMIN_USERNAME",
-                  "value": "[parameters('adminUsername')]"
-                },
-                {
-                  "name": "SEED_ADMIN_PASSWORD",
-                  "secretRef": "admin-password"
-                },
-                {
-                  "name": "DATABASE_URL",
-                  "secretRef": "database-url"
-                },
-                {
-                  "name": "COOKIE_SECURE",
-                  "value": "true"
-                },
-                {
-                  "name": "TRUST_FORWARDED_HEADERS",
-                  "value": "true"
-                },
-                {
-                  "name": "IP_ALLOWLIST_SEED",
-                  "value": "[parameters('allowlistSeed')]"
-                },
-                {
-                  "name": "IP_ALLOWLIST_SEED_MODE",
-                  "value": "[parameters('allowlistSeedMode')]"
-                },
-                {
-                  "name": "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT",
-                  "value": "1"
-                },
-                {
-                  "name": "ENTRA_MCP_COMMAND",
-                  "value": "/opt/eidmcp/bin/python"
-                },
-                {
-                  "name": "ENTRA_MCP_ARGS",
-                  "value": "/app/third_party/entraid-mcp-server/run_server.py"
-                },
-                {
-                  "name": "BROWSER_PROFILE_DIR",
-                  "value": "/tmp/browser-profiles"
-                },
-                {
-                  "name": "AZURE_EXTENSION_DIR",
-                  "value": "/opt/az-extensions"
-                },
-                {
-                  "name": "PUBLIC_BASE_URL",
-                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)]"
-                },
-                {
-                  "name": "FRONTEND_ORIGIN",
-                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)]"
-                }
-              ],
+              "env": "[flatten(createArray(createArray(createObject('name', 'SEED_ADMIN_USERNAME', 'value', parameters('adminUsername')), createObject('name', 'SEED_ADMIN_PASSWORD', 'secretRef', 'admin-password'), createObject('name', 'DATABASE_URL', 'secretRef', 'database-url')), if(variables('hasSecretsEncryptionKey'), createArray(createObject('name', 'SECRETS_ENCRYPTION_KEY', 'secretRef', 'secrets-encryption-key')), createArray()), createArray(createObject('name', 'COOKIE_SECURE', 'value', 'true'), createObject('name', 'TRUST_FORWARDED_HEADERS', 'value', 'true'), createObject('name', 'IP_ALLOWLIST_SEED', 'value', parameters('allowlistSeed')), createObject('name', 'IP_ALLOWLIST_SEED_MODE', 'value', parameters('allowlistSeedMode')), createObject('name', 'DOTNET_SYSTEM_GLOBALIZATION_INVARIANT', 'value', '1'), createObject('name', 'ENTRA_MCP_COMMAND', 'value', '/opt/eidmcp/bin/python'), createObject('name', 'ENTRA_MCP_ARGS', 'value', '/app/third_party/entraid-mcp-server/run_server.py'), createObject('name', 'BROWSER_PROFILE_DIR', 'value', '/tmp/browser-profiles'), createObject('name', 'AZURE_EXTENSION_DIR', 'value', '/opt/az-extensions'), createObject('name', 'PUBLIC_BASE_URL', 'value', format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)), createObject('name', 'FRONTEND_ORIGIN', 'value', format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('environmentName')), '2024-03-01').defaultDomain)))))]",
               "resources": {
                 "cpu": "[json(parameters('containerCpu'))]",
                 "memory": "[parameters('containerMemory')]"
               },
+              "probes": [
+                {
+                  "type": "Startup",
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8000,
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 10,
+                  "successThreshold": 1
+                },
+                {
+                  "type": "Liveness",
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8000,
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 30,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 3,
+                  "successThreshold": 1
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/readyz",
+                    "port": 8000,
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 3,
+                  "successThreshold": 1
+                }
+              ],
               "volumeMounts": [
                 {
                   "volumeName": "appdata",
@@ -645,8 +1102,18 @@
             }
           ],
           "scale": {
-            "minReplicas": 1,
-            "maxReplicas": 1
+            "minReplicas": "[parameters('appMinReplicas')]",
+            "maxReplicas": "[parameters('appMaxReplicas')]",
+            "rules": [
+              {
+                "name": "http-concurrency",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "[string(parameters('appHttpConcurrency'))]"
+                  }
+                }
+              }
+            ]
           },
           "volumes": [
             {
@@ -666,6 +1133,221 @@
         "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('postgresPeName'), 'default')]",
         "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', variables('storageFilePeName'), 'default')]"
       ]
+    },
+    {
+      "condition": "[parameters('enableDiagnosticSettings')]",
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+      "name": "[format('send-to-{0}', variables('workspaceName'))]",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]",
+        "logs": [
+          {
+            "category": "PostgreSQLLogs",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "AllMetrics",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableDiagnosticSettings')]",
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]",
+      "name": "[format('send-to-{0}', variables('workspaceName'))]",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]",
+        "logAnalyticsDestinationType": "Dedicated",
+        "logs": [
+          {
+            "category": "StorageRead",
+            "enabled": true
+          },
+          {
+            "category": "StorageWrite",
+            "enabled": true
+          },
+          {
+            "category": "StorageDelete",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "AllMetrics",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ]
+    },
+    {
+      "condition": "[or(parameters('enableAlerts'), parameters('enableLogAlerts'))]",
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}-ag-{1}', variables('namePrefix'), variables('unique'))]",
+      "location": "global",
+      "tags": "[variables('resourceTags')]",
+      "properties": {
+        "groupShortName": "[substring(format('{0}alerts', variables('namePrefix')), 0, min(length(format('{0}alerts', variables('namePrefix'))), 12))]",
+        "enabled": true,
+        "emailReceivers": "[if(empty(parameters('alertEmailReceiver')), createArray(), createArray(createObject('name', 'operations-email', 'emailAddress', parameters('alertEmailReceiver'), 'useCommonAlertSchema', true())))]"
+      }
+    },
+    {
+      "copy": {
+        "name": "platformMetricAlert",
+        "count": "[length(variables('platformMetricAlerts'))]"
+      },
+      "condition": "[parameters('enableAlerts')]",
+      "type": "Microsoft.Insights/metricAlerts",
+      "apiVersion": "2018-03-01",
+      "name": "[format('{0}-{1}', variables('containerAppName'), uniqueString(variables('platformMetricAlerts')[copyIndex()].name))]",
+      "location": "global",
+      "tags": "[variables('resourceTags')]",
+      "properties": {
+        "description": "[variables('platformMetricAlerts')[copyIndex()].description]",
+        "severity": "[variables('platformMetricAlerts')[copyIndex()].severity]",
+        "enabled": true,
+        "scopes": [
+          "[variables('platformMetricAlerts')[copyIndex()].scope]"
+        ],
+        "evaluationFrequency": "[if(equals(variables('platformMetricAlerts')[copyIndex()].metricName, 'FileCapacity'), 'PT15M', 'PT1M')]",
+        "windowSize": "[if(equals(variables('platformMetricAlerts')[copyIndex()].metricName, 'FileCapacity'), 'PT1H', 'PT5M')]",
+        "autoMitigate": true,
+        "criteria": {
+          "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+          "allOf": [
+            {
+              "name": "condition",
+              "criterionType": "StaticThresholdCriterion",
+              "metricNamespace": "[variables('platformMetricAlerts')[copyIndex()].metricNamespace]",
+              "metricName": "[variables('platformMetricAlerts')[copyIndex()].metricName]",
+              "operator": "[variables('platformMetricAlerts')[copyIndex()].operator]",
+              "threshold": "[variables('platformMetricAlerts')[copyIndex()].threshold]",
+              "timeAggregation": "[variables('platformMetricAlerts')[copyIndex()].timeAggregation]",
+              "dimensions": "[variables('platformMetricAlerts')[copyIndex()].dimensions]",
+              "skipMetricValidation": false
+            }
+          ]
+        },
+        "actions": [
+          {
+            "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', format('{0}-ag-{1}', variables('namePrefix'), variables('unique')))]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', format('{0}-ag-{1}', variables('namePrefix'), variables('unique')))]",
+        "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "logAlert",
+        "count": "[length(variables('logAlertDefinitions'))]"
+      },
+      "condition": "[parameters('enableLogAlerts')]",
+      "type": "Microsoft.Insights/scheduledQueryRules",
+      "apiVersion": "2023-12-01",
+      "name": "[format('{0}-log-{1}', variables('containerAppName'), uniqueString(variables('logAlertDefinitions')[copyIndex()].name))]",
+      "location": "[parameters('location')]",
+      "kind": "LogAlert",
+      "tags": "[variables('resourceTags')]",
+      "properties": {
+        "displayName": "[variables('logAlertDefinitions')[copyIndex()].name]",
+        "description": "[variables('logAlertDefinitions')[copyIndex()].description]",
+        "enabled": true,
+        "severity": 1,
+        "scopes": [
+          "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+        ],
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT5M",
+        "skipQueryValidation": true,
+        "autoMitigate": true,
+        "criteria": {
+          "allOf": [
+            {
+              "query": "[variables('logAlertDefinitions')[copyIndex()].query]",
+              "timeAggregation": "Count",
+              "operator": "GreaterThan",
+              "threshold": 0,
+              "failingPeriods": {
+                "numberOfEvaluationPeriods": 1,
+                "minFailingPeriodsToAlert": 1
+              }
+            }
+          ]
+        },
+        "actions": {
+          "actionGroups": [
+            "[resourceId('Microsoft.Insights/actionGroups', format('{0}-ag-{1}', variables('namePrefix'), variables('unique')))]"
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', format('{0}-ag-{1}', variables('namePrefix'), variables('unique')))]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ]
+    },
+    {
+      "condition": "[equals(parameters('resourceLock'), 'CanNotDelete')]",
+      "type": "Microsoft.Authorization/locks",
+      "apiVersion": "2016-09-01",
+      "scope": "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]",
+      "name": "prevent-accidental-delete",
+      "properties": {
+        "level": "CanNotDelete",
+        "notes": "Optional deployment lock. Remove deliberately before deleting PostgreSQL."
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ]
+    },
+    {
+      "condition": "[equals(parameters('resourceLock'), 'CanNotDelete')]",
+      "type": "Microsoft.Authorization/locks",
+      "apiVersion": "2016-09-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+      "name": "prevent-accidental-delete",
+      "properties": {
+        "level": "CanNotDelete",
+        "notes": "Optional deployment lock. Remove deliberately before deleting persistent Azure Files data."
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[equals(parameters('resourceLock'), 'CanNotDelete')]",
+      "type": "Microsoft.Authorization/locks",
+      "apiVersion": "2016-09-01",
+      "scope": "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]",
+      "name": "prevent-accidental-delete",
+      "properties": {
+        "level": "CanNotDelete",
+        "notes": "Optional deployment lock. Remove deliberately before deleting the application."
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', variables('containerAppName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -676,6 +1358,10 @@
     "containerAppName": {
       "type": "string",
       "value": "[variables('containerAppName')]"
+    },
+    "containerAppPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01', 'full').identity.principalId]"
     },
     "postgresServerName": {
       "type": "string",

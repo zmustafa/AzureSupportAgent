@@ -5,12 +5,12 @@ library on first use but remain fully editable/deletable.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.insights import packfile, starters
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "insight_packs.json"
@@ -30,19 +30,15 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("packs"), dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, {"packs": {}, "seeded": False})
+    if isinstance(data, dict) and isinstance(data.get("packs"), dict):
+        return data
     return {"packs": {}, "seeded": False}
 
 
 def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    """Replace the store for import/test compatibility; CRUD uses atomic mutations."""
+    jsonstore.write_json(_PATH, data)
 
 
 def _ensure_seeded(data: dict[str, Any]) -> dict[str, Any]:
@@ -75,83 +71,106 @@ def _ensure_seeded(data: dict[str, Any]) -> dict[str, Any]:
         data["packs"][p["id"]] = p
     data["seeded"] = True
     data["seed_version"] = starters.SEED_VERSION
-    _write(data)
     return data
 
 
+def _seeded() -> dict[str, Any]:
+    data = _read()
+    if data.get("seed_version") == starters.SEED_VERSION:
+        return data
+    return jsonstore.mutate_json(_PATH, {"packs": {}, "seeded": False}, _ensure_seeded)
+
+
+def _mutate(mutator) -> Any:  # noqa: ANN001
+    result: Any = None
+
+    def _apply(data: dict[str, Any]) -> None:
+        nonlocal result
+        _ensure_seeded(data)
+        result = mutator(data)
+
+    jsonstore.mutate_json(_PATH, {"packs": {}, "seeded": False}, _apply)
+    return result
+
+
 def list_packs() -> list[dict[str, Any]]:
-    data = _ensure_seeded(_read())
+    data = _seeded()
     out = [packfile.normalize(p) for p in data["packs"].values()]
     out.sort(key=lambda p: (p.get("category", ""), p.get("name", "").lower()))
     return out
 
 
 def get_pack(pack_id: str) -> dict[str, Any] | None:
-    data = _ensure_seeded(_read())
+    data = _seeded()
     p = data["packs"].get(pack_id)
     return packfile.normalize(p) if p else None
 
 
 def upsert_pack(pack: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
     """Create or update a pack. A missing/blank id creates a new pack."""
-    data = _ensure_seeded(_read())
     p = packfile.normalize(pack)
     pid = (p.get("id") or "").strip()
-    if not pid or pid not in data["packs"]:
-        if not pid:
-            pid = str(uuid.uuid4())
-        p["id"] = pid
-        p["created_at"] = _now()
-        p["created_by"] = actor or p.get("created_by") or ""
-    else:
-        existing = data["packs"][pid]
-        p["created_at"] = existing.get("created_at") or _now()
-        p["created_by"] = existing.get("created_by") or actor
-        p["builtin"] = existing.get("builtin", False)  # builtin flag is not user-editable
-        # Snooze is runtime state the edit form doesn't carry — preserve it across upserts.
-        p["snoozed_until"] = p.get("snoozed_until") or existing.get("snoozed_until", "")
-        # Pin + collection membership are organizational state the edit form doesn't carry.
-        p["pinned"] = existing.get("pinned", False)
-        p["collection_ids"] = existing.get("collection_ids", []) or []
-    p["updated_at"] = _now()
-    data["packs"][pid] = p
-    _write(data)
-    return packfile.normalize(p)
+    if not pid:
+        pid = str(uuid.uuid4())
+    p["id"] = pid
+
+    def _apply(data: dict[str, Any]) -> dict[str, Any]:
+        existing = data["packs"].get(pid)
+        if existing is None:
+            p["created_at"] = _now()
+            p["created_by"] = actor or p.get("created_by") or ""
+        else:
+            p["created_at"] = existing.get("created_at") or _now()
+            p["created_by"] = existing.get("created_by") or actor
+            p["builtin"] = existing.get("builtin", False)  # builtin flag is not user-editable
+            # Snooze is runtime state the edit form doesn't carry — preserve it across upserts.
+            p["snoozed_until"] = p.get("snoozed_until") or existing.get("snoozed_until", "")
+            # Pin + collection membership are organizational state the edit form doesn't carry.
+            p["pinned"] = existing.get("pinned", False)
+            p["collection_ids"] = existing.get("collection_ids", []) or []
+        p["updated_at"] = _now()
+        data["packs"][pid] = p
+        return packfile.normalize(p)
+
+    return _mutate(_apply)
 
 
 def delete_pack(pack_id: str) -> bool:
-    data = _ensure_seeded(_read())
-    if pack_id in data["packs"]:
+    def _apply(data: dict[str, Any]) -> bool:
+        if pack_id not in data["packs"]:
+            return False
         del data["packs"][pack_id]
-        _write(data)
         return True
-    return False
+
+    return bool(_mutate(_apply))
 
 
 def set_enabled(pack_id: str, enabled: bool) -> dict[str, Any] | None:
-    data = _ensure_seeded(_read())
-    p = data["packs"].get(pack_id)
-    if not p:
-        return None
-    p["enabled"] = bool(enabled)
-    p["updated_at"] = _now()
-    data["packs"][pack_id] = p
-    _write(data)
-    return packfile.normalize(p)
+    def _apply(data: dict[str, Any]) -> dict[str, Any] | None:
+        p = data["packs"].get(pack_id)
+        if not p:
+            return None
+        p["enabled"] = bool(enabled)
+        p["updated_at"] = _now()
+        data["packs"][pack_id] = p
+        return packfile.normalize(p)
+
+    return _mutate(_apply)
 
 
 def set_snooze(pack_id: str, until_iso: str) -> dict[str, Any] | None:
     """Mute a pack's notifications until ``until_iso`` (an empty string clears the snooze).
     Snoozed packs still run on schedule and record digests; the runner just won't notify."""
-    data = _ensure_seeded(_read())
-    p = data["packs"].get(pack_id)
-    if not p:
-        return None
-    p["snoozed_until"] = str(until_iso or "")
-    p["updated_at"] = _now()
-    data["packs"][pack_id] = p
-    _write(data)
-    return packfile.normalize(p)
+    def _apply(data: dict[str, Any]) -> dict[str, Any] | None:
+        p = data["packs"].get(pack_id)
+        if not p:
+            return None
+        p["snoozed_until"] = str(until_iso or "")
+        p["updated_at"] = _now()
+        data["packs"][pack_id] = p
+        return packfile.normalize(p)
+
+    return _mutate(_apply)
 
 
 def clone_pack(pack_id: str, *, actor: str = "") -> dict[str, Any] | None:
@@ -168,22 +187,23 @@ def clone_pack(pack_id: str, *, actor: str = "") -> dict[str, Any] | None:
 
 def set_pinned(pack_id: str, pinned: bool) -> dict[str, Any] | None:
     """Pin/unpin a pack so it surfaces in the Library's top section."""
-    data = _ensure_seeded(_read())
-    p = data["packs"].get(pack_id)
-    if not p:
-        return None
-    p["pinned"] = bool(pinned)
-    p["updated_at"] = _now()
-    data["packs"][pack_id] = p
-    _write(data)
-    return packfile.normalize(p)
+    def _apply(data: dict[str, Any]) -> dict[str, Any] | None:
+        p = data["packs"].get(pack_id)
+        if not p:
+            return None
+        p["pinned"] = bool(pinned)
+        p["updated_at"] = _now()
+        data["packs"][pack_id] = p
+        return packfile.normalize(p)
+
+    return _mutate(_apply)
 
 
 # ------------------------------------------------------------------ collections
 # User-defined groupings for the Library. A pack may belong to zero or more collections
 # (membership lives on the pack as ``collection_ids``); this store holds their names/icons.
 def list_collections() -> list[dict[str, Any]]:
-    data = _ensure_seeded(_read())
+    data = _seeded()
     cols = [c for c in (data.get("collections") or []) if isinstance(c, dict) and c.get("id")]
     cols.sort(key=lambda c: str(c.get("name", "")).lower())
     return cols
@@ -193,55 +213,66 @@ def create_collection(name: str, *, icon: str = "📁", actor: str = "") -> dict
     name = (name or "").strip()[:80]
     if not name:
         return None
-    data = _ensure_seeded(_read())
-    cols = list(data.get("collections") or [])
     col = {"id": str(uuid.uuid4()), "name": name, "icon": (icon or "📁")[:8],
            "created_by": actor, "created_at": _now()}
-    cols.append(col)
-    data["collections"] = cols
-    _write(data)
+
+    def _apply(data: dict[str, Any]) -> None:
+        cols = list(data.get("collections") or [])
+        cols.append(col)
+        data["collections"] = cols
+
+    _mutate(_apply)
     return col
 
 
 def update_collection(collection_id: str, *, name: str | None = None, icon: str | None = None) -> dict[str, Any] | None:
-    data = _ensure_seeded(_read())
-    cols = list(data.get("collections") or [])
-    for c in cols:
-        if c.get("id") == collection_id:
-            if name is not None and name.strip():
-                c["name"] = name.strip()[:80]
-            if icon is not None and icon.strip():
-                c["icon"] = icon.strip()[:8]
-            data["collections"] = cols
-            _write(data)
-            return c
-    return None
+    def _apply(data: dict[str, Any]) -> dict[str, Any] | None:
+        cols = list(data.get("collections") or [])
+        for collection in cols:
+            if collection.get("id") == collection_id:
+                if name is not None and name.strip():
+                    collection["name"] = name.strip()[:80]
+                if icon is not None and icon.strip():
+                    collection["icon"] = icon.strip()[:8]
+                data["collections"] = cols
+                return collection
+        return None
+
+    return _mutate(_apply)
 
 
 def delete_collection(collection_id: str) -> bool:
     """Remove a collection and detach it from every pack that referenced it."""
-    data = _ensure_seeded(_read())
-    cols = list(data.get("collections") or [])
-    remaining = [c for c in cols if c.get("id") != collection_id]
-    if len(remaining) == len(cols):
-        return False
-    data["collections"] = remaining
-    for p in data["packs"].values():
-        if collection_id in (p.get("collection_ids") or []):
-            p["collection_ids"] = [c for c in p["collection_ids"] if c != collection_id]
-    _write(data)
-    return True
+    def _apply(data: dict[str, Any]) -> bool:
+        cols = list(data.get("collections") or [])
+        remaining = [collection for collection in cols if collection.get("id") != collection_id]
+        if len(remaining) == len(cols):
+            return False
+        data["collections"] = remaining
+        for pack in data["packs"].values():
+            if collection_id in (pack.get("collection_ids") or []):
+                pack["collection_ids"] = [
+                    cid for cid in pack["collection_ids"] if cid != collection_id
+                ]
+        return True
+
+    return bool(_mutate(_apply))
 
 
 def set_pack_collections(pack_id: str, collection_ids: list[str]) -> dict[str, Any] | None:
     """Replace a pack's collection membership (unknown collection ids are dropped)."""
-    data = _ensure_seeded(_read())
-    p = data["packs"].get(pack_id)
-    if not p:
-        return None
-    valid = {c.get("id") for c in (data.get("collections") or [])}
-    p["collection_ids"] = [str(c) for c in (collection_ids or []) if str(c) in valid]
-    p["updated_at"] = _now()
-    data["packs"][pack_id] = p
-    _write(data)
-    return packfile.normalize(p)
+    def _apply(data: dict[str, Any]) -> dict[str, Any] | None:
+        p = data["packs"].get(pack_id)
+        if not p:
+            return None
+        valid = {collection.get("id") for collection in (data.get("collections") or [])}
+        p["collection_ids"] = [
+            str(collection_id)
+            for collection_id in (collection_ids or [])
+            if str(collection_id) in valid
+        ]
+        p["updated_at"] = _now()
+        data["packs"][pack_id] = p
+        return packfile.normalize(p)
+
+    return _mutate(_apply)

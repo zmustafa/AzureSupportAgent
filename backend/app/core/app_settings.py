@@ -488,8 +488,7 @@ def load_settings() -> dict[str, Any]:
     return data
 
 
-def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    current = load_settings()
+def _apply_settings(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
     for k, v in updates.items():
         if k in DEFAULTS and v is not None:
             current[k] = v
@@ -738,10 +737,20 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         current["autopilot_autosave_confidence"] = 0.0
     current["autopilot_auto_assess"] = bool(current.get("autopilot_auto_assess", False))
     current["autopilot_auto_architecture"] = bool(current.get("autopilot_auto_architecture", False))
+    return current
+
+
+def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     from app.core import jsonstore
 
-    jsonstore.write_json(_PATH, current)
-    return current
+    def _mutate(saved: Any) -> dict[str, Any]:
+        current = dict(DEFAULTS)
+        if isinstance(saved, dict):
+            current.update({k: v for k, v in saved.items() if k in DEFAULTS})
+            _carry_legacy_keys(current, saved)
+        return _apply_settings(current, updates)
+
+    return jsonstore.mutate_json(_PATH, {}, _mutate)
 
 
 def system_prompt_additions() -> str:

@@ -9,11 +9,12 @@ Stored at backend/.data/autopilot_profiles.json (Azure Files volume), keyed by
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "autopilot_profiles.json"
 _MAX_PROFILES = 50  # per (tenant, connection) bucket
@@ -24,19 +25,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, connection_id: str) -> str:
@@ -86,53 +76,63 @@ def save_profile(
 ) -> dict[str, Any]:
     """Create or update a profile. When ``profile_id`` matches an existing one it's updated
     in place (preserving created_at); otherwise a new profile is appended. Returns it."""
-    data = _read()
     key = _key(tenant_id, connection_id)
-    bucket = data.setdefault(key, [])
     clean = _sanitize_config(config or {})
     name = (name or "Untitled profile").strip()[:80]
+    result: dict[str, Any] = {}
 
-    existing = next((p for p in bucket if p.get("id") == profile_id), None) if profile_id else None
-    if existing is not None:
-        existing.update({
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(key, [])
+        existing = (
+            next((profile for profile in bucket if profile.get("id") == profile_id), None)
+            if profile_id
+            else None
+        )
+        if existing is not None:
+            existing.update({
+                "name": name,
+                "config": clean,
+                "scope_kind": scope_kind or existing.get("scope_kind", ""),
+                "scope_id": scope_id or existing.get("scope_id", ""),
+                "scope_name": scope_name or existing.get("scope_name", ""),
+                "updated_at": _now(),
+                "updated_by": actor,
+            })
+            result.update(existing)
+            return
+        profile = {
+            "id": uuid.uuid4().hex,
             "name": name,
             "config": clean,
-            "scope_kind": scope_kind or existing.get("scope_kind", ""),
-            "scope_id": scope_id or existing.get("scope_id", ""),
-            "scope_name": scope_name or existing.get("scope_name", ""),
+            "scope_kind": scope_kind,
+            "scope_id": scope_id,
+            "scope_name": scope_name,
+            "created_at": _now(),
             "updated_at": _now(),
+            "created_by": actor,
             "updated_by": actor,
-        })
-        _write(data)
-        return existing
+        }
+        bucket.append(profile)
+        if len(bucket) > _MAX_PROFILES:
+            data[key] = bucket[-_MAX_PROFILES:]
+        result.update(profile)
 
-    profile = {
-        "id": uuid.uuid4().hex,
-        "name": name,
-        "config": clean,
-        "scope_kind": scope_kind,
-        "scope_id": scope_id,
-        "scope_name": scope_name,
-        "created_at": _now(),
-        "updated_at": _now(),
-        "created_by": actor,
-        "updated_by": actor,
-    }
-    bucket.append(profile)
-    if len(bucket) > _MAX_PROFILES:
-        data[key] = bucket[-_MAX_PROFILES:]
-    _write(data)
-    return profile
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return result
 
 
 def delete_profile(tenant_id: str, connection_id: str, profile_id: str) -> bool:
     """Remove a profile by id. Returns True when one was deleted."""
-    data = _read()
     key = _key(tenant_id, connection_id)
-    bucket = data.get(key, [])
-    new = [p for p in bucket if p.get("id") != profile_id]
-    if len(new) == len(bucket):
-        return False
-    data[key] = new
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(key, [])
+        new = [profile for profile in bucket if profile.get("id") != profile_id]
+        if len(new) != len(bucket):
+            data[key] = new
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted

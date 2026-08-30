@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "architectures.json"
 
 # Lifecycle states (fixed workflow). draft -> in_review -> ready; archived is terminal
@@ -51,19 +53,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"architectures": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"architectures": {}})
+    return data if isinstance(data, dict) else {"architectures": {}}
 
 
 def _merge(aid: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -106,26 +97,30 @@ def get_architecture(architecture_id: str, *, include_deleted: bool = False) -> 
 def upsert_architecture(
     arch: dict[str, Any], *, actor: str = "", reason: str = "Edited", skip_activity: bool = False
 ) -> dict[str, Any]:
-    data = _read()
-    archs = data.setdefault("architectures", {})
     aid = arch.get("id") or str(uuid.uuid4())
-    existing = archs.get(aid, {})
-    merged = dict(existing)
-    for key in _FIELDS:
-        if key in arch and arch[key] is not None:
-            merged[key] = arch[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    # Record who last modified it (and who created it on first write).
-    if actor:
-        merged["updated_by"] = actor
-        if not existing:
-            merged.setdefault("created_by", actor)
-    merged.pop("id", None)
-    archs[aid] = merged
-    _write(data)
-    result = get_architecture(aid)
-    assert result is not None
+    existing: dict[str, Any] = {}
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        archs = data.setdefault("architectures", {})
+        stored = archs.get(aid, {})
+        existing.update(stored)
+        merged = dict(stored)
+        for key in _FIELDS:
+            if key in arch and arch[key] is not None:
+                merged[key] = arch[key]
+        merged["created_at"] = stored.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        # Record who last modified it (and who created it on first write).
+        if actor:
+            merged["updated_by"] = actor
+            if not stored:
+                merged.setdefault("created_by", actor)
+        merged.pop("id", None)
+        archs[aid] = merged
+        result.update(_merge(aid, merged))
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
     # Auto-snapshot a revision of the new version (deduped by content signature).
     from app.architectures import revisions
 
@@ -176,15 +171,22 @@ def delete_architecture(architecture_id: str, *, actor: str = "") -> bool:
     """Soft-delete: move the architecture to the Trash (set ``deleted_at``). It's hidden
     everywhere but fully restorable — revisions and activity are PRESERVED — until purged.
     Returns False if not found or already trashed."""
-    data = _read()
-    raw = data.get("architectures", {}).get(architecture_id)
-    if raw is None or raw.get("deleted_at"):
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        raw = data.get("architectures", {}).get(architecture_id)
+        if raw is None or raw.get("deleted_at"):
+            return
+        raw["deleted_at"] = _now()
+        raw["updated_at"] = _now()
+        if actor:
+            raw["updated_by"] = actor
+        deleted = True
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if not deleted:
         return False
-    raw["deleted_at"] = _now()
-    raw["updated_at"] = _now()
-    if actor:
-        raw["updated_by"] = actor
-    _write(data)
     from app.architectures import activity
 
     activity.log(architecture_id, activity.TRASHED, "Moved to Trash", actor)
@@ -194,28 +196,40 @@ def delete_architecture(architecture_id: str, *, actor: str = "") -> bool:
 def restore_architecture(architecture_id: str, *, actor: str = "") -> dict[str, Any] | None:
     """Restore a trashed architecture back into the active list. Returns None if not found
     or not currently trashed."""
-    data = _read()
-    raw = data.get("architectures", {}).get(architecture_id)
-    if raw is None or not raw.get("deleted_at"):
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        raw = data.get("architectures", {}).get(architecture_id)
+        if raw is None or not raw.get("deleted_at"):
+            return
+        raw["deleted_at"] = ""
+        raw["updated_at"] = _now()
+        if actor:
+            raw["updated_by"] = actor
+        result.update(_merge(architecture_id, raw))
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if not result:
         return None
-    raw["deleted_at"] = ""
-    raw["updated_at"] = _now()
-    if actor:
-        raw["updated_by"] = actor
-    _write(data)
     from app.architectures import activity
 
     activity.log(architecture_id, activity.RESTORED, "Restored from Trash", actor)
-    return get_architecture(architecture_id)
+    return result
 
 
 def purge_architecture(architecture_id: str) -> bool:
     """Permanently delete an architecture (hard delete) along with its revisions and
     activity log. Works regardless of trash state. Returns False if not found."""
-    data = _read()
-    if architecture_id in data.get("architectures", {}):
-        del data["architectures"][architecture_id]
-        _write(data)
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if architecture_id in data.get("architectures", {}):
+            del data["architectures"][architecture_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if deleted:
         from app.architectures import activity, memory, revisions
 
         revisions.delete_for(architecture_id)
@@ -224,8 +238,7 @@ def purge_architecture(architecture_id: str) -> bool:
         # revisions) so a hard-deleted architecture never leaves an unreachable,
         # unmanageable orphan memory behind.
         memory.delete_memory(architecture_id)
-        return True
-    return False
+    return deleted
 
 
 def all_architecture_ids() -> set[str]:
@@ -252,54 +265,66 @@ def set_state(architecture_id: str, state: str, actor: str) -> dict[str, Any] | 
     """Update only the lifecycle state (read-modify-write; never touches the diagram)."""
     if state not in VALID_STATES:
         raise ValueError(f"Invalid state '{state}'.")
-    data = _read()
-    raw = data.get("architectures", {}).get(architecture_id)
-    if raw is None:
+    old_state = "draft"
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal old_state
+        raw = data.get("architectures", {}).get(architecture_id)
+        if raw is None:
+            return
+        old_state = raw.get("state", "draft")
+        raw["state"] = state
+        raw["state_changed_by"] = actor
+        raw["state_changed_at"] = _now()
+        raw["updated_by"] = actor
+        raw["updated_at"] = _now()
+        result.update(_merge(architecture_id, raw))
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if not result:
         return None
-    old_state = raw.get("state", "draft")
-    raw["state"] = state
-    raw["state_changed_by"] = actor
-    raw["state_changed_at"] = _now()
-    raw["updated_by"] = actor
-    raw["updated_at"] = _now()
-    _write(data)
-    result = get_architecture(architecture_id)
     from app.architectures import activity, revisions
 
-    if result is not None:
-        revisions.snapshot(architecture_id, result, reason=f"State \u2192 {state.replace('_', ' ')}", actor=actor)
-        if old_state != state:
-            activity.log(
-                architecture_id, activity.STATE_CHANGED,
-                f"Status changed from {_STATE_LABEL.get(old_state, old_state)} to {_STATE_LABEL.get(state, state)}",
-                actor, meta={"from": old_state, "to": state},
-            )
+    revisions.snapshot(architecture_id, result, reason=f"State \u2192 {state.replace('_', ' ')}", actor=actor)
+    if old_state != state:
+        activity.log(
+            architecture_id, activity.STATE_CHANGED,
+            f"Status changed from {_STATE_LABEL.get(old_state, old_state)} to {_STATE_LABEL.get(state, state)}",
+            actor, meta={"from": old_state, "to": state},
+        )
     return result
 
 
 def set_category(architecture_id: str, category_id: str, actor: str = "") -> dict[str, Any] | None:
     """Assign the architecture to a collection/solution (empty = Uncategorized)."""
-    data = _read()
-    raw = data.get("architectures", {}).get(architecture_id)
-    if raw is None:
+    old_category = ""
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal old_category
+        raw = data.get("architectures", {}).get(architecture_id)
+        if raw is None:
+            return
+        old_category = raw.get("category_id", "")
+        raw["category_id"] = category_id or ""
+        if actor:
+            raw["updated_by"] = actor
+        raw["updated_at"] = _now()
+        result.update(_merge(architecture_id, raw))
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if not result:
         return None
-    old_category = raw.get("category_id", "")
-    raw["category_id"] = category_id or ""
-    if actor:
-        raw["updated_by"] = actor
-    raw["updated_at"] = _now()
-    _write(data)
-    result = get_architecture(architecture_id)
     from app.architectures import activity, revisions
 
-    if result is not None:
-        revisions.snapshot(architecture_id, result, reason="Category changed", actor=actor)
-        if (old_category or "") != (category_id or ""):
-            activity.log(
-                architecture_id, activity.CATEGORY_CHANGED,
-                f"Moved from {_category_name(old_category)} to {_category_name(category_id)}",
-                actor, meta={"from": old_category or "", "to": category_id or ""},
-            )
+    revisions.snapshot(architecture_id, result, reason="Category changed", actor=actor)
+    if (old_category or "") != (category_id or ""):
+        activity.log(
+            architecture_id, activity.CATEGORY_CHANGED,
+            f"Moved from {_category_name(old_category)} to {_category_name(category_id)}",
+            actor, meta={"from": old_category or "", "to": category_id or ""},
+        )
     return result
 
 
@@ -307,22 +332,30 @@ def set_workload(
     architecture_id: str, workload_id: str, workload_name: str = "", actor: str = ""
 ) -> dict[str, Any] | None:
     """Link the architecture to a workload (empty = unlinked). Never touches the diagram."""
-    data = _read()
-    raw = data.get("architectures", {}).get(architecture_id)
-    if raw is None:
+    old_id = ""
+    old_name = ""
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal old_id, old_name
+        raw = data.get("architectures", {}).get(architecture_id)
+        if raw is None:
+            return
+        old_id = raw.get("workload_id", "")
+        old_name = raw.get("workload_name", "")
+        raw["workload_id"] = workload_id or ""
+        raw["workload_name"] = workload_name or ""
+        if actor:
+            raw["updated_by"] = actor
+        raw["updated_at"] = _now()
+        result.update(_merge(architecture_id, raw))
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
+    if not result:
         return None
-    old_id = raw.get("workload_id", "")
-    old_name = raw.get("workload_name", "")
-    raw["workload_id"] = workload_id or ""
-    raw["workload_name"] = workload_name or ""
-    if actor:
-        raw["updated_by"] = actor
-    raw["updated_at"] = _now()
-    _write(data)
-    result = get_architecture(architecture_id)
     from app.architectures import activity, revisions
 
-    if result is not None and (old_id or "") != (workload_id or ""):
+    if (old_id or "") != (workload_id or ""):
         revisions.snapshot(architecture_id, result, reason="Workload link changed", actor=actor)
         if workload_id:
             detail = f"Linked to workload \u201c{workload_name or workload_id}\u201d"
@@ -363,22 +396,26 @@ def clear_category(category_id: str, actor: str = "") -> int:
     """
     if not category_id:
         return 0
-    data = _read()
     affected: list[str] = []
-    for aid, raw in data.get("architectures", {}).items():
-        if (raw.get("category_id") or "") == category_id:
-            raw["category_id"] = ""
-            raw["updated_at"] = _now()
-            if actor:
-                raw["updated_by"] = actor
-            affected.append(aid)
+    results: dict[str, dict[str, Any]] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        for aid, raw in data.get("architectures", {}).items():
+            if (raw.get("category_id") or "") == category_id:
+                raw["category_id"] = ""
+                raw["updated_at"] = _now()
+                if actor:
+                    raw["updated_by"] = actor
+                affected.append(aid)
+                results[aid] = _merge(aid, raw)
+
+    jsonstore.mutate_json(_PATH, {"architectures": {}}, _mutate)
     if affected:
-        _write(data)
         from app.architectures import activity, revisions
 
         old_name = _category_name(category_id)
         for aid in affected:
-            result = get_architecture(aid)
+            result = results[aid]
             if result is None:
                 continue
             revisions.snapshot(aid, result, reason="Category changed", actor=actor)

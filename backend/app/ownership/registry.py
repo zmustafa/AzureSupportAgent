@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _DIR = Path(__file__).resolve().parents[2] / ".data" / "ownership"
 _OWNERS_PATH = _DIR / "owners.json"
 _ASSIGNMENTS_PATH = _DIR / "assignments.json"
@@ -117,16 +119,8 @@ def _now() -> str:
 
 
 def _read(path: Path, root_key: str) -> dict[str, Any]:
-    from app.core import jsonstore
-
     data = jsonstore.read_json(path, {root_key: {}})
     return data if isinstance(data, dict) else {root_key: {}}
-
-
-def _write(path: Path, data: dict[str, Any]) -> None:
-    from app.core import jsonstore
-
-    jsonstore.write_json(path, data)
 
 
 def _merge(defaults: dict[str, Any], record: dict[str, Any], rec_id: str) -> dict[str, Any]:
@@ -173,87 +167,110 @@ def get_owner(tenant_id: str, owner_id: str, *, include_deleted: bool = False) -
 
 
 def upsert_owner(tenant_id: str, owner: dict[str, Any]) -> dict[str, Any]:
-    data = _read(_OWNERS_PATH, "owners")
-    owners = data.setdefault("owners", {})
     oid = owner.get("id") or str(uuid.uuid4())
-    existing = owners.get(oid, {})
-    merged = dict(existing)
-    for key in OWNER_DEFAULTS:
-        if key in owner and owner[key] is not None:
-            merged[key] = owner[key]
-    merged["tenant_id"] = tenant_id or "default"
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["created_by"] = existing.get("created_by") or owner.get("created_by", "")
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    owners[oid] = merged
-    _write(_OWNERS_PATH, data)
-    result = get_owner(tenant_id, oid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        owners = data.setdefault("owners", {})
+        existing = owners.get(oid, {})
+        merged = dict(existing)
+        for key in OWNER_DEFAULTS:
+            if key in owner and owner[key] is not None:
+                merged[key] = owner[key]
+        merged["tenant_id"] = tenant_id or "default"
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["created_by"] = existing.get("created_by") or owner.get("created_by", "")
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        owners[oid] = merged
+        result.update(_merge(OWNER_DEFAULTS, merged, oid))
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate)
     return result
 
 
 def delete_owner(tenant_id: str, owner_id: str, *, actor: str = "") -> bool:
     """Soft-delete an owner (move to Trash). Returns False if missing/already trashed."""
-    data = _read(_OWNERS_PATH, "owners")
-    rec = data.get("owners", {}).get(owner_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return False
-    if rec.get("deleted_at"):
-        return False
-    rec["deleted_at"] = _now()
-    rec["deleted_by"] = actor
-    rec["updated_at"] = _now()
-    _write(_OWNERS_PATH, data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("owners", {}).get(owner_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and not rec.get("deleted_at")
+        ):
+            rec["deleted_at"] = _now()
+            rec["deleted_by"] = actor
+            rec["updated_at"] = _now()
+            deleted = True
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate)
+    return deleted
 
 
 def restore_owner(tenant_id: str, owner_id: str) -> dict[str, Any] | None:
-    data = _read(_OWNERS_PATH, "owners")
-    rec = data.get("owners", {}).get(owner_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return None
-    if not rec.get("deleted_at"):
-        return None
-    rec["deleted_at"] = ""
-    rec["deleted_by"] = ""
-    rec["updated_at"] = _now()
-    _write(_OWNERS_PATH, data)
-    return get_owner(tenant_id, owner_id)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = data.get("owners", {}).get(owner_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and rec.get("deleted_at")
+        ):
+            rec["deleted_at"] = ""
+            rec["deleted_by"] = ""
+            rec["updated_at"] = _now()
+            result.update(_merge(OWNER_DEFAULTS, rec, owner_id))
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate)
+    return result or None
 
 
 def purge_owner(tenant_id: str, owner_id: str) -> bool:
     """Permanently delete a trashed owner (hard). Also drops its assignments."""
-    data = _read(_OWNERS_PATH, "owners")
-    rec = data.get("owners", {}).get(owner_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
+    deleted = False
+
+    def _mutate_owner(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("owners", {}).get(owner_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and rec.get("deleted_at")
+        ):
+            del data["owners"][owner_id]
+            deleted = True
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate_owner)
+    if not deleted:
         return False
-    if not rec.get("deleted_at"):
-        return False
-    del data["owners"][owner_id]
-    _write(_OWNERS_PATH, data)
     # Cascade: remove assignments that referenced this owner.
-    adata = _read(_ASSIGNMENTS_PATH, "assignments")
-    assignments = adata.get("assignments", {})
-    dropped = [aid for aid, a in assignments.items() if a.get("owner_id") == owner_id]
-    for aid in dropped:
-        del assignments[aid]
-    if dropped:
-        _write(_ASSIGNMENTS_PATH, adata)
+    def _mutate_assignments(data: dict[str, Any]) -> None:
+        assignments = data.get("assignments", {})
+        for aid in [aid for aid, assignment in assignments.items() if assignment.get("owner_id") == owner_id]:
+            del assignments[aid]
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate_assignments)
     return True
 
 
 def empty_owner_trash(tenant_id: str) -> int:
-    data = _read(_OWNERS_PATH, "owners")
-    owners = data.get("owners", {})
-    trashed = [
-        oid for oid, rec in owners.items()
-        if rec.get("deleted_at") and (rec.get("tenant_id") or "default") == (tenant_id or "default")
-    ]
-    for oid in trashed:
-        del owners[oid]
-    if trashed:
-        _write(_OWNERS_PATH, data)
+    trashed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        owners = data.get("owners", {})
+        trashed.extend(
+            oid for oid, rec in owners.items()
+            if rec.get("deleted_at")
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+        )
+        for oid in trashed:
+            del owners[oid]
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate)
     return len(trashed)
 
 
@@ -305,112 +322,148 @@ def get_assignment(tenant_id: str, assignment_id: str, *, include_deleted: bool 
 
 
 def upsert_assignment(tenant_id: str, assignment: dict[str, Any]) -> dict[str, Any]:
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    assignments = data.setdefault("assignments", {})
     aid = assignment.get("id") or str(uuid.uuid4())
-    existing = assignments.get(aid, {})
-    merged = dict(existing)
-    for key in ASSIGNMENT_DEFAULTS:
-        if key in assignment and assignment[key] is not None:
-            merged[key] = assignment[key]
-    merged["tenant_id"] = tenant_id or "default"
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["created_by"] = existing.get("created_by") or assignment.get("created_by", "")
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    assignments[aid] = merged
-    _write(_ASSIGNMENTS_PATH, data)
-    result = get_assignment(tenant_id, aid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        assignments = data.setdefault("assignments", {})
+        existing = assignments.get(aid, {})
+        merged = dict(existing)
+        for key in ASSIGNMENT_DEFAULTS:
+            if key in assignment and assignment[key] is not None:
+                merged[key] = assignment[key]
+        merged["tenant_id"] = tenant_id or "default"
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["created_by"] = existing.get("created_by") or assignment.get("created_by", "")
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        assignments[aid] = merged
+        result.update(_merge(ASSIGNMENT_DEFAULTS, merged, aid))
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
     return result
 
 
 def delete_assignment(tenant_id: str, assignment_id: str, *, actor: str = "") -> bool:
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    rec = data.get("assignments", {}).get(assignment_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return False
-    if rec.get("deleted_at"):
-        return False
-    rec["deleted_at"] = _now()
-    rec["deleted_by"] = actor
-    rec["updated_at"] = _now()
-    _write(_ASSIGNMENTS_PATH, data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("assignments", {}).get(assignment_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and not rec.get("deleted_at")
+        ):
+            rec["deleted_at"] = _now()
+            rec["deleted_by"] = actor
+            rec["updated_at"] = _now()
+            deleted = True
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
+    return deleted
 
 
 def restore_assignment(tenant_id: str, assignment_id: str) -> dict[str, Any] | None:
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    rec = data.get("assignments", {}).get(assignment_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return None
-    if not rec.get("deleted_at"):
-        return None
-    rec["deleted_at"] = ""
-    rec["deleted_by"] = ""
-    rec["updated_at"] = _now()
-    _write(_ASSIGNMENTS_PATH, data)
-    return get_assignment(tenant_id, assignment_id)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = data.get("assignments", {}).get(assignment_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and rec.get("deleted_at")
+        ):
+            rec["deleted_at"] = ""
+            rec["deleted_by"] = ""
+            rec["updated_at"] = _now()
+            result.update(_merge(ASSIGNMENT_DEFAULTS, rec, assignment_id))
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
+    return result or None
 
 
 def purge_assignment(tenant_id: str, assignment_id: str) -> bool:
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    rec = data.get("assignments", {}).get(assignment_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return False
-    if not rec.get("deleted_at"):
-        return False
-    del data["assignments"][assignment_id]
-    _write(_ASSIGNMENTS_PATH, data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("assignments", {}).get(assignment_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and rec.get("deleted_at")
+        ):
+            del data["assignments"][assignment_id]
+            deleted = True
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
+    return deleted
 
 
 def empty_assignment_trash(tenant_id: str) -> int:
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    assignments = data.get("assignments", {})
-    trashed = [
-        aid for aid, rec in assignments.items()
-        if rec.get("deleted_at") and (rec.get("tenant_id") or "default") == (tenant_id or "default")
-    ]
-    for aid in trashed:
-        del assignments[aid]
-    if trashed:
-        _write(_ASSIGNMENTS_PATH, data)
+    trashed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        assignments = data.get("assignments", {})
+        trashed.extend(
+            aid for aid, rec in assignments.items()
+            if rec.get("deleted_at")
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+        )
+        for aid in trashed:
+            del assignments[aid]
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
     return len(trashed)
 
 
 def attest_assignment(tenant_id: str, assignment_id: str, *, actor: str = "") -> dict[str, Any] | None:
     """Record that the owner confirmed they still own this subject (attestation/recert)."""
-    data = _read(_ASSIGNMENTS_PATH, "assignments")
-    rec = data.get("assignments", {}).get(assignment_id)
-    if rec is None or (rec.get("tenant_id") or "default") != (tenant_id or "default"):
-        return None
-    if rec.get("deleted_at"):
-        return None
-    rec["attested_at"] = _now()
-    rec["attested_by"] = actor
-    rec["updated_at"] = _now()
-    _write(_ASSIGNMENTS_PATH, data)
-    return get_assignment(tenant_id, assignment_id)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = data.get("assignments", {}).get(assignment_id)
+        if (
+            rec is not None
+            and (rec.get("tenant_id") or "default") == (tenant_id or "default")
+            and not rec.get("deleted_at")
+        ):
+            rec["attested_at"] = _now()
+            rec["attested_by"] = actor
+            rec["updated_at"] = _now()
+            result.update(_merge(ASSIGNMENT_DEFAULTS, rec, assignment_id))
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate)
+    return result or None
 
 
 def delete_all_for_tenant(tenant_id: str) -> int:
     """Hard-delete every owner + assignment for a tenant (used by demo purge). Count removed."""
     removed = 0
-    odata = _read(_OWNERS_PATH, "owners")
-    owners = odata.get("owners", {})
-    drop = [oid for oid, r in owners.items() if (r.get("tenant_id") or "default") == (tenant_id or "default")]
-    for oid in drop:
-        del owners[oid]
-    removed += len(drop)
-    if drop:
-        _write(_OWNERS_PATH, odata)
-    adata = _read(_ASSIGNMENTS_PATH, "assignments")
-    assignments = adata.get("assignments", {})
-    dropa = [aid for aid, r in assignments.items() if (r.get("tenant_id") or "default") == (tenant_id or "default")]
-    for aid in dropa:
-        del assignments[aid]
-    removed += len(dropa)
-    if dropa:
-        _write(_ASSIGNMENTS_PATH, adata)
+    def _mutate_owners(data: dict[str, Any]) -> None:
+        nonlocal removed
+        owners = data.get("owners", {})
+        drop = [
+            oid for oid, rec in owners.items()
+            if (rec.get("tenant_id") or "default") == (tenant_id or "default")
+        ]
+        for oid in drop:
+            del owners[oid]
+        removed += len(drop)
+
+    jsonstore.mutate_json(_OWNERS_PATH, {"owners": {}}, _mutate_owners)
+
+    def _mutate_assignments(data: dict[str, Any]) -> None:
+        nonlocal removed
+        assignments = data.get("assignments", {})
+        drop = [
+            aid for aid, rec in assignments.items()
+            if (rec.get("tenant_id") or "default") == (tenant_id or "default")
+        ]
+        for aid in drop:
+            del assignments[aid]
+        removed += len(drop)
+
+    jsonstore.mutate_json(_ASSIGNMENTS_PATH, {"assignments": {}}, _mutate_assignments)
     return removed

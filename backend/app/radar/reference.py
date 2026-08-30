@@ -7,7 +7,6 @@ reference files (identical machinery)."""
 from __future__ import annotations
 
 import copy
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +18,7 @@ from app.radar.builtin_seed import (
     RETIREMENT,
     builtin_reference,
 )
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "radar_reference.json"
 _REV_PATH = Path(__file__).resolve().parents[2] / ".data" / "radar_reference_revisions.json"
@@ -32,42 +32,26 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any] | None:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("classification_rules"), list):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
+    data = jsonstore.read_json(_PATH, None)
+    if isinstance(data, dict) and isinstance(data.get("classification_rules"), list):
+        return data
     return None
 
 
-def _write(doc: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-
-
 def _read_revs() -> dict[str, Any]:
-    if _REV_PATH.exists():
-        try:
-            data = json.loads(_REV_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"revisions": []}
-
-
-def _write_revs(data: dict[str, Any]) -> None:
-    _REV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _REV_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_REV_PATH, {"revisions": []})
+    return data if isinstance(data, dict) else {"revisions": []}
 
 
 def load_reference() -> dict[str, Any]:
     doc = _read()
     if doc is None:
-        doc = builtin_reference()
-        _write(doc)
+        def _seed(stored: Any) -> dict[str, Any]:
+            if isinstance(stored, dict) and isinstance(stored.get("classification_rules"), list):
+                return stored
+            return builtin_reference()
+
+        doc = jsonstore.mutate_json(_PATH, None, _seed)
     return doc
 
 
@@ -137,38 +121,51 @@ def _meta(rev: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot(doc: dict[str, Any], *, reason: str, actor: str) -> None:
-    data = _read_revs()
-    revs = data.setdefault("revisions", [])
-    revs.append(
-        {
-            "id": str(uuid.uuid4()),
-            "version": doc.get("version", 0),
-            "created_at": _now(),
-            "by": actor or "",
-            "reason": reason or "Edited",
-            "classification_rules": copy.deepcopy(doc.get("classification_rules", [])),
-            "model_lifecycle": copy.deepcopy(doc.get("model_lifecycle", [])),
-            "builtin_seed_version": doc.get("builtin_seed_version", BUILTIN_SEED_VERSION),
-        }
-    )
-    if len(revs) > _MAX_REVISIONS:
-        del revs[: len(revs) - _MAX_REVISIONS]
-    _write_revs(data)
+    revision = {
+        "id": str(uuid.uuid4()),
+        "version": doc.get("version", 0),
+        "created_at": _now(),
+        "by": actor or "",
+        "reason": reason or "Edited",
+        "classification_rules": copy.deepcopy(doc.get("classification_rules", [])),
+        "model_lifecycle": copy.deepcopy(doc.get("model_lifecycle", [])),
+        "builtin_seed_version": doc.get("builtin_seed_version", BUILTIN_SEED_VERSION),
+    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        revs = data.setdefault("revisions", [])
+        revs.append(revision)
+        if len(revs) > _MAX_REVISIONS:
+            del revs[: len(revs) - _MAX_REVISIONS]
+
+    jsonstore.mutate_json(_REV_PATH, {"revisions": []}, _mutate)
 
 
 def save_reference(
     *, classification_rules: Any, model_lifecycle: Any, actor: str, reason: str = "Edited"
 ) -> dict[str, Any]:
-    current = load_reference()
-    doc = {
-        "version": int(current.get("version", 0)) + 1,
-        "updated_at": _now(),
-        "updated_by": actor or "",
-        "builtin_seed_version": BUILTIN_SEED_VERSION,
-        "classification_rules": _sanitize_rules(classification_rules),
-        "model_lifecycle": _sanitize_models(model_lifecycle),
-    }
-    _write(doc)
+    rules = _sanitize_rules(classification_rules)
+    models = _sanitize_models(model_lifecycle)
+    doc: dict[str, Any] = {}
+
+    def _mutate(stored: Any) -> dict[str, Any]:
+        current = (
+            stored
+            if isinstance(stored, dict) and isinstance(stored.get("classification_rules"), list)
+            else builtin_reference()
+        )
+        value = {
+            "version": int(current.get("version", 0)) + 1,
+            "updated_at": _now(),
+            "updated_by": actor or "",
+            "builtin_seed_version": BUILTIN_SEED_VERSION,
+            "classification_rules": rules,
+            "model_lifecycle": models,
+        }
+        doc.update(value)
+        return value
+
+    jsonstore.mutate_json(_PATH, None, _mutate)
     _snapshot(doc, reason=reason, actor=actor)
     return doc
 

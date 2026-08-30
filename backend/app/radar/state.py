@@ -6,10 +6,11 @@ assessment-scoring side, but the Radar's own table needs lightweight, tenant-sco
 volume (``backend/.data/radar_state.json``)."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "radar_state.json"
 
@@ -21,19 +22,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def get_states(tenant_id: str) -> dict[str, dict[str, Any]]:
@@ -49,23 +39,27 @@ def set_state(
     waive_reason: str | None = None,
     actor: str = "",
 ) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    entry = bucket.setdefault(tracking_id, {"status": "new", "history": []})
-    if status and status in STATUSES:
-        entry["status"] = status
-    if assignee is not None:
-        entry["assignee"] = assignee
-    if waive_reason is not None:
-        entry["waive_reason"] = waive_reason
-    entry["updated_at"] = _now()
-    entry["updated_by"] = actor
-    entry.setdefault("history", []).append(
-        {"at": _now(), "by": actor, "status": entry["status"], "assignee": entry.get("assignee", ""), "waive_reason": entry.get("waive_reason", "")}
-    )
-    entry["history"] = entry["history"][-25:]
-    _write(data)
-    return entry
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        entry = bucket.setdefault(tracking_id, {"status": "new", "history": []})
+        if status and status in STATUSES:
+            entry["status"] = status
+        if assignee is not None:
+            entry["assignee"] = assignee
+        if waive_reason is not None:
+            entry["waive_reason"] = waive_reason
+        entry["updated_at"] = _now()
+        entry["updated_by"] = actor
+        entry.setdefault("history", []).append(
+            {"at": _now(), "by": actor, "status": entry["status"], "assignee": entry.get("assignee", ""), "waive_reason": entry.get("waive_reason", "")}
+        )
+        entry["history"] = entry["history"][-25:]
+        result.update(entry)
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return result
 
 
 def apply_states(tenant_id: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:

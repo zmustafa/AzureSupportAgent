@@ -8,11 +8,12 @@ with the other registries. No secrets here, so no encryption needed.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "custom_agents.json"
 
@@ -63,19 +64,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"agents": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"agents": {}})
+    return data if isinstance(data, dict) else {"agents": {}}
 
 
 def list_agents() -> list[dict[str, Any]]:
@@ -103,48 +93,55 @@ def get_agent(agent_id: str) -> dict[str, Any] | None:
 
 
 def upsert_agent(agent: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    agents = data.setdefault("agents", {})
     aid = agent.get("id") or str(uuid.uuid4())
-    existing = agents.get(aid, {})
-    is_update = bool(existing)
-    merged = dict(DEFAULTS)
-    merged.update(existing)
-    # Defense-in-depth: never let a partial UPDATE blank out the meaningful identity
-    # fields. A bulk model change sends only {name, provider, model}; an empty/missing
-    # instructions or name must NOT overwrite the stored value (that bug wiped every
-    # agent's instructions once). For a brand-new agent these may be empty.
-    _preserve_if_blank = {"instructions", "name"}
-    for key in DEFAULTS:
-        if key not in agent or agent[key] is None:
-            continue
-        if is_update and key in _preserve_if_blank and not str(agent[key]).strip():
-            continue  # keep the existing non-blank value
-        merged[key] = agent[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    # Normalize the category; auto-classify a brand-new agent left uncategorized.
-    if merged.get("category") not in _CATEGORY_IDS:
-        merged["category"] = (
-            existing.get("category")
-            if existing.get("category") in _CATEGORY_IDS
-            else classify_category(merged.get("name", ""), merged.get("instructions", ""))
-        )
-    merged.pop("id", None)
-    agents[aid] = merged
-    _write(data)
-    result = get_agent(aid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        agents = data.setdefault("agents", {})
+        existing = agents.get(aid, {})
+        is_update = bool(existing)
+        merged = dict(DEFAULTS)
+        merged.update(existing)
+        # Defense-in-depth: never let a partial UPDATE blank out the meaningful identity
+        # fields. A bulk model change sends only {name, provider, model}; an empty/missing
+        # instructions or name must NOT overwrite the stored value (that bug wiped every
+        # agent's instructions once). For a brand-new agent these may be empty.
+        preserve_if_blank = {"instructions", "name"}
+        for key in DEFAULTS:
+            if key not in agent or agent[key] is None:
+                continue
+            if is_update and key in preserve_if_blank and not str(agent[key]).strip():
+                continue  # keep the existing non-blank value
+            merged[key] = agent[key]
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        # Normalize the category; auto-classify a brand-new agent left uncategorized.
+        if merged.get("category") not in _CATEGORY_IDS:
+            merged["category"] = (
+                existing.get("category")
+                if existing.get("category") in _CATEGORY_IDS
+                else classify_category(merged.get("name", ""), merged.get("instructions", ""))
+            )
+        merged.pop("id", None)
+        agents[aid] = merged
+        result.update(merged)
+        result["id"] = aid
+
+    jsonstore.mutate_json(_PATH, {"agents": {}}, _mutate)
     return result
 
 
 def delete_agent(agent_id: str) -> bool:
-    data = _read()
-    if agent_id in data.get("agents", {}):
-        del data["agents"][agent_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if agent_id in data.get("agents", {}):
+            del data["agents"][agent_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"agents": {}}, _mutate)
+    return deleted
 
 
 # Keyword → category rules used to auto-classify existing/unseen agents by name. First
@@ -180,16 +177,19 @@ def seed_categories() -> int:
     """Assign a category to any agent that doesn't have one yet (idempotent).
 
     Returns the number of agents updated. Never overwrites an explicit category."""
-    data = _read()
-    agents = data.get("agents", {})
     changed = 0
-    for agent in agents.values():
-        if agent.get("category") in _CATEGORY_IDS:
-            continue
-        agent["category"] = classify_category(agent.get("name", ""), agent.get("instructions", ""))
-        changed += 1
-    if changed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal changed
+        for stored in data.get("agents", {}).values():
+            if stored.get("category") in _CATEGORY_IDS:
+                continue
+            stored["category"] = classify_category(
+                stored.get("name", ""), stored.get("instructions", "")
+            )
+            changed += 1
+
+    jsonstore.mutate_json(_PATH, {"agents": {}}, _mutate)
     return changed
 
 
@@ -202,12 +202,9 @@ _SEED_PATH = Path(__file__).resolve().parent / "builtin_agents.json"
 
 
 def _read_builtin_seed() -> dict[str, Any]:
-    try:
-        data = json.loads(_SEED_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data.get("agents", {}) or {}
-    except (json.JSONDecodeError, OSError):
-        pass
+    data = jsonstore.read_json(_SEED_PATH, {})
+    if isinstance(data, dict):
+        return data.get("agents", {}) or {}
     return {}
 
 
@@ -217,22 +214,29 @@ def seed_if_empty() -> int:
     Returns the number of agents seeded. Idempotent: once any agent exists (including after
     the admin edits or deletes some), this never re-adds them, so a deleted starter stays
     deleted. Mirrors the workbook / sample-control starter-seed convention."""
-    data = _read()
-    if data.get("agents"):
-        return 0
     builtins = _read_builtin_seed()
     if not builtins:
         return 0
-    agents = data.setdefault("agents", {})
-    for aid, seed in builtins.items():
-        merged = dict(DEFAULTS)
-        merged.update(seed)
-        if merged.get("category") not in _CATEGORY_IDS:
-            merged["category"] = classify_category(merged.get("name", ""), merged.get("instructions", ""))
-        merged["created_at"] = _now()
-        merged["updated_at"] = _now()
-        merged.pop("id", None)
-        agents[aid] = merged
-    _write(data)
-    return len(agents)
+    seeded = 0
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal seeded
+        if data.get("agents"):
+            return
+        agents = data.setdefault("agents", {})
+        for aid, seed in builtins.items():
+            merged = dict(DEFAULTS)
+            merged.update(seed)
+            if merged.get("category") not in _CATEGORY_IDS:
+                merged["category"] = classify_category(
+                    merged.get("name", ""), merged.get("instructions", "")
+                )
+            merged["created_at"] = _now()
+            merged["updated_at"] = _now()
+            merged.pop("id", None)
+            agents[aid] = merged
+        seeded = len(agents)
+
+    jsonstore.mutate_json(_PATH, {"agents": {}}, _mutate)
+    return seeded
 

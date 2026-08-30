@@ -247,26 +247,29 @@ def update_ledger(
 ) -> dict[str, Any]:
     """Record first-seen, last-seen and resolution. Returns the updated ledger."""
     now = now or _now_iso()
-    ledger = read_ledger(tenant_id)
     live = {str(f.get("id", "")) for f in findings if f.get("id")}
-    for f in findings:
-        fp = str(f.get("id", ""))
-        if not fp:
-            continue
-        entry = ledger.setdefault(fp, {"first_seen": now, "signal_id": f.get("signal_id", "")})
-        entry["last_seen"] = now
-        entry["signal_id"] = f.get("signal_id", "")
-        entry["severity"] = f.get("severity", "")
-        entry.pop("resolved_at", None)
-    for fp, entry in ledger.items():
-        if fp not in live and not entry.get("resolved_at"):
-            # Resolution is COMPUTED, never clicked. A fingerprint that stopped appearing is
-            # resolved, and that is the only reason this inbox can be trusted.
-            entry["resolved_at"] = now
-    if len(ledger) > MAX_LEDGER_ENTRIES:
-        ledger = {fp: e for fp, e in ledger.items() if not e.get("resolved_at")}
-    cache.write_state(tenant_id, LEDGER_KEY, ledger)
-    return ledger
+
+    def _mutate(ledger: dict[str, Any]) -> dict[str, Any] | None:
+        for finding in findings:
+            fingerprint = str(finding.get("id", ""))
+            if not fingerprint:
+                continue
+            entry = ledger.setdefault(
+                fingerprint,
+                {"first_seen": now, "signal_id": finding.get("signal_id", "")},
+            )
+            entry["last_seen"] = now
+            entry["signal_id"] = finding.get("signal_id", "")
+            entry["severity"] = finding.get("severity", "")
+            entry.pop("resolved_at", None)
+        for fingerprint, entry in ledger.items():
+            if fingerprint not in live and not entry.get("resolved_at"):
+                entry["resolved_at"] = now
+        if len(ledger) > MAX_LEDGER_ENTRIES:
+            return {fp: entry for fp, entry in ledger.items() if not entry.get("resolved_at")}
+        return None
+
+    return cache.mutate_state(tenant_id, LEDGER_KEY, _mutate)
 
 
 def _now_iso() -> str:
@@ -308,44 +311,47 @@ def run(
     blocked = blocked_reasons(scanner, results)
     current = [] if blocked else select(scanner, findings)
 
-    runs = read_runs(tenant_id)
-    previous = runs.get(scanner.id) or {}
-    previous_ids = set(previous.get("fingerprints") or [])
     by_fp = {str(f.get("id", "")): f for f in current if f.get("id")}
     current_ids = set(by_fp)
+    result: dict[str, Any] = {}
 
-    new = [by_fp[fp] for fp in sorted(current_ids - previous_ids)]
-    resolved = sorted(previous_ids - current_ids)
-    persisting = sorted(current_ids & previous_ids)
-    first_run = scanner.id not in runs
+    def _build(runs: dict[str, Any]) -> None:
+        previous = runs.get(scanner.id) or {}
+        previous_ids = set(previous.get("fingerprints") or [])
+        new = [by_fp[fp] for fp in sorted(current_ids - previous_ids)]
+        resolved = sorted(previous_ids - current_ids)
+        persisting = sorted(current_ids & previous_ids)
+        result.update({
+            "scanner_id": scanner.id,
+            "name": scanner.name,
+            "at": now,
+            "blocked": blocked,
+            "counts": None if blocked else {
+                "total": len(current), "new": len(new),
+                "resolved": len(resolved), "persisting": len(persisting),
+            },
+            "by_severity": {} if blocked else {
+                severity: sum(1 for finding in current if finding.get("severity") == severity)
+                for severity in sig.SEVERITIES
+            },
+            "new": new,
+            "resolved_fingerprints": resolved,
+            "immediate": [f for f in new if f.get("signal_id") in ALWAYS_IMMEDIATE],
+            "unmeasured": unmeasured_for(scanner, results),
+            "first_run": scanner.id not in runs,
+            "last_run_at": str(previous.get("at") or ""),
+        })
+        if persist and not blocked:
+            runs[scanner.id] = {
+                "at": now,
+                "fingerprints": sorted(current_ids),
+                "counts": result["counts"],
+            }
 
-    result = {
-        "scanner_id": scanner.id,
-        "name": scanner.name,
-        "at": now,
-        # A list, not a bool: the card has to say WHY, and "could not look" with no reason is
-        # only marginally better than a silent zero.
-        "blocked": blocked,
-        "counts": None if blocked else {
-            "total": len(current), "new": len(new),
-            "resolved": len(resolved), "persisting": len(persisting),
-        },
-        "by_severity": {} if blocked else {
-            s: sum(1 for f in current if f.get("severity") == s) for s in sig.SEVERITIES
-        },
-        "new": new,
-        "resolved_fingerprints": resolved,
-        "immediate": [f for f in new if f.get("signal_id") in ALWAYS_IMMEDIATE],
-        # Everything this scanner could not check, whether or not it is blocked overall.
-        "unmeasured": unmeasured_for(scanner, results),
-        "first_run": first_run,
-        "last_run_at": str(previous.get("at") or ""),
-    }
     if persist and not blocked:
-        runs[scanner.id] = {
-            "at": now, "fingerprints": sorted(current_ids), "counts": result["counts"],
-        }
-        write_runs(tenant_id, runs)
+        cache.mutate_state(tenant_id, SCANNER_STATE_KEY, lambda runs: _build(runs))
+    else:
+        _build(read_runs(tenant_id))
     return result
 
 

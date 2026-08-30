@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "monitor_dashboards.json"
 
 MAX_REVISIONS = 30
@@ -203,19 +205,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"dashboards": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"dashboards": {}})
+    return data if isinstance(data, dict) else {"dashboards": {}}
 
 
 def _merge(did: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -272,8 +263,7 @@ def get_dashboard(dashboard_id: str) -> dict[str, Any] | None:
     return _merge(dashboard_id, raw) if raw is not None else None
 
 
-def upsert_dashboard(dashboard: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
-    data = _read()
+def _upsert_in(data: dict[str, Any], dashboard: dict[str, Any], actor: str) -> dict[str, Any]:
     dashboards = data.setdefault("dashboards", {})
     did = dashboard.get("id") or str(uuid.uuid4())
     existing = dashboards.get(did, {})
@@ -322,9 +312,16 @@ def upsert_dashboard(dashboard: dict[str, Any], *, actor: str = "") -> dict[str,
         for other_id, other in dashboards.items():
             if other_id != did and (other.get("tenant_id") or "") == tid:
                 other["is_default"] = False
-    _write(data)
-    result = get_dashboard(did)
-    assert result is not None
+    return _merge(did, merged)
+
+
+def upsert_dashboard(dashboard: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        result.update(_upsert_in(data, dashboard, actor))
+
+    jsonstore.mutate_json(_PATH, {"dashboards": {}}, _mutate)
     return result
 
 
@@ -340,40 +337,62 @@ def list_revisions(dashboard_id: str) -> list[dict[str, Any]]:
 
 def restore_revision(dashboard_id: str, version: int, *, actor: str = "") -> dict[str, Any] | None:
     """Restore a dashboard's widgets/params from a prior revision (creates a new version)."""
-    dash = get_dashboard(dashboard_id)
-    if dash is None:
-        return None
-    target = next((r for r in dash.get("revisions", []) if int(r.get("version", -1)) == int(version)), None)
-    if target is None:
-        return None
-    payload = dict(dash)
-    payload["id"] = dashboard_id
-    payload["widgets"] = target.get("widgets", [])
-    payload["tiles"] = target.get("tiles", [])
-    payload["params"] = target.get("params", [])
-    return upsert_dashboard(payload, actor=actor)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        raw = data.get("dashboards", {}).get(dashboard_id)
+        if raw is None:
+            return
+        dash = _merge(dashboard_id, raw)
+        target = next(
+            (
+                revision
+                for revision in dash.get("revisions", [])
+                if int(revision.get("version", -1)) == int(version)
+            ),
+            None,
+        )
+        if target is None:
+            return
+        payload = dict(dash)
+        payload["id"] = dashboard_id
+        payload["widgets"] = target.get("widgets", [])
+        payload["tiles"] = target.get("tiles", [])
+        payload["params"] = target.get("params", [])
+        result.update(_upsert_in(data, payload, actor))
+
+    jsonstore.mutate_json(_PATH, {"dashboards": {}}, _mutate)
+    return result or None
 
 
 def delete_dashboard(dashboard_id: str) -> bool:
-    data = _read()
-    if dashboard_id in data.get("dashboards", {}):
-        del data["dashboards"][dashboard_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if dashboard_id in data.get("dashboards", {}):
+            del data["dashboards"][dashboard_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"dashboards": {}}, _mutate)
+    return deleted
 
 
 def set_default(dashboard_id: str, tenant_id: str, actor: str = "") -> dict[str, Any] | None:
     """Make one dashboard the tenant's default, clearing the flag on the others."""
-    data = _read()
-    dashboards = data.get("dashboards", {})
-    if dashboard_id not in dashboards:
-        return None
-    for did, d in dashboards.items():
-        if (d.get("tenant_id") or "") == tenant_id:
-            d["is_default"] = did == dashboard_id
-    dashboards[dashboard_id]["updated_at"] = _now()
-    if actor:
-        dashboards[dashboard_id]["updated_by"] = actor
-    _write(data)
-    return get_dashboard(dashboard_id)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        dashboards = data.get("dashboards", {})
+        if dashboard_id not in dashboards:
+            return
+        for did, dashboard in dashboards.items():
+            if (dashboard.get("tenant_id") or "") == tenant_id:
+                dashboard["is_default"] = did == dashboard_id
+        dashboards[dashboard_id]["updated_at"] = _now()
+        if actor:
+            dashboards[dashboard_id]["updated_by"] = actor
+        result.update(_merge(dashboard_id, dashboards[dashboard_id]))
+
+    jsonstore.mutate_json(_PATH, {"dashboards": {}}, _mutate)
+    return result or None

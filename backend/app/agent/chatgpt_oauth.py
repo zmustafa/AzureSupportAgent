@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 _DATA_DIR = Path(__file__).resolve().parents[2] / ".data"
@@ -56,18 +57,13 @@ _cache: dict[str, Any] = {"access_token": "", "expires_at": 0.0, "account_id": "
 
 def _read_tokens() -> dict[str, Any]:
     """Read this app's stored ChatGPT tokens (never ~/.codex/auth.json)."""
-    if not _TOKENS_PATH.exists():
+    data = jsonstore.read_json(_TOKENS_PATH, {})
+    if not isinstance(data, dict):
         return {}
-    try:
-        data = json.loads(_TOKENS_PATH.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return {}
-        for f in _SECRET_FIELDS:
-            if data.get(f):
-                data[f] = decrypt(data[f])
-        return data
-    except (json.JSONDecodeError, OSError):
-        return {}
+    for f in _SECRET_FIELDS:
+        if data.get(f):
+            data[f] = decrypt(data[f])
+    return data
 
 
 def _jwt_exp(token: str) -> float:
@@ -93,22 +89,26 @@ def _jwt_claims(token: str) -> dict[str, Any]:
 
 def _write_tokens(access_token: str, refresh_token: str, account_id: str, id_token: str = "") -> None:
     """Persist tokens to this app's own store (preserving prior fields when blank)."""
-    data = _read_tokens()
-    data["access_token"] = access_token
-    if refresh_token:
-        data["refresh_token"] = refresh_token
-    if account_id:
-        data["account_id"] = account_id
-    if id_token:
-        data["id_token"] = id_token
-    data["last_refresh"] = datetime.now(timezone.utc).isoformat()
-    out = dict(data)
-    for f in _SECRET_FIELDS:
-        if out.get(f):
-            out[f] = encrypt(out[f])
     try:
-        _TOKENS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _TOKENS_PATH.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        def _mutate(stored: Any) -> dict[str, Any]:
+            data = dict(stored) if isinstance(stored, dict) else {}
+            for field in _SECRET_FIELDS:
+                if data.get(field):
+                    data[field] = decrypt(data[field])
+            data["access_token"] = access_token
+            if refresh_token:
+                data["refresh_token"] = refresh_token
+            if account_id:
+                data["account_id"] = account_id
+            if id_token:
+                data["id_token"] = id_token
+            data["last_refresh"] = datetime.now(timezone.utc).isoformat()
+            for field in _SECRET_FIELDS:
+                if data.get(field):
+                    data[field] = encrypt(data[field])
+            return data
+
+        jsonstore.mutate_json(_TOKENS_PATH, {}, _mutate)
     except OSError:
         pass
 
@@ -209,23 +209,20 @@ def _new_pkce() -> dict[str, str]:
     state = secrets.token_hex(16)
     pending = {"verifier": verifier, "state": state, "created_at": time.time()}
     try:
-        _PKCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PKCE_PATH.write_text(json.dumps(pending), encoding="utf-8")
+        jsonstore.write_json(_PKCE_PATH, pending, indent=None)
     except OSError:
         pass
     return {"verifier": verifier, "challenge": challenge, "state": state}
 
 
 def _load_pending_pkce() -> dict[str, Any] | None:
-    try:
-        return json.loads(_PKCE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    pending = jsonstore.read_json(_PKCE_PATH, None)
+    return pending if isinstance(pending, dict) else None
 
 
 def _clear_pending_pkce() -> None:
     try:
-        _PKCE_PATH.unlink(missing_ok=True)
+        jsonstore.delete_json(_PKCE_PATH)
     except OSError:
         pass
 

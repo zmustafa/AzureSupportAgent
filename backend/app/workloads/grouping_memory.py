@@ -11,10 +11,11 @@ Stored at backend/.data/workload_grouping_memory.json (Azure Files volume), keye
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "workload_grouping_memory.json"
 _MAX_DECISIONS = 200  # cap per (tenant, connection) bucket
@@ -25,19 +26,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, connection_id: str) -> str:
@@ -52,24 +42,29 @@ def record_decisions(
     Returns the new bucket size. De-dupes consecutive identical decisions."""
     if not decisions:
         return 0
-    data = _read()
     key = _key(tenant_id, connection_id)
-    bucket = data.setdefault(key, [])
-    for d in decisions:
-        if not isinstance(d, dict) or not d.get("action"):
-            continue
-        entry = {**d, "at": _now()}
-        # Skip an exact-content duplicate of the most recent entry.
-        if bucket:
-            prev = {k: v for k, v in bucket[-1].items() if k != "at"}
-            if prev == {k: v for k, v in entry.items() if k != "at"}:
+    size = 0
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal size
+        bucket = data.setdefault(key, [])
+        for decision in decisions:
+            if not isinstance(decision, dict) or not decision.get("action"):
                 continue
-        bucket.append(entry)
-    # Cap (keep most recent).
-    if len(bucket) > _MAX_DECISIONS:
-        data[key] = bucket[-_MAX_DECISIONS:]
-    _write(data)
-    return len(data[key])
+            entry = {**decision, "at": _now()}
+            # Skip an exact-content duplicate of the most recent entry.
+            if bucket:
+                previous = {k: v for k, v in bucket[-1].items() if k != "at"}
+                if previous == {k: v for k, v in entry.items() if k != "at"}:
+                    continue
+            bucket.append(entry)
+        # Cap (keep most recent).
+        if len(bucket) > _MAX_DECISIONS:
+            data[key] = bucket[-_MAX_DECISIONS:]
+        size = len(data[key])
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return size
 
 
 def get_decisions(tenant_id: str, connection_id: str, limit: int = 40) -> list[dict[str, Any]]:

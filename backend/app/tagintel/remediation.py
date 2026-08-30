@@ -14,12 +14,13 @@ to ``.data/tagintel_plans.json`` for the audit trail and rollback.
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_plans.json"
 _CS_PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_changesets.json"
@@ -388,28 +389,12 @@ def generate_scripts(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PATH.write_text(json.dumps(data), encoding="utf-8")
-    except OSError:
-        pass
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def save_plan(tenant_id: str, plan: dict[str, Any], *, actor: str = "", approved: bool = False,
               applied: bool = False, result: dict[str, Any] | None = None) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", [])
     record = {
         "id": uuid.uuid4().hex,
         "created_at": _now(),
@@ -422,9 +407,15 @@ def save_plan(tenant_id: str, plan: dict[str, Any], *, actor: str = "", approved
         "overwrites": plan.get("overwrites", 0),
         "result": result or None,
     }
-    bucket.insert(0, record)
-    del bucket[100:]
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", [])
+        bucket.insert(0, record)
+        del bucket[100:]
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return record
 
 
@@ -438,22 +429,8 @@ def list_plans(tenant_id: str) -> list[dict[str, Any]]:
 
 
 def _cs_read() -> dict[str, Any]:
-    if _CS_PATH.exists():
-        try:
-            data = json.loads(_CS_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _cs_write(data: dict[str, Any]) -> None:
-    try:
-        _CS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+    data = jsonstore.read_json(_CS_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _clean_ops(operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -544,96 +521,110 @@ def save_changeset(tenant_id: str, cs: dict[str, Any], *, actor: str = "") -> di
     ops = _clean_ops(cs.get("operations") or [])
     if not ops:
         raise ValueError("change-set needs at least one valid operation")
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
     cs_id = cs.get("id") or uuid.uuid4().hex
-    prior = bucket["changesets"].get(cs_id, {})
-    # Validate the group exists (or clear it).
-    group_id = str(cs.get("group_id", "") or "")
-    if group_id and group_id not in bucket["groups"]:
-        group_id = ""
-    labels = [str(l).strip() for l in (cs.get("labels") or []) if str(l).strip()]
+    labels = [
+        str(label).strip()
+        for label in (cs.get("labels") or [])
+        if str(label).strip()
+    ]
     labels = list(dict.fromkeys(labels))[:12]  # dedupe (order-preserving), cap at 12
-    record = {
-        "id": cs_id,
-        "name": name,
-        "description": str(cs.get("description", "")),
-        "group_id": group_id,
-        "labels": labels,
-        "operations": ops,
-        "op_breakdown": _op_breakdown(ops),
-        "affected_keys": _affected_keys(ops),
-        "actor": actor or prior.get("actor", ""),
-        "created_at": prior.get("created_at") or _now(),
-        "updated_at": _now(),
-        "last_run": prior.get("last_run"),
-        "run_count": prior.get("run_count", 0),
-    }
-    bucket["changesets"][cs_id] = record
-    _cs_write(data)
+    record: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = _cs_bucket(data, tenant_id)
+        prior = bucket["changesets"].get(cs_id, {})
+        group_id = str(cs.get("group_id", "") or "")
+        if group_id and group_id not in bucket["groups"]:
+            group_id = ""
+        record.update({
+            "id": cs_id,
+            "name": name,
+            "description": str(cs.get("description", "")),
+            "group_id": group_id,
+            "labels": labels,
+            "operations": ops,
+            "op_breakdown": _op_breakdown(ops),
+            "affected_keys": _affected_keys(ops),
+            "actor": actor or prior.get("actor", ""),
+            "created_at": prior.get("created_at") or _now(),
+            "updated_at": _now(),
+            "last_run": prior.get("last_run"),
+            "run_count": prior.get("run_count", 0),
+        })
+        bucket["changesets"][cs_id] = record
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
     return record
 
 
 def delete_changeset(tenant_id: str, cs_id: str) -> bool:
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-    if cs_id in bucket["changesets"]:
-        del bucket["changesets"][cs_id]
-        _cs_write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = _cs_bucket(data, tenant_id)
+        if cs_id in bucket["changesets"]:
+            del bucket["changesets"][cs_id]
+            deleted = True
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
+    return deleted
 
 
 def duplicate_changeset(tenant_id: str, cs_id: str, *, actor: str = "") -> dict[str, Any] | None:
     """Clone a change-set (same group/labels/operations) under a new id + "(copy)" name."""
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-    src = bucket["changesets"].get(cs_id)
-    if not src:
-        return None
     new_id = uuid.uuid4().hex
-    record = {
-        **src,
-        "id": new_id,
-        "name": f"{src.get('name', 'Change-set')} (copy)"[:200],
-        "actor": actor or src.get("actor", ""),
-        "created_at": _now(),
-        "updated_at": _now(),
-        "last_run": None,
-        "run_count": 0,
-    }
-    bucket["changesets"][new_id] = record
-    _cs_write(data)
-    return record
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = _cs_bucket(data, tenant_id)
+        src = bucket["changesets"].get(cs_id)
+        if not src:
+            return
+        result.update({
+            **src,
+            "id": new_id,
+            "name": f"{src.get('name', 'Change-set')} (copy)"[:200],
+            "actor": actor or src.get("actor", ""),
+            "created_at": _now(),
+            "updated_at": _now(),
+            "last_run": None,
+            "run_count": 0,
+        })
+        bucket["changesets"][new_id] = result
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
+    return result or None
 
 
 def move_changeset(tenant_id: str, cs_id: str, group_id: str) -> dict[str, Any] | None:
     """Reassign a change-set to a group (``""`` = ungrouped)."""
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-    rec = bucket["changesets"].get(cs_id)
-    if not rec:
-        return None
-    gid = group_id or ""
-    if gid and gid not in bucket["groups"]:
-        return None
-    rec["group_id"] = gid
-    rec["updated_at"] = _now()
-    _cs_write(data)
-    return rec
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = _cs_bucket(data, tenant_id)
+        rec = bucket["changesets"].get(cs_id)
+        gid = group_id or ""
+        if not rec or (gid and gid not in bucket["groups"]):
+            return
+        rec["group_id"] = gid
+        rec["updated_at"] = _now()
+        result.update(rec)
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
+    return result or None
 
 
 def record_changeset_run(tenant_id: str, cs_id: str, summary: dict[str, Any]) -> None:
     """Stamp a change-set's last-run audit info (scope, applied/failed, when) — the cloud-ops
     sanity trail. No-op when the change-set isn't found (ad-hoc runs aren't tracked)."""
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-    rec = bucket["changesets"].get(cs_id)
-    if not rec:
-        return
-    rec["last_run"] = {**summary, "at": _now()}
-    rec["run_count"] = int(rec.get("run_count", 0)) + 1
-    _cs_write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = _cs_bucket(data, tenant_id)["changesets"].get(cs_id)
+        if rec:
+            rec["last_run"] = {**summary, "at": _now()}
+            rec["run_count"] = int(rec.get("run_count", 0)) + 1
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
 
 
 # --------------------------------------------------------------------------- import / export
@@ -691,67 +682,88 @@ def import_changesets(tenant_id: str, payload: dict[str, Any], *, actor: str = "
     if not isinstance(raw_changesets, list) or not raw_changesets:
         raise ValueError("the file contains no change-sets to import")
 
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-
-    # Map an exported group id -> local group id (reuse a same-named group, else create one).
-    existing_by_name = {str(g.get("name", "")).strip().lower(): g["id"] for g in bucket["groups"].values()}
-    group_id_map: dict[str, str] = {}
     groups_created = 0
-    for g in raw_groups:
-        if not isinstance(g, dict):
-            continue
-        name = str(g.get("name", "")).strip()
-        if not name:
-            continue
-        old_id = str(g.get("id", ""))
-        key = name.lower()
-        local_id = existing_by_name.get(key)
-        if not local_id:
-            local_id = uuid.uuid4().hex
-            bucket["groups"][local_id] = {
-                "id": local_id, "name": name,
-                "color": str(g.get("color", "") or _GROUP_COLORS[len(bucket["groups"]) % len(_GROUP_COLORS)]),
-                "description": str(g.get("description", "")),
-                "order": int(g.get("order", len(bucket["groups"]))),
-                "created_at": _now(), "updated_at": _now(),
-            }
-            existing_by_name[key] = local_id
-            groups_created += 1
-        if old_id:
-            group_id_map[old_id] = local_id
-
     imported = 0
     skipped = 0
     errors: list[str] = []
-    for c in raw_changesets:
-        if not isinstance(c, dict):
-            skipped += 1
-            continue
-        name = str(c.get("name", "")).strip()
-        ops = _clean_ops(c.get("operations") or [])
-        if not name:
-            errors.append("a change-set is missing a name")
-            skipped += 1
-            continue
-        if not ops:
-            errors.append(f"'{name}' has no valid operations")
-            skipped += 1
-            continue
-        gid = group_id_map.get(str(c.get("group_id", "")), "")
-        labels = [str(l).strip() for l in (c.get("labels") or []) if str(l).strip()]
-        labels = list(dict.fromkeys(labels))[:12]
-        cs_id = uuid.uuid4().hex
-        bucket["changesets"][cs_id] = {
-            "id": cs_id, "name": name[:200], "description": str(c.get("description", "")),
-            "group_id": gid, "labels": labels, "operations": ops,
-            "op_breakdown": _op_breakdown(ops), "affected_keys": _affected_keys(ops),
-            "actor": actor, "created_at": _now(), "updated_at": _now(),
-            "last_run": None, "run_count": 0,
-        }
-        imported += 1
 
-    _cs_write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal groups_created, imported, skipped
+        bucket = _cs_bucket(data, tenant_id)
+        # Map an exported group id -> local group id (reuse a same-named group, else create one).
+        existing_by_name = {
+            str(group.get("name", "")).strip().lower(): group["id"]
+            for group in bucket["groups"].values()
+        }
+        group_id_map: dict[str, str] = {}
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            group_name = str(group.get("name", "")).strip()
+            if not group_name:
+                continue
+            old_id = str(group.get("id", ""))
+            name_key = group_name.lower()
+            local_id = existing_by_name.get(name_key)
+            if not local_id:
+                local_id = uuid.uuid4().hex
+                bucket["groups"][local_id] = {
+                    "id": local_id,
+                    "name": group_name,
+                    "color": str(
+                        group.get("color", "")
+                        or _GROUP_COLORS[len(bucket["groups"]) % len(_GROUP_COLORS)]
+                    ),
+                    "description": str(group.get("description", "")),
+                    "order": int(group.get("order", len(bucket["groups"]))),
+                    "created_at": _now(),
+                    "updated_at": _now(),
+                }
+                existing_by_name[name_key] = local_id
+                groups_created += 1
+            if old_id:
+                group_id_map[old_id] = local_id
+
+        for changeset in raw_changesets:
+            if not isinstance(changeset, dict):
+                skipped += 1
+                continue
+            changeset_name = str(changeset.get("name", "")).strip()
+            ops = _clean_ops(changeset.get("operations") or [])
+            if not changeset_name:
+                errors.append("a change-set is missing a name")
+                skipped += 1
+                continue
+            if not ops:
+                errors.append(f"'{changeset_name}' has no valid operations")
+                skipped += 1
+                continue
+            gid = group_id_map.get(str(changeset.get("group_id", "")), "")
+            labels = [
+                str(label).strip()
+                for label in (changeset.get("labels") or [])
+                if str(label).strip()
+            ]
+            labels = list(dict.fromkeys(labels))[:12]
+            cs_id = uuid.uuid4().hex
+            bucket["changesets"][cs_id] = {
+                "id": cs_id,
+                "name": changeset_name[:200],
+                "description": str(changeset.get("description", "")),
+                "group_id": gid,
+                "labels": labels,
+                "operations": ops,
+                "op_breakdown": _op_breakdown(ops),
+                "affected_keys": _affected_keys(ops),
+                "actor": actor,
+                "created_at": _now(),
+                "updated_at": _now(),
+                "last_run": None,
+                "run_count": 0,
+            }
+            imported += 1
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
     return {"imported": imported, "groups_created": groups_created, "skipped": skipped, "errors": errors}
 
 
@@ -780,36 +792,48 @@ def save_group(tenant_id: str, group: dict[str, Any], *, actor: str = "") -> dic
     name = str(group.get("name", "")).strip()
     if not name:
         raise ValueError("group name is required")
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
     gid = group.get("id") or uuid.uuid4().hex
-    prior = bucket["groups"].get(gid, {})
-    color = str(group.get("color", "") or prior.get("color") or _GROUP_COLORS[len(bucket["groups"]) % len(_GROUP_COLORS)])
-    record = {
-        "id": gid,
-        "name": name,
-        "color": color,
-        "description": str(group.get("description", "")),
-        "order": int(group.get("order", prior.get("order", len(bucket["groups"])))),
-        "created_at": prior.get("created_at") or _now(),
-        "updated_at": _now(),
-    }
-    bucket["groups"][gid] = record
-    _cs_write(data)
+    record: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = _cs_bucket(data, tenant_id)
+        prior = bucket["groups"].get(gid, {})
+        color = str(
+            group.get("color", "")
+            or prior.get("color")
+            or _GROUP_COLORS[len(bucket["groups"]) % len(_GROUP_COLORS)]
+        )
+        record.update({
+            "id": gid,
+            "name": name,
+            "color": color,
+            "description": str(group.get("description", "")),
+            "order": int(group.get("order", prior.get("order", len(bucket["groups"])))),
+            "created_at": prior.get("created_at") or _now(),
+            "updated_at": _now(),
+        })
+        bucket["groups"][gid] = record
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
     return record
 
 
 def delete_group(tenant_id: str, group_id: str) -> bool:
     """Delete a group; its change-sets are moved to ungrouped (never deleted with the group)."""
-    data = _cs_read()
-    bucket = _cs_bucket(data, tenant_id)
-    if group_id not in bucket["groups"]:
-        return False
-    del bucket["groups"][group_id]
-    for cs in bucket["changesets"].values():
-        if cs.get("group_id") == group_id:
-            cs["group_id"] = ""
-    _cs_write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = _cs_bucket(data, tenant_id)
+        if group_id not in bucket["groups"]:
+            return
+        del bucket["groups"][group_id]
+        for changeset in bucket["changesets"].values():
+            if changeset.get("group_id") == group_id:
+                changeset["group_id"] = ""
+        deleted = True
+
+    jsonstore.mutate_json(_CS_PATH, {}, _mutate)
+    return deleted
 
 

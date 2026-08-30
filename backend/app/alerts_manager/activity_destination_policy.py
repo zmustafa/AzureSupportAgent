@@ -124,8 +124,10 @@ def get_policy(tenant_id: str, connection_id: str) -> dict[str, Any]:
 def put_policy(tenant_id: str, connection_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     policy = normalize_policy(payload)
     policy["updated_at"] = datetime.now(timezone.utc).isoformat()
-    data = _read()
-    tenant = data.setdefault("tenants", {}).setdefault(_key(tenant_id) or "default", {})
-    tenant.setdefault("connections", {})[_key(connection_id)] = policy
-    jsonstore.write_json(_PATH, data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        tenant = data.setdefault("tenants", {}).setdefault(_key(tenant_id) or "default", {})
+        tenant.setdefault("connections", {})[_key(connection_id)] = policy
+
+    jsonstore.mutate_json(_PATH, {"version": 1, "tenants": {}}, _mutate)
     return dict(policy)

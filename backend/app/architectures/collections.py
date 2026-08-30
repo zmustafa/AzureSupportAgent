@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "architecture_collections.json"
 
 # Curated default palette offered in the UI color picker (kept in sync with the resource
@@ -43,19 +45,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"collections": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"collections": {}})
+    return data if isinstance(data, dict) else {"collections": {}}
 
 
 def _merge(cid: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -82,45 +73,52 @@ def get_collection(collection_id: str) -> dict[str, Any] | None:
 
 
 def upsert_collection(coll: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    colls = data.setdefault("collections", {})
     cid = coll.get("id") or str(uuid.uuid4())
-    existing = colls.get(cid, {})
-    merged = dict(existing)
-    for key in _FIELDS:
-        if key in coll and coll[key] is not None:
-            merged[key] = coll[key]
-    # New collections sort to the end unless an explicit order was supplied.
-    if not existing and "order" not in coll:
-        merged["order"] = _next_order(colls)
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    colls[cid] = merged
-    _write(data)
-    result = get_collection(cid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        colls = data.setdefault("collections", {})
+        existing = colls.get(cid, {})
+        merged = dict(existing)
+        for key in _FIELDS:
+            if key in coll and coll[key] is not None:
+                merged[key] = coll[key]
+        # New collections sort to the end unless an explicit order was supplied.
+        if not existing and "order" not in coll:
+            merged["order"] = _next_order(colls)
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        colls[cid] = merged
+        result.update(_merge(cid, merged))
+
+    jsonstore.mutate_json(_PATH, {"collections": {}}, _mutate)
     return result
 
 
 def delete_collection(collection_id: str) -> bool:
-    data = _read()
-    if collection_id in data.get("collections", {}):
-        del data["collections"][collection_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if collection_id in data.get("collections", {}):
+            del data["collections"][collection_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"collections": {}}, _mutate)
+    return deleted
 
 
 def reorder_collections(ordered_ids: list[str]) -> None:
     """Apply a new manual order from a list of collection ids (index becomes order)."""
-    data = _read()
-    colls = data.get("collections", {})
-    for idx, cid in enumerate(ordered_ids):
-        if cid in colls:
-            colls[cid]["order"] = idx
-            colls[cid]["updated_at"] = _now()
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        colls = data.get("collections", {})
+        for idx, cid in enumerate(ordered_ids):
+            if cid in colls:
+                colls[cid]["order"] = idx
+                colls[cid]["updated_at"] = _now()
+
+    jsonstore.mutate_json(_PATH, {"collections": {}}, _mutate)
 
 
 def _next_order(colls: dict[str, Any]) -> int:

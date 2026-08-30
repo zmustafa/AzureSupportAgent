@@ -1,9 +1,8 @@
 """Mission Control orchestrator.
 
-In-process manager that drives a *mission* (one sweep over a workload): it runs the
-selected systems, streams live progress to SSE subscribers, and persists a ``MissionRun``
-row incrementally so partial progress + history survive a crash. Mirrors the
-``architectures.jobs`` manager pattern (in-memory live state; DB is the durable record).
+Manager that drives a *mission* (one sweep over a workload): it runs the selected systems,
+streams live progress to SSE subscribers, and persists a ``MissionRun`` row incrementally.
+Shared durable-job leases and events coordinate replicas; local objects only serve the owner.
 
 Concurrency: systems run serially inside a mission, while a central FIFO admission queue
 limits how many missions may run globally and against one Azure connection. Systems declare
@@ -22,6 +21,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.durable_jobs import (
+    DurableJobContext,
+    DurableJobExecutor,
+    JobOutcome,
+    as_utc,
+    utcnow,
+)
 from app.missions import systems as sysreg
 
 logger = logging.getLogger("app.missions.orchestrator")
@@ -82,6 +91,8 @@ class _Mission:
     queued_at: float = field(default_factory=time.time)
     queue_position: int | None = None
     queue_lane: str = ""
+    durable_context: DurableJobContext | None = field(default=None, repr=False)
+    event_tasks: set[asyncio.Task] = field(default_factory=set, repr=False)
 
     def public(self) -> dict[str, Any]:
         systems = [self.systems[k] for k in self.system_keys if k in self.systems]
@@ -208,12 +219,27 @@ _admission = _AdmissionQueue()
 
 
 class _Manager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        owner_id: str | None = None,
+        lease_seconds: float = 60.0,
+        poll_seconds: float = 0.25,
+    ) -> None:
+        self._executor = DurableJobExecutor(
+            "mission.control",
+            session_factory=session_factory,
+            owner_id=owner_id,
+            lease_seconds=lease_seconds,
+            poll_seconds=poll_seconds,
+            retention_seconds=_RETAIN_SECONDS,
+            event_limit=1000,
+        )
         self._missions: dict[str, _Mission] = {}
-        self._bg: set[asyncio.Task] = set()
 
     # ----------------------------------------------------------------- public API
-    def create(
+    async def create(
         self,
         *,
         tenant_id: str,
@@ -256,11 +282,45 @@ class _Manager:
                 "started_at": "",
                 "ended_at": "",
             }
-        self._missions[mission.id] = mission
-        task = asyncio.create_task(self._run(mission))
-        mission.task = task
-        self._bg.add(task)
-        task.add_done_callback(self._bg.discard)
+        async def execute(context: DurableJobContext) -> JobOutcome:
+            mission.durable_context = context
+            await self._run(mission)
+            if mission.event_tasks:
+                await asyncio.gather(*list(mission.event_tasks), return_exceptions=True)
+            status = {
+                "succeeded": "done",
+                "partial": "done",
+                "failed": "error",
+                "cancelled": "cancelled",
+            }.get(mission.status, "error")
+            return JobOutcome(
+                status=status,
+                result={
+                    "mission_id": mission.id,
+                    "status": mission.status,
+                    "readiness": mission.readiness,
+                },
+                error=mission.error,
+            )
+
+        claim = await self._executor.start(
+            tenant_id=tenant_id,
+            key=mission.id,
+            metadata={
+                "mission_id": mission.id,
+                "workload_id": workload_id,
+                "workload_name": workload_name,
+                "connection_id": connection_id,
+                "actor": actor,
+                "force": force,
+                "trigger": trigger,
+                "system_keys": mission.system_keys,
+            },
+            runner=execute,
+        )
+        if claim.acquired:
+            self._missions[mission.id] = mission
+            mission.task = self._executor.tasks.get(mission.id)
         return mission.public()
 
     def get_live(self, mission_id: str, tenant_id: str) -> _Mission | None:
@@ -269,14 +329,13 @@ class _Manager:
             return None
         return m
 
-    def cancel(self, mission_id: str, tenant_id: str) -> bool:
+    async def cancel(self, mission_id: str, tenant_id: str) -> bool:
         m = self.get_live(mission_id, tenant_id)
-        if m is None or m.status in _TERMINAL:
-            return False
-        m.cancel_requested = True
-        if m.task is not None:
-            m.task.cancel()
-        return True
+        if m is not None:
+            if m.status in _TERMINAL:
+                return False
+            m.cancel_requested = True
+        return await self._executor.cancel(tenant_id=tenant_id, key=mission_id)
 
     def queue_state(self, tenant_id: str) -> dict[str, Any]:
         return _admission.snapshot(tenant_id)
@@ -285,17 +344,38 @@ class _Manager:
         """SSE generator: emit a snapshot then live deltas until the mission ends."""
         m = self.get_live(mission_id, tenant_id)
         if m is None:
-            # Not live in this process. It either finished and aged out of the in-memory
-            # retain window, or it was orphaned by a server restart (the driving task died
-            # but the DB row may still read running/queued). Fall back to the durable DB
-            # record and emit a final snapshot instead of a bare "Mission not found." — a
-            # reconnect should show the mission's last persisted state, not a scary error.
             snap = await get_mission(mission_id, tenant_id)
             if snap is None:
                 yield {"event": "error", "data": _json({"message": "Mission not found."})}
                 return
             yield {"event": "snapshot", "data": _json(snap)}
-            yield {"event": "done", "data": _json(snap)}
+            durable = await self._executor.store.load_current(
+                tenant_id=tenant_id,
+                feature=self._executor.feature,
+                key=mission_id,
+                include_events=False,
+            )
+            if durable is None or durable["status"] != "running":
+                yield {"event": "done", "data": _json(snap)}
+                return
+            sent_seq = -1
+            while True:
+                for event in await self._executor.store.events_after(durable["id"], sent_seq):
+                    sent_seq = max(sent_seq, int(event["seq"]))
+                    yield {"event": event["event"], "data": _json(event["data"])}
+                    if event["event"] == "done":
+                        return
+                durable = await self._executor.store.load_current(
+                    tenant_id=tenant_id,
+                    feature=self._executor.feature,
+                    key=mission_id,
+                    include_events=False,
+                )
+                if durable is None or durable["status"] != "running":
+                    latest = await get_mission(mission_id, tenant_id) or snap
+                    yield {"event": "done", "data": _json(latest)}
+                    return
+                await asyncio.sleep(self._executor.store.poll_seconds)
             return
         q: asyncio.Queue = asyncio.Queue()
         m.subscribers.add(q)
@@ -368,6 +448,10 @@ class _Manager:
                 q.put_nowait(payload)
             except Exception:  # noqa: BLE001
                 pass
+        if mission.durable_context is not None:
+            task = asyncio.create_task(mission.durable_context.emit(event, data))
+            mission.event_tasks.add(task)
+            task.add_done_callback(mission.event_tasks.discard)
 
     def _log(self, mission: _Mission, message: str, key: str = "") -> None:
         mission.log.append({"ts": _now().isoformat(), "key": key, "message": message})
@@ -378,28 +462,46 @@ class _Manager:
         from app.models import MissionRun
 
         pub = mission.public()
-        try:
-            async with SessionLocal() as db:
-                row = await db.get(MissionRun, mission.id)
-                if row is None:
-                    return
-                row.status = mission.status
-                row.readiness = mission.readiness
-                row.systems_total = pub["systems_total"]
-                row.systems_done = pub["systems_done"]
-                row.systems_attention = pub["systems_attention"]
-                row.systems_json = pub["systems"]
-                row.log_json = mission.log  # persist the full activity log so it reloads on reopen
-                row.error = mission.error or None
-                if mission.started_at:
-                    row.started_at = datetime.fromtimestamp(mission.started_at, tz=timezone.utc)
-                if mission.status in _TERMINAL and row.ended_at is None:
-                    row.ended_at = _now()
+        for attempt in range(5):
+            try:
+                async with SessionLocal() as db:
+                    row = await db.get(MissionRun, mission.id)
+                    if row is None:
+                        return
+                    row.status = mission.status
+                    row.readiness = mission.readiness
+                    row.systems_total = pub["systems_total"]
+                    row.systems_done = pub["systems_done"]
+                    row.systems_attention = pub["systems_attention"]
+                    row.systems_json = pub["systems"]
+                    # Persist the full activity log so it reloads on reopen.
+                    row.log_json = mission.log
+                    row.error = mission.error or None
                     if mission.started_at:
-                        row.duration_ms = int((time.time() - mission.started_at) * 1000)
-                await db.commit()
-        except Exception:  # noqa: BLE001
-            logger.warning("Mission persist failed for %s", mission.id, exc_info=True)
+                        row.started_at = datetime.fromtimestamp(
+                            mission.started_at, tz=timezone.utc
+                        )
+                    if mission.status in _TERMINAL and row.ended_at is None:
+                        row.ended_at = _now()
+                        if mission.started_at:
+                            row.duration_ms = int(
+                                (time.time() - mission.started_at) * 1000
+                            )
+                    await db.commit()
+                    return
+            except OperationalError:
+                if attempt < 4:
+                    await asyncio.sleep(0.05 * (2**attempt))
+                    continue
+                logger.warning(
+                    "Mission persist failed for %s after retries",
+                    mission.id,
+                    exc_info=True,
+                )
+                return
+            except Exception:  # noqa: BLE001
+                logger.warning("Mission persist failed for %s", mission.id, exc_info=True)
+                return
 
     async def _create_row(self, mission: _Mission) -> None:
         from app.core.db import SessionLocal
@@ -670,7 +772,7 @@ async def run_to_completion(
     system_keys: list[str] | None,
 ) -> dict[str, Any]:
     """Launch a mission and await its completion (used by the scheduler)."""
-    pub = manager.create(
+    pub = await manager.create(
         tenant_id=tenant_id,
         workload_id=workload_id,
         workload_name=workload_name,
@@ -725,24 +827,56 @@ async def latest_missions_by_workload(tenant_id: str) -> list[dict[str, Any]]:
 
 
 async def reap_orphaned_missions() -> int:
-    """Fail any missions left ``queued``/``running`` by a previous process.
-
-    A mission only advances inside a live in-process task (the in-memory ``_Manager``);
-    once the process exits, an in-flight mission can never resume, so a row stuck at
-    ``running``/``queued`` is an orphan. If left as-is the board's reconnect-on-mount sees
-    that stale "running" row, tries to follow its (now non-existent) live stream, and the
-    user gets a spurious "Mission not found." Called once at startup so history never shows
-    a mission as perpetually in progress and the board never tries to resume a dead run.
-    Returns the number of missions reaped."""
-    from sqlalchemy import update
+    """Fail only legacy or lease-expired missions, never another replica's active work."""
+    from sqlalchemy import select, update
 
     from app.core.db import SessionLocal
+    from app.core.durable_jobs import DurableJobStore
     from app.models import MissionRun
 
     async with SessionLocal() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(MissionRun.id, MissionRun.tenant_id).where(
+                        MissionRun.status.in_(("queued", "running"))
+                    )
+                )
+            ).all()
+        )
+    store = DurableJobStore()
+    orphaned: list[str] = []
+    for mission_id, tenant_id in rows:
+        durable = await store.load_current(
+            tenant_id=tenant_id,
+            feature="mission.control",
+            key=mission_id,
+            include_events=False,
+        )
+        if durable is None:
+            orphaned.append(mission_id)  # pre-0012 mission with no durable lease
+            continue
+        expires = durable.get("lease_expires_at")
+        if durable["status"] != "running" or not expires:
+            orphaned.append(mission_id)
+            continue
+        expires_at = as_utc(datetime.fromisoformat(expires))
+        if expires_at is None or expires_at > utcnow():
+            continue
+        if await store.interrupt_expired(
+            tenant_id=tenant_id,
+            feature="mission.control",
+            key=mission_id,
+            error="Mission was interrupted before completion.",
+            retention_seconds=_RETAIN_SECONDS,
+        ):
+            orphaned.append(mission_id)
+    if not orphaned:
+        return 0
+    async with SessionLocal() as db:
         result = await db.execute(
             update(MissionRun)
-            .where(MissionRun.status.in_(("queued", "running")))
+            .where(MissionRun.id.in_(orphaned))
             .values(
                 status="failed",
                 error="Interrupted by a server restart before completion.",

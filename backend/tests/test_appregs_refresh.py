@@ -122,10 +122,12 @@ class FakeGraphClient:
 
 
 @pytest.fixture(autouse=True)
-def _reset_job_state(monkeypatch, tmp_path):
-    appregs_job._jobs.clear()
-    appregs_job._conds.clear()
-    appregs_job._tasks.clear()
+async def _reset_job_state(monkeypatch, tmp_path, durable_job_sessions):
+    manager = appregs_job.AppRegistrationsJobManager(
+        session_factory=durable_job_sessions, owner_id="appregs-test", poll_seconds=0.01
+    )
+    monkeypatch.setattr(appregs_job, "manager", manager)
+    monkeypatch.setattr(appregs_job, "_tasks", manager._executor.tasks)
     FakeGraphClient.pages = {}
     FakeGraphClient.calls = []
     FakeGraphClient.retry_events = []
@@ -144,6 +146,13 @@ def _reset_job_state(monkeypatch, tmp_path):
     monkeypatch.setattr(appregs_cache, "_CHECKPOINT_PATH", tmp_path / "checkpoints.json")
     monkeypatch.setattr(appregs_cache, "_mem_cache", None)
     monkeypatch.setattr(appregs_cache, "_checkpoint_cache", None)
+    yield
+    tasks = list(manager._executor.tasks.values())
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -424,9 +433,9 @@ async def test_per_app_events_supply_the_real_success_and_failure():
     FakeGraphClient.signin_events = {
         "app-0": [
             # Newest first, exactly as `$orderby=createdDateTime desc` returns them.
-            {"createdDateTime": "2026-08-22T17:28:26Z", "status": {"errorCode": 0}},
-            {"createdDateTime": "2026-08-22T09:00:00Z", "status": {"errorCode": 700027}},
-            {"createdDateTime": "2026-08-21T09:00:00Z", "status": {"errorCode": 0}},
+                {"createdDateTime": "2026-08-29T17:28:26Z", "status": {"errorCode": 0}},
+                {"createdDateTime": "2026-08-29T09:00:00Z", "status": {"errorCode": 700027}},
+                {"createdDateTime": "2026-08-28T09:00:00Z", "status": {"errorCode": 0}},
         ],
     }
     apps, meta = await appregs._collect_real({"id": "c1"}, limit=50)
@@ -437,8 +446,8 @@ async def test_per_app_events_supply_the_real_success_and_failure():
     assert block["stale"] is False
 
     app = apps[0]
-    assert app["lastSignIn"] == "2026-08-22T17:28:26Z", "newest SUCCESS"
-    assert app["lastFailedSignIn"] == "2026-08-22T09:00:00Z", "newest FAILURE"
+    assert app["lastSignIn"] == "2026-08-29T17:28:26Z", "newest SUCCESS"
+    assert app["lastFailedSignIn"] == "2026-08-29T09:00:00Z", "newest FAILURE"
     assert app["lastSignInKnown"] is True
     assert appregs.signin_bucket(app) == appregs.SIGNIN_BUCKET_RECENT
 
@@ -784,14 +793,16 @@ async def test_cancel_after_page_preserves_checkpoint_and_previous_snapshot(monk
         raise AssertionError("unreachable")
 
     monkeypatch.setattr(appregs, "collect_app_registrations", collect)
-    job = appregs_job.start_job(
+    job = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
         limit=500, mode="full",
     )
     await reached_page.wait()
     task = appregs_job._tasks["t1|c1"]
-    assert appregs_job.cancel_job("t1|c1") is True
+    assert await appregs_job.cancel_job("t1|c1") is True
     await task
+    job = await appregs_job.get_job("t1|c1")
+    assert job is not None
     assert job["status"] == "cancelled"
     assert job["resume_available"] is True
     assert appregs_cache.get("t1", "c1")["payload"] == previous
@@ -814,11 +825,13 @@ async def test_failed_job_preserves_previous_snapshot_and_exposes_resume(monkeyp
         raise RuntimeError("provider detail must not escape")
 
     monkeypatch.setattr(appregs, "collect_app_registrations", collect)
-    job = appregs_job.start_job(
+    job = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1", limit=500,
     )
     task = appregs_job._tasks["t1|c1"]
     await task
+    job = await appregs_job.get_job("t1|c1")
+    assert job is not None
     assert job["status"] == "error"
     assert job["error"] == "Refresh failed. The previous completed snapshot was preserved."
     assert "provider detail" not in job["error"]
@@ -845,11 +858,13 @@ async def test_restart_resume_uses_checkpoint_limit_even_if_setting_changed(monk
         }
 
     monkeypatch.setattr(appregs, "collect_app_registrations", collect)
-    job = appregs_job.start_job(
+    job = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
         limit=1000, mode="capped",
     )
     await appregs_job._tasks["t1|c1"]
+    job = await appregs_job.get_job("t1|c1")
+    assert job is not None
     assert job["status"] == "done"
     assert seen["limit"] == 500
     assert seen["checkpoint"]["configured_limit"] == 500
@@ -872,11 +887,13 @@ async def test_deliberate_mode_change_discards_checkpoint_with_visible_warning(m
         }
 
     monkeypatch.setattr(appregs, "collect_app_registrations", collect)
-    job = appregs_job.start_job(
+    job = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
         limit=500, mode="full",
     )
     await appregs_job._tasks["t1|c1"]
+    job = await appregs_job.get_job("t1|c1")
+    assert job is not None
     assert job["status"] == "done"
     assert any("cannot be used for full mode" in row["message"] for row in job["progress"])
 
@@ -890,16 +907,28 @@ def test_checkpoint_roundtrip_and_expiry(monkeypatch):
     assert appregs_cache.get_checkpoint("t1", "c1") is None
 
 
-def test_start_does_not_spawn_a_second_task_while_cancelling():
-    existing = {
-        "id": "existing", "status": "cancelling", "progress": [],
-    }
-    appregs_job._jobs["t1|c1"] = existing
-    returned = appregs_job.start_job(
+@pytest.mark.asyncio
+async def test_start_does_not_spawn_a_second_task_while_running(monkeypatch):
+    release = asyncio.Event()
+    executions = 0
+
+    async def collect(*_args, **_kwargs):
+        nonlocal executions
+        executions += 1
+        await release.wait()
+        return {"source": "microsoft_graph", "apps": [], "summary": {"total": 0}}
+
+    monkeypatch.setattr(appregs, "collect_app_registrations", collect)
+    first = await appregs_job.start_job(
         key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
     )
-    assert returned is existing
-    assert "t1|c1" not in appregs_job._tasks
+    second = await appregs_job.start_job(
+        key="t1|c1", tenant_id="t1", connection={"id": "c1"}, connection_id="c1",
+    )
+    assert second["id"] == first["id"]
+    assert executions == 1
+    release.set()
+    await appregs_job._tasks["t1|c1"]
 
 
 @pytest.mark.parametrize(("requested", "expected"), [(10, 50), (500, 500), (9000, 5000)])

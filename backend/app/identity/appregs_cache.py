@@ -17,58 +17,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _CACHE_PATH = Path(__file__).resolve().parents[2] / ".data" / "appregs_cache.json"
 _CHECKPOINT_PATH = Path(__file__).resolve().parents[2] / ".data" / "appregs_refresh_checkpoints.json"
 CHECKPOINT_TTL_SECONDS = 24 * 3600
 _mem_cache: dict[str, Any] | None = None
 _checkpoint_cache: dict[str, Any] | None = None
+_checkpoint_cache_loaded_at = 0.0
 
 
 def _load() -> dict[str, Any]:
     global _mem_cache
-    if _mem_cache is None:
-        if _CACHE_PATH.exists():
-            try:
-                loaded = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-                _mem_cache = loaded if isinstance(loaded, dict) else {}
-            except (json.JSONDecodeError, OSError):
-                _mem_cache = {}
-        else:
-            _mem_cache = {}
+    loaded = jsonstore.read_json(_CACHE_PATH, {})
+    _mem_cache = loaded if isinstance(loaded, dict) else {}
     return _mem_cache
 
 
-def _persist() -> None:
-    if _mem_cache is None:
-        return
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(_mem_cache), encoding="utf-8")
-    except OSError:
-        pass
-
-
 def _load_checkpoints() -> dict[str, Any]:
-    global _checkpoint_cache
-    if _checkpoint_cache is None:
-        try:
-            loaded = json.loads(_CHECKPOINT_PATH.read_text(encoding="utf-8"))
-            _checkpoint_cache = loaded if isinstance(loaded, dict) else {}
-        except (json.JSONDecodeError, OSError):
-            _checkpoint_cache = {}
+    global _checkpoint_cache, _checkpoint_cache_loaded_at
+    if (
+        _checkpoint_cache is not None
+        and time.monotonic() - _checkpoint_cache_loaded_at <= 0.5
+    ):
+        return _checkpoint_cache
+    loaded = jsonstore.read_json(_CHECKPOINT_PATH, {})
+    _checkpoint_cache = loaded if isinstance(loaded, dict) else {}
+    _checkpoint_cache_loaded_at = time.monotonic()
     return _checkpoint_cache
-
-
-def _persist_checkpoints() -> None:
-    if _checkpoint_cache is None:
-        return
-    try:
-        _CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _CHECKPOINT_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(_checkpoint_cache, separators=(",", ":")), encoding="utf-8")
-        tmp.replace(_CHECKPOINT_PATH)
-    except OSError:
-        pass
 
 
 def _key(tenant_id: str, connection_id: str) -> str:
@@ -90,10 +66,17 @@ def get(tenant_id: str, connection_id: str) -> dict[str, Any] | None:
 
 def set_(tenant_id: str, connection_id: str, payload: dict[str, Any]) -> str:
     """Store a snapshot, return the fetched_at ISO timestamp."""
-    cache = _load()
     fetched_at = datetime.now(timezone.utc).isoformat()
-    cache[_key(tenant_id, connection_id)] = {"payload": payload, "ts": time.time(), "fetched_at": fetched_at}
-    _persist()
+    entry = {"payload": payload, "ts": time.time(), "fetched_at": fetched_at}
+    global _mem_cache
+
+    def _mutate(cache: dict[str, Any]) -> None:
+        cache[_key(tenant_id, connection_id)] = entry
+
+    try:
+        _mem_cache = jsonstore.mutate_json(_CACHE_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return fetched_at
 
 
@@ -114,31 +97,57 @@ def set_checkpoint(tenant_id: str, connection_id: str, checkpoint: dict[str, Any
     """Persist one completed Graph page without touching the last-good snapshot."""
     clean = json.loads(json.dumps(checkpoint))
     clean["updated_ts"] = time.time()
-    _load_checkpoints()[_key(tenant_id, connection_id)] = clean
-    _persist_checkpoints()
+    global _checkpoint_cache, _checkpoint_cache_loaded_at
+
+    def _mutate(cache: dict[str, Any]) -> None:
+        cache[_key(tenant_id, connection_id)] = clean
+
+    try:
+        _checkpoint_cache = jsonstore.mutate_json(
+            _CHECKPOINT_PATH, {}, _mutate, indent=None, separators=(",", ":")
+        )
+        _checkpoint_cache_loaded_at = time.monotonic()
+    except OSError:
+        pass
 
 
 def delete_checkpoint(tenant_id: str, connection_id: str) -> bool:
-    cache = _load_checkpoints()
-    removed = cache.pop(_key(tenant_id, connection_id), None) is not None
-    if removed:
-        _persist_checkpoints()
+    global _checkpoint_cache, _checkpoint_cache_loaded_at
+    removed = False
+
+    def _mutate(cache: dict[str, Any]) -> None:
+        nonlocal removed
+        removed = cache.pop(_key(tenant_id, connection_id), None) is not None
+
+    try:
+        _checkpoint_cache = jsonstore.mutate_json(
+            _CHECKPOINT_PATH, {}, _mutate, indent=None, separators=(",", ":")
+        )
+        _checkpoint_cache_loaded_at = time.monotonic()
+    except OSError:
+        pass
     return removed
 
 
 def delete_demo(tenant_id: str) -> int:
     """Remove any cached app-registration snapshots for the tenant that hold demo data
     (source == 'demo_dummy_data'). Real Graph-backed caches are left untouched. Returns count."""
-    cache = _load()
     prefix = f"{tenant_id or ''}|"
     removed = 0
-    for k in list(cache):
-        if not k.startswith(prefix):
-            continue
-        payload = (cache[k] or {}).get("payload", {})
-        if payload.get("source") == "demo_dummy_data":
-            del cache[k]
-            removed += 1
-    if removed:
-        _persist()
+    global _mem_cache
+
+    def _mutate(cache: dict[str, Any]) -> None:
+        nonlocal removed
+        for key in list(cache):
+            if not key.startswith(prefix):
+                continue
+            payload = (cache[key] or {}).get("payload", {})
+            if payload.get("source") == "demo_dummy_data":
+                del cache[key]
+                removed += 1
+
+    try:
+        _mem_cache = jsonstore.mutate_json(_CACHE_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return removed

@@ -205,15 +205,16 @@ def cached(tenant_id: str, session_id: str) -> dict[str, Any] | None:
 
 
 def _remember(tenant_id: str, session_id: str, payload: dict[str, Any]) -> None:
-    store = cache.read_state(tenant_id, STATE_NAME, default=None) or {}
-    if not isinstance(store, dict):
-        store = {}
-    sessions = store.setdefault("sessions", {})
-    sessions[_cache_key(session_id)] = payload
-    if len(sessions) > CACHE_MAX_SESSIONS:
-        for key in list(sessions)[: len(sessions) - CACHE_MAX_SESSIONS]:
-            del sessions[key]
-    cache.write_state(tenant_id, STATE_NAME, store)
+    def _mutate(stored: Any) -> dict[str, Any]:
+        store = stored if isinstance(stored, dict) else {}
+        sessions = store.setdefault("sessions", {})
+        sessions[_cache_key(session_id)] = payload
+        if len(sessions) > CACHE_MAX_SESSIONS:
+            for key in list(sessions)[: len(sessions) - CACHE_MAX_SESSIONS]:
+                del sessions[key]
+        return store
+
+    cache.mutate_state(tenant_id, STATE_NAME, {}, _mutate)
 
 
 async def actions_in_window(

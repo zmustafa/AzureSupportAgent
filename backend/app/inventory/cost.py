@@ -18,6 +18,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 logger = logging.getLogger("app.inventory.cost")
 
 _CACHE_PATH = Path(__file__).resolve().parents[2] / ".data" / "inventory_cost_cache.json"
@@ -369,25 +371,9 @@ async def query_cost_breakdown(
 
 def _load() -> dict[str, Any]:
     global _mem
-    if _mem is None:
-        if _CACHE_PATH.exists():
-            try:
-                _mem = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                _mem = {}
-        else:
-            _mem = {}
+    loaded = jsonstore.read_json(_CACHE_PATH, {})
+    _mem = loaded if isinstance(loaded, dict) else {}
     return _mem or {}
-
-
-def _persist() -> None:
-    if _mem is None:
-        return
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(_mem), encoding="utf-8")
-    except OSError:
-        pass
 
 
 def _key(tenant_id: str, connection_id: str, scope: str = "") -> str:
@@ -641,10 +627,16 @@ async def get_cost(
     # retries the missing subscriptions instead of persisting stale partial data. Once cached,
     # the payload is kept indefinitely (no TTL) until the user force-refreshes.
     if available and not errors:
-        cache[ck] = {"payload": payload, "ts": time.time()}
         global _mem
-        _mem = cache
-        _persist()
+        entry = {"payload": payload, "ts": time.time()}
+
+        def _mutate(stored: dict[str, Any]) -> None:
+            stored[ck] = entry
+
+        try:
+            _mem = jsonstore.mutate_json(_CACHE_PATH, {}, _mutate, indent=None)
+        except OSError:
+            pass
     result = {**payload, "cached": False}
     await _notify(
         progress,

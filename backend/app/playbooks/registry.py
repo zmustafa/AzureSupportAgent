@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "playbooks.json"
 
 DEFAULTS: dict[str, Any] = {
@@ -41,19 +43,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"playbooks": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"playbooks": {}})
+    return data if isinstance(data, dict) else {"playbooks": {}}
 
 
 def _merge(stored: dict[str, Any]) -> dict[str, Any]:
@@ -87,28 +78,35 @@ def get_playbook(playbook_id: str) -> dict[str, Any] | None:
 
 
 def upsert_playbook(pb: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    playbooks = data.setdefault("playbooks", {})
     pid = pb.get("id") or str(uuid.uuid4())
-    existing = playbooks.get(pid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in pb and pb[key] is not None:
-            merged[key] = pb[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    playbooks[pid] = merged
-    _write(data)
-    result = get_playbook(pid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        playbooks = data.setdefault("playbooks", {})
+        existing = playbooks.get(pid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in pb and pb[key] is not None:
+                merged[key] = pb[key]
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        playbooks[pid] = merged
+        result.update(_merge(merged))
+        result["id"] = pid
+
+    jsonstore.mutate_json(_PATH, {"playbooks": {}}, _mutate)
     return result
 
 
 def delete_playbook(playbook_id: str) -> bool:
-    data = _read()
-    if playbook_id in data.get("playbooks", {}):
-        del data["playbooks"][playbook_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if playbook_id in data.get("playbooks", {}):
+            del data["playbooks"][playbook_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"playbooks": {}}, _mutate)
+    return deleted

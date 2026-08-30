@@ -8,7 +8,6 @@ from openpyxl import load_workbook
 from app.alert_analysis import collector
 from app.api import alert_analysis as alert_analysis_api
 from app.alert_analysis.collector import compute_analysis
-from app.core.genjob import JobRegistry
 from app.core.security import Principal
 from app.alert_analysis.decisions import apply_decisions
 from app.alert_analysis.demo import build_demo_snapshot
@@ -313,8 +312,10 @@ async def test_collector_emits_truthful_detailed_progress(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(monkeypatch: pytest.MonkeyPatch) -> None:
-    registry = JobRegistry("alert-analysis-test")
+async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(
+    monkeypatch: pytest.MonkeyPatch, durable_job_registry_factory
+) -> None:
+    registry = durable_job_registry_factory("alert-analysis-test")
     monkeypatch.setattr(alert_analysis_api, "_refresh_jobs", registry)
     monkeypatch.setattr(alert_analysis_api, "_effective_connection_id", lambda *_args: "conn1")
     release = __import__("asyncio").Event()
@@ -370,19 +371,22 @@ async def test_refresh_job_is_idempotent_reconnectable_and_request_detached(monk
     assert first["job"]["status"] == "running"
 
     # A later GET is a reconnect: it replays progress without owning/cancelling the task.
-    await __import__("asyncio").sleep(0)
-    reconnected = await alert_analysis_api.refresh_job(
-        subscription_id="sub1", workload_id=None, management_group_id=None,
-        connection_id="conn1", principal=principal,
-    )
+    for _ in range(200):
+        await __import__("asyncio").sleep(0.01)
+        reconnected = await alert_analysis_api.refresh_job(
+            subscription_id="sub1", workload_id=None, management_group_id=None,
+            connection_id="conn1", principal=principal,
+        )
+        if reconnected["progress"]:
+            break
     assert reconnected["job"]["status"] == "running"
     assert reconnected["progress"]
     assert persisted == []
 
     # Returning from both request handlers did not cancel the detached server task.
     release.set()
-    for _ in range(20):
-        await __import__("asyncio").sleep(0)
+    for _ in range(200):
+        await __import__("asyncio").sleep(0.01)
         completed = await alert_analysis_api.refresh_job(
             subscription_id="sub1", workload_id=None, management_group_id=None,
             connection_id="conn1", principal=principal,

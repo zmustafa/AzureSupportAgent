@@ -10,10 +10,11 @@ different verdict for each workload. Persisted under backend/.data/assessment_at
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "assessment_attestations.json"
 
@@ -25,19 +26,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, workload_id: str) -> str:
@@ -63,23 +53,27 @@ def set_attestation(
 
     ``status`` must be one of pass/fail/not_applicable, or the empty string to CLEAR the
     attestation (reverting the control to pending). Returns the stored entry, or None on clear."""
-    data = _read()
-    bucket = data.setdefault(_key(tenant_id, workload_id), {})
-    if not isinstance(bucket, dict):
-        bucket = {}
-        data[_key(tenant_id, workload_id)] = bucket
-    if not status:
-        bucket.pop(check_id, None)
-        _write(data)
-        return None
     if status not in _VALID:
-        status = "fail"
-    entry = {
-        "status": status,
-        "note": str(note or "")[:2000],
-        "by": str(by or "")[:128],
-        "at": _now(),
-    }
-    bucket[check_id] = entry
-    _write(data)
+        status = "fail" if status else ""
+    entry: dict[str, Any] | None = None
+    if status:
+        entry = {
+            "status": status,
+            "note": str(note or "")[:2000],
+            "by": str(by or "")[:128],
+            "at": _now(),
+        }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        key = _key(tenant_id, workload_id)
+        bucket = data.setdefault(key, {})
+        if not isinstance(bucket, dict):
+            bucket = {}
+            data[key] = bucket
+        if entry is None:
+            bucket.pop(check_id, None)
+        else:
+            bucket[check_id] = entry
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return entry

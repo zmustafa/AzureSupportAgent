@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import time
 import uuid
@@ -15,8 +16,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, text, update
 
+from app.core.leases import HEARTBEAT_SECONDS, LEASE_SECONDS, lease_token, worker_id
 from app.models import WorkBatch, WorkBatchItem
 
 log = logging.getLogger("app.core.work_batches")
@@ -63,6 +65,17 @@ _TRANSIENT_MARKERS = (
     "503",
     "504",
 )
+IDLE_SAFETY_POLL_SECONDS = 30.0
+_PROGRESS_MIN_INTERVAL_SECONDS = 2.0
+_CHILD_PROGRESS_POLL_SECONDS = 2.0
+# Admission limits are global, not merely per process. PostgreSQL row locks protect the
+# selected item, while this short transaction-scoped lock serializes the lane/feature count
+# followed by claim across replicas. SQLite's BEGIN IMMEDIATE provides the equivalent guard.
+_CLAIM_ADVISORY_LOCK_KEY = 8_274_119_004_512_338
+_current_lease: contextvars.ContextVar[tuple[str, str, str] | None] = contextvars.ContextVar(
+    "work_batch_lease", default=None
+)
+_progress_writes: dict[str, tuple[float, tuple[Any, ...]]] = {}
 
 
 def _now() -> datetime:
@@ -92,6 +105,12 @@ class ItemResult:
     result: dict[str, Any] = field(default_factory=dict)
     error: str = ""
     retryable: bool = False
+
+
+@dataclass(frozen=True)
+class ItemLease:
+    item_id: str
+    token: str
 
 
 def item_public(item: WorkBatchItem) -> dict[str, Any]:
@@ -143,36 +162,53 @@ def batch_public(batch: WorkBatch, items: list[WorkBatchItem]) -> dict[str, Any]
 
 
 async def refresh_batch(db, batch_id: str) -> WorkBatch | None:
-    batch = await db.get(WorkBatch, batch_id)
+    batch = (
+        await db.execute(
+            select(WorkBatch).where(WorkBatch.id == batch_id).with_for_update()
+        )
+    ).scalar_one_or_none()
     if batch is None:
         return None
-    items = list(
-        (
-            await db.execute(select(WorkBatchItem).where(WorkBatchItem.batch_id == batch_id))
-        ).scalars().all()
-    )
-    counts = {status: 0 for status in TERMINAL}
-    for item in items:
-        if item.status in counts:
-            counts[item.status] += 1
-    batch.total = len(items)
+    status_counts = {
+        status: int(count)
+        for status, count in (
+            await db.execute(
+                select(WorkBatchItem.status, func.count(WorkBatchItem.id))
+                .where(WorkBatchItem.batch_id == batch_id)
+                .group_by(WorkBatchItem.status)
+            )
+        ).all()
+    }
+    counts = {status: status_counts.get(status, 0) for status in TERMINAL}
+    total = sum(status_counts.values())
+    batch.total = total
     batch.completed = sum(counts.values())
     batch.succeeded = counts["succeeded"]
     batch.partial = counts["partial"]
     batch.failed = counts["failed"]
     batch.cancelled = counts["cancelled"]
-    if items and batch.completed == len(items):
-        if counts["cancelled"] == len(items):
+    if total and batch.completed == total:
+        if counts["cancelled"] == total:
             batch.status = "cancelled"
-        elif counts["failed"] == len(items):
+        elif counts["failed"] == total:
             batch.status = "failed"
         elif counts["failed"] or counts["partial"] or counts["cancelled"]:
             batch.status = "partial"
         else:
             batch.status = "succeeded"
         batch.ended_at = batch.ended_at or _now()
-        batch.error = next((item.error for item in items if item.error), None)
-    elif any(item.status == "running" for item in items):
+        batch.error = (
+            await db.execute(
+                select(WorkBatchItem.error)
+                .where(
+                    WorkBatchItem.batch_id == batch_id,
+                    WorkBatchItem.error.is_not(None),
+                    WorkBatchItem.error != "",
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    elif status_counts.get("running", 0):
         batch.status = "running"
         batch.started_at = batch.started_at or _now()
     else:
@@ -424,32 +460,71 @@ async def retry_batch(batch_id: str, tenant_id: str, actor: str, idempotency_key
     return created
 
 
-async def recover_interrupted() -> int:
-    """Requeue running items; terminal siblings remain untouched."""
+async def recover_interrupted(*, owned_by: str | None = None) -> int:
+    """Requeue expired work at startup, or only this worker's work at shutdown."""
     from app.core.db import SessionLocal
 
     async with SessionLocal() as db:
+        if db.bind is not None and db.bind.dialect.name == "sqlite":
+            await db.execute(text("BEGIN IMMEDIATE"))
+        now = _now()
+        ownership = (
+            WorkBatchItem.lease_owner == owned_by
+            if owned_by is not None
+            else or_(
+                WorkBatchItem.lease_owner.is_(None),
+                WorkBatchItem.lease_expires_at.is_(None),
+                WorkBatchItem.lease_expires_at <= now,
+            )
+        )
         running_ids = list(
             (
-                await db.execute(select(WorkBatchItem.id).where(WorkBatchItem.status == "running"))
+                await db.execute(
+                    select(WorkBatchItem.id).where(
+                        WorkBatchItem.status == "running", ownership
+                    )
+                )
             ).scalars().all()
         )
+        recovered = 0
         if running_ids:
-            await db.execute(
+            recovery_result = await db.execute(
                 update(WorkBatchItem)
-                .where(WorkBatchItem.id.in_(running_ids))
+                .where(
+                    WorkBatchItem.id.in_(running_ids),
+                    WorkBatchItem.status == "running",
+                    ownership,
+                )
+                .execution_options(synchronize_session=False)
                 .values(
                     status="queued",
                     started_at=None,
                     available_at=None,
                     retryable=True,
-                    message="Requeued after server restart.",
-                    error="Requeued after server restart.",
+                    message="Requeued after worker interruption.",
+                    error="Requeued after worker interruption.",
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    lease_heartbeat_at=None,
                 )
             )
-        batch_ids = list(
+            recovered = max(0, int(getattr(recovery_result, "rowcount", 0)))
+        batch_ids = set(
             (
-                await db.execute(select(WorkBatch.id).where(WorkBatch.status.in_(ACTIVE)))
+                await db.execute(
+                    select(WorkBatchItem.batch_id).where(WorkBatchItem.id.in_(running_ids))
+                )
+            ).scalars().all()
+        ) if running_ids else set()
+        batch_ids.update(
+            (
+                await db.execute(
+                    select(WorkBatch.id).where(
+                        WorkBatch.status.in_(ACTIVE),
+                        WorkBatch.cancel_requested.is_(True),
+                    )
+                )
             ).scalars().all()
         )
         for batch_id in batch_ids:
@@ -462,7 +537,7 @@ async def recover_interrupted() -> int:
                 )
             await refresh_batch(db, batch_id)
         await db.commit()
-        return len(running_ids)
+        return recovered
 
 
 async def update_item_progress(
@@ -476,28 +551,68 @@ async def update_item_progress(
 ) -> None:
     from app.core.db import SessionLocal
 
+    claim = _current_lease.get()
+    payload = (current, total, message, status, result)
+    timestamp = time.monotonic()
+    previous = _progress_writes.get(item_id)
+    if status is None and result is None and previous is not None:
+        previous_at, previous_payload = previous
+        if payload == previous_payload or timestamp - previous_at < _PROGRESS_MIN_INTERVAL_SECONDS:
+            return
     async with SessionLocal() as db:
-        item = await db.get(WorkBatchItem, item_id)
+        stmt = select(WorkBatchItem).where(WorkBatchItem.id == item_id)
+        if claim is not None:
+            stmt = stmt.where(
+                WorkBatchItem.status == "running",
+                WorkBatchItem.lease_owner == claim[1],
+                WorkBatchItem.lease_token == claim[2],
+            )
+        item = (await db.execute(stmt)).scalar_one_or_none()
         if item is None:
             return
+        changed = False
         if current is not None:
-            item.progress_current = max(0, current)
+            value = max(0, current)
+            changed = changed or item.progress_current != value
+            item.progress_current = value
         if total is not None:
-            item.progress_total = max(0, total)
+            value = max(0, total)
+            changed = changed or item.progress_total != value
+            item.progress_total = value
         if message is not None:
-            item.message = message[:2000]
+            value = message[:2000]
+            changed = changed or item.message != value
+            item.message = value
         if status is not None:
+            changed = changed or item.status != status
             item.status = status
         if result is not None:
+            changed = changed or item.result_json != result
             item.result_json = result
+        if not changed:
+            _progress_writes[item_id] = (timestamp, payload)
+            return
         await db.commit()
+        _progress_writes[item_id] = (timestamp, payload)
 
 
 async def _set_result_ref(item_id: str, result_ref: dict[str, Any]) -> None:
     from app.core.db import SessionLocal
 
     async with SessionLocal() as db:
-        item = await db.get(WorkBatchItem, item_id)
+        claim = _current_lease.get()
+        if claim is not None and db.bind is not None and db.bind.dialect.name == "sqlite":
+            await db.execute(text("BEGIN IMMEDIATE"))
+        stmt = select(WorkBatchItem).where(WorkBatchItem.id == item_id)
+        if claim is not None:
+            stmt = stmt.where(
+                WorkBatchItem.status == "running",
+                WorkBatchItem.lease_owner == claim[1],
+                WorkBatchItem.lease_token == claim[2],
+                WorkBatchItem.lease_expires_at > _now(),
+            )
+            stmt = stmt.with_for_update()
+        item = (await db.execute(stmt)).scalar_one_or_none()
         if item is not None:
             item.result_ref = result_ref
             await db.commit()
@@ -535,7 +650,7 @@ async def _execute_assessment(item: dict[str, Any], batch: dict[str, Any]) -> It
     from app.models import AssessmentRun
 
     config = batch["config"]
-    pillars = config.get("pillars") or list(catalog.PILLARS)
+    pillars: list[str] = list(config.get("pillars") or catalog.PILLARS)
     pack = str(config.get("pack") or "")
     if pack:
         pillars = catalog.pack_pillars(pack) or pillars
@@ -690,7 +805,7 @@ async def _execute_architecture(item: dict[str, Any], batch: dict[str, Any]) -> 
     existing = registry.get_architecture(item["id"])
     if target_id == item["id"] and existing is not None:
         return ItemResult(message="Architecture already generated.", result_ref={"kind": "architecture", "id": item["id"]})
-    job = manager.create(
+    job = await manager.create(
         tenant_id=batch["tenant_id"],
         workload_id=item["workload_id"],
         workload_name=item["workload_name"],
@@ -699,7 +814,7 @@ async def _execute_architecture(item: dict[str, Any], batch: dict[str, Any]) -> 
         target_architecture_id=target_id,
     )
     while True:
-        current = manager.get(job["id"], batch["tenant_id"])
+        current = await manager.get(job["id"], batch["tenant_id"])
         if current is None:
             raise RuntimeError("Architecture generation job disappeared.")
         await update_item_progress(item["id"], current=current.get("progress", 0), total=100, message=current.get("message", ""))
@@ -711,14 +826,14 @@ async def _execute_architecture(item: dict[str, Any], batch: dict[str, Any]) -> 
                 result_ref={"kind": "architecture", "id": current.get("architecture_id") or target_id},
                 result={"resource_count": current.get("resource_count", 0)},
             )
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(_CHILD_PROGRESS_POLL_SECONDS)
 
 
 async def _execute_mission(item: dict[str, Any], batch: dict[str, Any]) -> ItemResult:
     from app.missions import orchestrator
 
     config = batch["config"]
-    mission = orchestrator.manager.create(
+    mission = await orchestrator.manager.create(
         tenant_id=batch["tenant_id"],
         workload_id=item["workload_id"],
         workload_name=item["workload_name"],
@@ -750,7 +865,7 @@ async def _execute_mission(item: dict[str, Any], batch: dict[str, Any]) -> ItemR
                 error=str(current.get("error") or "") if status in {"failed", "partial"} else "",
                 retryable=_transient(str(current.get("error") or "")),
             )
-        await asyncio.sleep(0.75)
+        await asyncio.sleep(_CHILD_PROGRESS_POLL_SECONDS)
 
 
 async def _execute_deep_review(item: dict[str, Any], batch: dict[str, Any]) -> ItemResult:
@@ -793,11 +908,42 @@ async def _execute_inventory_cost(item: dict[str, Any], batch: dict[str, Any]) -
     config = batch["config"]
     connection = resolve_connection(str(config.get("connection_id") or "") or None)
     async with SessionLocal() as db:
+        claim = _current_lease.get()
+        if claim is not None:
+            now = _now()
+            await db.execute(
+                update(WorkBatchItem)
+                .where(
+                    WorkBatchItem.batch_id == batch["id"],
+                    WorkBatchItem.status == "queued",
+                    or_(
+                        WorkBatchItem.lease_owner.is_(None),
+                        WorkBatchItem.lease_expires_at.is_(None),
+                        WorkBatchItem.lease_expires_at <= now,
+                    ),
+                )
+                .values(
+                    status="running",
+                    attempt=WorkBatchItem.attempt + 1,
+                    started_at=now,
+                    ended_at=None,
+                    available_at=None,
+                    lease_owner=claim[1],
+                    lease_token=claim[2],
+                    lease_expires_at=now + timedelta(seconds=LEASE_SECONDS),
+                    lease_heartbeat_at=now,
+                )
+            )
+            await db.commit()
+        rows_stmt = select(WorkBatchItem).where(WorkBatchItem.batch_id == batch["id"])
+        if claim is not None:
+            rows_stmt = rows_stmt.where(
+                WorkBatchItem.lease_owner == claim[1],
+                WorkBatchItem.lease_token == claim[2],
+            )
         rows = list(
             (
-                await db.execute(
-                    select(WorkBatchItem).where(WorkBatchItem.batch_id == batch["id"])
-                )
+                await db.execute(rows_stmt)
             ).scalars().all()
         )
         subscriptions = [row.item_key for row in rows]
@@ -843,13 +989,18 @@ async def _execute_inventory_cost(item: dict[str, Any], batch: dict[str, Any]) -
             await db.commit()
     # Defensive completion for a collector that returned without an item terminal event.
     async with SessionLocal() as db:
+        claim = _current_lease.get()
+        pending_stmt = select(WorkBatchItem).where(
+            WorkBatchItem.batch_id == batch["id"], WorkBatchItem.status.in_(ACTIVE)
+        )
+        if claim is not None:
+            pending_stmt = pending_stmt.where(
+                WorkBatchItem.lease_owner == claim[1],
+                WorkBatchItem.lease_token == claim[2],
+            )
         pending = list(
             (
-                await db.execute(
-                    select(WorkBatchItem).where(
-                        WorkBatchItem.batch_id == batch["id"], WorkBatchItem.status.in_(ACTIVE)
-                    )
-                )
+                await db.execute(pending_stmt)
             ).scalars().all()
         )
     for row in pending:
@@ -885,7 +1036,15 @@ async def _complete_external_item(item_id: str, result: ItemResult) -> None:
     from app.core.db import SessionLocal
 
     async with SessionLocal() as db:
-        item = await db.get(WorkBatchItem, item_id)
+        claim = _current_lease.get()
+        stmt = select(WorkBatchItem).where(WorkBatchItem.id == item_id)
+        if claim is not None:
+            stmt = stmt.where(
+                WorkBatchItem.status == "running",
+                WorkBatchItem.lease_owner == claim[1],
+                WorkBatchItem.lease_token == claim[2],
+            )
+        item = (await db.execute(stmt)).scalar_one_or_none()
         if item is None:
             return
         _apply_result(item, result)
@@ -902,6 +1061,10 @@ def _apply_result(item: WorkBatchItem, result: ItemResult) -> None:
     item.error = (result.error or "")[:4000] or None
     item.retryable = bool(result.retryable)
     item.available_at = None
+    item.lease_owner = None
+    item.lease_token = None
+    item.lease_expires_at = None
+    item.lease_heartbeat_at = None
     item.ended_at = _now()
     started = _aware(item.started_at)
     if started is not None:
@@ -909,7 +1072,8 @@ def _apply_result(item: WorkBatchItem, result: ItemResult) -> None:
 
 
 class WorkBatchWorker:
-    def __init__(self) -> None:
+    def __init__(self, *, identity: str | None = None) -> None:
+        self.worker_id = identity or worker_id("work-batch")
         self._tasks: list[asyncio.Task] = []
         self._wake: asyncio.Event | None = None
         self._claim_lock: asyncio.Lock | None = None
@@ -943,7 +1107,7 @@ class WorkBatchWorker:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         with contextlib.suppress(Exception):
-            await recover_interrupted()
+            await recover_interrupted(owned_by=self.worker_id)
         self._wake = None
         self._claim_lock = None
 
@@ -957,15 +1121,22 @@ class WorkBatchWorker:
         backoff = Backoff()
         while True:
             try:
-                item_id = await self._claim_next()
+                claim = await self._claim_next()
                 backoff.reset()
-                if item_id:
-                    await self._run_item(item_id)
+                if claim:
+                    await self._run_item(claim)
                     continue
                 assert self._wake is not None
+                # Clear before a final claim so a wake racing with the query remains set.
                 self._wake.clear()
+                claim = await self._claim_next()
+                if claim:
+                    await self._run_item(claim)
+                    continue
                 try:
-                    await asyncio.wait_for(self._wake.wait(), timeout=1.0)
+                    await asyncio.wait_for(
+                        self._wake.wait(), timeout=IDLE_SAFETY_POLL_SECONDS
+                    )
                 except asyncio.TimeoutError:
                     pass
             except asyncio.CancelledError:
@@ -981,21 +1152,43 @@ class WorkBatchWorker:
                 )
                 await asyncio.sleep(waited)
 
-    async def _claim_next(self) -> str | None:
+    async def _claim_next(self) -> ItemLease | None:
         from app.core.db import background_session
 
         assert self._claim_lock is not None
         async with self._claim_lock:
             async with background_session() as db:
+                if db.bind is not None and db.bind.dialect.name == "sqlite":
+                    await db.execute(text("BEGIN IMMEDIATE"))
+                elif db.bind is not None and db.bind.dialect.name == "postgresql":
+                    await db.execute(
+                        text("SELECT pg_advisory_xact_lock(:key)"),
+                        {"key": _CLAIM_ADVISORY_LOCK_KEY},
+                    )
                 now = _now()
+                expired = or_(
+                    WorkBatchItem.lease_owner.is_(None),
+                    WorkBatchItem.lease_expires_at.is_(None),
+                    WorkBatchItem.lease_expires_at <= now,
+                )
+                claimable = or_(
+                    (
+                        (WorkBatchItem.status == "queued")
+                        & or_(
+                            WorkBatchItem.available_at.is_(None),
+                            WorkBatchItem.available_at <= now,
+                        )
+                        & expired
+                    ),
+                    (WorkBatchItem.status == "running") & expired,
+                )
                 candidates = list(
                     (
                         await db.execute(
                             select(WorkBatchItem, WorkBatch)
                             .join(WorkBatch, WorkBatch.id == WorkBatchItem.batch_id)
                             .where(
-                                WorkBatchItem.status == "queued",
-                                or_(WorkBatchItem.available_at.is_(None), WorkBatchItem.available_at <= now),
+                                claimable,
                                 WorkBatch.status.in_(ACTIVE),
                                 WorkBatch.cancel_requested.is_(False),
                             )
@@ -1007,21 +1200,32 @@ class WorkBatchWorker:
                 )
                 if not candidates:
                     return None
-                running = list(
-                    (
-                        await db.execute(
-                            select(WorkBatchItem, WorkBatch)
-                            .join(WorkBatch, WorkBatch.id == WorkBatchItem.batch_id)
-                            .where(WorkBatchItem.status == "running")
-                        )
-                    ).all()
-                )
                 lane_counts: dict[tuple[str, str], int] = {}
                 feature_counts: dict[str, int] = {}
-                for running_item, running_batch in running:
-                    lane = (running_item.tenant_id, running_item.connection_id or "no-connection")
-                    lane_counts[lane] = lane_counts.get(lane, 0) + 1
-                    feature_counts[running_batch.feature] = feature_counts.get(running_batch.feature, 0) + 1
+                running_groups = (
+                    await db.execute(
+                        select(
+                            WorkBatchItem.tenant_id,
+                            WorkBatchItem.connection_id,
+                            WorkBatch.feature,
+                            func.count(WorkBatchItem.id),
+                        )
+                        .join(WorkBatch, WorkBatch.id == WorkBatchItem.batch_id)
+                        .where(
+                            WorkBatchItem.status == "running",
+                            WorkBatchItem.lease_expires_at > now,
+                        )
+                        .group_by(
+                            WorkBatchItem.tenant_id,
+                            WorkBatchItem.connection_id,
+                            WorkBatch.feature,
+                        )
+                    )
+                ).all()
+                for tenant_id, connection_id, feature, count in running_groups:
+                    lane = (tenant_id, connection_id or "no-connection")
+                    lane_counts[lane] = lane_counts.get(lane, 0) + int(count)
+                    feature_counts[feature] = feature_counts.get(feature, 0) + int(count)
                 chosen: tuple[WorkBatchItem, WorkBatch] | None = None
                 for candidate, batch in candidates:
                     lane = (candidate.tenant_id, candidate.connection_id or "no-connection")
@@ -1034,20 +1238,38 @@ class WorkBatchWorker:
                 if chosen is None:
                     return None
                 item, batch = chosen
-                item.status = "running"
-                item.attempt += 1
-                item.started_at = _now()
-                item.ended_at = None
-                item.available_at = None
-                item.error = None
-                item.retryable = False
-                item.message = f"Starting {batch.feature.replace('_', ' ')}."
+                token = lease_token()
+                claimed_at = _now()
+                result = await db.execute(
+                    update(WorkBatchItem)
+                    .where(WorkBatchItem.id == item.id, claimable)
+                    .execution_options(synchronize_session=False)
+                    .values(
+                        status="running",
+                        attempt=WorkBatchItem.attempt + 1,
+                        started_at=claimed_at,
+                        ended_at=None,
+                        available_at=None,
+                        error=None,
+                        retryable=False,
+                        message=f"Starting {batch.feature.replace('_', ' ')}.",
+                        lease_owner=self.worker_id,
+                        lease_token=token,
+                        lease_expires_at=claimed_at + timedelta(seconds=LEASE_SECONDS),
+                        lease_heartbeat_at=claimed_at,
+                    )
+                )
+                if getattr(result, "rowcount", 0) != 1:
+                    await db.rollback()
+                    return None
+                _progress_writes.pop(item.id, None)
                 batch.status = "running"
                 batch.started_at = batch.started_at or _now()
                 await db.commit()
-                return item.id
+                return ItemLease(item.id, token)
 
-    async def _run_item(self, item_id: str) -> None:
+    async def _run_item(self, claim: ItemLease) -> None:
+        item_id = claim.item_id
         loaded = await _load_item_batch(item_id)
         if loaded is None:
             return
@@ -1065,20 +1287,73 @@ class WorkBatchWorker:
             batch["tenant_id"] = batch_row.tenant_id
             item["tenant_id"] = item_row.tenant_id
         executor = _EXECUTORS[batch["feature"]]
+        heartbeat = asyncio.create_task(
+            self._heartbeat(item_id, claim.token),
+            name=f"work-batch-heartbeat-{item_id}",
+        )
+        lease_context = _current_lease.set((item_id, self.worker_id, claim.token))
         try:
             result = await executor(item, batch)
-            await self._finish_item(item_id, result)
+            await self._finish_item(item_id, claim.token, result)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("Work-batch item failed: %s", item_id)
-            await self._fail_or_retry(item_id, str(exc)[:4000])
+            await self._fail_or_retry(
+                item_id, str(exc)[:4000], lease_token_value=claim.token
+            )
+        finally:
+            _current_lease.reset(lease_context)
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await heartbeat
 
-    async def _finish_item(self, item_id: str, result: ItemResult) -> None:
+    async def _heartbeat(self, item_id: str, token: str) -> None:
+        from app.core.db import SessionLocal
+
+        while True:
+            await asyncio.sleep(HEARTBEAT_SECONDS)
+            now = _now()
+            try:
+                async with SessionLocal() as db:
+                    result = await db.execute(
+                        update(WorkBatchItem)
+                        .where(
+                            WorkBatchItem.id == item_id,
+                            WorkBatchItem.status == "running",
+                            WorkBatchItem.lease_owner == self.worker_id,
+                            WorkBatchItem.lease_token == token,
+                        )
+                        .values(
+                            lease_heartbeat_at=now,
+                            lease_expires_at=now + timedelta(seconds=LEASE_SECONDS),
+                        )
+                    )
+                    await db.commit()
+                    if getattr(result, "rowcount", 0) != 1:
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - retry until the lease is lost or work ends
+                log.warning("Work-batch lease heartbeat failed for %s", item_id, exc_info=True)
+
+    async def _finish_item(self, item_id: str, token: str, result: ItemResult) -> None:
         from app.core.db import SessionLocal
 
         async with SessionLocal() as db:
-            item = await db.get(WorkBatchItem, item_id)
+            if db.bind is not None and db.bind.dialect.name == "sqlite":
+                await db.execute(text("BEGIN IMMEDIATE"))
+            item = (
+                await db.execute(
+                    select(WorkBatchItem).where(
+                        WorkBatchItem.id == item_id,
+                        WorkBatchItem.status == "running",
+                        WorkBatchItem.lease_owner == self.worker_id,
+                        WorkBatchItem.lease_token == token,
+                        WorkBatchItem.lease_expires_at > _now(),
+                    ).with_for_update()
+                )
+            ).scalar_one_or_none()
             if item is None:
                 return
             batch = await db.get(WorkBatch, item.batch_id)
@@ -1098,17 +1373,43 @@ class WorkBatchWorker:
                     item.message = f"Transient outcome; retrying in {delay}s."
                     item.available_at = _now() + timedelta(seconds=delay)
                     item.started_at = None
+                    item.lease_owner = None
+                    item.lease_token = None
+                    item.lease_expires_at = None
+                    item.lease_heartbeat_at = None
                 else:
                     _apply_result(item, result)
             await refresh_batch(db, item.batch_id)
             await db.commit()
+        _progress_writes.pop(item_id, None)
         self.wake()
 
-    async def _fail_or_retry(self, item_id: str, message: str) -> None:
+    async def _fail_or_retry(
+        self,
+        item_id: str,
+        message: str,
+        *,
+        lease_token_value: str | None = None,
+    ) -> None:
         from app.core.db import SessionLocal
 
         async with SessionLocal() as db:
-            item = await db.get(WorkBatchItem, item_id)
+            if lease_token_value is not None and db.bind is not None and db.bind.dialect.name == "sqlite":
+                await db.execute(text("BEGIN IMMEDIATE"))
+            if lease_token_value is None:
+                item = await db.get(WorkBatchItem, item_id)
+            else:
+                item = (
+                    await db.execute(
+                        select(WorkBatchItem).where(
+                            WorkBatchItem.id == item_id,
+                            WorkBatchItem.status == "running",
+                            WorkBatchItem.lease_owner == self.worker_id,
+                            WorkBatchItem.lease_token == lease_token_value,
+                            WorkBatchItem.lease_expires_at > _now(),
+                        ).with_for_update()
+                    )
+                ).scalar_one_or_none()
             if item is None:
                 return
             transient = _transient(message)
@@ -1121,10 +1422,15 @@ class WorkBatchWorker:
                 item.message = f"Transient failure; retrying in {delay}s."
                 item.available_at = _now() + timedelta(seconds=delay)
                 item.started_at = None
+                item.lease_owner = None
+                item.lease_token = None
+                item.lease_expires_at = None
+                item.lease_heartbeat_at = None
             else:
                 _apply_result(item, ItemResult(status="failed", message="Failed.", error=message, retryable=transient))
             await refresh_batch(db, item.batch_id)
             await db.commit()
+        _progress_writes.pop(item_id, None)
         self.wake()
 
 

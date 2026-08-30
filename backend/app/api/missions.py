@@ -107,7 +107,7 @@ async def run_mission(
         raise HTTPException(status_code=404, detail="Workload not found.")
     if payload.connection_id and conn_id is None:
         raise HTTPException(status_code=404, detail="Azure connection not found.")
-    mission = orchestrator.manager.create(
+    mission = await orchestrator.manager.create(
         tenant_id=principal.tenant_id,
         workload_id=payload.workload_id,
         workload_name=wl.get("name", "workload"),
@@ -222,7 +222,7 @@ async def stream_mission(mission_id: str, principal: Principal = Depends(require
 
 @router.post("/{mission_id}/cancel")
 async def cancel_mission(mission_id: str, principal: Principal = Depends(_run)):
-    ok = orchestrator.manager.cancel(mission_id, principal.tenant_id)
+    ok = await orchestrator.manager.cancel(mission_id, principal.tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Mission not running.")
     return {"ok": True}

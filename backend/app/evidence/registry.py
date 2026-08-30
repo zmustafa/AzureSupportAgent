@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _INDEX = Path(__file__).resolve().parents[2] / ".data" / "evidence_locker.json"
 _BLOB_DIR = Path(__file__).resolve().parents[2] / ".data" / "evidence"
 
@@ -32,19 +34,8 @@ def _now() -> str:
 
 
 def _read_index() -> dict[str, Any]:
-    if _INDEX.exists():
-        try:
-            data = json.loads(_INDEX.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"snapshots": {}}
-
-
-def _write_index(data: dict[str, Any]) -> None:
-    _INDEX.parent.mkdir(parents=True, exist_ok=True)
-    _INDEX.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_INDEX, {"snapshots": {}})
+    return data if isinstance(data, dict) else {"snapshots": {}}
 
 
 def _canonical(content: dict[str, Any]) -> str:
@@ -76,9 +67,8 @@ def create_snapshot(
     """Write a write-once content blob + an immutable index entry. Returns the metadata."""
     sid = str(uuid.uuid4())
     sha = compute_sha(content)
-    _BLOB_DIR.mkdir(parents=True, exist_ok=True)
     # Write the content blob once.
-    _blob_path(sid).write_text(_canonical(content), encoding="utf-8")
+    jsonstore.write_json(_blob_path(sid), content, indent=None, separators=(",", ":"))
     size = _blob_path(sid).stat().st_size
 
     meta = {
@@ -99,9 +89,10 @@ def create_snapshot(
         "shares": [],        # share tokens (metadata only)
         "demo": demo,
     }
-    data = _read_index()
-    data.setdefault("snapshots", {})[sid] = meta
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault("snapshots", {})[sid] = meta
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
     return meta
 
 
@@ -124,13 +115,8 @@ def get_meta(tenant_id: str, snapshot_id: str) -> dict[str, Any] | None:
 
 
 def get_content(snapshot_id: str) -> dict[str, Any] | None:
-    p = _blob_path(snapshot_id)
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    content = jsonstore.read_json(_blob_path(snapshot_id), None)
+    return content if isinstance(content, dict) else None
 
 
 def verify_sha(meta: dict[str, Any]) -> bool:
@@ -184,80 +170,103 @@ def list_trashed(tenant_id: str) -> list[dict[str, Any]]:
 
 def soft_delete(tenant_id: str, snapshot_id: str, *, actor: str = "") -> dict[str, Any] | None:
     """Move a snapshot to Trash (sets deleted_at; content blob + SHA are preserved)."""
-    data = _read_index()
-    m = data.get("snapshots", {}).get(snapshot_id)
-    if not m or m.get("tenant_id") != tenant_id:
-        return None
-    m["deleted_at"] = _now()
-    m["deleted_by"] = actor
-    _write_index(data)
-    return m
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        meta = data.get("snapshots", {}).get(snapshot_id)
+        if not meta or meta.get("tenant_id") != tenant_id:
+            return
+        meta["deleted_at"] = _now()
+        meta["deleted_by"] = actor
+        result.update(meta)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    return result or None
 
 
 def restore(tenant_id: str, snapshot_id: str) -> dict[str, Any] | None:
     """Restore a trashed snapshot back to the locker."""
-    data = _read_index()
-    m = data.get("snapshots", {}).get(snapshot_id)
-    if not m or m.get("tenant_id") != tenant_id or not m.get("deleted_at"):
-        return None
-    m.pop("deleted_at", None)
-    m.pop("deleted_by", None)
-    _write_index(data)
-    return m
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        meta = data.get("snapshots", {}).get(snapshot_id)
+        if not meta or meta.get("tenant_id") != tenant_id or not meta.get("deleted_at"):
+            return
+        meta.pop("deleted_at", None)
+        meta.pop("deleted_by", None)
+        result.update(meta)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    return result or None
 
 
 def purge(tenant_id: str, snapshot_id: str) -> bool:
     """Permanently delete a snapshot (metadata + content blob). Tenant-scoped."""
-    data = _read_index()
-    m = data.get("snapshots", {}).get(snapshot_id)
-    if not m or m.get("tenant_id") != tenant_id:
-        return False
-    try:
-        _blob_path(snapshot_id).unlink(missing_ok=True)
-    except OSError:
-        pass
-    del data["snapshots"][snapshot_id]
-    _write_index(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        meta = data.get("snapshots", {}).get(snapshot_id)
+        if meta and meta.get("tenant_id") == tenant_id:
+            del data["snapshots"][snapshot_id]
+            deleted = True
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    if deleted:
+        try:
+            _blob_path(snapshot_id).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return deleted
 
 
 def empty_trash(tenant_id: str) -> int:
     """Permanently delete all trashed snapshots for the tenant. Returns the count."""
-    data = _read_index()
-    removed = 0
-    for sid, m in list(data.get("snapshots", {}).items()):
-        if m.get("tenant_id") == tenant_id and m.get("deleted_at"):
-            try:
-                _blob_path(sid).unlink(missing_ok=True)
-            except OSError:
-                pass
-            del data["snapshots"][sid]
-            removed += 1
-    if removed:
-        _write_index(data)
-    return removed
+    removed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        for sid, meta in list(data.get("snapshots", {}).items()):
+            if meta.get("tenant_id") == tenant_id and meta.get("deleted_at"):
+                del data["snapshots"][sid]
+                removed.append(sid)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    for sid in removed:
+        try:
+            _blob_path(sid).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return len(removed)
 
 
 
 def add_attachment(tenant_id: str, snapshot_id: str, attachment: dict[str, Any]) -> dict[str, Any] | None:
     """Record a ticket/RCA attachment on the metadata (does NOT touch the content blob/SHA)."""
-    data = _read_index()
-    m = data.get("snapshots", {}).get(snapshot_id)
-    if not m or m.get("tenant_id") != tenant_id:
-        return None
-    m.setdefault("attachments", []).append({**attachment, "at": _now()})
-    _write_index(data)
-    return m
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        meta = data.get("snapshots", {}).get(snapshot_id)
+        if not meta or meta.get("tenant_id") != tenant_id:
+            return
+        meta.setdefault("attachments", []).append({**attachment, "at": _now()})
+        result.update(meta)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    return result or None
 
 
 def add_share(tenant_id: str, snapshot_id: str, share: dict[str, Any]) -> dict[str, Any] | None:
-    data = _read_index()
-    m = data.get("snapshots", {}).get(snapshot_id)
-    if not m or m.get("tenant_id") != tenant_id:
-        return None
-    m.setdefault("shares", []).append(share)
-    _write_index(data)
-    return m
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        meta = data.get("snapshots", {}).get(snapshot_id)
+        if not meta or meta.get("tenant_id") != tenant_id:
+            return
+        meta.setdefault("shares", []).append(share)
+        result.update(meta)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    return result or None
 
 
 def find_by_share_token(token: str) -> dict[str, Any] | None:
@@ -274,24 +283,26 @@ def purge_expired(*, standard_days: int) -> int:
     from datetime import timedelta
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, standard_days))
-    data = _read_index()
-    removed = 0
-    for sid, m in list(data.get("snapshots", {}).items()):
-        if m.get("retention_class") == "audit":
-            continue
-        try:
-            created = datetime.fromisoformat(m.get("created_at", ""))
-        except (ValueError, TypeError):
-            continue
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        if created < cutoff:
+    removed: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        for sid, meta in list(data.get("snapshots", {}).items()):
+            if meta.get("retention_class") == "audit":
+                continue
             try:
-                _blob_path(sid).unlink(missing_ok=True)
-            except OSError:
-                pass
-            del data["snapshots"][sid]
-            removed += 1
-    if removed:
-        _write_index(data)
-    return removed
+                created = datetime.fromisoformat(meta.get("created_at", ""))
+            except (ValueError, TypeError):
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created < cutoff:
+                del data["snapshots"][sid]
+                removed.append(sid)
+
+    jsonstore.mutate_json(_INDEX, {"snapshots": {}}, _mutate)
+    for sid in removed:
+        try:
+            _blob_path(sid).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return len(removed)

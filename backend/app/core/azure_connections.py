@@ -21,12 +21,12 @@ The shape mirrors the LLM provider registry: a flat dict keyed by connection id.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "azure_connections.json"
@@ -81,19 +81,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"connections": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"connections": {}})
+    return data if isinstance(data, dict) else {"connections": {}}
 
 
 def _merge_defaults(conn: dict[str, Any]) -> dict[str, Any]:
@@ -187,75 +176,86 @@ def upsert_connection(conn: dict[str, Any]) -> dict[str, Any]:
     """Create or update a connection. Secrets are encrypted before write. An empty
     secret field on update means 'keep the existing value' (so the UI never has to
     round-trip the plaintext)."""
-    data = _read()
-    connections = data.setdefault("connections", {})
     cid = conn.get("id") or str(uuid.uuid4())
-    existing = connections.get(cid, {})
+    stored_result: dict[str, Any] = {}
 
-    merged = _merge_defaults(existing)
-    # Apply only known fields from the incoming payload.
-    for key in _DEFAULTS:
-        if key in conn and conn[key] is not None:
-            merged[key] = conn[key]
+    def _mutate(data: dict[str, Any]) -> None:
+        connections = data.setdefault("connections", {})
+        existing = connections.get(cid, {})
+        merged = _merge_defaults(existing)
+        # Apply only known fields from the incoming payload.
+        for key in _DEFAULTS:
+            if key in conn and conn[key] is not None:
+                merged[key] = conn[key]
+        # Encrypt secrets; blank on update keeps the stored (encrypted) value.
+        for f in _SECRET_FIELDS:
+            incoming = conn.get(f)
+            if incoming:
+                merged[f] = encrypt(incoming)
+            else:
+                merged[f] = existing.get(f, "")  # keep prior encrypted value (or empty)
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        connections[cid] = merged
+        # Enforce a single default.
+        if merged.get("is_default"):
+            for other_id, other in connections.items():
+                if other_id != cid:
+                    other["is_default"] = False
+        stored_result.update(merged)
 
-    # Encrypt secrets; blank on update keeps the stored (encrypted) value.
-    for f in _SECRET_FIELDS:
-        incoming = conn.get(f)
-        if incoming:
-            merged[f] = encrypt(incoming)
-        else:
-            merged[f] = existing.get(f, "")  # keep prior encrypted value (or empty)
-
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    connections[cid] = merged
-
-    # Enforce a single default.
-    if merged.get("is_default"):
-        for other_id, other in connections.items():
-            if other_id != cid:
-                other["is_default"] = False
-
-    _write(data)
-    result = get_connection(cid)
-    assert result is not None
+    jsonstore.mutate_json(_PATH, {"connections": {}}, _mutate)
+    result = _merge_defaults(stored_result)
+    result["id"] = cid
+    for field in _SECRET_FIELDS:
+        result[field] = decrypt(result.get(field, ""))
     return result
 
 
 def delete_connection(connection_id: str) -> bool:
-    data = _read()
-    connections = data.get("connections", {})
-    if connection_id in connections:
-        del connections[connection_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        connections = data.get("connections", {})
+        if connection_id in connections:
+            del connections[connection_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"connections": {}}, _mutate)
+    return deleted
 
 
 def set_default(connection_id: str) -> bool:
-    data = _read()
-    connections = data.get("connections", {})
-    if connection_id not in connections:
-        return False
-    for cid, conn in connections.items():
-        conn["is_default"] = cid == connection_id
-    _write(data)
-    return True
+    updated = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal updated
+        connections = data.get("connections", {})
+        if connection_id not in connections:
+            return
+        for cid, stored in connections.items():
+            stored["is_default"] = cid == connection_id
+        updated = True
+
+    jsonstore.mutate_json(_PATH, {"connections": {}}, _mutate)
+    return updated
 
 
 def update_status(
     connection_id: str, status: str, detail: str = "", *, tested: bool = True
 ) -> None:
-    data = _read()
-    connections = data.get("connections", {})
-    if connection_id not in connections:
-        return
-    connections[connection_id]["status"] = status
-    connections[connection_id]["status_detail"] = detail
-    if tested:
-        connections[connection_id]["last_tested"] = _now()
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        connections = data.get("connections", {})
+        if connection_id not in connections:
+            return
+        connections[connection_id]["status"] = status
+        connections[connection_id]["status_detail"] = detail
+        if tested:
+            connections[connection_id]["last_tested"] = _now()
+
+    jsonstore.mutate_json(_PATH, {"connections": {}}, _mutate)
 
 
 def _mask(value: str) -> str:

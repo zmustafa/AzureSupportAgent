@@ -12,11 +12,11 @@ beyond the workload id itself.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from app.backup_manager import service
+from app.core import jsonstore
 
 #: Sibling of the snapshot document; small enough to rewrite whole on every analysis.
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "backup_manager_fleet.json"
@@ -31,19 +31,8 @@ def key(connection_id: str, workload_id: str) -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _int(value: Any) -> int:
@@ -112,10 +101,11 @@ def summarize(snapshot: dict[str, Any], *, workload_id: str, connection_id: str)
 
 
 def write_row(tenant_id: str, row: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    bucket[key(str(row.get("connection_id") or ""), str(row.get("workload_id") or ""))] = row
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        bucket[key(str(row.get("connection_id") or ""), str(row.get("workload_id") or ""))] = row
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return row
 
 
@@ -130,14 +120,16 @@ def read_rows(tenant_id: str) -> dict[str, dict[str, Any]]:
 
 
 def delete_rows(tenant_id: str, keys: list[str]) -> int:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
     removed = 0
-    for k in keys:
-        if bucket.pop(k, None) is not None:
-            removed += 1
-    if removed:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal removed
+        bucket = data.get(tenant_id or "default", {})
+        for stored_key in keys:
+            if bucket.pop(stored_key, None) is not None:
+                removed += 1
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return removed
 
 

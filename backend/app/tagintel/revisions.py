@@ -13,11 +13,12 @@ single source of truth the UI lists, visualizes (before→after diff) and revert
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "tag_revisions.json"
 _MAX_PER_KEY = 100  # bounded history per tenant:connection
@@ -32,22 +33,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PATH.write_text(json.dumps(data), encoding="utf-8")
-    except OSError:
-        pass
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, connection_id: str) -> str:
@@ -90,8 +77,6 @@ def save_revision(
     reverts_id: str = "",
 ) -> dict[str, Any]:
     """Persist a recovery revision (the ``before`` is the recovery copy). Returns its summary."""
-    data = _read()
-    bucket = data.setdefault(_key(tenant_id, connection_id), [])
     rev = {
         "id": uuid.uuid4().hex,
         "created_at": _now(),
@@ -109,9 +94,15 @@ def save_revision(
         "status": "applied",
         "reverts_id": reverts_id,
     }
-    bucket.insert(0, rev)
-    del bucket[_MAX_PER_KEY:]
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(_key(tenant_id, connection_id), [])
+        bucket.insert(0, rev)
+        del bucket[_MAX_PER_KEY:]
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
     return _summary(rev)
 
 
@@ -173,18 +164,22 @@ def diff_rows(rev: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _mark_reverted(tenant_id: str, rev_id: str, actor: str) -> None:
-    data = _read()
-    for key, bucket in data.items():
-        ktenant = (key.split("|", 1) + [""])[0]
-        if (ktenant or "default") != (tenant_id or "default"):
-            continue
-        for rev in bucket:
-            if rev.get("id") == rev_id:
-                rev["status"] = "reverted"
-                rev["reverted_at"] = _now()
-                rev["reverted_by"] = actor
-                _write(data)
-                return
+    def _mutate(data: dict[str, Any]) -> None:
+        for key, bucket in data.items():
+            key_tenant = (key.split("|", 1) + [""])[0]
+            if (key_tenant or "default") != (tenant_id or "default"):
+                continue
+            for revision in bucket:
+                if revision.get("id") == rev_id:
+                    revision["status"] = "reverted"
+                    revision["reverted_at"] = _now()
+                    revision["reverted_by"] = actor
+                    return
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
+    except OSError:
+        pass
 
 
 async def revert_revision(

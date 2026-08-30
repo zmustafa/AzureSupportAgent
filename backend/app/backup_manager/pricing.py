@@ -21,12 +21,12 @@ must never sit on the critical path of a dashboard render.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.core.retail_prices import fetch_retail_prices
 
 log = logging.getLogger("app.backup_manager.pricing")
@@ -170,22 +170,8 @@ def build_rate_card(
 
 # --------------------------------------------------------------------------- cache
 def _read_cache() -> dict[str, Any]:
-    if _CACHE_PATH.exists():
-        try:
-            data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write_cache(data: dict[str, Any]) -> None:
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError as exc:  # noqa: BLE001 - a cache write failure must not break pricing
-        log.debug("backup_manager: could not persist price cache: %s", exc)
+    data = jsonstore.read_json(_CACHE_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _cache_key(region: str, currency: str) -> str:
@@ -223,8 +209,15 @@ async def get_rate_card(region: str, currency: str, *, force: bool = False) -> d
         }
 
     card = build_rate_card(backup_items, asr_items, region=region, currency=currency)
-    cache[key] = {"cached_at": time.time(), "card": card}
-    _write_cache(cache)
+    cached_at = time.time()
+
+    def _mutate(stored: dict[str, Any]) -> None:
+        stored[key] = {"cached_at": cached_at, "card": card}
+
+    try:
+        jsonstore.mutate_json(_CACHE_PATH, {}, _mutate)
+    except OSError as exc:  # noqa: BLE001 - a cache write failure must not break pricing
+        log.debug("backup_manager: could not persist price cache: %s", exc)
     card["cache_age_seconds"] = 0
     return card
 

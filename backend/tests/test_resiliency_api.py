@@ -471,14 +471,21 @@ def test_a_failed_analysis_reports_a_canonical_message_not_the_exception(monkeyp
         raise RuntimeError(secret)
 
     monkeypatch.setattr(analyze_mod, "analyze", _boom)
-    started = _run(api.analyze_start(scope=_scope(), principal=_Principal(), db=_FakeDB()))
+    async def exercise() -> dict:
+        started = await api.analyze_start(
+            scope=_scope(), principal=_Principal(), db=_FakeDB()
+        )
+        # Poll the durable job just like another replica or a reconnected browser, while the
+        # detached owner remains on the same live event loop.
+        job = started["job"]
+        for _ in range(200):
+            current = (await api.analyze_job(scope=_scope(), principal=_Principal()))["job"]
+            if current and current.get("status") != "running":
+                return current
+            await asyncio.sleep(0.01)
+        return job
 
-    # The background task owns the job dict; drain the loop so it has finished.
-    job = started["job"]
-    for _ in range(200):
-        if job.get("status") != "running":
-            break
-        _run(asyncio.sleep(0.01))
+    job = _run(exercise())
 
     assert job["status"] == "error"
     assert job["error"] == api.ANALYSIS_FAILED

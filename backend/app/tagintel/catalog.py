@@ -7,12 +7,12 @@ secrets, so plaintext JSON like the other local registries.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
 from app.tagintel.analysis import classify_key
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "tagintel_catalog.json"
@@ -26,22 +26,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    try:
-        _PATH.parent.mkdir(parents=True, exist_ok=True)
-        _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _norm(entry: dict[str, Any]) -> dict[str, Any]:
@@ -74,25 +60,37 @@ def list_catalog(tenant_id: str) -> list[dict[str, Any]]:
 def upsert(tenant_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     if not str(entry.get("canonical", "")).strip():
         raise ValueError("canonical name is required")
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
     norm = _norm(entry)
-    # Preserve created_at on update.
-    if norm["id"] in bucket:
-        norm["created_at"] = bucket[norm["id"]].get("created_at", norm["created_at"])
-    bucket[norm["id"]] = norm
-    _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        # Preserve created_at on update.
+        if norm["id"] in bucket:
+            norm["created_at"] = bucket[norm["id"]].get("created_at", norm["created_at"])
+        bucket[norm["id"]] = norm
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate)
+    except OSError:
+        pass
     return norm
 
 
 def delete(tenant_id: str, entry_id: str) -> bool:
-    data = _read()
-    bucket = data.get(tenant_id or "default", {})
-    if entry_id in bucket:
-        del bucket[entry_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(tenant_id or "default", {})
+        if entry_id in bucket:
+            del bucket[entry_id]
+            deleted = True
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate)
+    except OSError:
+        pass
+    return deleted
 
 
 def required_keys(tenant_id: str) -> list[str]:
@@ -103,32 +101,45 @@ def seed_from_census(tenant_id: str, census_keys: list[dict[str, Any]], key_clus
                      limit: int = 12) -> list[dict[str, Any]]:
     """Create draft catalog entries from the most-used discovered keys (skipping any already
     cataloged). Aliases are pulled from the hygiene key-clusters so casing variants fold in."""
-    existing = {a.lower() for e in list_catalog(tenant_id) for a in [e["canonical"], *e["aliases"]]}
     alias_map: dict[str, list[str]] = {}
     for c in key_clusters:
         alias_map[c["canonical"].lower()] = [m for m in c["members"] if m != c["canonical"]]
 
-    created = []
-    for k in census_keys[:limit]:
-        canon = k["key"]
-        if canon.lower() in existing:
-            continue
-        cat = k.get("category", "other")
-        entry = {
-            "canonical": canon,
-            "aliases": alias_map.get(canon.lower(), k.get("casing_variants", [])),
-            "category": cat,
-            "purpose": _PURPOSE_HINTS.get(cat, ""),
-            "required": cat in ("billing", "ownership", "environment"),
-            "inherited": cat in ("billing", "organization"),
-            "scope": "subscription,resource_group,resource" if cat in ("billing", "organization") else "resource",
-            "allowed_values": [v["value"] for v in k.get("top_values", [])][:10] if k.get("distinct_values", 0) <= 12 else [],
-            "example_values": [v["value"] for v in k.get("top_values", [])][:3],
-            "owner": "",
-            "description": "",
+    created: list[dict[str, Any]] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        bucket = data.setdefault(tenant_id or "default", {})
+        existing = {
+            alias.lower()
+            for stored in bucket.values()
+            for alias in [stored["canonical"], *stored["aliases"]]
         }
-        created.append(upsert(tenant_id, entry))
-        existing.add(canon.lower())
+        for key_info in census_keys[:limit]:
+            canon = key_info["key"]
+            if canon.lower() in existing:
+                continue
+            category = key_info.get("category", "other")
+            entry = _norm({
+                "canonical": canon,
+                "aliases": alias_map.get(canon.lower(), key_info.get("casing_variants", [])),
+                "category": category,
+                "purpose": _PURPOSE_HINTS.get(category, ""),
+                "required": category in ("billing", "ownership", "environment"),
+                "inherited": category in ("billing", "organization"),
+                "scope": "subscription,resource_group,resource" if category in ("billing", "organization") else "resource",
+                "allowed_values": [v["value"] for v in key_info.get("top_values", [])][:10] if key_info.get("distinct_values", 0) <= 12 else [],
+                "example_values": [v["value"] for v in key_info.get("top_values", [])][:3],
+                "owner": "",
+                "description": "",
+            })
+            bucket[entry["id"]] = entry
+            created.append(entry)
+            existing.add(canon.lower())
+
+    try:
+        jsonstore.mutate_json(_PATH, {}, _mutate)
+    except OSError:
+        pass
     return created
 
 

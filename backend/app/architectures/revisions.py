@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "architecture_revisions.json"
 
 # Keep at most this many revisions per architecture (oldest pruned first).
@@ -28,19 +30,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"revisions": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"revisions": {}})
+    return data if isinstance(data, dict) else {"revisions": {}}
 
 
 def signature(arch: dict[str, Any]) -> str:
@@ -77,11 +68,7 @@ def snapshot(architecture_id: str, arch: dict[str, Any], *, reason: str, actor: 
     """Append a revision of ``arch``. Skips if identical to the most recent revision."""
     if not architecture_id:
         return None
-    data = _read()
-    revs = data.setdefault("revisions", {}).setdefault(architecture_id, [])
     sig = signature(arch)
-    if revs and revs[-1].get("sig") == sig:
-        return None  # dedup: nothing meaningful changed
     rev = {
         "id": str(uuid.uuid4()),
         "created_at": _now(),
@@ -90,11 +77,20 @@ def snapshot(architecture_id: str, arch: dict[str, Any], *, reason: str, actor: 
         "sig": sig,
         **{k: arch.get(k) for k in _CONTENT_KEYS},
     }
-    revs.append(rev)
-    if len(revs) > _MAX_PER_ARCH:
-        del revs[: len(revs) - _MAX_PER_ARCH]
-    _write(data)
-    return _meta(rev)
+    added = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal added
+        revs = data.setdefault("revisions", {}).setdefault(architecture_id, [])
+        if revs and revs[-1].get("sig") == sig:
+            return
+        revs.append(rev)
+        if len(revs) > _MAX_PER_ARCH:
+            del revs[: len(revs) - _MAX_PER_ARCH]
+        added = True
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)
+    return _meta(rev) if added else None
 
 
 def list_revisions(architecture_id: str) -> list[dict[str, Any]]:
@@ -115,7 +111,7 @@ def get_revision(architecture_id: str, revision_id: str) -> dict[str, Any] | Non
 
 def delete_for(architecture_id: str) -> None:
     """Drop all revisions for an architecture (called when it is deleted)."""
-    data = _read()
-    if architecture_id in data.get("revisions", {}):
-        del data["revisions"][architecture_id]
-        _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.get("revisions", {}).pop(architecture_id, None)
+
+    jsonstore.mutate_json(_PATH, {"revisions": {}}, _mutate)

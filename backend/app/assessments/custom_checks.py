@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.assessments import catalog
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "assessment_checks.json"
 
@@ -37,19 +38,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"checks": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"checks": {}})
+    return data if isinstance(data, dict) else {"checks": {}}
 
 
 def _merge(cid: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -81,37 +71,43 @@ def get_custom_check(check_id: str) -> dict[str, Any] | None:
 
 
 def upsert_custom_check(check: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    checks = data.setdefault("checks", {})
     cid = check.get("id") or ("custom_" + uuid.uuid4().hex[:10])
-    existing = checks.get(cid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in check and check[key] is not None:
-            merged[key] = check[key]
-    if merged.get("pillar") not in catalog.PILLARS:
-        merged["pillar"] = "security"
-    if merged.get("severity") not in ("critical", "error", "warning", "info"):
-        merged["severity"] = "warning"
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    merged.pop("custom", None)
-    merged.pop("weight", None)
-    checks[cid] = merged
-    _write(data)
-    result = get_custom_check(cid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        checks = data.setdefault("checks", {})
+        existing = checks.get(cid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in check and check[key] is not None:
+                merged[key] = check[key]
+        if merged.get("pillar") not in catalog.PILLARS:
+            merged["pillar"] = "security"
+        if merged.get("severity") not in ("critical", "error", "warning", "info"):
+            merged["severity"] = "warning"
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        merged.pop("custom", None)
+        merged.pop("weight", None)
+        checks[cid] = merged
+        result.update(_merge(cid, merged))
+
+    jsonstore.mutate_json(_PATH, {"checks": {}}, _mutate)
     return result
 
 
 def delete_custom_check(check_id: str) -> bool:
-    data = _read()
-    if check_id in data.get("checks", {}):
-        del data["checks"][check_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if check_id in data.get("checks", {}):
+            del data["checks"][check_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"checks": {}}, _mutate)
+    return deleted
 
 
 # Sample custom controls shipped to demonstrate the feature across every pillar. Seeded
@@ -201,22 +197,24 @@ def seed_sample_checks() -> int:
 
     Returns the number of samples newly added. Existing checks (including user edits or
     deletions of a sample) are never overwritten."""
-    data = _read()
-    checks = data.setdefault("checks", {})
     added = 0
     now = _now()
-    for cid, sample in _SAMPLE_CHECKS.items():
-        if cid in checks:
-            continue
-        entry = json.loads(json.dumps(DEFAULTS))
-        entry.update(sample)
-        entry["enabled"] = True
-        entry["created_by"] = "system:sample"
-        entry["created_at"] = now
-        entry["updated_at"] = now
-        checks[cid] = entry
-        added += 1
-    if added:
-        _write(data)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal added
+        checks = data.setdefault("checks", {})
+        for cid, sample in _SAMPLE_CHECKS.items():
+            if cid in checks:
+                continue
+            entry = json.loads(json.dumps(DEFAULTS))
+            entry.update(sample)
+            entry["enabled"] = True
+            entry["created_by"] = "system:sample"
+            entry["created_at"] = now
+            entry["updated_at"] = now
+            checks[cid] = entry
+            added += 1
+
+    jsonstore.mutate_json(_PATH, {"checks": {}}, _mutate)
     return added
 

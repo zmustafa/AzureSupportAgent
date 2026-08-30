@@ -15,10 +15,11 @@ the rest await it, then read the freshly written snapshot.
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "identity_cache.json"
 
@@ -37,19 +38,8 @@ def get_lock(tenant_id: str, days: int) -> asyncio.Lock:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def read_snapshot(tenant_id: str, days: int) -> dict[str, Any] | None:
@@ -61,10 +51,10 @@ def read_snapshot(tenant_id: str, days: int) -> dict[str, Any] | None:
 
 def write_snapshot(tenant_id: str, days: int, snapshot: dict[str, Any]) -> dict[str, Any]:
     """Persist a snapshot for (tenant, days) and return it."""
-    data = _read()
-    bucket = data.setdefault(tenant_id or "default", {})
-    bucket[str(int(days))] = snapshot
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault(tenant_id or "default", {})[str(int(days))] = snapshot
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return snapshot
 
 

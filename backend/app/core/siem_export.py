@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 from sqlalchemy import and_, or_, select
 
+from app.core import jsonstore
 from app.core.crypto import decrypt, encrypt
 
 logger = logging.getLogger("app.siem")
@@ -65,19 +66,8 @@ def _now_iso() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _migrate(data: dict[str, Any]) -> dict[str, Any]:
@@ -107,8 +97,23 @@ def _load() -> list[dict[str, Any]]:
     return dests
 
 
-def _save(dests: list[dict[str, Any]]) -> None:
-    _write({"destinations": dests})
+def _mutate_destinations(mutator) -> Any:  # noqa: ANN001
+    result: Any = None
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any]:
+        nonlocal result
+        migrated = _migrate(data)
+        dests = [
+            {**_FIELD_DEFAULTS, **_STATUS_DEFAULTS, **dest}
+            for dest in migrated.get("destinations", [])
+            if isinstance(dest, dict)
+        ]
+        result = mutator(dests)
+        migrated["destinations"] = dests
+        return migrated
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return result
 
 
 def _find(dests: list[dict[str, Any]], dest_id: str) -> dict[str, Any] | None:
@@ -183,53 +188,73 @@ def _apply_fields(dest: dict[str, Any], values: dict[str, Any]) -> None:
 
 
 def add_destination(values: dict[str, Any]) -> dict[str, Any]:
-    dests = _load()
     dest = {**_FIELD_DEFAULTS, **_STATUS_DEFAULTS, "id": uuid.uuid4().hex[:12]}
     _apply_fields(dest, values)
-    dests.append(dest)
-    _save(dests)
+
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        dests.append(dest)
+
+    _mutate_destinations(_mutate)
     return list_destinations()
 
 
 def update_destination(dest_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
-    dests = _load()
-    dest = _find(dests, dest_id)
-    if dest is None:
+    updated = False
+
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        nonlocal updated
+        dest = _find(dests, dest_id)
+        if dest is not None:
+            _apply_fields(dest, values)
+            updated = True
+
+    _mutate_destinations(_mutate)
+    if not updated:
         return None
-    _apply_fields(dest, values)
-    _save(dests)
     return list_destinations()
 
 
 def delete_destination(dest_id: str) -> bool:
-    dests = _load()
-    if _find(dests, dest_id) is None:
-        return False
-    _save([d for d in dests if d.get("id") != dest_id])
-    return True
+    deleted = False
+
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        nonlocal deleted
+        for index, dest in enumerate(dests):
+            if dest.get("id") == dest_id:
+                del dests[index]
+                deleted = True
+                return
+
+    _mutate_destinations(_mutate)
+    return deleted
 
 
 def reset_cursor(dest_id: str) -> bool:
     """Drop a destination's cursor so the next flush re-sends from the earliest row."""
-    dests = _load()
-    dest = _find(dests, dest_id)
-    if dest is None:
-        return False
-    dest["cursor_ts"] = None
-    dest["cursor_id"] = None
-    _save(dests)
-    return True
+    reset = False
+
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        nonlocal reset
+        dest = _find(dests, dest_id)
+        if dest is not None:
+            dest["cursor_ts"] = None
+            dest["cursor_id"] = None
+            reset = True
+
+    _mutate_destinations(_mutate)
+    return reset
 
 
 def _set_status(dest_id: str, **fields: Any) -> None:
-    dests = _load()
-    dest = _find(dests, dest_id)
-    if dest is None:
-        return
-    for k, v in fields.items():
-        if k in _STATUS_DEFAULTS:
-            dest[k] = v
-    _save(dests)
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        dest = _find(dests, dest_id)
+        if dest is None:
+            return
+        for key, value in fields.items():
+            if key in _STATUS_DEFAULTS:
+                dest[key] = value
+
+    _mutate_destinations(_mutate)
 
 
 def _event_from_row(row: Any) -> dict[str, Any]:
@@ -400,16 +425,17 @@ async def _flush_destination(dest: dict[str, Any], *, force: bool) -> dict[str, 
     else:
         cursor_ts_new = str(last_ts)
 
-    # Re-load + update only this destination so concurrent status writes don't clobber.
-    dests = _load()
-    target = _find(dests, dest_id)
-    if target is not None:
-        target["cursor_ts"] = cursor_ts_new
-        target["cursor_id"] = last.id
-        target["last_success_at"] = _now_iso()
-        target["last_error"] = None
-        target["forwarded_total"] = int(target.get("forwarded_total", 0)) + len(batch)
-        _save(dests)
+    # Update only this destination so concurrent status writes don't clobber.
+    def _mutate(dests: list[dict[str, Any]]) -> None:
+        target = _find(dests, dest_id)
+        if target is not None:
+            target["cursor_ts"] = cursor_ts_new
+            target["cursor_id"] = last.id
+            target["last_success_at"] = _now_iso()
+            target["last_error"] = None
+            target["forwarded_total"] = int(target.get("forwarded_total", 0)) + len(batch)
+
+    _mutate_destinations(_mutate)
 
     return {"id": dest_id, "forwarded": len(batch), "error": None, "pending_more": pending_more}
 

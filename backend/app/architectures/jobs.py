@@ -4,8 +4,8 @@ The reverse-engineering pipeline (resolve scope → query Azure Resource Graph �
 LLM → save) can take a while, so the dashboard launches it as a background job instead of
 blocking. Several jobs (e.g. one per workload) can run at once; each reports its phase and
 percentage and can be cancelled mid-flight. Jobs live in memory only — the resulting
-architecture is persisted to the registry, but the job records themselves are ephemeral
-(cleared on restart and auto-pruned once finished).
+architecture is persisted to the registry, and bounded job telemetry is stored in the shared
+durable-job tables so polling and cancellation work from any replica.
 """
 from __future__ import annotations
 
@@ -15,7 +15,17 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping, Protocol
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.durable_jobs import (
+    DurableJobContext,
+    DurableJobExecutor,
+    JobOutcome,
+    as_utc,
+    utcnow,
+)
 
 logger = logging.getLogger("app.architectures.jobs")
 
@@ -27,6 +37,40 @@ _RETAIN_SECONDS = 1800
 _MAX_JOBS = 200
 
 _TERMINAL = {"done", "error", "canceled"}
+
+
+class _JobContext(Protocol):
+    async def emit(
+        self,
+        event_type: str,
+        data: Mapping[str, Any],
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        include_seq: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    async def checkpoint(self) -> None: ...
+
+
+class _DirectContext:
+    """Compatibility context for focused tests that invoke the runner directly."""
+
+    def __init__(self, job: "_Job") -> None:
+        self.job = job
+
+    async def emit(
+        self,
+        _event_type: str,
+        _data: Mapping[str, Any],
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        include_seq: bool = False,
+    ) -> None:
+        del metadata, include_seq
+
+    async def checkpoint(self) -> None:
+        if self.job.cancel_requested:
+            raise asyncio.CancelledError()
 
 
 def _iso(ts: float) -> str:
@@ -81,12 +125,26 @@ class _Job:
 
 
 class _Manager:
-    """In-process registry + runner for background generation jobs."""
+    """Durable registry + runner for background generation jobs."""
 
-    def __init__(self) -> None:
-        self._jobs: dict[str, _Job] = {}
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        owner_id: str | None = None,
+        lease_seconds: float = 60.0,
+        poll_seconds: float = 0.25,
+    ) -> None:
+        self._executor = DurableJobExecutor(
+            "architecture.generate",
+            session_factory=session_factory,
+            owner_id=owner_id,
+            lease_seconds=lease_seconds,
+            poll_seconds=poll_seconds,
+            retention_seconds=_RETAIN_SECONDS,
+            event_limit=100,
+        )
         self._sem: asyncio.Semaphore | None = None
-        self._bg: set[asyncio.Task] = set()
 
     def _semaphore(self) -> asyncio.Semaphore:
         # Created lazily so it binds to the running event loop.
@@ -95,7 +153,65 @@ class _Manager:
         return self._sem
 
     # ----------------------------------------------------------------- public API
-    def create(
+    @staticmethod
+    def _from_durable(durable: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(durable.get("metadata") or {})
+        status = str(metadata.get("status") or "queued")
+        if durable["status"] == "cancelled":
+            status = "canceled"
+        elif durable["status"] == "error":
+            status = "error"
+        elif durable["status"] == "done":
+            status = "done"
+        return {
+            "id": metadata.get("id") or durable["key"],
+            "workload_id": metadata.get("workload_id", ""),
+            "workload_name": metadata.get("workload_name", ""),
+            "status": status,
+            "phase": metadata.get("phase", "queued"),
+            "progress": int(metadata.get("progress") or 0),
+            "message": metadata.get("message", "Queued…"),
+            "architecture_id": metadata.get("architecture_id", ""),
+            "architecture_name": metadata.get("architecture_name", ""),
+            "resource_count": int(metadata.get("resource_count") or 0),
+            "target_architecture_id": metadata.get("target_architecture_id", ""),
+            "error": durable.get("error") or metadata.get("error", ""),
+            "created_at": metadata.get("created_at") or durable["started_at"],
+            "started_at": metadata.get("started_at", ""),
+            "ended_at": metadata.get("ended_at") or durable.get("finished_at") or "",
+        }
+
+    async def _load(self, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id,
+            feature=self._executor.feature,
+            key=job_id,
+        )
+        if durable is None:
+            return None
+        lease_expires = durable.get("lease_expires_at")
+        if durable["status"] == "running" and lease_expires:
+            expires = datetime.fromisoformat(lease_expires)
+            if as_utc(expires) <= utcnow():
+                # Architecture generation has no safe checkpoint. Re-running automatically
+                # could save a second architecture after the first owner already wrote one.
+                await self._executor.store.interrupt_expired(
+                    tenant_id=tenant_id,
+                    feature=self._executor.feature,
+                    key=job_id,
+                    error="Architecture generation was interrupted before completion.",
+                    retention_seconds=_RETAIN_SECONDS,
+                )
+                durable = await self._executor.store.load_current(
+                    tenant_id=tenant_id,
+                    feature=self._executor.feature,
+                    key=job_id,
+                )
+                if durable is None:
+                    return None
+        return self._from_durable(durable)
+
+    async def create(
         self,
         *,
         tenant_id: str,
@@ -105,9 +221,9 @@ class _Manager:
         created_by: str,
         target_architecture_id: str = "",
     ) -> dict[str, Any]:
-        self._prune()
+        job_id = str(uuid.uuid4())
         job = _Job(
-            id=str(uuid.uuid4()),
+            id=job_id,
             tenant_id=tenant_id,
             workload_id=workload_id,
             workload_name=workload_name,
@@ -115,65 +231,76 @@ class _Manager:
             created_by=created_by,
             target_architecture_id=target_architecture_id,
         )
-        self._jobs[job.id] = job
-        task = asyncio.create_task(self._run(job))
-        job.task = task
-        self._bg.add(task)
-        task.add_done_callback(self._bg.discard)
-        return job.public()
+        claim = await self._executor.start(
+            tenant_id=tenant_id,
+            key=job_id,
+            metadata=job.public(),
+            runner=lambda context: self._run(job, context),
+        )
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id, feature=self._executor.feature, key=claim.job["key"]
+        )
+        return self._from_durable(durable or claim.job)
 
-    def list(self, tenant_id: str) -> list[dict[str, Any]]:
-        self._prune()
-        jobs = [j for j in self._jobs.values() if j.tenant_id == tenant_id]
-        jobs.sort(key=lambda j: j.created_at, reverse=True)
-        return [j.public() for j in jobs]
+    async def list(self, tenant_id: str) -> list[dict[str, Any]]:
+        durable = await self._executor.store.list_current(
+            tenant_id=tenant_id, feature=self._executor.feature, limit=_MAX_JOBS
+        )
+        result: list[dict[str, Any]] = []
+        for item in durable:
+            loaded = await self._load(str(item["key"]), tenant_id)
+            if loaded is not None:
+                result.append(loaded)
+        return result
 
-    def get(self, job_id: str, tenant_id: str) -> dict[str, Any] | None:
-        job = self._jobs.get(job_id)
-        if job is None or job.tenant_id != tenant_id:
-            return None
-        return job.public()
+    async def get(self, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        return await self._load(job_id, tenant_id)
 
-    def cancel(self, job_id: str, tenant_id: str) -> bool:
-        job = self._jobs.get(job_id)
-        if job is None or job.tenant_id != tenant_id or job.status in _TERMINAL:
+    async def cancel(self, job_id: str, tenant_id: str) -> bool:
+        return await self._executor.cancel(tenant_id=tenant_id, key=job_id)
+
+    async def dismiss(self, job_id: str, tenant_id: str) -> bool:
+        current = await self._load(job_id, tenant_id)
+        if current is None or current["status"] not in _TERMINAL:
             return False
-        job.cancel_requested = True
-        if job.status == "queued":
-            # Not yet started — mark terminal right away for a snappy UI.
-            job.status = "canceled"
-            job.phase = "done"
-            job.message = "Canceled."
-            job.ended_at = time.time()
-        if job.task is not None:
-            job.task.cancel()
-        return True
-
-    def dismiss(self, job_id: str, tenant_id: str) -> bool:
-        job = self._jobs.get(job_id)
-        if job is None or job.tenant_id != tenant_id or job.status not in _TERMINAL:
+        durable = await self._executor.store.load_current(
+            tenant_id=tenant_id, feature=self._executor.feature, key=job_id,
+            include_events=False,
+        )
+        if durable is None:
             return False
-        self._jobs.pop(job_id, None)
-        return True
+        return await self._executor.store.dismiss(
+            tenant_id=tenant_id, feature=self._executor.feature, job_id=durable["id"]
+        )
 
     # ----------------------------------------------------------------- internals
-    def _set(self, job: _Job, phase: str, progress: int, message: str) -> None:
+    async def _set(
+        self, job: _Job, context: _JobContext, phase: str, progress: int, message: str
+    ) -> None:
         job.phase = phase
         job.progress = progress
         job.message = message
+        await context.emit(
+            "progress",
+            {"phase": phase, "progress": progress, "message": message},
+            metadata=job.public(),
+        )
 
-    def _fail(self, job: _Job, message: str) -> None:
+    async def _fail(self, job: _Job, context: _JobContext, message: str) -> JobOutcome:
         job.status = "error"
         job.phase = "done"
         job.error = message
         job.message = message
         job.ended_at = time.time()
+        await context.emit("progress", {"phase": "done", "progress": job.progress, "message": message}, metadata=job.public())
+        return JobOutcome(status="error", error=message)
 
-    def _checkpoint(self, job: _Job) -> None:
-        if job.cancel_requested:
-            raise asyncio.CancelledError()
+    async def _checkpoint(self, context: _JobContext) -> None:
+        await context.checkpoint()
 
-    async def _run(self, job: _Job) -> None:
+    async def _run(
+        self, job: _Job, context: DurableJobContext | None = None
+    ) -> JobOutcome:
         from app.architectures import registry as arch_registry
         from app.architectures.designer import generate_architecture
         from app.architectures.reverse import dump_resources
@@ -181,18 +308,18 @@ class _Manager:
         from app.workloads.registry import get_workload
         from app.azure.credentials import get_arm_token
 
+        active_context: _JobContext = context or _DirectContext(job)
         try:
             async with self._semaphore():
                 if job.cancel_requested:
-                    return  # cancelled while queued
+                    return JobOutcome(status="cancelled", error="Canceled.")
                 job.status = "running"
                 job.started_at = time.time()
-                self._set(job, "scope", 10, f"Resolving scope for '{job.workload_name}'…")
+                await self._set(job, active_context, "scope", 10, f"Resolving scope for '{job.workload_name}'…")
 
                 wl = get_workload(job.workload_id)
                 if wl is None:
-                    self._fail(job, "Workload not found.")
-                    return
+                    return await self._fail(job, active_context, "Workload not found.")
                 conn = resolve_connection(job.connection_id or wl.get("connection_id") or None)
 
                 # Pre-flight auth probe (mirrors the assessment runner). open_sp_session is a
@@ -205,37 +332,34 @@ class _Manager:
                     _tok, _terr = await get_arm_token(conn)
                     if not _tok:
                         cname = conn.get("name") or "the selected connection"
-                        self._fail(
+                        return await self._fail(
                             job,
+                            active_context,
                             f"Can't authenticate to Azure with {cname}: {_terr} "
                             "Refresh its token in Settings → Azure Tenants, then rebuild again.",
                         )
-                        return
 
-                self._checkpoint(job)
-                self._set(job, "query", 35, "Querying Azure Resource Graph for resources + properties…")
+                await self._checkpoint(active_context)
+                await self._set(job, active_context, "query", 35, "Querying Azure Resource Graph for resources + properties…")
                 dump = await dump_resources(wl, conn)
                 if dump.get("error"):
-                    self._fail(job, str(dump["error"]))
-                    return
+                    return await self._fail(job, active_context, str(dump["error"]))
                 resources = dump.get("resources") or []
-                context = dump.get("context") or {}
-                job.resource_count = int(context.get("total_resource_count") or len(resources))
+                resource_context = dump.get("context") or {}
+                job.resource_count = int(resource_context.get("total_resource_count") or len(resources))
                 if not resources:
-                    self._fail(job, "No resources found in this workload's scope.")
-                    return
+                    return await self._fail(job, active_context, "No resources found in this workload's scope.")
 
-                self._checkpoint(job)
-                represented = int(context.get("represented_resource_count") or len(resources))
-                mode = str(context.get("mode") or "detailed")
-                self._set(job, "ai", 70, f"Reverse-engineering a {mode} architecture representing {represented} resource(s)…")
-                result = await generate_architecture(job.workload_name, resources, context=context)
+                await self._checkpoint(active_context)
+                represented = int(resource_context.get("represented_resource_count") or len(resources))
+                mode = str(resource_context.get("mode") or "detailed")
+                await self._set(job, active_context, "ai", 70, f"Reverse-engineering a {mode} architecture representing {represented} resource(s)…")
+                result = await generate_architecture(job.workload_name, resources, context=resource_context)
                 if result is None:
-                    self._fail(job, "The AI could not infer an architecture. Try again.")
-                    return
+                    return await self._fail(job, active_context, "The AI could not infer an architecture. Try again.")
 
-                self._checkpoint(job)
-                self._set(job, "save", 90, "Saving architecture…")
+                await self._checkpoint(active_context)
+                await self._set(job, active_context, "save", 90, "Saving architecture…")
                 rebuild = bool(job.target_architecture_id)
                 arch_payload = {
                     "description": result["description"],
@@ -252,7 +376,7 @@ class _Manager:
                         "rationale": result["rationale"],
                         "confidence": result["confidence"],
                         "resource_count": job.resource_count,
-                        "context": context,
+                        "context": resource_context,
                         "generated_by": job.created_by,
                     },
                 }
@@ -275,32 +399,34 @@ class _Manager:
                 job.progress = 100
                 job.message = "Done."
                 job.ended_at = time.time()
+                await active_context.emit(
+                    "progress",
+                    {"phase": "done", "progress": 100, "message": "Done."},
+                    metadata=job.public(),
+                )
+                return JobOutcome(
+                    result={
+                        "architecture_id": job.architecture_id,
+                        "architecture_name": job.architecture_name,
+                        "resource_count": job.resource_count,
+                    }
+                )
         except asyncio.CancelledError:
             job.status = "canceled"
             job.phase = "done"
             job.message = "Canceled."
             job.ended_at = time.time()
-            # Swallow: this is the task's top-level coroutine, so ending cleanly is correct.
+            await asyncio.shield(
+                active_context.emit(
+                    "progress",
+                    {"phase": "done", "progress": job.progress, "message": "Canceled."},
+                    metadata=job.public(),
+                )
+            )
+            return JobOutcome(status="cancelled", error="Canceled.")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Architecture generation job failed")
-            self._fail(job, str(exc)[:300])
-
-    def _prune(self) -> None:
-        now = time.time()
-        stale = [
-            jid
-            for jid, job in self._jobs.items()
-            if job.status in _TERMINAL and job.ended_at and (now - job.ended_at) > _RETAIN_SECONDS
-        ]
-        for jid in stale:
-            self._jobs.pop(jid, None)
-        if len(self._jobs) > _MAX_JOBS:
-            terminal = sorted(
-                (j for j in self._jobs.values() if j.status in _TERMINAL),
-                key=lambda j: j.ended_at or j.created_at,
-            )
-            for job in terminal[: len(self._jobs) - _MAX_JOBS]:
-                self._jobs.pop(job.id, None)
+            return await self._fail(job, active_context, str(exc)[:300])
 
 
 manager = _Manager()

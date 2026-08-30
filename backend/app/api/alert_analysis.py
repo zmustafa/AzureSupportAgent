@@ -272,7 +272,7 @@ async def refresh_start(
         )
         return snapshot
 
-    job = _refresh_jobs.start(key, runner)
+    job = await _refresh_jobs.start(key, runner, tenant_id=tenant_id)
     return _job_response(job)
 
 
@@ -288,7 +288,7 @@ async def refresh_job(
     scope_kind, scope_id = _scope(workload_id, subscription_id, management_group_id)
     effective_connection_id = _effective_connection_id(scope_kind, scope_id, connection_id)
     key = _refresh_job_key(principal.tenant_id or "default", effective_connection_id, scope_kind, scope_id)
-    return _job_response(_refresh_jobs.get_job(key))
+    return _job_response(await _refresh_jobs.get_job(key, tenant_id=principal.tenant_id or "default"))
 
 
 @router.get("/export")

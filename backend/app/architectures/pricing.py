@@ -8,7 +8,6 @@ a seeded or fabricated amount when Azure has no matching row.
 from __future__ import annotations
 
 import asyncio
-import json
 import math
 import re
 import time
@@ -17,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from app.core import jsonstore
 from app.core.retail_prices import RetailFetchResult, fetch_retail_prices, normalize_currency
 
 MONTHLY_HOURS = 730.0
@@ -224,26 +224,24 @@ def classify_resource_type(arm_type: str | None) -> dict[str, str]:
 
 
 def _read_cache() -> dict[str, Any]:
-    try:
-        data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    data = jsonstore.read_json(_CACHE_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _write_cache(data: dict[str, Any]) -> None:
     try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_PATH.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        jsonstore.write_json(_CACHE_PATH, data, indent=None, separators=(",", ":"))
     except OSError:
         pass
 
 
 def _hint(node: dict[str, Any], key: str) -> Any:
-    hint = node.get("pricing_hint") if isinstance(node.get("pricing_hint"), dict) else {}
+    raw_hint = node.get("pricing_hint")
+    hint: dict[str, Any] = raw_hint if isinstance(raw_hint, dict) else {}
     if key in hint:
         return hint.get(key)
-    meta = node.get("meta") if isinstance(node.get("meta"), dict) else {}
+    raw_meta = node.get("meta")
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
     aliases = {
         "meter_id": ("pricingMeterId", "meterId"),
         "tier": ("pricingTier", "tier"),
@@ -338,7 +336,8 @@ def _catalog_entry(result: RetailFetchResult) -> dict[str, Any]:
 
 async def _load_catalogs(queries: dict[str, CatalogQuery], *, force: bool) -> dict[str, dict[str, Any]]:
     cache = _read_cache()
-    entries = cache.get("entries") if isinstance(cache.get("entries"), dict) else {}
+    raw_entries = cache.get("entries")
+    entries: dict[str, Any] = raw_entries if isinstance(raw_entries, dict) else {}
     now = time.time()
     resolved: dict[str, dict[str, Any]] = {}
     pending: list[CatalogQuery] = []

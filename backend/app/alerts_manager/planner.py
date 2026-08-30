@@ -40,10 +40,6 @@ def _read() -> dict[str, Any]:
     return data if isinstance(data, dict) else {"version": 1, "tenants": {}}
 
 
-def _write(data: dict[str, Any]) -> None:
-    jsonstore.write_json(_PATH, data)
-
-
 def _bucket(data: dict[str, Any], tenant_id: str) -> dict[str, Any]:
     bucket = data.setdefault("tenants", {}).setdefault(tenant_id or "default", {})
     for name in _COLLECTIONS:
@@ -81,23 +77,30 @@ def _get(tenant_id: str, collection: str, item_id: str) -> dict[str, Any] | None
 
 
 def _put(tenant_id: str, collection: str, item: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
     item_id = str(item.get("id") or uuid.uuid4())
     stored = copy.deepcopy(item)
     stored.pop("id", None)
-    _bucket(data, tenant_id)[collection][item_id] = service.encrypted_json(stored)
-    _write(data)
+    encrypted = service.encrypted_json(stored)
+
+    def _mutate(data: dict[str, Any]) -> None:
+        _bucket(data, tenant_id)[collection][item_id] = encrypted
+
+    jsonstore.mutate_json(_PATH, {"version": 1, "tenants": {}}, _mutate)
     return {**stored, "id": item_id}
 
 
 def _delete(tenant_id: str, collection: str, item_id: str) -> bool:
-    data = _read()
-    values = _bucket(data, tenant_id)[collection]
-    if item_id not in values:
-        return False
-    del values[item_id]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        values = _bucket(data, tenant_id)[collection]
+        if item_id in values:
+            del values[item_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"version": 1, "tenants": {}}, _mutate)
+    return deleted
 
 
 def _text(value: Any, limit: int) -> str:

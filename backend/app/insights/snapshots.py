@@ -8,11 +8,12 @@ This is deliberately lightweight: JSON on disk, keyed by (tenant, pack, scope), 
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 log = logging.getLogger("app.insights.snapshots")
 
@@ -31,19 +32,8 @@ def scope_key(scope: dict[str, Any]) -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _key(tenant_id: str, pack_id: str, scope: dict[str, Any]) -> str:
@@ -63,17 +53,25 @@ def save(tenant_id: str, pack_id: str, scope: dict[str, Any], ids_by_source: dic
     """Persist the current fingerprint, trimming per-source id lists and old scopes."""
     if not pack_id:
         return
-    data = _read()
     trimmed = {src: list(ids)[:_MAX_IDS_PER_SOURCE] for src, ids in ids_by_source.items()}
-    data[_key(tenant_id, pack_id, scope)] = {
+    entry = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "ids": trimmed,
     }
-    if len(data) > _MAX_SCOPES:
-        # Drop the oldest scopes beyond the cap.
-        items = sorted(data.items(), key=lambda kv: (kv[1] or {}).get("updated_at", ""), reverse=True)
-        data = dict(items[:_MAX_SCOPES])
+
+    def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
+        data[_key(tenant_id, pack_id, scope)] = entry
+        if len(data) > _MAX_SCOPES:
+            # Drop the oldest scopes beyond the cap.
+            items = sorted(
+                data.items(),
+                key=lambda pair: (pair[1] or {}).get("updated_at", ""),
+                reverse=True,
+            )
+            return dict(items[:_MAX_SCOPES])
+        return None
+
     try:
-        _write(data)
+        jsonstore.mutate_json(_PATH, {}, _mutate, indent=None)
     except OSError:
         log.warning("Failed to persist insight snapshot", exc_info=True)

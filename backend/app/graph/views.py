@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "graph_views.json"
 
 DEFAULTS: dict[str, Any] = {
@@ -38,19 +40,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"views": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_PATH, {"views": {}})
+    return data if isinstance(data, dict) else {"views": {}}
 
 
 def _merge(vid: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -74,28 +65,36 @@ def get_view(view_id: str) -> dict[str, Any] | None:
 
 
 def save_view(view: dict[str, Any], *, actor: str = "") -> dict[str, Any]:
-    data = _read()
-    views = data.setdefault("views", {})
     vid = view.get("id") or str(uuid.uuid4())
-    existing = views.get(vid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in view and view[key] is not None:
-            merged[key] = view[key]
-    merged["created_by"] = existing.get("created_by") or actor
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    views[vid] = merged
-    _write(data)
-    return _merge(vid, merged)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        views = data.setdefault("views", {})
+        existing = views.get(vid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in view and view[key] is not None:
+                merged[key] = view[key]
+        merged["created_by"] = existing.get("created_by") or actor
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        views[vid] = merged
+        result.update(_merge(vid, merged))
+
+    jsonstore.mutate_json(_PATH, {"views": {}}, _mutate)
+    return result
 
 
 def delete_view(view_id: str) -> bool:
-    data = _read()
-    views = data.get("views", {})
-    if view_id in views:
-        del views[view_id]
-        _write(data)
-        return True
-    return False
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        views = data.get("views", {})
+        if view_id in views:
+            del views[view_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"views": {}}, _mutate)
+    return deleted

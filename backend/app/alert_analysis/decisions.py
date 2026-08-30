@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "alert_analysis_decisions.json"
 _ACTIONS = {"keep_rule", "exempt_rule", "consolidate_to", "dismiss_finding"}
 
@@ -19,20 +21,12 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    if not _PATH.exists():
-        return {}
-    try:
-        data = json.loads(_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    data = jsonstore.read_json(_PATH, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(_PATH)
+    jsonstore.write_json(_PATH, data)
 
 
 def _bucket(tenant_id: str, connection_id: str) -> str:
@@ -62,8 +56,6 @@ def record_decision(
     if target_type not in {"rule", "overlap", "gap"} or not target_id:
         raise ValueError("A valid decision target is required.")
     key = f"{target_type}:{target_id}"
-    data = _read()
-    bucket = data.setdefault(_bucket(tenant_id, connection_id), {})
     item = {
         "id": key,
         "target_type": target_type,
@@ -74,20 +66,26 @@ def record_decision(
         "decided_by": actor,
         "decided_at": _now(),
     }
-    bucket[key] = item
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault(_bucket(tenant_id, connection_id), {})[key] = item
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
     return item
 
 
 def delete_decision(tenant_id: str, connection_id: str, target_type: str, target_id: str) -> bool:
-    data = _read()
-    bucket = data.get(_bucket(tenant_id, connection_id), {})
     key = f"{target_type}:{target_id}"
-    if key not in bucket:
-        return False
-    del bucket[key]
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        bucket = data.get(_bucket(tenant_id, connection_id), {})
+        if key in bucket:
+            del bucket[key]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {}, _mutate)
+    return deleted
 
 
 def apply_decisions(snapshot: dict[str, Any], values: list[dict[str, Any]]) -> dict[str, Any]:

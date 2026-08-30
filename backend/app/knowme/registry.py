@@ -53,19 +53,26 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
     if not needs:
         return data
     remap: dict[str, str] = {}  # old key (architecture_id) -> km_id
-    new_store: dict[str, Any] = {}
-    for old_key, rec in store.items():
-        if not isinstance(rec, dict):
-            continue
-        kid = rec.get("id") or str(uuid.uuid4())
-        rec["id"] = kid
-        if not rec.get("architecture_id"):
-            rec["architecture_id"] = old_key
-        new_store[kid] = rec
-        if old_key != kid:
-            remap[old_key] = kid
-    data["know_me"] = new_store
-    jsonstore.write_json(_PATH, data)
+
+    def _mutate(current: dict[str, Any]) -> None:
+        current_store = current.get("know_me")
+        if not isinstance(current_store, dict):
+            return
+        new_store: dict[str, Any] = {}
+        for old_key, stored in current_store.items():
+            if not isinstance(stored, dict):
+                continue
+            rec = dict(stored)
+            kid = rec.get("id") or str(uuid.uuid4())
+            rec["id"] = kid
+            if not rec.get("architecture_id"):
+                rec["architecture_id"] = old_key
+            new_store[kid] = rec
+            if old_key != kid:
+                remap[old_key] = kid
+        current["know_me"] = new_store
+
+    data = jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
     if remap:
         try:
             from app.knowme import assets as kassets
@@ -76,10 +83,6 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 — best-effort; the records are already re-keyed
             pass
     return data
-
-
-def _write(data: dict[str, Any]) -> None:
-    jsonstore.write_json(_PATH, data)
 
 
 def _clean_sections(rows: list[dict[str, Any]] | None) -> list[dict[str, str]]:
@@ -176,8 +179,6 @@ def create_know_me(
     actor: str = "",
 ) -> dict[str, Any]:
     """Create a NEW empty (draft) Know-Me for an architecture and return it."""
-    data = _read()
-    store = data.setdefault("know_me", {})
     kid = str(uuid.uuid4())
     rec: dict[str, Any] = {
         "id": kid,
@@ -201,35 +202,45 @@ def create_know_me(
         "created_by": actor,
         "updated_by": actor,
     }
-    store[kid] = rec
-    _write(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        data.setdefault("know_me", {})[kid] = rec
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
     return dict(rec)
 
 
 def add_asset(km_id: str, asset: dict[str, Any]) -> dict[str, Any] | None:
-    data = _read()
-    rec = data.get("know_me", {}).get(km_id)
-    if not rec:
-        return None
-    rec.setdefault("assets", []).append(asset)
-    rec["updated_at"] = _now()
-    _write(data)
-    return asset
+    added = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal added
+        rec = data.get("know_me", {}).get(km_id)
+        if rec:
+            rec.setdefault("assets", []).append(asset)
+            rec["updated_at"] = _now()
+            added = True
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    return asset if added else None
 
 
 def remove_asset(km_id: str, asset_id: str) -> bool:
-    data = _read()
-    rec = data.get("know_me", {}).get(km_id)
-    if not rec:
-        return False
-    before = rec.get("assets", []) or []
-    after = [a for a in before if a.get("id") != asset_id]
-    if len(after) == len(before):
-        return False
-    rec["assets"] = after
-    rec["updated_at"] = _now()
-    _write(data)
-    return True
+    removed = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal removed
+        rec = data.get("know_me", {}).get(km_id)
+        if not rec:
+            return
+        before = rec.get("assets", []) or []
+        after = [asset for asset in before if asset.get("id") != asset_id]
+        if len(after) != len(before):
+            rec["assets"] = after
+            rec["updated_at"] = _now()
+            removed = True
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    return removed
 
 
 def update_know_me(
@@ -253,68 +264,74 @@ def update_know_me(
 ) -> dict[str, Any] | None:
     """Update an existing Know-Me by id (read-modify-write) + auto-snapshot a revision.
     Returns the saved record, or None if it doesn't exist (and ``create_if_missing`` is off)."""
-    data = _read()
-    store = data.setdefault("know_me", {})
-    existing = store.get(km_id)
-    if existing is None:
-        if not create_if_missing:
-            return None
-        existing = {}
-    merged: dict[str, Any] = dict(existing)
-    merged["id"] = km_id
-    if architecture_id or "architecture_id" not in merged:
-        merged["architecture_id"] = architecture_id or merged.get("architecture_id", "")
-    if workload_id or "workload_id" not in merged:
-        merged["workload_id"] = workload_id or merged.get("workload_id", "")
-    if workload_name or "workload_name" not in merged:
-        merged["workload_name"] = workload_name or merged.get("workload_name", "")
-    if connection_id or "connection_id" not in merged:
-        merged["connection_id"] = connection_id or merged.get("connection_id", "")
-    if tenant_id or "tenant_id" not in merged:
-        merged["tenant_id"] = tenant_id or merged.get("tenant_id", "")
-    if title is not None:
-        merged["title"] = title
-    elif "title" not in merged:
-        merged["title"] = ""
-    if description is not None:
-        merged["description"] = description
-    elif "description" not in merged:
-        merged["description"] = ""
-    if sections is not None:
-        merged["sections"] = _clean_sections(sections)
-    elif "sections" not in merged:
-        merged["sections"] = km.default_sections()
-    if todos is not None:
-        merged["todos"] = _clean_todos(todos)
-    elif "todos" not in merged:
-        merged["todos"] = []
-    if "assets" not in merged:
-        merged["assets"] = []
-    if status is not None and status in _STATUSES:
-        merged["status"] = status
-    elif "status" not in merged:
-        merged["status"] = "draft"
-    if source is not None:
-        merged["source"] = source
-    elif "source" not in merged:
-        merged["source"] = "edited"
-    if ai is not None:
-        merged["ai"] = ai
-    elif "ai" not in merged:
-        merged["ai"] = {}
-    merged.setdefault("is_reference", bool(existing.get("is_reference", False)))
-    merged.setdefault("deleted_at", "")
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    if actor:
-        merged["updated_by"] = actor
-        if not existing:
-            merged.setdefault("created_by", actor)
-    store[km_id] = merged
-    _write(data)
+    merged: dict[str, Any] = {}
+    existed = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal existed
+        store = data.setdefault("know_me", {})
+        current = store.get(km_id)
+        if current is None and not create_if_missing:
+            return
+        existing = current or {}
+        existed = bool(existing)
+        value: dict[str, Any] = dict(existing)
+        value["id"] = km_id
+        for key, incoming in (
+            ("architecture_id", architecture_id),
+            ("workload_id", workload_id),
+            ("workload_name", workload_name),
+            ("connection_id", connection_id),
+            ("tenant_id", tenant_id),
+        ):
+            if incoming or key not in value:
+                value[key] = incoming or value.get(key, "")
+        if title is not None:
+            value["title"] = title
+        elif "title" not in value:
+            value["title"] = ""
+        if description is not None:
+            value["description"] = description
+        elif "description" not in value:
+            value["description"] = ""
+        if sections is not None:
+            value["sections"] = _clean_sections(sections)
+        elif "sections" not in value:
+            value["sections"] = km.default_sections()
+        if todos is not None:
+            value["todos"] = _clean_todos(todos)
+        elif "todos" not in value:
+            value["todos"] = []
+        value.setdefault("assets", [])
+        if status is not None and status in _STATUSES:
+            value["status"] = status
+        elif "status" not in value:
+            value["status"] = "draft"
+        if source is not None:
+            value["source"] = source
+        elif "source" not in value:
+            value["source"] = "edited"
+        if ai is not None:
+            value["ai"] = ai
+        elif "ai" not in value:
+            value["ai"] = {}
+        value.setdefault("is_reference", bool(existing.get("is_reference", False)))
+        value.setdefault("deleted_at", "")
+        value["created_at"] = existing.get("created_at") or _now()
+        value["updated_at"] = _now()
+        if actor:
+            value["updated_by"] = actor
+            if not existing:
+                value.setdefault("created_by", actor)
+        store[km_id] = value
+        merged.update(value)
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    if not merged:
+        return None
     from app.knowme import revisions
 
-    snap_reason = ("Created" if reason == "Edited" else reason) if not existing else reason
+    snap_reason = ("Created" if reason == "Edited" else reason) if not existed else reason
     revisions.snapshot(km_id, merged, reason=snap_reason, actor=actor)
     return dict(merged)
 
@@ -323,26 +340,32 @@ def set_reference(km_id: str, *, is_reference: bool = True, actor: str = "") -> 
     """Mark this Know-Me as the canonical *reference* for its workload. Only one document per
     workload can be the reference, so setting it clears the flag on its siblings. Pass
     ``is_reference=False`` to simply unset it. Returns the updated record (or None)."""
-    data = _read()
-    store = data.get("know_me", {})
-    rec = store.get(km_id)
-    if not rec or rec.get("deleted_at"):
-        return None
-    if is_reference:
-        wid = rec.get("workload_id") or ""
-        aid = rec.get("architecture_id") or ""
-        for other in store.values():
-            if other is rec or not isinstance(other, dict):
-                continue
-            same = (wid and other.get("workload_id") == wid) or (not wid and other.get("architecture_id") == aid)
-            if same and other.get("is_reference"):
-                other["is_reference"] = False
-    rec["is_reference"] = bool(is_reference)
-    rec["updated_at"] = _now()
-    if actor:
-        rec["updated_by"] = actor
-    _write(data)
-    return dict(rec)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        store = data.get("know_me", {})
+        rec = store.get(km_id)
+        if not rec or rec.get("deleted_at"):
+            return
+        if is_reference:
+            wid = rec.get("workload_id") or ""
+            aid = rec.get("architecture_id") or ""
+            for other in store.values():
+                if other is rec or not isinstance(other, dict):
+                    continue
+                same = (wid and other.get("workload_id") == wid) or (
+                    not wid and other.get("architecture_id") == aid
+                )
+                if same and other.get("is_reference"):
+                    other["is_reference"] = False
+        rec["is_reference"] = bool(is_reference)
+        rec["updated_at"] = _now()
+        if actor:
+            rec["updated_by"] = actor
+        result.update(rec)
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    return result or None
 
 
 def merge_ai_sections(
@@ -362,37 +385,50 @@ def merge_ai_sections(
 
 
 def soft_delete(km_id: str, actor: str = "") -> bool:
-    data = _read()
-    rec = data.get("know_me", {}).get(km_id)
-    if not rec or rec.get("deleted_at"):
-        return False
-    rec["deleted_at"] = _now()
-    rec["updated_at"] = _now()
-    if actor:
-        rec["deleted_by"] = actor
-    _write(data)
-    return True
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        rec = data.get("know_me", {}).get(km_id)
+        if rec and not rec.get("deleted_at"):
+            rec["deleted_at"] = _now()
+            rec["updated_at"] = _now()
+            if actor:
+                rec["deleted_by"] = actor
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    return deleted
 
 
 def restore(km_id: str) -> dict[str, Any] | None:
-    data = _read()
-    rec = data.get("know_me", {}).get(km_id)
-    if not rec or not rec.get("deleted_at"):
-        return None
-    rec["deleted_at"] = ""
-    rec["updated_at"] = _now()
-    _write(data)
-    return dict(rec)
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        rec = data.get("know_me", {}).get(km_id)
+        if rec and rec.get("deleted_at"):
+            rec["deleted_at"] = ""
+            rec["updated_at"] = _now()
+            result.update(rec)
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    return result or None
 
 
 def purge(km_id: str) -> bool:
     """Permanently delete a Know-Me + its revisions + assets."""
-    data = _read()
-    store = data.get("know_me", {})
-    if km_id not in store:
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        store = data.get("know_me", {})
+        if km_id in store:
+            del store[km_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
+    if not deleted:
         return False
-    del store[km_id]
-    _write(data)
     from app.knowme import assets as kassets
     from app.knowme import revisions
 
@@ -433,14 +469,20 @@ def restore_revision(km_id: str, revision_id: str, actor: str = "") -> dict[str,
 
 def prune_orphans(valid_architecture_ids: set[str]) -> int:
     """Drop Know-Me records whose architecture no longer exists (cascades revisions+assets)."""
-    data = _read()
-    store = data.get("know_me", {})
-    orphans = [kid for kid, rec in store.items() if (rec or {}).get("architecture_id") not in valid_architecture_ids]
+    orphans: list[str] = []
+
+    def _mutate(data: dict[str, Any]) -> None:
+        store = data.get("know_me", {})
+        orphans.extend(
+            kid for kid, rec in store.items()
+            if (rec or {}).get("architecture_id") not in valid_architecture_ids
+        )
+        for kid in orphans:
+            del store[kid]
+
+    jsonstore.mutate_json(_PATH, {"know_me": {}}, _mutate)
     if not orphans:
         return 0
-    for kid in orphans:
-        del store[kid]
-    _write(data)
     from app.knowme import assets as kassets
     from app.knowme import revisions
 

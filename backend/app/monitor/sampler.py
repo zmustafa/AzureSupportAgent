@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 logger = logging.getLogger("app.monitor.sampler")
 
@@ -38,21 +39,8 @@ def target_key(kind: str, cfg: dict[str, Any]) -> str:
 
 
 def _read() -> dict[str, Any]:
-    if _PATH.exists():
-        try:
-            data = json.loads(_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"targets": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    _PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=0), encoding="utf-8")
-    tmp.replace(_PATH)
+    data = jsonstore.read_json(_PATH, {"targets": {}})
+    return data if isinstance(data, dict) else {"targets": {}}
 
 
 def get_history(target_key_: str) -> list[dict[str, Any]]:
@@ -66,19 +54,27 @@ def get_history(target_key_: str) -> list[dict[str, Any]]:
 def record_sample(kind: str, cfg: dict[str, Any], sample: dict[str, Any]) -> None:
     """Append one probe result to a target's history (bounded)."""
     key = target_key(kind, cfg)
-    data = _read()
-    targets = data.setdefault("targets", {})
-    entry = targets.setdefault(key, {"kind": kind, "label": cfg.get("url") or cfg.get("host") or "", "samples": []})
-    entry["label"] = cfg.get("url") or (f"{cfg.get('host')}:{cfg.get('port')}" if cfg.get("host") else entry.get("label", ""))
-    entry["last_sampled"] = time.time()
-    entry["samples"].append({
+    stored_sample = {
         "at": sample.get("at") or datetime.now(timezone.utc).isoformat(),
         "ok": bool(sample.get("ok")),
         "latency_ms": sample.get("latency_ms"),
         "status": sample.get("status"),
-    })
-    entry["samples"] = entry["samples"][-MAX_SAMPLES_PER_TARGET:]
-    _write(data)
+    }
+
+    def _mutate(data: dict[str, Any]) -> None:
+        targets = data.setdefault("targets", {})
+        entry = targets.setdefault(
+            key,
+            {"kind": kind, "label": cfg.get("url") or cfg.get("host") or "", "samples": []},
+        )
+        entry["label"] = cfg.get("url") or (
+            f"{cfg.get('host')}:{cfg.get('port')}" if cfg.get("host") else entry.get("label", "")
+        )
+        entry["last_sampled"] = time.time()
+        entry["samples"].append(stored_sample)
+        entry["samples"] = entry["samples"][-MAX_SAMPLES_PER_TARGET:]
+
+    jsonstore.mutate_json(_PATH, {"targets": {}}, _mutate, indent=0)
 
 
 def _due(key: str, every_s: int) -> bool:

@@ -4,11 +4,12 @@ per tenant, bounded to the most recent runs.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from app.core import jsonstore
 
 _DIR = Path(__file__).resolve().parents[2] / ".data" / "insight_runs"
 _MAX_PER_TENANT = 500
@@ -28,28 +29,18 @@ def _path(tenant_id: str) -> Path:
 
 
 def _read(tenant_id: str) -> list[dict[str, Any]]:
-    p = _path(tenant_id)
-    if p.exists():
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return []
-
-
-def _write(tenant_id: str, runs: list[dict[str, Any]]) -> None:
-    _DIR.mkdir(parents=True, exist_ok=True)
-    _path(tenant_id).write_text(json.dumps(runs[:_MAX_PER_TENANT], indent=2), encoding="utf-8")
+    data = jsonstore.read_json(_path(tenant_id), [])
+    return data if isinstance(data, list) else []
 
 
 def save_run(tenant_id: str, run: dict[str, Any]) -> dict[str, Any]:
     run.setdefault("id", new_id())
     run.setdefault("created_at", _now())
-    runs = _read(tenant_id)
-    runs.insert(0, run)  # newest first
-    _write(tenant_id, runs)
+    def _mutate(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        runs.insert(0, run)  # newest first
+        return runs[:_MAX_PER_TENANT]
+
+    jsonstore.mutate_json(_path(tenant_id), [], _mutate)
     return run
 
 
@@ -75,26 +66,32 @@ def latest_run(tenant_id: str, *, pack_id: str | None = None) -> dict[str, Any] 
 def update_run(tenant_id: str, run_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
     """Shallow-merge ``patch`` into the stored run (review state: read/ack/false-positive).
     Returns the updated run, or None if not found."""
-    runs = _read(tenant_id)
-    for r in runs:
-        if r.get("id") == run_id:
-            r.update(patch)
-            _write(tenant_id, runs)
-            return r
-    return None
+    result: dict[str, Any] = {}
+
+    def _mutate(runs: list[dict[str, Any]]) -> None:
+        for run in runs:
+            if run.get("id") == run_id:
+                run.update(patch)
+                result.update(run)
+                return
+
+    jsonstore.mutate_json(_path(tenant_id), [], _mutate)
+    return result or None
 
 
 def mark_all_read(tenant_id: str, *, at: str | None = None) -> int:
     """Stamp ``read_at`` on every notified-but-unread run. Returns how many were updated."""
     at = at or _now()
-    runs = _read(tenant_id)
     updated = 0
-    for r in runs:
-        if r.get("notified") and not r.get("read_at"):
-            r["read_at"] = at
-            updated += 1
-    if updated:
-        _write(tenant_id, runs)
+
+    def _mutate(runs: list[dict[str, Any]]) -> None:
+        nonlocal updated
+        for run in runs:
+            if run.get("notified") and not run.get("read_at"):
+                run["read_at"] = at
+                updated += 1
+
+    jsonstore.mutate_json(_path(tenant_id), [], _mutate)
     return updated
 
 

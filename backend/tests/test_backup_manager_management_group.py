@@ -362,9 +362,11 @@ async def test_management_group_mutations_are_server_rejected_before_estate_or_a
 
 
 @pytest.mark.asyncio
-async def test_refresh_start_empty_management_group_creates_no_job(monkeypatch) -> None:
+async def test_refresh_start_empty_management_group_creates_no_job(
+    monkeypatch, durable_job_registry_factory
+) -> None:
     monkeypatch.setattr(api, "_connection", lambda *_args, **_kwargs: CONNECTION)
-    monkeypatch.setattr(api, "_refresh_jobs", type(api._refresh_jobs)("mg-empty"))
+    monkeypatch.setattr(api, "_refresh_jobs", durable_job_registry_factory("mg-empty"))
 
     async def empty(*_args, **_kwargs):
         raise ValueError("No visible subscriptions were found under the selected management group.")
@@ -380,4 +382,4 @@ async def test_refresh_start_empty_management_group_creates_no_job(monkeypatch) 
             management_group_id=MG, principal=_principal(),
         )
     assert excinfo.value.status_code == 409
-    assert api._refresh_jobs.jobs_with_prefix("") == []
+    assert await api._refresh_jobs.jobs_with_prefix("") == []

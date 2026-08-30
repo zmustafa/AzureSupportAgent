@@ -435,8 +435,8 @@ async def start_app_registrations_refresh(
 
     connection, tenant_id, cid = _appregs_target(principal, principal and connection_id)
     key = _appregs_job_key(tenant_id, cid)
-    already = appregs_job.is_running(key)
-    job = appregs_job.start_job(
+    already = await appregs_job.is_running(key)
+    job = await appregs_job.start_job(
         key=key, tenant_id=tenant_id, connection=connection, connection_id=cid,
         limit=_appregs_limit(), mode=mode,
     )
@@ -464,7 +464,7 @@ async def app_registrations_job(
 
     _conn, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
-    job = appregs_job.get_job(key) or appregs_job.recoverable_job(tenant_id, cid)
+    job = await appregs_job.get_job(key) or appregs_job.recoverable_job(tenant_id, cid)
     return {"job": appregs_job.public_job(job)}
 
 
@@ -478,7 +478,7 @@ async def cancel_app_registrations_refresh(
 
     _connection, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
-    if not appregs_job.cancel_job(key):
+    if not await appregs_job.cancel_job(key):
         raise HTTPException(status_code=409, detail="No application registration refresh is running.")
     return {"ok": True, "resume_available": appregs_cache.get_checkpoint(tenant_id, cid) is not None}
 
@@ -496,8 +496,8 @@ async def stream_app_registrations_refresh(
 
     connection, tenant_id, cid = _appregs_target(principal, connection_id)
     key = _appregs_job_key(tenant_id, cid)
-    if not appregs_job.is_running(key):
-        appregs_job.start_job(
+    if not await appregs_job.is_running(key):
+        await appregs_job.start_job(
             key=key, tenant_id=tenant_id, connection=connection, connection_id=cid,
             limit=_appregs_limit(), mode=mode,
         )

@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 _PATH = Path(__file__).resolve().parents[2] / ".data" / "workload_groups.json"
 
 DEFAULTS: dict[str, Any] = {
@@ -57,16 +59,8 @@ def _now() -> str:
 
 
 def _read() -> dict[str, Any]:
-    from app.core import jsonstore
-
     data = jsonstore.read_json(_PATH, {"groups": {}})
     return data if isinstance(data, dict) else {"groups": {}}
-
-
-def _write(data: dict[str, Any]) -> None:
-    from app.core import jsonstore
-
-    jsonstore.write_json(_PATH, data)
 
 
 def list_groups() -> list[dict[str, Any]]:
@@ -91,32 +85,42 @@ def get_group(group_id: str) -> dict[str, Any] | None:
 
 
 def upsert_group(group: dict[str, Any]) -> dict[str, Any]:
-    data = _read()
-    groups = data.setdefault("groups", {})
     gid = group.get("id") or str(uuid.uuid4())
-    existing = groups.get(gid, {})
-    merged = dict(existing)
-    for key in DEFAULTS:
-        if key in group and group[key] is not None:
-            merged[key] = group[key]
-    merged["created_at"] = existing.get("created_at") or _now()
-    merged["updated_at"] = _now()
-    merged.pop("id", None)
-    groups[gid] = merged
-    _write(data)
-    result = get_group(gid)
-    assert result is not None
+    result: dict[str, Any] = {}
+
+    def _mutate(data: dict[str, Any]) -> None:
+        groups = data.setdefault("groups", {})
+        existing = groups.get(gid, {})
+        merged = dict(existing)
+        for key in DEFAULTS:
+            if key in group and group[key] is not None:
+                merged[key] = group[key]
+        merged["created_at"] = existing.get("created_at") or _now()
+        merged["updated_at"] = _now()
+        merged.pop("id", None)
+        groups[gid] = merged
+        result.update(json.loads(json.dumps(DEFAULTS)))
+        result.update(merged)
+        result["id"] = gid
+
+    jsonstore.mutate_json(_PATH, {"groups": {}}, _mutate)
     return result
 
 
 def delete_group(group_id: str) -> bool:
     """Delete a group and detach it from every member workload (the workloads themselves are
     NOT deleted — only their ``group_id`` is cleared). Returns False when not found."""
-    data = _read()
-    if group_id not in data.get("groups", {}):
+    deleted = False
+
+    def _mutate(data: dict[str, Any]) -> None:
+        nonlocal deleted
+        if group_id in data.get("groups", {}):
+            del data["groups"][group_id]
+            deleted = True
+
+    jsonstore.mutate_json(_PATH, {"groups": {}}, _mutate)
+    if not deleted:
         return False
-    del data["groups"][group_id]
-    _write(data)
     # Detach members (registry manages its own persistence).
     from app.workloads import registry as wl_registry
 

@@ -12,18 +12,27 @@ import contextlib
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.leases import HEARTBEAT_SECONDS, LEASE_SECONDS, lease_token, worker_id
 from app.models import PerfProfileFleetBatch, PerfProfileFleetItem
 
 log = logging.getLogger("app.perfprofile.fleet")
 
 _TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
 _ITEM_TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
+IDLE_SAFETY_POLL_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class FleetLease:
+    item_id: str
+    token: str
 
 
 def _now() -> datetime:
@@ -77,7 +86,13 @@ def _batch_public(batch: PerfProfileFleetBatch, items: list[PerfProfileFleetItem
 
 
 async def _refresh_batch(db: AsyncSession, batch_id: str) -> PerfProfileFleetBatch | None:
-    batch = await db.get(PerfProfileFleetBatch, batch_id)
+    batch = (
+        await db.execute(
+            select(PerfProfileFleetBatch)
+            .where(PerfProfileFleetBatch.id == batch_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
     if batch is None:
         return None
     items = (
@@ -275,35 +290,68 @@ async def retryable_workloads(batch_id: str, tenant_id: str) -> list[dict[str, A
         ]
 
 
-async def recover_interrupted() -> int:
-    """Requeue interrupted items and preserve already-terminal work after a restart."""
+async def recover_interrupted(*, owned_by: str | None = None) -> int:
+    """Requeue expired work at startup, or only this worker's work at shutdown."""
     from app.core.db import SessionLocal
 
     async with SessionLocal() as db:
+        if db.bind is not None and db.bind.dialect.name == "sqlite":
+            await db.execute(text("BEGIN IMMEDIATE"))
+        now = _now()
+        ownership = (
+            PerfProfileFleetItem.lease_owner == owned_by
+            if owned_by is not None
+            else (
+                PerfProfileFleetItem.lease_owner.is_(None)
+                | PerfProfileFleetItem.lease_expires_at.is_(None)
+                | (PerfProfileFleetItem.lease_expires_at <= now)
+            )
+        )
         running_ids = list(
             (
                 await db.execute(
                     select(PerfProfileFleetItem.id).where(
-                        PerfProfileFleetItem.status == "running"
+                        PerfProfileFleetItem.status == "running", ownership
                     )
                 )
             ).scalars().all()
         )
+        recovered = 0
         if running_ids:
-            await db.execute(
+            recovery_result = await db.execute(
                 update(PerfProfileFleetItem)
-                .where(PerfProfileFleetItem.id.in_(running_ids))
+                .where(
+                    PerfProfileFleetItem.id.in_(running_ids),
+                    PerfProfileFleetItem.status == "running",
+                    ownership,
+                )
+                .execution_options(synchronize_session=False)
                 .values(
                     status="queued",
                     started_at=None,
-                    error="Requeued after server restart.",
+                    error="Requeued after worker interruption.",
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    lease_heartbeat_at=None,
                 )
             )
-        batch_ids = list(
+            recovered = max(0, int(getattr(recovery_result, "rowcount", 0)))
+        batch_ids = set(
+            (
+                await db.execute(
+                    select(PerfProfileFleetItem.batch_id).where(
+                        PerfProfileFleetItem.id.in_(running_ids)
+                    )
+                )
+            ).scalars().all()
+        ) if running_ids else set()
+        batch_ids.update(
             (
                 await db.execute(
                     select(PerfProfileFleetBatch.id).where(
-                        PerfProfileFleetBatch.status.in_(("queued", "running"))
+                        PerfProfileFleetBatch.status.in_(("queued", "running")),
+                        PerfProfileFleetBatch.cancel_requested.is_(True),
                     )
                 )
             ).scalars().all()
@@ -321,11 +369,12 @@ async def recover_interrupted() -> int:
                 )
             await _refresh_batch(db, batch_id)
         await db.commit()
-        return len(running_ids)
+        return recovered
 
 
 class FleetWorker:
-    def __init__(self) -> None:
+    def __init__(self, *, identity: str | None = None) -> None:
+        self.worker_id = identity or worker_id("perf-fleet")
         self._tasks: list[asyncio.Task] = []
         self._wake: asyncio.Event | None = None
         self._claim_lock: asyncio.Lock | None = None
@@ -367,9 +416,9 @@ class FleetWorker:
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-        # Any item interrupted by graceful shutdown is durable queued work for next startup.
+        # Never disturb another replica: only this process's leases are released.
         with contextlib.suppress(Exception):
-            await recover_interrupted()
+            await recover_interrupted(owned_by=self.worker_id)
         self._wake = None
         self._claim_lock = None
         self._start_lock = None
@@ -384,16 +433,23 @@ class FleetWorker:
         backoff = Backoff()
         while True:
             try:
-                item_id = await self._claim_next()
+                claim = await self._claim_next()
                 backoff.reset()
-                if item_id:
+                if claim:
                     await self._delay_start()
-                    await self._run_item(item_id)
+                    await self._run_item(claim)
                     continue
                 assert self._wake is not None
                 self._wake.clear()
+                claim = await self._claim_next()
+                if claim:
+                    await self._delay_start()
+                    await self._run_item(claim)
+                    continue
                 try:
-                    await asyncio.wait_for(self._wake.wait(), timeout=1.0)
+                    await asyncio.wait_for(
+                        self._wake.wait(), timeout=IDLE_SAFETY_POLL_SECONDS
+                    )
                 except asyncio.TimeoutError:
                     pass
             except asyncio.CancelledError:
@@ -424,12 +480,24 @@ class FleetWorker:
                 await asyncio.sleep(wait)
             self._last_start = time.monotonic()
 
-    async def _claim_next(self) -> str | None:
+    async def _claim_next(self) -> FleetLease | None:
         from app.core.db import background_session
 
         assert self._claim_lock is not None
         async with self._claim_lock:
             async with background_session() as db:
+                if db.bind is not None and db.bind.dialect.name == "sqlite":
+                    await db.execute(text("BEGIN IMMEDIATE"))
+                now = _now()
+                expired = (
+                    PerfProfileFleetItem.lease_owner.is_(None)
+                    | PerfProfileFleetItem.lease_expires_at.is_(None)
+                    | (PerfProfileFleetItem.lease_expires_at <= now)
+                )
+                claimable = (
+                    (PerfProfileFleetItem.status == "queued")
+                    | ((PerfProfileFleetItem.status == "running") & expired)
+                ) & expired
                 item = (
                     await db.execute(
                         select(PerfProfileFleetItem)
@@ -438,7 +506,7 @@ class FleetWorker:
                             PerfProfileFleetBatch.id == PerfProfileFleetItem.batch_id,
                         )
                         .where(
-                            PerfProfileFleetItem.status == "queued",
+                            claimable,
                             PerfProfileFleetBatch.status.in_(("queued", "running")),
                             PerfProfileFleetBatch.cancel_requested.is_(False),
                         )
@@ -453,16 +521,33 @@ class FleetWorker:
                 if item is None:
                     return None
                 batch = await db.get(PerfProfileFleetBatch, item.batch_id)
-                item.status = "running"
-                item.started_at = _now()
-                item.error = None
+                token = lease_token()
+                claimed_at = _now()
+                result = await db.execute(
+                    update(PerfProfileFleetItem)
+                    .where(PerfProfileFleetItem.id == item.id, claimable)
+                    .execution_options(synchronize_session=False)
+                    .values(
+                        status="running",
+                        started_at=claimed_at,
+                        ended_at=None,
+                        error=None,
+                        lease_owner=self.worker_id,
+                        lease_token=token,
+                        lease_expires_at=claimed_at + timedelta(seconds=LEASE_SECONDS),
+                        lease_heartbeat_at=claimed_at,
+                    )
+                )
+                if getattr(result, "rowcount", 0) != 1:
+                    await db.rollback()
+                    return None
                 if batch is not None:
                     batch.status = "running"
                     batch.started_at = batch.started_at or _now()
                 await db.commit()
-                return item.id
+                return FleetLease(item.id, token)
 
-    async def _run_item(self, item_id: str) -> None:
+    async def _run_item(self, claim: FleetLease) -> None:
         from app.core.app_settings import load_settings
         from app.core.azure_connections import connection_for_scope
         from app.core.db import SessionLocal
@@ -470,8 +555,18 @@ class FleetWorker:
         from app.perfprofile.service import execute_profile
         from app.workloads.registry import get_workload
 
+        item_id = claim.item_id
         async with SessionLocal() as db:
-            item = await db.get(PerfProfileFleetItem, item_id)
+            item = (
+                await db.execute(
+                    select(PerfProfileFleetItem).where(
+                        PerfProfileFleetItem.id == item_id,
+                        PerfProfileFleetItem.status == "running",
+                        PerfProfileFleetItem.lease_owner == self.worker_id,
+                        PerfProfileFleetItem.lease_token == claim.token,
+                    )
+                )
+            ).scalar_one_or_none()
             if item is None:
                 return
             batch = await db.get(PerfProfileFleetBatch, item.batch_id)
@@ -492,11 +587,15 @@ class FleetWorker:
                 "actor": batch.triggered_by,
             }
 
-        trigger = f"fleet:{item_data['batch_id']}:{item_data['id']}"
-        stored = runs.find_run_by_trigger(
-            item_data["tenant_id"], "workload", item_data["workload_id"], trigger
+        heartbeat = asyncio.create_task(
+            self._heartbeat(item_id, claim.token),
+            name=f"perf-fleet-heartbeat-{item_id}",
         )
+        trigger = f"fleet:{item_data['batch_id']}:{item_data['id']}"
         try:
+            stored = runs.find_run_by_trigger(
+                item_data["tenant_id"], "workload", item_data["workload_id"], trigger
+            )
             if stored is None:
                 workload = get_workload(item_data["workload_id"])
                 if workload is None:
@@ -517,8 +616,17 @@ class FleetWorker:
                     if progress_count != 1 and progress_count % 5:
                         return
                     async with SessionLocal() as progress_db:
-                        progress_item = await progress_db.get(PerfProfileFleetItem, item_id)
-                        if progress_item is not None and progress_item.status == "running":
+                        progress_item = (
+                            await progress_db.execute(
+                                select(PerfProfileFleetItem).where(
+                                    PerfProfileFleetItem.id == item_id,
+                                    PerfProfileFleetItem.status == "running",
+                                    PerfProfileFleetItem.lease_owner == self.worker_id,
+                                    PerfProfileFleetItem.lease_token == claim.token,
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if progress_item is not None:
                             progress_item.resources_completed = progress_count
                             await progress_db.commit()
 
@@ -537,18 +645,63 @@ class FleetWorker:
                     progress=progress,
                     trigger=trigger,
                 )
-            await self._finish_item(item_id, stored)
+            await self._finish_item(item_id, claim.token, stored)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("Profiler fleet item failed: %s", item_id)
-            await self._fail_item(item_id, str(exc)[:1000])
+            await self._fail_item(item_id, claim.token, str(exc)[:1000])
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await heartbeat
 
-    async def _finish_item(self, item_id: str, stored: dict[str, Any]) -> None:
+    async def _heartbeat(self, item_id: str, token: str) -> None:
+        from app.core.db import SessionLocal
+
+        while True:
+            await asyncio.sleep(HEARTBEAT_SECONDS)
+            now = _now()
+            try:
+                async with SessionLocal() as db:
+                    result = await db.execute(
+                        update(PerfProfileFleetItem)
+                        .where(
+                            PerfProfileFleetItem.id == item_id,
+                            PerfProfileFleetItem.status == "running",
+                            PerfProfileFleetItem.lease_owner == self.worker_id,
+                            PerfProfileFleetItem.lease_token == token,
+                        )
+                        .values(
+                            lease_heartbeat_at=now,
+                            lease_expires_at=now + timedelta(seconds=LEASE_SECONDS),
+                        )
+                    )
+                    await db.commit()
+                    if getattr(result, "rowcount", 0) != 1:
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - retry until the lease is lost or work ends
+                log.warning("Profiler fleet lease heartbeat failed for %s", item_id, exc_info=True)
+
+    async def _finish_item(self, item_id: str, token: str, stored: dict[str, Any]) -> None:
         from app.core.db import SessionLocal
 
         async with SessionLocal() as db:
-            item = await db.get(PerfProfileFleetItem, item_id)
+            if db.bind is not None and db.bind.dialect.name == "sqlite":
+                await db.execute(text("BEGIN IMMEDIATE"))
+            item = (
+                await db.execute(
+                    select(PerfProfileFleetItem).where(
+                        PerfProfileFleetItem.id == item_id,
+                        PerfProfileFleetItem.status == "running",
+                        PerfProfileFleetItem.lease_owner == self.worker_id,
+                        PerfProfileFleetItem.lease_token == token,
+                        PerfProfileFleetItem.lease_expires_at > _now(),
+                    ).with_for_update()
+                )
+            ).scalar_one_or_none()
             if item is None:
                 return
             status = str(stored.get("status") or "succeeded")
@@ -561,6 +714,10 @@ class FleetWorker:
             item.resources_completed = int(collection.get("resources_completed") or 0)
             item.resources_total = int(collection.get("resources_selected") or 0)
             item.error = str(stored.get("error") or stored.get("warning") or "") or None
+            item.lease_owner = None
+            item.lease_token = None
+            item.lease_expires_at = None
+            item.lease_heartbeat_at = None
             item.ended_at = _now()
             if item.started_at:
                 start = item.started_at
@@ -571,15 +728,31 @@ class FleetWorker:
             await db.commit()
         self.wake()
 
-    async def _fail_item(self, item_id: str, message: str) -> None:
+    async def _fail_item(self, item_id: str, token: str, message: str) -> None:
         from app.core.db import SessionLocal
 
         async with SessionLocal() as db:
-            item = await db.get(PerfProfileFleetItem, item_id)
+            if db.bind is not None and db.bind.dialect.name == "sqlite":
+                await db.execute(text("BEGIN IMMEDIATE"))
+            item = (
+                await db.execute(
+                    select(PerfProfileFleetItem).where(
+                        PerfProfileFleetItem.id == item_id,
+                        PerfProfileFleetItem.status == "running",
+                        PerfProfileFleetItem.lease_owner == self.worker_id,
+                        PerfProfileFleetItem.lease_token == token,
+                        PerfProfileFleetItem.lease_expires_at > _now(),
+                    ).with_for_update()
+                )
+            ).scalar_one_or_none()
             if item is None:
                 return
             item.status = "failed"
             item.error = message
+            item.lease_owner = None
+            item.lease_token = None
+            item.lease_expires_at = None
+            item.lease_heartbeat_at = None
             item.ended_at = _now()
             await _refresh_batch(db, item.batch_id)
             await db.commit()

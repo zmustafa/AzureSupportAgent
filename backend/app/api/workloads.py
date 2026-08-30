@@ -1080,7 +1080,7 @@ async def autopilot_save_endpoint(
                 try:
                     from app.architectures.jobs import manager as arch_jobs
 
-                    job = arch_jobs.create(
+                    job = await arch_jobs.create(
                         tenant_id=principal.tenant_id,
                         workload_id=wl["id"],
                         workload_name=wl["name"],
@@ -1094,7 +1094,7 @@ async def autopilot_save_endpoint(
                 try:
                     from app.missions import orchestrator as missions
 
-                    m = missions.manager.create(
+                    m = await missions.manager.create(
                         tenant_id=principal.tenant_id,
                         workload_id=wl["id"],
                         workload_name=wl["name"],

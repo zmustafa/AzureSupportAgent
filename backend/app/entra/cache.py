@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core import jsonstore
+
 log = logging.getLogger("app.entra.cache")
 
 SCHEMA_VERSION = 1
@@ -105,11 +107,8 @@ def _read_gz(path: Path) -> Any | None:
 
 
 def _write_gz(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     blob = gzip.compress(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_bytes(blob)
-    tmp.replace(path)
+    jsonstore.write_bytes(path, blob)
     _memo.pop(str(path), None)
 
 
@@ -155,20 +154,8 @@ def meta_of(payload: dict[str, Any]) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------- index
 def read_index() -> dict[str, Any]:
-    if not _INDEX.exists():
-        return {}
-    try:
-        data = json.loads(_INDEX.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _write_index(data: dict[str, Any]) -> None:
-    _INDEX.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _INDEX.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(_INDEX)
+    data = jsonstore.read_json(_INDEX, {})
+    return data if isinstance(data, dict) else {}
 
 
 def tenant_index(tenant_id: str) -> dict[str, Any]:
@@ -177,28 +164,37 @@ def tenant_index(tenant_id: str) -> dict[str, Any]:
 
 
 def set_domain_meta(tenant_id: str, domain: str, meta: dict[str, Any]) -> None:
-    data = read_index()
-    entry = data.setdefault(_safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION})
-    entry.setdefault("domains", {})[domain] = meta
-    entry["schema_version"] = SCHEMA_VERSION
-    entry["updated_at"] = now_iso()
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        entry = data.setdefault(
+            _safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION}
+        )
+        entry.setdefault("domains", {})[domain] = meta
+        entry["schema_version"] = SCHEMA_VERSION
+        entry["updated_at"] = now_iso()
+
+    jsonstore.mutate_json(_INDEX, {}, _mutate)
 
 
 def mark_full_refresh(tenant_id: str) -> None:
-    data = read_index()
-    entry = data.setdefault(_safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION})
-    entry["last_full"] = now_iso()
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        entry = data.setdefault(
+            _safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION}
+        )
+        entry["last_full"] = now_iso()
+
+    jsonstore.mutate_json(_INDEX, {}, _mutate)
 
 
 def set_tenant_meta(tenant_id: str, **fields: Any) -> None:
     """Set tenant-level index fields (licenses, permissions, ...)."""
-    data = read_index()
-    entry = data.setdefault(_safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION})
-    entry.update(fields)
-    entry["updated_at"] = now_iso()
-    _write_index(data)
+    def _mutate(data: dict[str, Any]) -> None:
+        entry = data.setdefault(
+            _safe(tenant_id), {"domains": {}, "schema_version": SCHEMA_VERSION}
+        )
+        entry.update(fields)
+        entry["updated_at"] = now_iso()
+
+    jsonstore.mutate_json(_INDEX, {}, _mutate)
 
 
 def domain_meta(tenant_id: str, domain: str) -> dict[str, Any] | None:
@@ -213,31 +209,31 @@ def _state_path(tenant_id: str, name: str) -> Path:
 
 def read_state(tenant_id: str, name: str, default: Any = None) -> Any:
     path = _state_path(tenant_id, name)
-    if not path.exists():
-        return default if default is not None else {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return default if default is not None else {}
+    return jsonstore.read_json(path, default if default is not None else {})
 
 
 def write_state(tenant_id: str, name: str, payload: Any) -> None:
-    path = _state_path(tenant_id, name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    jsonstore.write_json(_state_path(tenant_id, name), payload)
+
+
+def mutate_state(
+    tenant_id: str,
+    name: str,
+    default: Any,
+    mutator,
+) -> Any:  # noqa: ANN001
+    """Apply one short read-modify-write transaction to an uncompressed state document."""
+    return jsonstore.mutate_json(_state_path(tenant_id, name), default, mutator)
 
 
 def append_score_history(tenant_id: str, entry: dict[str, Any], *, cap: int = 365) -> list[dict[str, Any]]:
     """Append one score point. Only successful FULL refreshes should call this."""
-    hist = read_state(tenant_id, "score_history", [])
-    if not isinstance(hist, list):
-        hist = []
-    hist.append(entry)
-    hist = hist[-max(1, cap):]
-    write_state(tenant_id, "score_history", hist)
-    return hist
+    def _mutate(history: Any) -> list[dict[str, Any]]:
+        values = history if isinstance(history, list) else []
+        values.append(entry)
+        return values[-max(1, cap):]
+
+    return mutate_state(tenant_id, "score_history", [], _mutate)
 
 
 def score_history(tenant_id: str) -> list[dict[str, Any]]:
