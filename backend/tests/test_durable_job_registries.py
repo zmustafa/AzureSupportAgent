@@ -12,7 +12,12 @@ from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent.turn_runner import TurnRegistry
-from app.core.durable_jobs import DurableJobExecutor, DurableJobStore, utcnow
+from app.core.durable_jobs import (
+    DurableJobContext,
+    DurableJobExecutor,
+    DurableJobStore,
+    utcnow,
+)
 from app.core.genjob import JobRegistry
 from app.core.db import Base
 from app.models import DurableJob, DurableJobEvent, DurableJobSlot
@@ -219,6 +224,101 @@ async def test_stale_owner_cannot_finalize_new_fence(durable_sessions) -> None:
     ) is True
     current = await new.load_current(tenant_id="tenant-a", feature="fence", key="job")
     assert current is not None and current["result"] == {"winner": "new"}
+
+
+@pytest.mark.asyncio
+async def test_stale_context_emit_cancels_the_fenced_runner(durable_sessions) -> None:
+    old = DurableJobStore(
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        lease_seconds=10,
+        poll_seconds=0.01,
+    )
+    new = DurableJobStore(
+        session_factory=durable_sessions,
+        owner_id="replica-b",
+        lease_seconds=10,
+        poll_seconds=0.01,
+    )
+    claim = await old.claim(tenant_id="tenant-a", feature="fence", key="job")
+    assert claim.lease_token
+    context = DurableJobContext(
+        store=old,
+        job=claim.job,
+        lease_token=claim.lease_token,
+        event_limit=10,
+    )
+    expired = utcnow() - timedelta(seconds=1)
+    async with durable_sessions() as db:
+        await db.execute(
+            update(DurableJob)
+            .where(DurableJob.id == claim.job["id"])
+            .values(lease_expires_at=expired)
+        )
+        await db.execute(
+            update(DurableJobSlot)
+            .where(DurableJobSlot.current_job_id == claim.job["id"])
+            .values(lease_expires_at=expired)
+        )
+        await db.commit()
+    recovered = await new.claim(tenant_id="tenant-a", feature="fence", key="job")
+    assert recovered.acquired
+
+    with pytest.raises(asyncio.CancelledError):
+        await context.emit("progress", {"message": "stale owner"})
+
+
+@pytest.mark.asyncio
+async def test_old_completion_does_not_cancel_reused_key_heartbeat(
+    durable_sessions, monkeypatch
+) -> None:
+    executor = DurableJobExecutor(
+        "reuse",
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        lease_seconds=0.3,
+        poll_seconds=0.01,
+    )
+    first_may_finish = asyncio.Event()
+    first_finalized = asyncio.Event()
+    release_finalize = asyncio.Event()
+    second_may_finish = asyncio.Event()
+    original_finalize = executor.store.finalize
+    first_job_id = ""
+
+    async def delayed_finalize(**kwargs):
+        result = await original_finalize(**kwargs)
+        if kwargs["job_id"] == first_job_id:
+            first_finalized.set()
+            await release_finalize.wait()
+        return result
+
+    monkeypatch.setattr(executor.store, "finalize", delayed_finalize)
+
+    async def first_runner(_context):
+        await first_may_finish.wait()
+
+    first = await executor.start(
+        tenant_id="tenant-a", key="same", metadata={}, runner=first_runner
+    )
+    first_job_id = first.job["id"]
+    first_may_finish.set()
+    await first_finalized.wait()
+
+    async def second_runner(_context):
+        await second_may_finish.wait()
+
+    second = await executor.start(
+        tenant_id="tenant-a", key="same", metadata={}, runner=second_runner
+    )
+    assert second.acquired
+    second_heartbeat = executor._heartbeats["same"]  # noqa: SLF001 - lifecycle assertion
+    release_finalize.set()
+    await asyncio.sleep(0)
+    assert not second_heartbeat.done()
+    second_may_finish.set()
+    await executor.store.wait_for_terminal(second.job["id"])
+    await executor.stop()
 
 
 @pytest.mark.asyncio

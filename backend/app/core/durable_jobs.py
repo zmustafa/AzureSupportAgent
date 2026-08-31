@@ -984,7 +984,9 @@ class DurableJobContext:
             metadata=self.metadata,
             include_seq=include_seq,
         )
-        return stored[0] if stored else None
+        if not stored:
+            raise asyncio.CancelledError()
+        return stored[0]
 
     async def checkpoint(self) -> None:
         """Raise cancellation when this runner no longer owns the durable lease."""
@@ -1071,6 +1073,8 @@ class DurableJobExecutor:
             except asyncio.CancelledError:
                 return
 
+        heartbeat_task: asyncio.Task[None] | None = None
+
         async def _run() -> None:
             try:
                 raw_outcome = await runner(context)
@@ -1122,14 +1126,16 @@ class DurableJobExecutor:
                     retention_seconds=self.retention_seconds,
                 )
             finally:
-                heartbeat = self._heartbeats.pop(key, None)
-                if heartbeat is not None:
+                heartbeat = self._heartbeats.get(key)
+                if heartbeat is heartbeat_task:
+                    self._heartbeats.pop(key, None)
                     heartbeat.cancel()
                     await asyncio.gather(heartbeat, return_exceptions=True)
 
         task = asyncio.create_task(_run(), name=f"durable-{self.feature}-{key[:32]}")
         self.tasks[key] = task
-        self._heartbeats[key] = asyncio.create_task(_heartbeat())
+        heartbeat_task = asyncio.create_task(_heartbeat())
+        self._heartbeats[key] = heartbeat_task
 
         def _forget(completed: asyncio.Task[None]) -> None:
             if self.tasks.get(key) is completed:

@@ -94,10 +94,11 @@ class JobRegistry:
             event_limit=self._event_limit,
             include_seq=True,
         )
-        if stored:
-            line = dict(stored[0]["data"])
-            line["ts"] = stored[0]["created_at"]
-            job["progress"].append(line)
+        if not stored:
+            raise asyncio.CancelledError()
+        line = dict(stored[0]["data"])
+        line["ts"] = stored[0]["created_at"]
+        job["progress"].append(line)
         cond = self._cond(key)
         async with cond:
             cond.notify_all()
@@ -200,6 +201,8 @@ class JobRegistry:
             return job
         lease_token = claim.lease_token
 
+        heartbeat_task: asyncio.Task | None = None
+
         async def _run() -> None:
             async def _progress(level: str, message: str) -> None:
                 await self._append(key, lease_token, level, message)
@@ -239,8 +242,9 @@ class JobRegistry:
                     retention_seconds=self._retention_seconds,
                 )
             finally:
-                heartbeat = self._heartbeat_tasks.pop(key, None)
-                if heartbeat is not None:
+                heartbeat = self._heartbeat_tasks.get(key)
+                if heartbeat is heartbeat_task:
+                    self._heartbeat_tasks.pop(key, None)
                     heartbeat.cancel()
                     await asyncio.gather(heartbeat, return_exceptions=True)
                 latest = await self.get_job(key, tenant_id=tenant_id)
@@ -252,9 +256,10 @@ class JobRegistry:
 
         task = asyncio.create_task(_run())
         self._tasks[key] = task
-        self._heartbeat_tasks[key] = asyncio.create_task(
+        heartbeat_task = asyncio.create_task(
             self._heartbeat(key, job["id"], lease_token)
         )
+        self._heartbeat_tasks[key] = heartbeat_task
 
         def _forget(completed: asyncio.Task) -> None:
             if self._tasks.get(key) is completed:

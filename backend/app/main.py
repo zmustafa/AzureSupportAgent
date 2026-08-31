@@ -395,6 +395,7 @@ async def _shutdown() -> None:
         turn_registry.stop(),
         shutdown_registries(),
         shutdown_executors(),
+        return_exceptions=True,
     )
 
     from app.core import loopwatch
