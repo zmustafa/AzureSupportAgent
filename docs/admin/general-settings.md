@@ -58,7 +58,7 @@ These controls do not change the profiler's one-day default window, 15-minute in
 
 ### Resource Graph pacing
 
-`arg_rate_limit_enabled` defaults on. `arg_max_queries_per_window` defaults to 12 and accepts 1–100; `arg_rate_window_seconds` defaults to 5 and accepts 1–60. Resource Graph pacing and Performance Profiler metric concurrency protect different Azure services and should be tuned independently.
+`arg_rate_limit_enabled` defaults on. `arg_max_queries_per_window` defaults to 12 and accepts 1–100; `arg_rate_window_seconds` defaults to 5 and accepts 1–60. On PostgreSQL deployments, Resource Graph query starts for the same Azure principal are spaced through a cross-replica advisory lock; SQLite/local development retains process-local pacing. Resource Graph pacing and Performance Profiler metric concurrency protect different Azure services and should be tuned independently.
 
 ## Freshness and scope behavior
 

@@ -708,7 +708,7 @@ async def _execute_changeexplorer(item: dict[str, Any], batch: dict[str, Any]) -
 
     run_id = item["id"]
     stored = runs_store.get_run(batch["tenant_id"], run_id)
-    if stored is not None:
+    if stored is not None and stored.get("analysisOutcome", "complete") == "complete":
         return ItemResult(message="Change analysis already complete.", result_ref={"kind": "changeexplorer", "id": run_id})
     workload = get_workload(item["workload_id"])
     if workload is None:
@@ -728,11 +728,20 @@ async def _execute_changeexplorer(item: dict[str, Any], batch: dict[str, Any]) -
         run_id=run_id,
     )
     runs_store.save_run(batch["tenant_id"], item["workload_id"], run)
+    partial = run.get("analysisOutcome") == "partial"
+    retryable = bool(run.get("retryable"))
     return ItemResult(
-        status="succeeded",
-        message=f"Analyzed {int(run.get('totalChanges') or 0)} change(s).",
+        status="partial" if partial else "succeeded",
+        message=("Analysis is partial; one or more required Azure sources were incomplete."
+                 if partial else f"Analyzed {int(run.get('totalChanges') or 0)} change(s)."),
         result_ref={"kind": "changeexplorer", "id": run_id},
         result={"total_changes": int(run.get("totalChanges") or 0)},
+        error=("; ".join(
+            str(source.get("note") or source.get("status") or "incomplete source")
+            for source in (run.get("sourceProvenance") or {}).values()
+            if source.get("required") and not source.get("complete")
+        ) if partial else ""),
+        retryable=retryable,
     )
 
 

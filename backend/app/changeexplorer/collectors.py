@@ -17,6 +17,7 @@ import logging
 import os
 import random
 import re
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -24,10 +25,10 @@ log = logging.getLogger("app.changeexplorer.collectors")
 
 
 # --------------------------------------------------------------------------- concurrency + 429 policy
-# Change history is gathered with bounded concurrency (>= 5 parallel Azure calls) so a tenant-wide
+# Change history is gathered with bounded concurrency (up to 4 parallel Azure calls) so a tenant-wide
 # scope spanning many subscriptions finishes quickly, paired with smart exponential backoff +
 # full jitter and automatic retry whenever Azure answers 429 / throttling.
-_COLLECT_CONCURRENCY = 8          # max parallel Azure calls (>= 5 as required)
+_COLLECT_CONCURRENCY = 4          # conservative ceiling; adaptive gate narrows on Azure 429s
 _MAX_RETRIES = 5                  # retry attempts after the first try, on throttling only
 _BACKOFF_BASE_SECONDS = 1.0       # first backoff window (grows 2**attempt)
 _BACKOFF_CAP_SECONDS = 30.0       # never wait longer than this between attempts
@@ -105,7 +106,8 @@ def _backoff_delay(attempt: int, cap: Any) -> float:
     return random.uniform(0, expo)
 
 
-async def _capture_with_retry(run: Callable[[], Awaitable[Any]], *, label: str) -> Any:
+async def _capture_with_retry(run: Callable[[], Awaitable[Any]], *, label: str,
+                              on_throttle: Callable[[int, float], None] | None = None) -> Any:
     """Await a callable returning a CaptureResult, retrying ONLY on 429 / throttling with smart
     exponential backoff + jitter. Non-throttle failures return immediately (best-effort). Returns
     the final CaptureResult."""
@@ -113,12 +115,44 @@ async def _capture_with_retry(run: Callable[[], Awaitable[Any]], *, label: str) 
     attempt = 0
     while _is_throttled(cap) and attempt < _MAX_RETRIES:
         delay = _backoff_delay(attempt, cap)
+        if on_throttle is not None:
+            on_throttle(attempt + 1, delay)
         log.warning("changeexplorer: %s throttled (429) — retry %d/%d in %.1fs",
                     label, attempt + 1, _MAX_RETRIES, delay)
         await asyncio.sleep(delay)
         cap = await run()
         attempt += 1
     return cap
+
+
+def _activity_gate(connection: dict[str, Any] | None):
+    """Process-shared adaptive gate for Activity Log calls by Azure principal."""
+    from app.azure.arg_throttle import principal_key
+    from app.entra.graphclient import AdaptiveGate
+
+    key = principal_key(connection)
+    gate = _ACTIVITY_GATES.get(key)
+    if gate is None:
+        gate = AdaptiveGate(_COLLECT_CONCURRENCY)
+        _ACTIVITY_GATES[key] = gate
+        while len(_ACTIVITY_GATES) > 128:
+            _ACTIVITY_GATES.popitem(last=False)
+    else:
+        _ACTIVITY_GATES.move_to_end(key)
+    return key, gate
+
+
+_ACTIVITY_GATES: OrderedDict[str, Any] = OrderedDict()
+
+
+def _note_activity_retry(principal: str, gate: Any, status: int, attempt: int, delay: float,
+                         *, narrow: bool = True) -> None:
+    from app.core.structured_events import emit, opaque_id
+
+    if status == 429 and narrow:
+        gate.record_throttled(delay)
+    emit("source_retry", source="ActivityLog", principal=opaque_id(principal), status=status,
+         attempt=attempt, delay_seconds=round(delay, 3), concurrency=gate.limit)
 
 
 def _parse_rows(stdout: str) -> list[dict[str, Any]]:
@@ -179,7 +213,7 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
                                          connection: dict[str, Any] | None) -> tuple[list[dict[str, Any]], str]:
     """Query the ARG ``resourcechanges`` table for changes within the window, scoped by joining
     to resources matching ``predicate``. Returns (raw_rows, note)."""
-    from app.exec.command_runner import run_kql_capture
+    from app.exec.command_runner import run_kql_collect
 
     if not predicate:
         return [], "No scope predicate for Resource Graph changes."
@@ -196,21 +230,18 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
         "| project rid=tolower(id), name, type, resourceGroup, subscriptionId, location) on $left.targetId == $right.rid "
         "| project ts, ct, targetId, name, type, resourceGroup, subscriptionId, location, "
         "changes=properties.changes, correlationId=tostring(properties.changeAttributes.correlationId) "
-        f"| order by ts desc | take {limit}"
+        "| order by ts desc, targetId asc"
     )
-    cap = await _capture_with_retry(
-        lambda: run_kql_capture(kql, connection, output="json", max_bytes=_CHANGE_CAPTURE_BYTES),
-        label="resourcechanges")
-    if not cap.ok:
-        err = (cap.error or cap.stderr or "").strip()
+    result = await run_kql_collect(
+        kql, connection, max_rows=limit, page_size=1000, max_bytes=_CHANGE_CAPTURE_BYTES,
+    )
+    if not result.ok:
+        err = (result.error or "").strip()
         el = err.lower()
         if "forbidden" in el or "authoriz" in el or "403" in el:
             return [], "Resource Graph: access denied reading change history (the connection lacks read permission)."
         return [], f"Resource Graph change history unavailable: {err[:140]}"
-    rows = _parse_rows(cap.stdout)
-    # Detect a result that overran even the enlarged cap (salvage recovered partial rows). Surface
-    # it as a note so an apparent shortfall isn't mistaken for "no more changes".
-    truncated = len(cap.stdout or "") >= _CHANGE_CAPTURE_BYTES
+    rows = result.rows
     out: list[dict[str, Any]] = []
     for r in rows:
         changes = []
@@ -229,7 +260,7 @@ async def collect_resource_graph_changes(predicate: str, start_iso: str, end_iso
             "changes": changes, "raw": {k: v for k, v in r.items() if k != "changes"},
         })
     note = ""
-    if truncated or len(out) >= limit:
+    if not result.complete or len(out) >= limit:
         note = (f"Change history was capped at the {limit:,} most recent changes for this "
                 "window. There may be more — narrow the time range or scope to see all changes.")
     return out, note
@@ -261,7 +292,7 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
     ``resource_ids`` (lowercased) optionally restricts to the workload's resources.
 
     Subscriptions are queried CONCURRENTLY (bounded to ``_COLLECT_CONCURRENCY`` parallel calls,
-    >= 5) with per-call 429 backoff/retry, so a tenant-wide scope spanning many subscriptions
+    up to 4) with per-call 429 backoff/retry, so a tenant-wide scope spanning many subscriptions
     completes in a fraction of the sequential time.
 
     Two execution paths: a service-principal connection signs ``az`` in and runs
@@ -285,7 +316,9 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
 
         token, terr = await get_arm_token(connection)
         if token:
-            return await _collect_activity_log_rest(subs, start_iso, end_iso, token, wanted, limit)
+            return await _collect_activity_log_rest(
+                subs, start_iso, end_iso, token, wanted, limit, connection=connection,
+            )
         # No token: a pasted-token / managed-identity connection has no ambient `az` fallback, so
         # surface the auth error rather than silently returning zero. Pure local dev (ambient
         # `az login`, no managed identity) falls through to the CLI path below.
@@ -293,10 +326,17 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
         if method == "az_cli_token" or os.environ.get("IDENTITY_ENDPOINT") or os.environ.get("MSI_ENDPOINT"):
             return [], f"Activity Log: {terr or 'could not acquire an Azure token for this connection.'}"
 
-    sem = asyncio.Semaphore(_COLLECT_CONCURRENCY)
+    principal, gate = _activity_gate(connection)
 
     async def _one(sub: str) -> tuple[list[dict[str, Any]], str]:
         from app.exec.command_runner import run_command_capture
+
+        throttle_seen = False
+
+        def _on_throttle(attempt: int, delay: float) -> None:
+            nonlocal throttle_seen
+            _note_activity_retry(principal, gate, 429, attempt, delay, narrow=not throttle_seen)
+            throttle_seen = True
 
         cmd = (
             f"az monitor activity-log list --subscription {sub} "
@@ -311,10 +351,19 @@ async def collect_activity_log(subscriptions: list[str], start_iso: str, end_iso
             "resourceGroupName:resourceGroupName, eventTimestamp:eventTimestamp, "
             "subscriptionId:subscriptionId}\" -o json"
         )
-        async with sem:
+        await gate.acquire()
+        try:
             cap = await _capture_with_retry(
                 lambda: run_command_capture(cmd, connection, read_only=True, max_bytes=_ACTIVITY_CAPTURE_BYTES),
-                label=f"activity-log {sub[:8]}")
+                label=f"activity-log {sub[:8]}",
+                on_throttle=_on_throttle)
+        finally:
+            await gate.release()
+        if _is_throttled(cap) and not throttle_seen:
+            delay = _retry_after_seconds(cap) or _BACKOFF_BASE_SECONDS
+            _note_activity_retry(principal, gate, 429, _MAX_RETRIES + 1, delay)
+        elif cap.ok:
+            gate.record_ok()
         note = ""
         if not cap.ok:
             # A truncation/timeout on a huge result still leaves complete objects in stdout — salvage
@@ -372,19 +421,40 @@ def _activity_row(r: dict[str, Any], sub: str, op: str) -> dict[str, Any]:
 
 
 async def _collect_activity_log_rest(subs: list[str], start_iso: str, end_iso: str,
-                                     token: str, wanted: set[str], max_events: int = RG_CHANGE_LIMIT) -> tuple[list[dict[str, Any]], str]:
+                                     token: str, wanted: set[str], max_events: int = RG_CHANGE_LIMIT,
+                                     *, connection: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], str]:
     """Activity Log via ARM REST (for pasted-token / managed-identity connections). Queries each
     subscription concurrently with the connection's token, applies the same status/operation +
     resource-id filtering the CLI ``--query`` does, and returns the same row shape."""
     from app.azure.arm import list_activity_log_events
 
-    sem = asyncio.Semaphore(_COLLECT_CONCURRENCY)
+    principal, gate = _activity_gate(connection)
 
     async def _one(sub: str) -> tuple[list[dict[str, Any]], str]:
-        async with sem:
-            events, err = await list_activity_log_events(token, sub, start_iso, end_iso, max_events=max_events)
-        if err:
+        await gate.acquire()
+        try:
+            throttle_seen = False
+
+            async def _on_retry(status: int, attempt: int, delay: float) -> None:
+                nonlocal throttle_seen
+                _note_activity_retry(
+                    principal, gate, status, attempt, delay,
+                    narrow=status == 429 and not throttle_seen,
+                )
+                throttle_seen = throttle_seen or status == 429
+
+            events, err = await list_activity_log_events(
+                token, sub, start_iso, end_iso, max_events=max_events, on_retry=_on_retry,
+            )
+            if not err:
+                gate.record_ok()
+        finally:
+            await gate.release()
+        if err and not events:
             return [], _activity_note(sub, err)
+        note = ""
+        if err:
+            note = f"Activity Log for subscription {sub[:8]}… is partial: {err[:240]}"
         rows_out: list[dict[str, Any]] = []
         for r in events:
             status = (r.get("status") or {}).get("value", "") if isinstance(r.get("status"), dict) else r.get("status", "")
@@ -395,7 +465,7 @@ async def _collect_activity_log_rest(subs: list[str], start_iso: str, end_iso: s
             if wanted and rid not in wanted and not any(rid.startswith(w) for w in wanted):
                 continue
             rows_out.append(_activity_row(r, sub, op))
-        return rows_out, ""
+        return rows_out, note
 
     results = await asyncio.gather(*(_one(s) for s in subs))
     out: list[dict[str, Any]] = []

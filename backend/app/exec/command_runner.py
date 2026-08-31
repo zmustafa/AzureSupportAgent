@@ -1030,7 +1030,7 @@ async def run_kql_collect(
                     # Back the shared limiter off too, so sibling scans on this principal slow
                     # down instead of each discovering the quota wall independently.
                     with arg_throttle.use_principal(connection):
-                        arg_throttle.note_throttled(None)
+                        await arg_throttle.note_throttled_async(None)
                 if transient and attempt < max_retries:
                     await asyncio.sleep(min(60.0, (2 ** attempt) + random.uniform(0, 0.5)))
                     continue

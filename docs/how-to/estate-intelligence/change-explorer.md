@@ -32,10 +32,11 @@ Open `/change-explorer` or a tab route from **Summary**, **Operations**, **Narra
 4. Leave **Perform AI analysis** off for fast deterministic analysis, or enable it when approved.
 5. Select **Analyze** and monitor collection, classification, and optional AI phases. The run is persisted before completion is returned.
 6. Confirm the displayed analyzed window and scope. If the cached-window banner differs from current selectors, re-analyze.
+7. If the run is marked **partial**, read every required-source status before interpreting an empty or short result. A throttled source is not evidence that no change occurred.
 
 **Expected result:** A fixed, saved forensic run represents the recorded scope and time window.
 
-**Verification:** Match workload/subscription, mode, start/end, run time, event count, and collection notes. Activity Log can be eventually consistent, so repeat later when necessary.
+**Verification:** Match workload/subscription, mode, start/end, run time, event count, source-completeness status, and collection notes. Activity Log can be eventually consistent, so repeat later when necessary.
 
 ## How to use Summary, Risk Insights, and Timeline for first-pass triage
 
@@ -135,6 +136,8 @@ Open `/change-explorer` or a tab route from **Summary**, **Operations**, **Narra
 2. Review run age, scope mode, total changes, and severity counts.
 3. Open a workload for detailed analysis or start the appropriate scoped run.
 4. Navigate away if necessary; the background registry can surface completion when you return.
+
+Fleet uses the durable server queue. Change Explorer admits at most two analyses globally and one per tenant/connection lane across replicas. Direct analyses and Mission Control use the same admission gate, so waiting is expected under load and is safer than sending overlapping Azure bursts.
 
 **Expected result:** Fleet identifies stale, never-analyzed, or high-risk workloads from saved runs.
 

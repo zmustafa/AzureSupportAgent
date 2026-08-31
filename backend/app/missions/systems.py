@@ -920,7 +920,10 @@ async def _run_changeexplorer(ctx: MissionContext, *, force: bool, progress=None
         return SystemResult(status="fail", headline="Change analysis produced no run", attention=True, link=link)
     runs_store.save_run(ctx.tenant_id, ctx.workload_id, run)
     head, total, attention = _changeexplorer_headline(run)
-    return SystemResult(status="done", headline=head, score=total, attention=attention, link=link,
+    partial = run.get("analysisOutcome") == "partial"
+    detail = "One or more required Azure change sources were incomplete." if partial else ""
+    return SystemResult(status="partial" if partial else "done", headline=head, detail=detail,
+                        score=total, attention=attention or partial, link=link,
                         result_ref={"kind": "changeexplorer", "workload_id": ctx.workload_id, "run_id": run.get("runId", "")})
 
 

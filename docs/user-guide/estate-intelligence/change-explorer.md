@@ -56,6 +56,10 @@ Each run is a fixed analysis of its recorded start/end window. Changing selector
 
 Activity Log and Resource Graph are eventually consistent. A run performed immediately after a change may need to be repeated later. Actor resolution is best-effort and can degrade without Graph permissions.
 
+Expensive analysis is admitted server-side across application replicas: at most two Change Explorer analyses run globally, and only one runs for the same tenant/connection identity at a time. Concurrent duplicate requests for the same scope and window reuse the successful run that completed while they waited. Fleet, direct analysis, and Mission Control share this gate.
+
+Resource Graph query starts are paced per Azure principal across PostgreSQL-backed replicas. Change history pages to the configured cap instead of stopping at the first 1,000 rows. Activity Log uses adaptive concurrency of up to four subscriptions, honors `Retry-After`, and retries transient responses. Microsoft Graph audit and identity reads use bounded adaptive retries as well.
+
 ## Workflow overview
 
 ### Configure an analysis
@@ -89,6 +93,7 @@ Enable AI only when contextual narrative/risk enrichment is valuable and approve
 - Technical diff availability depends on source evidence; absence of a before value is not proof that nothing changed.
 - Dependency impact reflects the app's known graph and cannot discover every runtime/data-plane dependency.
 - AI narrative and re-scoring can be wrong. Cite underlying events and timestamps in an incident conclusion.
+- A run marked **partial** did not complete one or more required sources. The banner names each source, row count, throttle state, and whether retry is appropriate; do not interpret missing rows as no changes.
 
 ## Exports, history, scheduling, and integrations
 
@@ -114,6 +119,7 @@ Do not purge runs needed for incident, legal, or audit retention. Do not mistake
 | Raw JSON is absent | Open the event's Raw JSON section to lazy-load it; confirm the source retained it. |
 | Export is too large/sensitive | Filter or use high-risk/executive output and follow evidence-handling policy. |
 | Compare looks misleading | Ensure both runs use comparable scope and windows. |
+| Run is partial or says throttled | Read the source banner, allow the advertised retry window to pass, narrow broad time/scope selections, and rerun. Fleet automatically retries retryable partial items within its bounded attempt policy. |
 
 ## Related pages
 

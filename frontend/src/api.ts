@@ -8406,6 +8406,8 @@ export const api = {
   changeExplorerRun: (runId: string) => http<ChangeAnalysisRun>(`/changeexplorer/runs/${encodeURIComponent(runId)}`),
   changeExplorerChangeRaw: (runId: string, changeId: string) =>
     http<{ rawEventJson: Record<string, unknown> | null }>(`/changeexplorer/runs/${encodeURIComponent(runId)}/changes/${encodeURIComponent(changeId)}/raw`),
+  changeExplorerDiagnostics: (runId: string) =>
+    http<Pick<ChangeAnalysisRun, "runId" | "status" | "analysisOutcome" | "retryable" | "sourceProvenance" | "createdAt" | "completedAt">>(`/changeexplorer/runs/${encodeURIComponent(runId)}/diagnostics`),
   changeExplorerAsk: (body: { question: string; run_id?: string; workload_id?: string }, signal?: AbortSignal) =>
     http<ChangeAskResponse>("/changeexplorer/ask", { method: "POST", body: JSON.stringify(body), signal }),
   changeExplorerDeleteRun: (runId: string) =>
@@ -9001,6 +9003,13 @@ export interface ChangeAnalysisRun {
   narrative?: ChangeNarrativeBeat[];
   security?: ChangeSecuritySummary;
   caseFile?: ChangeCaseFile;
+  analysisOutcome?: "complete" | "partial";
+  retryable?: boolean;
+  sourceProvenance?: Record<string, {
+    source: string; status: "complete" | "partial" | "failed" | "unavailable";
+    complete: boolean; required: boolean; retryable: boolean; throttled: boolean;
+    rowCount: number; note: string;
+  }>;
 }
 export interface ChangeRunSummary {
   runId: string;

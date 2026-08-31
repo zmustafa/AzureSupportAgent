@@ -49,12 +49,14 @@ def test_migration_adopts_runtime_created_durable_tables(tmp_path: Path) -> None
     sync_engine = create_engine(sync_url)
     with sync_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0012_durable_job_registries"
+            "0013_distributed_rate_limits"
         )
     assert {
         "durable_jobs",
         "durable_job_slots",
         "durable_job_events",
+        "distributed_rate_limits",
+        "changeexplorer_analysis_leases",
     } <= set(inspect(sync_engine).get_table_names())
     sync_engine.dispose()
 

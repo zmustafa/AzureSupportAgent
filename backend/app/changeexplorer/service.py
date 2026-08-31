@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.changeexplorer import ai_enrich
@@ -146,8 +147,34 @@ def _suspicious_insights(run_id: str, tenant_id: str, workload_id: str,
 
 
 
+def _source_provenance(name: str, rows: list[dict[str, Any]], note: str, *, required: bool) -> dict[str, Any]:
+    low = (note or "").lower()
+    throttled = any(token in low for token in ("429", "throttl", "too many requests", "ratelimit"))
+    retryable = throttled or any(token in low for token in (
+        "timeout", "timed out", "temporarily unavailable", "connection reset", "server busy", " 502", " 503", " 504",
+    ))
+    if not note:
+        status = "complete"
+    elif "not included" in low or "no microsoft graph" in low or "no graph token" in low:
+        status = "unavailable"
+    elif rows:
+        status = "partial"
+    else:
+        status = "failed"
+    return {
+        "source": name,
+        "status": status,
+        "complete": status == "complete",
+        "required": required,
+        "retryable": retryable,
+        "throttled": throttled,
+        "rowCount": len(rows),
+        "note": note,
+    }
+
+
 async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | None,
-                       scope_info: dict[str, Any], start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], list[str], int]:
+                       scope_info: dict[str, Any], start_iso: str, end_iso: str) -> tuple[list[dict[str, Any]], list[str], int, dict[str, dict[str, Any]]]:
     """Run the collectors for a real (non-demo) workload. Returns (raw_rows, notes, change_limit).
 
     ``change_limit`` is the per-scan source cap (``RG_CHANGE_LIMIT``) when the Resource Graph
@@ -159,7 +186,7 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
     'unknown' actor into the real service principal / user that made the change.
 
     The two sources are queried CONCURRENTLY; each collector internally fans out across
-    subscriptions with bounded parallelism (>= 5) and 429 backoff/retry."""
+    subscriptions with adaptive bounded parallelism and 429 backoff/retry."""
     notes: list[str] = []
     from app.changeexplorer import entra as entra_mod
 
@@ -177,6 +204,11 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
         notes.append(al_note)
     if entra_note:
         notes.append(entra_note)
+    provenance = {
+        "resourceGraph": _source_provenance("ResourceGraph", rg_rows, rg_note, required=True),
+        "activityLog": _source_provenance("ActivityLog", al_rows, al_note, required=True),
+        "entraAudit": _source_provenance("EntraAudit", entra_rows, entra_note, required=False),
+    }
     change_limit = collectors.change_limit() if len(rg_rows) >= collectors.change_limit() else 0
 
     # ---- Actor attribution --------------------------------------------------------------
@@ -249,6 +281,9 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
         app_ids = [r.get("actorAppId", "") for r in raw_rows if r.get("actorAppId")]
         if oids or app_ids:
             resolved, rnote = await identity_mod.resolve_display_names(oids, app_ids, connection)
+            provenance["identityResolution"] = _source_provenance(
+                "IdentityResolution", list(resolved.values()), rnote, required=False,
+            )
             if rnote:
                 notes.append(rnote)
             for r in raw_rows:
@@ -260,7 +295,7 @@ async def _collect_raw(workload: dict[str, Any], connection: dict[str, Any] | No
                     if rec.get("kind"):
                         r["actorKind"] = rec["kind"]
 
-    return raw_rows, notes, change_limit
+    return raw_rows, notes, change_limit, provenance
 
 
 def _epoch(iso: str) -> float:
@@ -285,10 +320,10 @@ def _identity_resolution_enabled() -> bool:
         return True
 
 
-async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
-                         start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
-                         force_demo: bool = False, run_ai: bool = True,
-                         run_id: str | None = None) -> Any:
+async def _analyze_stream_impl(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
+                               start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
+                               force_demo: bool = False, run_ai: bool = True,
+                               run_id: str | None = None) -> Any:
     """The change-analysis pipeline as an async generator that yields progress dicts while it
     works (``{"phase","message",...}``) and finally yields the completed run
     (``{"phase":"done","run":<run dict>}``). Used by the SSE endpoint; ``analyze`` drains it."""
@@ -299,6 +334,7 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
     notes: list[str] = []
     raw: list[dict[str, Any]] = []
     change_limit = 0
+    source_provenance: dict[str, dict[str, Any]] = {}
     is_demo = force_demo or demo.is_demo(workload_id)
     is_catalog_demo = demo.is_catalog_demo(workload_id)
 
@@ -322,10 +358,18 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
         if scope_info.get("error"):
             notes.append(scope_info["error"])
         if connection is None:
-            notes.append("No Azure connection bound — live change sources were not queried.")
+            missing_note = "No Azure connection bound — live change sources were not queried."
+            notes.append(missing_note)
+            source_provenance = {
+                "resourceGraph": _source_provenance("ResourceGraph", [], missing_note, required=True),
+                "activityLog": _source_provenance("ActivityLog", [], missing_note, required=True),
+                "entraAudit": _source_provenance("EntraAudit", [], missing_note, required=False),
+            }
         else:
             yield {"phase": "collect", "message": "Querying Azure Resource Graph & Activity Log for changes…"}
-            raw, cnotes, change_limit = await _collect_raw(workload, connection, scope_info, start_iso, end_iso)
+            raw, cnotes, change_limit, source_provenance = await _collect_raw(
+                workload, connection, scope_info, start_iso, end_iso,
+            )
             notes.extend(cnotes)
 
     production = _is_production(workload)
@@ -374,19 +418,71 @@ async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection
     # Persist the production flag so a later AI re-enrich re-scores consistently.
     scope_info = {**scope_info, "production": production}
 
+    required_incomplete = [
+        source for source in source_provenance.values()
+        if source.get("required") and not source.get("complete")
+    ]
+    analysis_outcome = "partial" if required_incomplete else "complete"
+    retryable = any(source.get("retryable") for source in required_incomplete)
     run = ChangeAnalysisRun(
         runId=run_id, tenantId=tenant_id, workloadId=workload_id, workloadName=workload_name,
         startTime=start_iso, endTime=end_iso, scopeMode=scope_mode, requestedBy=requested_by,
-        createdAt=created, completedAt=now_iso(), status="succeeded",
+        createdAt=created, completedAt=now_iso(), status="partial" if required_incomplete else "succeeded",
         totalChanges=head["total"], criticalCount=head["critical"], highCount=head["high"],
         mediumCount=head["medium"], lowCount=head["low"], informationalCount=head["informational"],
         summary=summary, demo=is_demo, truncated=truncated, notes=notes, scopeInfo=scope_info,
         facets=facets, events=events, insights=insights, changeLimit=change_limit,
-        aiAnalyzed=ai_analyzed,
+        aiAnalyzed=ai_analyzed, analysisOutcome=analysis_outcome,
+        sourceProvenance=source_provenance, retryable=retryable,
     )
     out = asdict(run)
     _attach_derived(out, events)
+    from app.core.structured_events import emit, opaque_id
+
+    emit("collection_completeness", feature="changeexplorer", run=opaque_id(run_id),
+         outcome=analysis_outcome, retryable=retryable,
+         sources={key: value.get("status") for key, value in source_provenance.items()},
+         event_count=len(events))
     yield {"phase": "done", "run": out}
+
+
+async def analyze_stream(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,
+                         start_iso: str, end_iso: str, scope_mode: str, requested_by: str,
+                         force_demo: bool = False, run_ai: bool = True,
+                         run_id: str | None = None) -> Any:
+    """Admitted analysis stream shared by direct UI, fleet batches, and Mission Control."""
+    from app.changeexplorer.admission import analysis_slot
+
+    dedupe_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=30)).timestamp()
+    yield {"phase": "admission", "message": "Waiting for Change Explorer capacity…"}
+    async with analysis_slot(tenant_id, connection):
+        # A duplicate request may have completed while this one waited for the same lane. Reuse
+        # that exact successful window instead of immediately spending the Azure quota again.
+        if run_id is None:
+            from app.changeexplorer import runs as runs_store
+
+            for summary in runs_store.list_runs(tenant_id, workload.get("id", ""))[:3]:
+                if (
+                    summary.get("status") == "succeeded"
+                    and _epoch(summary.get("completedAt", "")) >= dedupe_cutoff
+                    and summary.get("startTime") == start_iso
+                    and summary.get("endTime") == end_iso
+                    and summary.get("scopeMode") == scope_mode
+                ):
+                    existing = runs_store.get_run(tenant_id, summary.get("runId", ""))
+                    if existing is not None:
+                        from app.core.structured_events import emit, opaque_id
+
+                        emit("analysis_admission", feature="changeexplorer", action="coalesced",
+                             run=opaque_id(str(existing.get("runId") or "")))
+                        yield {"phase": "done", "run": existing}
+                        return
+        async for event in _analyze_stream_impl(
+            tenant_id=tenant_id, workload=workload, connection=connection,
+            start_iso=start_iso, end_iso=end_iso, scope_mode=scope_mode,
+            requested_by=requested_by, force_demo=force_demo, run_ai=run_ai, run_id=run_id,
+        ):
+            yield event
 
 
 async def analyze(*, tenant_id: str, workload: dict[str, Any], connection: dict[str, Any] | None,

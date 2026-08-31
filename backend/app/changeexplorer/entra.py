@@ -59,69 +59,67 @@ async def collect_entra_audits(connection: dict[str, Any] | None, start_iso: str
     """Pull Entra directory audit events in the window via Graph. Returns (raw_rows, note)."""
     if connection is None:
         return [], ""
-    from app.azure.credentials import get_graph_token
-
-    token, terr = await get_graph_token(connection)
-    if not token:
-        # Soft note only — Entra audits are a bonus source, not required.
-        return [], ("Entra ID audit events not included — this connection has no Microsoft Graph "
-                    "token (paste a Graph token or use an SP with AuditLog.Read.All / Directory.Read.All).")
-
-    import httpx
+    from app.core.structured_events import emit, opaque_id
+    from app.entra.graphclient import GraphAuthError, GraphClient, GraphError, GraphPermissionError
 
     flt = f"activityDateTime ge {start_iso} and activityDateTime le {end_iso}"
-    url = "https://graph.microsoft.com/v1.0/auditLogs/directoryAudits"
-    params: dict[str, str] | None = {"$filter": flt, "$top": "200", "$orderby": "activityDateTime desc"}
-    headers = {"Authorization": f"Bearer {token}"}
     rows: list[dict[str, Any]] = []
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            for _page in range(20):
-                resp = await client.get(url, headers=headers, params=params)
-                params = None
-                if resp.status_code != 200:
-                    if resp.status_code in (401, 403):
-                        return [], ("Entra ID audit events not included — Graph denied access "
-                                    f"({resp.status_code}); grant AuditLog.Read.All to include identity changes.")
-                    return rows, f"Entra audit query failed ({resp.status_code})."
-                data = resp.json()
-                for a in data.get("value", []) or []:
-                    cat = (a.get("category", "") or "")
-                    if cat.lower().replace(" ", "") not in {c.replace(" ", "") for c in _INTERESTING_CATEGORIES}:
-                        # Keep role/app/policy even if category label differs; else skip noise.
-                        act = (a.get("activityDisplayName", "") or "").lower()
-                        if not any(t in act for t in ("role", "application", "credential", "password",
-                                                      "conditional access", "policy", "member", "secret")):
-                            continue
-                    caller, kind, oid, ip = _actor_from_audit(a.get("initiatedBy") or {})
-                    targets = a.get("targetResources", []) or []
-                    target_name = ""
-                    target_id = ""
-                    if targets:
-                        t0 = targets[0]
-                        target_name = t0.get("displayName") or t0.get("userPrincipalName") or t0.get("id", "")
-                        target_id = t0.get("id", "")
-                    activity = a.get("activityDisplayName", "") or "Directory change"
-                    rows.append({
-                        "source": "EntraAudit",
-                        "resourceId": f"entra://{cat}/{target_id}" if target_id else f"entra://{cat}",
-                        "resourceName": target_name or activity,
-                        "resourceType": f"microsoft.graph/{cat.lower().replace(' ', '')}",
-                        "resourceGroup": "", "subscriptionId": "", "location": "Entra ID",
-                        "eventTime": a.get("activityDateTime", ""),
-                        "operation": activity, "changeType": "Update",
-                        "actor": caller, "actorType": kind, "actorKind": kind,
-                        "actorObjectId": oid, "actorIp": ip,
-                        "correlationId": a.get("correlationId", ""),
-                        "category_hint": _map_category(activity, cat),
-                        "changes": [], "raw": a,
-                    })
-                    if len(rows) >= max_events:
-                        return rows, ""
-                nxt = data.get("@odata.nextLink") or ""
-                if not nxt:
+        async with GraphClient(connection, concurrency=4, timeout=60) as client:
+            audits, truncated = await client.get_all(
+                "/auditLogs/directoryAudits",
+                filter=flt,
+                orderby="activityDateTime desc",
+                top=200,
+                # Preserve the previous twenty-page safety bound while the output itself remains
+                # capped independently after irrelevant directory categories are discarded.
+                max_items=4000,
+            )
+            for a in audits:
+                cat = (a.get("category", "") or "")
+                if cat.lower().replace(" ", "") not in {c.lower().replace(" ", "") for c in _INTERESTING_CATEGORIES}:
+                    # Keep role/app/policy even if category label differs; else skip noise.
+                    act = (a.get("activityDisplayName", "") or "").lower()
+                    if not any(t in act for t in ("role", "application", "credential", "password",
+                                                  "conditional access", "policy", "member", "secret")):
+                        continue
+                caller, kind, oid, ip = _actor_from_audit(a.get("initiatedBy") or {})
+                targets = a.get("targetResources", []) or []
+                target_name = ""
+                target_id = ""
+                if targets:
+                    t0 = targets[0]
+                    target_name = t0.get("displayName") or t0.get("userPrincipalName") or t0.get("id", "")
+                    target_id = t0.get("id", "")
+                activity = a.get("activityDisplayName", "") or "Directory change"
+                rows.append({
+                    "source": "EntraAudit",
+                    "resourceId": f"entra://{cat}/{target_id}" if target_id else f"entra://{cat}",
+                    "resourceName": target_name or activity,
+                    "resourceType": f"microsoft.graph/{cat.lower().replace(' ', '')}",
+                    "resourceGroup": "", "subscriptionId": "", "location": "Entra ID",
+                    "eventTime": a.get("activityDateTime", ""),
+                    "operation": activity, "changeType": "Update",
+                    "actor": caller, "actorType": kind, "actorKind": kind,
+                    "actorObjectId": oid, "actorIp": ip,
+                    "correlationId": a.get("correlationId", ""),
+                    "category_hint": _map_category(activity, cat),
+                    "changes": [], "raw": a,
+                })
+                if len(rows) >= max_events:
                     break
-                url = nxt
-        return rows, ""
-    except httpx.HTTPError as e:  # noqa: BLE001
-        return rows, f"Entra audit query error: {e}"
+            emit("graph_collection", source="EntraAudit",
+                 principal=opaque_id(str((connection or {}).get("tenant_id") or "default")),
+                 **client.stats.as_dict())
+            note = ""
+            if truncated:
+                note = "Entra audit collection reached its 4,000-event safety cap; narrow the time range for full fidelity."
+            return rows, note
+    except GraphAuthError as exc:
+        return [], ("Entra ID audit events not included — this connection has no Microsoft Graph "
+                    f"token ({exc.message}).")
+    except GraphPermissionError:
+        return [], ("Entra ID audit events not included — Graph denied access (403); grant "
+                    "AuditLog.Read.All to include identity changes.")
+    except GraphError as exc:
+        return rows, f"Entra audit query failed ({exc.status}): {exc.message[:160]}"

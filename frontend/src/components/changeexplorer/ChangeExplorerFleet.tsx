@@ -1,7 +1,7 @@
 // Fleet view for the Change Explorer: a dense, sortable table summarizing the LATEST change-
 // analysis run for every workload, plus a mass-launch bar that analyzes the selected workloads
-// over ONE shared time window. Runs stream in the background (parallelism 3) via the shared
-// analysis registry, so progress survives tab switches / navigation.
+// over ONE shared time window. The durable server queue admits at most two Change Explorer
+// items globally and one per tenant/connection lane, so progress survives browser navigation.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";

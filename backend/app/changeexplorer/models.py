@@ -146,6 +146,10 @@ class ChangeAnalysisRun:
     facets: dict[str, Any] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
     insights: list[dict[str, Any]] = field(default_factory=list)
+    # Collection fidelity. Older stored runs simply omit these fields.
+    analysisOutcome: str = "complete"   # complete | partial
+    sourceProvenance: dict[str, dict[str, Any]] = field(default_factory=dict)
+    retryable: bool = False
 
 
 # --------------------------------------------------------------------------- factories

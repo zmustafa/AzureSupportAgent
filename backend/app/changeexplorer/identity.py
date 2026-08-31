@@ -202,33 +202,18 @@ async def resolve_display_names(
     if not to_fetch_oids and not to_fetch_apps:
         return out, ""
 
-    from app.azure.credentials import get_graph_token
+    from app.core.structured_events import emit, opaque_id
+    from app.entra.graphclient import GraphAuthError, GraphClient, GraphError, GraphPermissionError
 
-    token, terr = await get_graph_token(connection or {})
-    if not token:
-        return out, (
-            "Identity names not resolved — this connection has no Microsoft Graph access "
-            f"({terr or 'no Graph token'}). Object-ids are shown as-is."
-        )
-
-    import httpx
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with GraphClient(connection or {}, concurrency=4, timeout=30) as client:
             # directoryObjects/getByIds resolves users, servicePrincipals and groups in one batch.
             # NOTE: managed identities are themselves ``servicePrincipal`` objects — there is no
             # ``managedIdentity`` directory type, and including it makes Graph reject the whole
             # request with 400 "Invalid resource type specified".
             for chunk in _chunks(to_fetch_oids, 900):
-                body = {"ids": chunk, "types": ["user", "servicePrincipal", "group"]}
-                resp = await client.post(
-                    "https://graph.microsoft.com/v1.0/directoryObjects/getByIds",
-                    headers=headers, json=body,
-                )
-                if resp.status_code != 200:
-                    return out, _graph_error_note(resp.status_code, resp.text)
-                for obj in (resp.json().get("value", []) or []):
+                objects = await client.get_by_ids(chunk, ["user", "servicePrincipal", "group"])
+                for obj in objects.values():
                     oid = obj.get("id", "")
                     if not oid:
                         continue
@@ -241,29 +226,42 @@ async def resolve_display_names(
                     _cache_put(tenant, oid, rec)
                 # Cache the ids Graph didn't return (deleted / cross-tenant) as empty so we don't
                 # re-query them every run.
-                returned = {o.get("id", "") for o in (resp.json().get("value", []) or [])}
-                for missing in chunk:
-                    if missing not in returned:
-                        _cache_put(tenant, missing, {})
+                returned = set(objects)
+                # A clean Graph response can authoritatively cache deleted/cross-tenant misses.
+                # A terminal retry failure is recorded in stats and must NOT become a 12-hour
+                # negative cache entry, otherwise one throttle looks like a real missing object.
+                if not client.stats.errors:
+                    for missing in chunk:
+                        if missing not in returned:
+                            _cache_put(tenant, missing, {})
 
             # appId -> servicePrincipal (the Activity Log appid claim is the app id, not object id).
             for aid in to_fetch_apps:
-                resp = await client.get(
-                    "https://graph.microsoft.com/v1.0/servicePrincipals",
-                    headers=headers,
+                data = await client.get(
+                    "/servicePrincipals",
                     params={"$filter": f"appId eq '{aid}'", "$select": "id,displayName,appId"},
                 )
-                if resp.status_code == 200:
-                    vals = resp.json().get("value", []) or []
-                    if vals:
-                        sp = vals[0]
-                        rec = {"display": sp.get("displayName") or aid, "kind": "ServicePrincipal"}
-                        out[aid] = rec
-                        _cache_put(tenant, "app:" + aid, rec)
-                    else:
-                        _cache_put(tenant, "app:" + aid, {})
-    except httpx.HTTPError as e:  # noqa: BLE001
-        return out, f"Identity resolution error ({e}); object-ids are shown as-is."
+                vals = data.get("value", []) or []
+                if vals:
+                    sp = vals[0]
+                    rec = {"display": sp.get("displayName") or aid, "kind": "ServicePrincipal"}
+                    out[aid] = rec
+                    _cache_put(tenant, "app:" + aid, rec)
+                else:
+                    _cache_put(tenant, "app:" + aid, {})
+            emit("graph_collection", source="IdentityResolution", principal=opaque_id(tenant),
+                 **client.stats.as_dict())
+            if client.stats.errors:
+                return out, "Some identity names could not be resolved after Microsoft Graph retries; object-ids are shown as-is."
+    except GraphAuthError as exc:
+        return out, (
+            "Identity names not resolved — this connection has no Microsoft Graph access "
+            f"({exc.message}). Object-ids are shown as-is."
+        )
+    except GraphPermissionError as exc:
+        return out, _graph_error_note(exc.status, exc.message)
+    except GraphError as exc:
+        return out, _graph_error_note(exc.status, exc.message)
 
     return out, ""
 

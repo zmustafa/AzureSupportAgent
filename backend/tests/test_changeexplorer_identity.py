@@ -127,6 +127,7 @@ async def test_resolve_display_names_no_token_fails_open(monkeypatch):
         return None, "no graph token"
 
     monkeypatch.setattr("app.azure.credentials.get_graph_token", _no_token)
+    monkeypatch.setattr("app.entra.graphclient.get_graph_token", _no_token)
     identity._CACHE.clear()
     out, note = await identity.resolve_display_names(
         ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"], [], {"tenant_id": "t1"})
@@ -143,6 +144,10 @@ async def test_resolve_display_names_success(monkeypatch):
 
     class _Resp:
         status_code = 200
+        content = b"json"
+        headers = {}
+        text = ""
+        reason_phrase = "OK"
 
         def json(self):
             return {"value": [{"id": oid, "displayName": "Network RNM",
@@ -158,13 +163,14 @@ async def test_resolve_display_names_success(monkeypatch):
         async def __aexit__(self, *a):
             return False
 
-        async def post(self, *a, **k):
+        async def request(self, *a, **k):
             return _Resp()
 
-        async def get(self, *a, **k):
-            return _Resp()
+        async def aclose(self):
+            pass
 
     monkeypatch.setattr("app.azure.credentials.get_graph_token", _token)
+    monkeypatch.setattr("app.entra.graphclient.get_graph_token", _token)
     monkeypatch.setattr("httpx.AsyncClient", _Client)
     identity._CACHE.clear()
     out, note = await identity.resolve_display_names([oid], [], {"tenant_id": "t2"})

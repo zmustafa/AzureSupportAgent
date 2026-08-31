@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -735,6 +736,29 @@ class WorkBatchItem(Base):
         Index("ix_work_batch_items_lane", "tenant_id", "connection_id", "status"),
         Index("ix_work_batch_items_claim", "status", "lease_expires_at", "available_at"),
     )
+
+
+class DistributedRateLimit(Base):
+    """Cross-replica sliding-window and hard-block state for an external principal quota."""
+
+    __tablename__ = "distributed_rate_limits"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    starts_json: Mapped[list] = mapped_column(JSON, default=list)
+    blocked_until_epoch: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ChangeExplorerAnalysisLease(Base):
+    """Crash-safe cross-replica admission lease for one Change Explorer analysis."""
+
+    __tablename__ = "changeexplorer_analysis_leases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    lane_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    owner: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class WorkbookRun(Base):

@@ -8,13 +8,13 @@ scheduler, Mission Control and a fleet launch all draw from the same budget with
 each other.
 
 This module is the one place that does see them all. Every ARG query in the app passes through
-:func:`acquire` before it leaves the process, so the aggregate rate stays under the quota no
-matter how many callers fan out concurrently.
+:func:`acquire`. PostgreSQL deployments coordinate query starts with per-principal advisory
+locks across replicas; SQLite/local runs retain the process-local sliding window.
 
 Two mechanisms combine:
 
-- **Sliding-window rate limit** — a per-principal window of recent query starts. Admission
-  blocks until a slot frees up. This is the proactive pacing.
+- **Distributed pacing** — PostgreSQL replicas serialize and evenly space starts for each
+    principal. The local fallback uses a per-principal sliding window.
 - **Quota-header feedback** — ARG reports ``x-ms-user-quota-remaining`` and
   ``x-ms-user-quota-resets-after`` on every response. When remaining hits zero (or a genuine
   429 arrives) the bucket hard-blocks until the reported reset, so we back off using Azure's
@@ -32,9 +32,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import hashlib
+import logging
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Iterator
+
+from app.core.structured_events import emit, opaque_id
+
+log = logging.getLogger("app.azure.arg_throttle")
 
 # ARG's documented allowance is 15 queries / 5 s per principal. Default to 12 so other tooling
 # in the tenant (the Portal, a colleague's script, Terraform) retains headroom.
@@ -150,6 +157,107 @@ class _Bucket:
 _buckets: dict[str, _Bucket] = {}
 
 
+def _advisory_key(principal: str) -> int:
+    """Stable signed bigint key for PostgreSQL's session advisory-lock namespace."""
+    raw = hashlib.blake2b(f"arg-rate:{principal}".encode("utf-8"), digest_size=8).digest()
+    unsigned = int.from_bytes(raw, "big")
+    return unsigned if unsigned < 2**63 else unsigned - 2**64
+
+
+def _state_key(principal: str) -> str:
+    return hashlib.sha256(principal.encode("utf-8")).hexdigest()
+
+
+async def _distributed_acquire(principal: str, max_queries: int, window_s: float) -> float | None:
+    """Reserve a query start in PostgreSQL, or return ``None`` outside PostgreSQL.
+
+    Each decision is a short transaction under a principal-specific transaction advisory lock.
+    Waits happen only after that transaction releases its database connection. The row carries
+    both recent starts and hard-block state, so quota-reset feedback is visible to every replica.
+    """
+    try:
+        from sqlalchemy import select, text
+
+        from app.core.db import SessionLocal, engine
+        from app.models import DistributedRateLimit
+
+        if engine.dialect.name != "postgresql":
+            return None
+    except Exception:  # noqa: BLE001 - retain local pacing during early boot
+        return None
+
+    lock_key = _advisory_key(principal)
+    state_key = _state_key(principal)
+    started = time.monotonic()
+    while True:
+        try:
+            delay = 0.0
+            async with SessionLocal.begin() as session:
+                await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+                row = (await session.execute(
+                    select(DistributedRateLimit).where(DistributedRateLimit.key == state_key).with_for_update()
+                )).scalar_one_or_none()
+                now = time.time()
+                if row is None:
+                    row = DistributedRateLimit(key=state_key, starts_json=[], blocked_until_epoch=0.0)
+                    session.add(row)
+                starts = [float(value) for value in (row.starts_json or []) if float(value) > now - window_s]
+                if float(row.blocked_until_epoch or 0.0) > now:
+                    delay = float(row.blocked_until_epoch) - now
+                elif len(starts) >= max_queries:
+                    delay = starts[0] + window_s - now
+                elif starts and len(starts) * 2 >= max_queries:
+                    min_gap = window_s / max_queries
+                    delay = max(0.0, starts[-1] + min_gap - now)
+                if delay <= 0:
+                    starts.append(now)
+                    row.starts_json = starts
+                    row.updated_at = datetime.now(timezone.utc)
+            if delay <= 0:
+                waited = time.monotonic() - started
+                if waited >= 0.05:
+                    emit("rate_limit_admission", source="ResourceGraph", principal=opaque_id(principal),
+                         wait_seconds=round(waited, 3), distributed=True)
+                return waited
+            await asyncio.sleep(min(max(0.001, delay), _MAX_SLEEP))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fall back to the existing safe local limiter
+            log.warning("Distributed ARG pacing unavailable; using local limiter: %s", exc)
+            return None
+
+
+async def _distributed_block(principal: str, seconds: float) -> None:
+    """Publish a quota-reset block to the PostgreSQL state row for all replicas."""
+    if seconds <= 0:
+        return
+    try:
+        from sqlalchemy import select, text
+
+        from app.core.db import SessionLocal, engine
+        from app.models import DistributedRateLimit
+
+        if engine.dialect.name != "postgresql":
+            return
+        lock_key = _advisory_key(principal)
+        state_key = _state_key(principal)
+        async with SessionLocal.begin() as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+            row = (await session.execute(
+                select(DistributedRateLimit).where(DistributedRateLimit.key == state_key).with_for_update()
+            )).scalar_one_or_none()
+            if row is None:
+                row = DistributedRateLimit(key=state_key, starts_json=[])
+                session.add(row)
+            row.blocked_until_epoch = max(
+                float(row.blocked_until_epoch or 0.0), time.time() + min(seconds, _MAX_SLEEP)
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - local block still protects the observing replica
+        log.warning("Could not publish distributed ARG backoff: %s", exc)
+
+
 def _bucket(key: str) -> _Bucket:
     b = _buckets.get(key)
     if b is None:
@@ -180,7 +288,19 @@ async def acquire() -> float:
     enabled, max_q, window = _limits()
     if not enabled:
         return 0.0
-    return await _bucket(_principal_var.get()).acquire(max_q, window)
+    principal = _principal_var.get()
+    distributed = await _distributed_acquire(principal, max_q, window)
+    if distributed is not None:
+        # Quota-header feedback remains process-local, but every replica now obeys the aggregate
+        # base rate. A replica that actually observed exhaustion waits the longer server window.
+        bucket = _bucket(principal)
+        now = time.monotonic()
+        if now < bucket._blocked_until:
+            delay = min(bucket._blocked_until - now, _MAX_SLEEP)
+            await asyncio.sleep(delay)
+            distributed += delay
+        return distributed
+    return await _bucket(principal).acquire(max_q, window)
 
 
 def parse_reset_after(value: str | None) -> float | None:
@@ -222,7 +342,29 @@ def note_quota_headers(headers: Any) -> None:
     if remaining > 0:
         return
     reset_s = parse_reset_after(reset_raw)
-    _bucket(_principal_var.get()).block_for(reset_s if reset_s is not None else DEFAULT_WINDOW_SECONDS)
+    seconds = reset_s if reset_s is not None else DEFAULT_WINDOW_SECONDS
+    _bucket(_principal_var.get()).block_for(seconds)
+
+
+async def note_quota_headers_async(headers: Any) -> None:
+    """Async variant that also shares an exhausted-quota block with every replica."""
+    try:
+        remaining_raw = headers.get("x-ms-user-quota-remaining") if headers is not None else None
+        reset_raw = headers.get("x-ms-user-quota-resets-after") if headers is not None else None
+    except (AttributeError, TypeError):
+        remaining_raw = reset_raw = None
+    note_quota_headers(headers)
+    try:
+        exhausted = remaining_raw is not None and int(str(remaining_raw).strip()) <= 0
+    except (TypeError, ValueError):
+        exhausted = False
+    if exhausted:
+        reset_s = parse_reset_after(reset_raw)
+        seconds = reset_s if reset_s is not None else DEFAULT_WINDOW_SECONDS
+        if reset_s is None:
+            emit("quota_header_invalid", source="ResourceGraph",
+                 principal=opaque_id(_principal_var.get()), header="x-ms-user-quota-resets-after")
+        await _distributed_block(_principal_var.get(), seconds)
 
 
 def note_throttled(retry_after_s: float | None = None) -> None:
@@ -230,6 +372,16 @@ def note_throttled(retry_after_s: float | None = None) -> None:
     b = _bucket(_principal_var.get())
     b.throttled += 1
     b.block_for(retry_after_s if retry_after_s is not None else DEFAULT_WINDOW_SECONDS)
+    emit("throttle_observed", source="ResourceGraph", principal=opaque_id(_principal_var.get()),
+         status=429, retry_after_seconds=retry_after_s)
+
+
+async def note_throttled_async(retry_after_s: float | None = None) -> None:
+    """Record a 429 locally and publish its hard backoff to every PostgreSQL replica."""
+    note_throttled(retry_after_s)
+    await _distributed_block(
+        _principal_var.get(), retry_after_s if retry_after_s is not None else DEFAULT_WINDOW_SECONDS,
+    )
 
 
 def stats() -> dict[str, dict[str, float]]:

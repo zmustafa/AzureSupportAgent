@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from typing import Any, AsyncIterator
 
@@ -26,8 +27,20 @@ log = logging.getLogger("app.changeexplorer.ai_enrich")
 _AI_TIMEOUT_SECONDS = 25.0
 _BATCH = 10          # events per LLM call
 _MAX_EVENTS = 60     # whole-run cap on AI-analyzed events (bounded cost/latency)
-_AI_CONCURRENCY = 10  # parallel LLM calls (batches run 10-at-a-time, not sequentially)
+_AI_CONCURRENCY = 4   # per-run ceiling
+_AI_PROVIDER_CONCURRENCY = 4  # shared process ceiling across simultaneous analyses
 _VALID = set(CATEGORIES)
+_provider_loop: asyncio.AbstractEventLoop | None = None
+_provider_gate: asyncio.Semaphore | None = None
+
+
+def _shared_provider_gate() -> asyncio.Semaphore:
+    global _provider_loop, _provider_gate
+    loop = asyncio.get_running_loop()
+    if _provider_loop is not loop or _provider_gate is None:
+        _provider_loop = loop
+        _provider_gate = asyncio.Semaphore(_AI_PROVIDER_CONCURRENCY)
+    return _provider_gate
 
 _SYSTEM = (
     "You are a senior Azure change-analysis expert reviewing control-plane changes. For each "
@@ -86,15 +99,28 @@ def _select(events: list[dict[str, Any]]) -> list[int]:
 async def _ask(provider: Any, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     user = "Analyze these Azure changes:\n" + json.dumps(batch, default=str)
     text = ""
-    try:
-        async for ev in provider.stream(
-            [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}], None
-        ):
-            if ev.type == "token":
-                text += ev.text
-    except Exception as exc:  # noqa: BLE001
-        log.warning("AI enrich batch failed: %s", exc)
-        return []
+    for attempt in range(3):
+        try:
+            text = ""
+            async with _shared_provider_gate():
+                async for ev in provider.stream(
+                    [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}], None
+                ):
+                    if ev.type == "token":
+                        text += ev.text
+            break
+        except Exception as exc:  # noqa: BLE001
+            low = str(exc).lower()
+            throttled = any(token in low for token in ("429", "throttl", "rate limit", "too many requests"))
+            if not throttled or attempt >= 2:
+                log.warning("AI enrich batch failed: %s", exc)
+                return []
+            delay = min(8.0, (2 ** attempt) + random.uniform(0, 0.5))
+            from app.core.structured_events import emit
+
+            emit("source_retry", source="AI", status=429, attempt=attempt + 1,
+                 delay_seconds=round(delay, 3), concurrency=_AI_PROVIDER_CONCURRENCY)
+            await asyncio.sleep(delay)
     t = text.strip()
     if "```" in t:
         m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)

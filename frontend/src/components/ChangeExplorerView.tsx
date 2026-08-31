@@ -607,7 +607,8 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                 the result is empty because the QUERY FAILED, not because nothing changed. */}
             {(() => {
               const problems = (run.notes ?? []).filter(isSourceProblemNote);
-              if (problems.length === 0) return null;
+              const incomplete = Object.values(run.sourceProvenance ?? {}).filter((source) => source.required && !source.complete);
+              if (problems.length === 0 && incomplete.length === 0) return null;
               return (
                 <div className="mb-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
                   <div className="flex items-center gap-2 font-medium">
@@ -621,6 +622,11 @@ export function ChangeExplorerPanel({ tab = "summary" }: { tab?: ChangeExplorerT
                       ↻ Re-analyze
                     </button>
                   </div>
+                  {incomplete.map((source) => (
+                    <div key={source.source} className="mt-0.5 pl-6">
+                      • <b>{source.source}</b>: {source.status}{source.throttled ? " (throttled)" : ""} · {source.rowCount.toLocaleString()} row(s)
+                    </div>
+                  ))}
                   {problems.map((n, i) => <div key={i} className="mt-0.5 pl-6">• {n}</div>)}
                   <div className="mt-1 pl-6 text-[11px] text-red-600">
                     If a pasted token expired, refresh it on the connection (Settings → Azure connections), or pick the connection that owns this scope, then Re-analyze.
@@ -957,7 +963,7 @@ function fmtDuration(startIso: string, endIso: string): string {
 // A collector note that signals a source couldn't be queried (vs. an informational note like a
 // demo/truncation message) — drives the prominent amber "sources unavailable" banner.
 function isProblemNote(n: string): boolean {
-  return /unavailable|not reachable|isn['’]t reachable|access denied|denied|unauthor|forbidden|not recognized|failed|isn['’]t signed in|no access|lacks (read )?permission|expired|no (azure |graph )?token|couldn['’]t acquire|sign(ed)? in/i.test(n || "");
+  return /unavailable|not reachable|isn['’]t reachable|access denied|denied|unauthor|forbidden|not recognized|failed|throttl|rate.?limit|too many requests|timed? ?out|timeout|isn['’]t signed in|no access|lacks (read )?permission|expired|no (azure |graph )?token|couldn['’]t acquire|sign(ed)? in/i.test(n || "");
 }
 
 // A stronger, panel-level check used to surface a RED "sources couldn't be queried" banner on
