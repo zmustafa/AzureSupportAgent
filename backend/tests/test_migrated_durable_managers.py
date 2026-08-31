@@ -15,7 +15,7 @@ from app.iam import job as iam_job
 from app.identity import appregs, appregs_job
 from app.insights import jobs as insights_jobs
 from app.inventory import cost_jobs
-from app.models import DurableJob, DurableJobSlot
+from app.models import DurableJob, DurableJobSlot, MissionRun
 from app.missions import orchestrator as mission_jobs
 from app.missions import systems as mission_systems
 
@@ -265,6 +265,54 @@ async def test_iam_two_managers_execute_once(durable_job_sessions, monkeypatch) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("manager_kind", ["entra", "iam", "appregs"])
+async def test_identity_managers_do_not_report_expired_owner_as_running(
+    durable_job_sessions, manager_kind
+) -> None:
+    if manager_kind == "entra":
+        manager = entra_job.EntraJobManager(
+            session_factory=durable_job_sessions, owner_id="reader", poll_seconds=0.01
+        )
+        feature = "entra.refresh"
+        key = entra_job.job_key("tenant-a")
+    elif manager_kind == "iam":
+        manager = iam_job.IamJobManager(
+            session_factory=durable_job_sessions, owner_id="reader", poll_seconds=0.01
+        )
+        feature = "iam.refresh"
+        key = iam_job.job_key("tenant-a", "subscription-a")
+    else:
+        manager = appregs_job.AppRegistrationsJobManager(
+            session_factory=durable_job_sessions, owner_id="reader", poll_seconds=0.01
+        )
+        feature = "identity.appregs"
+        key = "tenant-a|connection-a"
+
+    claim = await manager._executor.store.claim(  # noqa: SLF001 - orphan fixture
+        tenant_id="tenant-a", feature=feature, key=key
+    )
+    expired = utcnow() - timedelta(seconds=1)
+    async with durable_job_sessions() as db:
+        await db.execute(
+            update(DurableJob)
+            .where(DurableJob.id == claim.job["id"])
+            .values(lease_expires_at=expired, lease_heartbeat_at=expired)
+        )
+        await db.execute(
+            update(DurableJobSlot)
+            .where(DurableJobSlot.current_job_id == claim.job["id"])
+            .values(lease_expires_at=expired)
+        )
+        await db.commit()
+
+    current = await manager.get_job(key)
+    assert current is not None
+    assert current["status"] == "error"
+    assert current["finished_at"] is not None
+    assert "interrupted" in current["error"].lower()
+
+
+@pytest.mark.asyncio
 async def test_cost_job_cross_instance_latest(durable_job_sessions, monkeypatch) -> None:
     release = asyncio.Event()
     executions = 0
@@ -452,6 +500,52 @@ async def test_mission_duplicate_start_replay_and_remote_cancel(
     frames = await asyncio.wait_for(replay_task, timeout=2)
     assert frames[0]["event"] == "snapshot"
     assert frames[-1]["event"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_mission_read_reconciles_companion_row_after_owner_disappears(
+    durable_job_sessions, monkeypatch
+) -> None:
+    from app.core import db as dbmod
+
+    monkeypatch.setattr(dbmod, "SessionLocal", durable_job_sessions)
+    mission_id = "orphaned-mission"
+    mission_jobs.manager._missions.pop(mission_id, None)  # noqa: SLF001 - isolate fixture
+    async with durable_job_sessions() as db:
+        db.add(
+            MissionRun(
+                id=mission_id,
+                tenant_id="tenant-a",
+                workload_id="workload-a",
+                status="running",
+                started_at=utcnow(),
+            )
+        )
+        await db.commit()
+
+    store = mission_jobs.manager._executor.store  # noqa: SLF001 - orphan fixture
+    claim = await store.claim(
+        tenant_id="tenant-a", feature="mission.control", key=mission_id
+    )
+    expired = utcnow() - timedelta(seconds=1)
+    async with durable_job_sessions() as db:
+        await db.execute(
+            update(DurableJob)
+            .where(DurableJob.id == claim.job["id"])
+            .values(lease_expires_at=expired, lease_heartbeat_at=expired)
+        )
+        await db.execute(
+            update(DurableJobSlot)
+            .where(DurableJobSlot.current_job_id == claim.job["id"])
+            .values(lease_expires_at=expired)
+        )
+        await db.commit()
+
+    current = await mission_jobs.get_mission(mission_id, "tenant-a")
+    assert current is not None
+    assert current["status"] == "failed"
+    assert current["ended_at"]
+    assert "interrupted" in current["error"].lower()
 
 
 @pytest.mark.asyncio

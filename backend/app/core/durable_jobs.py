@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import uuid
+import weakref
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,9 @@ DEFAULT_EVENT_LIMIT = 1000
 MAX_EVENT_BYTES = 512 * 1024
 MAX_METADATA_BYTES = 64 * 1024
 MAX_RESULT_BYTES = 2 * 1024 * 1024
+INTERRUPTED_ERROR = "Background work was interrupted before completion. Start it again."
+
+_EXECUTORS: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 def utcnow() -> datetime:
@@ -178,7 +182,10 @@ class DurableJobStore:
             if claimed is None:
                 await db.rollback()
                 attached = await self.load_current(
-                    tenant_id=tenant_id, feature=feature, key=key
+                    tenant_id=tenant_id,
+                    feature=feature,
+                    key=key,
+                    reconcile_expired=False,
                 )
                 if attached is None:
                     # A concurrent creator can be between slot creation and publishing its job.
@@ -186,7 +193,10 @@ class DurableJobStore:
                     for _ in range(3):
                         await asyncio.sleep(self.poll_seconds)
                         attached = await self.load_current(
-                            tenant_id=tenant_id, feature=feature, key=key
+                            tenant_id=tenant_id,
+                            feature=feature,
+                            key=key,
+                            reconcile_expired=False,
                         )
                         if attached is not None:
                             break
@@ -273,7 +283,13 @@ class DurableJobStore:
         }
 
     async def load_current(
-        self, *, tenant_id: str, feature: str, key: str, include_events: bool = True
+        self,
+        *,
+        tenant_id: str,
+        feature: str,
+        key: str,
+        include_events: bool = True,
+        reconcile_expired: bool = True,
     ) -> dict[str, Any] | None:
         tenant_id, feature, key = self._scope(tenant_id, feature, key)
         async with self._sessions()() as db:
@@ -304,10 +320,32 @@ class DurableJobStore:
                         )
                     ).scalars()
                 )
-            return self._job_dict(job, events)
+            snapshot = self._job_dict(job, events)
+        if reconcile_expired and self._is_expired_running(snapshot):
+            interrupted = await self.interrupt_expired(
+                tenant_id=tenant_id,
+                feature=feature,
+                key=key,
+                error=INTERRUPTED_ERROR,
+            )
+            if interrupted:
+                return await self.load_current(
+                    tenant_id=tenant_id,
+                    feature=feature,
+                    key=key,
+                    include_events=include_events,
+                    reconcile_expired=False,
+                )
+        return snapshot
 
     async def load_by_id(
-        self, *, tenant_id: str, feature: str, job_id: str, include_events: bool = True
+        self,
+        *,
+        tenant_id: str,
+        feature: str,
+        job_id: str,
+        include_events: bool = True,
+        reconcile_expired: bool = True,
     ) -> dict[str, Any] | None:
         """Load a current job by its public execution id, scoped to its tenant and feature."""
         async with self._sessions()() as db:
@@ -338,7 +376,33 @@ class DurableJobStore:
                         )
                     ).scalars()
                 )
-            return self._job_dict(job, events)
+            snapshot = self._job_dict(job, events)
+        if reconcile_expired and self._is_expired_running(snapshot):
+            interrupted = await self.interrupt_expired(
+                tenant_id=tenant_id,
+                feature=feature,
+                key=str(snapshot["key"]),
+                error=INTERRUPTED_ERROR,
+            )
+            if interrupted:
+                return await self.load_by_id(
+                    tenant_id=tenant_id,
+                    feature=feature,
+                    job_id=job_id,
+                    include_events=include_events,
+                    reconcile_expired=False,
+                )
+        return snapshot
+
+    @staticmethod
+    def _is_expired_running(job: Mapping[str, Any]) -> bool:
+        if job.get("status") != "running" or not job.get("lease_expires_at"):
+            return False
+        try:
+            expires_at = as_utc(datetime.fromisoformat(str(job["lease_expires_at"])))
+        except ValueError:
+            return False
+        return expires_at is not None and expires_at <= utcnow()
 
     async def events_after(
         self, job_id: str, after_seq: int, *, limit: int = 500
@@ -490,6 +554,60 @@ class DurableJobStore:
                 return False, False
             return True, bool(row[2])
 
+    async def monitor_lease(
+        self,
+        *,
+        job_id: str,
+        lease_token: str,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> tuple[bool, bool]:
+        """Renew a lease until ownership is lost, cancellation is requested, or work ends.
+
+        Transient database failures are tolerated only until the last confirmed lease would
+        expire. This prevents a failed heartbeat task from silently abandoning an unfenced
+        runner, while a bounded operation timeout prevents the monitor itself hanging forever.
+        """
+        loop = asyncio.get_running_loop()
+        renewal_interval = max(self.poll_seconds, self.lease_seconds / 3)
+        control_interval = max(
+            self.poll_seconds,
+            min(1.0, self.lease_seconds / 6),
+        )
+        operation_timeout = max(0.05, min(5.0, self.lease_seconds / 3))
+        next_renewal = loop.time() + renewal_interval
+        confirmed_until = loop.time() + self.lease_seconds
+        failure_logged = False
+        while should_stop is None or not should_stop():
+            await asyncio.sleep(control_interval)
+            renewing = loop.time() >= next_renewal
+            try:
+                async with asyncio.timeout(operation_timeout):
+                    if renewing:
+                        owned, cancel_requested = await self.heartbeat(
+                            job_id=job_id, lease_token=lease_token
+                        )
+                    else:
+                        owned, cancel_requested = await self.lease_state(
+                            job_id=job_id, lease_token=lease_token
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - retry only inside the confirmed lease window
+                if not failure_logged:
+                    log.warning("Durable background-job lease monitor lost database access")
+                    failure_logged = True
+                if loop.time() >= confirmed_until:
+                    return False, False
+                continue
+            failure_logged = False
+            if renewing:
+                next_renewal = loop.time() + renewal_interval
+                if owned:
+                    confirmed_until = loop.time() + self.lease_seconds
+            if not owned or cancel_requested:
+                return owned, cancel_requested
+        return True, False
+
     async def request_cancel(
         self, *, tenant_id: str, feature: str, key: str
     ) -> bool:
@@ -519,15 +637,10 @@ class DurableJobStore:
         tenant_id: str,
         feature: str,
         key: str,
-        error: str,
+        error: str = INTERRUPTED_ERROR,
         retention_seconds: float = DEFAULT_RETENTION_SECONDS,
     ) -> bool:
-        """Fence and fail expired work that cannot be resumed safely.
-
-        This is deliberately separate from :meth:`claim`: resumable managers claim the same
-        attempt with fresh executor input, while non-resumable polling managers call this on
-        status reads rather than silently running a side-effecting operation twice.
-        """
+        """Fence and fail expired work rather than leaving a permanent running row."""
         tenant_id, feature, key = self._scope(tenant_id, feature, key)
         now = utcnow()
         async with self._sessions()() as db:
@@ -586,6 +699,52 @@ class DurableJobStore:
             await db.commit()
             return True
 
+    async def interrupt_all_expired(
+        self,
+        *,
+        tenant_id: str | None = None,
+        feature: str | None = None,
+        error: str = INTERRUPTED_ERROR,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+    ) -> int:
+        """Fail every current running job whose owner lease has expired."""
+        now = utcnow()
+        async with self._sessions()() as db:
+            statement = (
+                select(
+                    DurableJobSlot.tenant_id,
+                    DurableJobSlot.feature,
+                    DurableJobSlot.job_key,
+                )
+                .join(DurableJob, DurableJob.id == DurableJobSlot.current_job_id)
+                .where(
+                    DurableJob.status == "running",
+                    DurableJob.lease_expires_at.is_not(None),
+                    DurableJob.lease_expires_at <= now,
+                    DurableJobSlot.lease_expires_at.is_not(None),
+                    DurableJobSlot.lease_expires_at <= now,
+                )
+            )
+            if tenant_id is not None:
+                statement = statement.where(
+                    DurableJobSlot.tenant_id == (tenant_id or "default")
+                )
+            if feature is not None:
+                statement = statement.where(DurableJobSlot.feature == feature)
+            scopes = list((await db.execute(statement)).all())
+        interrupted = 0
+        for scope_tenant, scope_feature, scope_key in scopes:
+            interrupted += int(
+                await self.interrupt_expired(
+                    tenant_id=scope_tenant,
+                    feature=scope_feature,
+                    key=scope_key,
+                    error=error,
+                    retention_seconds=retention_seconds,
+                )
+            )
+        return interrupted
+
     async def finalize(
         self,
         *,
@@ -615,6 +774,7 @@ class DurableJobStore:
                             result_json=bounded_result,
                             error=(error or "")[:1500] or None,
                             owner_id=None,
+                            lease_token=None,
                             lease_expires_at=None,
                             finished_at=now,
                             expires_at=now
@@ -661,6 +821,11 @@ class DurableJobStore:
         active_only: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
+        if not active_only:
+            await self.interrupt_all_expired(
+                tenant_id=tenant_id,
+                feature=feature,
+            )
         now = utcnow()
         async with self._sessions()() as db:
             statement = (
@@ -765,6 +930,18 @@ class DurableJobStore:
                     return None
                 if job.status != "running":
                     return self._job_dict(job, [])
+                expired = (
+                    as_utc(job.lease_expires_at) is not None
+                    and as_utc(job.lease_expires_at) <= utcnow()
+                )
+                scope = (job.tenant_id, job.feature, job.job_key)
+            if expired:
+                await self.interrupt_expired(
+                    tenant_id=scope[0],
+                    feature=scope[1],
+                    key=scope[2],
+                )
+                continue
             await asyncio.sleep(self.poll_seconds)
 
 
@@ -851,6 +1028,7 @@ class DurableJobExecutor:
         self.event_limit = max(1, int(event_limit))
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self._heartbeats: dict[str, asyncio.Task[None]] = {}
+        _EXECUTORS.add(self)
 
     async def start(
         self,
@@ -877,27 +1055,19 @@ class DurableJobExecutor:
         )
 
         async def _heartbeat() -> None:
-            interval = max(self.store.poll_seconds, self.store.lease_seconds / 3)
-            loop = asyncio.get_running_loop()
-            next_renewal = loop.time() + interval
             try:
-                while True:
-                    await asyncio.sleep(self.store.poll_seconds)
-                    if loop.time() >= next_renewal:
-                        owned, cancel_requested = await self.store.heartbeat(
-                            job_id=context.job_id, lease_token=context.lease_token
-                        )
-                        next_renewal = loop.time() + interval
-                    else:
-                        owned, cancel_requested = await self.store.lease_state(
-                            job_id=context.job_id, lease_token=context.lease_token
-                        )
-                    context.cancel_requested = cancel_requested
-                    if not owned or cancel_requested:
-                        task = self.tasks.get(key)
-                        if task is not None and not task.done():
-                            task.cancel()
-                        return
+                owned, cancel_requested = await self.store.monitor_lease(
+                    job_id=context.job_id,
+                    lease_token=context.lease_token,
+                    should_stop=lambda: (
+                        self.tasks.get(key) is None or self.tasks[key].done()
+                    ),
+                )
+                context.cancel_requested = cancel_requested
+                if not owned or cancel_requested:
+                    task = self.tasks.get(key)
+                    if task is not None and not task.done():
+                        task.cancel()
             except asyncio.CancelledError:
                 return
 
@@ -955,6 +1125,7 @@ class DurableJobExecutor:
                 heartbeat = self._heartbeats.pop(key, None)
                 if heartbeat is not None:
                     heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
 
         task = asyncio.create_task(_run(), name=f"durable-{self.feature}-{key[:32]}")
         self.tasks[key] = task
@@ -971,6 +1142,21 @@ class DurableJobExecutor:
         await asyncio.sleep(0)
         return claim
 
+    async def stop(self, *, timeout_seconds: float = 5.0) -> None:
+        """Cancel and terminalize local runners while the database is still available."""
+        tasks = [task for task in self.tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=max(0.1, timeout_seconds))
+            if pending:
+                log.warning("Durable background jobs exceeded the graceful shutdown window")
+        heartbeats = list(self._heartbeats.values())
+        for heartbeat in heartbeats:
+            heartbeat.cancel()
+        if heartbeats:
+            await asyncio.gather(*heartbeats, return_exceptions=True)
+
     async def cancel(self, *, tenant_id: str, key: str) -> bool:
         requested = await self.store.request_cancel(
             tenant_id=tenant_id, feature=self.feature, key=key
@@ -982,7 +1168,7 @@ class DurableJobExecutor:
 
 
 class DurableJobJanitor:
-    """Periodically remove terminal rows whose feature-specific replay window elapsed."""
+    """Reconcile expired owners and remove terminal rows after their replay window."""
 
     def __init__(self, *, interval_seconds: float = 60.0) -> None:
         self.interval_seconds = max(1.0, interval_seconds)
@@ -1009,6 +1195,11 @@ class DurableJobJanitor:
         store = DurableJobStore(owner_id="durable-job-janitor")
         while not self._stop.is_set():
             try:
+                interrupted = await store.interrupt_all_expired()
+                if interrupted:
+                    log.warning(
+                        "Reconciled %d expired durable background job(s)", interrupted
+                    )
                 removed = await store.cleanup()
                 if removed:
                     log.info("Removed %d expired durable background job(s)", removed)
@@ -1018,6 +1209,16 @@ class DurableJobJanitor:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 continue
+
+
+async def shutdown_executors() -> None:
+    """Gracefully stop every feature executor created in this process."""
+    executors = list(_EXECUTORS)
+    if executors:
+        await asyncio.gather(
+            *(executor.stop() for executor in executors),
+            return_exceptions=True,
+        )
 
 
 janitor = DurableJobJanitor()

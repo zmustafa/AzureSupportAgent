@@ -181,8 +181,8 @@ async def _startup() -> None:
     # failed. Exiting." — which the platform answered by restarting into the same race. The
     # loser of a deadlock has usually had its work done for it by the winner.
     await _ensure_schema_resilient()
-    # Expired terminal generic jobs and chat replay events are removed from their shared SQL
-    # tables even when the replica that executed them no longer exists.
+    # Expired running jobs are failed, and old terminal replay events are removed, even when
+    # the scale-out replica that executed them no longer exists.
     from app.core.durable_jobs import janitor as durable_job_janitor
 
     durable_job_janitor.start()
@@ -383,6 +383,19 @@ async def _shutdown() -> None:
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await _warm_task
     _warm_task = None
+
+    # Container Apps can remove scale-out replicas while detached work is running. Close all
+    # process-owned durable runners first, while SQL is still available, so their rows reach a
+    # terminal state instead of remaining "running" after the replica has disappeared.
+    from app.agent.turn_runner import registry as turn_registry
+    from app.core.durable_jobs import shutdown_executors
+    from app.core.genjob import shutdown_registries
+
+    await asyncio.gather(
+        turn_registry.stop(),
+        shutdown_registries(),
+        shutdown_executors(),
+    )
 
     from app.core import loopwatch
 

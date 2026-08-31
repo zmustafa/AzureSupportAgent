@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent.turn_runner import TurnRegistry
-from app.core.durable_jobs import DurableJobStore, utcnow
+from app.core.durable_jobs import DurableJobExecutor, DurableJobStore, utcnow
 from app.core.genjob import JobRegistry
 from app.core.db import Base
 from app.models import DurableJob, DurableJobEvent, DurableJobSlot
@@ -222,6 +222,228 @@ async def test_stale_owner_cannot_finalize_new_fence(durable_sessions) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "feature",
+    [
+        "alert-analysis-refresh",
+        "architecture.generate",
+        "backup-manager-refresh",
+        "chat-turn",
+        "entra.refresh",
+        "fmea",
+        "iam.refresh",
+        "identity.appregs",
+        "insights.pack",
+        "inventory.cost",
+        "knowme",
+        "mission.control",
+        "resiliency.analyze",
+    ],
+)
+async def test_status_read_reconciles_expired_jobs_for_every_consumer(
+    durable_sessions, feature
+) -> None:
+    store = DurableJobStore(
+        session_factory=durable_sessions,
+        owner_id="scaled-in-replica",
+        lease_seconds=10,
+        poll_seconds=0.01,
+    )
+    claim = await store.claim(tenant_id="tenant-a", feature=feature, key="job")
+    expired = utcnow() - timedelta(seconds=1)
+    async with durable_sessions() as db:
+        await db.execute(
+            update(DurableJob)
+            .where(DurableJob.id == claim.job["id"])
+            .values(lease_expires_at=expired, lease_heartbeat_at=expired)
+        )
+        await db.execute(
+            update(DurableJobSlot)
+            .where(DurableJobSlot.current_job_id == claim.job["id"])
+            .values(lease_expires_at=expired)
+        )
+        await db.commit()
+
+    current = await store.load_current(
+        tenant_id="tenant-a", feature=feature, key="job"
+    )
+    assert current is not None
+    assert current["status"] == "error"
+    assert current["finished_at"] is not None
+    assert "interrupted" in current["error"].lower()
+    assert current["owner_id"] is None
+    assert current["lease_token"] is None
+    async with durable_sessions() as db:
+        slot = (
+            await db.execute(
+                select(DurableJobSlot).where(
+                    DurableJobSlot.current_job_id == claim.job["id"]
+                )
+            )
+        ).scalar_one()
+        assert slot.lease_owner is None
+        assert slot.lease_token is None
+        assert slot.lease_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_janitor_reconciles_expired_jobs_without_a_status_reader(
+    durable_sessions,
+) -> None:
+    store = DurableJobStore(
+        session_factory=durable_sessions,
+        owner_id="removed-replica",
+        lease_seconds=10,
+        poll_seconds=0.01,
+    )
+    claims = [
+        await store.claim(tenant_id="tenant-a", feature=feature, key="job")
+        for feature in ("entra.refresh", "iam.refresh")
+    ]
+    expired = utcnow() - timedelta(seconds=1)
+    async with durable_sessions() as db:
+        await db.execute(
+            update(DurableJob)
+            .where(DurableJob.id.in_([claim.job["id"] for claim in claims]))
+            .values(lease_expires_at=expired, lease_heartbeat_at=expired)
+        )
+        await db.execute(
+            update(DurableJobSlot)
+            .where(DurableJobSlot.current_job_id.in_([claim.job["id"] for claim in claims]))
+            .values(lease_expires_at=expired)
+        )
+        await db.commit()
+
+    assert await store.interrupt_all_expired() == 2
+    async with durable_sessions() as db:
+        statuses = list(
+            (
+                await db.execute(
+                    select(DurableJob.status).where(
+                        DurableJob.id.in_([claim.job["id"] for claim in claims])
+                    )
+                )
+            ).scalars()
+        )
+    assert statuses == ["error", "error"]
+
+
+@pytest.mark.asyncio
+async def test_executor_stop_terminalizes_work_before_replica_exit(durable_sessions) -> None:
+    executor = DurableJobExecutor(
+        "shutdown",
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        poll_seconds=0.01,
+    )
+    entered = asyncio.Event()
+
+    async def runner(_context):
+        entered.set()
+        await asyncio.Event().wait()
+
+    claim = await executor.start(
+        tenant_id="tenant-a", key="job", metadata={}, runner=runner
+    )
+    await entered.wait()
+    await executor.stop()
+
+    current = await executor.store.load_current(
+        tenant_id="tenant-a",
+        feature="shutdown",
+        key="job",
+        reconcile_expired=False,
+    )
+    assert current is not None
+    assert current["status"] == "error"
+    assert current["finished_at"] is not None
+    assert current["id"] == claim.job["id"]
+    assert current["owner_id"] is None
+    assert current["lease_token"] is None
+
+
+@pytest.mark.asyncio
+async def test_lease_monitor_fails_closed_when_database_checks_hang(
+    durable_sessions, monkeypatch
+) -> None:
+    store = DurableJobStore(
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        lease_seconds=0.15,
+        poll_seconds=0.01,
+    )
+
+    async def hangs(**_kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(store, "heartbeat", hangs)
+    monkeypatch.setattr(store, "lease_state", hangs)
+    owned, cancel_requested = await asyncio.wait_for(
+        store.monitor_lease(job_id="job", lease_token="token"),
+        timeout=0.5,
+    )
+    assert owned is False
+    assert cancel_requested is False
+
+
+@pytest.mark.asyncio
+async def test_generic_registry_stop_terminalizes_work_before_replica_exit(
+    durable_sessions,
+) -> None:
+    registry = JobRegistry(
+        "generic-shutdown",
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        poll_seconds=0.01,
+    )
+    entered = asyncio.Event()
+
+    async def runner(_progress):
+        entered.set()
+        await asyncio.Event().wait()
+
+    await registry.start("job", runner, tenant_id="tenant-a")
+    await entered.wait()
+    await registry.stop()
+    current = await registry.get_job("job", tenant_id="tenant-a")
+    assert current is not None
+    assert current["status"] == "error"
+    assert current["finished_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_turn_registry_stop_terminalizes_work_before_replica_exit(
+    durable_sessions,
+) -> None:
+    registry = TurnRegistry(
+        session_factory=durable_sessions,
+        owner_id="replica-a",
+        poll_seconds=0.01,
+    )
+    entered = asyncio.Event()
+
+    async def worker(_run):
+        entered.set()
+        await asyncio.Event().wait()
+
+    run = await registry.start(
+        "chat-shutdown", "message-a", worker, tenant_id="tenant-a"
+    )
+    await entered.wait()
+    await registry.stop()
+    current = await registry._store.load_current(  # noqa: SLF001 - lifecycle assertion
+        tenant_id="tenant-a",
+        feature=TurnRegistry.FEATURE,
+        key="chat-shutdown",
+        reconcile_expired=False,
+    )
+    assert current is not None
+    assert current["id"] == run.job_id
+    assert current["status"] == "cancelled"
+    assert current["finished_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_expired_owner_is_recovered_and_old_runner_is_fenced(durable_sessions) -> None:
     old = JobRegistry(
         "recover", session_factory=durable_sessions, owner_id="replica-a",
@@ -266,6 +488,8 @@ async def test_expired_owner_is_recovered_and_old_runner_is_fenced(durable_sessi
     if old_task is not None:
         old_task.cancel()
     await asyncio.wait_for(old_cancelled.wait(), timeout=1)
+    if old_task is not None:
+        await asyncio.gather(old_task, return_exceptions=True)
     still_new = await new.get_job("job", tenant_id="tenant-a")
     assert still_new is not None and still_new["result"] == {"owner": "new"}
 

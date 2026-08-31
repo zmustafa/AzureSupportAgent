@@ -351,6 +351,24 @@ class TurnRegistry:
             }
         return snapshot
 
+    async def stop(self, *, timeout_seconds: float = 5.0) -> None:
+        """Terminalize local turns while their database connection is still usable."""
+        tasks = [
+            run.task
+            for run in self._runs.values()
+            if run.task is not None and not run.task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=max(0.1, timeout_seconds))
+            if pending:
+                log.warning("Chat turns exceeded the graceful shutdown window")
+        expiry_tasks = list(self._expiry_tasks)
+        for task in expiry_tasks:
+            task.cancel()
+        if expiry_tasks:
+            await asyncio.gather(*expiry_tasks, return_exceptions=True)
 
     async def start(
         self,
@@ -422,6 +440,9 @@ class TurnRegistry:
             finally:
                 if run._watchdog_task is not None:  # noqa: SLF001 - paired lifecycle
                     run._watchdog_task.cancel()  # noqa: SLF001
+                    await asyncio.gather(  # noqa: SLF001 - paired lifecycle
+                        run._watchdog_task, return_exceptions=True  # noqa: SLF001
+                    )
                 await asyncio.shield(run.close_durable(status=status, error=error))
                 async def _expire() -> None:
                     await asyncio.sleep(60)
@@ -439,26 +460,16 @@ class TurnRegistry:
 
     async def _watch(self, run: TurnRun) -> None:
         assert run._lease_token is not None  # noqa: SLF001
-        heartbeat_interval = max(self._store.poll_seconds, self._store.lease_seconds / 3)
-        loop = asyncio.get_running_loop()
-        next_heartbeat = loop.time() + heartbeat_interval
         try:
-            while not run.done:
-                await asyncio.sleep(self._store.poll_seconds)
-                if loop.time() >= next_heartbeat:
-                    owned, cancel_requested = await self._store.heartbeat(
-                        job_id=run.job_id, lease_token=run._lease_token  # noqa: SLF001
-                    )
-                    next_heartbeat = loop.time() + heartbeat_interval
-                else:
-                    owned, cancel_requested = await self._store.lease_state(
-                        job_id=run.job_id, lease_token=run._lease_token  # noqa: SLF001
-                    )
-                if not owned or cancel_requested:
-                    run.cancelled = cancel_requested
-                    if run.task is not None and not run.task.done():
-                        run.task.cancel()
-                    return
+            owned, cancel_requested = await self._store.monitor_lease(
+                job_id=run.job_id,
+                lease_token=run._lease_token,  # noqa: SLF001
+                should_stop=lambda: run.done,
+            )
+            if not owned or cancel_requested:
+                run.cancelled = cancel_requested
+                if run.task is not None and not run.task.done():
+                    run.task.cancel()
         except asyncio.CancelledError:
             return
 

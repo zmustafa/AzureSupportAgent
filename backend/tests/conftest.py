@@ -176,6 +176,9 @@ async def durable_job_sessions(tmp_path):
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     yield sessions
+    from app.core.durable_jobs import shutdown_executors
+
+    await shutdown_executors()
     await engine.dispose()
 
 

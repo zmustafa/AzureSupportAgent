@@ -132,6 +132,11 @@ class InsightsJobManager:
                 }
                 await context.emit("step", done)
                 return JobOutcome(result=digest)
+            except asyncio.CancelledError:
+                if not writer.done():
+                    writer.cancel()
+                await asyncio.gather(writer, return_exceptions=True)
+                raise
             except Exception as exc:  # noqa: BLE001 - expose bounded polling failure
                 if not writer.done():
                     writer.cancel()

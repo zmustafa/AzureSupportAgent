@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import weakref
 from typing import Any, Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -32,6 +33,8 @@ log = logging.getLogger("app.core.genjob")
 # that the final SSE ``done`` event carries (and that the runner has already persisted).
 ProgressFn = Callable[[str, str], Awaitable[None]]
 Runner = Callable[[ProgressFn], Awaitable[dict[str, Any]]]
+
+_REGISTRIES: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 class JobRegistry:
@@ -61,6 +64,7 @@ class JobRegistry:
         self._conds: dict[str, asyncio.Condition] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._heartbeat_tasks: dict[str, asyncio.Task] = {}
+        _REGISTRIES.add(self)
 
     # ---- internals --------------------------------------------------------------
     def _cond(self, key: str) -> asyncio.Condition:
@@ -99,26 +103,18 @@ class JobRegistry:
             cond.notify_all()
 
     async def _heartbeat(self, key: str, job_id: str, lease_token: str) -> None:
-        heartbeat_interval = max(self._store.poll_seconds, self._store.lease_seconds / 3)
-        loop = asyncio.get_running_loop()
-        next_heartbeat = loop.time() + heartbeat_interval
         try:
-            while True:
-                await asyncio.sleep(self._store.poll_seconds)
-                if loop.time() >= next_heartbeat:
-                    owned, cancel_requested = await self._store.heartbeat(
-                        job_id=job_id, lease_token=lease_token
-                    )
-                    next_heartbeat = loop.time() + heartbeat_interval
-                else:
-                    owned, cancel_requested = await self._store.lease_state(
-                        job_id=job_id, lease_token=lease_token
-                    )
-                if not owned or cancel_requested:
-                    task = self._tasks.get(key)
-                    if task is not None and not task.done():
-                        task.cancel()
-                    return
+            owned, cancel_requested = await self._store.monitor_lease(
+                job_id=job_id,
+                lease_token=lease_token,
+                should_stop=lambda: (
+                    self._tasks.get(key) is None or self._tasks[key].done()
+                ),
+            )
+            if not owned or cancel_requested:
+                task = self._tasks.get(key)
+                if task is not None and not task.done():
+                    task.cancel()
         except asyncio.CancelledError:
             return
 
@@ -246,6 +242,7 @@ class JobRegistry:
                 heartbeat = self._heartbeat_tasks.pop(key, None)
                 if heartbeat is not None:
                     heartbeat.cancel()
+                    await asyncio.gather(heartbeat, return_exceptions=True)
                 latest = await self.get_job(key, tenant_id=tenant_id)
                 if latest is not None:
                     self._jobs[key] = latest
@@ -277,6 +274,21 @@ class JobRegistry:
 
     async def cleanup(self) -> int:
         return await self._store.cleanup(feature=self.name)
+
+    async def stop(self, *, timeout_seconds: float = 5.0) -> None:
+        """Cancel and terminalize this process's runners before replica shutdown."""
+        tasks = [task for task in self._tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=max(0.1, timeout_seconds))
+            if pending:
+                log.warning("Background generation jobs exceeded the graceful shutdown window")
+        heartbeats = list(self._heartbeat_tasks.values())
+        for heartbeat in heartbeats:
+            heartbeat.cancel()
+        if heartbeats:
+            await asyncio.gather(*heartbeats, return_exceptions=True)
 
     async def stream(self, key: str, *, tenant_id: str = "default"):
         """Async generator of SSE-ready dicts: replay the progress log so far, then tail new
@@ -331,3 +343,13 @@ class JobRegistry:
             yield {"event": "done", "data": json.dumps(job["result"] or {})}
         else:
             yield {"event": "error", "data": json.dumps({"message": job["error"] or "Generation failed."})}
+
+
+async def shutdown_registries() -> None:
+    """Gracefully stop every generic registry created in this process."""
+    registries = list(_REGISTRIES)
+    if registries:
+        await asyncio.gather(
+            *(registry.stop() for registry in registries),
+            return_exceptions=True,
+        )

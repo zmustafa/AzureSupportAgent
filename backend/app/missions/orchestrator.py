@@ -893,12 +893,43 @@ async def get_mission(mission_id: str, tenant_id: str) -> dict[str, Any] | None:
     if live is not None:
         return live.public()
     from app.core.db import SessionLocal
+    from app.core.durable_jobs import DurableJobStore
     from app.models import MissionRun
 
     async with SessionLocal() as db:
         row = await db.get(MissionRun, mission_id)
     if row is None or row.tenant_id != tenant_id or row.deleted_at is not None:
         return None
+    if row.status in {"queued", "running"}:
+        durable = await DurableJobStore().load_current(
+            tenant_id=tenant_id,
+            feature="mission.control",
+            key=mission_id,
+            include_events=False,
+        )
+        if durable is None or durable["status"] != "running":
+            result = dict((durable or {}).get("result") or {})
+            if durable and durable["status"] == "done":
+                terminal_status = str(result.get("status") or "succeeded")
+            elif durable and durable["status"] == "cancelled":
+                terminal_status = "cancelled"
+            else:
+                terminal_status = "failed"
+            async with SessionLocal() as db:
+                current = await db.get(MissionRun, mission_id)
+                if (
+                    current is not None
+                    and current.tenant_id == tenant_id
+                    and current.status in {"queued", "running"}
+                ):
+                    current.status = terminal_status
+                    current.error = str(
+                        (durable or {}).get("error")
+                        or "Mission was interrupted before completion."
+                    )[:1500]
+                    current.ended_at = _now()
+                    await db.commit()
+                    row = current
     return _row_public(row)
 
 
