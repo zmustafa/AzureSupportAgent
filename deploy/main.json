@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "63803471516936985"
+      "templateHash": "13845330582118819318"
     }
   },
   "parameters": {
@@ -27,7 +27,7 @@
     },
     "containerImage": {
       "type": "string",
-      "defaultValue": "docker.io/zmustafa/azure-support-agent@sha256:37e4a4a6ea446bfe6d72b2c375699763ba031aa2b598fda4fb9e9d589dcde27f",
+      "defaultValue": "docker.io/zmustafa/azure-support-agent@sha256:8ac7ef39a3d62ef37b1a055b969e58273e7b32c22ca43867654f84ddd4375529",
       "metadata": {
         "description": "Immutable container image reference. The default is a published linux/amd64 manifest digest; override only with another reviewed tag or, preferably, registry/repository@sha256:digest reference."
       }

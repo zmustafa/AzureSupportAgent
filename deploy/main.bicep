@@ -9,7 +9,7 @@ param location string = 'westus3'
 param appName string = 'azure-support-agent'
 
 @description('Immutable container image reference. The default is a published linux/amd64 manifest digest; override only with another reviewed tag or, preferably, registry/repository@sha256:digest reference.')
-param containerImage string = 'docker.io/zmustafa/azure-support-agent@sha256:37e4a4a6ea446bfe6d72b2c375699763ba031aa2b598fda4fb9e9d589dcde27f'
+param containerImage string = 'docker.io/zmustafa/azure-support-agent@sha256:8ac7ef39a3d62ef37b1a055b969e58273e7b32c22ca43867654f84ddd4375529'
 
 @description('Optional Azure Container Registry login server, for example contoso.azurecr.io. Leave empty for public images. When set, containerRegistryIdentityResourceId must name an existing user-assigned identity with AcrPull on that registry.')
 param containerRegistryServer string = ''
