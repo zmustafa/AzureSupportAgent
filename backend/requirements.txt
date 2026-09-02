@@ -10,7 +10,7 @@ anyio==4.14.2
 argon2-cffi==25.1.0
 argon2-cffi-bindings==25.1.0
 asyncpg==0.31.0
-asyncssh==2.23.1
+asyncssh==2.24.0
 attrs==26.1.0
 Authlib==1.7.2
 azure-core==1.41.0
