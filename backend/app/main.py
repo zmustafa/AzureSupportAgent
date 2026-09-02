@@ -457,6 +457,10 @@ app.add_middleware(
 # send `Accept: text/event-stream`; we bypass GZipMiddleware for those requests
 # so per-event delivery latency is preserved (gzip's internal buffer would
 # otherwise batch/delay events).
+#
+# Workbook downloads are deliberately NOT excluded. An .xlsx looks incompressible because it
+# is a ZIP container, but measured on a real 1,500-row export gzip still removes 18.5% — and
+# Starlette compresses a body over 128 KiB in a worker thread, so it never reaches the loop.
 class _SafeGZip:
     def __init__(self, app, minimum_size: int = 1024) -> None:
         self._raw_app = app

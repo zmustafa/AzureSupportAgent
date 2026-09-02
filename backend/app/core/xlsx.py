@@ -310,8 +310,12 @@ class WorkbookBuilder:
         # "n/a" and a thousands separator on the rest would be a lie about the column's type.
         numeric = [True] * ncols
         populated = [False] * ncols
-        for r in data:
-            row_number = ws.max_row + 1
+        # Counted, never read back from the sheet: openpyxl's `max_row` is `max(self._cells)`,
+        # a full scan of every cell written so far, so asking it once per row made this method
+        # O(rows^2 x cols). A 16,000-row sheet took ~35 s and a whole workbook outlived the
+        # 240 s Azure Container Apps request timeout; counting makes the same sheet 0.6 s.
+        for offset, r in enumerate(data):
+            row_number = offset + 2
             for ci in range(ncols):
                 raw = r[ci] if ci < len(r) else None
                 if ci in date_idx:
@@ -444,16 +448,17 @@ class WorkbookBuilder:
             cell.fill = self._header_fill
             cell.alignment = Alignment(vertical="center")
         link_font = Font(color="0563C1", underline="single")
-        for name, section, count, note in self.manifest:
+        for offset, (name, section, count, note) in enumerate(self.manifest):
+            row_number = offset + 2
             ws.append([name, section, count, coerce(note)])
-            cell = ws.cell(row=ws.max_row, column=1)
+            cell = ws.cell(row=row_number, column=1)
             # `location`, not `target`: a target would be written as an EXTERNAL relationship
             # and Excel would try to open it as a file. An apostrophe in a sheet name has to be
             # doubled or the quoted reference terminates early.
             quoted = str(name).replace("'", "''")
             cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{quoted}'!A1")
             cell.font = link_font
-            ws.cell(row=ws.max_row, column=4).alignment = Alignment(vertical="top", wrap_text=True)
+            ws.cell(row=row_number, column=4).alignment = Alignment(vertical="top", wrap_text=True)
         ws.freeze_panes = "A2"
         ws.column_dimensions["A"].width = 34
         ws.column_dimensions["B"].width = 22

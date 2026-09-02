@@ -25,6 +25,7 @@ import ast
 import asyncio
 import inspect
 import statistics
+import textwrap
 import time
 from pathlib import Path
 
@@ -70,6 +71,14 @@ _FILES = [
     _ROOT / "iam" / "store.py",
 ]
 
+# Entra's equivalents. Kept separate from `_MUST_BE_THREADED` because `app/api/entra.py` as a
+# whole does NOT satisfy this rule yet: 57 endpoints reach the snapshot through the synchronous
+# `_snapshot` helper, which is cheap on a memo hit and expensive on the first read after a
+# refresh. Listing the file wholesale would fail on all of them; leaving the file out entirely
+# would have let the export regress again. So the guard is scoped to the export, which is the
+# one caller that serialises fifty sheets and took the live site down.
+_ENTRA_MUST_BE_THREADED = {"analyze", "escalation_edges", "read_runs", "history", "to_workbook"}
+
 
 class _InlineCallFinder(ast.NodeVisitor):
     """Finds calls to expensive functions made directly inside an `async def` body.
@@ -81,7 +90,8 @@ class _InlineCallFinder(ast.NodeVisitor):
     workbook export, where the two most expensive computations in the product sat in the
     argument list of a `to_thread` that appeared to protect them."""
 
-    def __init__(self) -> None:
+    def __init__(self, names: set[str] | None = None) -> None:
+        self.names = names or _MUST_BE_THREADED
         self.async_depth = 0
         self.sync_depth = 0
         self.offenders: list[tuple[str, int]] = []
@@ -116,7 +126,7 @@ class _InlineCallFinder(ast.NodeVisitor):
                 if isinstance(first, (ast.Lambda, ast.Call)):
                     self.visit(first)
             return
-        if name in _MUST_BE_THREADED and self.async_depth and not self.sync_depth:
+        if name in self.names and self.async_depth and not self.sync_depth:
             self.offenders.append((name, node.lineno))
         self.generic_visit(node)
 
@@ -190,6 +200,58 @@ def test_the_detector_can_actually_fail():
     assert finder5.offenders == [("compute_overview", 2)]
 
 
+def test_the_entra_workbook_export_builds_nothing_on_the_event_loop():
+    """The outage of 2026-09-02, pinned.
+
+    `GET /entra/export/workbook` analysed the snapshot, walked the escalation graph, merged the
+    activation ledger and serialised fifty sheets inline, then handed only the final formatter
+    to a thread. On the live tenant that was minutes of frozen event loop per click: the browser
+    got a 504 from the 240 s Container Apps ingress timeout, and every other request in the
+    process failed with `QueuePool limit of size 5 overflow 5 reached` because nothing could be
+    scheduled to release a connection.
+
+    Only `_target` may stay on the loop."""
+    import app.api.entra as entra_api
+
+    src = textwrap.dedent(inspect.getsource(entra_api.export_workbook))
+    finder = _InlineCallFinder(_ENTRA_MUST_BE_THREADED)
+    finder.visit(ast.parse(src))
+    assert not finder.offenders, (
+        "the Entra workbook export calls these on the event loop: "
+        + ", ".join(f"{n}()" for n, _ in finder.offenders)
+        + ". Build them inside the function handed to cpu.run."
+    )
+
+
+def test_that_entra_export_guard_fails_on_the_code_that_caused_the_outage():
+    """The guard above is only worth having if it fails on the shape that broke production.
+
+    This is the real pre-fix body, not an invented one: everything was computed inline and only
+    `to_workbook` was passed to `to_thread` — which is exactly why it looked protected."""
+    broken = textwrap.dedent(
+        """
+        async def export_workbook(connection_id=None, principal=None):
+            connection, tenant_id, _cid = _target(principal, connection_id)
+            snapshot = snapshot_mod.analyze(tenant_id)
+            escalations = [e for e in blastradius.escalation_edges(snapshot.get("data") or {})]
+            scanner_runs = scanners_mod.read_runs(tenant_id)
+            content = await asyncio.to_thread(
+                entra_export.to_workbook,
+                snapshot=snapshot,
+                escalations=escalations,
+                history=score_mod.history(tenant_id),
+                scanners=scanner_runs,
+            )
+            return Response(content=content)
+        """
+    )
+    finder = _InlineCallFinder(_ENTRA_MUST_BE_THREADED)
+    finder.visit(ast.parse(broken))
+    assert sorted(n for n, _ in finder.offenders) == [
+        "analyze", "escalation_edges", "history", "read_runs",
+    ], f"the guard missed the original defect; it only saw {finder.offenders}"
+
+
 @pytest.mark.parametrize(
     "module,attr",
     [
@@ -197,6 +259,7 @@ def test_the_detector_can_actually_fail():
         ("app.api.iam", "rightsizing"),
         ("app.api.iam", "export_workbook"),
         ("app.iam.orchestrator", "refresh_usage"),
+        ("app.api.entra", "export_workbook"),
     ],
 )
 def test_the_heaviest_jobs_run_under_the_concurrency_cap(module: str, attr: str):

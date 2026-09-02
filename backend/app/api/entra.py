@@ -2775,54 +2775,63 @@ async def export_workbook(
 
     Carries the raw directory too (users, groups, service principals, registrations), which the
     tabs only ever show counts of. **The Users sheet contains personal data.**"""
-    connection, tenant_id, _cid = _target(principal, connection_id)
-    snapshot = snapshot_mod.analyze(tenant_id)
+    from app.iam import cpu as iam_cpu
 
-    # The few things the screens compute rather than store. Passed in so the formatter stays
-    # pure and can be unit-tested without a tenant.
-    escalations = [{
-        "source": e["source"], "target": e["target"], "primitive": e["data"]["primitive"],
-        "name": e["label"], "reason": e["data"]["reason"],
-        "confidence": e["data"]["confidence"], "rule": e["data"]["rule"],
-    } for e in blastradius.escalation_edges(snapshot.get("data") or {})]
+    _connection, tenant_id, _cid = _target(principal, connection_id)
 
-    granted = set((snapshot.get("permissions") or {}).get("granted") or [])
-    setup_tiers = [{
-        **tier,
-        "granted": [s for s in tier["scopes"] if s in granted],
-        "missing": [s for s in tier["scopes"] if s not in granted],
-        "complete": bool(granted) and all(s in granted for s in tier["scopes"]),
-    } for tier in permissions_probe.TIERS]
+    # EVERYTHING below runs in the worker thread, under the shared CPU cap. Only `_target`
+    # stays on the loop. Analysing the snapshot, merging the activation ledger and serialising
+    # fifty sheets is tens of seconds of pure-Python work; inline it froze every other request
+    # in the process, which is what turned a slow download into an application-wide outage.
+    def _build() -> bytes:
+        snapshot = snapshot_mod.analyze(tenant_id)
 
-    # Exactly what GET /entra/scanners builds. `public()` alone carries no run history and no
-    # blocked reason, so the workbook's Blocked column read "no" for every scanner including
-    # the ones that could not run at all.
-    scanner_runs = scanners_mod.read_runs(tenant_id)
-    domain_meta = snapshot.get("domains") or {}
-    scanner_cards = []
-    for scanner in scanners_mod.registry():
-        last = scanner_runs.get(scanner.id) or {}
-        scanner_cards.append({
-            **scanner.public(),
-            "last_run": last.get("at", ""),
-            "last_counts": last.get("counts") or {},
-            "blocked": scanners_mod.unavailable_reason(scanner, domain_meta),
-        })
+        # The few things the screens compute rather than store. Passed in so the formatter
+        # stays pure and can be unit-tested without a tenant.
+        escalations = [{
+            "source": e["source"], "target": e["target"], "primitive": e["data"]["primitive"],
+            "name": e["label"], "reason": e["data"]["reason"],
+            "confidence": e["data"]["confidence"], "rule": e["data"]["rule"],
+        } for e in blastradius.escalation_edges(snapshot.get("data") or {})]
 
-    # The screen merges the snapshot's sessions with the durable ledger so history reaches past
-    # Graph's 30-day retention. Reading the snapshot alone loses those older sessions.
-    merged_sessions, _domain = _activation_sessions(snapshot, tenant_id, history=True)
-    merged_sessions = _decorate(merged_sessions, snapshot, 0.0, (8, 18))
+        granted = set((snapshot.get("permissions") or {}).get("granted") or [])
+        setup_tiers = [{
+            **tier,
+            "granted": [s for s in tier["scopes"] if s in granted],
+            "missing": [s for s in tier["scopes"] if s not in granted],
+            "complete": bool(granted) and all(s in granted for s in tier["scopes"]),
+        } for tier in permissions_probe.TIERS]
 
-    content = await asyncio.to_thread(
-        entra_export.to_workbook,
-        snapshot=snapshot,
-        escalations=escalations,
-        history=score_mod.history(tenant_id) if hasattr(score_mod, "history") else None,
-        setup_tiers=setup_tiers,
-        scanners=scanner_cards,
-        activations=merged_sessions,
-    )
+        # Exactly what GET /entra/scanners builds. `public()` alone carries no run history and
+        # no blocked reason, so the workbook's Blocked column read "no" for every scanner
+        # including the ones that could not run at all.
+        scanner_runs = scanners_mod.read_runs(tenant_id)
+        domain_meta = snapshot.get("domains") or {}
+        scanner_cards = []
+        for scanner in scanners_mod.registry():
+            last = scanner_runs.get(scanner.id) or {}
+            scanner_cards.append({
+                **scanner.public(),
+                "last_run": last.get("at", ""),
+                "last_counts": last.get("counts") or {},
+                "blocked": scanners_mod.unavailable_reason(scanner, domain_meta),
+            })
+
+        # The screen merges the snapshot's sessions with the durable ledger so history reaches
+        # past Graph's 30-day retention. Reading the snapshot alone loses those older sessions.
+        merged_sessions, _domain = _activation_sessions(snapshot, tenant_id, history=True)
+        merged_sessions = _decorate(merged_sessions, snapshot, 0.0, (8, 18))
+
+        return entra_export.to_workbook(
+            snapshot=snapshot,
+            escalations=escalations,
+            history=score_mod.history(tenant_id) if hasattr(score_mod, "history") else None,
+            setup_tiers=setup_tiers,
+            scanners=scanner_cards,
+            activations=merged_sessions,
+        )
+
+    content = await iam_cpu.run(_build, label="entra workbook export")
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
