@@ -33,7 +33,7 @@ The template provisions a cost-conscious footprint: an Azure Container App with 
 1. Select the **Deploy to Azure** button above. It opens the portal's **Custom deployment** blade pre-loaded with the template. Every resource is created in your own subscription.
 2. Select the subscription, resource group, and region. Confirm that the selected region supports the template's Container Apps and PostgreSQL choices.
 3. Enter separate bootstrap and PostgreSQL administrator passwords. Do not reuse personal credentials. The bootstrap password is temporary and must be changed at first sign-in; the database password remains an application dependency.
-4. Review the remaining parameters, including the immutable container image digest, database tier/storage/backup/HA settings, replica limits, diagnostics, alerts, locks, and private-networking choice.
+4. Review the remaining parameters, including the mutable `latest` container image, automatically generated revision suffix, database tier/storage/backup/HA settings, replica limits, diagnostics, alerts, locks, and private-networking choice.
 5. In public database mode, explicitly acknowledge the cross-tenant `AllowAzureServices` firewall behavior. Private mode uses `No` and creates private endpoints instead.
 6. Select **Review + create**, resolve validation errors, and then select **Create**.
 7. Wait for the deployment to finish. PostgreSQL commonly takes longer than the other resources.
@@ -47,7 +47,8 @@ The bootstrap and PostgreSQL passwords plus the public-database acknowledgement 
 | Parameter | Default |
 | --- | --- |
 | Location | `westus3`, validated for Container Apps and PostgreSQL B1ms |
-| Container image | a published `docker.io/...@sha256:...` manifest digest; no mutable `latest` default |
+| Container image | the published Docker Hub `latest` tag; each deployment generates a fresh revision suffix so Azure pulls the current image |
+| Container revision suffix | `latest-<UTC timestamp>`, evaluated separately for every deployment |
 | Admin username | `admin` |
 | PostgreSQL | Burstable `Standard_B1ms`, 32 GiB, autogrow off, 14-day backup, no geo redundancy or HA |
 | Azure Files | 32 GiB share, `Standard_LRS`, 14-day share soft delete |
@@ -56,6 +57,8 @@ The bootstrap and PostgreSQL passwords plus the public-database acknowledgement 
 | Protection | system-assigned identity on; deletion locks off |
 
 Verify the current defaults in [`deploy/main.bicep`](https://github.com/zmustafa/AzureSupportAgent/blob/main/deploy/main.bicep); the template is authoritative when it differs from this table.
+
+Moving the registry's `latest` tag does not update an already running Container App by itself. Rerun the deployment to refresh it. The generated timestamp changes `template.revisionSuffix`, causing Azure Container Apps to create a new revision and pull the current `latest` image even when all other parameters are unchanged.
 
 ## What the template creates
 

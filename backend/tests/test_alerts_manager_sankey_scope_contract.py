@@ -450,6 +450,7 @@ async def test_bulk_api_retains_legacy_routes_while_forwarding_scope(
         "workload_id": "wl-1", "subscription_id": None, "management_group_id": None,
         "monitor_condition": "Fired", "include_disabled": True,
         "families": {"metric"}, "severities": {2},
+        "activity_categories": set(), "service_health_event_types": None,
     }
 
 # --------------------------------------------------------------------- demo scope is not Azure

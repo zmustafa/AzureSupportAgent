@@ -57,14 +57,42 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 ## How to visualize notification paths and separate them from overlaps
 
 1. Open `/alerts-manager/visualize` and run the notification simulation for the selected scope.
-2. Trace the rendered resources and rules through Action Groups to receivers; inspect duplicate or missing route edges.
-3. Open `/alerts-manager/overlaps` to find rules sharing a signal/target or notification path.
-4. Expand a group and compare scopes, conditions, severities, Action Groups, and receiver paths.
-5. Decide whether the repeated path is intentional escalation or unintended duplicate delivery; use firing history separately to judge noisy behavior.
+2. Use the always-visible **Activity category** selector. Choosing a category selects the Activity family and applies the filter locally without reloading Azure inventory.
+3. For **Service Health**, open **Event types** and select Service issue, Planned maintenance, Health advisories, Security advisories, or any combination. Health advisories include both `Informational` and `ActionRequired`.
+4. For **Resource Health**, filter Event status, Current resource status, Previous resource status, and Reason type. Display values such as In Progress and Platform Initiated map to Azure's compact condition values.
+5. For **Recommendation**, filter Recommendation category and Impact level. High Availability and Operational Excellence accept both spaced and compact Azure values.
+6. Use **Reset Activity filters** to return to all categories. Changing rule family, severity, enabled state, category, or a category dimension updates the graph immediately in the browser; changing Event state reruns the simulation.
+7. Trace the rendered resources and rules through Action Groups to receivers; inspect duplicate or missing route edges. A rule without a condition for a selected dimension is unrestricted for that dimension.
+8. If an unmapped-value warning appears, use broad filters and review the routing diagnostic before narrowing the view; Azure may have introduced a value not yet classified.
+9. Open `/alerts-manager/overlaps` to find rules sharing a signal/target or notification path, then decide whether the repeated path is intentional escalation or unintended duplicate delivery. Use firing history separately to judge noisy behavior.
 
 **Expected result:** Simulated notification topology and structural overlap evidence are evaluated separately from firing frequency.
 
-**Verification:** Trace each suspected duplicate from rule to Action Group to receiver. An overlap is a review signal, not automatically an error.
+**Verification:** Change each local filter and confirm that no new bulk-simulation request is made while the graph, KPIs, route count, diagnostics, CSV, and JSON all describe the same filtered rule set. Trace each suspected duplicate from rule to Action Group to receiver. An overlap is a review signal, not automatically an error, and the simulator does not replay historical events.
+
+## How to edit a rule or Action Group from Visualize
+
+1. In `/alerts-manager/visualize`, right-click an alert-rule or Action Group node. Keyboard users can focus the node and press `Shift+F10` or the Context Menu key.
+2. Select **Edit rule** or **Edit Action Group**. If several connected resources are available, select the intended name and ARM ID from the inline list.
+3. Confirm that the app navigates to **Rule management** or **Action groups** and opens the existing editor with the selected resource loaded.
+4. Review the full rule conditions, scope, routing, or receiver configuration. Cancel to return without creating a change, or save to create the normal approval-gated managed change.
+
+**Expected result:** The exact connected entity opens in its existing editor. Right-clicking resource, receiver, or outcome nodes does not open an edit menu. Read-only and unauthorized actions stay visible but locked with an explanation.
+
+**Verification:** Close the editor, return to Visualize, and confirm the prior client filters, zoom, and highlight remain. No Azure write occurs until a separately approved managed change is applied.
+
+## How to create a guided Activity Log alert rule
+
+1. Open `/alerts-manager/manage-rules` on a writable connection and select **+ Activity**.
+2. Choose the subscription, destination resource group, processing region, and target scope.
+3. In **Activity Log conditions**, choose a category. The editor replaces incompatible fields with that category's defaults.
+4. For Service Health, select Event types and optionally enter impacted services or regions. For Resource Health, select Event status, Current resource status, Previous resource status, and Reason type. For Recommendation, select Recommendation category and Impact level; the Advisor operation is added automatically.
+5. Use the dropdown search, **Select all**, and **Clear** controls to build each `containsAny` condition. Existing custom values are identified and preserved until that field is changed.
+6. Select one or more Action Groups, enter the change reason, and select **Validate & create change**. Review any overlap warning before continuing.
+
+**Expected result:** The editor submits category plus guided ARM `equals` and `containsAny` conditions as an approval-gated pending change; it does not write directly to Azure.
+
+**Verification:** Inspect the pending change in `/alerts-manager/changes` and confirm the category, condition field names, selected raw Azure values, scope, and Action Groups before approval.
 
 ## How to add missing AMBA alerts in bulk
 
@@ -116,15 +144,15 @@ Open `/alerts-manager`. It normalizes to `/alerts-manager/overview`. Current rou
 3. Select **Set up missing alerts**. In **Categories**, choose Service Health, Resource Health, Security, and/or Recommendation. Missing and unhealthy categories are preselected.
 4. In **Subscriptions**, search, filter, group, and page through the resolved subscriptions. Select every intended subscription explicitly; unlisted subscriptions are never inferred.
 5. In **Conditions & naming**, map every selected subscription to a destination resource group. Existing update/enable operations retain their existing destination.
-6. To reuse a name where it already exists, enter **Preferred resource-group name** and select **Use where available**. If a destination does not exist, enable **Create missing resource groups**, provide a default or row-specific location, and select **Copy name** or type an explicit name.
-7. Optionally select **Save as connection default** after all rows resolve. This stores the preferred name, default location, and per-subscription mappings in tenant/connection-scoped application state; it does not create Azure resources.
-8. Set the rule-name prefix and review category conditions. Service Health requires at least one incident type; Resource Health requires at least one current status. Optional comma-separated filters are de-duplicated and bounded by the server allowlist.
-9. In **Routing**, choose only enabled Action Groups with active receivers. For a multi-subscription scope, prefer **Hybrid central + local routing**: select one healthy visible central Action Group, use matching-name or explicit healthy same-subscription overrides where available, and leave the central group as the supported cross-subscription fallback elsewhere.
-10. If a subscription requires a local route and has no healthy local group, explicitly enable local Action Group creation, select **Create local clone** for that row, choose a healthy visible clone source, and enter an Azure-safe prefix. The clone is an approval-gated prerequisite, not an immediate Azure write.
-11. Treat **Suggest from ownership** as ranking evidence, not an approval. Inspect full destinations for existing groups and verify any **SIEM-capable route?** hint. Use the separate diagnostic-settings flow for Activity Log ingestion.
-12. Select **Review plan**. Inspect resource-group prerequisites first, Action Group prerequisites second, and rules third. Confirm every `local`, `cross subscription`, or `planned clone` relationship. Clone preview intentionally shows IDs and receiver counts without exposing endpoints or secrets.
-13. Select **Validate**. If inputs or live inventory changed, rebuild the preview. Submit only after validation passes.
-14. Optionally save the resolved resource-group and Action Group preferences as the connection default. This writes tenant-and-connection-scoped application state and performs no Azure write.
+6. Review the real prefilled **Preferred resource-group name** (`rg-monitoring` when no policy exists) and select the colored **Use where available** action to apply existing matches. Its count shows how many selected subscriptions will change.
+7. If a destination does not exist, enable **Create missing resource groups**, review the prefilled `eastus` default or enter a row-specific location, and select **Copy name to missing** or type an explicit name. The action count shows how many unmatched rows will be filled.
+8. Optionally select **Save as connection default** at any time after the preferred name is valid. This stores the preferred name, default location, and only resolved per-subscription mappings in tenant/connection-scoped application state; unresolved empty rows are omitted and no Azure resource is created.
+9. Set the rule-name prefix and review category conditions. Service Health requires at least one incident type; Resource Health requires at least one current status. Optional comma-separated filters are de-duplicated and bounded by the server allowlist.
+10. In **Routing**, choose only enabled Action Groups with active receivers. For a multi-subscription scope, prefer **Hybrid central + local routing**: select one healthy visible central Action Group, use matching-name or explicit healthy same-subscription overrides where available, and leave the central group as the supported cross-subscription fallback elsewhere.
+11. If a subscription requires a local route and has no healthy local group, explicitly enable local Action Group creation, select **Create local clone** for that row, choose a healthy visible clone source, and enter an Azure-safe prefix. The clone is an approval-gated prerequisite, not an immediate Azure write.
+12. Treat **Suggest from ownership** as ranking evidence, not an approval. Inspect full destinations for existing groups and verify any **SIEM-capable route?** hint. Use the separate diagnostic-settings flow for Activity Log ingestion.
+13. Select **Review plan**. Inspect resource-group prerequisites first, Action Group prerequisites second, and rules third. Confirm every `local`, `cross subscription`, or `planned clone` relationship. Clone preview intentionally shows IDs and receiver counts without exposing endpoints or secrets.
+14. Select **Validate**. If inputs or live inventory changed, rebuild the preview. Submit only after validation passes.
 15. Select **Submit pending changes**. The result is an ordered batch of pending application records; no Azure write occurs.
 
 **Expected result:** Missing resource groups become pending prerequisites, explicitly selected local clones become pending Action Group prerequisites, and actionable Activity Log rule creates/updates/enables follow them. Equivalent, blocked, and invalid rows are not submitted as Azure changes.

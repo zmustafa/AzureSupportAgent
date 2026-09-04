@@ -49,7 +49,7 @@ The Azure MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Write-cap
 
 1. **Choose persistence.** Use PostgreSQL for a shared production database, or place SQLite's `.data` directory on Azure Files. Never rely on an ephemeral container filesystem.
 2. **Choose the identity.** Prefer a Container App managed identity. If using a service principal, store its secret or certificate as a Container App secret.
-3. **Build and tag the image.** Build from the repository root so the frontend and backend are included. Record and deploy the registry manifest digest, not a mutable tag.
+3. **Build, scan, and publish the image.** Build from the repository root so the frontend and backend are included, scan it before publication, and update the registry's `latest` tag.
 4. **Create the Container Apps environment and application.** Expose port 8000 through HTTPS ingress.
 5. **Set production configuration.** Important settings include the database URL, secure-cookie behavior, bootstrap administrator values, public URL, connection identity, and optional model configuration.
 6. **Attach persistent storage** before allowing production traffic when SQLite is selected.
@@ -84,7 +84,7 @@ az deployment group create -g <resource-group> `
   --parameters deploy/production.bicepparam
 ```
 
-Use the default template instead for the lower-cost 1-2 replica/Burstable/LRS profile. Supply an immutable image as `registry/repository@sha256:digest` when overriding `containerImage`.
+Use the default template instead for the lower-cost 1-2 replica/Burstable/LRS profile. Keep `containerImage` on `registry/repository:latest`. The template's timestamp-backed `containerRevisionSuffix` creates a fresh revision on every deployment so Azure pulls the current image.
 
 ### Production knobs
 
@@ -92,11 +92,11 @@ Use the default template instead for the lower-cost 1-2 replica/Burstable/LRS pr
 - Container Apps: environment zone redundancy, CPU/memory, minimum/maximum replicas, HTTP concurrency, and startup/liveness/readiness probes.
 - Storage: redundancy, Azure Files quota, and share soft-delete retention.
 - Operations: shared tags, Log Analytics retention, data-service diagnostics, optional metric/log alerts and email receiver, and optional `CanNotDelete` locks.
-- Secrets and supply chain: immutable image digest, system-assigned runtime identity, optional existing user-assigned identity for ACR/Key Vault, and optional Key Vault URIs for database/admin/encryption secrets.
+- Secrets and supply chain: pre-publication image scanning, a mutable `latest` application tag, system-assigned runtime identity, optional existing user-assigned identity for ACR/Key Vault, and optional Key Vault URIs for database/admin/encryption secrets.
 
 `appMaxReplicas` must be at least `appMinReplicas`. PostgreSQL HA requires a supported General Purpose or Memory Optimized SKU. A private ACR configuration requires an existing user-assigned identity with AcrPull before the initial deployment. Scheduled-query alerts should be enabled on a later deployment, after the Container Apps log tables have received data; platform metric alerts can be enabled initially.
 
-When publishing a new image, resolve its manifest digest, pass that digest as `containerImage`, and retain the old digest as the rollback handle. See [upgrades and uninstall]({{ site.baseurl }}/getting-started/upgrades-uninstall/).
+When publishing a new image, scan it first and then move `latest` to that reviewed build. Re-running the supplied template uses a new revision suffix automatically; a direct `az containerapp update` must likewise provide a unique suffix. See [upgrades and uninstall]({{ site.baseurl }}/getting-started/upgrades-uninstall/).
 
 ## Cost and scaling
 
@@ -117,7 +117,7 @@ When publishing a new image, resolve its manifest digest, pass that digest as `c
 
 ## Validate the result
 
-- The Container App revision is healthy and serving the expected immutable image.
+- The Container App revision is healthy, serving the expected `latest` build, and reports the expected build identity from `/version`.
 - `/healthz` succeeds without touching dependencies; `/readyz` succeeds only when the bounded database probe and recent event-loop criterion are healthy.
 - Refreshing a client-side route such as `/workloads` returns the SPA, not a 404.
 - Database data survives a revision restart.

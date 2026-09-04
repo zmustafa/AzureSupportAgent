@@ -142,6 +142,8 @@ class NotificationSimulationRequest(BaseModel):
 
 
 class BulkNotificationSimulationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     connection_id: str = ""
     workload_id: str | None = None
     subscription_id: str | None = None
@@ -150,6 +152,8 @@ class BulkNotificationSimulationRequest(BaseModel):
     include_disabled: bool = True
     families: list[Literal["metric", "log", "activity", "smart", "prometheus"]] = Field(default_factory=list)
     severities: list[int] = Field(default_factory=list, max_length=5)
+    activity_categories: list[Literal["ServiceHealth", "ResourceHealth", "Security", "Recommendation", "Other"]] = Field(default_factory=list, max_length=5)
+    service_health_event_types: list[Literal["service_issue", "planned_maintenance", "health_advisory", "security_advisory"]] | None = Field(default=None, max_length=4)
 
 
 class NoiseGuardRequest(BaseModel):
@@ -1900,12 +1904,20 @@ async def bulk_simulate_notification_paths(
     scopes = [payload.workload_id, payload.subscription_id, payload.management_group_id]
     if sum(bool(value) for value in scopes) != 1:
         raise HTTPException(status_code=422, detail="Select exactly one workload, subscription, or management group scope.")
+    if payload.activity_categories and payload.families and set(payload.families) != {"activity"}:
+        raise HTTPException(status_code=422, detail="Activity category filters require the Activity rule family.")
+    if payload.service_health_event_types is not None and "ServiceHealth" not in payload.activity_categories:
+        raise HTTPException(status_code=422, detail="Service Health event types require the ServiceHealth activity category.")
     try:
         return await advisory.bulk_simulate_notification_paths(
             _connection(payload.connection_id, payload.workload_id),
             workload_id=payload.workload_id, subscription_id=payload.subscription_id,
             management_group_id=payload.management_group_id, monitor_condition=payload.monitor_condition,
             include_disabled=payload.include_disabled, families=set(payload.families), severities=set(payload.severities),
+            activity_categories=set(payload.activity_categories),
+            service_health_event_types=(
+                None if payload.service_health_event_types is None else set(payload.service_health_event_types)
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

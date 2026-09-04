@@ -762,6 +762,27 @@ export type AlertsManagerCapabilities = {
 };
 
 export type ActivityLogCategory = "ServiceHealth" | "ResourceHealth" | "Security" | "Recommendation";
+export type ActivityLogFilterCategory = ActivityLogCategory | "Other";
+export type ServiceHealthEventType = "service_issue" | "planned_maintenance" | "health_advisory" | "security_advisory";
+export type ResourceHealthEventStatus = "active" | "in_progress" | "resolved" | "updated";
+export type ResourceHealthStatus = "available" | "degraded" | "unavailable" | "unknown";
+export type ResourceHealthReasonType = "platform_initiated" | "unknown" | "user_initiated";
+export type RecommendationCategory = "cost" | "performance" | "high_availability" | "operational_excellence" | "security";
+export type RecommendationImpact = "high" | "medium" | "low";
+export type ActivityRuleFilterMetadata = {
+  activity_category?: string;
+  service_health_event_types?: ServiceHealthEventType[];
+  service_health_unrestricted?: boolean;
+  service_health_unmapped?: boolean;
+  resource_health_event_statuses?: ResourceHealthEventStatus[];
+  resource_health_current_statuses?: ResourceHealthStatus[];
+  resource_health_previous_statuses?: ResourceHealthStatus[];
+  resource_health_reason_types?: ResourceHealthReasonType[];
+  recommendation_categories?: RecommendationCategory[];
+  recommendation_impacts?: RecommendationImpact[];
+  activity_unrestricted_fields?: string[];
+  activity_unmapped_values?: Record<string, string[]>;
+};
 export type ActivityLogCoverageStatus = "covered" | "partial" | "missing" | "disabled" | "no_routing" | "unknown";
 export type ActivityLogCondition = { field: string; equals?: string; containsAny?: string[]; anyOf?: ActivityLogCondition[] };
 export type ActivityLogSubscriptionMetadata = { id?: string; subscription_id?: string; name?: string; display_name?: string; state?: string; status?: string; environment?: string; tags?: Record<string, string> };
@@ -1126,10 +1147,11 @@ export type NotificationSimulation = {
 
 export type BulkNotificationSimulation = {
   summary: { rules: number; resources: number; action_groups: number; receiver_paths: number; would_deliver: number; blocked: number; diagnostics: number };
-  facets?: { families: Partial<Record<ManagedAlertRule["family"], number>>; severities: Partial<Record<0 | 1 | 2 | 3 | 4, number>>; total_rules: number };
-  nodes: { id: string; name: string; kind: "resource" | "alert" | "action_group" | "receiver" | "outcome"; status: string; resource_id?: string; family?: string; severity?: number; receiver_type?: string; fingerprint?: string }[];
+  facets?: { families: Partial<Record<ManagedAlertRule["family"], number>>; severities: Partial<Record<0 | 1 | 2 | 3 | 4, number>>; total_rules: number; activity_categories?: Partial<Record<ActivityLogFilterCategory, number>>; service_health_event_types?: Partial<Record<ServiceHealthEventType, number>>; service_health_unrestricted?: number; service_health_unmapped?: number; resource_health_event_statuses?: Partial<Record<ResourceHealthEventStatus, number>>; resource_health_current_statuses?: Partial<Record<ResourceHealthStatus, number>>; resource_health_previous_statuses?: Partial<Record<ResourceHealthStatus, number>>; resource_health_reason_types?: Partial<Record<ResourceHealthReasonType, number>>; recommendation_categories?: Partial<Record<RecommendationCategory, number>>; recommendation_impacts?: Partial<Record<RecommendationImpact, number>>; activity_unmapped?: number; applied?: { activity_categories: ActivityLogFilterCategory[]; service_health_event_types: ServiceHealthEventType[] | null } };
+  rules?: Array<{ id: string; name: string; family: ManagedAlertRule["family"]; severity: number | null; enabled: boolean } & ActivityRuleFilterMetadata>;
+  nodes: Array<{ id: string; name: string; kind: "resource" | "alert" | "action_group" | "receiver" | "outcome"; status: string; resource_id?: string; family?: string; severity?: number; receiver_type?: string; fingerprint?: string } & ActivityRuleFilterMetadata>;
   links: { source: string; target: string; value: number; status: string; receiver_type?: string }[];
-  routes: { resource_ids: string[]; rule_id: string; rule_name: string; family: string; severity: number | null; rule_enabled: boolean; action_group_id: string; action_group_name: string; action_group_enabled?: boolean; receiver_type: string; receiver_name: string; receiver_destination?: string; receiver_masked: string; receiver_fingerprint?: string; receiver_enabled?: boolean; payload_schema?: string; outcome: string; would_run?: boolean; issues: string[] }[];
+  routes: Array<{ resource_ids: string[]; rule_id: string; rule_name: string; family: string; severity: number | null; rule_enabled: boolean; action_group_id: string; action_group_name: string; action_group_enabled?: boolean; receiver_type: string; receiver_name: string; receiver_destination?: string; receiver_masked: string; receiver_fingerprint?: string; receiver_enabled?: boolean; payload_schema?: string; outcome: string; would_run?: boolean; issues: string[] } & ActivityRuleFilterMetadata>;
   diagnostics: { code: string; severity: string; rule_id?: string; rule_name?: string; action_group_id?: string; receiver?: string; message: string }[];
   scope?: { kind: "workload" | "subscription" | "management_group"; id: string; name?: string };
   resources?: { id: string; name?: string; type?: string; resource_type?: string; resource_group?: string; subscription_id?: string; subscription_name?: string; workload_ids?: string[]; alert_rule_ids?: string[]; accessible?: boolean }[];
@@ -7513,7 +7535,7 @@ export const api = {
     http<NoiseGuardResult>("/alerts-manager/alert-rules/noise-guard", { method: "POST", body: JSON.stringify(body) }),
   simulateNotificationPath: (body: { connection_id?: string; rule_id?: string; rule_name?: string; family?: ManagedAlertRule["family"]; resource_id?: string; severity?: number; timestamp?: string; description?: string; action_group_ids?: string[]; selected_action_group_ids?: string[]; use_selected_only?: boolean; monitor_condition?: "Fired" | "Resolved" }) =>
     http<NotificationSimulation>("/alerts-manager/notifications/simulate", { method: "POST", body: JSON.stringify(body) }),
-  bulkSimulateNotificationPaths: (body: AlertsManagerScopeContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[] }, signal?: AbortSignal) =>
+  bulkSimulateNotificationPaths: (body: AlertsManagerScopeContext & { monitor_condition?: "Fired" | "Resolved"; include_disabled?: boolean; families?: ManagedAlertRule["family"][]; severities?: number[]; activity_categories?: ActivityLogFilterCategory[]; service_health_event_types?: ServiceHealthEventType[] }, signal?: AbortSignal) =>
     http<BulkNotificationSimulation>("/alerts-manager/notifications/bulk-simulate", { method: "POST", body: JSON.stringify(body), signal }),
   actionGroupSuggestions: (params: { connection_id?: string; workload_id?: string; subject_kind: "resource" | "workload"; subject_id: string }) => {
     const q = new URLSearchParams({ subject_kind: params.subject_kind, subject_id: params.subject_id });

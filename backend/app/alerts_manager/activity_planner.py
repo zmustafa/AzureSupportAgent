@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from app.alerts_manager import rules
+from app.alerts_manager import rules, service_health
 from app.alerts_manager.activity_coverage import ESSENTIAL_CATEGORIES, normalize_category, subscription_scope
 
 _DEFAULTS: dict[str, dict[str, Any]] = {
@@ -16,7 +16,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "description": "Notify responders about Azure Service Health incidents for this subscription.",
         "conditions": [
             {"field": "category", "equals": "ServiceHealth"},
-            {"field": "properties.incidentType", "containsAny": ["Incident", "Maintenance", "Security", "ActionRequired"]},
+            {"field": "properties.incidentType", "containsAny": list(service_health.SERVICE_HEALTH_INCIDENT_TYPES)},
         ],
     },
     "ResourceHealth": {
@@ -25,7 +25,10 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "description": "Notify responders when Azure reports an unhealthy resource state.",
         "conditions": [
             {"field": "category", "equals": "ResourceHealth"},
-            {"field": "properties.currentHealthStatus", "containsAny": ["Degraded", "Unavailable", "Unknown"]},
+            {"field": "status", "containsAny": ["Active", "InProgress", "Resolved", "Updated"]},
+            {"field": "properties.currentHealthStatus", "containsAny": ["Available", "Degraded", "Unavailable"]},
+            {"field": "properties.previousHealthStatus", "containsAny": ["Available", "Degraded", "Unavailable", "Unknown"]},
+            {"field": "properties.cause", "containsAny": ["PlatformInitiated", "Unknown", "UserInitiated"]},
         ],
     },
     "Security": {
@@ -45,10 +48,13 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
 _CONDITION_FIELDS: dict[str, set[str]] = {
     "ServiceHealth": {"properties.incidentType", "properties.service", "properties.region"},
     "ResourceHealth": {
-        "properties.currentHealthStatus", "properties.previousHealthStatus", "properties.cause",
+        "status", "properties.currentHealthStatus", "properties.previousHealthStatus", "properties.cause",
     },
     "Security": {"level", "operationName", "resourceType", "resourceGroup"},
-    "Recommendation": {"level", "operationName", "resourceType", "resourceGroup"},
+    "Recommendation": {
+        "level", "operationName", "resourceType", "resourceGroup",
+        "properties.recommendationCategory", "properties.recommendationImpact",
+    },
 }
 _CONDITION_OPERATORS = {"equals", "containsAny"}
 

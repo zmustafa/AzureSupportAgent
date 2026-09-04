@@ -36,7 +36,7 @@ Alerts Manager combines current alert operations with rule authoring and governe
 - **Overview** summarizes gaps, overlaps, ineffective/clean rules, activity-log coverage, and reference cost estimates.
 - **Overview** also hosts **Essential Activity Log coverage** and its five-step setup wizard: Categories, Subscriptions, Conditions & naming, Routing, and Review.
 - **Alert instances** lists fired alerts and state history; permitted users can acknowledge or close an instance.
-- **Visualize** runs the notification-path simulator and renders resources/rules through action groups to receivers so duplicate and missing routes can be inspected.
+- **Visualize** runs the notification-path simulator and renders resources/rules through action groups to receivers so duplicate and missing routes can be inspected. Activity rules can be narrowed by category; Service Health rules can also be narrowed by Azure event type.
 - **Overlaps** shows rules monitoring the same signal/target and their notification impact.
 - **Gaps** shows missing, disabled, or ineffective baseline coverage and can create reviewed rules or deployment plans for supported gaps.
 - **Rule analysis** evaluates observed conditions, targets, action groups, firings, status, recommendations, and estimated cost.
@@ -69,18 +69,53 @@ The live Alerts Manager inventory cache lasts 20 seconds, is bounded to 128 entr
 3. **Recover from an out-of-band conflict:** open `/alerts-manager/changes`, inspect a **Stale** row whose concurrency hash no longer matches Azure, refresh live inventory, create a new request instead of forcing the old payload, and run **Analyze again** after apply.
 4. **Establish management-group Activity Log coverage:** select a management group, map every selected subscription to its own existing monitoring resource group or an explicitly approved resource-group prerequisite, choose a healthy visible central Action Group with recommended same-subscription overrides or approved local clones, review server-classified operations, validate, submit pending changes, and apply prerequisites before dependent rules.
 
+### Activity Log filters in Visualize
+
+**Activity category** is always visible. Choosing a category selects the Activity family locally and reveals category-specific filters. Rule family, severity, enabled state, Activity category, and all category dimensions filter the already-loaded routing universe in the browser; they do not rerun Azure inventory. Scope, event state, and explicit simulation refreshes can rerun the backend.
+
+Choosing **Service Health** adds Azure's four event types. The simulator maps them to Activity Log `properties.incidentType` values as follows:
+
+| Visualize event type | Activity Log value |
+| --- | --- |
+| Service issue | `Incident` |
+| Planned maintenance | `Maintenance` |
+| Health advisories | `Informational` or `ActionRequired` |
+| Security advisories | `Security` |
+
+Choosing **Resource Health** adds **Event status** (`status`: Active, InProgress, Resolved, Updated), **Current resource status** (`properties.currentHealthStatus`: Available, Degraded, Unavailable), **Previous resource status** (`properties.previousHealthStatus`: Available, Degraded, Unavailable, Unknown), and **Reason type** (`properties.cause`: PlatformInitiated, Unknown, UserInitiated).
+
+Facet counts are computed from the conditions currently stored on each live ARM rule. They do not assume the portal defaults. New guided rules and Essential Activity Log plans now default to all four event statuses, all three current statuses, all four previous statuses, and all three reason types. Existing rules are not silently rewritten; a zero beside **Available** means the live rule does not currently include that value.
+
+Choosing **Recommendation** adds **Recommendation category** (`properties.recommendationCategory`: Cost, Performance, HighAvailability, OperationalExcellence, Security) and **Impact level** (`properties.recommendationImpact`: High, Medium, Low). Display labels use spaces while condition matching accepts both spaced and compact Azure values.
+
+Multiple values within one dropdown use OR semantics; separate dimensions use AND semantics. Conditions within an Azure rule retain their ARM `allOf`/`anyOf` semantics. A rule without a condition for one dimension is unrestricted for that dimension. Unknown future values are not silently assigned to a known option: Visualize reports an unmapped-condition warning and routing diagnostic. The graph, KPIs, routes, diagnostics, and exports all use the same client-filtered rule set.
+
+This is a configured-routing prediction, not a replay of historical Service Health notifications. It does not fire an alert or send a notification. Use Alert instances or Azure Service Health history to investigate events that actually occurred.
+
+Alert-rule and Action Group nodes support a context menu through right-click, `Shift+F10`, or the keyboard Context Menu key. The menu always offers **Edit rule** and **Edit Action Group**. If the clicked entity has several connected counterparts, the chosen action expands to an inline list so the operator selects the exact ARM resource. Selecting an action opens the corresponding management tab and loads the existing editor with that resource's current configuration. Visualize filter and highlight context is retained for the return journey.
+
+On a read-only connection or without the relevant management permission, both context actions remain visible as red locked items with the reason. Missing or unreadable connected entities are disabled separately. Opening an editor performs reads only; saving still creates an approval-gated managed change and never applies directly to Azure.
+
+### Guided Activity Log rule authoring
+
+Creating or editing an Activity Log rule in **Rule management** dynamically changes the condition controls for the selected category. Service Health provides event-type selection plus optional impacted services and regions. Resource Health provides Event status, Current resource status, Previous resource status, and Reason type. Recommendation provides Recommendation category and Impact level and fixes the Advisor operation to `Microsoft.Advisor/recommendations/available/action`. Administrative and Security retain operation, level, status, resource-type, and resource-group controls.
+
+Changing category resets incompatible conditions to safe category defaults. Multi-select values become ARM `containsAny` clauses; singular free-text values become `equals` clauses. Existing unknown values for a supported field remain visible as preserved custom values until that field or category is changed. Saving still creates an approval-gated managed change and never writes immediately to Azure.
+
 ### Essential Activity Log destination model
 
 The setup wizard manages four subscription-level categories: **Service Health**, **Resource Health**, **Security**, and **Recommendation**. It creates or repairs Activity Log alert rules; it does not silently configure SIEM ingestion. Security event export requires the separate diagnostic-settings workflow.
+
+For a read-only tenant connection, **Set up missing alerts** remains visible as a red locked action and a persistent notice explains that a writable connection is required. Missing rule-management permission is reported separately from tenant read-only state.
 
 For a management-group scope, destination mapping is per subscription:
 
 - A common resource-group name is optional. Each selected subscription can map to a different resource group.
 - Existing rule updates and enables retain the existing rule's resource group.
 - New rules require a mapped resource group. The wizard verifies each target with ARM before it permits submission.
-- **Preferred resource-group name** applies only where a matching group exists. With **Create missing resource groups** enabled, **Copy name** can propose that name for missing groups, but a location is also required.
+- **Preferred resource-group name** is a real editable value, prefilled as `rg-monitoring` when no connection policy is saved. **Use where available** applies it only where a matching group exists. With **Create missing resource groups** enabled, **Copy name to missing** fills unmatched subscriptions; the prefilled `eastus` default location can be changed before planning.
 - If exactly one resource group is visible for a subscription, it is the fallback after saved and preferred mappings. Ambiguous subscriptions remain unresolved rather than receiving an arbitrary destination.
-- **Save as connection default** writes tenant-and-connection-scoped application configuration containing the preferred name, default location, and normalized subscription-to-resource-group map. It requires `alerts_manager.rule_write`, is audited, and does not write Azure.
+- **Save as connection default** writes tenant-and-connection-scoped application configuration containing the preferred name, default location, and resolved subscription-to-resource-group mappings. It can save reusable naming and location defaults before every current mapping is complete; unresolved empty rows are omitted. It requires `alerts_manager.rule_write`, is audited, and does not write Azure.
 
 Only enabled Action Groups with at least one active receiver are selectable. **One common Action Group** can be a healthy group visible through the selected connection in another subscription; preview labels each rule relationship `local` or `cross_subscription`. **Hybrid central + local routing** is the recommended multi-subscription model: a same-subscription healthy override wins, otherwise the healthy central Action Group is the fallback. Saved preferred and per-subscription Action Group mappings are tenant-and-connection scoped application configuration, are re-matched only to healthy visible groups, and require `alerts_manager.rule_write` to read or update.
 

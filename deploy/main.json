@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "14657910219246194113"
+      "templateHash": "18066828053158299130"
     }
   },
   "parameters": {
@@ -27,9 +27,18 @@
     },
     "containerImage": {
       "type": "string",
-      "defaultValue": "docker.io/zmustafa/azure-support-agent@sha256:1256331a82774800ed5c894f41bbe052df6ee3f4fbb65bbcf35935aefd3489b9",
+      "defaultValue": "docker.io/zmustafa/azure-support-agent:latest",
       "metadata": {
-        "description": "Immutable container image reference. The default is a published linux/amd64 manifest digest; override only with another reviewed tag or, preferably, registry/repository@sha256:digest reference."
+        "description": "Mutable container image reference. Keep the application deployment on the latest tag; do not pin it to a manifest digest."
+      }
+    },
+    "containerRevisionSuffix": {
+      "type": "string",
+      "defaultValue": "[format('latest-{0}', utcNow('yyyyMMddHHmmssfff'))]",
+      "minLength": 1,
+      "maxLength": 64,
+      "metadata": {
+        "description": "Unique Container Apps revision suffix. The timestamp default forces every template deployment to create a fresh revision and pull the current latest image."
       }
     },
     "containerRegistryServer": {
@@ -1043,6 +1052,7 @@
           "secrets": "[concat(createArray(if(empty(parameters('databaseUrlSecretUri')), createObject('name', 'database-url', 'value', format('postgresql+asyncpg://{0}:{1}@{2}:5432/{3}?ssl=require', uriComponent(parameters('postgresAdminLogin')), uriComponent(parameters('postgresAdminPassword')), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName')), '2024-08-01').fullyQualifiedDomainName, parameters('postgresDatabaseName'))), createObject('name', 'database-url', 'keyVaultUrl', parameters('databaseUrlSecretUri'), 'identity', variables('keyVaultIdentity'))), variables('adminPasswordSecret')), if(variables('hasSecretsEncryptionKey'), createArray(variables('secretsEncryptionKeySecret')), createArray()))]"
         },
         "template": {
+          "revisionSuffix": "[parameters('containerRevisionSuffix')]",
           "containers": [
             {
               "name": "azsupagent",

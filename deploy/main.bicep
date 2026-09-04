@@ -8,8 +8,13 @@ param location string = 'westus3'
 @maxLength(40)
 param appName string = 'azure-support-agent'
 
-@description('Immutable container image reference. The default is a published linux/amd64 manifest digest; override only with another reviewed tag or, preferably, registry/repository@sha256:digest reference.')
-param containerImage string = 'docker.io/zmustafa/azure-support-agent@sha256:1256331a82774800ed5c894f41bbe052df6ee3f4fbb65bbcf35935aefd3489b9'
+@description('Mutable container image reference. Keep the application deployment on the latest tag; do not pin it to a manifest digest.')
+param containerImage string = 'docker.io/zmustafa/azure-support-agent:latest'
+
+@description('Unique Container Apps revision suffix. The timestamp default forces every template deployment to create a fresh revision and pull the current latest image.')
+@minLength(1)
+@maxLength(64)
+param containerRevisionSuffix string = format('latest-{0}', utcNow('yyyyMMddHHmmssfff'))
 
 @description('Optional Azure Container Registry login server, for example contoso.azurecr.io. Leave empty for public images. When set, containerRegistryIdentityResourceId must name an existing user-assigned identity with AcrPull on that registry.')
 param containerRegistryServer string = ''
@@ -773,6 +778,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       secrets: containerSecrets
     }
     template: {
+      revisionSuffix: containerRevisionSuffix
       containers: [
         {
           name: 'azsupagent'

@@ -1292,6 +1292,32 @@ export function AlertsManagerPanel() {
     finally { setManagementBusy(""); }
   }
 
+  async function editVisualizedRule(ruleId: string, family: ManagedAlertRule["family"]) {
+    goTab("manage-rules");
+    setManagementBusy(ruleId); setError("");
+    if (capabilities?.read_only || !capabilities?.can_manage_rules) {
+      setError(capabilities?.read_only ? "This tenant connection is read-only. Select a writable connection to edit alert rules." : "You do not have permission to edit alert rules.");
+      setManagementBusy("");
+      return;
+    }
+    try { setRuleEditor((await api.managedAlertRuleDetails(connId, ruleId, family)).rule); }
+    catch (cause) { setError(`Could not load the selected alert rule: ${formatError(cause)}`); }
+    finally { setManagementBusy(""); }
+  }
+
+  async function editVisualizedActionGroup(actionGroupId: string) {
+    goTab("action-groups");
+    setManagementBusy(actionGroupId); setError(""); setActionGroupEditorError("");
+    if (capabilities?.read_only || !capabilities?.can_manage_action_groups) {
+      setError(capabilities?.read_only ? "This tenant connection is read-only. Select a writable connection to edit Action Groups." : "You do not have permission to edit Action Groups.");
+      setManagementBusy("");
+      return;
+    }
+    try { setEditor((await api.managedActionGroupDetails(connId, actionGroupId)).action_group); }
+    catch (cause) { setError(`Could not load the selected Action Group: ${formatError(cause)}`); }
+    finally { setManagementBusy(""); }
+  }
+
   async function cloneManagedRule(row: ManagedAlertRule) {
     setManagementBusy(row.id); setError("");
     try {
@@ -1514,12 +1540,12 @@ export function AlertsManagerPanel() {
               <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone={data.kpis.firings_7d > 0 ? "amber" : "gray"} />
               <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone={data.kpis.firings_30d > 0 ? "blue" : "gray"} />
             </div>}
-            <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} disabled={!capabilities?.can_manage_rules || !!capabilities.read_only} onOpen={() => setActivityLogWizardOpen(true)} />} />
+            <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} readOnly={!!capabilities?.read_only} canManageRules={!!capabilities?.can_manage_rules} onOpen={() => setActivityLogWizardOpen(true)} />} />
           </div>
           : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} sortColumn={overlapSort} sortDirection={overlapSortDirection} onSort={(column) => updateSort(column, overlapSort, overlapSortDirection, setOverlapSort, setOverlapSortDirection, column === "confidence" ? "desc" : "asc")} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
           : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} sortColumn={gapSort} sortDirection={gapSortDirection} onSort={(column) => updateSort(column, gapSort, gapSortDirection, setGapSort, setGapSortDirection)} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
           : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} sortColumn={ruleSort} sortDirection={ruleSortDirection} onSort={(column) => updateSort(column, ruleSort, ruleSortDirection, setRuleSort, setRuleSortDirection, column === "cost" || column === "firings" ? "desc" : "asc")} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
-          : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} />
+          : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} readOnly={!!capabilities?.read_only} canEditRules={!!capabilities?.can_manage_rules} canEditActionGroups={!!capabilities?.can_manage_action_groups} onEditRule={(ruleId, family) => void editVisualizedRule(ruleId, family)} onEditActionGroup={(actionGroupId) => void editVisualizedActionGroup(actionGroupId)} />
           : null}
       </main>
       {editor && <ActionGroupEditor initial={editor} connectionId={connId} busy={managementBusy === "save"} saveError={actionGroupEditorError} onClose={() => { setActionGroupEditorError(""); setEditor(null); }} onSave={(value, reason) => void saveActionGroup(value, reason)} />}

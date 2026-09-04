@@ -317,14 +317,14 @@ credentials · 🌐 IP allowlisting · 🖥️ Sandbox VMs for private-endpoint 
 ## 🚀 Deploy to Azure (one-click)
 
 > **Status: tested.** Provisions a managed PostgreSQL database, Azure Files state storage,
-> and the Container App running an immutable public image digest — in **your** subscription, in one
+> and the Container App following the current public `latest` image — in **your** subscription, in one
 > deployment. No CLI, no manual wiring.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fzmustafa%2FAzureSupportAgent%2Fmain%2Fdeploy%2Fmain.json)
 
 What it creates:
 
-1. **Azure Container App** running a digest-pinned public Docker Hub image
+1. **Azure Container App** running the public Docker Hub `latest` image with a fresh revision per deployment
 2. **Azure Database for PostgreSQL — Flexible Server** (managed), auto-linked via `DATABASE_URL` (`?ssl=require`)
 3. **Azure Files** share mounted at `/app/.data` (registries, caches, encryption key)
 4. **Container Apps environment** + external HTTPS ingress on port 8000

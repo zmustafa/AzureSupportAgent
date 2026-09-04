@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.alerts_manager import rules, service
+from app.alerts_manager import rules, service, service_health
 
 
 _MONITORING_CONTROL_PLANE_RESOURCE_TYPES = frozenset({
@@ -209,6 +209,8 @@ def build_bulk_notification_simulation(
     inventory: list[dict[str, Any]], groups: list[dict[str, Any]], *,
     monitor_condition: str = "Fired", include_disabled: bool = True,
     families: set[str] | None = None, severities: set[int] | None = None,
+    activity_categories: set[str] | None = None,
+    service_health_event_types: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build a read-only estate routing graph from already-loaded Azure inventories."""
     filtered = [
@@ -216,12 +218,17 @@ def build_bulk_notification_simulation(
         if (include_disabled or rule.get("enabled"))
         and (not families or rule.get("family") in families)
         and (not severities or rule.get("severity") in severities)
+        and service_health.matches_activity_filters(
+            rule, activity_categories=activity_categories,
+            service_health_event_types=service_health_event_types,
+        )
     ]
     groups_by_id = {str(group.get("id") or "").lower(): group for group in groups}
     nodes: dict[str, dict[str, Any]] = {}
     links: dict[tuple[str, str, str], dict[str, Any]] = {}
     routes: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
+    rule_records: list[dict[str, Any]] = []
     receiver_occurrences: dict[str, set[str]] = {}
 
     def node(node_id: str, name: str, kind: str, status: str = "ok", **meta: Any) -> None:
@@ -242,7 +249,26 @@ def build_bulk_notification_simulation(
         rule_id = str(rule.get("id") or "")
         rule_node = f"alert:{rule_id.lower()}"
         rule_enabled = bool(rule.get("enabled", True))
-        node(rule_node, str(rule.get("name") or service._name_from_id(rule_id)), "alert", "ok" if rule_enabled else "disabled", family=rule.get("family"), severity=rule.get("severity"), resource_id=rule_id)
+        activity_metadata = service_health.rule_activity_metadata(rule)
+        route_metadata = {
+            key: value for key, value in activity_metadata.items()
+            if key != "service_health_unmapped_values"
+        }
+        rule_records.append({
+            "id": rule_id, "name": rule.get("name"), "family": rule.get("family"),
+            "severity": rule.get("severity"), "enabled": rule_enabled, **route_metadata,
+        })
+        node(rule_node, str(rule.get("name") or service._name_from_id(rule_id)), "alert", "ok" if rule_enabled else "disabled", family=rule.get("family"), severity=rule.get("severity"), resource_id=rule_id, **route_metadata)
+        if activity_metadata["activity_unmapped_values"]:
+            values = "; ".join(
+                f"{field}: {', '.join(unmapped)}"
+                for field, unmapped in activity_metadata["activity_unmapped_values"].items()
+            )
+            diagnostics.append({
+                "code": "activity_condition_unmapped", "severity": "medium",
+                "rule_id": rule_id, "rule_name": rule.get("name"),
+                "message": f"Activity Log rule contains unmapped condition values ({values}).",
+            })
         scopes = [str(value) for value in rule.get("scopes") or []] or ["unscoped"]
         for scope in scopes:
             resource_node = f"resource:{scope.lower()}"
@@ -253,7 +279,7 @@ def build_bulk_notification_simulation(
             outcome = outcome_node("no_receiver")
             link(rule_node, outcome, "error")
             diagnostics.append({"code": "no_action_group", "severity": "critical" if rule.get("severity") in {0, 1} else "high", "rule_id": rule_id, "rule_name": rule.get("name"), "message": "Alert has no Action Group destination."})
-            routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": "", "action_group_name": "", "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": "no_receiver", "issues": ["no Action Group"]})
+            routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": "", "action_group_name": "", "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": "no_receiver", "issues": ["no Action Group"], **route_metadata})
             continue
         for group_id in action_group_ids:
             group = groups_by_id.get(group_id.lower())
@@ -268,7 +294,7 @@ def build_bulk_notification_simulation(
                 link(rule_node, group_node, "warning" if cross_subscription else "error")
                 link(group_node, outcome_node(outcome), "warning" if cross_subscription else "error")
                 diagnostics.append({"code": "unresolved_action_group_access" if cross_subscription else "missing_action_group", "severity": "medium" if cross_subscription else "high", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": "Referenced Action Group is in another subscription that this connection did not return." if cross_subscription else "Referenced Action Group was not found."})
-                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": service._name_from_id(group_id), "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": outcome, "issues": [issue]})
+                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": service._name_from_id(group_id), "receiver_type": "", "receiver_name": "", "receiver_masked": "", "outcome": outcome, "issues": [issue], **route_metadata})
                 continue
             group_enabled = bool(group.get("enabled", True))
             node(group_node, str(group.get("name") or service._name_from_id(group_id)), "action_group", "ok" if group_enabled else "disabled", resource_id=group_id)
@@ -295,11 +321,15 @@ def build_bulk_notification_simulation(
                 link(group_node, receiver_node, "ok" if would_run else "disabled", receiver_type=receiver_type)
                 link(receiver_node, outcome_node(outcome_status), "ok" if would_run else "disabled")
                 issues = []
-                if not rule_enabled: issues.append("rule disabled")
-                if not group_enabled: issues.append("Action Group disabled")
-                if not receiver_enabled: issues.append("receiver disabled")
-                if monitor_condition == "Resolved": issues.append("resolved behavior requires per-rule fidelity check")
-                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": group.get("name"), "action_group_enabled": group_enabled, "receiver_type": receiver_type, "receiver_name": receiver.get("name"), "receiver_destination": destination, "receiver_masked": destination, "receiver_fingerprint": fingerprint, "receiver_enabled": receiver_enabled, "payload_schema": "common" if receiver.get("use_common_alert_schema") else "alert-type-specific", "outcome": outcome_status, "would_run": would_run, "issues": issues})
+                if not rule_enabled:
+                    issues.append("rule disabled")
+                if not group_enabled:
+                    issues.append("Action Group disabled")
+                if not receiver_enabled:
+                    issues.append("receiver disabled")
+                if monitor_condition == "Resolved":
+                    issues.append("resolved behavior requires per-rule fidelity check")
+                routes.append({"resource_ids": scopes, "rule_id": rule_id, "rule_name": rule.get("name"), "family": rule.get("family"), "severity": rule.get("severity"), "rule_enabled": rule_enabled, "action_group_id": group_id, "action_group_name": group.get("name"), "action_group_enabled": group_enabled, "receiver_type": receiver_type, "receiver_name": receiver.get("name"), "receiver_destination": destination, "receiver_masked": destination, "receiver_fingerprint": fingerprint, "receiver_enabled": receiver_enabled, "payload_schema": "common" if receiver.get("use_common_alert_schema") else "alert-type-specific", "outcome": outcome_status, "would_run": would_run, "issues": issues, **route_metadata})
             if rule.get("severity") in {0, 1} and active_receivers < 2:
                 diagnostics.append({"code": "critical_single_path", "severity": "high", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": "Critical alert has fewer than two active receiver paths."})
 
@@ -314,13 +344,15 @@ def build_bulk_notification_simulation(
         "blocked": sum(1 for route in routes if not route.get("would_run")),
         "diagnostics": len(diagnostics),
     }
-    return {"summary": summary, "nodes": list(nodes.values()), "links": list(links.values()), "routes": routes, "diagnostics": diagnostics, "warning": "Dry-run only. No alert was fired and no notification was sent."}
+    return {"summary": summary, "rules": rule_records, "nodes": list(nodes.values()), "links": list(links.values()), "routes": routes, "diagnostics": diagnostics, "warning": "Dry-run only. No alert was fired and no notification was sent."}
 
 
 async def bulk_simulate_notification_paths(
     connection: dict[str, Any], *, workload_id: str | None = None, subscription_id: str | None = None,
     management_group_id: str | None = None, monitor_condition: str = "Fired",
     include_disabled: bool = True, families: set[str] | None = None, severities: set[int] | None = None,
+    activity_categories: set[str] | None = None,
+    service_health_event_types: set[str] | None = None,
 ) -> dict[str, Any]:
     inventory_result, groups_result, context = await asyncio.gather(
         rules.list_rules(
@@ -346,6 +378,10 @@ async def bulk_simulate_notification_paths(
     severity_inventory = [
         rule for rule in enabled_inventory
         if not families or rule.get("family") in families
+        if service_health.matches_activity_filters(
+            rule, activity_categories=activity_categories,
+            service_health_event_types=service_health_event_types,
+        )
     ]
     severity_counts = {
         severity: sum(rule.get("severity") == severity for rule in severity_inventory)
@@ -353,7 +389,8 @@ async def bulk_simulate_notification_paths(
     }
     result = build_bulk_notification_simulation(
         inventory, groups, monitor_condition=monitor_condition, include_disabled=include_disabled,
-        families=families, severities=severities,
+        families=families, severities=severities, activity_categories=activity_categories,
+        service_health_event_types=service_health_event_types,
     )
     for resource in context["resources"]:
         matching_rules = [
@@ -362,6 +399,10 @@ async def bulk_simulate_notification_paths(
             and (include_disabled or rule.get("enabled"))
             and (not families or rule.get("family") in families)
             and (not severities or rule.get("severity") in severities)
+            and service_health.matches_activity_filters(
+                rule, activity_categories=activity_categories,
+                service_health_event_types=service_health_event_types,
+            )
         ]
         rule_ids = {str(rule.get("id") or "") for rule in matching_rules if rule.get("id")}
         matching_routes = [
@@ -384,10 +425,70 @@ async def bulk_simulate_notification_paths(
         context["completeness"]["partial"] = True
         context["completeness"]["warnings"].append("Alert-rule or Action Group inventory reached its configured result limit.")
     result.update(context)
+    activity_inventory = [
+        rule for rule in enabled_inventory if str(rule.get("family") or "").lower() == "activity"
+    ]
+    activity_metadata = [service_health.rule_activity_metadata(rule) for rule in activity_inventory]
+    service_health_metadata = [
+        item for item in activity_metadata if item["activity_category"] == "ServiceHealth"
+    ]
+    resource_health_metadata = [
+        item for item in activity_metadata if item["activity_category"] == "ResourceHealth"
+    ]
+    recommendation_metadata = [
+        item for item in activity_metadata if item["activity_category"] == "Recommendation"
+    ]
+    def dimension_counts(rows: list[dict[str, Any]], field: str, values: tuple[str, ...]) -> dict[str, int]:
+        return {value: sum(value in item[field] for item in rows) for value in values}
+
     result["facets"] = {
         "families": family_counts,
         "severities": severity_counts,
         "total_rules": len(enabled_inventory),
+        "activity_categories": {
+            category: sum(item["activity_category"] == category for item in activity_metadata)
+            for category in service_health.ACTIVITY_CATEGORY_FILTERS
+        },
+        "service_health_event_types": {
+            event_type: sum(event_type in item["service_health_event_types"] for item in service_health_metadata)
+            for event_type in service_health.SERVICE_HEALTH_EVENT_TYPES
+        },
+        "service_health_unrestricted": sum(bool(item["service_health_unrestricted"]) for item in service_health_metadata),
+        "service_health_unmapped": sum(bool(item["service_health_unmapped"]) for item in service_health_metadata),
+        "resource_health_event_statuses": dimension_counts(
+            resource_health_metadata, "resource_health_event_statuses",
+            tuple(service_health.RESOURCE_HEALTH_EVENT_STATUS_VALUES),
+        ),
+        "resource_health_current_statuses": dimension_counts(
+            resource_health_metadata, "resource_health_current_statuses",
+            tuple(service_health.RESOURCE_HEALTH_CURRENT_STATUS_VALUES),
+        ),
+        "resource_health_previous_statuses": dimension_counts(
+            resource_health_metadata, "resource_health_previous_statuses",
+            tuple(service_health.RESOURCE_HEALTH_PREVIOUS_STATUS_VALUES),
+        ),
+        "resource_health_reason_types": dimension_counts(
+            resource_health_metadata, "resource_health_reason_types",
+            tuple(service_health.RESOURCE_HEALTH_REASON_TYPE_VALUES),
+        ),
+        "recommendation_categories": dimension_counts(
+            recommendation_metadata, "recommendation_categories",
+            tuple(service_health.RECOMMENDATION_CATEGORY_VALUES),
+        ),
+        "recommendation_impacts": dimension_counts(
+            recommendation_metadata, "recommendation_impacts",
+            tuple(service_health.RECOMMENDATION_IMPACT_VALUES),
+        ),
+        "activity_unmapped": sum(bool(item["activity_unmapped_values"]) for item in activity_metadata),
+        "applied": {
+            "activity_categories": sorted(activity_categories or []),
+            "service_health_event_types": (
+                None if service_health_event_types is None else [
+                    event_type for event_type in service_health.SERVICE_HEALTH_EVENT_TYPES
+                    if event_type in service_health_event_types
+                ]
+            ),
+        },
     }
     result["summary"].update({
         "resources": len(context["resources"]),

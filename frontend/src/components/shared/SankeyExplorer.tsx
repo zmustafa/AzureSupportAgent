@@ -16,7 +16,7 @@
  *   upstream and downstream of them, and multiple tokens intersect. Searching two names shows
  *   the paths that involve both, instead of two disconnected fragments.
  */
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Sankey } from "recharts";
 import { AzureIcon } from "../AzureIcon";
 
@@ -111,6 +111,7 @@ type NodeProps = {
   colors?: Record<string, string>; iconKinds?: ReadonlySet<string>; labelRightKinds?: ReadonlySet<string>;
   showNodeValues?: boolean; formatValue?: (value: number) => string; formatLabel?: (value: number) => string;
   onSelect?: (key: string) => void; onHover?: (item: TooltipPayload | null, x?: number, y?: number) => void;
+  onContextMenu?: (node: FlowNode, context: { clientX: number; clientY: number; origin: SVGElement }) => boolean;
   [key: string]: unknown;
 };
 
@@ -118,7 +119,7 @@ function FlowSankeyNode(props: NodeProps) {
   const {
     x = 0, y = 0, width = 12, height = 10, payload = {}, selectedKey = "",
     highlightedNodeIds = new Set<string>(), colors = {}, iconKinds = new Set<string>(),
-    labelRightKinds, showNodeValues, formatValue, formatLabel, onSelect, onHover,
+    labelRightKinds, showNodeValues, formatValue, formatLabel, onSelect, onHover, onContextMenu,
   } = props as {
     x?: number; y?: number; width?: number; height?: number;
     payload?: Partial<ResolvedNode>;
@@ -126,6 +127,7 @@ function FlowSankeyNode(props: NodeProps) {
     iconKinds?: ReadonlySet<string>; labelRightKinds?: ReadonlySet<string>;
     showNodeValues?: boolean; formatValue?: (value: number) => string; formatLabel?: (value: number) => string;
     onSelect?: (key: string) => void; onHover?: (item: TooltipPayload | null, x?: number, y?: number) => void;
+    onContextMenu?: (node: FlowNode, context: { clientX: number; clientY: number; origin: SVGElement }) => boolean;
   };
   const nodeKey = `node:${payload.id || ""}`;
   const selected = highlightedNodeIds.has(payload.id || "");
@@ -149,9 +151,21 @@ function FlowSankeyNode(props: NodeProps) {
   const valueLabel = showNodeValues && payload.value != null
     ? (formatLabel ?? formatValue)?.(payload.value) ?? ""
     : "";
+  const openKeyboardMenu = (event: ReactKeyboardEvent<SVGGElement>) => {
+    if (!onContextMenu || !((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")) return false;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const handled = onContextMenu(payload as FlowNode, {
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.top + bounds.height / 2,
+      origin: event.currentTarget,
+    });
+    if (handled) { event.preventDefault(); event.stopPropagation(); }
+    return handled;
+  };
   return <g role="button" tabIndex={0} aria-label={`Highlight complete paths for ${hoverText}${valueLabel ? ` · ${valueLabel}` : ""}`}
     onClick={(event) => { event.stopPropagation(); onSelect?.(selectedKey === nodeKey ? "" : nodeKey); }}
-    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect?.(selectedKey === nodeKey ? "" : nodeKey); } }}
+    onContextMenu={(event) => { if (onContextMenu?.(payload as FlowNode, { clientX: event.clientX, clientY: event.clientY, origin: event.currentTarget })) { event.preventDefault(); event.stopPropagation(); } }}
+    onKeyDown={(event) => { if (openKeyboardMenu(event)) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect?.(selectedKey === nodeKey ? "" : nodeKey); } }}
     onMouseEnter={(event) => onHover?.({
       name: label, paths: payload.paths, path_count: payload.path_count,
       value: payload.value, valueLabel: formatValue?.(payload.value ?? 0),
@@ -252,6 +266,8 @@ export type SankeyExplorerProps = {
   kpiBar?: ReactNode;
   /** Called whenever the selection changes; `null` when cleared. */
   onSelectNode?: (node: (FlowNode & { value: number }) | null) => void;
+  /** Called for pointer or keyboard context-menu requests. Return true to suppress the native menu. */
+  onNodeContextMenu?: (node: FlowNode, context: { clientX: number; clientY: number; origin: SVGElement }) => boolean;
   /**
    * Print each node's weight next to its label. Worth it when the weight is money — reading
    * a figure off a ribbon's thickness is guesswork — and noise when every node is "1 flow".
@@ -275,12 +291,16 @@ export function SankeyExplorer({
   nodes, links, title, subtitle, iconKinds = new Set<string>(), labelRightKinds, colors,
   legend, formatValue, formatNodeValue, storageKey, searchPlaceholder = "Search the flow…",
   emptyMessage = "No flows match the selected filters.", onClearFilters, actions, filterBar, kpiBar,
-  onSelectNode, maxLinksDefault = 250, heightPx = 580, fillHeight = false, fullscreenTargetRef, marginRight = 36, showNodeValues = false,
+  onSelectNode, onNodeContextMenu, maxLinksDefault = 250, heightPx = 580, fillHeight = false, fullscreenTargetRef, marginRight = 36, showNodeValues = false,
 }: SankeyExplorerProps) {
   const [flowQuery, setFlowQuery] = useState("");
   const deferredQuery = useDeferredValue(flowQuery.trim().toLowerCase());
   const [maxLinks, setMaxLinks] = useState(maxLinksDefault);
-  const [selectedKey, setSelectedKey] = useState("");
+  const [selectedKey, setSelectedKey] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return window.sessionStorage.getItem(`${storageKey}.selected`) || ""; }
+    catch { return ""; }
+  });
   const [hovered, setHovered] = useState<Hover | null>(null);
   const [zoom, setZoom] = useState(() => {
     if (typeof window === "undefined") return 100;
@@ -299,6 +319,13 @@ export function SankeyExplorer({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number; offsetX: number; offsetY: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      if (selectedKey) window.sessionStorage.setItem(`${storageKey}.selected`, selectedKey);
+      else window.sessionStorage.removeItem(`${storageKey}.selected`);
+    } catch { /* ignore unavailable storage */ }
+  }, [selectedKey, storageKey]);
 
   const clearTooltip = () => {
     if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
@@ -449,6 +476,13 @@ export function SankeyExplorer({
       totalRoutes: selection.totalRoutes,
     };
   }, [nodes, links, deferredQuery, maxLinks, colors]);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const exists = selectedKey.startsWith("node:")
+      ? graph.nodes.some((node) => node.id === selectedKey.slice(5))
+      : graph.links.some((link) => link.key === selectedKey);
+    if (!exists) setSelectedKey("");
+  }, [graph, selectedKey]);
 
   /** Size the canvas to the busiest column so nodes never overlap. */
   const requiredHeight = useMemo(() => {
@@ -690,7 +724,7 @@ export function SankeyExplorer({
         <div className="relative" style={{ width: Math.max(baseSize.width, baseSize.width * zoom / 100), height: Math.max(baseSize.height, requiredHeight * zoom / 100) }}>
           <div className="absolute left-1/2 top-1/2" style={{ width: baseSize.width, height: requiredHeight, transform: `translate(calc(-50% + ${panOffset.x}px), calc(-50% + ${panOffset.y}px)) scale(${zoom / 100})`, transformOrigin: "center" }}>
             <Sankey width={baseSize.width} height={requiredHeight} data={graph}
-              node={<FlowSankeyNode selectedKey={selectedKey} highlightedNodeIds={highlightedNodeIds} colors={colors} iconKinds={iconKinds} labelRightKinds={labelRightKinds} showNodeValues={showNodeValues} formatValue={formatValue} formatLabel={formatNodeValue ?? formatValue} onSelect={select} onHover={showTooltip} />}
+              node={<FlowSankeyNode selectedKey={selectedKey} highlightedNodeIds={highlightedNodeIds} colors={colors} iconKinds={iconKinds} labelRightKinds={labelRightKinds} showNodeValues={showNodeValues} formatValue={formatValue} formatLabel={formatNodeValue ?? formatValue} onSelect={select} onHover={showTooltip} onContextMenu={onNodeContextMenu} />}
               nodePadding={18} nodeWidth={12} margin={{ top: 12, right: marginRight, bottom: 12, left: 36 }}
               link={<FlowSankeyLink selectedKey={selectedKey} highlightedKeys={highlightedLinkKeys} onSelect={select} onHover={showTooltip} formatValue={formatValue} />} />
           </div>

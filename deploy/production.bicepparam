@@ -4,6 +4,7 @@ using './main.bicep'
 // Set AZSUP_ADMIN_PASSWORD and AZSUP_POSTGRES_PASSWORD before running `az deployment group`.
 param adminPassword = readEnvironmentVariable('AZSUP_ADMIN_PASSWORD')
 param postgresAdminPassword = readEnvironmentVariable('AZSUP_POSTGRES_PASSWORD')
+param containerImage = 'docker.io/zmustafa/azure-support-agent:latest'
 
 // Private data services, zone-aware platform placement, and bounded horizontal capacity.
 param privateNetworking = 'Yes'

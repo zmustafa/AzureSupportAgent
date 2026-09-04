@@ -148,21 +148,22 @@ if ($Stage -in 'preflight', 'all') {
             ForEach-Object { ($_ -split '#')[0].Trim() } |
             Where-Object { $_ }
 
-        $idHits = @()
-        foreach ($gid in $liveIds) {
-            # --untracked matters: a file that is about to be `git add`ed is NOT tracked
-            # yet, so a plain `git grep` cannot see it. That blind spot let this very
-            # script ship with hardcoded identifiers on 2026-07-31.
-            $hit = git grep -nI --untracked --fixed-strings -i $gid -- `
-                ':!docs/improvement-plans' ':!.security' ':!*.lock' ':!*package-lock.json' 2>$null
-            if ($hit) { $idHits += $hit }
+        $identifierGuard = Join-Path $repo 'scripts\check_live_identifiers.py'
+        if (-not (Test-Path $identifierGuard) -or -not (Test-Path $py)) {
+            Add-Check 'no live tenant identifiers tracked' 'ERROR' 'identifier guard or Python environment missing'
+            Add-Finding -Id 'S1.2' -Severity 'BLOCKER' -Title 'Live identifier scan could not run' `
+                -Action 'Restore scripts/check_live_identifiers.py and the backend Python environment before publishing.'
         }
-        if ($idHits) {
-            Add-Check 'no live tenant identifiers tracked' 'FAIL' "$(($idHits | Measure-Object).Count) hit(s)"
-            Add-Finding -Id 'S1.2' -Severity 'HIGH' -Title 'Live tenant/connection/app identifier in source' `
-                -Detail (($idHits | Select-Object -First 8) -join "`n") `
-                -Action 'Replace with a placeholder or move to an ignored fixture. Not secret, but reconnaissance value on a public repo.'
-        } else { Add-Check 'no live tenant identifiers tracked' 'PASS' "$($liveIds.Count) identifier(s) checked" }
+        else {
+            $guardOutput = & $py $identifierGuard 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Add-Check 'no live tenant identifiers tracked' 'FAIL' 'identifier guard rejected publishable content'
+                Add-Finding -Id 'S1.2' -Severity 'HIGH' -Title 'Live tenant/connection/app identifier in source' `
+                    -Detail (($guardOutput | Select-Object -First 10) -join "`n") `
+                    -Action 'Replace with a placeholder or move to an ignored fixture. Not secret, but reconnaissance value on a public repo.'
+            }
+            else { Add-Check 'no live tenant identifiers tracked' 'PASS' "$($liveIds.Count) identifier(s) checked" }
+        }
     }
 
     Pop-Location

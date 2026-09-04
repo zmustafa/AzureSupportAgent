@@ -13,7 +13,7 @@ Upgrade procedures depend on how the application was deployed. The repository pr
 
 ## Before an upgrade
 
-1. Record the current image digest or immutable tag and active Container App revision.
+1. Record the current `/version` build identity and active Container App revision.
 2. Back up the application database and configuration using your approved method. If using the in-product backup export, remember that secrets are intentionally not included and must be re-entered.
 3. Review release notes and database migration requirements.
 4. Confirm persistent storage mounts and database connection settings.
@@ -22,7 +22,7 @@ Upgrade procedures depend on how the application was deployed. The repository pr
 
 ## Manual Container Apps upgrade
 
-[Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/) documents the supported pattern: build a new image and update the Container App so Azure creates a fresh revision. Prefer a versioned tag or digest. If reusing `latest`, force a unique revision as shown in that guide.
+[Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/) documents the supported pattern: build and scan a new image, publish it as `latest`, and update the Container App with a unique revision suffix. The supplied Bicep template generates that suffix automatically on every deployment.
 
 After the new revision starts:
 
@@ -62,7 +62,7 @@ For a manual deployment spread across resource groups, delete resources in depen
 | --- | --- |
 | New revision starts but old data is absent | Stop rollout and verify database URL, secret references, and storage mount before writing new state |
 | Readiness fails after upgrade | Inspect startup/migration logs and dependency connectivity; keep traffic on the prior revision |
-| A reused tag still runs old code | Deploy a unique tag/digest or force a new revision as documented |
+| `latest` still runs old code | Force a new revision with a unique suffix as documented, then verify `/version` |
 | Resource group deletion is blocked | Check locks, policy, dependent resources, and delete permissions |
 | Costs remain after uninstall | Search for resources, role-linked services, or external dependencies outside the deleted group |
 

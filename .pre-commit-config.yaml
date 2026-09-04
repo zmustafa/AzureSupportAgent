@@ -44,8 +44,7 @@ repos:
       # not the product's.
       - id: no-live-azure-identifiers
         name: no live Azure tenant/app identifiers in source
-        entry: python .security/check_identifiers.py
+        entry: python scripts/check_live_identifiers.py
         language: system
         types: [text]
-        exclude: '^(docs/improvement-plans/|\.security/)'
         pass_filenames: true
