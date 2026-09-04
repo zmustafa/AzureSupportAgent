@@ -39,7 +39,7 @@ ARG AZQR_APRL_COMMIT=60eaddda76541f6adbc1c5ffa686829807e55e29
 ARG AZQR_APRL_SHA256=9f5125e2992649057328c0fb8e7430d5eac0db574d07316b4876236a66a10deb
 # The release source pins x/crypto v0.54.0, which contains CVE-2026-56854.
 # Override only that module to its first fixed release before compiling.
-ARG GO_X_CRYPTO_VERSION=v0.55.0
+ARG GO_X_CRYPTO_VERSION=v0.56.0
 WORKDIR /src
 RUN curl -fsSLo /tmp/azqr.tar.gz \
         "https://github.com/Azure/azqr/archive/${AZQR_SOURCE_COMMIT}.tar.gz" \
