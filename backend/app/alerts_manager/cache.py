@@ -14,7 +14,7 @@ from typing import Any, TypeVar
 
 T = TypeVar("T")
 
-_TTL_SECONDS = 20.0
+_TTL_SECONDS = 120.0
 _MAX_ENTRIES = 128
 _entries: OrderedDict[tuple[Any, ...], tuple[float, Any]] = OrderedDict()
 _flights: dict[tuple[Any, ...], asyncio.Task[Any]] = {}

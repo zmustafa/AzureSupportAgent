@@ -1918,6 +1918,7 @@ async def bulk_simulate_notification_paths(
             service_health_event_types=(
                 None if payload.service_health_event_types is None else set(payload.service_health_event_types)
             ),
+            tenant_id=_tenant(_) if _ is not None else "default",
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

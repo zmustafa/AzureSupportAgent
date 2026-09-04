@@ -108,7 +108,7 @@ def apply_decisions(snapshot: dict[str, Any], values: list[dict[str, Any]]) -> d
         if decision and decision["action"] in {"keep_rule", "exempt_rule"}:
             rule["finding_status"] = "accepted"
 
-    active_overlaps: list[dict[str, Any]] = []
+    active_overlap_ids: list[str] = []
     for overlap in result.get("overlaps", []):
         decision = overlap_decisions.get(overlap.get("id", ""))
         rule_decision = next(
@@ -119,9 +119,10 @@ def apply_decisions(snapshot: dict[str, Any], values: list[dict[str, Any]]) -> d
         if overlap["decision"] and overlap["decision"]["action"] in {"keep_rule", "exempt_rule", "dismiss_finding"}:
             overlap["accepted"] = True
         else:
-            active_overlaps.append(overlap)
+            overlap["accepted"] = False
+            active_overlap_ids.append(str(overlap.get("id") or ""))
 
-    active_gaps: list[dict[str, Any]] = []
+    active_gap_keys: list[str] = []
     for index, gap in enumerate(result.get("gaps", [])):
         gap_key = f"{gap.get('type','')}:{gap.get('rule_id') or gap.get('resource_id') or gap.get('action_group_id') or index}"
         decision = gap_decisions.get(gap_key) or rule_decisions.get(gap.get("rule_id", ""))
@@ -130,15 +131,20 @@ def apply_decisions(snapshot: dict[str, Any], values: list[dict[str, Any]]) -> d
         if decision and decision["action"] in {"exempt_rule", "dismiss_finding", "keep_rule"}:
             gap["accepted"] = True
         else:
-            active_gaps.append(gap)
+            gap["accepted"] = False
+            active_gap_keys.append(gap_key)
 
     result["decisions"] = values
-    result["active_overlaps"] = active_overlaps
-    result["active_gaps"] = active_gaps
+    # The originals already carry ``accepted`` and ``decision``. Compact identifiers
+    # preserve the active-set contract without repeating every large finding object.
+    result.pop("active_overlaps", None)
+    result.pop("active_gaps", None)
+    result["active_overlap_ids"] = active_overlap_ids
+    result["active_gap_keys"] = active_gap_keys
     result.setdefault("kpis", {})["accepted_findings"] = (
-        len(result.get("overlaps", [])) - len(active_overlaps)
-        + len(result.get("gaps", [])) - len(active_gaps)
+        len(result.get("overlaps", [])) - len(active_overlap_ids)
+        + len(result.get("gaps", [])) - len(active_gap_keys)
     )
-    result["kpis"]["actionable_overlap_groups"] = len(active_overlaps)
-    result["kpis"]["actionable_gap_count"] = len(active_gaps)
+    result["kpis"]["actionable_overlap_groups"] = len(active_overlap_ids)
+    result["kpis"]["actionable_gap_count"] = len(active_gap_keys)
     return result

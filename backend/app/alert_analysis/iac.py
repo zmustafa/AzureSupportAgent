@@ -43,7 +43,10 @@ def generate_review_artifact(snapshot: dict[str, Any]) -> tuple[str, list[dict[s
         "",
     ]
     seen: set[str] = set()
-    for overlap in snapshot.get("active_overlaps", snapshot.get("overlaps", [])):
+    overlaps = snapshot.get("active_overlaps")
+    if overlaps is None:
+        overlaps = [item for item in snapshot.get("overlaps", []) if not item.get("accepted")]
+    for overlap in overlaps:
         ids = [rule_id for rule_id in overlap.get("rule_ids", []) if rule_id in rules]
         if not ids:
             continue
@@ -58,7 +61,10 @@ def generate_review_artifact(snapshot: dict[str, Any]) -> tuple[str, list[dict[s
                     "reason": overlap.get("explanation", ""),
                 }
             )
-    for gap in snapshot.get("active_gaps", snapshot.get("gaps", [])):
+    gaps = snapshot.get("active_gaps")
+    if gaps is None:
+        gaps = [item for item in snapshot.get("gaps", []) if not item.get("accepted")]
+    for gap in gaps:
         actions.append(
             {
                 "action": "review_gap",

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.alerts_manager import rules, service, service_health
+from app.alerts_manager import cache as inventory_cache
 
 
 _MONITORING_CONTROL_PLANE_RESOURCE_TYPES = frozenset({
@@ -153,6 +154,25 @@ async def _scope_resource_context(
         "subscriptions": subscriptions,
         "completeness": {"complete": not warnings, "partial": bool(warnings), "inaccessible_subscription_ids": [], "warnings": warnings},
     }
+
+
+async def _cached_scope_resource_context(
+    connection: dict[str, Any], *, tenant_id: str, workload_id: str | None,
+    subscription_id: str | None, management_group_id: str | None,
+) -> dict[str, Any]:
+    key = inventory_cache.inventory_key(
+        "scope_resource_context", connection, tenant_id=tenant_id,
+        workload_id=workload_id, subscription_id=subscription_id,
+        management_group_id=management_group_id,
+    )
+
+    async def load() -> dict[str, Any]:
+        return await _scope_resource_context(
+            connection, workload_id=workload_id, subscription_id=subscription_id,
+            management_group_id=management_group_id,
+        )
+
+    return await inventory_cache.get_or_create(key, load)
 
 
 def _scope_matches(scope: str, target: str) -> bool:
@@ -303,6 +323,25 @@ def build_bulk_notification_simulation(
             if not receivers:
                 link(group_node, outcome_node("no_receiver"), "error")
                 diagnostics.append({"code": "no_receivers", "severity": "high", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": "Action Group has no receivers."})
+                routes.append({
+                    "resource_ids": scopes,
+                    "rule_id": rule_id,
+                    "rule_name": rule.get("name"),
+                    "family": rule.get("family"),
+                    "severity": rule.get("severity"),
+                    "rule_enabled": rule_enabled,
+                    "action_group_id": group_id,
+                    "action_group_name": group.get("name"),
+                    "action_group_enabled": group_enabled,
+                    "receiver_type": "",
+                    "receiver_name": "",
+                    "receiver_destination": "",
+                    "receiver_masked": "",
+                    "outcome": "no_receiver",
+                    "would_run": False,
+                    "issues": ["Action Group has no receivers"],
+                    **route_metadata,
+                })
             if len(receivers) > 10:
                 diagnostics.append({"code": "excessive_fanout", "severity": "medium", "rule_id": rule_id, "rule_name": rule.get("name"), "action_group_id": group_id, "message": f"Action Group fans out to {len(receivers)} receivers."})
             active_receivers = 0
@@ -353,23 +392,58 @@ async def bulk_simulate_notification_paths(
     include_disabled: bool = True, families: set[str] | None = None, severities: set[int] | None = None,
     activity_categories: set[str] | None = None,
     service_health_event_types: set[str] | None = None,
+    tenant_id: str = "",
 ) -> dict[str, Any]:
     inventory_result, groups_result, context = await asyncio.gather(
         rules.list_rules(
             connection, workload_id=workload_id, subscription_id=subscription_id,
-            management_group_id=management_group_id, with_metadata=True,
+            management_group_id=management_group_id, tenant_id=tenant_id, with_metadata=True,
         ),
         service.list_action_groups(
             connection, workload_id=workload_id, subscription_id=subscription_id,
-            management_group_id=management_group_id, all_visible=True, with_metadata=True,
+            management_group_id=management_group_id, tenant_id=tenant_id,
+            include_dependencies=False, with_metadata=True,
         ),
-        _scope_resource_context(
-            connection, workload_id=workload_id, subscription_id=subscription_id,
-            management_group_id=management_group_id,
+        _cached_scope_resource_context(
+            connection, tenant_id=tenant_id, workload_id=workload_id,
+            subscription_id=subscription_id, management_group_id=management_group_id,
         ),
     )
     inventory, rule_metadata = inventory_result if isinstance(inventory_result, tuple) else (inventory_result, {})
     groups, group_metadata = groups_result if isinstance(groups_result, tuple) else (groups_result, {})
+    known_group_ids = {_normalized_id(group.get("id")) for group in groups}
+    referenced_group_ids = {
+        _normalized_id(group_id)
+        for rule in inventory for group_id in rule.get("action_group_ids") or [] if group_id
+    }
+    missing_subscriptions = sorted({
+        service._subscription_from_id(group_id)
+        for group_id in referenced_group_ids - known_group_ids
+        if service._subscription_from_id(group_id)
+    })
+    if missing_subscriptions:
+        extra_results = await asyncio.gather(*(
+            service.list_action_groups(
+                connection, subscription_id=value, tenant_id=tenant_id,
+                include_dependencies=False, with_metadata=True,
+            )
+            for value in missing_subscriptions
+        ), return_exceptions=True)
+        for extra in extra_results:
+            if isinstance(extra, Exception):
+                context["completeness"]["complete"] = False
+                context["completeness"]["partial"] = True
+                context["completeness"]["warnings"].append(
+                    f"A referenced cross-subscription Action Group could not be read: {service.safe_error(str(extra))}"
+                )
+                continue
+            extra_groups, extra_metadata = extra if isinstance(extra, tuple) else (extra, {})
+            group_metadata["partial"] = bool(group_metadata.get("partial") or extra_metadata.get("partial"))
+            for group in extra_groups:
+                group_id = _normalized_id(group.get("id"))
+                if group_id not in known_group_ids:
+                    groups.append(group)
+                    known_group_ids.add(group_id)
     enabled_inventory = [rule for rule in inventory if include_disabled or rule.get("enabled")]
     family_counts = {
         family: sum(rule.get("family") == family for rule in enabled_inventory)

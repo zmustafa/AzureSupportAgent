@@ -20,7 +20,7 @@ from app.amba.collector import compute_coverage
 from app.alert_analysis.pricing import empty_cost_summary, estimate_rule_cost, summarize_rule_costs
 
 log = logging.getLogger("app.alert_analysis.collector")
-SNAPSHOT_SCHEMA_VERSION = 3
+SNAPSHOT_SCHEMA_VERSION = 4
 ProgressCallback = Callable[[str, str], Awaitable[None]]
 
 _ALERT_TYPES = {
@@ -489,34 +489,54 @@ def _overlaps(rules: list[dict[str, Any]], *, tolerance_pct: float = 20.0) -> li
                 near_buckets[(target, condition["near_signature"])].append((rule, condition))
 
     results: list[dict[str, Any]] = []
+    aggregated: dict[tuple[Any, ...], dict[str, Any]] = {}
     exact_pairs: set[tuple[str, str, str]] = set()
 
     def append_group(kind: str, confidence: str, target: str, members: list[tuple[dict[str, Any], dict[str, Any]]]) -> None:
         unique: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {item[0]["id"]: item for item in members}
         if len(unique) < 2:
             return
-        ordered = list(unique.values())
+        ordered = [unique[key] for key in sorted(unique)]
         fingerprints = [set(rule["receiver_fingerprints"]) for rule, _ in ordered]
         shared = set.intersection(*fingerprints) if fingerprints and all(fingerprints) else set()
-        group_id = f"OV-{len(results) + 1:04d}"
         signal = ordered[0][1]
-        results.append(
-            {
-                "id": group_id,
-                "type": kind,
-                "confidence": confidence,
-                "target_id": target,
-                "signal_type": signal["signal_type"],
-                "signal_name": signal["signal_name"],
-                "rule_ids": [rule["id"] for rule, _ in ordered],
-                "rule_names": [rule["name"] for rule, _ in ordered],
-                "shared_recipient_count": len(shared),
-                "shared_recipient_fingerprints": sorted(shared),
-                "notification_overlap": bool(shared),
-                "explanation": "Equivalent conditions can fire for the same target" if kind == "exact" else "Similar conditions can fire for the same target",
-                "recommendation": "Consolidate the rules or separate their escalation intent and recipients.",
-            }
+        rule_ids = tuple(rule["id"] for rule, _ in ordered)
+        aggregation_key = (
+            kind,
+            confidence,
+            rule_ids,
+            signal.get("signal_type", ""),
+            signal.get("signal_key", ""),
+            signal.get("exact_signature" if kind == "exact" else "near_signature", ""),
         )
+        existing = aggregated.get(aggregation_key)
+        if existing is not None:
+            existing["target_count"] += 1
+            if len(existing["target_ids"]) < 100:
+                existing["target_ids"].append(target)
+            return
+        digest = hashlib.sha256(json.dumps(aggregation_key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12].upper()
+        group_id = f"OV-{digest}"
+        group = {
+            "id": group_id,
+            "type": kind,
+            "confidence": confidence,
+            "target_id": target,
+            "target_ids": [target],
+            "target_count": 1,
+            "targets_truncated": False,
+            "signal_type": signal["signal_type"],
+            "signal_name": signal["signal_name"],
+            "rule_ids": list(rule_ids),
+            "rule_names": [rule["name"] for rule, _ in ordered],
+            "shared_recipient_count": len(shared),
+            "shared_recipient_fingerprints": sorted(shared),
+            "notification_overlap": bool(shared),
+            "explanation": "Equivalent conditions can fire for the same targets" if kind == "exact" else "Similar conditions can fire for the same targets",
+            "recommendation": "Consolidate the rules or separate their escalation intent and recipients.",
+        }
+        aggregated[aggregation_key] = group
+        results.append(group)
         for rule, _ in ordered:
             rule["overlap_group_ids"].append(group_id)
             rule["finding_status"] = "overlap"
@@ -565,6 +585,9 @@ def _overlaps(rules: list[dict[str, Any]], *, tolerance_pct: float = 20.0) -> li
                 "type": "notification",
                 "confidence": "high",
                 "target_id": _target_atoms(rule)[0],
+                "target_ids": [_target_atoms(rule)[0]],
+                "target_count": 1,
+                "targets_truncated": False,
                 "signal_type": condition.get("signal_type", ""),
                 "signal_name": condition.get("signal_name", ""),
                 "rule_ids": [rule["id"]],
@@ -578,6 +601,8 @@ def _overlaps(rules: list[dict[str, Any]], *, tolerance_pct: float = 20.0) -> li
         )
         rule["overlap_group_ids"].append(group_id)
         rule["finding_status"] = "overlap"
+    for result in results:
+        result["targets_truncated"] = result.get("target_count", 1) > len(result.get("target_ids") or [])
     return results
 
 

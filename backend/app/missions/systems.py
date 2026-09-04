@@ -317,7 +317,8 @@ async def _state_alerts_manager(ctx: MissionContext) -> dict[str, Any] | None:
     from app.api.alert_analysis import _effective_connection_id
 
     connection_id = _effective_connection_id("workload", ctx.workload_id, ctx.connection_id)
-    snapshot = cache.read_snapshot(
+    snapshot = await asyncio.to_thread(
+        cache.read_snapshot,
         ctx.tenant_id or "default", connection_id, "workload", ctx.workload_id,
     )
     if not snapshot:

@@ -312,7 +312,7 @@ async def test_bulk_simulation_facets_only_report_existing_inventory(
 
 
 @pytest.mark.asyncio
-async def test_management_group_scope_reaches_rules_and_groups_with_all_visible(
+async def test_management_group_scope_reaches_rules_and_scoped_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: dict[str, dict[str, Any]] = {}
@@ -332,11 +332,12 @@ async def test_management_group_scope_reaches_rules_and_groups_with_all_visible(
 
     assert calls["rules"] == {
         "workload_id": None, "subscription_id": None, "management_group_id": "mg-root",
-        "with_metadata": True,
+        "tenant_id": "", "with_metadata": True,
     }
     assert calls["groups"] == {
         "workload_id": None, "subscription_id": None,
-        "management_group_id": "mg-root", "all_visible": True, "with_metadata": True,
+        "management_group_id": "mg-root", "tenant_id": "",
+        "include_dependencies": False, "with_metadata": True,
     }
     assert result["summary"]["rules"] == 0
 
@@ -451,6 +452,7 @@ async def test_bulk_api_retains_legacy_routes_while_forwarding_scope(
         "monitor_condition": "Fired", "include_disabled": True,
         "families": {"metric"}, "severities": {2},
         "activity_categories": set(), "service_health_event_types": None,
+        "tenant_id": "default",
     }
 
 # --------------------------------------------------------------------- demo scope is not Azure

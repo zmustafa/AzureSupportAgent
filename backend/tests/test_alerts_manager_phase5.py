@@ -80,6 +80,22 @@ def test_phase5_api_routes_are_registered() -> None:
     assert "/alerts-manager/alert-rules/noise-guard" in paths
 
 
+def test_receiverless_action_group_remains_an_explicit_simulation_route() -> None:
+    group_id = "/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.Insights/actionGroups/empty"
+    result = advisory.build_bulk_notification_simulation(
+        [{
+            "id": "/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.Insights/activityLogAlerts/rule",
+            "name": "rule", "family": "activity", "severity": 2, "enabled": True,
+            "scopes": ["/subscriptions/sub-1"], "action_group_ids": [group_id],
+        }],
+        [{"id": group_id, "name": "empty", "enabled": True, "receivers": []}],
+    )
+    assert result["summary"]["rules"] == 1
+    assert len(result["routes"]) == 1
+    assert result["routes"][0]["outcome"] == "no_receiver"
+    assert result["routes"][0]["action_group_id"] == group_id
+
+
 @pytest.mark.asyncio
 async def test_bulk_rule_preparation_reuses_token_caps_six_and_preserves_order(monkeypatch, tmp_path: Path) -> None:
     targets = [
@@ -303,7 +319,9 @@ async def test_bulk_simulator_resolves_visible_cross_subscription_group(monkeypa
         }]
 
     async def list_groups(*_args, **kwargs):
-        assert kwargs.get("all_visible") is True
+        assert kwargs.get("include_dependencies") is False
+        if kwargs.get("subscription_id") != "destination":
+            return []
         return [{
             "id": group_id, "name": "team", "enabled": True,
             "receivers": [{
@@ -325,7 +343,7 @@ async def test_bulk_simulator_resolves_visible_cross_subscription_group(monkeypa
     # This test is about route resolution, not about the resource universe. Left unstubbed,
     # the third branch of the gather runs a real Resource Graph query and blocks on the
     # network until it times out.
-    monkeypatch.setattr(advisory, "_scope_resource_context", scope_context)
+    monkeypatch.setattr(advisory, "_cached_scope_resource_context", scope_context)
     result = await advisory.bulk_simulate_notification_paths({}, subscription_id="source")
     assert result["routes"][0]["outcome"] == "deliver"
     assert result["routes"][0]["action_group_name"] == "team"

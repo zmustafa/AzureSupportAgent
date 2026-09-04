@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -54,6 +55,9 @@ _AG_ID_RE = re.compile(
 )
 _GUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _RESOURCE_ID_RE = re.compile(r"/subscriptions/[^/]+/resourcegroups/[^/]+/providers/[^/]+/.+", re.I)
+_TOKEN_TTL_SECONDS = 60.0
+_token_cache: dict[tuple[str, ...], tuple[float, str]] = {}
+_token_lock = asyncio.Lock()
 
 
 def now() -> datetime:
@@ -280,10 +284,25 @@ def assert_writable(connection: dict[str, Any]) -> None:
 async def _token(connection: dict[str, Any]) -> str:
     from app.azure.credentials import get_arm_token
 
-    token, error = await get_arm_token(connection)
-    if not token:
-        raise ValueError(safe_error(error or "Could not acquire an ARM token."))
-    return token
+    key = (
+        str(connection.get("tenant_id") or ""),
+        str(connection.get("id") or connection.get("connection_id") or "default"),
+        str(connection.get("auth_method") or "default_chain"),
+        str(connection.get("client_id") or connection.get("managed_identity_client_id") or ""),
+    )
+    now = time.monotonic()
+    cached = _token_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+    async with _token_lock:
+        cached = _token_cache.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        token, error = await get_arm_token(connection)
+        if not token:
+            raise ValueError(safe_error(error or "Could not acquire an ARM token."))
+        _token_cache[key] = (time.monotonic() + _TOKEN_TTL_SECONDS, token)
+        return token
 
 
 async def _arg(
@@ -449,18 +468,19 @@ async def change_fired_alert_state(connection: dict[str, Any], alert_id: str, ne
 async def list_action_groups(
     connection: dict[str, Any], *, workload_id: str | None = None, subscription_id: str | None = None,
     management_group_id: str | None = None, tenant_id: str = "", with_metadata: bool = False,
-    all_visible: bool = False,
+    all_visible: bool = False, include_dependencies: bool = True,
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
     key = inventory_cache.inventory_key(
         "action_groups", connection, tenant_id=tenant_id, workload_id=workload_id,
         subscription_id=subscription_id, management_group_id=management_group_id,
-        dimensions=("all_visible",) if all_visible else (),
+        dimensions=("all_visible" if all_visible else "scoped", "dependencies" if include_dependencies else "groups_only"),
     )
 
     async def load() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return await _list_action_groups_uncached(
             connection, workload_id=workload_id, subscription_id=subscription_id,
             management_group_id=management_group_id, all_visible=all_visible,
+            include_dependencies=include_dependencies,
         )
 
     rows, metadata = await inventory_cache.get_or_create(key, load)
@@ -469,7 +489,7 @@ async def list_action_groups(
 
 async def _list_action_groups_uncached(
     connection: dict[str, Any], *, workload_id: str | None, subscription_id: str | None,
-    management_group_id: str | None, all_visible: bool = False,
+    management_group_id: str | None, all_visible: bool = False, include_dependencies: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not subscription_id and not management_group_id and not all_visible:
         demo = demo_scope_inventory(workload_id)
@@ -484,9 +504,13 @@ async def _list_action_groups_uncached(
 
         subscriptions = set(await subscriptions_under_mg(connection, management_group_id))
     quoted = ",".join(f"'{item}'" for item in _ALERT_TYPES)
+    type_filter = (
+        f"type =~ 'microsoft.insights/actiongroups' or type in~ ({quoted})"
+        if include_dependencies else "type =~ 'microsoft.insights/actiongroups'"
+    )
     query = f"""
 resources
-| where type =~ 'microsoft.insights/actiongroups' or type in~ ({quoted})
+| where {type_filter}
 | project id, name, type, subscriptionId, resourceGroup, location, tags, properties
 """
     rows, metadata = _arg_rows_and_metadata(

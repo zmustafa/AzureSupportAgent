@@ -15,6 +15,49 @@ from app.models import AlertManagerChange
 
 
 @pytest.mark.asyncio
+async def test_arm_token_acquisition_is_reused_for_concurrent_inventory_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def token(_connection):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return "token", None
+
+    service._token_cache.clear()
+    monkeypatch.setattr("app.azure.credentials.get_arm_token", token)
+    connection = {"id": "connection", "tenant_id": "tenant", "auth_method": "default_chain"}
+    assert await asyncio.gather(*(service._token(connection) for _ in range(4))) == ["token"] * 4
+    assert calls == 1
+    assert await service._token(connection) == "token"
+    assert calls == 1
+    service._token_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_action_group_groups_only_inventory_omits_alert_rule_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = ""
+
+    async def arg(_connection, query, _subscriptions, **_kwargs):
+        nonlocal captured
+        captured = query
+        return []
+
+    monkeypatch.setattr(service, "_arg", arg)
+    rows, _metadata = await service._list_action_groups_uncached(
+        {}, workload_id=None, subscription_id="sub-1", management_group_id=None,
+        include_dependencies=False,
+    )
+    assert rows == []
+    assert "type =~ 'microsoft.insights/actiongroups'" in captured
+    assert "type in~" not in captured
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_single_flight_defensive_copy_key_isolation_and_invalidation() -> None:
     calls = 0
     gate = asyncio.Event()

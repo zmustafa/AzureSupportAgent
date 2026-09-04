@@ -230,7 +230,7 @@ function sortActionGroups<T extends AlertAnalysisActionGroup>(rows: T[], sortCol
   });
 }
 
-function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: { overlaps: AlertAnalysisOverlap[]; gaps: AlertAnalysisGap[]; rules: AlertAnalysisRule[]; costSummary?: AlertAnalysisSnapshot["cost_summary"]; activityLogCoverage: ReactNode }) {
+function Overview({ overlaps, gaps, overview, totals, costSummary, activityLogCoverage }: { overlaps: AlertAnalysisOverlap[]; gaps: AlertAnalysisGap[]; overview?: AlertAnalysisSnapshot["overview"]; totals?: AlertAnalysisSnapshot["section_totals"]; costSummary?: AlertAnalysisSnapshot["cost_summary"]; activityLogCoverage: ReactNode }) {
   const top = [
     ...overlaps.map((item) => ({
       key: item.id,
@@ -247,25 +247,21 @@ function Overview({ overlaps, gaps, rules, costSummary, activityLogCoverage }: {
       risk: item.risk,
     })),
   ].slice(0, 12);
-  const clean = rules.filter((rule) => rule.finding_status === "ok").length;
+  const clean = overview?.clean_rules ?? 0;
   const currency = costSummary?.currency ?? "USD";
   const [costDetailsExpanded, setCostDetailsExpanded] = usePersistedState("azsup.alertsManager.costDetailsExpanded", false);
-  const confidenceCounts = rules.reduce<Record<string, number>>((counts, rule) => {
-    const confidence = rule.cost?.confidence ?? "none";
-    counts[confidence] = (counts[confidence] ?? 0) + 1;
-    return counts;
-  }, {});
+  const confidenceCounts = overview?.cost_confidence_counts ?? {};
   return (
     <div className="space-y-3">
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border bg-white p-3">
           <div className="text-[10px] font-medium uppercase text-gray-400">Rationalization opportunity</div>
-          <div className="mt-1 text-xl font-semibold leading-5 text-amber-600">{overlaps.length}</div>
+          <div className="mt-1 text-xl font-semibold leading-5 text-amber-600">{totals?.overlaps ?? overlaps.length}</div>
           <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title="Rule groups that may evaluate the same symptom.">Rule groups that may evaluate the same symptom.</p>
         </div>
         <div className="rounded-lg border bg-white p-3">
           <div className="text-[10px] font-medium uppercase text-gray-400">Coverage & routing gaps</div>
-          <div className="mt-1 text-xl font-semibold leading-5 text-red-600">{gaps.length}</div>
+          <div className="mt-1 text-xl font-semibold leading-5 text-red-600">{totals?.gaps ?? gaps.length}</div>
           <p className="mt-1 truncate text-[10px] leading-4 text-gray-500" title="Missing baselines, disabled rules, or ineffective notification paths.">Missing baselines, disabled rules, or ineffective notification paths.</p>
         </div>
         <div className="rounded-lg border bg-white p-3">
@@ -340,7 +336,7 @@ function OverlapsTable({ rows, sortColumn, sortDirection, onSort, onDismiss }: {
           {rows.map((row) => (
             <tr key={row.id} className="align-top hover:bg-gray-50">
               <td className="px-3 py-3"><span className={`rounded px-2 py-0.5 font-medium ${row.confidence === "high" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>{row.confidence} · {row.type}</span></td>
-              <td className="max-w-xs px-3 py-3"><div className="font-medium text-gray-800">{row.signal_name}</div><div className="mt-1 break-all text-[10px] text-gray-400">{row.target_id}</div></td>
+              <td className="max-w-xs px-3 py-3"><div className="font-medium text-gray-800">{row.signal_name}</div><div className="mt-1 break-all text-[10px] text-gray-400">{row.target_id}</div>{(row.target_count ?? 1) > 1 && <div className="mt-1 text-[10px] font-medium text-indigo-600">{row.target_count} matching targets{row.targets_truncated ? " · sample shown" : ""}</div>}</td>
               <td className="px-3 py-3"><div className="space-y-1">{row.rule_names.map((name) => <div key={name} className="rounded bg-gray-50 px-2 py-1 text-gray-700">{name}</div>)}</div></td>
               <td className="px-3 py-3">{row.notification_overlap ? <span className="font-medium text-red-600">{row.shared_recipient_count} shared destination{row.shared_recipient_count === 1 ? "" : "s"}</span> : <span className="text-gray-400">No shared destination</span>}</td>
               <td className="max-w-sm px-3 py-3 text-gray-600">{row.recommendation}</td>
@@ -809,6 +805,7 @@ export function AlertsManagerPanel() {
   const [bulkOutcome, setBulkOutcome] = useState("");
   const [bulkPreparingCount, setBulkPreparingCount] = useState(0);
   const [selectedGapIds, setSelectedGapIds] = useState<Set<string>>(new Set());
+  const [selectedGapRows, setSelectedGapRows] = useState<Map<string, AlertAnalysisGap>>(new Map());
   const [gapPlannerOpen, setGapPlannerOpen] = useState(false);
   const [activityLogWizardOpen, setActivityLogWizardOpen] = useState(false);
   const [activityLogDiagnosticsOpen, setActivityLogDiagnosticsOpen] = useState(false);
@@ -869,19 +866,19 @@ export function AlertsManagerPanel() {
   const managedGroupsQ = useQuery({
     queryKey: queryKeys.alertsManager.actionGroups(managementParams),
     queryFn: () => api.managedActionGroups(managementParams),
-    enabled: ready && !!data && !data.demo && (tab === "action-groups" || gapPlannerOpen || activityLogWizardOpen),
+    enabled: ready && !!data && !data.demo && (tab === "action-groups" || tab === "deployment-plans" || gapPlannerOpen || activityLogWizardOpen),
     staleTime: 5 * 60_000,
   });
   const ruleActionGroupsQ = useQuery({
     queryKey: queryKeys.alertsManager.actionGroups({ ...managementParams, all_visible: true }),
     queryFn: () => api.managedActionGroups({ ...managementParams, all_visible: true }),
-    enabled: ready && !!data && !data.demo,
+    enabled: ready && !!data && !data.demo && (tab === "manage-rules" || !!ruleEditor),
     staleTime: 5 * 60_000,
   });
   const managedRulesQ = useQuery({
     queryKey: queryKeys.alertsManager.rules(managementParams),
     queryFn: () => api.managedAlertRules(managementParams),
-    enabled: ready && !!data && !data.demo,
+    enabled: ready && !!data && !data.demo && tab === "manage-rules",
     staleTime: 5 * 60_000,
   });
   const summaryQ = useQuery({
@@ -922,6 +919,7 @@ export function AlertsManagerPanel() {
       qc.setQueryData(queryKey, state.result);
       setAnalysisNeedsRefresh(false);
       void Promise.all([
+        qc.invalidateQueries({ queryKey: ["alert-analysis-section"] }),
         qc.invalidateQueries({ queryKey: ["alert-analysis-trend"] }),
         qc.invalidateQueries({ queryKey: ["alert-analysis-runs"] }),
         qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot }),
@@ -934,83 +932,40 @@ export function AlertsManagerPanel() {
   }, [jobQ.data, qc, queryKey, scopeKind, effectiveWorkloadId, subId, mgId, connId]);
 
   const query = useDeferredValue(search.trim().toLowerCase());
-  const compareText = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
   function updateSort<K extends string>(column: K, current: K | null, direction: SortDirection, setColumn: (value: K) => void, setDirection: (value: SortDirection) => void, defaultDirection: SortDirection = "asc") {
     if (current === column) setDirection(direction === "asc" ? "desc" : "asc");
     else { setColumn(column); setDirection(defaultDirection); }
     goPage(1);
   }
-  const searchableRules = useMemo(() => (data?.rules ?? []).map((rule) => ({ rule, text: `${rule.name} ${rule.type} ${rule.resource_group} ${rule.conditions.map((item) => item.signal_name).join(" ")} ${rule.action_group_names.join(" ")}`.toLowerCase() })), [data?.rules]);
-  const searchableOverlaps = useMemo(() => (data?.active_overlaps ?? data?.overlaps ?? []).map((row) => ({ row, text: `${row.signal_name} ${row.target_id} ${row.rule_names.join(" ")}`.toLowerCase() })), [data?.active_overlaps, data?.overlaps]);
-  const searchableGaps = useMemo(() => (data?.active_gaps ?? data?.gaps ?? []).map((row) => ({ row, text: `${row.type} ${row.resource_name} ${row.rule_name} ${row.signal}`.toLowerCase() })), [data?.active_gaps, data?.gaps]);
-  const rules = useMemo(() => {
-    const filtered = searchableRules.filter(({ rule, text }) => {
-      if (status !== "all" && rule.finding_status !== status) return false;
-      return !query || text.includes(query);
-    }).map(({ rule }) => rule);
-    if (!ruleSort) return filtered;
-    const direction = ruleSortDirection === "asc" ? 1 : -1;
-    return [...filtered].sort((left, right) => {
-      let result = 0;
-      if (ruleSort === "status") result = compareText(left.finding_status, right.finding_status);
-      else if (ruleSort === "rule") result = compareText(left.name, right.name);
-      else if (ruleSort === "condition") result = compareText(`${left.conditions[0]?.signal_name || ""} ${left.conditions[0]?.aggregation || ""}`, `${right.conditions[0]?.signal_name || ""} ${right.conditions[0]?.aggregation || ""}`);
-      else if (ruleSort === "targets") result = left.effective_target_count - right.effective_target_count || compareText(left.scopes[0] || "", right.scopes[0] || "");
-      else if (ruleSort === "action_groups") result = left.action_group_names.length - right.action_group_names.length || compareText(left.action_group_names.join(" "), right.action_group_names.join(" "));
-      else if (ruleSort === "cost") {
-        const leftCost = left.cost?.monthly_usd;
-        const rightCost = right.cost?.monthly_usd;
-        if (leftCost == null || rightCost == null) return leftCost == null && rightCost == null ? compareText(left.name, right.name) : leftCost == null ? 1 : -1;
-        result = leftCost - rightCost;
-      }
-      else result = (left.firing_30d ?? left.firing_7d ?? 0) - (right.firing_30d ?? right.firing_7d ?? 0);
-      return direction * (result || compareText(left.name, right.name));
-    });
-  }, [searchableRules, query, status, ruleSort, ruleSortDirection]);
-  const overlaps = useMemo(() => {
-    const filtered = searchableOverlaps.filter(({ text }) => !query || text.includes(query)).map(({ row }) => row);
-    if (!overlapSort) return filtered;
-    const direction = overlapSortDirection === "asc" ? 1 : -1;
-    const confidenceOrder = { medium: 0, high: 1 };
-    return [...filtered].sort((left, right) => {
-      let result = overlapSort === "confidence" ? confidenceOrder[left.confidence] - confidenceOrder[right.confidence]
-        : overlapSort === "signal" ? compareText(`${left.signal_name} ${left.target_id}`, `${right.signal_name} ${right.target_id}`)
-          : overlapSort === "rules" ? left.rule_names.length - right.rule_names.length
-            : left.shared_recipient_count - right.shared_recipient_count;
-      return direction * (result || compareText(left.signal_name, right.signal_name));
-    });
-  }, [searchableOverlaps, query, overlapSort, overlapSortDirection]);
-  const gapOptions = useMemo(() => ({
-    risks: [...new Set(searchableGaps.map(({ row }) => row.risk).filter(Boolean))].sort(),
-    types: [...new Set(searchableGaps.map(({ row }) => row.type).filter(Boolean))].sort(),
-    signals: [...new Set(searchableGaps.map(({ row }) => row.signal).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
-  }), [searchableGaps]);
-  const gaps = useMemo(() => {
-    const riskOrder: Record<string, number> = { critical: 0, error: 1, warning: 2, info: 3 };
-    const filtered = searchableGaps.filter(({ row, text }) =>
-      (!query || text.includes(query))
-      && (gapRisk === "all" || row.risk === gapRisk)
-      && (gapType === "all" || row.type === gapType)
-      && (gapSignal === "all" || row.signal === gapSignal)
-    ).map(({ row }) => row);
-    if (!gapSort && gapGroup !== "signal") return filtered;
-    const direction = gapSortDirection === "asc" ? 1 : -1;
-    return [...filtered].sort((left, right) => {
-      const signalResult = compareText(left.signal || "", right.signal || "");
-      if (gapGroup === "signal" && signalResult) return gapSort === "signal" ? direction * signalResult : signalResult;
-      let result = 0;
-      if (gapSort === "risk") result = (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
-      else if (gapSort === "gap") result = compareText(left.type, right.type);
-      else if (gapSort === "resource") result = compareText(left.rule_name || left.resource_name || "", right.rule_name || right.resource_name || "");
-      else if (gapSort === "signal") result = signalResult;
-      else if (gapSort === "recommendation") result = compareText(left.recommendation, right.recommendation);
-      else result = (riskOrder[left.risk] ?? 99) - (riskOrder[right.risk] ?? 99);
-      return direction * (result || compareText(left.resource_name || left.rule_name || "", right.resource_name || right.rule_name || ""));
-    });
-  }, [searchableGaps, query, gapRisk, gapType, gapSignal, gapGroup, gapSort, gapSortDirection]);
+  const rulesPageQ = useQuery({
+    queryKey: ["alert-analysis-section", "rules", ...queryKey, page, query, status, ruleSort, ruleSortDirection],
+    queryFn: () => api.alertAnalysisSection<AlertAnalysisRule>("rules", params, { page, page_size: PAGE_SIZE, search: query, status, sort: ruleSort || "", direction: ruleSortDirection }),
+    enabled: ready && !!data?.report_exists && tab === "rules",
+    placeholderData: (previous) => previous,
+  });
+  const overlapsPageQ = useQuery({
+    queryKey: ["alert-analysis-section", "overlaps", ...queryKey, page, query, overlapSort, overlapSortDirection],
+    queryFn: () => api.alertAnalysisSection<AlertAnalysisOverlap>("overlaps", params, { page, page_size: PAGE_SIZE, search: query, sort: overlapSort || "", direction: overlapSortDirection }),
+    enabled: ready && !!data?.report_exists && tab === "overlaps",
+    placeholderData: (previous) => previous,
+  });
+  const gapsPageQ = useQuery({
+    queryKey: ["alert-analysis-section", "gaps", ...queryKey, page, query, gapRisk, gapType, gapSignal, gapGroup, gapSort, gapSortDirection],
+    queryFn: () => api.alertAnalysisSection<AlertAnalysisGap>("gaps", params, { page, page_size: PAGE_SIZE, search: query, risk: gapRisk, gap_type: gapType, signal: gapSignal, sort: gapSort || "", direction: gapSortDirection, group: gapGroup }),
+    enabled: ready && !!data?.report_exists && tab === "gaps",
+    placeholderData: (previous) => previous,
+  });
+  const rules = rulesPageQ.data?.items ?? [];
+  const overlaps = overlapsPageQ.data?.items ?? [];
+  const gaps = gapsPageQ.data?.items ?? [];
+  const gapOptions = {
+    risks: gapsPageQ.data?.facets.risks ?? [],
+    types: gapsPageQ.data?.facets.types ?? [],
+    signals: gapsPageQ.data?.facets.signals ?? [],
+  };
   const sortedAnalysisGroups = useMemo(() => sortActionGroups(data?.action_groups ?? [], actionGroupSort, actionGroupSortDirection), [data?.action_groups, actionGroupSort, actionGroupSortDirection]);
   const sortedManagedGroups = useMemo(() => sortActionGroups(managedGroupsQ.data?.action_groups ?? [], actionGroupSort, actionGroupSortDirection), [managedGroupsQ.data?.action_groups, actionGroupSort, actionGroupSortDirection]);
-  const allGaps = data?.active_gaps ?? data?.gaps ?? [];
+  const allGaps = gaps;
   const allGapIds = useMemo(() => [...new Set(allGaps.map((row, index) => gapIdentity(row, index)))], [allGaps]);
   const gapPlansQ = useQuery({
     queryKey: ["alerts-manager-deployment-plans-by-gap", allGapIds],
@@ -1044,15 +999,22 @@ export function AlertsManagerPanel() {
     });
   }, [gapPlansQ.data]);
   const analysisSelectionKey = `${data?.scope_kind ?? scopeKind}:${data?.scope_id ?? ""}:${data?.generated_at ?? ""}`;
-  useEffect(() => { setSelectedGapIds(new Set()); setGapPlannerOpen(false); setAnalysisNeedsRefresh(false); }, [analysisSelectionKey]);
-  const selectedGaps = useMemo(() => {
-    const unique = new Map<string, AlertAnalysisGap>();
-    for (const [index, row] of allGaps.entries()) {
-      const id = gapIdentity(row, index);
-      if (selectedGapIds.has(id) && !unique.has(id)) unique.set(id, row);
-    }
-    return [...unique.values()];
-  }, [allGaps, selectedGapIds]);
+  useEffect(() => { setSelectedGapIds(new Set()); setSelectedGapRows(new Map()); setGapPlannerOpen(false); setAnalysisNeedsRefresh(false); }, [analysisSelectionKey]);
+  useEffect(() => {
+    setSelectedGapRows((current) => new Map([...current].filter(([id]) => selectedGapIds.has(id))));
+  }, [selectedGapIds]);
+  const selectedGaps = useMemo(() => [...selectedGapRows.values()], [selectedGapRows]);
+  function changeSelectedGaps(next: Set<string>) {
+    setSelectedGapRows((current) => {
+      const rows = new Map([...current].filter(([id]) => next.has(id)));
+      for (const row of allGaps) {
+        const id = gapIdentity(row);
+        if (next.has(id)) rows.set(id, row);
+      }
+      return rows;
+    });
+    setSelectedGapIds(next);
+  }
   const canPlanGaps = !!capabilities?.can_submit_deployment_plans && !capabilities.read_only && !data?.demo;
   const invalidateManagedChanges = () => Promise.all([
     qc.invalidateQueries({ queryKey: queryKeys.alertsManager.changesRoot }),
@@ -1116,7 +1078,10 @@ export function AlertsManagerPanel() {
     setError("");
     try {
       await api.recordAlertAnalysisDecision(connId, { target_type: targetType, target_id: targetId, action, reason });
-      await qc.invalidateQueries({ queryKey: ["alert-analysis"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["alert-analysis"] }),
+        qc.invalidateQueries({ queryKey: ["alert-analysis-section"] }),
+      ]);
     } catch (cause) {
       setError(formatError(cause));
     }
@@ -1384,11 +1349,11 @@ export function AlertsManagerPanel() {
     { id: "overview", label: "Overview" },
     { id: "inbox", label: "Alert instances", count: firedQ.data?.count },
     { id: "visualize", label: "Visualize" },
-    { id: "overlaps", label: "Overlaps", count: data?.overlaps.length },
-    { id: "gaps", label: "Gaps", count: data?.gaps.length },
-    { id: "rules", label: "Rule analysis", count: data?.rules.length },
-    { id: "manage-rules", label: "Rule management", count: managedRulesQ.data?.count },
-    { id: "action-groups", label: "Action groups", count: data?.action_groups.length ?? managedGroupsQ.data?.count },
+    { id: "overlaps", label: "Overlaps", count: data?.section_totals?.overlaps ?? data?.kpis.actionable_overlap_groups ?? data?.kpis.overlap_groups },
+    { id: "gaps", label: "Gaps", count: data?.section_totals?.gaps ?? data?.kpis.actionable_gap_count ?? data?.kpis.gap_count },
+    { id: "rules", label: "Rule analysis", count: data?.section_totals?.rules ?? data?.kpis.total_rules },
+    { id: "manage-rules", label: "Rule management", count: managedRulesQ.data?.count ?? data?.kpis.total_rules },
+    { id: "action-groups", label: "Action groups", count: data?.demo ? data.action_groups.length : managedGroupsQ.data?.count ?? data?.kpis.action_groups },
     { id: "deployment-plans", label: "Deployment plans" },
     { id: "changes", label: "Managed changes", count: summaryQ.data?.actionable_count ?? changesQ.data?.actionable_count, urgent: (summaryQ.data?.actionable_count ?? changesQ.data?.actionable_count ?? 0) > 0 },
   ];
@@ -1463,9 +1428,9 @@ export function AlertsManagerPanel() {
         </div>
         {data?.report_exists && !managementTab && tab !== "overview" && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search rules, signals, resources…" className="w-64 rounded-lg border px-3 py-1.5 text-xs focus:border-brand focus:outline-none" />
+            <input value={search} onChange={(event) => { setSearch(event.target.value); goPage(1); }} placeholder="Search rules, signals, resources…" className="w-64 rounded-lg border px-3 py-1.5 text-xs focus:border-brand focus:outline-none" />
             {tab === "gaps" && <><select aria-label="Filter gaps by risk" value={gapRisk} onChange={(event) => { setGapRisk(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All risks</option>{gapOptions.risks.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Filter gaps by type" value={gapType} onChange={(event) => { setGapType(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All gap types</option>{gapOptions.types.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select><select aria-label="Filter gaps by signal" value={gapSignal} onChange={(event) => { setGapSignal(event.target.value); goPage(1); }} className="max-w-64 rounded-lg border px-2 py-1.5 text-xs"><option value="all">All signals</option>{gapOptions.signals.map((value) => <option key={value} value={value}>{value}</option>)}</select><select aria-label="Group gaps" value={gapGroup} onChange={(event) => { setGapGroup(event.target.value as typeof gapGroup); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="none">No grouping</option><option value="signal">Group by signal</option></select><select aria-label="Sort gaps" value={gapSort ?? "default"} onChange={(event) => { setGapSort(event.target.value === "default" ? null : event.target.value as GapSort); setGapSortDirection("asc"); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="risk">Risk</option><option value="signal">Signal</option><option value="gap">Gap type</option><option value="resource">Resource / rule</option><option value="recommendation">Recommended action</option></select><button type="button" disabled={!gapSort} onClick={() => { setGapSortDirection((value) => value === "asc" ? "desc" : "asc"); goPage(1); }} title="Reverse gap sort direction" className="rounded-lg border px-2 py-1.5 text-xs disabled:opacity-40">{gapSortDirection === "asc" ? "↑" : "↓"}</button></>}
-            {tab === "rules" && <select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All statuses</option><option value="overlap">Overlaps</option><option value="gap">Gaps</option><option value="ok">OK</option></select>}
+            {tab === "rules" && <select value={status} onChange={(event) => { setStatus(event.target.value); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="all">All statuses</option><option value="overlap">Overlaps</option><option value="gap">Gaps</option><option value="ok">OK</option></select>}
             {tab === "rules" && <select aria-label="Sort rule analysis" value={ruleSort === "cost" ? `cost_${ruleSortDirection}` : "default"} onChange={(event) => { const value = event.target.value; setRuleSort(value === "default" ? null : "cost"); if (value !== "default") setRuleSortDirection(value.endsWith("desc") ? "desc" : "asc"); goPage(1); }} className="rounded-lg border px-2 py-1.5 text-xs"><option value="default">Default order</option><option value="cost_desc">Cost: highest first</option><option value="cost_asc">Cost: lowest first</option></select>}
             {(search || status !== "all" || ruleSort || overlapSort || gapRisk !== "all" || gapType !== "all" || gapSignal !== "all" || gapGroup !== "none" || gapSort) && <button onClick={() => { setSearch(""); setStatus("all"); setRuleSort(null); setOverlapSort(null); setGapRisk("all"); setGapType("all"); setGapSignal("all"); setGapGroup("none"); setGapSort(null); goPage(1); }} className="text-xs text-gray-500 hover:underline">Clear</button>}
           </div>
@@ -1540,17 +1505,17 @@ export function AlertsManagerPanel() {
               <Kpi label="Fires 7d" value={data.kpis.firings_7d} tone={data.kpis.firings_7d > 0 ? "amber" : "gray"} />
               <Kpi label="Fires 30d" value={data.kpis.firings_30d} tone={data.kpis.firings_30d > 0 ? "blue" : "gray"} />
             </div>}
-            <Overview overlaps={data.active_overlaps ?? data.overlaps} gaps={data.active_gaps ?? data.gaps} rules={data.rules} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} readOnly={!!capabilities?.read_only} canManageRules={!!capabilities?.can_manage_rules} onOpen={() => setActivityLogWizardOpen(true)} />} />
+            <Overview overlaps={data.overlaps} gaps={data.gaps} overview={data.overview} totals={data.section_totals} costSummary={data.cost_summary} activityLogCoverage={data.demo ? <section className="rounded-xl border bg-white p-4 text-xs text-gray-500">Essential Activity Log coverage is available for live Azure scopes.</section> : <ActivityLogCoverageSection coverage={activityLogCoverageQ.data?.coverage} loading={activityLogCoverageQ.isLoading} error={activityLogCoverageQ.error} readOnly={!!capabilities?.read_only} canManageRules={!!capabilities?.can_manage_rules} onOpen={() => setActivityLogWizardOpen(true)} />} />
           </div>
-          : tab === "overlaps" ? <PagedView rows={overlaps} page={page} onPage={goPage}>{(pageRows) => <OverlapsTable rows={pageRows} sortColumn={overlapSort} sortDirection={overlapSortDirection} onSort={(column) => updateSort(column, overlapSort, overlapSortDirection, setOverlapSort, setOverlapSortDirection, column === "confidence" ? "desc" : "asc")} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} />}</PagedView>
-          : tab === "gaps" ? <PagedView rows={gaps} page={page} onPage={goPage}>{(pageRows) => <GapsTable rows={pageRows} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} sortColumn={gapSort} sortDirection={gapSortDirection} onSort={(column) => updateSort(column, gapSort, gapSortDirection, setGapSort, setGapSortDirection)} onSelectionChange={setSelectedGapIds} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} />}</PagedView>
-          : tab === "rules" ? <PagedView rows={rules} page={page} onPage={goPage}>{(pageRows) => <RulesTable rows={pageRows} sortColumn={ruleSort} sortDirection={ruleSortDirection} onSort={(column) => updateSort(column, ruleSort, ruleSortDirection, setRuleSort, setRuleSortDirection, column === "cost" || column === "firings" ? "desc" : "asc")} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} />}</PagedView>
+          : tab === "overlaps" ? overlapsPageQ.isLoading ? <Skeleton rows={8} /> : overlapsPageQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(overlapsPageQ.error)}</div> : <div className="space-y-2"><OverlapsTable rows={overlaps} sortColumn={overlapSort} sortDirection={overlapSortDirection} onSort={(column) => updateSort(column, overlapSort, overlapSortDirection, setOverlapSort, setOverlapSortDirection, column === "confidence" ? "desc" : "asc")} onDismiss={(id) => void recordDecision("overlap", id, "dismiss_finding")} /><PageBar total={overlapsPageQ.data?.total ?? 0} page={page} pageSize={PAGE_SIZE} onPage={goPage} /></div>
+          : tab === "gaps" ? gapsPageQ.isLoading ? <Skeleton rows={8} /> : gapsPageQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(gapsPageQ.error)}</div> : <div className="space-y-2"><GapsTable rows={gaps} selectedRows={selectedGaps} selectedIds={selectedGapIds} plansByGap={gapPlansQ.data?.by_gap ?? {}} canPlan={canPlanGaps} groupBySignal={gapGroup === "signal"} sortColumn={gapSort} sortDirection={gapSortDirection} onSort={(column) => updateSort(column, gapSort, gapSortDirection, setGapSort, setGapSortDirection)} onSelectionChange={changeSelectedGaps} onCreatePlan={() => setGapPlannerOpen(true)} onOpenPlan={(planId) => { setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onCreateRule={capabilitiesQ.data?.can_manage_rules && !capabilitiesQ.data.read_only ? (row) => setRuleEditor(ruleFromGap(row, scopeKind === "subscription" ? subId : "")) : undefined} /><PageBar total={gapsPageQ.data?.total ?? 0} page={page} pageSize={PAGE_SIZE} onPage={goPage} /></div>
+          : tab === "rules" ? rulesPageQ.isLoading ? <Skeleton rows={8} /> : rulesPageQ.isError ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{formatError(rulesPageQ.error)}</div> : <div className="space-y-2"><RulesTable rows={rules} sortColumn={ruleSort} sortDirection={ruleSortDirection} onSort={(column) => updateSort(column, ruleSort, ruleSortDirection, setRuleSort, setRuleSortDirection, column === "cost" || column === "firings" ? "desc" : "asc")} onDecision={(rule, action) => void recordDecision("rule", rule.id, action)} /><PageBar total={rulesPageQ.data?.total ?? 0} page={page} pageSize={PAGE_SIZE} onPage={goPage} /></div>
           : tab === "visualize" ? <NotificationSimulatorPanel params={managementParams} readOnly={!!capabilities?.read_only} canEditRules={!!capabilities?.can_manage_rules} canEditActionGroups={!!capabilities?.can_manage_action_groups} onEditRule={(ruleId, family) => void editVisualizedRule(ruleId, family)} onEditActionGroup={(actionGroupId) => void editVisualizedActionGroup(actionGroupId)} />
           : null}
       </main>
       {editor && <ActionGroupEditor initial={editor} connectionId={connId} busy={managementBusy === "save"} saveError={actionGroupEditorError} onClose={() => { setActionGroupEditorError(""); setEditor(null); }} onSave={(value, reason) => void saveActionGroup(value, reason)} />}
       {ruleEditor && <AlertRuleEditor initial={ruleEditor} connectionId={connId} workloadId={scopeKind === "workload" ? effectiveWorkloadId : ""} actionGroups={ruleActionGroupsQ.data?.action_groups ?? []} canPreview={!!capabilitiesQ.data?.can_preview_queries} busy={managementBusy === "rule-save"} onClose={() => setRuleEditor(null)} onSave={saveManagedRule} />}
-      {gapPlannerOpen && selectedGaps.length > 0 && <GapRemediationPlanner gaps={selectedGaps} scopeParams={managementParams} liveActionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilitiesQ.data} onClose={() => setGapPlannerOpen(false)} onOpenPlan={(planId) => { setGapPlannerOpen(false); setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onSubmitted={(plan) => { setGapPlannerOpen(false); setSelectedGapIds(new Set()); setFocusedDeploymentPlanId(plan.id); goTab("deployment-plans"); void Promise.all([qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans"] }), qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans-by-gap"] }), invalidateManagedChanges()]); }} />}
+      {gapPlannerOpen && selectedGaps.length > 0 && <GapRemediationPlanner gaps={selectedGaps} scopeParams={managementParams} liveActionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilitiesQ.data} onClose={() => setGapPlannerOpen(false)} onOpenPlan={(planId) => { setGapPlannerOpen(false); setFocusedDeploymentPlanId(planId); goTab("deployment-plans"); }} onSubmitted={(plan) => { setGapPlannerOpen(false); setSelectedGapIds(new Set()); setSelectedGapRows(new Map()); setFocusedDeploymentPlanId(plan.id); goTab("deployment-plans"); void Promise.all([qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans"] }), qc.invalidateQueries({ queryKey: ["alerts-manager-deployment-plans-by-gap"] }), invalidateManagedChanges()]); }} />}
       {activityLogWizardOpen && activityLogCoverageQ.data && <ActivityLogSetupWizard coverage={activityLogCoverageQ.data.coverage} scopeParams={managementParams} actionGroups={managedGroupsQ.data?.action_groups ?? []} capabilities={capabilities} onClose={() => setActivityLogWizardOpen(false)} onOpenDiagnostics={() => { setActivityLogWizardOpen(false); setActivityLogDiagnosticsOpen(true); }} onSubmitted={() => { setActivityLogWizardOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot }), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.rulesRoot })]); }} />}
       {activityLogDiagnosticsOpen && <ActivityLogDiagnosticsWizard scopeParams={managementParams} capabilities={capabilities} onBack={() => { setActivityLogDiagnosticsOpen(false); setActivityLogWizardOpen(true); }} onClose={() => setActivityLogDiagnosticsOpen(false)} onSubmitted={() => { setActivityLogDiagnosticsOpen(false); goTab("changes"); requestAnimationFrame(() => contentScrollRef.current?.scrollTo({ top: 0, behavior: "auto" })); void Promise.all([invalidateManagedChanges(), qc.invalidateQueries({ queryKey: queryKeys.alertsManager.activityLogCoverageRoot })]); }} />}
     </div>

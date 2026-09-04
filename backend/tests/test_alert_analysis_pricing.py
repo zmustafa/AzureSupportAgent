@@ -158,7 +158,7 @@ def test_summary_separates_current_disabled_unknown_and_families() -> None:
         [resource], rules, [], scope_kind="workload", scope_id="wl1", scope_name="One"
     )
     summary = snapshot["cost_summary"]
-    assert snapshot["schema_version"] == SNAPSHOT_SCHEMA_VERSION == 3
+    assert snapshot["schema_version"] == SNAPSHOT_SCHEMA_VERSION == 4
     assert summary["catalog_version"] == CATALOG_VERSION
     assert summary["currency"] == "USD"
     assert summary["monthly_usd"] == 1.6
@@ -173,7 +173,7 @@ def test_summary_separates_current_disabled_unknown_and_families() -> None:
 
 def test_empty_demo_csv_and_xlsx_include_cost_contract() -> None:
     empty = empty_snapshot("workload", "wl1")
-    assert empty["schema_version"] == 3
+    assert empty["schema_version"] == 4
     assert empty["cost_summary"]["monthly_usd"] == 0.0
     assert empty["cost_summary"]["by_family"] == {}
 

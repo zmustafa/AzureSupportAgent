@@ -698,6 +698,9 @@ export type AlertAnalysisOverlap = {
   type: "exact" | "near" | "notification";
   confidence: "high" | "medium";
   target_id: string;
+  target_ids?: string[];
+  target_count?: number;
+  targets_truncated?: boolean;
   signal_type: string;
   signal_name: string;
   rule_ids: string[];
@@ -1422,6 +1425,32 @@ export type AlertAnalysisSnapshot = {
   decisions?: AlertAnalysisDecision[];
   active_overlaps?: AlertAnalysisOverlap[];
   active_gaps?: AlertAnalysisGap[];
+  active_overlap_ids?: string[];
+  active_gap_keys?: string[];
+  overview?: {
+    clean_rules: number;
+    cost_confidence_counts: Record<string, number>;
+  };
+  section_totals?: {
+    rules: number;
+    overlaps: number;
+    gaps: number;
+    action_groups: number;
+    recipients: number;
+  };
+};
+
+export type AlertAnalysisSectionPage<T> = {
+  section: "rules" | "overlaps" | "gaps";
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  facets: {
+    risks?: string[];
+    types?: string[];
+    signals?: string[];
+  };
 };
 
 export type AlertAnalysisRefreshProgress = {
@@ -7262,12 +7291,25 @@ export const api = {
     return http<AmbaCoverage>(`/amba/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
   alertAnalysis: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
-    const q = new URLSearchParams();
+    const q = new URLSearchParams({ compact: "true" });
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
     if (params.connection_id) q.set("connection_id", params.connection_id);
     return http<AlertAnalysisSnapshot>(`/alert-analysis?${q.toString()}`);
+  },
+  alertAnalysisSection: <T>(
+    section: "rules" | "overlaps" | "gaps",
+    params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string },
+    options: { page?: number; page_size?: number; search?: string; status?: string; risk?: string; gap_type?: string; signal?: string; sort?: string; direction?: "asc" | "desc"; group?: string } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.workload_id) q.set("workload_id", params.workload_id);
+    if (params.subscription_id) q.set("subscription_id", params.subscription_id);
+    if (params.management_group_id) q.set("management_group_id", params.management_group_id);
+    if (params.connection_id) q.set("connection_id", params.connection_id);
+    for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== "") q.set(key, String(value));
+    return http<AlertAnalysisSectionPage<T>>(`/alert-analysis/sections/${section}?${q.toString()}`);
   },
   refreshAlertAnalysis: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
     const q = new URLSearchParams();
@@ -7278,7 +7320,7 @@ export const api = {
     return http<AlertAnalysisSnapshot>(`/alert-analysis/refresh?${q.toString()}`, { method: "POST", body: "{}" });
   },
   startAlertAnalysisRefresh: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
-    const q = new URLSearchParams();
+    const q = new URLSearchParams({ compact: "true" });
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
@@ -7286,7 +7328,7 @@ export const api = {
     return http<AlertAnalysisRefreshJobResponse>(`/alert-analysis/refresh/start?${q.toString()}`, { method: "POST", body: "{}" });
   },
   alertAnalysisRefreshJob: (params: { workload_id?: string; subscription_id?: string; management_group_id?: string; connection_id?: string }) => {
-    const q = new URLSearchParams();
+    const q = new URLSearchParams({ compact: "true" });
     if (params.workload_id) q.set("workload_id", params.workload_id);
     if (params.subscription_id) q.set("subscription_id", params.subscription_id);
     if (params.management_group_id) q.set("management_group_id", params.management_group_id);
