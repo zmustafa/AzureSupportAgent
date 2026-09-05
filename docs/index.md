@@ -2,84 +2,169 @@
 layout: home
 title: Home
 nav_order: 1
-description: Deploy, learn, operate, and extend Azure Support Agent.
+description: Understand your Azure estate, investigate problems, and plan your next move with Azure Support Agent.
 permalink: /
+home_showcase: true
 ---
+
+<div class="home-page" markdown="1">
+<div class="home-hero" markdown="1">
 
 # Azure Support Agent
 
-{: .fs-8 .fw-700 }
-AI-driven Azure operations, investigation, governance, and proactive support—deployed in your own subscription.
-{: .fs-5 .fw-300 }
+<p class="home-headline">See your Azure estate.<br><span>Know where to act.</span></p>
+<p class="home-intro">Connect architecture, operational signals, and investigation evidence in one place. Understand what needs attention—and review your next step before making a change.</p>
+<div class="home-actions">
+	<a class="home-action home-action-primary" href="{{ site.baseurl }}/getting-started/">Get started <span aria-hidden="true">&nbsp;→</span></a>
+	<a class="home-action" href="{{ site.baseurl }}/reference/visual-tour/">Explore the visual tour</a>
+</div>
+<div class="home-context" role="group" aria-label="Product context">
+	<span>Deployed in your subscription</span><span>Open source</span><span>Read-oriented starting point</span>
+</div>
+</div>
 
-[Get started]({{ site.baseurl }}/getting-started/){: .btn .btn-primary .mr-2 }
-[Follow a how-to]({{ site.baseurl }}/how-to/){: .btn .mr-2 }
-[Explore every feature]({{ site.baseurl }}/user-guide/){: .btn .mr-2 }
-[View on GitHub](https://github.com/zmustafa/AzureSupportAgent){: .btn }
+<div class="home-showcase" data-home-showcase markdown="1">
+<div class="showcase-header">
+	<h2 id="see-the-workflow">From estate context to a reviewed next step</h2>
+	<span class="showcase-badge">Synthetic demonstration</span>
+</div>
+<nav class="showcase-navigation" data-showcase-navigation aria-label="Explore four application workflows">
+	<a class="showcase-tab" id="showcase-tab-map" href="#showcase-map" data-showcase-tab><span class="showcase-step" aria-hidden="true">01</span><span>Map your estate</span></a>
+	<a class="showcase-tab" id="showcase-tab-investigate" href="#showcase-investigate" data-showcase-tab><span class="showcase-step" aria-hidden="true">02</span><span>Investigate an incident</span></a>
+	<a class="showcase-tab" id="showcase-tab-recovery" href="#showcase-recovery" data-showcase-tab><span class="showcase-step" aria-hidden="true">03</span><span>Review recovery gaps</span></a>
+	<a class="showcase-tab" id="showcase-tab-coordinate" href="#showcase-coordinate" data-showcase-tab><span class="showcase-step" aria-hidden="true">04</span><span>Coordinate operations</span></a>
+</nav>
 
-![The Proactive Support tool directory, grouped by what each tool answers]({{ site.baseurl }}/assets/proactive-support.png)
+<section class="showcase-panel" id="showcase-map" aria-labelledby="showcase-map-title" markdown="1">
+<h3 id="showcase-map-title">Make the connections visible.</h3>
+<p>Explore a connected application, inspect its resources, and put dependencies in context before assessing impact.</p>
 
-## Start here
+{% include screenshot.html file="estate-architecture-canvas.png" title="A connected application in the Architecture canvas" caption="Inspect the synthetic checkout topology and resource palette. Modeled connections and illustrative costs are not verified traffic, deployed resources, or price quotes." eager=true %}
 
-| Goal | Guide |
-| --- | --- |
-| Preview critical workflows in screenshots | [Visual tour: 137 captured states, grouped by workflow]({{ site.baseurl }}/reference/visual-tour/) |
-| Deploy in about ten minutes | [One-click installation]({{ site.baseurl }}/getting-started/one-click-install/) |
-| Complete first-run configuration | [First-run setup]({{ site.baseurl }}/getting-started/first-run/) |
-| Ask questions and investigate incidents | [Chat and Deep Investigation]({{ site.baseurl }}/user-guide/core/chat-deep-investigation/) |
-| Discover and manage applications | [Workloads]({{ site.baseurl }}/user-guide/workloads/) |
-| Scan a workload across support systems | [Mission Control]({{ site.baseurl }}/user-guide/mission-control/) |
-| Complete a specific operational task | [How-to guides]({{ site.baseurl }}/how-to/) |
-| Configure users, providers, and integrations | [Administration]({{ site.baseurl }}/admin/) |
+<a class="showcase-workflow" href="{{ site.baseurl }}/how-to/design-assessment/architectures-know-me/">Follow the architecture workflow <span aria-hidden="true">→</span></a>
+</section>
+
+<section class="showcase-panel" id="showcase-investigate" aria-labelledby="showcase-investigate-title" markdown="1">
+<h3 id="showcase-investigate-title">Follow the evidence, not just the alert.</h3>
+<p>Read competing hypotheses, supporting observations, uncertainty, and proposed next steps together.</p>
+
+{% include screenshot.html file="core-investigation-result.png" title="Deep Investigation with hypotheses and supporting evidence" caption="This illustrative result shows how to review an investigation. It is not an executed AI session or proof of root cause; proposed actions were not applied." %}
+
+<a class="showcase-workflow" href="{{ site.baseurl }}/how-to/core-workloads/dashboard-chat/">Follow the investigation workflow <span aria-hidden="true">→</span></a>
+</section>
+
+<section class="showcase-panel" id="showcase-recovery" aria-labelledby="showcase-recovery-title" markdown="1">
+<h3 id="showcase-recovery-title">See the gaps behind a readiness score.</h3>
+<p>Compare failure scenarios, resource-level outcomes, and missing evidence instead of treating unknown as healthy.</p>
+
+{% include screenshot.html file="ops-recovery-scenario-matrix.png" title="Recovery scenarios with known gaps and unknown outcomes" caption="This seeded demonstration separates scenario outcomes and evidence limits. It is not a live recovery assessment, successful restore, or executed failover drill." %}
+
+<a class="showcase-workflow" href="{{ site.baseurl }}/how-to/coverage/recovery-readiness/">Follow the recovery review <span aria-hidden="true">→</span></a>
+</section>
+
+<section class="showcase-panel" id="showcase-coordinate" aria-labelledby="showcase-coordinate-title" markdown="1">
+<h3 id="showcase-coordinate-title">Bring workload signals into one view.</h3>
+<p>Use Mission Control to review saved support-system results and choose which finding needs a closer look.</p>
+
+{% include screenshot.html file="core-mission-board.png" title="Mission Control support-system results for a synthetic workload" caption="The board illustrates saved workload results across operational checks. Statuses and scores are synthetic examples, not current Azure health, complete collection, or certification." %}
+
+<a class="showcase-workflow" href="{{ site.baseurl }}/how-to/core-workloads/mission-control/">Follow the Mission Control workflow <span aria-hidden="true">→</span></a>
+</section>
+
+<p class="showcase-note">Real application views, fictional example data. Each preview illustrates a separate workflow—not a single end-to-end execution. Open any image full-size to inspect the details.</p>
+</div>
 
 ## Explore by outcome
 
-### Understand and investigate
+<p class="home-section-intro">Start with the question you need to answer. Keep scope, source freshness, and evidence limits in view.</p>
+<div class="home-outcomes">
+	<article class="outcome-card" style="--card-accent: #0759ac;">
+		<h3 id="outcome-investigations">Investigations</h3>
+		<p>Connect symptoms, changes, and evidence. Preserve the reasoning behind your next step.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/core/chat-deep-investigation/">Chat &amp; Deep Investigation →</a>
+			<a href="{{ site.baseurl }}/user-guide/lifecycle-investigation/evidence-locker/">Evidence Locker</a>
+			<a href="{{ site.baseurl }}/user-guide/lifecycle-investigation/case-files/">Case Files</a>
+		</div>
+	</article>
+	<article class="outcome-card" style="--card-accent: #087c87;">
+		<h3 id="outcome-architecture">Architecture</h3>
+		<p>Discover application boundaries, explore dependencies, and assess design concerns.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/design-ownership/architectures/">Architectures &amp; resource context →</a>
+			<a href="{{ site.baseurl }}/user-guide/workloads/">Workload discovery</a>
+			<a href="{{ site.baseurl }}/user-guide/design-ownership/know-me/">Know-Me support knowledge</a>
+		</div>
+	</article>
+	<article class="outcome-card" style="--card-accent: #7152a1;">
+		<h3 id="outcome-governance">Governance</h3>
+		<p>Review policy, identity, and access paths. Separate findings from coverage gaps.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/governance-identity/azure-policy/">Azure Policy →</a>
+			<a href="{{ site.baseurl }}/user-guide/governance-identity/identity/">Entra ID</a>
+			<a href="{{ site.baseurl }}/user-guide/governance-identity/iam/">IAM &amp; access paths</a>
+		</div>
+	</article>
+	<article class="outcome-card" style="--card-accent: #aa6323;">
+		<h3 id="outcome-recovery">Recovery</h3>
+		<p>Identify protection gaps, inspect backup operations, and question recovery assumptions.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/coverage/recovery-readiness/">Recovery Readiness →</a>
+			<a href="{{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/">Backup &amp; DR Coverage</a>
+			<a href="{{ site.baseurl }}/user-guide/coverage/backup-manager/">Backup Manager</a>
+		</div>
+	</article>
+	<article class="outcome-card" style="--card-accent: #287d5e;">
+		<h3 id="outcome-estate-intelligence">Estate intelligence</h3>
+		<p>Understand inventory, cost, ownership, and change across your selected estate.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/estate-intelligence/inventory/">Inventory &amp; cost views →</a>
+			<a href="{{ site.baseurl }}/user-guide/estate-intelligence/change-explorer/">Change Explorer</a>
+			<a href="{{ site.baseurl }}/user-guide/design-ownership/ownership/">Ownership &amp; accountability</a>
+		</div>
+	</article>
+	<article class="outcome-card" style="--card-accent: #4766a0;">
+		<h3 id="outcome-automation">Automation</h3>
+		<p>Turn reviewed procedures into reusable operations, schedules, and notification routes.</p>
+		<div class="outcome-links">
+			<a href="{{ site.baseurl }}/user-guide/automations/">Tasks, Workbooks &amp; Playbooks →</a>
+			<a href="{{ site.baseurl }}/user-guide/design-ownership/ai-insight-packs/">AI Insight Packs</a>
+			<a href="{{ site.baseurl }}/connectors/">Connectors &amp; integrations</a>
+		</div>
+	</article>
+</div>
 
-- Use [Chat and Deep Investigation]({{ site.baseurl }}/user-guide/core/chat-deep-investigation/) for evidence-backed questions and War Room investigations.
-- Preserve decisions in [Evidence Locker]({{ site.baseurl }}/user-guide/lifecycle-investigation/evidence-locker/) and [Case Files]({{ site.baseurl }}/user-guide/lifecycle-investigation/case-files/).
-- Correlate application signals with [Telemetry Intelligence]({{ site.baseurl }}/user-guide/lifecycle-investigation/telemetry-intelligence/).
+## Start here
 
-### Map and assess
+<div class="home-start">
+	<article class="start-card">
+		<h3 id="start-setup">Set up your instance</h3>
+		<p>Review prerequisites, deploy into your subscription, and configure your first connection.</p>
+		<div class="outcome-links"><a href="{{ site.baseurl }}/getting-started/one-click-install/">Installation guide →</a><a href="{{ site.baseurl }}/getting-started/first-run/">First-run configuration</a></div>
+	</article>
+	<article class="start-card">
+		<h3 id="start-task">Complete a task</h3>
+		<p>Follow a workflow with prerequisites, expected results, safety notes, and verification.</p>
+		<div class="outcome-links"><a href="{{ site.baseurl }}/how-to/">Find a how-to guide →</a><a href="{{ site.baseurl }}/user-guide/">Explore every feature</a></div>
+	</article>
+	<article class="start-card">
+		<h3 id="start-operate">Operate and extend</h3>
+		<p>Configure access, providers, and integrations, or inspect how the application is built.</p>
+		<div class="outcome-links"><a href="{{ site.baseurl }}/admin/">Administration →</a><a href="{{ site.baseurl }}/technical/">Technical documentation</a><a href="https://github.com/zmustafa/AzureSupportAgent">View on GitHub</a></div>
+	</article>
+</div>
 
-- Discover [Workloads]({{ site.baseurl }}/user-guide/workloads/) and reverse-engineer [Architectures]({{ site.baseurl }}/user-guide/design-ownership/architectures/).
-- Build support knowledge with [Know-Me]({{ site.baseurl }}/user-guide/design-ownership/know-me/).
-- Prioritize improvements with [Assessments]({{ site.baseurl }}/user-guide/assessment-performance/assessments/), [FMEA]({{ site.baseurl }}/user-guide/assessment-performance/fmea/), and the [Performance Profiler]({{ site.baseurl }}/user-guide/assessment-performance/performance-profiler/).
-
-### Know your estate
-
-- Browse every resource through cost, location, and optimization lenses in [Inventory]({{ site.baseurl }}/user-guide/estate-intelligence/inventory/).
-- Explore how resources connect in the [Estate Graph]({{ site.baseurl }}/user-guide/design-ownership/estate-graph/), and give each one an accountable team with [Ownership]({{ site.baseurl }}/user-guide/design-ownership/ownership/).
-- Fix cost allocation and tagging drift with [Tag Intelligence]({{ site.baseurl }}/user-guide/estate-intelligence/tag-intelligence/).
-- Trace a regression back to its cause in [Change Explorer]({{ site.baseurl }}/user-guide/estate-intelligence/change-explorer/).
-
-### Improve operational coverage
-
-- Find alert gaps with [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/).
-- Review alert noise and routing in [Alerts Manager]({{ site.baseurl }}/user-guide/coverage/alerts-manager/).
-- Audit diagnostic settings and recoverability with [Telemetry Coverage]({{ site.baseurl }}/user-guide/coverage/telemetry-coverage/) and [Backup & DR Coverage]({{ site.baseurl }}/user-guide/coverage/backup-dr-coverage/).
-- Triage backup jobs and manage vaults, policies, DR drills, and backup cost in [Backup Manager]({{ site.baseurl }}/user-guide/coverage/backup-manager/), one workload at a time or across the whole fleet.
-- Confirm what each Azure connection can actually reach with [Connection Capability]({{ site.baseurl }}/user-guide/coverage/connection-capability/) before trusting a result.
-
-### Stay ahead of change
-
-- Let scheduled [AI Insight Packs]({{ site.baseurl }}/user-guide/design-ownership/ai-insight-packs/) watch the estate and speak up only when something material happens.
-- Track service retirements and breaking changes in [Retirement Radar]({{ site.baseurl }}/user-guide/lifecycle-investigation/retirement-radar/).
-- Catch expiring commitments with the [Reservations Monitor]({{ site.baseurl }}/user-guide/lifecycle-investigation/reservations-monitor/) and limit exhaustion with the [Quota Monitor]({{ site.baseurl }}/user-guide/lifecycle-investigation/quota-monitor/).
-
-### Govern and automate
-
-- Review [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/), [Entra ID]({{ site.baseurl }}/user-guide/governance-identity/identity/), and [IAM]({{ site.baseurl }}/user-guide/governance-identity/iam/).
-- Turn reviewed procedures into [Scheduled Tasks, Workbooks, and Playbooks]({{ site.baseurl }}/user-guide/automations/).
-- Route results through [Connectors]({{ site.baseurl }}/connectors/).
-
-## Built for controlled operations
-
-Azure Support Agent starts from a read-oriented posture. Azure writes remain subject to connection policy, product permissions, explicit approval, and audit controls. Begin with the [security overview]({{ site.baseurl }}/security/) and grant only the access required for each workflow.
+<section class="home-safety" aria-labelledby="home-safety-title">
+	<h2 id="home-safety-title">Understand first. Review before acting.</h2>
+	<p>Start from a read-oriented posture and grant only the access each workflow requires. Before making changes, review the feature's permissions, confirmation and approval behavior, scope, and rollback options. A preview is not permission to execute. Read the <a href="{{ site.baseurl }}/security/">security overview</a>.</p>
+</section>
 
 ## Need help?
 
-- [Troubleshooting index]({{ site.baseurl }}/reference/troubleshooting/)
-- [Permissions reference]({{ site.baseurl }}/reference/permissions/)
-- [Concepts and glossary]({{ site.baseurl }}/reference/glossary/)
-- [Technical documentation]({{ site.baseurl }}/technical/)
+<div class="home-help">
+	<a href="{{ site.baseurl }}/reference/troubleshooting/">Troubleshooting</a>
+	<a href="{{ site.baseurl }}/reference/permissions/">Permissions</a>
+	<a href="{{ site.baseurl }}/reference/glossary/">Concepts &amp; glossary</a>
+	<a href="{{ site.baseurl }}/reference/visual-tour/">Browse the screenshot collection</a>
+</div>
+</div>
