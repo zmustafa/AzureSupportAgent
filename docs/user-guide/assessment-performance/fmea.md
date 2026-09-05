@@ -17,6 +17,9 @@ Failure Mode and Effects Analysis (FMEA) records how a design can fail, the effe
 
 **Application routes:** `/fmea` and `/fmea/:id`.
 
+{: .note }
+**Screenshot note:** The native Memory and FMEA views contain synthetic content. Autosaves and scores update only browser-scoped examples; no AI generation, probe, or control verification occurred. Memory has revision preview/diff, but the current FMEA editor has no History or revision-preview control.
+
 ## Common use cases
 
 - Run a reliability review for a new or changed architecture.
@@ -33,6 +36,8 @@ Failure Mode and Effects Analysis (FMEA) records how a design can fail, the effe
 - A linked, current [architecture and memory]({{ site.baseurl }}/user-guide/design-ownership/know-me/) provide the primary AI grounding.
 - Workload inventory supports document suggestions and detects documents whose workload was deleted.
 - AI generation requires a configured provider. Manual documents and edits remain available without trusting generated output.
+
+{% include screenshot.html file="fdesign-memory-editor-preview.png" title="Review the source Architecture Memory before scoring risk" caption="This is the separate native Memory editor and live Markdown preview, not the FMEA worksheet. Its 800 ms autosave updates only synthetic browser data. Filled sections still carry review flags; Use in investigations is shown without launching an investigation." %}
 
 ## Document index and editor
 
@@ -52,6 +57,8 @@ Actions include:
 
 Edits auto-save after 1.2 seconds of idle time; **Save** is also available. Wait for **Saved** before navigating away, generating, or exporting. The worksheet has action-results and completion-date fields, not a separate per-row open/in-progress/completed status selector. Document lifecycle is independent of those row values.
 
+{% include screenshot.html file="fdesign-fmea-worksheet.png" title="Review scored and unscored failure modes" caption="The native, horizontally scrolling worksheet contains a synthetic critical DNS risk, medium capacity risk, and unscored recovery uncertainty. These are workshop examples, not AI findings or verified failures; a blank RPN preserves the scoring gap." %}
+
 ## RPN and risk bands
 
 For valid factors from 1 through 10:
@@ -70,6 +77,8 @@ If a factor is blank or zero, the row is not fully scored and RPN remains blank.
 | Below 40 | Low |
 
 Factor-cell color also helps identify high individual values. RPN is a prioritization convention, not an objective probability or impact model. Teams should calibrate factor definitions and review low-RPN catastrophic scenarios separately.
+
+{% include screenshot.html file="fdesign-fmea-factors-controls.png" title="Inspect factor scores and current-control rationale" caption="The synthetic row shows Severity 9, Occurrence 3, and Detection 5, giving RPN 135 after browser-local autosave. Rationale is entered in native Controls cells, not a separate factor dialog; the changed score does not prove a control was implemented." %}
 
 ## Workflow
 

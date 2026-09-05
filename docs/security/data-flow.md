@@ -19,6 +19,8 @@ permalink: /security/data-flow/
 ## Boundaries
 Tenant ID is applied at database/API boundaries. Azure connections are isolated records, but selecting one intentionally sends requests to that external tenant. AI and connector egress leaves the application boundary; review payload minimization and destination policy. Evidence share tokens create a temporary read path for anyone possessing the token.
 
+{% include screenshot.html file="admin-provider-azure-openai-draft.png" title="AI egress boundary — choose the provider endpoint and deployment" caption="Settings → AI Providers exposes the Azure OpenAI endpoint, API version, model/deployment, and separate API-key field. Review the intended destination before sending context. This draft uses a nonfunctional example endpoint and an empty key; it was not saved or tested and is not evidence of network traffic or data-residency compliance." %}
+
 ## Data minimization
 Select the narrowest workload, timespan, fields, and row limits. Avoid sending raw logs to AI or tickets when aggregate evidence is enough. Preserve immutable evidence only for approved retention periods. Disable unused providers, MCP surfaces, and connectors.
 

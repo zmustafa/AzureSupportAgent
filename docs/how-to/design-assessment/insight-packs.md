@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:insights, ROUTE:insights, INSIGHTS_NAV:today, INSIGH
 
 # Operate AI Insight Packs
 
+{: .note }
+**Screenshot note:** These are synthetic definitions and schedule records in the current native UI. Saved records and previews are browser-only examples, not real AI results. No generation, sample run, source collection, probe, scheduler execution, or notification occurred.
+
 ## Prerequisites
 
 - `insights.read`; `insights.write` for definitions/state; `insights.run` for execution.
@@ -34,6 +37,8 @@ Open `/insights`; sections include **Today**, **Library**, **Recent Runs**, and 
 **Expected result:** A reusable, validated pack exists and produces a persisted digest from accessible sources.
 
 **Verification:** Open the run and compare source counts/rows, scope, lookback, verdict, and materiality-gate explanation.
+
+{% include screenshot.html file="fdesign-insights-pack-definition.png" title="Inspect a definition and deterministic preview" caption="An existing synthetic pack is open in the native editor. The deterministic preview is not a test against current evidence; AI suggestions, refinement, generation, sample execution, and Save were not invoked for this capture." %}
 
 ## How to run, triage, and acknowledge digests
 
@@ -63,6 +68,8 @@ Open `/insights`; sections include **Today**, **Library**, **Recent Runs**, and 
 **Expected result:** The intended scope runs at the displayed local/UTC cadence and only material results request notification.
 
 **Verification:** Confirm next-run time, scheduler history, resulting digest, and connector delivery log.
+
+{% include screenshot.html file="fdesign-insights-paused-schedules.png" title="Review paused watchers before enabling execution" caption="Three synthetic watchers are disabled with no next run in the native schedule view. Run now and Resume remain untouched. These browser-only records demonstrate the paused state, not a scheduler run or successful external delivery." %}
 
 ## How to export a digest
 

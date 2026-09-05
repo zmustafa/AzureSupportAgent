@@ -60,6 +60,8 @@ feature_ids: [ADMIN_NAV:usage, ADMIN_NAV:audit]
 
 Usage is grouped by provider and model with request count, prompt tokens, completion tokens, and estimated USD cost plus totals. A tilde marks a fallback rate for a model absent from the price table. These numbers support governance only; provider invoices, Azure agreements, caching, and delayed billing remain authoritative.
 
+{% include screenshot.html file="flife-usage-model-history.png" title="Usage by Model — dummy request, token, and cost totals" caption="The table shows provider/model grouping, prompt and completion tokens, and estimated costs. All model names, request counts, token counts, and amounts are invented examples, not actual usage, Azure charges, or provider invoices. No provider was invoked or billed." %}
+
 ### Audit Log
 
 Audit entries include timestamp, actor, action, target, optional provider/model, and action-specific metadata. Use pagination and available filters/search to investigate configuration, provider OAuth, approvals, connections, connectors, users, sessions, backups, demo data, and feature writes.
@@ -69,6 +71,8 @@ An audit event proves the application recorded an action; it does not alone prov
 SIEM **Send test event** performs a real outbound delivery. A successful test verifies the
 configured endpoint at that moment, not continuous delivery. **Flush now** can forward pending
 records, and **Reset cursor** deliberately replays previously forwarded records.
+
+{% include screenshot.html file="flife-audit-event-history.png" title="Audit Log — illustrative event history and SIEM boundary" caption="The flat table displays nine dummy events with time, action, target, and optional provider/model columns; no SIEM destination is configured in this example. These rows are not evidence that the depicted actions occurred. No CSV/JSON export, SIEM test, flush, reset, or external delivery was performed." %}
 
 ## Safety and limitations
 

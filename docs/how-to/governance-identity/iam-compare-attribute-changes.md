@@ -55,6 +55,10 @@ Two things about the classification are worth knowing while reading it. The diff
 
 Before **Find out who** has ever been run, the tab states that every actor is unknown *for that reason*. It does not report a zero-unattributed summary for a tenant where the join was never attempted.
 
+**Screenshot notes:** This synthetic browser fixture supplies a saved diff and attribution; **Find out who** was not invoked and no live Activity Log read or backend join produced the example. The counts and actors are illustrative. Its 30-day window matches the window requested by the tab, not a guarantee of complete event coverage.
+
+{% include screenshot.html file="fid2-iam-compare-attribution.png" title="Compare access changes with exact, inferred and unknown actors" caption="Read the attribution summary before investigating a row. Exact matches use the assignment identifier; inferred matches are leads based on scope and time. Unknown actor means no unambiguous match in the available evidence, not that the change was unauthorized or happened without an actor." %}
+
 ## How to keep a baseline you can compare against later
 
 1. Understand the retention rule: full rows are kept for the **most recent run plus any pinned run**. Thirty runs of a large estate is not a history feature, it is an outage.

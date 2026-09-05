@@ -33,6 +33,8 @@ Open the feature's **Fleet** view. Workload-group bulk actions are under
    in SQL and the server continues it.
 4. Return to the feature. The latest batch and per-item status reattach automatically.
 
+{% include screenshot.html file="flife-durable-queued-batch.png" title="Locate the queued batch bar before leaving the page" caption="Telemetry Coverage Fleet illustrates where to read queued status and completed/total counts beside Cancel pending. The queue and cached rows are dummy records; no job was launched, browser-resumption behavior verified, or cancellation requested." %}
+
 ## How to understand outcomes
 
 - **Succeeded** means every item completed successfully.
@@ -41,6 +43,8 @@ Open the feature's **Fleet** view. Workload-group bulk actions are under
 - **Cancelled** means every item was cancelled before starting.
 
 A failed newest attempt does not replace the feature's last trusted successful snapshot.
+
+{% include screenshot.html file="flife-durable-partial-batch.png" title="Review a partial outcome before retrying" caption="The example batch has a mixture of succeeded, partial, and failed items, with previous scan values still visible. These are illustrative records, not an observed scan or proof of last-good persistence. Retry failed was not clicked; investigate the real item cause before retrying." %}
 
 ## How to cancel or retry
 

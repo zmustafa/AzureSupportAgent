@@ -11,6 +11,9 @@ feature_ids: [PERMISSION:sandbox.exec]
 
 # Run a bounded diagnostic on a Sandbox VM
 
+{: .note }
+**Screenshot note:** The native console uses synthetic browser-only output and saved history. No Sandbox Test, SSH command, DNS lookup, network probe, AI call, installation, or approval bypass occurred. Strict mode is on, sudo is off, and no credential is configured; a succeeded/exit-0 label is not evidence of execution.
+
 ## Prerequisites
 
 - Product permission `sandbox.exec`.
@@ -33,6 +36,8 @@ feature_ids: [PERMISSION:sandbox.exec]
 **Expected result:** A completed run with an exit code, captured output, and a durable run record.
 
 **Verification:** Confirm the run record names the VM you expected and the command you meant to send. Treat a non-zero exit code as a failure even when output looks plausible.
+
+{% include screenshot.html file="fdesign-sandbox-modeled-diagnostic.png" title="Read a modeled console response and its history" caption="The actual console displays a synthetic reply for ip route show and a browser-only history row. The command was not sent over SSH; succeeded, exit 0, duration, and output describe the example rather than a real host." %}
 
 ## How to let the agent run a diagnostic
 
@@ -79,6 +84,12 @@ Capture state before any mutation and plan the reversal before running it. Assum
 | Runs appear to queue | Four SSH sessions run concurrently across the application. |
 | Missing tool, installation fails | `allow_sudo` is off or the account cannot escalate. Install through the VM's maintenance process. |
 | Output ends mid-line | Storage truncation, not host behavior. Narrow the command or write to a file and read it in parts. |
+
+## Related network diagnostic workflow
+
+For a bounded source-to-target connectivity question, the separate **Test connectivity** form lets you select a sandbox VM and protocol inputs. It uses `netdiag.run` and its own diagnostic records, not this console's run history; showing the form does not establish SSH readiness or authorize execution.
+
+{% include screenshot.html file="fdesign-network-probe-inputs.png" title="Select a sandbox source in the separate connectivity form" caption="This native form is an alternative network-diagnostic entry point, not a console or agent run. The source VM and reserved target are synthetic, Run probe is intercepted, and no DNS, SSH, TLS, or HTTP connection is attempted." %}
 
 ## Related docs
 

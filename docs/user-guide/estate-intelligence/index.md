@@ -12,6 +12,8 @@ has_children: true
 
 Estate Intelligence turns Azure inventory and change evidence into searchable operational views.
 
+{% include screenshot.html file="estate-inventory-grid.png" title="Estate orientation — inventory rows with workload and location context" caption="The synthetic tenant inventory separates production, development, and unassigned resources, with type, resource-group, location, subscription, and workload columns. Use Inventory to establish the resource set, then Tag Intelligence or Change Explorer for their distinct evidence. Grid filters are not proof that the underlying collection scope was narrowed; no live collection is shown." %}
+
 | Guide | Use it to |
 | --- | --- |
 | [Inventory]({{ site.baseurl }}/user-guide/estate-intelligence/inventory/) | Search/export resources, inspect access/location/cost, find optimization candidates, and compare current cached inventory with a saved baseline. |

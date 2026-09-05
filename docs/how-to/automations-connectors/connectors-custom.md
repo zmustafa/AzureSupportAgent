@@ -23,6 +23,8 @@ feature_ids: [CONNECTOR:webhook]
 
 ## How to configure a generic webhook
 
+{% include screenshot.html file="fconn-webhook-http.png" title="Custom webhook — unsaved routing and signing setup" caption="Native UNSAVED form with Enabled off, a non-resolving example URL, and fictional non-secret routing headers. The HMAC secret is empty; the signature-header name alone does not enable or verify signing. No connector was saved or tested and no receiver request was sent. The image illustrates fields, not an accepted endpoint or successful delivery." %}
+
 1. Add **Webhook** and enter the HTTPS endpoint URL.
 2. Optionally enter custom headers, one `Key: Value` per line, for routing or authentication.
 3. Optionally set a signing secret and signature header name; the receiver must validate HMAC-SHA256 in `sha256=<hex>` format.

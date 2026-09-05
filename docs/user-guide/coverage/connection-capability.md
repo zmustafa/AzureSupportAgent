@@ -13,6 +13,9 @@ feature_ids: [PROACTIVE_NAV:capability, ROUTE:capability]
 
 **Product permission:** `connections.read`.
 
+{: .note }
+**Screenshot note:** These native views use synthetic browser-only matrix data and modeled diagnostic results. Verify live was never selected; no token check, Azure read, DNS lookup, SSH probe, or AI call occurred. Full cells and saved result labels are examples, not proof of access or reachability.
+
 ## Purpose
 
 **App route:** `/capability`
@@ -52,6 +55,8 @@ The page has one matrix rather than feature tabs. Rows are configured connection
 
 The score is the rounded mean across **14 columns**: Full = 1, Degraded = 0.5, Blind/Disabled = 0. **With blind spots** counts rows containing Blind cells only; **Fully capable** requires a score of 100. A deliberately read-only connection can have no blind spots yet score below 100.
 
+{% include screenshot.html file="fdesign-capability-inferred-matrix.png" title="Read inferred capabilities and inline reasons" caption="The native matrix displays synthetic availability, denial, and unknowns, including the Blind/Unknown fallback for missing cells. Verify live is off. A modeled Full cell is configuration inference, not tested reachability or resource-level authorization." %}
+
 ## Freshness and scope behavior
 
 The backend recomputes the matrix on each request. The browser treats inferred results as fresh for 60 seconds, and live results as immediately stale; normal query refetches can therefore repeat live probes while that mode is enabled. Use **Refresh** after a connection correction and switch off **Verify live** when finished. A new generated timestamp does not mean the cached Entra permission/license evidence was refreshed.
@@ -76,6 +81,10 @@ Do not broaden permissions merely to turn every cell green. A deliberately read-
 - **Log Analytics degraded/blind**: KQL investigation may lack a configured workspace or usable token path. Verify the actual feature's prerequisites and intended workspace.
 - **Key Vault blind**: secret/certificate expiry checks may be missing even when vault resources are visible through ARM.
 - **Gated writes Disabled** on a read-only connection is intentional. A Full cell does not authorize an operation: feature-specific permissions, Azure RBAC, and approval rules still apply. The matrix reason allows for auto-execution where separately enabled; it does not promise that every write needs approval.
+
+A feature's evidence can still be unavailable even when connection metadata looks usable. The separate DNS diagnostic below illustrates that distinction; it is not a capability-cell drawer or a result of **Verify live**.
+
+{% include screenshot.html file="fdesign-dns-modeled-chain-unknown.png" title="Keep feature-level DNS evidence gaps separate from capability" caption="The separate native DNS panel uses synthetic private and NXDOMAIN answers while zone existence and linkage remain unknown. No resolution or Azure read occurred. Neither the modeled answers nor the capability matrix establishes a verified private-endpoint path." %}
 
 ## Safety and limitations
 

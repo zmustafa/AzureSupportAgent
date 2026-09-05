@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:evidence, ROUTE:evidence, EVIDENCE_CONTENT_TABS:inve
 
 # Capture and manage investigation evidence
 
+{: .note }
+**Screenshot note:** These synthetic browser-only fixtures illustrate snapshot content and comparison, not live backend records or a captured evidence bundle. The displayed SHA-256 hash and **verified** badge are fixture values; no cryptographic check was performed for these screenshots. The comparison is illustrative, not live verification.
+
 ## Route
 
 Open `/evidence`.
@@ -32,6 +35,8 @@ Open `/evidence`.
 6. Open the snapshot and record creation time, creator, retention class, and SHA-256. Use **Export** for metadata including snapshot ID, size, and section counts.
 7. Check the detail view's integrity result. Detail and export verify the digest; content tabs, diff, and shared reads do not independently re-verify it.
 
+{% include screenshot.html file="estate-evidence-content.png" title="Snapshot inventory content and illustrative integrity badge" caption="Inspect inventory content and collection context before relying on a snapshot. The hash and verified badge shown here are fixture values, not the result of cryptographic verification; even a real digest check would not prove source truth or completeness." %}
+
 **Expected result:** An immutable point-in-time bundle with a recorded digest.
 
 **Verification:** Confirm scope/sections and successful integrity check. Inventory capture does not apply per-membership workload exclusions. Inspect notes: metrics are currently a placeholder, findings require workload scope and saved successful runs, and **Recent changes** does not apply the resolved scope predicate to its last-14-days query. Confirm each resource/change target before including it in the incident's evidence.
@@ -44,6 +49,8 @@ Open `/evidence`.
 3. Validate material changes against source systems.
 4. Open a snapshot and select **Export** for its JSON bundle with `evidence.read`; there is no ZIP export or import control.
 5. Verify exported ID, digest, generated time, and section counts, then store securely.
+
+{% include screenshot.html file="estate-evidence-diff.png" title="Selected snapshots compared across inventory and findings" caption="Confirm snapshot order and comparable scope before interpreting inventory or finding deltas. An empty comparison does not establish that other evidence sections are unchanged, and this fixture comparison is not live verification." %}
 
 **Expected result:** A point-in-time comparison and portable evidence bundle.
 

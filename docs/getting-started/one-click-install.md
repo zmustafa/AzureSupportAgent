@@ -79,6 +79,8 @@ These choices cost more and remain region-dependent. Confirm that the region off
 5. Grant the Container App identity Reader at the smallest useful subscription or management-group scope.
 6. Test the connection before running discovery.
 
+{% include screenshot.html file="admin-tenant-host-identity.png" title="After one-click deployment — add a read-only host-identity connection" caption="This is the application form used in the post-deployment connection step, not the Azure portal deployment blade. Host identity and Read-only for this tenant are selected in an unsaved synthetic draft. The image does not prove that a Container App exists, Reader was granted, or the connection test succeeded." %}
+
 ### Grant the managed identity read access
 
 In the portal: **Subscription** (or **Management group**) → **Access control (IAM)** → **Add role assignment** → role **Reader** → assign to **Managed identity** → select the Container App. Or with the CLI:

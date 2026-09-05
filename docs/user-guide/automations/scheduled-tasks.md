@@ -15,6 +15,8 @@ feature_ids: [AUTOMATIONS_NAV:tasks]
 
 Scheduled Tasks stores a recurrence and invokes a saved target. Editing the definition does not overwrite earlier task-run records. A successful schedule save does not execute or validate the target against Azure.
 
+**Screenshot note:** Status switches, next-run previews and histories below are browser fixtures. No schedule was created, enabled or run, and no notification was delivered. Editors are unsaved; turn **Schedule enabled** off before saving a real staged schedule, even where the example switch is on.
+
 ## Permissions and prerequisites
 
 | Operation | Application permission |
@@ -51,6 +53,8 @@ Only the first four types are offered by **New schedule**. All seven can appear 
 - The list supports type/status filters, search by name/target, grouping, and sorting by name, last run, next run, or run count. **Active tasks**, **Total tasks**, and **Failing** filter the list; Failing means the latest task run is `failed`, not that every target result is healthy otherwise.
 - Selection supports bulk **Enable**, **Disable**, and **Delete** (archive). Bulk operations are separate requests, not an all-or-nothing transaction; verify each row after an error.
 
+{% include screenshot.html file="fpa-tasks-schedules.png" title="Schedules grouped by target and status" caption="Compare workbook and playbook targets, cadence, destinations and run counts in one list. The assignment-check example is paused while other rows display enabled; these are illustrative states, not proof that any scheduler or connector ran." %}
+
 ## How to validate a schedule before enabling recurrence
 
 1. Select **New schedule**, choose the target, and supply the fields in the target catalog above.
@@ -59,6 +63,8 @@ Only the first four types are offered by **New schedule**. All seven can appear 
 4. Select **Create schedule**, then **Run now** on the saved row. Manual runs can execute a paused schedule and count toward its run limit.
 5. Inspect **Run history** and open the target output. Enable the schedule only after confirming its scope, result, and any delivery.
 
+{% include screenshot.html file="fpa-task-workbook-form.png" title="Unsaved workbook schedule and parameter preview" caption="Review the workbook parameter, daily time, timezone and upcoming occurrences together. The next-run values are a bounded synthetic preview, not validation of a saved date window or run limit; the form was not saved or run." %}
+
 **Expected result:** A paused definition is validated manually before automatic recurrence begins.
 
 **Verification:** Confirm the saved status, next run after enablement, `manual` versus `schedule` trigger, and the actual report/thread/workbook/playbook output. **Task started** is an acknowledgement, not a completion result.
@@ -66,6 +72,8 @@ Only the first four types are offered by **New schedule**. All seven can appear 
 ## History, recovery, and cleanup
 
 Task history returns the latest 50 records and polls while a displayed run is running (or briefly while a newly opened history is empty). It shows status, start time, trigger, summary/error, and supported result links. Workbook/playbook links open their libraries, not a selected historical run; match the run in that library. There is no task-history export, per-run delete, cancel, resume, or retry-failed button.
+
+{% include screenshot.html file="fpa-task-history.png" title="Task history distinguishes manual and scheduled outcomes" caption="The expanded example includes scheduled successes and a failed manual attempt with a scope-unavailable summary. Match the trigger and error to the target history before retrying; these modeled rows do not establish real execution or delivery." %}
 
 The scheduler checks approximately every 30 seconds and allows four scheduled runs per application process. Due occurrences are claimed in the database and heartbeated; an unfinished occurrence can be reclaimed after its lease expires. This is not checkpointed target execution or an exactly-once guarantee for external effects. Manual runs use a separate background path and are not subject to that scheduler semaphore. Avoid repeated **Run now** clicks while investigating an uncertain outcome.
 

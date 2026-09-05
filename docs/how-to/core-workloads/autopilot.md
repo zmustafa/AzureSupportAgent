@@ -10,6 +10,9 @@ permalink: /how-to/core-workloads/autopilot/
 
 # Discover workloads with Autopilot
 
+{: .note }
+**Screenshot note:** The native Autopilot screens use synthetic browser-only survey and candidate results. No Azure Resource Graph enumeration, AI inference, or probe occurred. Save was deliberately not clicked; no workload records or follow-on jobs were created, and the displayed estimates are not measured execution costs.
+
 ## Prerequisites
 
 - `workloads.read` to survey/discover and `workloads.write` to save candidates.
@@ -31,6 +34,8 @@ Open `/workloads` and select **✨ Autopilot**.
 **Expected result:** A cached, filterable survey describes the candidate resource population before AI grouping.
 
 **Verification:** Compare survey scope and counts with Resource Graph/inventory and confirm no unintended subscription is included.
+
+{% include screenshot.html file="fdesign-autopilot-survey.png" title="Inspect the survey before grouping resources" caption="Five supplied resources populate native facets and a zero-AI-call estimate. The survey response is synthetic rather than collected from Azure; use the controls to understand scope and sculpting without reading the counts as estate evidence." %}
 
 ## How to sculpt discovery inputs
 
@@ -67,6 +72,10 @@ Open `/workloads` and select **✨ Autopilot**.
 **Expected result:** Approved candidates become active workload records; discovery itself does not change Azure.
 
 **Verification:** Open each saved workload, inspect membership, then run Groups suggestions and Overlaps.
+
+{% include screenshot.html file="fdesign-autopilot-candidate-evidence.png" title="Inspect a candidate's membership and reasoning" caption="Native confidence badges, member counts, tags, type chips, and expandable reasoning display synthetic candidate evidence. Follow-on Mission Control and diagram options are unchecked. No AI grouping or workload save is demonstrated." %}
+
+{% include screenshot.html file="fdesign-autopilot-review-needed.png" title="Hold uncertain shared services out of the selection" caption="The synthetic shared-service candidate is left unselected for human review using native selection controls. Review-needed is example evidence, not an added UI status. Save was not clicked, so this view is a review decision rather than a saved workload result." %}
 
 ## How to tune poor results
 

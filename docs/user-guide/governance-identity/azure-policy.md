@@ -18,6 +18,10 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:advisors, POLICY_NA
 **App routes:** `/policy` and `/policy/:tab`
 Azure Policy provides governance inventory and analysis. It can author proposals, resolve effective policy, estimate blast radius, and build staged rollout plans, but it does not assign or deploy policy definitions or assignments to Azure. The Exemptions tab is the exception to the otherwise analytical workflow: with `policy.write` and a write-enabled connection, it can create, update, or delete Azure policy exemptions.
 
+**Screenshot note:** These views use browser-only example responses, not live Azure collections or compliance certification. No AI provider was called, policy deployed, or backend source/history saved during capture. Drafts and modeled results are not evidence of an applied change.
+
+{% include screenshot.html file="fpa-policy-overview.png" title="Azure Policy posture and scope hierarchy" caption="Compare the scope hierarchy with assignment, exemption and non-compliance totals before drilling into a finding. These modeled counts describe only the example inventory; they do not establish complete Azure coverage." %}
+
 ## Prerequisites and data sources
 
 - An ARM/Resource Graph-capable connection with Reader access to selected scopes.
@@ -70,9 +74,13 @@ Because the cache has no automatic expiry, always inspect `fetched_at`/age and e
 
 A 100% compliant audit assignment is not automatically safe to deny: sample limitations, stale compliance, exemptions, and unobserved deployment paths still matter.
 
+{% include screenshot.html file="fpa-policy-rollout-result.png" title="Saved rollout estimate awaiting review" caption="The saved simulation is marked HOLD and carries an estimated impact count. This example was opened from synthetic history, not measured against Azure; a displayed plan is neither deployment approval nor proof of a new save." %}
+
 ## Interpretation of results
 
 An effective-policy result is not a live Azure evaluation trace. The resolver tests string-prefix ancestry and `notScopes`; it does **not** expand management-group ancestry for an arbitrary subscription/resource target. It attaches all known exemptions referencing each assignment without checking exemption scope, expiry or initiative reference IDs, and does not subtract them from the count. Verify those separately in Azure.
+
+{% include screenshot.html file="fpa-policy-effective.png" title="Effective policy candidates at a selected scope" caption="Compare effect, source scope and enforcement separately, then investigate the linked exemption. The resolver response is modeled: exemption applicability and missing ancestry still need independent verification, and no Azure resolution ran during capture." %}
 
 **Safe to promote** is a lead, not a safety guarantee: once any compliance summary is available, an assignment absent from that summary can be treated as zero non-compliant. Missing assignment-level evidence is therefore unknown even if the card says **safe**. Baseline coverage is keyword matching over assignment names/categories, not proof that required effects, parameters and scopes are enforced. The three shipped baselines contain 8 WAF, 8 MCSB and 7 CIS controls.
 
@@ -83,6 +91,8 @@ Assignment and exemption tables/pivots provide CSV and Excel. Rollout results pr
 Rollout Planner attempts to save each completed simulation automatically; verify it appears under **Saved simulations**, since a missing `policy.write` grant can leave a displayed result unsaved. Advisors automatically saves coverage runs. History displays up to 30 snapshot summaries; storage retains at most 60 snapshots, 100 simulations and 100 coverage runs across their respective registries, not a guaranteed quota per connection. Confirm each record's scope before comparing.
 
 AI output is proposal text/JSON; validate aliases, modes, effects, parameters, and resource-provider behavior. **Detect drift** first saves the editor content, then asks AI to compare it with up to 120 summarized assignments and the first 20,000 source characters. Saved source is application-tenant-wide, not per selected Azure connection/workload. Neither drift nor rollout deploys definitions or assignments. There is no dedicated scheduling control in these Policy tabs.
+
+{% include screenshot.html file="fpa-policy-drift.png" title="Policy source and modeled reconciliation findings" caption="Separate live-only, declared-but-not-deployed and mismatched items before choosing a manual repository review. Both source-save and analysis responses were simulated in the browser; the backend source was untouched and no reconciliation was deployed." %}
 
 DeployIfNotExists and Modify remediation require assignment identity, location where applicable, suitable role-definition IDs, and Azure remediation tasks. The view highlights gaps but does not execute remediation.
 

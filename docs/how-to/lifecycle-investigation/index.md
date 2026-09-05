@@ -34,6 +34,8 @@ Use these recipes to identify time-bound operational risk, investigate telemetry
 
 **Verification:** Confirm the actual destination record and that verification timestamps postdate remediation. Record collection limits rather than treating missing rows, a green completion message, or a resolved case status as proof of success.
 
+{% include screenshot.html file="estate-case-timeline.png" title="Investigation handoff example — preserve scope and chronology in a case" caption="The synthetic checkout case keeps its workload and assignee beside timeline notes and linked findings, changes, and evidence. Use the Case Files and Evidence Locker recipes to understand those records and their separate permissions. The case is still Investigating; the image does not establish remediation, external verification, or a successful evidence capture." %}
+
 ## How to select a safe handoff or recovery action
 
 1. Use Quota's filtered CSV or full-snapshot CSV/JSON, Reservations' filtered report formats, Radar's runbook download, or Evidence Locker's JSON bundle for the appropriate handoff. Case Files and Telemetry Intelligence have no dedicated download button.

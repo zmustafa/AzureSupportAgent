@@ -24,6 +24,10 @@ feature_ids: [AUTOMATIONS_NAV:workbooks]
 
 - Open `/automations/workbooks`.
 
+**Screenshot note:** These are browser-only catalog and history examples, not executed workbook operations. No Azure query, host command or AI request ran. The parameter dialog was opened without selecting **Run workbook**; its recent results were supplied separately as synthetic history.
+
+{% include screenshot.html file="fpa-workbooks-catalog.png" title="Choose a workbook and inspect its runtime" caption="Locate the intended workbook, check its runtime, and use Edit to review its definition before execution. The example recovery workbook collects material for manual review; the catalog does not show a restore, remediation or provider compatibility test." %}
+
 ## How to create and test a workbook
 
 1. Select **New workbook**, edit a reviewed starter, or use **Generate with AI**. Submit each interview step with **Continue**; **Generate now** skips remaining questions and does not include unsubmitted current-step answers. Treat the result as an untrusted draft.
@@ -35,9 +39,13 @@ feature_ids: [AUTOMATIONS_NAV:workbooks]
 7. Enter test parameter values and select **Test run** only after reviewing execution effects. It executes the draft with confirmation enabled, does not persist a workbook run, and does not emit the workbook's alert event.
 8. Inspect raw output, structured output, narrative, severity, duration, and errors; then save.
 
+{% include screenshot.html file="fpa-workbook-editor.png" title="Review the query, default scope, and output settings" caption="The unsaved editor shows a read-only Resource Graph query, synthetic connection and parameter default, AI output modes, and alert/tile options. Save and Test run were not selected; configured AI processing is not evidence that extraction or execution succeeded. Inspect every parameter key and label in your own editor before running." %}
+
 **Expected result:** A reusable workbook is saved, and its draft test returns an understandable result without adding to run history.
 
 **Verification:** Select **Run**, enter parameter values, then **Run workbook**. Open **History**, expand the new record, and compare **Command**, raw output, structured result, severity, and error with the test. The saved Run action does not pass write confirmation, unlike Test run.
+
+{% include screenshot.html file="fpa-workbook-run-parameters.png" title="Review saved-run parameters without starting execution" caption="The Run dialog shows the resource-group input and recent successes and failure for context. Run workbook was not clicked during capture; a blocked saved write requires an approved execution process, not switching to Test run to bypass confirmation." %}
 
 ## How to verify a structured result, diff, tile, or alert
 
@@ -49,6 +57,8 @@ feature_ids: [AUTOMATIONS_NAV:workbooks]
 **Expected result:** Structured fields feed a shallow diff/tile, and qualifying saved results emit workbook events.
 
 **Verification:** Distinguish execution status from AI severity. No earlier structured result means keys appear as additions; unavailable AI/extraction can leave the tile empty. The AI processes bounded output, so inspect raw evidence before relying on a summary.
+
+{% include screenshot.html file="fpa-workbook-structured-result.png" title="Inspect structured fields before using a diff or tile" caption="The expanded example shows count, total, resource group and names alongside a prior-run change summary. It is synthetic saved evidence, not a new execution or AI extraction; verify the raw output and Command disclosures separately before trusting derived fields." %}
 
 ## How to import, export, and reuse a workbook
 

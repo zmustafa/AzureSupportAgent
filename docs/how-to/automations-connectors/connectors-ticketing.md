@@ -13,6 +13,8 @@ feature_ids: [CONNECTOR:jira, CONNECTOR:servicenow, CONNECTOR:pagerduty]
 
 Jira and ServiceNow intentionally have no **Send test** button because delivery would create a real record. PagerDuty is allowlisted, but its Send test triggers a real alert.
 
+The screenshots illustrate native **unsaved, disabled** setup or review steps. Credential secrets are empty; entered domains are non-resolving examples and other values are fictional. No connector was saved, authenticated, or tested, and no issue, incident, or alert was created.
+
 ## Prerequisites
 
 - `connectors.manage`.
@@ -29,6 +31,8 @@ Jira and ServiceNow intentionally have no **Send test** button because delivery 
 
 ## How to configure Jira
 
+{% include screenshot.html file="fconn-jira-token.png" title="Jira — unsaved token-mode setup" caption="Native UNSAVED setup shows fictional site, account, project, and issue-type defaults with an empty API token and Enabled off. The example domains do not resolve. This form is not a custom-field editor or an authenticated-user result; no search or issue creation occurred." %}
+
 1. Add **Jira**, enter the site URL, account email, token, and optional defaults, then save disabled.
 2. Select **Test**; it performs a read-only `GET /rest/api/3/myself` authentication check.
 3. Confirm the returned status, then enable the connector.
@@ -41,6 +45,8 @@ Jira and ServiceNow intentionally have no **Send test** button because delivery 
 
 ## How to configure ServiceNow
 
+{% include screenshot.html file="fconn-servicenow-basic.png" title="ServiceNow — unsaved incident-default review" caption="Native Review + add shows all seven generated fields, including fictional assignment group, caller, urgency, and impact. The password em dash means empty, not a stored secret. Disabled describes the UNSAVED draft; Add connector was not clicked. No Incident Table query, authentication result, or incident creation is demonstrated." %}
+
 1. Add **ServiceNow**, enter the instance and integration credentials, set approved defaults, and save disabled.
 2. Select **Test**; it performs a read-only incident-table query limited to one number.
 3. Confirm authentication, then enable the connector.
@@ -52,6 +58,8 @@ Jira and ServiceNow intentionally have no **Send test** button because delivery 
 **Verification:** Confirm the integration user and, only for an approved creation test, the incident number, assignment, urgency, and impact.
 
 ## How to configure PagerDuty
+
+{% include screenshot.html file="fconn-pagerduty-events-v2.png" title="PagerDuty — unsaved Events API v2 setup" caption="Native UNSAVED setup shows an empty routing key and a fictional default source with Enabled off. There are no escalation-policy or schedule controls here. Send test was not used and no responder was notified; a real trigger could create an alert and page responders." %}
 
 1. Add **PagerDuty**, enter the secret routing key and optional source, and save disabled.
 2. Select **Test**; it only confirms that a routing key is stored.

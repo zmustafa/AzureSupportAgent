@@ -13,6 +13,8 @@ has_children: true
 
 Use these procedures to configure the application, govern access, maintain reference data, and verify administrative changes without exposing credentials.
 
+{% include screenshot.html file="admin-access-built-in-roles.png" title="Administration task example — inspect roles before changing access" caption="Access Control → Roles exposes exact capability keys and distinguishes built-in roles. Use the access-control recipe below when the task is authorization; provider, connection, and reference changes have separate recipes and permissions. This local catalog was inspected only, with no user or role changes." %}
+
 ## How to choose an administration task
 
 ### Prerequisites

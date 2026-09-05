@@ -36,6 +36,8 @@ Open the feature route listed in the selected guide: `/coverage`, `/telemetry`, 
 
 **Verification and safety:** Confirm the route, selected connection, scope and result timestamp before acting on a score. Matrix Full, All Resources covered, and a high coverage percentage have different meanings; none proves recovery or end-to-end notification/log delivery.
 
+{% include screenshot.html file="ops-monitoring-alert-evidence.png" title="Coverage review example — compare a baseline with its observed evidence" caption="For the seeded Contoso Hotels workload, the selected AKS metric opens Recommended and Observed details beside the monitoring matrix. Inspect the underlying fields before proposing a change. This demo shows an evidence-review step, not live collection, an approval decision, notification delivery, or a deployed fix." %}
+
 ## How to separate collection, review and execution
 
 1. In Monitoring, Telemetry or Backup & DR Coverage, use **Load coverage** to read a saved scope, **Refresh now** for a new scan, or **Fleet → Scan selected** for a durable workload batch. A workload's connection is authoritative.

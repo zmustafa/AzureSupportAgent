@@ -41,6 +41,10 @@ See [Entra setup and coverage]({{ site.baseurl }}/user-guide/governance-identity
 
 **Inventory** is one grid over both planes of the same object: local app registrations joined to their service principal, plus enterprise applications that have no local registration, which are third-party apps someone consented into the tenant. Microsoft first-party service principals are excluded. Filters are a free-text search over display name and application ID, an **Ownerless only** toggle, and a **Risk ≥** threshold; the API additionally accepts a maximum-permission-tier filter and offset/limit paging, defaulting to 200 rows and capped at 2000. Rows sort by risk descending, then by name. Columns are risk, application, permissions, credentials, owners, and assigned principals. Inline markers call out Azure-managed identities, enterprise-app-only entries, orphaned service principals, multi-tenant registrations, external publishers, self-grant capability, and tenant-wide content access.
 
+**Screenshot notes:** These synthetic browser fixtures illustrate reading the panels, not a live collection or backend risk calculation. Example risk components, weights, counts and settings are not product defaults; use the model and refresh limits documented here.
+
+{% include screenshot.html file="fid2-entra-applications-inventory.png" title="Application inventory: risk, ownership and incomplete sign-in evidence" caption="Check the sign-in backfill banner before reading empty outcome cells. An unknown owner count is not ownerless, and measuring or not-yet-read activity is not evidence that an application is unused or has no failures." %}
+
 Risk is a weighted score out of 100, and the components are published by the API so the number is never a black box:
 
 | Component | Weight |
@@ -58,7 +62,11 @@ A component can be marked not applicable with a stated reason — an Azure-manag
 
 **Selecting a row** opens the application detail panel, which carries: the risk breakdown component by component with points against weight; owners resolved to names, with an explicit callout when there are none; granted application permissions as tier-colored chips; delegated consent separated into tenant-wide and per-user; requested-but-not-granted permissions, labeled as not being risk today; credentials with their name or identifier, their kind, and their expiry state; federated identity credentials with issuer and a flag for a wildcard subject; Conditional Access relevance, meaning which enforced policies target this application or all applications; Azure reach from the RBAC cache with a staleness note; provisioning jobs with their status and any quarantine; and the findings raised against this object. Redirect URIs are collected and feed the exposure component of the score. Sign-in audience, single sign-on mode, assignment requirement, and the owning tenant of an external application are shown as facts alongside the identifiers.
 
+{% include screenshot.html file="fid2-entra-application-permission-evidence.png" title="Application 360: granted permissions versus manifest requests" caption="The detail separates granted application permissions, delegated consent and requested-but-not-granted permissions. Requested access alone is not a grant; credential rows show expiry metadata, never secret values, and Azure reach comes from a separate RBAC cache." %}
+
 **Consent** reports the tenant posture — whether user consent is unrestricted, disabled, or restricted to low-risk permissions; whether the admin consent request workflow is enabled; and where guest invitations may come from — followed by a table of every delegated grant consented for all principals, with the client application, the resource, the scopes, and the highest tier among them. Permission grant policies are returned with the same payload.
+
+{% include screenshot.html file="fid2-entra-consent-grants.png" title="Consent posture and tenant-wide delegated grants" caption="The disabled user-consent setting and enabled administrator workflow are example tenant choices, not defaults. Despite the comparison in the on-screen helper text, tenant-wide delegated consent is not app-only access: operations still require a signed-in user and are limited by that user's access." %}
 
 ## Freshness and scope behavior
 
@@ -88,6 +96,8 @@ Microsoft's separate disable-status field is displayed independently from the te
 enabled/deactivated state.
 
 **Cancel** stops the active refresh and keeps completed pages available for resume. Cancellation, failure, or an incomplete provider response never replaces the previous completed snapshot. Only a successful refresh publishes the new cache. Completion metadata records mode, Graph total, fetched count, pages, duration, retries, throttles, resume state, truncation, and stop reason.
+
+{% include screenshot.html file="fid2-entra-registrations-expiry.png" title="Application Registrations: expiry, enterprise-app state and activity gaps" caption="First 1000 is an illustrative setting; the documented refresh-limit default is 500. Unknown enterprise-app state is not Deactivated, and not measured activity is not unused access. Application and delegated permission counts in this separate snapshot describe manifest requests, not proven consent." %}
 
 ## Interpretation of results
 

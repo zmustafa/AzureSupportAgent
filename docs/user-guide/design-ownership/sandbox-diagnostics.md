@@ -13,6 +13,9 @@ feature_ids: [PERMISSION:sandbox.exec, ADMIN_NAV:sandboxvms]
 
 **Product permission:** `sandbox.exec` for VM administration/console and agent-tool access. Dedicated connectivity/DNS endpoints use `netdiag.run` and call the same SSH runner without a second `sandbox.exec` guard.
 
+{: .note }
+**Screenshot note:** The native console and diagnostic form use synthetic browser-only data. Saved output and history are modeled results, not executed commands. No Sandbox Test, SSH command, DNS lookup, network probe, AI call, installation, or approval bypass occurred; the example has strict mode on, sudo off, and no configured credential.
+
 ## Purpose
 
 A Sandbox VM is a dedicated host you register inside your own network so the application has somewhere to stand. Everything else in this product observes Azure from the outside; a Sandbox VM lets a diagnostic run from a place that can actually see private endpoints, internal DNS, and traffic paths the backend cannot reach.
@@ -29,6 +32,10 @@ Treat this as remote shell access, not an isolated execution container. Its effe
 Console and `vm_exec` use the same command runner for length, kill-switch, classification, timeout, and SSH checks. Their recording and timeout-status behavior differ. **Test** uses a separate environment-detection path, and connectivity/DNS probes have their own run records.
 
 The agent additionally has `vm_list` and `vm_read_file` for read-only inspection.
+
+The dedicated connectivity form is another consumer of the same sandbox host, not the administrative console or an agent transcript. Confirm the source VM there independently; its diagnostic record is separate from console history.
+
+{% include screenshot.html file="fdesign-network-probe-inputs.png" title="Choose a sandbox source for the separate connectivity tool" caption="This native connectivity form illustrates the source-selection boundary, not console execution. Its fictional VM and reserved target are browser-only inputs; no SSH session or network probe was started." %}
 
 ## What has to be true before anything runs
 
@@ -84,6 +91,8 @@ Private keys are held in memory for the duration of a connection and are never w
 Console execution persists a run with command, exit code, bounded output/error, duration, trigger, and actor after capture. Its statuses are **succeeded**, **failed**, or **blocked**; a console timeout is failed with an error message. The agent wrapper also records **timeout** and can record separate install/retry runs. Agent logging is best-effort, so an absent record does not prove nothing ran. Read-only rejection before execution and environment detection are not ordinary command-run rows.
 
 Administrative changes to the VM registry — upsert, delete, and test — additionally write audit-log entries.
+
+{% include screenshot.html file="fdesign-sandbox-modeled-diagnostic.png" title="Inspect synthetic console output and modeled history" caption="The native console displays a browser-only reply for ip route show with strict mode on, sudo off, and no configured credential. Succeeded and exit 0 describe the fixture, not an SSH execution or a verified route table." %}
 
 {: .important }
 Agent-initiated `vm_exec` calls use run records rather than separate execution audit entries. Correlate available run history with the transcript and host-side logs; neither truncated output nor best-effort application logging is a complete forensic record.

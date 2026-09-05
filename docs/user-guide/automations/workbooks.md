@@ -15,6 +15,10 @@ feature_ids: [AUTOMATIONS_NAV:workbooks]
 
 A workbook is a saved parameterized operation. Its raw output can be summarized, severity-classified, schema-extracted, compared with a previous run, shown as a Monitor tile, or consumed by a playbook. It is an application definition, not an Azure Monitor Workbook resource.
 
+**Screenshot note:** The catalog and saved results below are browser fixtures. No Resource Graph query, CLI/PowerShell command or AI call ran during capture. Opening the Run dialog did not execute **Run workbook**, and the history rows do not demonstrate fresh execution or backend persistence.
+
+{% include screenshot.html file="fpa-workbooks-catalog.png" title="Workbook catalog across three runtimes" caption="Each example card identifies its runtime and exposes Run, History, Edit and Export. The vault workbook prepares evidence for manual recovery review; none of these labels proves an operation is safe or that a recovery action ran." %}
+
 ## Permissions and runtime prerequisites
 
 `workbooks.read` authorizes listing, JSON export, run history, and tiles. `workbooks.write` authorizes saving, deletion, import, AI drafting/enhancement, saved execution, and draft **Test run**. There is no separate `workbooks.run` permission. The current automation shell disables panel buttons/inputs without write access, including History/Export, even though the corresponding APIs use read permission.
@@ -70,13 +74,19 @@ Run status reflects captured execution success; severity is a separate interpret
 4. Inspect raw output, structured result, narrative, severity, status, duration, and error. Correct the draft and select **Save**.
 5. Select **Run**, enter the saved-run parameters, then **Run workbook**. Open **History** to inspect the persisted run.
 
+{% include screenshot.html file="fpa-workbook-run-parameters.png" title="Workbook parameters before execution" caption="Review the resource-group value and recent result summaries before selecting Run workbook. Only the dialog was opened for this capture; its displayed input was not executed and is not a confirmation or authorization result." %}
+
 **Expected result:** Draft testing returns an execution result without a workbook-history row or workbook alert; saved execution records its result and may emit a configured alert.
 
 **Verification:** Compare the test and saved-run outcomes, scope, and rendered **Command** in History. A test can change Azure/host state even though it leaves no workbook-run record.
 
+{% include screenshot.html file="fpa-workbook-structured-result.png" title="Structured workbook evidence and a prior-run change" caption="The expanded synthetic result pairs warning severity with succeeded status and shows structured fields beneath the change summary. Verify scope and prior-run compatibility before using a diff; no fresh query or AI extraction produced this example." %}
+
 ## History, portability, and cleanup
 
 History expands the latest 25 of the API's default 50 rows; the Run dialog shows eight recent summaries. The history API is tenant-scoped and caps requests at 200. It exposes raw output, structured results, command, diff, and errors. History polls while a returned row is `running`, but this executor normally inserts its row only after execution finishes. There is no live-output stream, cancel, resume, or retry-failed control in the workbook surface.
+
+{% include screenshot.html file="fpa-workbook-history.png" title="Workbook history separates status from severity" caption="Compare the two warning-level successes with the failed collection row before opening details. These prepared outcomes illustrate why a success badge is not a clean assessment and why a failed collection leaves the underlying condition unknown." %}
 
 **Export** downloads a version-1 definition bundle, not run output/history. Body, defaults, connection/tenant fields, AI settings, alert, and tile settings can remain in it; export is not automatic sanitization. **Import** creates a new definition and suffixes colliding names with `(imported)` or `(imported N)`, rather than updating an existing workbook. Repeating a single-workbook import creates another definition.
 

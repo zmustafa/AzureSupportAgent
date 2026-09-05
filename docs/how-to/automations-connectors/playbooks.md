@@ -23,6 +23,10 @@ feature_ids: [AUTOMATIONS_NAV:playbooks]
 - Open `/automations/playbooks`.
 - Open `/automations/tasks`.
 
+**Screenshot note:** The editor is unsaved, and the result is opened from browser-supplied synthetic history rather than from running the illustrated form. **Run** was not clicked; no workbook, AI request or notification delivery ran during capture.
+
+{% include screenshot.html file="fpa-playbooks-catalog.png" title="Select the playbook before reviewing its steps" caption="Check the saved flow name and step count, then choose Edit or History for review. Run starts immediately in the real application; the examples shown here were inspected without launching either flow." %}
+
 ## How to build and validate a playbook
 
 1. Select **New playbook**, or use **Generate with AI** and review its draft. Generation does not save anything; proposed workbooks must be created separately in Workbooks and then added as steps.
@@ -34,9 +38,13 @@ feature_ids: [AUTOMATIONS_NAV:playbooks]
 7. Select **Save**, then use **Export** to inspect any mappings and stored connection reference before selecting **Run**. Run starts immediately—there is no additional confirmation dialog.
 8. Read the result modal, open **History**, and expand the run to inspect succeeded, failed, or skipped steps. Open the underlying workbook histories for raw/structured output and rendered commands.
 
+{% include screenshot.html file="fpa-playbook-ordered-form.png" title="Review workbook order and severity gates before saving" caption="Start with an Always run evidence step, then inspect the warning and error thresholds on later workbooks. The unsaved editor exposes workbook references and gates, not drag/reorder or parameter-map controls; a severity condition is not write authorization." %}
+
 **Expected result:** Steps execute in list order; severity gates compare the highest severity reached so far, starting at info. The run records overall status, highest severity, and per-step outcomes.
 
 **Verification:** Use controlled read-only healthy and warning/error scenarios to check gates and mappings. A returned workbook failure marks the playbook failed but allows later steps; a raised exception stops the sequence. Empty/all-skipped flows can still succeed. Confirm every intended step and any qualifying completion event, not just the badge.
+
+{% include screenshot.html file="fpa-playbook-step-results.png" title="Check each completed and skipped step in history" caption="The modeled result records two completed steps and an ownership review skipped because severity stayed below error. Treat that review as unassessed, not healthy; this history was supplied separately and is not evidence that the edited playbook ran or was saved." %}
 
 ## How to import, export, and schedule a playbook
 

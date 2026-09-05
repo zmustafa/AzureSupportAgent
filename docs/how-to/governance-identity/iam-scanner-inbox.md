@@ -21,6 +21,8 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:findings, IAM_NAV:scanners]
 
 `/iam/scanners` and `/iam/findings`.
 
+**Screenshot notes:** These synthetic browser fixtures show saved scanner and finding states, not live collection or backend check results. Names and counts are examples, not the shipped scanner catalog or default configuration. No run control or finding-state change was invoked for the captures.
+
 ## How to read a scanner card without mistaking a quiet day for a clean tenant
 
 1. Open `/iam/scanners`. Check the header freshness first — a scanner run against a stale snapshot produces a delta about stale data.
@@ -33,6 +35,8 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:findings, IAM_NAV:scanners]
 **Expected result:** For each scanner, a clear reading of what is new, what is outstanding, and what could not be checked.
 
 **Verification:** Cross-check one card's `total` against `/iam/findings` filtered to that scanner's pillar and severity floor. The numbers should agree for the same snapshot.
+
+{% include screenshot.html file="fid2-iam-scanner-measurement.png" title="Read scanner deltas alongside measurement gaps" caption="The first example has a saved delta and an unmeasured usage check; the second is blocked by unreadable policy evidence and withholds its counts. Unknown is not zero, and not measured is not unused. Viewing these cards does not record a baseline." %}
 
 ## How to run a scanner and record a baseline
 
@@ -61,6 +65,8 @@ Reading the tab never records a run — the cards are computed without persistin
 **Expected result:** A triaged list where every finding you have looked at carries a state, and where the unmeasured checks are known rather than assumed to be passes.
 
 **Verification:** Re-collect affected access before rerunning the scanner. A disappeared fingerprint is a computed resolution, not proof of cloud revocation: confirm that its input collectors still succeeded. Suppressed findings keep local state while the detector may continue reporting them.
+
+{% include screenshot.html file="fid2-iam-inbox-finding-evidence.png" title="Inspect a finding before recording workflow state" caption="No grouping is selected here to expose the evidence; the normal defaults are severity, then check, with groups collapsed. The open card shows why the access matters and that usage was not measured. Triage changes require iam.write and were not performed in this example; they do not revoke cloud access." %}
 
 ## How to find the checks that were never measured
 

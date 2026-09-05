@@ -19,6 +19,12 @@ Secret fields are encrypted before registry storage and masked in API responses.
 - Treat Teams/Slack webhooks, Logic Apps trigger URLs, Sumo source URLs, PagerDuty routing keys, Service Bus connection strings, and Evidence share tokens as credentials.
 - Prefer managed identity/assume-role/short-lived OAuth and narrow destination policies over static broad keys.
 
+## Recognize the credential boundary
+
+The certificate connection form labels the PEM field as **private key + certificate**. Treat its contents as secret material, not as ordinary diagnostic text; a screenshot of the empty field can explain the workflow without exposing a usable credential.
+
+{% include screenshot.html file="admin-tenant-service-principal-certificate.png" title="Credential entry — certificate authentication without secret material" caption="Settings → Azure Tenants shows an unsaved certificate-based service-principal draft. The PEM area contains only placeholder guidance and the IDs are synthetic. No private key was entered, connection saved, encryption tested, or credential rotated during capture." %}
+
 ## Rotation
 Inventory dependents, add the replacement, test it, switch traffic, revoke the old value, and inspect audit/delivery logs. Changing the application's encryption key without migrating data makes existing encrypted values unreadable; plan re-entry or supported migration first.
 

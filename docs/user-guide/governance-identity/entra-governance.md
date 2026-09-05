@@ -48,11 +48,19 @@ Guest lifecycle sits here rather than under the directory inventory because it i
 
 Object classes on the **Coverage** table are fixed and each carries its own justification: privileged directory roles, role-assignable groups, guest accounts, high-privilege applications, and tenant-wide delegated consent.
 
+**Screenshot notes:** These synthetic browser fixtures use simplified object classes and example counts, policies and outcomes; they are not live collections or backend-computed coverage. Use the coverage rules and defaults in this text rather than treating the example rows as the shipped catalog.
+
+{% include screenshot.html file="fid2-entra-governance-coverage.png" title="Governance coverage: object classes and review gaps" caption="Expand an object class to inspect the identities behind its counts. This simplified fixture illustrates the drill-down, not an exact coverage calculation; unreadable review evidence does not prove that an object has never been reviewed elsewhere." %}
+
 Review **quality flags** are named conditions, not opinions. A campaign can be flagged because decisions are not applied automatically, because inaction defaults to approve, because it runs once and never again, because reviewers are not asked to justify a decision, or because the reviewer is the subject of the review.
+
+{% include screenshot.html file="fid2-entra-access-review-quality.png" title="Access reviews: overdue work and configuration warnings" caption="Read recurrence and quality warnings as well as campaign status. Inaction approving access and decisions not being applied are example campaign settings, not product defaults. This read-only view neither decides a review nor applies a denial." %}
 
 Access packages carry two hygiene markers: **no review**, when no assignment policy on the package requires a recurring review, and **never expires**, when an assignment policy grants access with no expiry.
 
 Expiring assignments use a configurable window; the app requests the default of 30 days. The underlying read accepts any window from 1 to 365 days.
+
+{% include screenshot.html file="fid2-entra-entitlement-packages.png" title="Entitlement: package hygiene and approaching assignment expiry" caption="Compare reviewed, time-bound access with the no review and never expires markers. The expiry panel uses the 30-day default window, while package policies and remaining days are illustrative. An empty panel is meaningful only when its source collection was readable and complete." %}
 
 ## Freshness and scope behavior
 
@@ -71,6 +79,8 @@ Coverage counts two distinct paths to being reviewed. A review scoped directly a
 A campaign that exists is not a campaign that works. A one-off review is accurate the day it closes and wrong the following week. A review that does not apply its own decisions removes nothing when a reviewer denies access. A review that defaults to approve can only confirm the status quo. These are the quality flags, and they are the reason the reviews sub-view is a list of configuration problems rather than a list of campaigns.
 
 Lifecycle workflows are read for their categories and their outcomes. The missing-categories notice names which of joiner, mover, and leaver has no *enabled* workflow — a disabled leaver workflow counts as missing, because offboarding that does not run is offboarding that depends on somebody remembering every system. Failure rate is failed runs over total runs within the bounded run window.
+
+{% include screenshot.html file="fid2-entra-lifecycle-workflows.png" title="Lifecycle workflows: enabled categories and bounded run outcomes" caption="The disabled leaver workflow does not satisfy enabled leaver coverage. Read each failure rate with its loaded run count and collection limits; zero loaded runs would mean no measured failure rate, not evidence of successful offboarding." %}
 
 Zero and unlicensed mean different things. Zero packages supports an absence claim only if that collection was complete and readable. A workflow with zero loaded runs has no measured failure rate, even if its computed percentage is 0%. Read capability flags and collector notes before concluding anything.
 

@@ -49,6 +49,10 @@ An escalation review asks whether a principal can reach greater privilege throug
 
 **Verification:** Pick one path and confirm its first hop independently in step three below. A path you cannot reproduce in the evaluator is a reporting question, not a finding.
 
+**Screenshot notes:** This synthetic browser fixture supplies an illustrative graph, not live Azure reads or backend-computed escalation evidence. **Paths only** remains on, its default, and **All confidence** is selected for the walkthrough. The named path and counts are examples, not proof of exploitability or actual use.
+
+{% include screenshot.html file="fid2-iam-escalation-review.png" title="Escalation review: inspect limitations before following the path" caption="Read What this map cannot see, then the workload-identity and Owner-grant hops with their scope and confidence. Runtime conditions and previously issued credentials remain unmeasured. Confirm each hop and any non-RBAC access before proposing a change; missing evidence is not an all-clear." %}
+
 ## How to confirm a hop before acting on it
 
 1. Note the principal id and the action named by the first hop of the path.

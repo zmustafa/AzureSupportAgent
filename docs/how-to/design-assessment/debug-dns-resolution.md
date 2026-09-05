@@ -11,6 +11,9 @@ feature_ids: [PERMISSION:netdiag.run]
 
 # Debug private DNS resolution
 
+{: .note }
+**Screenshot note:** The native DNS form and result columns use synthetic browser-only inputs and saved results. No live DNS resolution, SSH command, Azure zone read, or AI call occurred. The displayed private/NXDOMAIN answers are modeled examples; unknown zone facts must not be read as a verified DNS misconfiguration.
+
 ## Prerequisites
 
 - Product permission `netdiag.run`.
@@ -22,6 +25,8 @@ feature_ids: [PERMISSION:netdiag.run]
 ## Route
 
 - Open `/architectures/:id` and right-click a node, or open `/inventory` and use the action on a private endpoint or a private-endpoint-eligible resource.
+
+{% include screenshot.html file="fdesign-dns-source-selection.png" title="Choose the target and diagnostic source VMs" caption="The native architecture-node modal shows a reserved .invalid target and synthetic linked/unlinked VM choices with no credentials. Confirm the intended source network when using the real workflow; this capture does not test either host." %}
 
 ## How to resolve a name from inside the network
 
@@ -35,6 +40,8 @@ feature_ids: [PERMISSION:netdiag.run]
 **Expected result:** Per-source resolution with a named root cause, plus an overall classification for the run.
 
 **Verification:** Confirm the sources listed are the networks you meant to test. A result from an unlinked VM describes that VM's network, not the client's.
+
+{% include screenshot.html file="fdesign-dns-modeled-chain-unknown.png" title="Read modeled chains without filling evidence gaps" caption="Synthetic responses drive the actual CNAME and resolution columns: one private answer and one NXDOMAIN example. Zone existence and linkage remain unknown. No DNS lookup was executed, and neither a missing link nor a successful private-endpoint path was verified." %}
 
 ## How to identify the root cause
 

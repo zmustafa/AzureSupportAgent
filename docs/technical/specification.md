@@ -548,6 +548,8 @@ Implemented observability includes:
 - Tool-call latency and failure summaries.
 - In-app notifications and SIEM export hooks.
 
+{% include screenshot.html file="core-monitor-activity.png" title="Observability surface — built-in Monitor counters and operation status" caption="The Monitor overview renders messages, tool calls, chats, task runs, approvals, and live-operation status as separate widgets. This offline browser fixture illustrates the presentation described here, not actual operator activity, provider telemetry, measured reliability, or proof of scheduler and persistence behavior." %}
+
 The current local runtime uses a single backend process. The in-process scheduler handles
 automations and monitor ping sampling. A future multi-replica deployment should add a
 leader lock or external queue/worker for scheduler ownership.

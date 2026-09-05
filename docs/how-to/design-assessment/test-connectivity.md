@@ -11,6 +11,9 @@ feature_ids: [PERMISSION:netdiag.run]
 
 # Test connectivity between two nodes
 
+{: .note }
+**Screenshot note:** These native input and result views use synthetic browser-only data. Saved results are modeled, not actual probe execution: no DNS, SSH, TCP, TLS, HTTP, Azure read, or AI call occurred. The blocked result does not establish a real outage or identify a confirmed NSG rule.
+
 ## Prerequisites
 
 - Product permission `netdiag.run`.
@@ -22,6 +25,8 @@ feature_ids: [PERMISSION:netdiag.run]
 ## Route
 
 - Open `/architectures/:id` and select the architecture containing the two nodes.
+
+{% include screenshot.html file="fdesign-network-probe-inputs.png" title="Check the source, target, protocol, and health path" caption="The native form contains a fictional VM, reserved target, HTTPS port, and bounded health path. Run probe is intercepted in the example; choosing these values does not demonstrate a reachable sandbox or an executed test." %}
 
 ## How to run a connectivity test
 
@@ -35,6 +40,8 @@ feature_ids: [PERMISSION:netdiag.run]
 **Expected result:** A verdict backed by a per-step transcript, each step showing its command, status, evidence line, and duration.
 
 **Verification:** Confirm the source, target, and port in the result header are the ones you intended. Ignore a failed ICMP step when TCP succeeded — blocking ping while allowing TCP is normal.
+
+{% include screenshot.html file="fdesign-network-modeled-blocked.png" title="Inspect modeled TCP failure and skipped downstream checks" caption="The native panel renders synthetic TCP failure, skipped TLS/HTTP, an intent mismatch, and unknown control-plane evidence. No probe ran. The example illustrates why a blocked headline alone cannot attribute the failure to an NSG." %}
 
 ## How to compare a run against the previous one
 

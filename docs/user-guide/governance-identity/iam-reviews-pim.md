@@ -21,6 +21,8 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:reviews, IAM_NAV:pim]
 
 Entra Access Reviews cover directory roles and group membership. They do not cover Azure RBAC at resource scope, Key Vault access policies, classic administrators or bypass credentials. This does.
 
+**Screenshot notes:** These synthetic browser fixtures illustrate review states and item context, not actual campaign execution or backend analysis. Names, selectors and counts are examples, not defaults. No decision, evidence export or remediation script was generated for the captures.
+
 ## Prerequisites and data sources
 
 - Product permission `iam.read`; `iam.review` for every write on the Reviews tab.
@@ -46,9 +48,13 @@ Creation deduplicates equivalent review keys, retains at most **2,000 items**, a
 
 **Completeness is reported, not just status.** While a campaign is open the card shows `decided/total`. Once it is completed or expired the card states either `complete — all N items decided` or `INCOMPLETE — N of M items were never decided (they were not approved)`. "Completed" alone implies everything was reviewed; a campaign that closed with a large fraction untouched is a different artifact and says so. Undecided items are never rendered as approved.
 
+{% include screenshot.html file="fid2-iam-review-completeness.png" title="Review campaigns: completed is not complete" caption="The first closed example still has an undecided item, while the fully decided second example is self-attestation. Read completeness and reviewer independence separately: undecided is not approved, and self-attestation is not independent certification." %}
+
 **Decisions.** Four are offered on the item row — `approve`, `revoke`, `reduce`, `needs_info` — and the API also accepts `delegate`, which carries a delegate target. Undecided is `None` and is never the same as approved. A reason field sits beside the buttons.
 
 **Items carry the context a decision needs**, not just a row: whether the access is held directly or through a group and the group chain if so, whether it is standing privilege that nothing expires, how many escalation paths it reaches full control through, the open findings against it, and a usage note. The usage note exists so unmeasured usage is never presented as unused.
+
+{% include screenshot.html file="fid2-iam-review-context.png" title="Review detail: changed access and unmeasured usage" caption="The expanded fixture shows a cleared decision, group-derived access and an unmeasured-usage warning. Its supplied escalation context does not establish that campaign creation computes an escalation graph. Visible decision, export and remediation controls do not prove an action succeeded or that a closed campaign can be reopened." %}
 
 **Re-check** compares existing item keys with current cached access. It does not add newly matching identities, re-run the original selector, or replace frozen item snapshots. A missing key flags the item and can clear its prior decision; changes outside that key may not be detected. A reason is required when deciding a flagged item. The endpoint then attempts revocation confirmation, but a decision cleared by the first pass is no longer eligible for that confirmation. Verify cloud state independently rather than promising that every successful removal becomes `confirmed_applied`.
 

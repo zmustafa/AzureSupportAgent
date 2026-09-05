@@ -21,6 +21,14 @@ feature_ids: [ADMIN_NAV:connectors]
 
 - Open `/admin/connectors`.
 
+## Catalog and unsaved review
+
+These native screens illustrate provider selection and review before saving, not a completed integration. The draft is **unsaved and disabled**, credential secrets are empty, and non-secret values are fictional with non-resolving example domains. No save, authentication, test, or delivery is demonstrated.
+
+{% include screenshot.html file="fconn-catalog.png" title="Connector catalog — available provider types" caption="Native provider cards are shown with saved demo rows omitted from this documentation view only. No stored connectors were removed. The catalog shows available types, not configured or healthy integrations, and does not establish connectivity, permissions, or delivery." %}
+
+{% include screenshot.html file="fconn-disabled-review.png" title="Review before adding — disabled, unsaved Jira draft" caption="Native Review + add shows fictional Jira defaults and a Disabled badge for the UNSAVED draft. The API-token em dash represents an empty field, not a stored secret. Add connector was never clicked; this is not a saved-row status, successful Test, credential-rotation result, or deletion outcome." %}
+
 ## How to add and verify a connector
 
 1. Select **Add connector**, search the gallery, and choose one of the types visible in the build. The current registry supports Teams, Slack, Outlook, SMTP email, Jira, ServiceNow, PagerDuty, Grafana, Splunk, Cortex XSOAR, generic webhook, Amazon SQS, Amazon S3, AWS Security Hub, Azure Service Bus, Azure Logic Apps, Sumo Logic, and CrowdStrike Next-Gen SIEM.

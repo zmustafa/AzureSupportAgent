@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:inventory, ROUTE:inventory, INVENTORY_NAV:grid, INVE
 
 # Operate Inventory
 
+{: .note }
+**Screenshot note:** These synthetic browser-only fixtures illustrate Grid filtering and resource review, not live backend records, Azure collection, or verified resource state. Displayed costs are fictional modeled values, not billing evidence; no tag write or other application mutation was performed for these screenshots.
+
 ## Prerequisites
 
 - Product permission `inventory.read`.
@@ -45,6 +48,8 @@ Open `/inventory` or a tab route: `/inventory/grid`, `/inventory/overview`, `/in
 6. Select individual rows for **Export selection**, or select **Export** for the current filtered/sorted view.
 7. Preserve the CSV with the displayed filters and collection timestamp.
 
+{% include screenshot.html file="estate-inventory-grid.png" title="Inventory grid with connection, workload, and health facets" caption="Confirm the connection and combine facets to isolate the resources relevant to the review. A filtered grid is a view of returned data, not proof that collection covered the entire estate." %}
+
 **Expected result:** Export contains all filtered/sorted rows, including rows outside the virtualized viewport. Export selection contains selected rows that still pass the filters. Both use fixed CSV columns, not the display column choices or complete tag dictionaries.
 
 **Verification and safety:** Compare the export toast with the filtered/selected count and inspect sample rows. Record connection and filters separately: the URL preserves common facets/text, but not the complete tag/SKU/KQL/connection context.
@@ -57,6 +62,8 @@ Open `/inventory` or a tab route: `/inventory/grid`, `/inventory/overview`, `/in
 4. Use **Cost** for the shared cost overlay. Its load button refreshes the connection, not only the selected resource.
 5. For a handoff, use **Investigate** to prefill Chat, **Find its workload** for Autopilot review/save, or **Debug resolution** for eligible resource types. Recheck the Autopilot connection; replace the DNS dialog's resource-name prefill with the intended FQDN and choose an authorized sandbox source.
 6. If owner write-back is organizationally approved, independently record current `owner` and `owner-email` values, verify the resolved owner, then confirm **Write owner tag to Azure**. Otherwise stop before this action.
+
+{% include screenshot.html file="estate-inventory-resource-drawer.png" title="Inventory resource with ownership and governance tags" caption="Open a row to review cached properties, ownership, and tags before deciding on a handoff. Missing context is a reason to check source freshness, not evidence that the resource has no owner or governance requirements." %}
 
 **Expected result:** The resource's cached evidence and relevant specialist workflow are identified; only an explicitly confirmed owner action attempts an Azure tag merge.
 

@@ -21,6 +21,8 @@ Three ways of asking who can reach what. **Effective Access** evaluates a specif
 
 The tab id `evaluate` and the label **Effective Access** deliberately do not match. The id `effective` has always belonged to the raw grant grid on the **Access** tab, and renaming it would change what an existing `/iam/effective` link means. The label moved to the tab that evaluates effective permissions; the id stayed where the URL is.
 
+**Screenshot notes:** These synthetic browser fixtures illustrate verdicts, paths and collection gaps; no live provider calls or backend access analysis was performed. Principals, scopes, selected actions and counts are examples, not default access or verified authorization results.
+
 ## Prerequisites and data sources
 
 - Product permission `iam.read`.
@@ -49,11 +51,15 @@ Three modes across the top; each names what it answers.
 
 **Verdicts.** The evaluator returns `allowed`, `denied`, `not_granted` or `indeterminate`. When no unconditional known grant resolves the question, an unevaluated ABAC condition or missing role definition produces `indeterminate`. An independent unconditional grant can still produce `allowed`, with competing conditions/unknown roles listed. PIM eligibility is excluded from the action-level allow decision.
 
+{% include screenshot.html file="fid2-iam-evaluate-deny.png" title="Effective Access: a deny assignment takes precedence" caption="The synthetic question targets VM deletion at a protected child scope and names the deny assignment that decides it despite an Owner grant. Read the exact principal, action and scope; this fixture is not an authorization test against Azure." %}
+
 **Indeterminate is kept separate from allow and from deny, everywhere.** In **Who can…** it is a second box below the allowed list with its own heading and count, never merged into it, and the headline counts it separately: *`A` of `C` principals with any grant at or above this scope can perform this action · `I` could not be determined*. A reader scanning a list of names will not notice a per-row qualifier, so the qualifier is the box.
 
 **Who can… re-evaluates every candidate.** It is not a "who holds a matching role" query. Each candidate goes back through the same evaluator, so a principal blocked by a deny assignment does not appear in the allowed list. `candidates` is the number of principals holding any grant at or above the scope that were considered; the response is bounded, and the allowed and indeterminate lists together stop at that bound. When `candidates` is zero the tab states that no principal holds any grant at or above this scope *in the cached scan*, and that this is not the same as nobody being able to do it.
 
 **What can they reach** includes both covering ancestor assignments and descendant assignments under the selected scope, despite the current UI's narrower *at or above* caption. It is a role inventory, not a per-action verdict; inspect assignment state because eligible rows can appear here. It separates control/data planes, denies and unresolved role definitions. **Who can…** returns at most 200 allowed/indeterminate entries by default (API maximum 500 combined); its candidate total is not the number fully evaluated once that cap is reached.
+
+{% include screenshot.html file="fid2-iam-evaluate-who.png" title="Effective Access: allowed and indeterminate candidates stay separate" caption="This question uses the parent subscription, not the protected child scope in the deny example. Allowed candidates and candidates whose conditions cannot be evaluated remain separate; indeterminate is neither permission granted nor a soft denial." %}
 
 ### Escalation
 
@@ -71,6 +77,8 @@ Served by `GET /api/iam/escalation`. The tenant-wide graph is cached; `GET /api/
 | **Paths only** (default on) | Draws only the nodes and edges lying on a route to full control. Off draws every detected capability, which on a large tenant is a hairball |
 | Selecting a path | Highlights that chain and dims everything else |
 | **↻ Rebuild** | Recomputes the cached graph from the collected rows. No Azure call |
+
+{% include screenshot.html file="fid2-iam-escalation-review.png" title="Escalation: a workload-identity path with explicit limitations" caption="Paths only is checked, matching its default; All confidence is selected for this example. Read the limitations and weakest-hop confidence before tracing the workload identity to full control. This synthetic path does not prove exploitability or that anyone used the access." %}
 
 **Fan-out is capped and the true total is kept.** No more than twelve edges are drawn per (source, primitive) pair; beyond that the real count is retained and the footer states `fan-out capped`. One principal producing hundreds of arrows adds no information and costs the legibility that is the entire point of the view — but the count is never quietly lowered to match what is drawn.
 
@@ -95,6 +103,10 @@ Served by `GET /api/iam/bypass`. This tab reports the doors that are *not* Azure
 **Who can fetch the credential is a three-state answer, not a list.** Where a check names a control-plane action that yields the credential, the row joins that action to the effective-access engine. `Not determined` means role assignments for that scope were unavailable, so the holder set is unknown rather than empty; a stated zero means no principal holds that action at a covering scope; otherwise the holders are listed with the scope each holds it at, and a `+N more` line when the list is truncated. An empty list with the join unavailable must never read as *nobody holds this credential*.
 
 **Remediation and its blast radius are one unit.** Every remediation is published with the `Breaks if` line that qualifies it. Telling somebody to disable shared-key access without telling them it breaks every connection-string client is how a read-only tool causes an outage.
+
+{% include screenshot.html file="fid2-iam-shadow-key-reach.png" title="Shadow Access: assessed coverage, credential reach and breakage" caption="Read the RBAC-only percentage with its assessed-resource denominator and the unreadable service-family status. The expanded storage row joins credential-fetch capability to a principal and keeps the Breaks if warning with remediation; it does not inventory previously issued keys or tokens." %}
+
+{% include screenshot.html file="fid2-iam-shadow-unknown-reach.png" title="Shadow Access: an enabled credential with unknown holders" caption="The registry admin credential exists in this example, but its assignment join is unavailable. Not determined means the holder set is unknown, not empty. Check dependent build and deployment clients before disabling the credential; service-internal authorization remains outside this assessment." %}
 
 **Limitations, always shown:** this reports *the door, not the room*. Kubernetes RBAC objects, in-database SQL users and mailbox permissions are not read, so a cluster listed here has **not** had its internal authorization assessed.
 

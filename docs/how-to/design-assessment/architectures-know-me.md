@@ -13,6 +13,9 @@ feature_ids: [PROACTIVE_NAV:architectures, ROUTE:architectures, PROACTIVE_NAV:kn
 
 ![Architecture designer]({{ site.baseurl }}/assets/architecture-designer.png)
 
+{: .note }
+**Screenshot note:** The Know-Me views below use synthetic browser-only content in the current native UI. Saved fields are modeled local results, not a published document or real AI output. No AI inference, DNS lookup, SSH probe, or investigation was performed.
+
 ## Prerequisites
 
 - `architectures.read`; `architectures.write` for create, edit, generate, lifecycle, restore, and delete.
@@ -74,6 +77,9 @@ Architectures: `/architectures`, `/architectures/{id}`, `/architectures/{id}/mem
 
 ## How to generate and maintain architecture Memory
 
+{: .note }
+**Current Memory UI:** Memory is a separate source document with section/raw editing, live Markdown preview, and read-only revision preview/diff. Apply raw edits with **Raw → Sections** before saving or exporting. Its PDF-labeled print action prints Markdown text; it is not the Know-Me PDF exporter. A completeness count or saved state does not verify the content.
+
 1. Open **🧠 Memory** from the reviewed diagram.
 2. Select sections/templates and add approved grounding notes.
 3. Generate with AI or author manually; review live preview and evidence.
@@ -100,6 +106,12 @@ Architectures: `/architectures`, `/architectures/{id}`, `/architectures/{id}/mem
 **Expected result:** A human-completed, architecture-grounded support reference is published without replacing reviewed sections unnecessarily.
 
 **Verification:** Required completion passes, field values remain editable, stale-source warning is resolved, and exported content matches the current revision.
+
+{% include screenshot.html file="fdesign-knowme-fill.png" title="Complete a required field with Guided fill" caption="The native Guided fill view contains synthetic rule choices, an assignee, and a review note. Suggest options was not invoked; the example shows human completion rather than an AI-generated answer." %}
+
+{% include screenshot.html file="fdesign-knowme-completed-field.png" title="Review the field after a browser-only save" caption="Save updates only the synthetic browser example, and the completed field remains editable in the support reference. The document is still Draft and unpublished; the filled completion rail is not evidence of approval or durable production persistence." %}
+
+{% include screenshot.html file="fdesign-knowme-section-editor.png" title="Edit a section in the native Markdown editor" caption="The actual Visual/Markdown/Preview editor shows an unsaved synthetic section draft. This is not an AI-generated replacement or a saved section; use Save section deliberately when following the workflow with real reviewed content." %}
 
 ## Safety and rollback
 

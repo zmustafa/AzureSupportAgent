@@ -22,6 +22,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 
 `/policy/governance`, `/policy/exemptions`, `/policy/effective`, and `/policy/advisors`.
 
+**Screenshot note:** Resolution and advice below are modeled browser responses. No live Azure resolution, compliance scan, exemption mutation or remediation ran. The exemption procedures require separate authorization and verification; these images do not demonstrate an applied exemption.
+
 ## How to resolve effective policy at a scope
 
 1. Open `/policy/effective`.
@@ -30,6 +32,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:effective, POLICY_NAV:advisors, P
 3. Resolve assignments and inspect the returned source scope, effect and enforcement mode. The resolver matches scope prefixes and removes matching `notScopes`; inspect full parameters and exclusions in Azure.
 4. Follow **N exempt** into Exemptions. These are records referencing the assignment, not a validated applicable-exemption set: check their scope, reference IDs, category and expiry independently.
 5. Repeat at a representative child resource when inheritance or exclusions may differ.
+
+{% include screenshot.html file="fpa-policy-effective.png" title="Resolve candidate assignments at a resource-group scope" caption="The selected scope produces a modeled table of source scopes, effects and enforcement modes. Follow the exemption link for further review; its count does not prove that the exemption applies to this resource or remains valid." %}
 
 **Expected result:** A candidate assignment set with prefix inheritance, exclusions and linked exemption evidence. Management-group ancestry is not expanded for an arbitrary resource target, and exemptions are annotated rather than subtracted.
 
@@ -86,6 +90,8 @@ Default guardrails require justification, block never-expiring exemptions and li
 5. For conflicts, compare definition IDs, parameters, scopes, inheritance, and effects before labeling a duplicate.
 6. For a coverage proposal, select WAF (8 controls), MCSB (8) or CIS (7), then **Analyze coverage**. This keyword-based comparison automatically saves a local run under `policy.read`; it is not a full benchmark implementation or proof of enforcement.
 7. Record accepted work in a ticket or rollout plan; do not treat an advisor card as approval.
+
+{% include screenshot.html file="fpa-policy-advisors.png" title="Promotion leads, remediation gaps and exemption hygiene" caption="Compare the modeled safe and blocked promotion labels with the missing-identity and expired-exemption findings. These are review leads, not completed fixes; missing assignment-level compliance remains unknown even when a card says safe." %}
 
 **Expected result:** Prioritized, source-checked governance work rather than automatic changes.
 

@@ -22,6 +22,8 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:overview, POLICY_NA
 
 `/policy/overview`, `/policy/inventory`, and `/policy/assignments`.
 
+**Screenshot note:** The inventory and register below are browser fixtures, not results of a live Azure scan. Counts, attribution and compliance are illustrative; missing evidence remains unknown.
+
 ## How to build a current policy inventory
 
 1. Open `/policy/overview` and select the connection and workload scope.
@@ -31,9 +33,13 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:overview, POLICY_NA
 4. Open `/policy/inventory` and review definitions, initiatives, assignments, exemptions, and the scope tree.
 5. Confirm that expected management groups and subscriptions appear before using totals.
 
+{% include screenshot.html file="fpa-policy-inventory.png" title="Inventory assignments and enforcement modes" caption="Read Effect and Enforcement as separate fields: an audit or deny definition can be assigned in dry-run mode. Compare scope and identity before deciding which assignment needs further review." %}
+
 **Expected result:** A scope-bounded snapshot containing the policy objects visible to the selected connection, plus compliance only when requested and available.
 
 **Verification:** Compare a known assignment and its scope with Azure Policy. Confirm generated time is after the scan, inspect errors, and compare subscription coverage. Definitions/assignments are capped at 2,000 each and initiatives/exemptions at 1,000 each before workload filtering; compliance summarizes at most 24 subscriptions. Not every cap has a UI warning.
+
+{% include screenshot.html file="fpa-policy-definitions.png" title="Definitions within the policy inventory" caption="Switch to Definitions to compare type, category, effect and mode across the example catalog. A definition appearing here does not prove it is assigned or enforced at the scope being investigated." %}
 
 ## How to review and export assignments
 
@@ -43,6 +49,8 @@ feature_ids: [PROACTIVE_NAV:policy, ROUTE:policy, POLICY_NAV:overview, POLICY_NA
 3. Read the register's attribution, creation date, description and enforcement columns. Use Inventory for effect and identity type, and the Azure assignment for full parameters, identity and `notScopes`; the register does not open a detail drawer.
 4. Export the filtered rows with **CSV** or **Excel**.
 5. Open the file locally and confirm the row count and filters match the UI.
+
+{% include screenshot.html file="fpa-policy-register.png" title="Assignment register filters and attribution" caption="Use enforcement, scope and assigner filters to bound the register, then inspect creator and creation date alongside each policy. The CSV and Excel controls belong to this register; the screenshot is not evidence that an export was downloaded or verified." %}
 
 **Expected result:** A reviewable assignment register whose export reflects the selected data set.
 

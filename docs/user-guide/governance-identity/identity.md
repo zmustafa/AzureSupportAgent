@@ -25,6 +25,10 @@ Entra ID is a read-only tenant posture surface over Microsoft Graph. One backgro
 
 The native posture endpoints do not write to the directory: they do not rotate credentials, change Conditional Access, activate roles or resolve risky users. Collection, scanner baselines, workflow state, audit records and saved simulations write product-local data. Embedded Identity hygiene can create an external Jira/ServiceNow ticket. Its Chat handoff enters a separate feature with its own execution policy; do not generalize posture's read-only boundary to Chat.
 
+**Screenshot notes:** This overview uses a synthetic browser fixture, not a live collection or backend-computed assessment. Its simplified pillar set, weights and scores illustrate the layout, not the actual eight-pillar model documented below.
+
+{% include screenshot.html file="fid2-entra-posture-score.png" title="Entra ID overview: posture with explicit measurement limits" caption="Start with the connection, snapshot state and coverage before following a deep-dive tab. The unmeasured authentication pillar remains unknown rather than receiving a passing score; the headline score does not describe the unmeasured part of the model." %}
+
 ## Prerequisites and data sources
 
 - A connection that can obtain a Microsoft Graph application token for the tenant.

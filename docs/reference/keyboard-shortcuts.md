@@ -15,6 +15,8 @@ permalink: /reference/keyboard-shortcuts/
 | **?** | Open Help, including glossary, shortcuts, trust points, and documentation links. |
 | **Esc** | Close the active dialog or overlay. |
 
+{% include screenshot.html file="flife-reference-keyboard-shortcuts.png" title="Help — built-in keyboard shortcut reference" caption="Help → Keyboard shortcuts shows the three shipped key/action rows for the Command Palette, Help menu, and closing an overlay. The usage table behind the modal contains dummy model names and figures, not actual provider activity or billing. Opening this reference does not run an application action." %}
+
 ## Command Palette behavior
 
 The palette lists only destinations allowed by the active role's effective permissions. It

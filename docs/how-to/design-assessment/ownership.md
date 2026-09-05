@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:ownership, ROUTE:ownership, OWNERSHIP_NAV:assignment
 
 # Operate ownership records and attestations
 
+{: .note }
+**Screenshot note:** These synthetic browser-only fixtures illustrate directory, assignment, and coverage review, not live backend records or verified identities. No cloud collection, assignment, attestation, or tag write was performed for these screenshots.
+
 ## Prerequisites
 
 - `ownership.read` for directory, assignment, coverage refresh, suggestions, estate, export, import preview, and tag preview; `ownership.write` for record mutations, confirmed import, suggestion acceptance, attestation, tag apply, and revert.
@@ -30,6 +33,8 @@ Open `/ownership`; tabs are `/ownership/directory`, `/ownership/assignments`, `/
 5. Validate a small sample, confirm the import of at most 10,000 mapped rows, then search the resulting directory.
 6. Export the directory as CSV or Excel when an offline review is required.
 
+{% include screenshot.html file="estate-ownership-directory.png" title="Accountable teams and people in the ownership directory" caption="Review owner records before assigning responsibility so the accountable person or team is clear. A directory entry records ownership context; it does not grant Azure access." %}
+
 **Expected result:** Tenant-wide owner records have stable identity, kind, contact, source, and optional team/delegation metadata.
 
 **Verification:** Search imported owners, inspect duplicates, and compare export row counts with the confirmed import.
@@ -41,6 +46,8 @@ Open `/ownership`; tabs are `/ownership/directory`, `/ownership/assignments`, `/
 3. Select the accountability role, primary status, and notes where shown.
 4. Save; use bulk assignment or transfer only after reviewing the entire target set.
 5. Remove obsolete assignments to Trash and restore when removal was accidental.
+
+{% include screenshot.html file="estate-ownership-assignments.png" title="Direct, workload-derived, and missing ownership assignments" caption="Distinguish direct assignments, workload-derived ownership, and missing ownership before deciding which subjects need confirmation. An existing association is not a substitute for confirming accountability with the owner." %}
 
 **Expected result:** Accountability resolves for the selected subject; no Azure RBAC role is granted.
 
@@ -54,6 +61,8 @@ Open `/ownership`; tabs are `/ownership/directory`, `/ownership/assignments`, `/
 4. Open **Suggestions** and inspect RBAC, directory, naming, tag, or workload evidence and confidence.
 5. Accept only when the candidate is accountable—not merely privileged—or create an explicit assignment instead.
 6. Refresh coverage and verify the gap closes.
+
+{% include screenshot.html file="estate-ownership-coverage.png" title="Ownership coverage, evidence sources, and production gaps" caption="Check the workload scope and evidence sources, then inspect the unowned subjects rather than relying on the percentage alone; a high aggregate can still conceal a critical ownership gap." %}
 
 **Expected result:** Coverage is current for the scope and approved suggestions become explicit assignments.
 

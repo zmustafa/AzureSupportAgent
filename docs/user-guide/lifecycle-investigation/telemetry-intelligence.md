@@ -18,6 +18,8 @@ feature_ids: [PROACTIVE_NAV:telemetry-intel, ROUTE:telemetry-intel]
 **App route:** `/telemetry-intel`
 Telemetry Intelligence queries Application Insights components for a workload or subscription. It exposes the generated KQL and source rows alongside AI triage, timelines, Smart Detection aggregation, transaction reconstruction, and code-optimization suggestions.
 
+{% include screenshot.html file="flife-telemetry-triage.png" title="Telemetry Intelligence — illustrative failure triage" caption="The workload-scoped page pairs a triage hypothesis with operation, failure-rate, dependency, and probable-trigger fields. The narrative and counts are authored dummy data, not measured telemetry or an AI-inferred cause. No Azure query, provider call, finding creation, War Room launch, or ticket submission occurred." %}
+
 ## Prerequisites and data sources
 
 The selected connection must discover Application Insights resources and query their telemetry. The current query runner needs a supported Azure CLI authentication path, command execution enabled, and `az` allowed; a working Resource Graph connection or pasted ARM token alone does not establish Log Analytics/Application Insights query access. An AI provider is needed for natural-language translation and used for triage/transaction narration. Code Optimizations is a source-data feature, not an AI-generated patch.
@@ -57,6 +59,10 @@ The selected connection must discover Application Insights resources and query t
 **Expected result:** An evidence-backed hypothesis and bounded transaction reconstruction with gaps made explicit.
 
 **Verification:** Check operation IDs, raw span times, source query success, sampling, ingestion delay, and retention. **Explain**, like edited **Run**, does not preserve an explicit subscription connection ID in its backend schema. No-data/error results or a wrong component are not proof that an incident did not occur.
+
+{% include screenshot.html file="flife-telemetry-evidence-expanded.png" title="Cited evidence — inspect example KQL and operation rows" caption="The expanded native evidence disclosure places KQL beside operation totals and failure columns. Query text and rows are authored examples, not results of an executed query; use this view to locate the evidence that must be independently validated in a real investigation." %}
+
+{% include screenshot.html file="flife-telemetry-correlation-timeline.png" title="Correlation timeline — separate signals from causal proof" caption="Modeled signals, a change marker, the Smart Detection inbox, and an empty transaction input appear together. The chart uses independent scales; its marker is neither a real deployment nor proof of causation. Detector and optimization entries are dummy examples, and no transaction was queried." %}
 
 ## How to preserve findings and recover an interrupted review
 

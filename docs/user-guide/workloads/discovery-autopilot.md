@@ -12,6 +12,9 @@ permalink: /user-guide/workloads/discovery-autopilot/
 
 **Route:** `/workloads` → **Autopilot**
 
+{: .note }
+**Screenshot note:** Survey and candidate results are synthetic browser-only responses rendered by the native Autopilot UI. No Resource Graph collection, AI inference, or network probe occurred. Save was not clicked, so no workload was saved and no follow-on Mission Control or architecture job was created.
+
 ## Purpose
 
 Autopilot discovers candidate application boundaries from an Azure estate. It separates inexpensive Resource Graph survey from AI grouping, allowing you to filter, estimate, and control the operation before model calls begin.
@@ -74,6 +77,8 @@ the threshold is lowered or **Include anyway** is selected.
 
 The survey is cached for a limited period. Re-run it if controls report that a survey is needed.
 
+{% include screenshot.html file="fdesign-autopilot-survey.png" title="Survey and sculpt a synthetic resource population" caption="Five supplied resources populate the native facets and zero-AI-call estimate. This is a modeled survey response, not an Azure Resource Graph enumeration or a measured provider cost." %}
+
 ### 2. Sculpt
 
 1. Choose **Fast**, **Balanced**, or **Thorough** based on desired granularity and cost.
@@ -102,6 +107,8 @@ Hard-filtered resources are not reattached. Tag and naming conventions should be
 7. Compare **Grouped by discovery** with **Will be saved**. The save view reports selected
 	workloads and unique resource IDs after minimum-size exclusions and overrides.
 8. Save only accepted candidates. Saving creates active workload records; discovery itself is non-destructive.
+
+{% include screenshot.html file="fdesign-autopilot-review-needed.png" title="Leave uncertain shared-service membership unselected" caption="Native candidate selection excludes the synthetic shared services pending human review. Review-needed describes the example evidence, not a separate product lifecycle state. Save remains untouched, so the selections have not created workload records." %}
 
 ## Interpretation of results
 

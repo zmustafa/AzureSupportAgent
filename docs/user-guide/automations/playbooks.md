@@ -15,6 +15,10 @@ feature_ids: [AUTOMATIONS_NAV:playbooks]
 
 A playbook runs an ordered list of saved workbooks. It is a sequential form-based workflow, not a canvas, dependency graph, or transaction. Each step can use the highest severity reached so far as a condition.
 
+**Screenshot note:** The playbooks and histories below are browser fixtures, and the editor is unsaved. The step result was opened from synthetic saved history; **Run** was never clicked, no workbook executed and no completion notification was delivered.
+
+{% include screenshot.html file="fpa-playbooks-catalog.png" title="Playbook catalog and ordered step counts" caption="The governance and recovery-evidence examples show different step counts and separate Run, History and Edit controls. Review the definition before Run, which starts immediately; these library cards do not demonstrate executed investigations or recovery." %}
+
 ## Permissions and prerequisites
 
 - `playbooks.read`: list, export definitions, and read tenant-scoped history.
@@ -29,6 +33,8 @@ The current shell disables the whole playbook panel without `playbooks.write`, i
 Every step targets a workbook from the saved workbook catalog. The supported workbook runtimes are Resource Graph (KQL), Azure CLI, and PowerShell; see the [complete workbook starter catalog]({{ site.baseurl }}/user-guide/automations/workbooks/#starter-catalog). There are no built-in playbook templates or non-workbook step types.
 
 **New playbook** opens name, description, an ordered **Steps** list, and optional **Emit a notification event when finished** with minimum severity. **Add step** offers step name, workbook selector, and **Always run** or running severity ≥ warning/error/critical. The editor adds/removes steps but has no drag/reorder control, parameter-map editor, input form, cycle validator, or per-step enable switch. Plan the order before adding steps.
+
+{% include screenshot.html file="fpa-playbook-ordered-form.png" title="Unsaved sequential playbook editor" caption="The first workbook is Always run, followed by warning- and error-gated steps and a completion-event threshold. This is the actual ordered form, not a canvas or parameter-map editor; no definition was saved or step executed." %}
 
 Saved/AI-generated/imported definitions can contain static `params` and `param_map`. A mapping has the form `s1.count`: step ID plus a top-level key in that earlier workbook's structured result. It is not a nested JSON path. A resolved mapping overrides the static value. Missing/invalid mappings are ignored, leaving a static/default value or empty interpolation; they do not fail closed. Review mappings in the exported definition rather than looking for a mapping control in the current UI.
 
@@ -58,6 +64,8 @@ There is no automatic undo, transactional rollback, retry-failed step, or resume
 **Expected result:** Workbooks execute sequentially, conditional skips are recorded, and the result carries overall severity and per-step outcomes.
 
 **Verification:** Check both status and severity, count the intended versus returned steps, and confirm why each step ran, skipped, or stopped. A successful badge alone does not establish useful work was performed.
+
+{% include screenshot.html file="fpa-playbook-step-results.png" title="Synthetic playbook history with a severity-gated skip" caption="The expanded warning-level success contains two completed steps and an ownership step skipped below its error threshold. This prepared history shows why completion does not mean every check ran; the skipped check remains unassessed, and no live run produced these rows." %}
 
 ## History, scheduling, and notifications
 

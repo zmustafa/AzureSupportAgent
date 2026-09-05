@@ -3,13 +3,13 @@ layout: default
 title: Visual Tour
 parent: Reference
 nav_order: 5
-description: Explore critical Azure Support Agent workflows through nine screenshot highlights and twenty grouped routes into the synthetic screenshot collection.
+description: Explore Azure Support Agent workflows through screenshot highlights and grouped routes into a collection of 270 synthetic application views.
 permalink: /reference/visual-tour/
 ---
 
 # Visual tour
 
-Follow a critical operational question from workload scope to findings, evidence, and a reviewed next step. This tour groups **more than 100 captured UI states** into **20 workflow groups**, with **nine representative screenshots** here. Open the linked reference and how-to pages for the detailed views rather than loading the entire collection on one page. Select any screenshot to inspect it full-size. The [screenshot manifest]({{ site.baseurl }}/assets/screenshots/manifest.json) records the exact collection, route and synthetic-source notes.
+Follow a critical operational question from workload scope to findings, evidence, and a reviewed next step. The collection contains **270 captured UI states**, with relevant application screenshots on **all 204 public documentation pages**, including section indexes and auxiliary pages. This tour offers representative highlights and grouped routes into the detailed reference and how-to views rather than loading the entire collection on one page. Select any screenshot to inspect it full-size. The [screenshot manifest]({{ site.baseurl }}/assets/screenshots/manifest.json) records the exact collection, route and synthetic-source notes.
 
 {% include screenshot.html file="core-dashboard.png" title="Dashboard readiness, source coverage, and saved activity" caption="Use summaries to choose where to investigate, then inspect the owning feature. The displayed readiness and activity are synthetic browser fixtures, not live health evidence." %}
 
@@ -126,6 +126,28 @@ Use [First-Run Setup]({{ site.baseurl }}/getting-started/first-run/) and [Overvi
 ### 20. Review application backup scope and demo-data boundaries
 
 [Backup & Restore and Demo Data]({{ site.baseurl }}/admin/backup-demo/) covers the application export-section catalog and the loaded synthetic workload scope; it is separate from Azure resource backup protection. Follow the [backup and demo-data workflow]({{ site.baseurl }}/how-to/administration/backup-demo/) before exporting, restoring, or removing data. The captured screens do not demonstrate a download, upload, restore, or deletion.
+
+## Explore additional illustrated workflows
+
+### Design, discovery, and diagnostics
+
+- [Know-Me]({{ site.baseurl }}/user-guide/design-ownership/know-me/): review ownership context, knowledge, and memory before interpreting an answer.
+- [FMEA]({{ site.baseurl }}/how-to/design-assessment/fmea/) and [AI Insight Packs]({{ site.baseurl }}/how-to/design-assessment/insight-packs/): inspect draft scenarios, ranked concerns, evidence, and run history.
+- [Discovery Autopilot]({{ site.baseurl }}/how-to/core-workloads/autopilot/) and [Connection Capability]({{ site.baseurl }}/how-to/coverage/connection-capability/): distinguish discovery proposals and unknown capabilities from confirmed collection.
+- [DNS resolution]({{ site.baseurl }}/how-to/design-assessment/debug-dns-resolution/), [connectivity]({{ site.baseurl }}/how-to/design-assessment/test-connectivity/), and [sandbox diagnostics]({{ site.baseurl }}/how-to/design-assessment/run-sandbox-diagnostic/): inspect inputs and illustrative results without implying that a network probe ran during capture.
+
+### Policy and identity decisions
+
+- [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/): navigate definitions, assignments, effective policy, advisors, history, drift, and rollout planning.
+- [Entra applications]({{ site.baseurl }}/user-guide/governance-identity/entra-applications/), [signals]({{ site.baseurl }}/user-guide/governance-identity/entra-signals/), and [governance]({{ site.baseurl }}/user-guide/governance-identity/entra-governance/): compare permissions, activity, and review coverage.
+- [IAM comparisons]({{ site.baseurl }}/how-to/governance-identity/iam-compare-attribute-changes/), [escalation review]({{ site.baseurl }}/how-to/governance-identity/iam-escalation-review/), and [scanner inbox]({{ site.baseurl }}/how-to/governance-identity/iam-scanner-inbox/): follow synthetic changes and findings through the review process.
+
+### Automation, integrations, and administration
+
+- [Workbooks]({{ site.baseurl }}/how-to/automations-connectors/workbooks/), [playbooks]({{ site.baseurl }}/how-to/automations-connectors/playbooks/), [scheduled tasks]({{ site.baseurl }}/how-to/automations-connectors/scheduled-tasks/), and [notifications]({{ site.baseurl }}/how-to/automations-connectors/notifications/): compare unsaved configuration with synthetic history; no query, schedule, or delivery was executed for these examples.
+- [Connector lifecycle]({{ site.baseurl }}/how-to/automations-connectors/connector-lifecycle/) and the [connector reference]({{ site.baseurl }}/connectors/): review native configuration modes with intentionally empty credential fields.
+- [Administration]({{ site.baseurl }}/admin/) and [security]({{ site.baseurl }}/security/): inspect audit history, durable work, tool permissions, sandbox settings, sessions, and approval boundaries.
+- [Keyboard shortcuts]({{ site.baseurl }}/reference/keyboard-shortcuts/) and the [glossary]({{ site.baseurl }}/reference/glossary/): locate the in-app help views while following a task.
 
 ## Continue with a task
 

@@ -12,6 +12,8 @@ has_children: true
 
 These views combine Azure Resource Manager, Policy Insights, and Microsoft Graph evidence. They are analysis-first: Policy simulation does not deploy, Identity does not rotate credentials, and IAM does not alter assignments. Policy exemption apply/remove is an explicit Azure-write exception; legacy Identity ticket creation writes to its chosen connector.
 
+{% include screenshot.html file="identity-accessmap-grant-paths.png" title="Identity evidence example — distinguish direct and group-derived grant paths" caption="IAM Access Map connects synthetic principals through groups and roles to an offline subscription. Its warning strip preserves unreadable-group, deny, eligibility, and folded-tail limitations. This is a grant-path view, not the action-level Effective Access evaluator, an Azure Policy result, or evidence that a tenant was scanned or remediated." %}
+
 | Guide | Use it to |
 | --- | --- |
 | [Azure Policy]({{ site.baseurl }}/user-guide/governance-identity/azure-policy/) | Inventory definitions/assignments/exemptions, analyze compliance and effective policy, plan rollout, and assess drift. |

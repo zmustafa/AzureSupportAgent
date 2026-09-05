@@ -58,6 +58,12 @@ The read-only permissions are sufficient for most queries. Grant a `*.ReadWrite.
 6. Enable the required tools for the default assistant. For a sub-agent, select *"Also allow all EntraID (Microsoft Graph) tools (MCP)"* in that agent's editor instead.
 7. Test with a non-sensitive read request and verify the tenant and connection used.
 
+### Identify the connection before granting consent
+
+Use **Settings → Azure Tenants** to identify the tenant and application identity that the Graph permissions must belong to. Microsoft Entra admin consent is a separate step, not an effect of saving this form.
+
+{% include screenshot.html file="admin-tenant-service-principal-secret.png" title="Graph setup prerequisite — identify the Azure connection identity" caption="The service-principal form separates Tenant ID, Client (application) ID, and Client secret, with read-only access selected. All identifiers are synthetic and the secret is empty. This unsaved example is not a Graph permission grant, consent screen, MCP tool listing, or successful collection." %}
+
 ## Write permissions
 
 The `*.ReadWrite.All` permissions listed above are **not required for most queries**. Add them only when an approved workflow needs those operations. Write tools (create, update, delete, reset) remain gated behind the application's approval policy.

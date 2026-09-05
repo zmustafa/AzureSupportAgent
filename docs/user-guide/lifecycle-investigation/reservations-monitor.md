@@ -18,6 +18,8 @@ feature_ids: [PROACTIVE_NAV:reservations, ROUTE:reservations]
 **App route:** `/reservations`
 Reservations Monitor reads billing/tenant-scoped Azure reservation data into a connection-specific cache and highlights expiring, recently expired, non-renewing, and low-utilization orders. It does not buy, exchange, renew, or cancel reservations. `reservations.read` permits both cached reads and **Refresh**; there is no separate reservations write permission or approval step for collection.
 
+{% include screenshot.html file="flife-reservations-register.png" title="Reservations Monitor — demo expiry and utilization register" caption="With Demo data selected, the native register shows expiry countdowns, renewal flags, utilization, and status alongside summary tiles. These are built-in synthetic reservation orders, not current Azure billing records. Refresh and export were not used." %}
+
 ## Prerequisites and data sources
 
 Use a selected Azure connection whose identity can read reservation orders, normally with **Reservations Reader** at the appropriate reservation-order or tenant scope. Subscription Reader alone may not suffice. Demo reservation collection is synthetic and makes no Azure calls. Digest delivery uses the default Azure connection, plus configured recipients and compatible email connectors; it does not follow the connection currently selected in this page.
@@ -36,6 +38,8 @@ Use a selected Azure connection whose identity can read reservation orders, norm
 **Verification:** Match the connection and source order. One row represents an order; SKU, quantity, renew state, and utilization primarily come from its first child reservation, not an aggregate of all children. Utilization prefers a daily aggregate and flags values below 25%; unavailable values remain unknown, not zero or a recommendation to cancel.
 
 The default window is ±60 days. **Expiring soon** covers today through the window end; **Recently expired** covers the preceding window; later expiry is **Active** and older expiry is **Expired**. Unknown dates remain unknown. Red covers expiry within 30 days or recent expiry, amber covers the rest of the upcoming window. The main list retains orders outside the window; the digest selects only in-window orders.
+
+{% include screenshot.html file="flife-reservations-renewal-risk.png" title="Renewal review — isolate non-renewing demo orders" caption="The Not renewing tile and filter narrow the built-in demo register while the snapshot summary remains visible. Compare expiry, utilization, and renewal state before a separate financial review; this is client-side filtering only, not a recommendation or a purchase, renewal, or cancellation." %}
 
 ## How to export the current review
 
@@ -58,6 +62,8 @@ The default window is ±60 days. **Expiring soon** covers today through the wind
 **Expected result:** A safe preview and a clear distinction between cached review, configured scheduling, and actual external delivery.
 
 **Verification:** Confirm delivery in the destination, not merely the scheduler's period marker. The marker is recorded after a send attempt even when channels fail, so the same scheduled period is not automatically retried. Unknown time zones fall back to UTC; there is no resend button on this page.
+
+{% include screenshot.html file="flife-reservations-digest.png" title="Weekly digest — review the native demo preview" caption="The expanded preview shows the application-generated digest for in-window built-in demo orders. It is a preview of synthetic content, not a sent email or evidence that recipients, a connector, or scheduled delivery were configured. No email was sent." %}
 
 ## How to recover from stale or incomplete collection
 

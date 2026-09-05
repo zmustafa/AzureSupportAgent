@@ -38,6 +38,10 @@ Open `/reservations`.
 
 **Verification:** Spot-check order, expiry, renew state, quantity, and utilization in the authoritative billing view. Renew, SKU, quantity, and utilization primarily describe the first child reservation, not a whole-order aggregate. Unavailable utilization is unknown, not zero; values below 25% are highlighted.
 
+{% include screenshot.html file="flife-reservations-register.png" title="Start with the reservation register" caption="Locate the summary tiles, filters, countdown, renewal, and utilization columns with Demo data enabled. The rows come from the native synthetic demo; no Azure collection or financial validation was performed for this image." %}
+
+{% include screenshot.html file="flife-reservations-renewal-risk.png" title="Narrow the review to non-renewing orders" caption="Selecting Not renewing leaves the matching demo rows and an active filter chip. Use the chip or Clear all to return to the broader review. This filtering example did not buy, renew, exchange, or cancel a reservation." %}
+
 ## How to export a bounded reservation review
 
 1. Apply intended filters and sorting.
@@ -61,6 +65,8 @@ Open `/reservations`.
 **Expected result:** A reviewed preview, with scheduled delivery treated as a separate deployment configuration and external write.
 
 **Verification:** Confirm receipt in each destination, not just a saved period marker. A failed channel still advances the marker, preventing automatic same-period retry; invalid time zones fall back to UTC. Preview connection and scheduled default-connection data must be reconciled separately.
+
+{% include screenshot.html file="flife-reservations-digest.png" title="Expand the weekly digest before reviewing routing" caption="The application renders its own populated demo digest beneath the register. The preview contains synthetic in-window orders and sends nothing; it does not demonstrate enabled scheduling, successful connector delivery, or an email receipt." %}
 
 ## How to investigate missing or partial reservation data
 

@@ -21,6 +21,10 @@ Posture is the summary of the current snapshot: one tenant score out of 100, the
 
 The number is deterministic. The same snapshot and the same context produce the same score, and every lost point traces back to a signal, and every signal traces back to the objects that triggered it.
 
+**Screenshot notes:** These are synthetic browser fixtures, not live collections or backend-computed assessments. The simplified pillar set, weights, scores and history are illustrative; the eight-pillar model and its actual weights are documented below.
+
+{% include screenshot.html file="fid2-entra-posture-score.png" title="Entra posture: score, coverage and an unmeasured pillar" caption="Read coverage beside the score, then the reason beside each unmeasured pillar. The authentication row has no measured score because its report is unavailable; the dash is neither zero nor a passing control." %}
+
 ## Prerequisites and data sources
 
 - A connection that can obtain a Microsoft Graph application token for the tenant, and at least one completed collection.
@@ -45,6 +49,8 @@ Posture is a single scrolling page, not a set of sub-tabs.
 Supporting reads are exposed by the API: pillar detail at `/api/entra/posture/pillar/{pillar}`, history at `/api/entra/posture/history`, diff at `/api/entra/posture/diff`, and the registry at `/api/entra/signals`. Despite its name, the history `days` parameter (1–365, default 90) slices the latest **entries**, not a calendar-day interval. **View findings** navigates to the inbox; it does not open the API pillar dossier or prefilter that inbox.
 
 History is appended when a **full-domain** refresh reaches the history step. A targeted subset refresh does not append, but a full run with degraded collectors can still append; full does not mean every domain succeeded. Each point records score, coverage, pillar scores, severity counts and registry version. Storage keeps 365 points and Posture shows the latest 90. Coverage changes can move the line without remediation.
+
+{% include screenshot.html file="fid2-entra-posture-recovery-trend.png" title="Entra posture: recoverable points and collection history" caption="Biggest wins available ranks potential score recovery, not risk severity. This illustrative history shows the overall series selected; each point represents a recorded collection, and a missing pillar measurement is a gap rather than a score of zero." %}
 
 The pillar drill-down returns the pillar row, every signal in that pillar with its finding count and its measured flag, the reason for each signal that was not measured, and the pillar's findings capped at 500. An unknown pillar key is rejected rather than returned empty.
 

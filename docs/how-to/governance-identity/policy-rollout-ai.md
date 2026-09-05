@@ -21,7 +21,11 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:rollout, POLICY_NAV:ai]
 
 `/policy/rollout`, `/policy/ai`, and `/policy/history`.
 
+**Screenshot note:** The rollout form is unsaved and Simulate was not clicked. The result was opened separately from synthetic saved history, and the explanation is a prepared response, not an LLM answer. No AI call, backend save or Azure deployment occurred.
+
 ## How to simulate a staged rollout
+
+{% include screenshot.html file="fpa-policy-rollout-form.png" title="Unsaved policy promotion and dry-run scope" caption="Check the existing assignment, target scope, deny effect and DoNotEnforce setting before requesting a simulation. This configured form was not submitted; choosing dry-run here does not create an Azure test assignment." %}
 
 1. Open `/policy/rollout`.
 
@@ -32,6 +36,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:rollout, POLICY_NAV:ai]
 6. Review the proposed audit, limited/sample enforcement, and full-enforcement stages.
 7. Verify the completed result appears under **Saved simulations**. The UI attempts autosave with `policy.write`; a displayed result alone does not prove it was saved. **Save as planned guardrail** separately records an assessment handoff, not a deployed assignment.
 8. Implement externally only after peer review, approval, audit telemetry, and rollback preparation.
+
+{% include screenshot.html file="fpa-policy-rollout-result.png" title="Review a saved rollout estimate on hold" caption="The selected example history row shows HOLD and an estimated impact count, not a live measurement or the result of submitting the form above. Unsupported translation or missing impact evidence remains unknown; deployment and approval stay external." %}
 
 **Expected result:** A read-only staged plan and impact estimate; no Azure definition or assignment is deployed.
 
@@ -47,6 +53,8 @@ Assessment handoffs can queue multiple findings, and Tag Intelligence can prefil
 3. For Explain, paste sanitized policy JSON.
 4. Validate generated JSON syntax, aliases, mode, effect, parameter types, and provider behavior against Microsoft documentation.
 5. Pass the reviewed proposal into Rollout Planner; do not deploy raw model output.
+
+{% include screenshot.html file="fpa-policy-explanation.png" title="Policy JSON beside a prepared explanation" caption="Use the Explain this policy card to review scope, condition and effect alongside the input JSON. The visible explanation is a labeled synthetic response, not an AI-generated answer or proof that the policy was evaluated against Azure." %}
 
 **Expected result:** A draft policy or plain-language explanation suitable for expert review.
 

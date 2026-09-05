@@ -12,6 +12,8 @@ has_children: true
 
 Design & Ownership brings architecture context, operational knowledge, accountability, and estate relationships into one workflow. Use these guides to move from a workload diagram to support-ready documentation and named owners, then explore dependencies and risk across the estate.
 
+{% include screenshot.html file="estate-architecture-canvas.png" title="Design starting point — review a workload topology and its resource context" caption="The synthetic checkout architecture places gateway, application, data, storage, and Key Vault nodes on a reviewable canvas with Memory and History entry points. Follow the architecture, knowledge, and ownership guides for the next steps. Relationships and price labels are illustrative, not live discovery, tested reachability, or proof of an approved design." %}
+
 ## In this section
 
 | Guide | Use it to |

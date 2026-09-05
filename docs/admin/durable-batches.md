@@ -17,6 +17,8 @@ Multi-workload work does not run in the browser. When you start a fleet sweep, t
 
 The consequence users notice is the useful one: you can navigate away, reload, or close the browser and the queued tail keeps going. The consequence administrators need to understand is that a batch is a control record with its own lifecycle, separate from the results the feature stores natively.
 
+{% include screenshot.html file="flife-durable-queued-batch.png" title="Durable batch — queued status in Telemetry Coverage Fleet" caption="The blue batch bar shows queued status, completion counts, and Cancel pending above cached workload values. This is a static dummy queue, not a launched job or observed background execution. No scan, cancellation, or restart-recovery test occurred." %}
+
 ## What creates a batch
 
 | Feature key | Owning capability |
@@ -47,6 +49,8 @@ The consequence users notice is the useful one: you can navigate away, reload, o
 | `cancelled` | Items were cancelled before starting. |
 
 `partial` is the state that matters most operationally. It is not a soft success: it means the run's coverage is incomplete, and the feature's headline number is built from fewer workloads than you asked for.
+
+{% include screenshot.html file="flife-durable-partial-batch.png" title="Durable batch — terminal does not mean complete coverage" caption="The amber partial bar distinguishes succeeded, partial, and failed items, with Retry failed available above the workload rows. Status counts and previous scan values are synthetic examples, not measured Azure coverage. No worker, retry, persistence, or recovery behavior was exercised." %}
 
 ## Permissions
 

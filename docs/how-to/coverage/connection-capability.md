@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:capability, ROUTE:capability]
 
 # Diagnose Connection Capability
 
+{: .note }
+**Screenshot note:** These native views contain synthetic browser-only capability data and saved diagnostic results. Verify live was never selected; no token check, Azure read, DNS lookup, SSH/network probe, or AI call occurred. Neither a Full matrix cell nor a blocked result is live evidence in these examples.
+
 ## Prerequisites
 
 - Product permission `connections.read`.
@@ -20,6 +23,8 @@ feature_ids: [PROACTIVE_NAV:capability, ROUTE:capability]
 ## Route
 
 Open `/capability`. The page is a read-only matrix with 14 capability columns: ARM, Resource Graph, Recovery posture, raw Graph token, MCP-based Entra directory, Log Analytics, Key Vault, six Entra domain/license columns, and gated writes. It is not a new scoped authorization audit of all those surfaces.
+
+{% include screenshot.html file="fdesign-capability-inferred-matrix.png" title="Start with inferred cells and inline explanations" caption="The native matrix shows synthetic availability, denial, and missing-cell Blind/Unknown states. Verify live is off; Full is modeled configuration availability, not proof that a feature's scoped operation or data-plane request will succeed." %}
 
 ## How to explain a missing or partial feature result
 
@@ -33,6 +38,10 @@ Open `/capability`. The page is a read-only matrix with 14 capability columns: A
 **Expected result:** The matrix supplies an authentication, audience, configuration, cached-permission, license, timeout, or read-only explanation to investigate; some resource-specific failures remain outside its tests.
 
 **Verification and safety:** Compare the feature's selected connection with the row. Entra domain cells use the last tenant-level cached evidence, not a separate fresh probe for each row; a new matrix timestamp does not refresh that evidence. Do not broaden roles merely to raise the score.
+
+The separate connectivity result below illustrates why application-path evidence and control-plane capability must be reviewed independently. It is not a matrix-cell detail view or output from **Verify live**.
+
+{% include screenshot.html file="fdesign-network-modeled-blocked.png" title="Separate a path result from connection capability" caption="A native connectivity panel renders synthetic TCP failure, skipped TLS/HTTP, and unknown control-plane evidence. No probe executed and no NSG diagnosis was confirmed. An inferred capability cell cannot replace the missing path or rule evidence." %}
 
 ## How to run live verification safely
 

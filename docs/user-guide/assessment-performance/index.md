@@ -12,6 +12,8 @@ has_children: true
 
 Use this section to turn workload inventory and telemetry into prioritized engineering work. Assessments evaluate controls and framework mappings, Performance Profiler ranks metric bottlenecks, and FMEA records design failure modes and follow-up actions.
 
+{% include screenshot.html file="core-assessment-overview.png" title="Assessment entry point — overall posture, pillars, and individual controls" caption="The synthetic Commerce PROD report shows a score alongside pillar results, evaluated controls, and owner/finding context. Use Assessments for this control-based view, Performance Profiler for metric bottlenecks, and FMEA for failure-mode analysis. These fixture scores and mappings are not an executed assessment, certification, or verified risk conclusion." %}
+
 ## In this section
 
 | Guide | Use it to |

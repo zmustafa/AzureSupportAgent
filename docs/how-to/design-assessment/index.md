@@ -39,6 +39,8 @@ Open the route listed by the selected recipe.
 
 **Verification:** Confirm timestamps, source completeness, human approval state, and exported artifact contents.
 
+{% include screenshot.html file="core-assessment-finding.png" title="Reviewable output example — expand an assessment control before action" caption="The synthetic secure-transfer finding exposes its affected storage resource, owner/lifecycle fields, and a proposed remediation command. Use the assessment recipe to review evidence and follow-up state. The command is illustrative and was not run; this is not an FMEA worksheet, an approval record, or proof that the storage configuration changed." %}
+
 ## Safety and rollback
 
 Most collection and generation is read-only against Azure, but saved records, external tickets, ownership tags, waivers, lifecycle states, and purge actions are mutations. Use previews and revisions; restore soft-deleted records before purge; roll back Azure tag changes through the available tag revision/revert flow or reviewed organizational process.

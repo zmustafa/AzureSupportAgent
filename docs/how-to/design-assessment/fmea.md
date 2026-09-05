@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:fmea, ROUTE:fmea]
 
 # Build and maintain FMEA
 
+{: .note }
+**Screenshot note:** These native views contain synthetic support context and FMEA results. Saves, ownership entries, and post-action scores update browser-only examples; no AI generation, DNS/SSH probe, or real mitigation occurred. The source-document menu shown below belongs to Know-Me, not the FMEA editor.
+
 ## Prerequisites
 
 - `architectures.read`; `architectures.write` for create, generate, edit, lifecycle, restore, and delete.
@@ -19,6 +22,10 @@ feature_ids: [PROACTIVE_NAV:fmea, ROUTE:fmea]
 ## Route
 
 Open `/fmea` or `/fmea/{fmeaId}`.
+
+If a review starts from Know-Me, use its **Source** menu to open the linked Architecture Memory and diagram before drafting the FMEA. The support reference and source Memory are separate documents; a completed Know-Me field does not verify Memory or a risk control.
+
+{% include screenshot.html file="fdesign-knowme-source-links.png" title="Trace support context to the source Memory and diagram" caption="The native Know-Me Source menu distinguishes Architecture Memory, the architecture diagram, and related workload evidence. This synthetic navigation example supports the FMEA grounding check; it is neither an FMEA menu nor proof that AI generation or a diagnostic ran." %}
 
 ## How to create or generate an FMEA
 
@@ -45,7 +52,12 @@ Open `/fmea` or `/fmea/{fmeaId}`.
 
 **Verification:** Reopen the document and spot-check multiplication and band; out-of-range values are normalized server-side.
 
+{% include screenshot.html file="fdesign-fmea-factors-controls.png" title="Edit factors and retain the control rationale" caption="Native factor and Controls cells show synthetic scores of 9, 3, and 5 with RPN 135 after browser-local autosave. No separate factor dialog is implied, and the revised score is not evidence that a real control changed." %}
+
 ## How to assign ownership, actions, status, and lifecycle
+
+{: .note }
+**Current worksheet limits:** Use **Action results**, **Date completed**, and post-action factors to record follow-up. There is no separate per-row status selector or open/in-progress/completed summary; the status steps below are review guidance, not additional UI controls. Document lifecycle remains separate from row completion.
 
 1. Replace blank/generated owner and due-date placeholders with human-approved values.
 2. Enter recommended action and row status; record post-mitigation factors only after controls are implemented and verified.
@@ -57,7 +69,12 @@ Open `/fmea` or `/fmea/{fmeaId}`.
 
 **Verification:** Confirm owners accepted responsibility and completed controls have evidence before lowering post-mitigation scores.
 
+{% include screenshot.html file="fdesign-fmea-saved-actions.png" title="Inspect saved ownership and modeled post-action scores" caption="Scroll right in the native worksheet to see owner, dates, Action results, and synthetic post-action RPN 36. Saved refers only to this browser example, not verified mitigation. Export controls are visible but no export or revision action was performed." %}
+
 ## How to use revisions and exports
+
+{: .important }
+**Current FMEA history limit:** The editor has no History button, revision drawer, or revision-preview control. Revision listing and restore are API operations with no dedicated preview endpoint; the history steps below are not a clickable worksheet workflow. Architecture Memory has its own native preview/diff, but that history does not restore an FMEA. Wait for **Saved** before using the worksheet's CSV or Excel controls.
 
 1. Open revision history and preview the desired snapshot.
 2. Restore only after comparing it with current content; restore creates a new current revision.

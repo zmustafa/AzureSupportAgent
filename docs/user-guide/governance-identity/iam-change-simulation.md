@@ -19,6 +19,8 @@ feature_ids: [PROACTIVE_NAV:iam, IAM_NAV:compare, IAM_NAV:simulator]
 
 **Compare** answers *what changed since the last scan, is it worse, and who did it*. **Simulator** answers the same question in the other direction: *if I make this change, what actually happens* — before it is made anywhere.
 
+**Screenshot notes:** These synthetic browser fixtures show saved attribution and illustrative what-if output, not live Activity Log reads or backend-computed results. **Find out who** was not invoked for the capture. Counts and selected changes are examples, not defaults or proof of cloud changes.
+
 ## Prerequisites and data sources
 
 - Product permission `iam.read`; `iam.simulate` for the Simulator.
@@ -70,6 +72,8 @@ An unattributed change is rendered as the words *unknown actor*, never as a blan
 
 Before attribution has ever been run, the tab states that every actor below is unknown *for that reason* rather than because no event exists. It does not report `0 exact, 0 inferred, 0 unknown` for a tenant where the join has never been attempted.
 
+{% include screenshot.html file="fid2-iam-compare-attribution.png" title="Access changes: direction and actor confidence" caption="Added, escalated and removed rows are shown with exact, inferred and unknown attribution. The example uses the tab's 30-day attribution window; inferred is a scope-and-time lead, while unknown means no unambiguous match, not that nobody made the change." %}
+
 **Controls.** Change-type selector, **Only changes that increase risk**, and **Find out who**. A truncation banner states `Showing the first N of M changes` when the page cap bites.
 
 **Run selection is an API capability, not a tab control.** `GET /api/iam/diff` accepts `from_run` and `to_run` to compare two specific collections; the tab itself always shows the cached diff for the latest run. Comparing two named runs requires that full rows still exist for both, and retention keeps full rows only for the most recent run plus anything pinned — so a request naming a run whose rows have aged out returns `available: false` and a note saying which side is missing and that pinning is how to keep a baseline. `POST /api/iam/run/{run_id}/pin` (permission `iam.review`) is what retains a run indefinitely; there is no pin control on any screen today.
@@ -104,6 +108,8 @@ Changes are added to a **basket** and simulated together, so the interactions be
 | Orphaned scopes (above the columns) | Scopes that would be left with no owner-level access, each stating whether an owner is recorded so somebody can be asked |
 
 The middle column is why the tab exists. Removing somebody from a group frequently revokes nothing — they may hold the same role directly, through a second group, or through a service principal they own — and a tool that only reports what it removed encourages revocations that achieve nothing while leaving a false record of remediation behind. The orphaned panel is the second reason: *after this change, these scopes have nobody with owner-level access* is the outcome that gets a revocation reverted in a panic a fortnight later, and it is knowable in advance.
+
+{% include screenshot.html file="fid2-iam-simulator-impact.png" title="Simulator: lost, retained and gained access with ownerless-scope warnings" caption="The synthetic basket illustrates three different outcomes and an orphaned-scope warning; no backend simulation or cloud change produced these values. Read Retained anyway and the limitations before proposing a fix. Unmodeled tokens, service-local access and runtime conditions remain unknown, not proven safe." %}
 
 **A failed simulation is never a green tick.** An unknown change kind or a malformed change is rejected as a 400 and a change whose referent has since been deleted is a 409; both are surfaced with their message and the explicit statement that nothing was simulated and this is not a result showing no impact. An ignored change would produce a reassuring "nothing happens" from a typo, which is the worst possible output because it looks like an answer.
 

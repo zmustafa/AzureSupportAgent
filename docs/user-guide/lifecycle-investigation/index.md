@@ -12,6 +12,8 @@ has_children: true
 
 These tools turn time-sensitive estate signals into an accountable investigation record. They are read-oriented by default: refresh or scan explicitly, interpret scope and freshness, then hand material evidence into a finding, ticket, or case.
 
+{% include screenshot.html file="ops-radar-retirement-deadlines.png" title="Lifecycle starting point — review deadlines, affected resources, and owners" caption="Retirement Radar shows seeded Contoso Hotels notices with impact counts, replacement guidance, ownership, and status. Use Radar for this lifecycle review, then preserve investigation evidence through the linked guides. All dates, remaining days, and model-retirement examples are synthetic, not current Microsoft retirement announcements or proof that migration occurred." %}
+
 | Guide | Use it to |
 | --- | --- |
 | [Retirement Radar]({{ site.baseurl }}/user-guide/lifecycle-investigation/retirement-radar/) | Map Azure retirements and breaking changes to affected workloads. |

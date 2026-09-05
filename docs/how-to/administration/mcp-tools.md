@@ -42,6 +42,8 @@ feature_ids: [ADMIN_NAV:tools, ADMIN_NAV:entratools]
 
 **Verification:** Run one harmless read and confirm its scope and result. A `write` label does not grant permission or automatic execution; approval, connection policy, product permission, and Azure RBAC still apply.
 
+{% include screenshot.html file="flife-mcp-azure-catalog.png" title="Inspect routing budgets and read/write labels" caption="Use the example to locate catalog size, initially exposed count, per-turn ceiling, provider limit, and per-tool controls. The displayed names and counts are synthetic; catalog inspection here did not discover installed tools, change settings, execute a read, or perform a network probe." %}
+
 ## How to change tool exposure safely
 
 1. Open `/admin/tools` or `/admin/entratools` with an active role containing both
@@ -68,6 +70,10 @@ harmless read with the approved execution role and connection.
 4. Grant only permissions required by the intended read or write, then provide administrator consent.
 5. Revalidate the connection and reload `/admin/entratools`.
 6. Run a bounded directory read before any approved mutation.
+
+{% include screenshot.html file="flife-mcp-entra-catalog.png" title="Separate Entra catalog visibility from connection readiness" caption="The illustrative catalog shows default-assistant exposure off, a missing-connection warning, and a permission-withheld write entry. These dummy states are not a validated directory connection or Graph authorization. No exposure switch or consent setting was changed." %}
+
+{% include screenshot.html file="flife-mcp-entra-permission-reference.png" title="Read the permission reference before seeking consent" caption="The native application-permission table supplies names and descriptions for review. It is not a successful validation report or an instruction to grant every listed permission. No registration, permission grant, consent flow, or directory query occurred for this image." %}
 
 ## How to validate progressive discovery
 

@@ -63,6 +63,8 @@ the runtime reclassifies each call and keeps mutations behind the write policy.
 
 General settings control `mcp_read_only`, built-in tool enablement/disabled list, egress policy, command execution, and timeouts. A write label means approval and connection policy apply; it is not permission to execute automatically.
 
+{% include screenshot.html file="flife-mcp-azure-catalog.png" title="Azure MCP catalog — routing budgets and tool classifications" caption="The example shows catalog and routing counts, read entries, a disabled write entry, and disabled built-in utilities. Tool names and counts are synthetic, not an installed-tool inventory or successful discovery. No toggle was changed, tool executed, or network probe performed." %}
+
 ### EntraID MCP Tools
 
 The page lists Microsoft Graph tools available from the Entra MCP integration and reports
@@ -73,6 +75,10 @@ still needs the exact Graph application permissions and administrator consent re
 Behavioral-history tools remain withheld unless the caller has `investigate.activity`, even if
 an administrator enabled the broader Entra catalog. Read-only prompts do not initially expose
 mutating Entra tools; a clear write request and the existing approval policy are still required.
+
+{% include screenshot.html file="flife-mcp-entra-catalog.png" title="EntraID MCP catalog — exposure and permission boundaries" caption="Disabled default-assistant exposure, a missing-default-connection warning, and a permission-withheld entry distinguish visibility from authorization. The catalog names and routing counts are dummy examples; they do not establish a connected directory, granted Graph permissions, or tool execution." %}
+
+{% include screenshot.html file="flife-mcp-entra-permission-reference.png" title="Graph application-permission reference beneath the catalog" caption="The shipped reference lists permission names, application type, and descriptions beside the illustrative catalog. It is guidance for least-privilege review, not a report of granted permissions or completed administrator consent. No tenant, app registration, permission grant, or consent flow was created or verified." %}
 
 ## Progressive discovery and skills
 
@@ -132,6 +138,8 @@ tokens, or certificate private material into documentation or tool prompts.
 | Relevant tool was not initially exposed | The agent can call `search_tools`; confirm the tool was not globally disabled or excluded by the custom agent. |
 | Model says tools require `/v1/responses` | The direct OpenAI adapter should select Responses automatically. Verify the provider/model transport shown on the tool page; native `tool_search` can remain disabled. |
 | Catalog opens but an enable toggle returns forbidden | The active role has `settings.read` but lacks `settings.write`. Switch to an approved role containing both keys. |
+
+{% include screenshot.html file="flife-error-help-mcp-unavailable.png" title="Unavailable MCP catalog — read the error rather than infer an empty success" caption="A synthetic browser-only 503 displays the native EntraID catalog error and configuration guidance while the permission reference remains visible. This is not an actual provider outage, authentication failure, or application crash. No provider was contacted and no tool or probe ran." %}
 
 ## Related pages
 

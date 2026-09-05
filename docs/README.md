@@ -49,6 +49,8 @@ four pillars:
 > **New to the vocabulary?** The [concepts and glossary]({{ site.baseurl }}/reference/glossary/) defines every
 > term used in the UI. The same glossary is available in-app under the **Help (?) menu**.
 
+{% include screenshot.html file="core-dashboard.png" title="Documentation orientation — workload context, recent work, and setup guidance" caption="The Dashboard brings the selected connection and primary workload together with assessment, mission, and investigation entry points. Use the guides above to follow the relevant workflow. This populated synthetic example includes illustrative readiness and setup indicators; it is not a fresh-install result or evidence that any Azure or AI operation completed." %}
+
 ## Enterprise & security posture
 
 - **Read-only by default** — the agent reads your estate; writes are opt-in, **approval-gated**, and **audited**.

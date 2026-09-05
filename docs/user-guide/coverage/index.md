@@ -12,6 +12,8 @@ has_children: true
 
 Coverage views compare the estate with operational baselines and expose the connection blind spots that can make an assessment incomplete. Monitoring, Telemetry, and Backup & DR Coverage load saved snapshots through **Load coverage** (or restore the last loaded scope); use **Refresh now** for new collection. Connection Capability instead computes an inferred matrix, with optional live token checks. Other tools below have their own collection and write workflows.
 
+{% include screenshot.html file="ops-monitoring-baseline-matrix.png" title="Coverage example — a workload compared with the monitoring baseline" caption="Monitoring Coverage shows the seeded Contoso Hotels workload, cached age, resource-by-check matrix, and a separate All Resources tab. This is the monitoring baseline lens, not telemetry delivery, backup recovery, or connection-capability validation. Its demo coverage percentage does not establish a complete or current Azure assessment." %}
+
 | Guide | Use it to |
 | --- | --- |
 | [Monitoring Coverage]({{ site.baseurl }}/user-guide/coverage/monitoring-coverage/) | Compare metric, log-search, and Activity Log alerts with the AMBA reference, including routing and suppression evidence. |

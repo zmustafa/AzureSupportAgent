@@ -17,6 +17,9 @@ Know-Me turns architecture memory into a support-facing workload reference. It c
 
 **Application routes:** `/knowme`, `/knowme/:id`; architecture memory is also available at `/architectures/:id/memory` and `/architectures/memory`.
 
+{: .note }
+**Screenshot note:** These are synthetic documents in the current native UI. Saved fields, Memory history, and generation metadata are browser-only examples, not real AI output or diagnostic results. No AI calls, DNS lookups, or SSH probes were performed.
+
 ## Common use cases
 
 - Give on-call engineers a workload-specific starting point.
@@ -37,11 +40,17 @@ Know-Me turns architecture memory into a support-facing workload reference. It c
 
 The index shows existing documents grouped by workload, buildable architecture suggestions with Memory, source and status badges, last update, and Trash. A workload can have multiple Know-Me documents; **Reference** selects one canonical document and clears that flag on its siblings. Reference selection is separate from publication status.
 
+{% include screenshot.html file="fdesign-knowme-index.png" title="Know-Me documents grouped by workload" caption="The native index shows a synthetic draft with an outstanding human-completion field. Its source and lifecycle badges are examples; generation and Trash were not exercised." %}
+
 **Build from workload** reuses an architecture or creates one, generates missing/empty Memory, then creates a new Know-Me. It does not automatically refresh existing non-empty Memory. Review source freshness first. Retained documents can show **workload deleted** or orphaned architecture context; do not treat these as current buildable workloads.
 
 The Know-Me document has **Read**, **Fill**, and **Edit** modes. Field chips remain editable after completion; **Next empty** cycles through unfilled fields. **Fill** walks the whole document or a single section, with typed validation, suggestions, assignee, and note. Suggestions are options to verify, not accepted facts. The completion rail's **Publish** button waits for required fields, but the status selector/API is not an independent approval gate.
 
+{% include screenshot.html file="fdesign-knowme-read.png" title="Read the support reference and completion rail" caption="The synthetic document uses native Markdown tables, editable field chips, and the completion rail. Missing source evidence remains explicit; displayed runbook guidance is not a tested diagnostic result." %}
+
 Each section's editor has **Visual**, **Markdown**, and **Preview** tabs, table editing, architecture/Mermaid insertion, and image upload/paste. **Save section** persists the edit; closing the dialog is not a save. Uploads are limited to 8 MB and can create an asset before the section is saved. **How built** shows generation passes and the assessment, coverage, performance, and idle-resource evidence used; **Source** opens related records.
+
+{% include screenshot.html file="fdesign-knowme-how-built.png" title="Inspect modeled provenance in How built" caption="Pass labels, confidence, and evidence counts are deliberately synthetic provenance rendered by the native panel. They do not show an LLM call or establish that source evidence was collected or verified." %}
 
 ## Architecture Memory is a separate source document
 
@@ -57,6 +66,8 @@ Architecture Memory uses a two-pane editor:
 - **History:** preview a saved revision, compare it with current content, and restore it non-destructively.
 
 Memory also provides raw Markdown editing, section ordering, review flags, and heuristic diagram-coverage suggestions. Switch **Raw → Sections** to apply raw edits before saving or exporting. Section edits auto-save after 800 ms; the completeness meter counts non-empty sections, not verified facts. Applying a template adds missing sections without replacing existing content, whereas full AI generation overwrites every section for which the model returns content.
+
+{% include screenshot.html file="fdesign-memory-revision-diff.png" title="Compare a source Memory revision with current content" caption="This is the native read-only Architecture Memory preview and section diff, using synthetic browser-only history. Restore was not selected. This Memory control is separate from Know-Me history and is not an FMEA revision drawer." %}
 
 ## Recommended content
 

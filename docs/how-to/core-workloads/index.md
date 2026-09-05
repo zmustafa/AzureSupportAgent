@@ -12,6 +12,8 @@ has_children: true
 
 Use these recipes to move from estate orientation to a workload-scoped investigation or coordinated mission.
 
+{% include screenshot.html file="estate-workload-overview.png" title="Choose a workload workflow — scope first, then inspect its signals" caption="The synthetic Commerce PROD workload shows resource composition, health/coverage summaries, and handoffs to Architecture, Assess, Mission, and Graph. Use the detail/groups recipe to verify membership before choosing an analysis. The scores are illustrative stored responses, not a live scan or evidence that any of the visible actions ran." %}
+
 ## Prerequisites
 
 - Sign in and select only Azure connections and workloads you are authorized to inspect.

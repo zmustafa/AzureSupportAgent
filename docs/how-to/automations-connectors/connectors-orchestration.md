@@ -23,6 +23,8 @@ feature_ids: [CONNECTOR:logicapp]
 
 ## How to configure Azure Logic Apps
 
+{% include screenshot.html file="fconn-logicapp-http.png" title="Logic Apps — unsaved trigger, headers, and static payload" caption="Native UNSAVED setup with Enabled off and the entire SAS-signed trigger URL left blank; visible URL text is only a placeholder. Fictional non-secret headers use Key: Value lines and static additions use key=value lines, with no authorization header. No connector was saved or tested and no trigger, workflow, or downstream action ran." %}
+
 1. Add **Azure Logic Apps** and enter the secret trigger URL.
 2. Optionally add approved custom headers and static `key=value` payload entries.
 3. Save disabled and select **Test**; it only confirms that a trigger URL is stored.

@@ -20,6 +20,14 @@ permalink: /how-to/automations-connectors/connector-lifecycle/
 
 - Open `/automations/connectors`.
 
+## Selection and review examples
+
+These native screens stop at selection or **unsaved, disabled** review. The review uses fictional non-secret values and non-resolving example domains with the credential secret empty. They do not demonstrate saving, testing, enabling a stored connector, credential rotation, deletion, or delivery.
+
+{% include screenshot.html file="fconn-find-queue.png" title="Find a queue connector — native catalog search" caption="Searching for queue filters the native type picker to Azure Service Bus Queue and Amazon SQS. No type is selected and no connector is saved. These are catalog choices, not discovered queues or evidence of provider access; saved demo rows are omitted from the background documentation view only." %}
+
+{% include screenshot.html file="fconn-disabled-review.png" title="Review the draft — before Add connector" caption="The native Review + add step shows an UNSAVED Jira example with Disabled selected and fictional defaults. The API token is empty, shown as an em dash rather than a stored credential. Add connector was not clicked; no saved-state change, authentication, Test result, or delivery is demonstrated." %}
+
 ## How to create and test a connector
 
 1. Select **Add connector**, search or browse the six categories, and choose a type.

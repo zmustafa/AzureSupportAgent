@@ -34,6 +34,12 @@ Use this section to move from an empty Azure subscription to a working Azure Sup
 
 > Azure Support Agent starts from a read-oriented posture. Keep connections read-only while evaluating the product. Enable write permissions only for a defined workflow, and retain approval gates.
 
+## First connection: keep the boundary explicit
+
+The connection form is the application-side step after deployment and sign-in. Choose the identity and tenant deliberately; creating this record does not grant that identity Azure access.
+
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Onboarding — host identity with read-only access selected" caption="Settings → Azure Tenants shows the authentication method, optional default subscription, and Read-only for this tenant control. This synthetic draft was not saved or tested; it does not demonstrate a completed deployment, Reader assignment, or successful Azure connection." %}
+
 ## After onboarding
 
 With the first workload saved, continue to the [User guide]({{ site.baseurl }}/user-guide/) for what each application area does, the [How-to guides]({{ site.baseurl }}/how-to/) for numbered procedures, and [Administration]({{ site.baseurl }}/admin/) to configure providers, access, and integrations.

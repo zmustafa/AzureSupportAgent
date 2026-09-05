@@ -21,6 +21,8 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:drift]
 
 `/policy/drift`, `/policy/assignments`, and `/policy/history`.
 
+**Screenshot note:** Source-save and drift-analysis requests were answered only by browser fixtures; the backend source was untouched and no AI provider or deployment ran. The register is also illustrative, not a post-reconciliation collection. Confirmation and reconciliation remain manual, external steps.
+
 ## How to detect policy drift
 
 1. Open `/policy/drift` and select the same connection and workload used for inventory.
@@ -31,11 +33,15 @@ feature_ids: [PROACTIVE_NAV:policy, POLICY_NAV:drift]
 5. Classify differences as expected environment variation, missing deployment, portal change, scope mismatch, or stale/partial collection.
 6. Confirm each material difference in Azure and the authoritative repository.
 
+{% include screenshot.html file="fpa-policy-drift.png" title="Source editor and modeled drift categories" caption="Separate live-only, declared-but-not-deployed and mismatched findings before investigating their cause. This prepared response is not a structural IaC diff; unexamined source or assignment properties remain unknown, and the displayed source was not saved to the backend." %}
+
 **Expected result:** A reconciliation proposal identifying differences between locally stored source and observed policy.
 
 **Verification:** Match definition IDs, assignment scopes, parameters, effects, enforcement mode, exclusions, exemptions, and identity requirements in both systems.
 
 ## How to reconcile a confirmed difference
+
+{% include screenshot.html file="fpa-policy-register.png" title="Assignment register for manual drift cross-checks" caption="Use scope, enforcement, creator and creation date to locate the assignment behind a proposed difference, then inspect its full record in Azure and source control. This is a reference view, not evidence that reconciliation was deployed or verified." %}
 
 1. Choose the repository as the authority unless an approved exception says otherwise.
 

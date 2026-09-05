@@ -41,6 +41,8 @@ Open `/telemetry-intel`.
 
 ## How to triage and correlate an incident
 
+{% include screenshot.html file="flife-telemetry-triage.png" title="Read the triage hypothesis before taking action" caption="The synthetic checkout example locates the hypothesis, operation, dependency, and probable-trigger fields. Its figures are not actual usage or Azure observations, and no model inferred this cause. Create finding, Open War Room, Create ticket, and Ask were not used." %}
+
 1. After **Load telemetry**, review **AI Failure Triage** and expand **Cited evidence** for operation, dependency, and exception queries. These are page sections, not separate run buttons. “Spike” means a returned operation has failures, not a demonstrated baseline deviation.
 2. Read **Cross-signal correlation timeline** and its missing-signal notes. Each series is scaled independently; missing values may plot as zero, so compare raw values rather than line heights across units.
 3. Review **Smart Detection inbox** as aggregated enabled detector configuration across discovered components. Name-derived severity and presence in this inbox do not prove a recent firing.
@@ -50,6 +52,10 @@ Open `/telemetry-intel`.
 **Expected result:** A ranked incident hypothesis with supporting evidence and known gaps.
 
 **Verification:** Re-run supporting queries and confirm event ordering, affected operations, and component boundaries.
+
+{% include screenshot.html file="flife-telemetry-evidence-expanded.png" title="Expand Cited evidence and compare the operation rows" caption="The native disclosure shows illustrative KQL and a populated result table rather than an empty panel. The text and rows were authored for documentation; no query or provider call ran, and they cannot validate the example hypothesis." %}
+
+{% include screenshot.html file="flife-telemetry-correlation-timeline.png" title="Compare the timeline with source evidence" caption="The modeled timeline includes independently scaled signals and a labeled change marker beside the detection inbox. Similar timing is not causal proof, and this is not a record of an actual deployment or incident. The transaction input remains empty; no Explain request was made." %}
 
 ## How to reconstruct a transaction
 

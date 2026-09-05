@@ -81,6 +81,12 @@ shared UI:
 | `PageIntro.tsx` | Consistent per-page title + blurb + "Learn more". |
 | `help/glossary.ts` | In-app glossary + page-intro copy (mirrors CONCEPTS.md). |
 
+### Follow a visible workflow through the module maps
+
+In this chat example, distinguish the shared navigation shell from the conversation, answer body, and investigation handoff. Use the frontend map to locate their presentation and the backend agent/API map to investigate their data flow; a rendered answer alone cannot establish how it was generated or persisted.
+
+{% include screenshot.html file="core-investigation-conversation.png" title="Contributor orientation — chat shell and an investigation answer" caption="The synthetic checkout conversation displays its question, evidence table, recommended review, uncertainty, and Investigation link. It provides a concrete frontend surface to trace through the module maps, not a system deployment diagram or a test of SSE, model execution, MCP transport, or database persistence." %}
+
 ## Running locally
 
 ```pwsh

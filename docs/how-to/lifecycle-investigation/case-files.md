@@ -11,6 +11,9 @@ feature_ids: [PROACTIVE_NAV:cases, ROUTE:cases]
 
 # Run an investigation with Case Files
 
+{: .note }
+**Screenshot note:** The queue and timeline use synthetic browser-only fixtures, not live backend case records or a real incident. No case was created or updated for these screenshots; displayed statuses and artifact references are not proof of remediation or verification.
+
 ## Prerequisites
 
 - Product permissions `cases.read` and `cases.write` for case changes.
@@ -29,6 +32,8 @@ feature_ids: [PROACTIVE_NAV:cases, ROUTE:cases]
 4. Add an initial note stating impact, known facts, unknowns, and next step.
 5. Select **Add** to save the note, then select **Investigating** under **Move to**.
 
+{% include screenshot.html file="estate-cases-queue.png" title="Case queue across investigation, remediation, and resolution" caption="Review severity and status to locate the case needing attention. Check the Open only filter when looking for resolved or closed work rather than assuming a missing row was deleted." %}
+
 **Expected result:** A durable case with an append-only opening timeline.
 
 **Verification:** Reload the page and confirm the opening event, note, and status event persist. An assignment event is created only when an API update changes the assignee, not merely because a note names an owner.
@@ -40,6 +45,8 @@ feature_ids: [PROACTIVE_NAV:cases, ROUTE:cases]
 3. Add timestamped notes for hypotheses, tests, decisions, and rejected explanations.
 4. Correct mistakes with a new note; timeline events and notes are not edited in place.
 5. Have the case integration update severity, risk, confidence, summary, or assignee when evidence changes, or record the correction in a note. These are not inline UI editors.
+
+{% include screenshot.html file="estate-case-timeline.png" title="Incident timeline with change, finding, and evidence references" caption="Review the timeline and linked artifact identifiers before handoff so decisions retain their evidence context. Confirm the referenced sources separately; a displayed identifier or resolved status is not proof of verification." %}
 
 **Expected result:** A chronological record connecting evidence, decisions, ownership, and handoffs.
 

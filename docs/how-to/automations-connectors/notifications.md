@@ -23,6 +23,8 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 - Open `/notifications` for the tenant's shared in-app center.
 - Open `/automations/notifications` for tenant-wide routing rules.
 
+**Screenshot note:** The rule editor is unsaved, and routing/inbox data are synthetic browser responses. Connectors have no credentials and delivery/test endpoints were blocked. No real event was sent, no notification was marked read, and no linked job was launched.
+
 ## How to create and verify a notification rule
 
 1. Select **New rule** and give the rule a purpose-specific name.
@@ -34,9 +36,13 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 7. Enable the rule and produce a controlled event from a workbook, playbook, or scheduled task.
 8. Confirm the event in-app and at each intended external destination.
 
+{% include screenshot.html file="fpa-notification-rule-editor.png" title="Stage precise event matching and delivery targets" caption="Review the selected event and source chips together with the warning threshold and destinations. This unsaved example still shows Enabled selected; clear it before staging a real rule. No save, connector test or delivery occurred." %}
+
 **Expected result:** Matching events are delivered to the union of selected in-app and connector targets, once per connector ID for that event. With no enabled rules, events appear in-app by default.
 
 **Verification:** Compare the emitted event's exact type, source, and severity with the rule. Confirm the provider artifact rather than relying on saved rule/connector status. Once an enabled rule exists, unmatched events no longer receive the default in-app delivery.
+
+{% include screenshot.html file="fpa-notification-rules.png" title="Review the whole routing rule set" caption="The example list contains narrow event and severity filters, not an all-events in-app baseline. Check the complete rule set before enabling a new rule so unmatched events are not unintentionally hidden; these rows are not evidence of persistence or provider delivery." %}
 
 ## How to preserve all in-app events while filtering external delivery
 
@@ -56,6 +62,8 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 3. Select a notification to mark it read and open its source when a deep link is available.
 4. Use **Mark read** to change one item without navigation. Use **Mark all read** only after coordinating review: it marks all unread notifications in the tenant, including items outside the loaded/filter-selected page.
 5. Select **Manage rules** only when the active role also has `notifications.manage`.
+
+{% include screenshot.html file="fpa-notification-inbox.png" title="Review source evidence before marking notifications read" caption="Use severity, source and the summary to distinguish a failed task from a completed playbook with a skipped step. The synthetic inbox was only viewed: no item was marked read, no linked job ran, and the rows do not confirm external delivery." %}
 
 **Expected result:** Shared tenant read state updates for all operators, and supported items open their source. Workbook/playbook links open their libraries rather than a selected historical result.
 

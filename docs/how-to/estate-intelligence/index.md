@@ -32,6 +32,8 @@ Use `/inventory`, `/tagintel`, or `/change-explorer`. The feature guides list th
 
 **Verification and safety:** Confirm route, connection, actual resource/subscription scope and timestamp before combining evidence. A successful cost/analysis status does not rule out unsurfaced caps, and required-tag coverage differs from any-tag presence.
 
+{% include screenshot.html file="estate-inventory-resource-drawer.png" title="Estate workflow example — anchor the review to one resource" caption="The selected synthetic checkout app shows its resource identity, location, subscription, workload, owner, and tags alongside the Inventory grid. Establish that boundary before tag or change analysis. The displayed cost is modeled, tag write-back is shown disabled, and no Azure read, tag update, or billing validation was performed for this fixture." %}
+
 ## How to preserve evidence before a tagging campaign
 
 1. Record the intended scope and refresh its current Tag cache. Whole-connection Inventory and a separate workload/subscription cache are not interchangeable.

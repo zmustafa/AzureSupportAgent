@@ -13,6 +13,9 @@ feature_ids: [PERMISSION:netdiag.run]
 
 **Product permission:** `netdiag.run` for every endpoint of both tools.
 
+{: .note }
+**Screenshot note:** The native forms and result panels below use synthetic browser-only inputs and saved results. No DNS resolution, SSH command, TCP/TLS/HTTP connection, Azure read, or AI call occurred. The modeled verdicts are not live findings or proof of a network fault.
+
 ## Purpose
 
 Most of this product reads Azure's control plane. These two tools do the opposite: they run a real probe from a host **inside** the network and then place Azure's own configuration next to the result. That pairing is the point. A control-plane read can tell you a rule exists; only a probe can tell you the packet arrived.
@@ -50,6 +53,8 @@ A source hostname or IP can be typed instead of picking a VM, but that only labe
 
 Source VM, target FQDN or private IP, port (default `443`), and protocol — `tcp`, `tls`, `http`, or `https`. HTTP path and TLS SNI appear when the chosen protocol uses them.
 
+{% include screenshot.html file="fdesign-network-probe-inputs.png" title="Review connectivity inputs before any probe" caption="The native form shows a fictional source VM, reserved target, HTTPS port, and bounded health path. Run probe is intercepted in this example; no host, DNS, SSH, TLS, or HTTP connection is attempted." %}
+
 ### What it runs
 
 A chain of steps, each recording its command, status, evidence line, raw output, and duration: **DNS → ICMP → TCP → TLS → HTTP**. Which steps run depends on the protocol.
@@ -63,6 +68,8 @@ The verdict summarizes the chain:
 | `blocked` | The TCP step failed, or a DNS or TCP step failed outright. |
 
 ICMP cannot by itself establish a TCP block. An ICMP warning can make the overall result **degraded** even when TCP succeeds. A failed TLS-only step or administrative gate failure is not fully reflected by the aggregate verdict; a green headline with a failed/skipped required step is **not verified reachability**. TCP on port 443 also schedules a TLS check. The HTTP scheme is inferred from port 443 or SNI, so verify the actual command for nonstandard HTTPS ports.
+
+{% include screenshot.html file="fdesign-network-modeled-blocked.png" title="Read a modeled blocked path and skipped layers" caption="Synthetic results show TCP failure, skipped TLS/HTTP, an intent mismatch, and unavailable control-plane evidence in the native panel. No probe ran, and this example does not identify a confirmed NSG deny rule." %}
 
 ### The evidence panel
 
@@ -82,9 +89,13 @@ If the architecture's Memory records an expected flow that names this target or 
 
 Target FQDN, one or more source VMs, and an optional source VNet resource ID. Selecting several sources resolves the same name from each of them side by side, which is how split-horizon and per-VNet resolver problems become visible.
 
+{% include screenshot.html file="fdesign-dns-source-selection.png" title="Select the DNS target and source networks" caption="The actual diagnostic modal offers synthetic linked and unlinked source VMs for a reserved .invalid target. The choices contain no credentials and do not demonstrate that either source is reachable or correctly placed." %}
+
 ### What it runs
 
 Per source: effective DNS configuration, resolution, CNAME/trace evidence, possible hosts-file shadowing, and address classification. Sources run sequentially and their completed steps are streamed in groups. Each returns a resolved IPv4 address and classification of `private`, `public`, or `nxdomain`; the last label also represents no parsed address after tooling/SSH failure, not necessarily a DNS NXDOMAIN response. Review the underlying steps.
+
+{% include screenshot.html file="fdesign-dns-modeled-chain-unknown.png" title="Compare modeled DNS chains with unknown zone evidence" caption="Synthetic responses populate the native CNAME and resolution columns with one private answer and one NXDOMAIN example. No live DNS lookup occurred; zone existence and linkage remain unknown, not a verified misconfiguration." %}
 
 The run then names a root cause:
 

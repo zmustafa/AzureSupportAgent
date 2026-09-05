@@ -13,6 +13,8 @@ feature_ids: [SHELL_NAV:automations, ROUTE:automations]
 
 Automations turns reviewed operations into repeatable runs. Open `/automations` for the overview and its permission-filtered cards. Active schedules, total schedules, total runs, and connector count summarize stored application state, not current Azure health. The connector count is shown only with `connectors.manage`; task metrics require `tasks.read`.
 
+{% include screenshot.html file="admin-automations-workflow-directory.png" title="Automations directory — choose the operation, recurrence, or routing surface" caption="Scheduled Tasks, Workbooks, Playbooks, and Notifications have distinct entry cards. The isolated example has seeded connectors but no schedules or runs, illustrating why configuration counts and execution history are separate. No workbook, playbook, scheduled task, or external notification was executed for the capture." %}
+
 | Guide | Purpose |
 | --- | --- |
 | [Scheduled Tasks]({{ site.baseurl }}/user-guide/automations/scheduled-tasks/) | Run agents, assessments, workbooks, or playbooks on a recurrence. |

@@ -28,6 +28,10 @@ A sandbox VM is a dedicated host the agent may reach over SSH to run bounded dia
 
 The form captures display name, Azure resource ID, owning connection, SSH host, port, user, authentication method, and enabled state. A connectivity test establishes SSH, captures the host-key fingerprint, detects the operating system, and probes for installed tools. Agent execution is gated separately by `sandbox.exec`, General settings, and the configured command timeout.
 
+{% include screenshot.html file="flife-sandbox-key-draft.png" title="Sandbox VM — unsaved SSH-key draft" caption="The draft locates host, username, SSH private key, optional passphrase, and workload associations. Key and passphrase fields are empty; Strict mode is on, Allow sudo is off, and Disabled is on. Nothing was saved or tested, and no SSH connection or probe occurred." %}
+
+{% include screenshot.html file="flife-sandbox-password-draft.png" title="Sandbox VM — unsaved password-authentication draft" caption="Switching the draft authentication method reveals an empty Password field while retaining the workload association and restrictive draft settings. The documentation-only host is not a saved or verified reachable VM. No credential was collected or transmitted, and Save, Test, and command execution were not used." %}
+
 ## Freshness and scope behavior
 
 A successful test reflects reachability at that moment. Host keys, credentials, and network paths can change independently of the stored record.
@@ -49,6 +53,8 @@ Treat the exit code and captured output as the result, not the fact that a comma
 ## Exports, history, scheduling, and integrations
 
 Runs are recorded with their output for audit. There is no dedicated export or schedule for sandbox VMs.
+
+{% include screenshot.html file="flife-sandbox-recorded-history.png" title="Sandbox history — illustrative blocked, failed, and succeeded records" caption="The native Recent runs disclosure shows dummy command statuses and durations for a disabled example host. All history and output records are invented, not SSH connectivity, DNS resolution, or HTTP-probe evidence. Only the history disclosure was opened; no command ran." %}
 
 ## Safety and limitations
 

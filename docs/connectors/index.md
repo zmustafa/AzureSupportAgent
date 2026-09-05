@@ -17,6 +17,12 @@ Connector definitions are encrypted at rest. Secret fields are masked on read; e
 
 The source registers these exact types: **Teams, Outlook, Email, Jira, ServiceNow, Grafana, Slack, Webhook, PagerDuty, Splunk, Cortex XSOAR, Amazon SQS, Amazon S3, AWS Security Hub, Azure Service Bus, Azure Logic Apps, Sumo Logic, and CrowdStrike Falcon Next-Gen SIEM**.
 
+## Where connector setup meets routing
+
+Configure destinations at the app route above, then use the relevant automation or notification workflow to select how they are used. The Automations directory helps distinguish stored connectors from schedules, runs, and event-routing rules; it is not the connector editor.
+
+{% include screenshot.html file="admin-automations-workflow-directory.png" title="Connector consumers — automation and notification entry points" caption="The directory shows a seeded connector count separately from zero schedules and runs, with a Notifications card describing event routing. A stored connector is not proof of an enabled rule or successful delivery. This local synthetic example did not configure, test, or send to an external destination." %}
+
 ## Setup guides
 
 - [Teams, Slack, and email]({{ site.baseurl }}/connectors/messaging/)

@@ -18,6 +18,8 @@ feature_ids: [AUTOMATIONS_NAV:notifications, ROUTE:notifications]
 
 The notification engine records event type, source, severity, title, body, facts, links, and tenant. Matching rules select the in-app center and/or connector destinations. With no **enabled** rules for the tenant, events are delivered in-app by default; disabled rules do not suppress this fallback.
 
+**Screenshot note:** Routing rules, destinations and inbox events are browser fixtures. The editor is unsaved, connectors contain no credentials, and delivery/test operations were blocked during capture. No notification was marked read, no linked job was triggered, and no real message was sent.
+
 ## Prerequisites and data sources
 
 - `notifications.read` is required to list tenant-scoped in-app deliveries, read the unread count, and mark one or all notifications read.
@@ -31,6 +33,8 @@ The notification engine records event type, source, severity, title, body, facts
 - The bell provides a compact feed and **See all notifications**. Source links open an assessment report, workbook/playbook library, Insight Packs runs, chat thread, or schedules list when the event supplies recognized link fields. Not every producer has a supported deep link.
 - **Manage rules** opens tenant-wide rules. **New rule** and **Edit** open a modal containing name, Enabled, event-type/source chips, minimum severity, In-app center, and enabled connectors. **Delete** immediately removes the rule; there is no confirmation, archive, or restore here.
 - Marking an event read changes local application state only. Saving a rule changes application state only. A later connector delivery creates an external side effect.
+
+{% include screenshot.html file="fpa-notification-inbox.png" title="Notification center with source and severity context" caption="Compare source, severity and summary before opening the originating evidence. The example playbook completion explicitly notes a skipped step; these are read-only synthetic inbox rows, not delivery receipts, and no read state or linked job was changed." %}
 
 ## Freshness and scope behavior
 
@@ -46,6 +50,8 @@ Rules combine event-type membership, source membership, and the severity floor w
 The form offers `task.succeeded`, `task.failed`, `workbook.severity`, `workbook.failed`, `playbook.completed`, `investigation.completed`, `insight.notable`, and `insight.urgent`; source chips are `task`, `workbook`, `playbook`, `investigation`, and `insight_pack`. Other producers exist, including scheduled-assessment new-findings/low-confidence events and Radar digests. Their exact types/sources are not selectable chips; a wildcard rule can receive them. Do not select an unrelated chip as a substitute.
 
 With at least one enabled rule, only matching rules' selected channels are used. A nonmatching event—or a match with no destinations—can be recorded but delivered nowhere. Overlapping rules form a union: one event is delivered once per connector ID and once in-app. Separate events are not deduplicated by the stored fingerprint, and direct task-summary delivery is a separate path.
+
+{% include screenshot.html file="fpa-notification-rules.png" title="Routing rules summarize events, severity and destinations" caption="Read each rule as an event filter plus a severity floor and destination set. Enabled badges and named Teams, email or Slack targets are illustrative configuration, not evidence that a matching event was produced or delivered." %}
 
 | Channel/type | Notification delivery effect |
 | --- | --- |
@@ -72,6 +78,8 @@ These are all 18 connector types in the notification dispatcher. Delivery invoke
 4. Verify the connector separately using its provider-specific guide. Connector **Test** does not create a destination record; supported **Send test** actions perform real deliveries.
 5. Edit and enable the rule, then produce one controlled matching event through an authorized source workflow.
 6. Inspect the in-app result and each provider artifact, including any downstream workflow effect.
+
+{% include screenshot.html file="fpa-notification-rule-editor.png" title="Unsaved notification rule with explicit matching and channels" caption="The example selects workbook/playbook events, matching sources, a warning threshold and in-app plus connector destinations. The shown enabled checkbox does not mean the rule was saved; clear it before staging. Connector test and delivery endpoints were blocked for capture." %}
 
 **Expected result:** A matching event reaches the union of intended channels without routing unrelated events through this rule.
 

@@ -38,6 +38,8 @@ feature_ids: [ADMIN_NAV:usage, ADMIN_NAV:audit]
 
 **Verification:** Generate one bounded, non-sensitive request and confirm its usage appears after refresh; do not expect exact invoice parity because pricing, caching, and billing timing can differ.
 
+{% include screenshot.html file="flife-usage-model-history.png" title="Compare request and token columns without treating estimates as billing" caption="The example groups dummy model requests, prompt/completion tokens, and estimated costs with a total row. Every model name and numeric value is invented; this screenshot is not the verification request described above, actual usage, or an Azure/provider invoice. No provider was called or billed." %}
+
 ## How to investigate an administrative action
 
 1. Set the narrowest available time window, filter, search, or page range.
@@ -49,6 +51,8 @@ feature_ids: [ADMIN_NAV:usage, ADMIN_NAV:audit]
 **Expected result:** A defensible timeline distinguishes an application-recorded action from external execution and delivery evidence.
 
 **Verification:** Cross-check timestamps and identifiers in at least one independent system for external operations. Audit metadata should not contain plaintext credentials.
+
+{% include screenshot.html file="flife-audit-event-history.png" title="Locate the event in the application Audit Log" caption="The native flat table illustrates time, action, target, and optional provider/model fields using nine synthetic rows. It does not show an expanded metadata viewer or prove that a sign-in, approval, model call, or sandbox command occurred. No export or SIEM delivery action was taken." %}
 
 ## How to configure and verify continuous SIEM export
 

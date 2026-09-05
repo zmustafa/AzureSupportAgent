@@ -26,6 +26,11 @@ Configure an AI provider before using AI draft or enhancement flows. Provider/mo
 
 The list supports category filtering and **Group by category** for Networking, Compute, Data & Storage, Security & Identity, Operations & Monitoring, Cost & Governance, and General. Cards offer an enabled switch, **Chat**, **Enhance**, **Edit**, **Export**, and confirmed **Delete**. **Export all**, **Export selected**, **Import**, **Generate with AI**, and **New agent** are library actions.
 
+{: .note }
+**Screenshot note:** This isolated native-UI example shows built-in definitions in a synthetic demonstration, not live tenant records or agent execution results. Use the library to review instruction and mode context before selecting an agent; the screenshot does not validate its tools, provider, or access.
+
+{% include screenshot.html file="admin-agents-built-in-library.png" title="Built-in Sub Agent library and review-mode instructions" caption="The native security-specialist definitions are reusable instructions, not generated reports. No agent was enabled, disabled, enhanced, exported, or invoked during capture, and no provider, OAuth, or Azure connectivity was verified." %}
+
 Selection also enables **Set model for N**: choose a provider/model and **Apply to N**. This updates each selected agent separately and preserves instructions/tool settings; it is not atomic. **Select all** selects the entire agent list, not only the current category filter. Inspect the selection count before applying.
 
 The editor contains name, category, instructions, provider/model, Review/Autonomous mode, searchable connector tools, and Azure/Entra catalog policies. It has no connection picker even though imported/stored agent configuration can carry `connection_id`. Leave provider empty for defaults; in chat an agent overrides the chat model only when both its provider and model are set. Scheduled agent execution resolves provider/model defaults separately.

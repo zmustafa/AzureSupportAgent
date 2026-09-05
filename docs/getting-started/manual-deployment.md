@@ -38,6 +38,12 @@ Every backend endpoint is served under `/api` (for example `/api/me`, `/api/chat
 
 The Azure MCP server starts with `--read-only` (`MCP_READ_ONLY=true`). Write-capable tools are classified, approval-gated, and audited.
 
+### Match runtime identity to the application connection
+
+After deployment, configure the corresponding connection under **Settings → Azure Tenants**. The **Host identity** option covers a managed identity in Azure or the host credential chain in a suitable local environment; the form itself does not provision either identity.
+
+{% include screenshot.html file="admin-tenant-host-identity.png" title="Manual deployment handoff — configure the host-identity connection" caption="The unsaved synthetic form shows where the deployed host identity is selected and read-only policy is retained. Assign and verify Azure RBAC separately. No container build, revision rollout, health probe, connection save, or Azure authentication was performed for this image." %}
+
 ## Prerequisites
 
 - Azure CLI authenticated to the intended subscription.

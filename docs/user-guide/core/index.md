@@ -13,6 +13,8 @@ has_children: true
 
 The core experience connects estate posture with investigation. The Dashboard summarizes configured data and guides setup; Chat handles interactive questions; Deep Investigation coordinates specialist agents when a problem requires structured hypothesis testing.
 
+{% include screenshot.html file="core-dashboard.png" title="Core experience — orient in the Dashboard before investigating" caption="The selected connection and primary workload sit above readiness summaries, recent assessment/investigation links, and setup guidance. Use those entry points to reach the owning feature rather than treating the summary as source evidence. All activity, scores, and readiness indicators shown are synthetic; no live Azure or model run is demonstrated." %}
+
 ## Pages
 
 | Page | Use it for |

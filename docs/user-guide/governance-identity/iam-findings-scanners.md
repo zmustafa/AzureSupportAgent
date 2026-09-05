@@ -21,6 +21,8 @@ These two tabs are one mechanism seen from two ends. The signal registry evaluat
 
 The Findings tab answers *what is wrong right now*. The Scanners tab answers *what changed since this check last looked*.
 
+**Screenshot notes:** These synthetic browser fixtures contain example findings and scanner cards, not a live collection or backend signal evaluation. Scanner names, selections and counts are illustrative rather than the shipped catalog or defaults. No scanner run or finding-state change was performed for the captures.
+
 ## Prerequisites and data sources
 
 - Product permission `iam.read`. Changing a finding's state additionally requires `iam.write`, so an auditor can read a review without being able to suppress the findings they are auditing.
@@ -63,6 +65,8 @@ The distinction matters: a header count that shrank as you scrolled would be wor
 
 The UI requests the first 200 findings and has no paging control. The API permits 1–500 per page with an offset. Compare shown cards with server totals even when no truncation banner appears; use narrower filters or the workbook for a larger review.
 
+{% include screenshot.html file="fid2-iam-inbox-finding-evidence.png" title="Findings: coverage, affected identity and expanded evidence" caption="No grouping was selected to expose the example card; the defaults are severity, then check, with groups collapsed. Read the unmeasured-check warning before the evidence and triage controls. Not measured usage is not unused access, and displaying a state button does not mean a decision was recorded." %}
+
 ### Scanners
 
 Served by `GET /api/iam/scanners`. Ten scanners are registered:
@@ -87,6 +91,8 @@ The severity floor is inclusive and works downwards from critical: a floor of `w
 **A blocked scanner publishes no number at all.** A scanner is blocked only when *every* signal it selects came back unmeasured. Its card then shows an amber panel — *this scanner could not run — its findings are unknown, not zero* — with the distinct reasons, and withholds the counts entirely. On a real tenant a green "0 findings" card is the single most dangerous thing this screen could render.
 
 **A card that did report still names what it could not check.** A count drawn from three of eight checks is not the same fact as a count drawn from eight of eight, and an expandable line beneath the counts says which, listing each unmeasured check and its reason. It is worded *these are not passes*.
+
+{% include screenshot.html file="fid2-iam-scanner-measurement.png" title="Scanners: saved deltas, blocked counts and unmeasured checks" caption="Compare the example card's new and total counts with its named usage gap. The blocked card withholds counts because its source is unreadable; that is unknown, not zero. These saved fixture states do not demonstrate a Run now action or a newly recorded baseline." %}
 
 **Card counts, in the order they appear:**
 

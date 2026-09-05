@@ -20,6 +20,10 @@ Upgrade procedures depend on how the application was deployed. The repository pr
 5. Schedule a maintenance window for stateful or schema-changing upgrades.
 6. Test the target image in a non-production environment with representative configuration.
 
+{% include screenshot.html file="flife-about-version-environment.png" title="Before upgrade — locate the version and environment in About" caption="The native About dialog shows the documentation instance as version dev and environment local. Use the corresponding fields in your instance alongside the build identity and active revision recorded above. The background usage is dummy data; this image does not demonstrate an upgrade, uninstall, Azure deployment, or successful health check." %}
+
+{% include screenshot.html file="admin-backup-export-scope.png" title="Before upgrade or removal — review the application backup scope" caption="The Backup & Restore export catalog separates configuration, operational data, reference sets, and connections, and explicitly excludes secrets. Use it to plan retained application records alongside the database backup above. This seeded example did not download or restore a backup and is not proof of complete disaster recovery or a successful upgrade." %}
+
 ## Manual Container Apps upgrade
 
 [Manual deployment]({{ site.baseurl }}/getting-started/manual-deployment/) documents the supported pattern: build and scan a new image, publish it as `latest`, and update the Container App with a unique revision suffix. The supplied Bicep template generates that suffix automatically on every deployment.

@@ -21,6 +21,8 @@ API endpoints check explicit capability strings. Built-in roles are seeded from 
 
 `users.manage` is deliberately an administrator capability. A custom role containing it is treated as an effective administrator by both the API and client and therefore passes all product-permission checks. Do not add it to a narrowly scoped custom role.
 
+{% include screenshot.html file="admin-access-built-in-roles.png" title="Access Control — inspect exact product capabilities by role" caption="Settings → Access Control → Roles exposes capability chips for the built-in SysAdmin, Auditor, NoAccess, and Operator roles. Compare the required action key rather than relying on a role label. These are local built-in definitions, not Azure RBAC assignments; no role or user was changed for the capture." %}
+
 ## Effective permissions and active roles
 
 Assigned roles come from direct assignments and role-bearing groups. Before a session is explicitly scoped, the backend computes the union of those roles. The displayed default/highest role is a label for that session state; it does not remove capabilities contributed by other assigned roles.

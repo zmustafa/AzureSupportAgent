@@ -15,6 +15,8 @@ A plain-English reference for the concepts and vocabulary used throughout Azure 
 
 When writing cases or procedures, use these definitions consistently and record the scoped workload and connection plus the evidence timestamp, rather than relying on an ambiguous resource nickname.
 
+{% include screenshot.html file="flife-reference-glossary.png" title="Help Glossary — filter the shipped definitions by workload" caption="The native Glossary is filtered to workload-related terms, keeping the shipped definitions and full-reference link together. It is a vocabulary lookup, not an inventory or assessment. The background usage figures are dummy data; no provider call occurred and external documentation links were not followed." %}
+
 ## Core concepts
 
 ### Workload
@@ -24,6 +26,8 @@ A **Workload** is a named group of Azure resources that together make up one app
 ### Architecture and Architecture Memory
 
 An **Architecture** is a living diagram of a workload. AI reverse-engineers it from real resources, groups it into tiers, and draws the connections. You can refine it by hand, overlay an assessment onto it, run drift detection against live Azure, and save revisions. **Architecture Memory** is the persistent, versioned knowledge captured from those diagrams that powers dashboards and investigations.
+
+{% include screenshot.html file="core-estate-graph.png" title="Concepts in context — connection, subscription, workloads, and architecture" caption="Estate Graph uses distinct node types for the tenant/connection, subscription, production and staging workloads, resource members, and a linked architecture. This synthetic relationship model makes those terms concrete; it does not show Architecture Memory content, prove network connectivity, or certify a complete live inventory." %}
 
 ### Know-Me
 

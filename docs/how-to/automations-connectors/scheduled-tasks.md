@@ -23,6 +23,10 @@ feature_ids: [AUTOMATIONS_NAV:tasks, ROUTE:automations]
 
 - Open `/automations/tasks`.
 
+**Screenshot note:** These schedules, previews and histories are synthetic browser fixtures, not executed jobs. Both editors are unsaved, and no schedule was created, enabled or run. The illustrated enabled switch must be cleared before saving a real paused staging definition.
+
+{% include screenshot.html file="fpa-tasks-schedules.png" title="Locate the target schedule and its current state" caption="Use the target grouping and status columns to distinguish the paused assignment check from the enabled examples. Inspect destinations and the latest run before operating a row; the displayed counts are not execution or delivery evidence." %}
+
 ## How to create and validate a scheduled task
 
 1. Select **New schedule**, name the task, and choose its target type and target.
@@ -34,11 +38,15 @@ feature_ids: [AUTOMATIONS_NAV:tasks, ROUTE:automations]
 7. Select **Create schedule**. Reopen **Edit** to confirm the stored target, date window, run limit, and paused state.
 8. Select the row's **Run now** once, inspect its automatically opened **Run history**, then follow the target link. Enable recurrence only after verifying output and destination effects.
 
+{% include screenshot.html file="fpa-task-workbook-form.png" title="Stage workbook parameters and a daily cadence" caption="Set the resource-group parameter and review the daily time and timezone before saving. This unsaved form uses a synthetic next-five-occurrences preview; it does not validate the saved run limit, date window or daylight-saving behavior." %}
+
 **Expected result:** A paused schedule is saved and manually validated before automatic execution is enabled. Manual runs work while paused and count toward the run limit.
 
 **Verification:** Check status, start time, trigger, summary/error, and originating output. Workbook/playbook links open their library; find the matching run there. Task history does not expose per-connector outcomes. Recheck saved next-run times around daylight-saving transitions.
 
 The unified list also displays Retirement Radar, Mission Control, and AI Insight Pack schedules created from their own feature screens. Here their target type is fixed; edit only the shared name, cadence, and notification settings. The [target catalog]({{ site.baseurl }}/user-guide/automations/scheduled-tasks/#complete-target-catalog) explains all seven types.
+
+{% include screenshot.html file="fpa-task-playbook-cron.png" title="Unsaved weekday playbook schedule" caption="For a playbook target, review the saved playbook selection, custom weekday cron and notification destinations. No schedule was saved, enabled or run; clear the enabled switch before staging, and do not treat the example preview as a verified execution time." %}
 
 ## How to investigate an incomplete or failed scheduled run
 
@@ -47,6 +55,8 @@ The unified list also displays Retirement Radar, Mission Control, and AI Insight
 3. Follow the output link. For agents, inspect thread activity for tool errors or `awaiting_approval`; for assessments/missions, inspect every intended workload; for playbooks, inspect every step and underlying workbook history.
 4. Verify external destinations separately. A completed task does not prove direct connector delivery or rule-based notification succeeded.
 5. Correct the definition or dependencies. Start one new complete manual run only after establishing whether previous external actions already occurred; there is no resume/retry-failed control here.
+
+{% include screenshot.html file="fpa-task-history.png" title="Inspect the trigger and error before a manual retry" caption="The modeled failed manual row reports unavailable scope, while later rows are scheduled successes. Read the summary and open the corresponding workbook history; neither a later success nor an in-app badge proves that external delivery completed." %}
 
 **Expected result:** The next action is based on actual partial evidence rather than an acknowledgement or success badge.
 

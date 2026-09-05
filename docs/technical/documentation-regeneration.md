@@ -59,6 +59,16 @@ Every visible application area must have both. Every material action must be rep
 - Titles, category placement, and permalinks remain stable unless the feature was renamed.
 - Public examples never contain live identities, IDs, endpoints, or secrets.
 
+## Worked example: select and explain a screenshot
+
+The figure below is an actual use of the shared screenshot include, not a capture of the documentation agent or of the visual-tour page. It demonstrates the same selection process a maintainer can apply when updating a guide:
+
+1. Read the guide's workflow, then choose the architecture-canvas entry in the [screenshot manifest]({{ site.baseurl }}/assets/screenshots/manifest.json). Its route, source note, dimensions, and hash describe the approved asset.
+2. Inspect the image itself: this example shows a checkout topology, a resource palette, and review controls. It does not show a successful discovery run, a generated Know-Me document, or the documentation-regeneration interface.
+3. Use the exact manifest filename in the include's `file` parameter, identify the visible workflow in `title`, and explain scope and limitations in `caption`. Preserve the shared synthetic-data notice and full-size link. A page must not claim an operation completed merely because its button appears.
+
+{% include screenshot.html file="estate-architecture-canvas.png" title="Documentation example — explain the architecture canvas that is actually shown" caption="This approved synthetic checkout canvas illustrates resource relationships and review controls. Its nodes, topology, and retail-price labels are fixture values, not live discovery or pricing evidence. The example demonstrates screenshot selection and captioning; it does not depict the documentation agent, a rendered visual-tour page, or a completed regeneration run." %}
+
 ## Required validation
 
 A run is complete only when all checks pass:

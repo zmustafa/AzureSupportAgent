@@ -13,6 +13,8 @@ feature_ids: [CONNECTOR:sqs, CONNECTOR:s3, CONNECTOR:servicebus]
 
 These types do not expose **Send test** in the UI/API because it would write a queue message or storage object.
 
+The screenshots show native **unsaved, disabled** setup and review screens. Credential secrets are empty; account, role, and destination values are fictional, and entered domains are deliberately non-resolving. No save, authentication, test, queue message, or object write is demonstrated. In real Role mode, blank base keys may use the host credential chain; no STS call was made for these examples.
+
 ## Prerequisites
 
 - `connectors.manage`.
@@ -28,6 +30,10 @@ These types do not expose **Send test** in the UI/API because it would write a q
 
 ## How to configure Azure Service Bus Queue
 
+{% include screenshot.html file="fconn-servicebus-connection-string.png" title="Service Bus connection-string mode — unsaved setup" caption="The entire connection-string secret is blank and only a fictional default queue is entered. Visible connection-string text is a placeholder, not a stored credential. Enabled is off and the native form is UNSAVED. This mode has no separate namespace or SAS-key inputs; no connection or message send occurred." %}
+
+{% include screenshot.html file="fconn-servicebus-sas.png" title="Service Bus SAS mode — unsaved namespace and policy fields" caption="SAS mode exposes namespace FQDN, policy name, an empty SAS key, and default queue. The namespace is deliberately non-resolving and not a valid Azure namespace; the policy is fictional and its Send rights are unverified. Enabled is off and the draft is UNSAVED. No test or message send occurred." %}
+
 1. Add **Azure Service Bus Queue** and choose **Connection string** or **SAS**.
 2. Enter the credentials and a default queue when calls should not supply one, then save disabled.
 3. Select **Test**; it only checks that mode-required credential fields are present.
@@ -40,6 +46,10 @@ These types do not expose **Send test** in the UI/API because it would write a q
 
 ## How to configure Amazon SQS
 
+{% include screenshot.html file="fconn-sqs-keys.png" title="Amazon SQS keys mode — unsaved queue setup" caption="Native UNSAVED setup shows region, empty access key ID, secret access key, and session token fields, plus a fictional queue URL. Its .invalid domain is not a valid AWS destination and Enabled is off. FIFO message-group and deduplication IDs are call-time arguments, not form controls; no STS call or queue access occurred." %}
+
+{% include screenshot.html file="fconn-sqs-role.png" title="Amazon SQS role mode — unsaved review" caption="Native Review + add shows fictional role ARN, external ID, and FIFO queue URL with Disabled selected. Em dashes represent empty base credentials, not stored secrets. The draft is UNSAVED and Add connector was not clicked; no role assumption, queue discovery, message send, or deduplication verification occurred." %}
+
 1. Add **Amazon SQS**, choose **Keys** or **Role**, enter AWS identity fields and queue URL, then save disabled.
 2. Select **Test**; it calls STS `GetCallerIdentity` and sends no message.
 3. Confirm the returned ARN/account and enable.
@@ -51,6 +61,10 @@ These types do not expose **Send test** in the UI/API because it would write a q
 **Verification:** Confirm ARN, queue region/account, IAM resource scope, and controlled-message receipt/consumption when performed.
 
 ## How to configure Amazon S3
+
+{% include screenshot.html file="fconn-s3-keys.png" title="Amazon S3 keys mode — unsaved bucket and prefix setup" caption="Native UNSAVED setup shows region and fictional bucket and key-prefix defaults; access key ID, secret access key, and session token are empty. Enabled is off. There is no bucket-policy or encryption selector in this form, and no STS call, permission check, or object write occurred." %}
+
+{% include screenshot.html file="fconn-s3-role.png" title="Amazon S3 role mode — unsaved destination review" caption="Native Review + add shows all seven fields, including fictional role, external ID, bucket, and prefix values. Empty base credentials appear as em dashes and the draft is Disabled and UNSAVED. Add connector was not clicked; this is not evidence of role assumption, PutObject authorization, or a written object." %}
 
 1. Add **Amazon S3**, choose **Keys** or **Role**, enter AWS identity fields, bucket, and optional prefix, then save disabled.
 2. Select **Test**; it calls STS `GetCallerIdentity` and writes no object.

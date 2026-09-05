@@ -36,6 +36,10 @@ feature_ids: [PROACTIVE_NAV:entra, ROUTE:entra, ENTRA_NAV:setup, ENTRA_NAV:graph
 
 **Verification:** The coverage banner on the affected tab names the same limitation, and the scope it names appears as missing in the tier list.
 
+**Screenshot notes:** This combined setup view is a synthetic browser fixture; no permission probe, consent change, collection or backend computation was performed. The shortened tier list, seven-day sample and diagnostic counters are illustrative, not the full permission catalog or product defaults. The sign-in lookback defaults to 30 days.
+
+{% include screenshot.html file="fid2-entra-setup-permission-tiers.png" title="Collection diagnosis: permissions, licenses, coverage and Graph statistics" caption="Compare each domain's state and note with the collection statistics below it. Partial risk data is not a complete sample, and not permitted authentication data is unknown rather than empty. An inconclusive probe and a license restriction need different follow-up from missing consent." %}
+
 ## How to read the collection diagnostics
 
 1. Stay on `/entra/setup` and read the last collection's Microsoft Graph statistics: requests, batches, throttle events, retries, pages, items, forbidden responses, and elapsed time.

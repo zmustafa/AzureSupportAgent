@@ -17,6 +17,9 @@ AI Insight Packs are reusable monitoring definitions that collect selected opera
 
 **Application route:** `/insights` (section routes may appear as `/insights/:section`).
 
+{: .note }
+**Screenshot note:** These native views use browser-only synthetic definitions and saved digest results. No AI inference, source collection, probe, scheduler run, or notification occurred. A completed digest here is a modeled example, not a real monitoring result.
+
 ## Common use cases
 
 - Summarize recent workload changes and highlight security-sensitive operations.
@@ -59,6 +62,8 @@ The library presents saved packs and starter templates. From a pack, you can:
 - open **Run / Schedule**;
 - review recent runs, unread material digests, health, and upcoming executions.
 
+{% include screenshot.html file="fdesign-insights-library.png" title="Browse disabled synthetic Insight Packs" caption="Three custom definitions appear in the native library with its filters, categories, and run/schedule entry points. All three packs are disabled; no pack was executed or notification requested for this capture." %}
+
 ### AI generator wizard
 
 The guided flow is **Goal → AI interview → Generate → Preview & save**.
@@ -90,6 +95,8 @@ An on-demand run continues server-side if the dialog is closed; the completed di
 ## Interpret a digest
 
 A digest shows the pack and scope, evidence lookback, headline, bullets, structured rows, counts, notification state, and materiality-gate reason.
+
+{% include screenshot.html file="fdesign-insights-digest-evidence.png" title="Read a modeled digest and its evidence links" caption="The completed state, materiality gate, and change row are synthetic saved results. Native Change Explorer and Radar links show where to inspect supporting context, but were not followed. No live AI result or delivery is demonstrated." %}
 
 - **Nothing notable** means the collected evidence did not cross the pack's materiality threshold. It does not prove that no issue exists.
 - **Notable** indicates review-worthy evidence.

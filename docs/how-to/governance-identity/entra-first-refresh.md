@@ -23,6 +23,8 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 
 `/entra/setup` for consent and coverage, then `/entra` for the posture score once the collection completes.
 
+**Screenshot notes:** These synthetic browser fixtures illustrate how to read setup and posture; no consent, permission recheck, refresh or backend assessment was performed for them. Their shortened permission catalog and pillar model are examples, not the complete tiers, weights or default configuration documented in the linked references.
+
 ## How to grant a consent tier
 
 1. Open `/entra/setup` and select the connection for the tenant you intend to analyze.
@@ -48,6 +50,8 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 **Expected result:** The granted list matches what you consented to, and the gained list names the scopes you just added.
 
 **Verification:** The page reports that a fresh collection is needed for the new scopes to change any data.
+
+{% include screenshot.html file="fid2-entra-setup-permission-tiers.png" title="First collection: consent tiers, licenses and collector coverage" caption="Read granted application permissions separately from license flags and collector results. A granted scope does not establish measured coverage. The combined setup view distinguishes successful, partial and unreadable domains; zero items beside not permitted is not evidence of an empty domain." %}
 
 ## How to run the first collection
 
@@ -87,6 +91,8 @@ feature_ids: [PROACTIVE_NAV:entra, ENTRA_NAV:setup, ENTRA_NAV:posture]
 **Expected result:** The posture score is interpreted together with snapshot age, measured coverage, and source findings.
 
 **Verification:** Every quoted deduction resolves to a current finding and authoritative directory evidence; unexplored domains remain explicitly excluded from conclusions.
+
+{% include screenshot.html file="fid2-entra-posture-score.png" title="After collection: read posture and coverage together" caption="This illustrative result pairs a score with partial coverage and a named authentication blind spot. It shows what to inspect after your own collection, not evidence that a collection ran for this example. A missing pillar score is unknown, not zero." %}
 
 ## Safety and rollback
 
